@@ -32,11 +32,12 @@ use openstack_keystone_core_types::auth::{
 use openstack_keystone_core_types::mapping::auth::MappingAuthRequest;
 use openstack_keystone_core_types::mapping::resolution::IdentitySource;
 use openstack_keystone_dynamic_plugin_runtime::{
-    AuthPluginRequest, AuthPluginResponse, MappingResponse, WORKLOAD_ID_CLAIM_KEY,
+    AuthPluginRequest, AuthPluginResponse, MappingResponse, RouteRequest, RouteResponse,
+    WORKLOAD_ID_CLAIM_KEY,
 };
 
 use crate::auth::ExecutionContext;
-use crate::dynamic_plugin::emit_wasm_plugin_audit;
+use crate::dynamic_plugin::{emit_wasm_plugin_audit, emit_wasm_route_audit};
 use crate::keystone::ServiceState;
 use crate::net::resolve_client_ip;
 
@@ -567,6 +568,228 @@ pub async fn authenticate_via_wasm_mapping_plugin(
     }
 
     result
+}
+
+/// What a `route`-mode plugin's `route` entry point decided (ADR 0025 §4
+/// "Guest Contract - `route` Mode"). `target_method: None` means
+/// `Passthrough` - the caller dispatches the request exactly as received,
+/// as if no router plugin were installed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RouteDecision {
+    pub target_method: Option<String>,
+    pub payload: Option<serde_json::Value>,
+}
+
+/// Dispatch a pre-dispatch routing decision to a `mode = route` plugin's
+/// `route` entry point (ADR 0025 §4 "Guest Contract - `route` Mode"). Unlike
+/// [`authenticate_via_wasm_plugin`]/[`authenticate_via_wasm_mapping_plugin`],
+/// this runs *before* the caller's per-method dispatch loop, on the client's
+/// full, raw `identity.methods` list, and never authenticates anyone - it
+/// only ever relabels which already-registered method should handle the
+/// request. `methods`/`payloads` are already filtered by the caller to
+/// exactly this plugin's `inspect_methods` (a router never sees a block it
+/// wasn't configured to inspect). A `Route { target_method, .. }` naming a
+/// method outside the plugin's configured `route_targets` is rejected as
+/// malformed (§7 posture: reject, never redirect to an unintended handler),
+/// since the guest contract's own bounds-checker
+/// (`decode_and_validate_route_response`) has no visibility into `core`/
+/// config state.
+pub async fn route_via_wasm_plugin(
+    state: &ServiceState,
+    plugin_name: &str,
+    methods: &[String],
+    payloads: HashMap<String, serde_json::Value>,
+    raw_headers: HashMap<String, String>,
+    xff_header: Option<String>,
+    peer_ip: Option<std::net::IpAddr>,
+) -> Result<RouteDecision, WasmPluginAuthError> {
+    let registry = state.dynamic_plugin_registry.read().await.clone();
+    let Some(loaded) = registry.get(plugin_name) else {
+        return Err(WasmPluginAuthError::NotFound);
+    };
+
+    let config = {
+        let cfg = state.config_manager.config.read().await;
+        cfg.dynamic_plugin.get(plugin_name).cloned()
+    };
+    let Some(config) = config else {
+        return Err(WasmPluginAuthError::NotFound);
+    };
+    if config.mode != PluginMode::Route {
+        return Err(WasmPluginAuthError::WrongMode);
+    }
+
+    let Some(limiter) = state
+        .dynamic_plugin_limiters
+        .read()
+        .await
+        .get(plugin_name)
+        .cloned()
+    else {
+        return Err(WasmPluginAuthError::NotFound);
+    };
+
+    let trusted_proxies = {
+        let cfg = state.config_manager.config.read().await;
+        cfg.dynamic_plugins.trusted_proxies.clone()
+    };
+    let remote_addr = resolve_client_ip(xff_header.as_deref(), peer_ip, &trusted_proxies)
+        .map(|ip| ip.to_string());
+
+    // Independent budget from the target method's own (ADR §7 "Fail-closed,
+    // independent budget") - falls out for free since `limiter` is looked
+    // up by this router's own `plugin_name`, a separate
+    // `PluginInvocationLimiter` instance from any target method's.
+    if let Err(bound) = limiter.check_per_source(remote_addr.as_deref()) {
+        let _ = emit_wasm_route_audit(
+            state,
+            plugin_name,
+            methods,
+            "rate_limited",
+            None,
+            Some(bound.as_str().to_string()),
+        )
+        .await;
+        return Err(WasmPluginAuthError::RateLimited(bound.as_str()));
+    }
+    if let Err(bound) = limiter.check_per_plugin() {
+        let _ = emit_wasm_route_audit(
+            state,
+            plugin_name,
+            methods,
+            "rate_limited",
+            None,
+            Some(bound.as_str().to_string()),
+        )
+        .await;
+        return Err(WasmPluginAuthError::RateLimited(bound.as_str()));
+    }
+    let _permit = match limiter.try_acquire_concurrency_permit() {
+        Ok(permit) => permit,
+        Err(bound) => {
+            let _ = emit_wasm_route_audit(
+                state,
+                plugin_name,
+                methods,
+                "rate_limited",
+                None,
+                Some(bound.as_str().to_string()),
+            )
+            .await;
+            return Err(WasmPluginAuthError::RateLimited(bound.as_str()));
+        }
+    };
+
+    let headers: HashMap<String, String> = raw_headers
+        .into_iter()
+        .filter(|(name, _)| {
+            let lower = name.to_ascii_lowercase();
+            config
+                .exposed_headers
+                .iter()
+                .any(|h| h.eq_ignore_ascii_case(name))
+                && !HARD_DENYLISTED_HEADERS.contains(&lower.as_str())
+        })
+        .collect();
+
+    let route_request = RouteRequest {
+        methods: methods.to_vec(),
+        headers,
+        payloads,
+        remote_addr,
+    };
+    let input = serde_json::to_vec(&route_request)
+        .map_err(|e| WasmPluginAuthError::InvokeFailed(e.to_string()))?;
+
+    let raw_response = match loaded.invoke("route", &input) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            let _ = emit_wasm_route_audit(
+                state,
+                plugin_name,
+                methods,
+                "failure",
+                None,
+                Some(e.to_string()),
+            )
+            .await;
+            return Err(WasmPluginAuthError::InvokeFailed(e.to_string()));
+        }
+    };
+
+    let response =
+        match openstack_keystone_dynamic_plugin_runtime::decode_and_validate_route_response(
+            &raw_response,
+        ) {
+            Ok(response) => response,
+            Err(e) => {
+                let _ = emit_wasm_route_audit(
+                    state,
+                    plugin_name,
+                    methods,
+                    "failure",
+                    None,
+                    Some(e.to_string()),
+                )
+                .await;
+                return Err(WasmPluginAuthError::MalformedResponse(e.to_string()));
+            }
+        };
+
+    match response {
+        RouteResponse::Passthrough => {
+            let _ =
+                emit_wasm_route_audit(state, plugin_name, methods, "passthrough", None, None).await;
+            Ok(RouteDecision {
+                target_method: None,
+                payload: None,
+            })
+        }
+        RouteResponse::Route {
+            target_method,
+            payload,
+        } => {
+            if !config.route_targets.iter().any(|t| t == &target_method) {
+                let _ = emit_wasm_route_audit(
+                    state,
+                    plugin_name,
+                    methods,
+                    "failure",
+                    Some(&target_method),
+                    Some("target_method outside configured route_targets".to_string()),
+                )
+                .await;
+                return Err(WasmPluginAuthError::MalformedResponse(format!(
+                    "target_method `{target_method}` is not in this plugin's route_targets"
+                )));
+            }
+            let _ = emit_wasm_route_audit(
+                state,
+                plugin_name,
+                methods,
+                "route",
+                Some(&target_method),
+                None,
+            )
+            .await;
+            Ok(RouteDecision {
+                target_method: Some(target_method),
+                payload: Some(payload),
+            })
+        }
+        RouteResponse::Deny { reason } => {
+            let _ = emit_wasm_route_audit(
+                state,
+                plugin_name,
+                methods,
+                "deny",
+                None,
+                Some(reason.clone()),
+            )
+            .await;
+            Err(WasmPluginAuthError::Denied(reason))
+        }
+    }
 }
 
 /// End-to-end acceptance tests against the real, compiled reference plugin
@@ -1342,6 +1565,369 @@ mod mapping_acceptance_tests {
         let err = authenticate_via_wasm_plugin(&state, "p", mapping_request("alice", false))
             .await
             .expect_err("a mode=mapping plugin must be rejected by the full_auth dispatcher");
+        assert!(matches!(err, WasmPluginAuthError::WrongMode));
+    }
+}
+
+/// End-to-end acceptance tests against the real, compiled reference plugin's
+/// `route` export (ADR 0025 §4 "Guest Contract - `route` Mode"). Proves
+/// [`route_via_wasm_plugin`] gets the wasm boundary right end to end: real
+/// registry lookup, real `extism` invocation of the `route` entry point,
+/// response-bounds decoding, and the host-side `route_targets` allowlist
+/// check that the guest contract's own decoder can't perform (it has no
+/// visibility into config state).
+#[cfg(test)]
+mod route_acceptance_tests {
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::sync::Arc;
+
+    use openstack_keystone_audit::AuditDispatcher;
+    use openstack_keystone_config::{Config, ConfigManager, DynamicPluginsSection};
+    use sha2::{Digest, Sha256};
+
+    use crate::dynamic_plugin_http::{DynamicPluginHttpFetcher, FetchResponse};
+    use crate::dynamic_plugin_identity::MockDynamicPluginIdentityProvider;
+    use crate::dynamic_plugin_startup::load_dynamic_plugins;
+    use crate::identity::MockIdentityProvider;
+    use crate::keystone::Service;
+    use crate::policy::MockPolicy;
+    use crate::provider::Provider;
+
+    use super::*;
+
+    struct UnreachableHttpFetcher;
+
+    #[async_trait::async_trait]
+    impl DynamicPluginHttpFetcher for UnreachableHttpFetcher {
+        async fn fetch(
+            &self,
+            _method: &str,
+            _url: &str,
+            _resolved_addr: std::net::SocketAddr,
+            _headers: &HashMap<String, String>,
+            _body: Option<&str>,
+            _timeout_ms: u64,
+            _auth_header: Option<(&str, &str)>,
+            _max_body_bytes: usize,
+        ) -> Result<FetchResponse, String> {
+            panic!("this test's plugin doesn't grant http_fetch")
+        }
+    }
+
+    fn fixture_dir() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../dynamic-plugin-runtime/tests/fixtures/reference-plugin")
+    }
+
+    fn build_reference_plugin() -> (PathBuf, String) {
+        let dir = fixture_dir();
+        let status = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string()))
+            .args(["build", "--release", "--target", "wasm32-unknown-unknown"])
+            .current_dir(&dir)
+            .status()
+            .expect("failed to spawn cargo to build the reference plugin fixture");
+        assert!(
+            status.success(),
+            "building the reference plugin fixture failed"
+        );
+
+        let wasm_path = dir.join("target/wasm32-unknown-unknown/release/reference_plugin.wasm");
+        assert!(
+            wasm_path.is_file(),
+            "expected build artifact at {}",
+            wasm_path.display()
+        );
+        let bytes = std::fs::read(&wasm_path).unwrap();
+        let sha256 = {
+            use std::fmt::Write;
+            Sha256::digest(&bytes)
+                .iter()
+                .fold(String::new(), |mut acc, b| {
+                    let _ = write!(acc, "{b:02x}");
+                    acc
+                })
+        };
+        (wasm_path, sha256)
+    }
+
+    /// Loads the reference plugin fixture as `mode = route`, `inspect_methods
+    /// = application_credential`, with `route_targets` set to
+    /// `allowed_target` - a single caller-chosen allowlist entry, letting
+    /// each test independently prove both the allowlisted and
+    /// non-allowlisted paths.
+    async fn build_route_state(plugin_name: &str, allowed_target: &str) -> ServiceState {
+        let (path, sha256) = build_reference_plugin();
+
+        let cfg = Config {
+            dynamic_plugins: DynamicPluginsSection {
+                plugins: vec![plugin_name.to_string()],
+                ..Default::default()
+            },
+            dynamic_plugin: {
+                use config::{Config as RawConfig, File, FileFormat};
+                use std::collections::HashMap as StdHashMap;
+
+                #[derive(serde::Deserialize)]
+                struct Wrapper {
+                    dynamic_plugin:
+                        StdHashMap<String, openstack_keystone_config::DynamicPluginConfig>,
+                }
+
+                let ini = format!(
+                    "[dynamic_plugin.{plugin_name}]\npath = {}\nsha256 = {}\nmode = route\ninspect_methods = application_credential\nroute_targets = {allowed_target}\n",
+                    path.display(),
+                    sha256,
+                );
+                let c = RawConfig::builder()
+                    .add_source(File::from_str(&ini, FileFormat::Ini))
+                    .build()
+                    .unwrap();
+                let wrapper: Wrapper = c.try_deserialize().unwrap();
+                wrapper.dynamic_plugin.into_iter().collect()
+            },
+            ..Default::default()
+        };
+
+        let (audit_dispatcher, receivers) = AuditDispatcher::new(
+            "test-node",
+            uuid::Uuid::new_v4().to_string(),
+            Arc::from(b"test-hmac-key-32-bytes-long!!!!".as_slice()),
+            0,
+        );
+        std::mem::forget(receivers);
+
+        let provider = Provider::mocked_builder()
+            .mock_identity(MockIdentityProvider::default())
+            .mock_dynamic_plugin_identity(MockDynamicPluginIdentityProvider::default())
+            .build()
+            .unwrap();
+
+        let state = Arc::new(
+            Service::new(
+                ConfigManager::not_watched(cfg),
+                sea_orm::DatabaseConnection::Disconnected,
+                provider,
+                Arc::new(MockPolicy::default()),
+                audit_dispatcher,
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+
+        load_dynamic_plugins(&state, Arc::new(UnreachableHttpFetcher)).await;
+        assert!(
+            state
+                .dynamic_plugin_registry
+                .read()
+                .await
+                .contains(plugin_name),
+            "reference plugin {plugin_name} should have loaded"
+        );
+        state
+    }
+
+    /// Loads the reference plugin fixture as `mode = full_auth` - used only
+    /// by [`test_route_dispatch_rejects_non_route_mode_plugin`] to prove the
+    /// route dispatcher's own mode gate, mirroring `acceptance_tests::
+    /// build_state` (duplicated rather than shared, since that helper is
+    /// private to its own module).
+    async fn build_full_auth_state(plugin_name: &str) -> ServiceState {
+        let (path, sha256) = build_reference_plugin();
+
+        let cfg = Config {
+            dynamic_plugins: DynamicPluginsSection {
+                plugins: vec![plugin_name.to_string()],
+                ..Default::default()
+            },
+            dynamic_plugin: {
+                use config::{Config as RawConfig, File, FileFormat};
+                use std::collections::HashMap as StdHashMap;
+
+                #[derive(serde::Deserialize)]
+                struct Wrapper {
+                    dynamic_plugin:
+                        StdHashMap<String, openstack_keystone_config::DynamicPluginConfig>,
+                }
+
+                let ini = format!(
+                    "[dynamic_plugin.{plugin_name}]\npath = {}\nsha256 = {}\nmode = full_auth\ncapabilities = provision_user\nprovision_domain_id = d\n",
+                    path.display(),
+                    sha256,
+                );
+                let c = RawConfig::builder()
+                    .add_source(File::from_str(&ini, FileFormat::Ini))
+                    .build()
+                    .unwrap();
+                let wrapper: Wrapper = c.try_deserialize().unwrap();
+                wrapper.dynamic_plugin.into_iter().collect()
+            },
+            ..Default::default()
+        };
+
+        let (audit_dispatcher, receivers) = AuditDispatcher::new(
+            "test-node",
+            uuid::Uuid::new_v4().to_string(),
+            Arc::from(b"test-hmac-key-32-bytes-long!!!!".as_slice()),
+            0,
+        );
+        std::mem::forget(receivers);
+
+        let provider = Provider::mocked_builder()
+            .mock_identity(MockIdentityProvider::default())
+            .mock_dynamic_plugin_identity(MockDynamicPluginIdentityProvider::default())
+            .build()
+            .unwrap();
+
+        let state = Arc::new(
+            Service::new(
+                ConfigManager::not_watched(cfg),
+                sea_orm::DatabaseConnection::Disconnected,
+                provider,
+                Arc::new(MockPolicy::default()),
+                audit_dispatcher,
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+
+        load_dynamic_plugins(&state, Arc::new(UnreachableHttpFetcher)).await;
+        assert!(
+            state
+                .dynamic_plugin_registry
+                .read()
+                .await
+                .contains(plugin_name),
+            "reference plugin {plugin_name} should have loaded"
+        );
+        state
+    }
+
+    fn appcred_payloads(cred_id: &str) -> HashMap<String, serde_json::Value> {
+        let mut payloads = HashMap::new();
+        payloads.insert(
+            "application_credential".to_string(),
+            serde_json::json!({"application_credential_id": cred_id}),
+        );
+        payloads
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_passthrough_when_no_matching_credential_shape() {
+        let state = build_route_state("p", "tf_appcred_handler").await;
+        let decision = route_via_wasm_plugin(
+            &state,
+            "p",
+            &["application_credential".to_string()],
+            appcred_payloads("some-other-shape"),
+            HashMap::new(),
+            None,
+            None,
+        )
+        .await
+        .expect("passthrough should not error");
+        assert_eq!(decision.target_method, None);
+        assert_eq!(decision.payload, None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_route_to_allowlisted_target_succeeds() {
+        let state = build_route_state("p", "tf_appcred_handler").await;
+        let decision = route_via_wasm_plugin(
+            &state,
+            "p",
+            &["application_credential".to_string()],
+            appcred_payloads("tf-abc123"),
+            HashMap::new(),
+            None,
+            None,
+        )
+        .await
+        .expect("route to an allowlisted target should succeed");
+        assert_eq!(
+            decision.target_method.as_deref(),
+            Some("tf_appcred_handler")
+        );
+        assert_eq!(
+            decision.payload,
+            Some(serde_json::json!({"external_id": "abc123"}))
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_route_to_non_allowlisted_target_is_rejected() {
+        // route_targets allowlists a *different* method than the plugin
+        // actually reroutes to (`tf_appcred_handler`), so the host's own
+        // allowlist check must reject it - the plugin cannot direct traffic
+        // to a target the operator never authorized, even though the wire
+        // response itself is well-formed.
+        let state = build_route_state("p", "some_other_target").await;
+        let err = route_via_wasm_plugin(
+            &state,
+            "p",
+            &["application_credential".to_string()],
+            appcred_payloads("tf-abc123"),
+            HashMap::new(),
+            None,
+            None,
+        )
+        .await
+        .expect_err("an off-allowlist target must be rejected, not redirected");
+        assert!(matches!(err, WasmPluginAuthError::MalformedResponse(_)));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_deny_fails_closed() {
+        let state = build_route_state("p", "tf_appcred_handler").await;
+        let err = route_via_wasm_plugin(
+            &state,
+            "p",
+            &["application_credential".to_string()],
+            appcred_payloads("deny-me"),
+            HashMap::new(),
+            None,
+            None,
+        )
+        .await
+        .expect_err("a plugin Deny response must be rejected");
+        assert!(matches!(err, WasmPluginAuthError::Denied(_)));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_full_auth_dispatch_rejects_route_mode_plugin() {
+        let state = build_route_state("p", "tf_appcred_handler").await;
+        let err = authenticate_via_wasm_plugin(
+            &state,
+            "p",
+            WasmPluginAuthRequest {
+                payload: serde_json::json!({"external_id": "alice"}),
+                raw_headers: HashMap::new(),
+                xff_header: None,
+                peer_ip: None,
+            },
+        )
+        .await
+        .expect_err("a mode=route plugin must be rejected by the full_auth dispatcher");
+        assert!(matches!(err, WasmPluginAuthError::WrongMode));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_route_dispatch_rejects_non_route_mode_plugin() {
+        let state = build_full_auth_state("p").await;
+
+        let err = route_via_wasm_plugin(
+            &state,
+            "p",
+            &["password".to_string()],
+            HashMap::new(),
+            HashMap::new(),
+            None,
+            None,
+        )
+        .await
+        .expect_err("a mode=full_auth plugin must be rejected by the route dispatcher");
         assert!(matches!(err, WasmPluginAuthError::WrongMode));
     }
 }

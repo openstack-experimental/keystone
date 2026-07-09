@@ -33,6 +33,14 @@ openssl x509 -req -in "${SSL_DIR}/ks.csr" \
     -days 30 -copy_extensions copyall 2>/dev/null
 rm -f "${SSL_DIR}/ks.csr"
 
+# Build the ADR 0025 reference dynamic-auth-plugin fixture (mapping/route/
+# full_auth entry points) and hash it, so the real server can load it just
+# like a genuine operator-supplied plugin.
+(cd crates/dynamic-plugin-runtime/tests/fixtures/reference-plugin && \
+    cargo build --release --target wasm32-unknown-unknown)
+PLUGIN_WASM="$(pwd)/crates/dynamic-plugin-runtime/tests/fixtures/reference-plugin/target/wasm32-unknown-unknown/release/reference_plugin.wasm"
+PLUGIN_SHA256="$(sha256sum "$PLUGIN_WASM" | awk '{print $1}')"
+
 cleanup() {
   echo "Tearing down SPIRE daemons..." >&2
   PID_DIR="/tmp/spire-ci-test-harness"
@@ -101,6 +109,28 @@ cluster_salt = "fbb27433d07ab307cc1fc899d0e174cf197fd398fbcff7285a63fe2f94eec2fe
 
 [audit]
 spool_dir = ${STATE_DIR}/audit
+
+[dynamic_plugins]
+plugins = mapper,router,tf_appcred_handler
+
+[dynamic_plugin.mapper]
+path = ${PLUGIN_WASM}
+sha256 = ${PLUGIN_SHA256}
+mode = mapping
+
+[dynamic_plugin.router]
+path = ${PLUGIN_WASM}
+sha256 = ${PLUGIN_SHA256}
+mode = route
+inspect_methods = application_credential
+route_targets = tf_appcred_handler
+
+[dynamic_plugin.tf_appcred_handler]
+path = ${PLUGIN_WASM}
+sha256 = ${PLUGIN_SHA256}
+mode = full_auth
+capabilities = provision_user
+provision_domain_id = default
 
 EOF
 

@@ -159,6 +159,33 @@ pub(crate) async fn emit_wasm_plugin_audit(
     dispatcher.dispatch_critical(event).await.map_err(|_| ())
 }
 
+/// Emit a mandatory CADF audit record for a `route`-mode invocation (ADR
+/// 0025 §4 "Guest Contract - `route` Mode", "Audit") - records the client's
+/// originally-requested method list and, for a `Route` decision, the
+/// resulting `target_method`, distinct from the eventually-dispatched
+/// method's own audit trail, so an operator investigating a routing plugin
+/// gone wrong doesn't see only the routed-to method as if the client had
+/// requested it directly. Encoded into [`emit_wasm_plugin_audit`]'s
+/// `outcome_reason` free-text field rather than widening the CADF payload
+/// schema.
+pub(crate) async fn emit_wasm_route_audit(
+    state: &ServiceState,
+    plugin_name: &str,
+    requested_methods: &[String],
+    decision: &str,
+    target_method: Option<&str>,
+    reason: Option<String>,
+) -> Result<(), ()> {
+    let mut outcome_reason = format!("requested_methods={requested_methods:?}");
+    if let Some(target) = target_method {
+        outcome_reason.push_str(&format!(" target_method={target}"));
+    }
+    if let Some(reason) = reason {
+        outcome_reason.push_str(&format!(" reason={reason}"));
+    }
+    emit_wasm_plugin_audit(state, plugin_name, "route", decision, Some(outcome_reason)).await
+}
+
 /// Why a `authenticate` invocation was rejected before ever reaching the
 /// plugin (ADR 0025 §7 "Invocation Rate Limiting & Concurrency").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

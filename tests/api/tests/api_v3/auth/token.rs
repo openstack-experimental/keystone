@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+mod dynamic_plugin;
 mod password;
 mod revoke;
 mod token;

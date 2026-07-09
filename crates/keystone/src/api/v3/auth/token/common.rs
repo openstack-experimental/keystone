@@ -12,13 +12,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashMap;
 use std::net::IpAddr;
 
 use openstack_keystone_config::PluginMode;
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::dynamic_plugin_auth::{
     WasmPluginAuthError, WasmPluginAuthRequest, authenticate_via_wasm_mapping_plugin,
-    authenticate_via_wasm_plugin,
+    authenticate_via_wasm_plugin, route_via_wasm_plugin,
 };
 
 use crate::api::error::KeystoneApiError;
@@ -37,8 +38,94 @@ pub(super) async fn authenticate_request(
     headers: &axum::http::HeaderMap,
     peer_ip: Option<IpAddr>,
 ) -> Result<Vec<AuthenticationResult>, KeystoneApiError> {
+    let raw_headers: HashMap<String, String> = headers
+        .iter()
+        .filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|v| (name.as_str().to_string(), v.to_string()))
+        })
+        .collect();
+    let xff_header = headers
+        .get(axum::http::header::HeaderName::from_static(
+            "x-forwarded-for",
+        ))
+        .and_then(|h| h.to_str().ok())
+        .map(str::to_string);
+
+    // Pre-dispatch `route` mode (ADR 0025 §4 "Guest Contract - `route`
+    // Mode"): runs once, before any builtin/plugin method dispatch, and may
+    // relabel which already-registered method actually handles the request
+    // (the Terraform `application_credential`-shaped-auth case, where the
+    // client can't be made to name a custom method itself). Only the first
+    // configured `mode = route` plugin whose `inspect_methods` intersects
+    // the client's `identity.methods` runs - single-shot falls out of this
+    // being a single pre-pass with no recursion, not an explicit flag.
+    let mut effective_methods = req.auth.identity.methods.clone();
+    let mut effective_extra = req.auth.identity.extra.clone();
+    {
+        let router = {
+            let cfg = state.config_manager.config.read().await;
+            cfg.dynamic_plugin
+                .iter()
+                .filter(|(_, p)| p.mode == PluginMode::Route)
+                .find(|(_, p)| {
+                    p.inspect_methods
+                        .iter()
+                        .any(|m| effective_methods.contains(m))
+                })
+                .map(|(name, p)| (name.clone(), p.inspect_methods.clone()))
+        };
+        if let Some((router_name, inspect_methods)) = router {
+            let inspected: Vec<String> = inspect_methods
+                .into_iter()
+                .filter(|m| effective_methods.contains(m))
+                .collect();
+            let payloads: HashMap<String, serde_json::Value> = inspected
+                .iter()
+                .filter_map(|m| effective_extra.get(m).map(|v| (m.clone(), v.clone())))
+                .collect();
+            match route_via_wasm_plugin(
+                state,
+                &router_name,
+                &effective_methods,
+                payloads,
+                raw_headers.clone(),
+                xff_header.clone(),
+                peer_ip,
+            )
+            .await
+            {
+                Ok(decision) => {
+                    if let (Some(target), Some(payload)) =
+                        (decision.target_method, decision.payload)
+                    {
+                        effective_methods.retain(|m| !inspected.contains(m));
+                        for m in &inspected {
+                            effective_extra.remove(m);
+                        }
+                        if !effective_methods.contains(&target) {
+                            effective_methods.push(target.clone());
+                        }
+                        effective_extra.insert(target, payload);
+                    }
+                    // `Passthrough` (both `None`) leaves `effective_methods`/
+                    // `effective_extra` untouched.
+                }
+                Err(WasmPluginAuthError::RateLimited(_)) => {
+                    return Err(KeystoneApiError::TooManyRequests);
+                }
+                // Denied/malformed/etc fail the whole request closed - never
+                // fall through to dispatching the original, un-routed
+                // request (ADR §4 constraint 6 "Fail-closed").
+                Err(_) => return Err(KeystoneApiError::UnauthorizedNoContext),
+            }
+        }
+    }
+
     let mut res = Vec::new();
-    for method in req.auth.identity.methods.iter() {
+    for method in effective_methods.iter() {
         if method == "password" {
             if let Some(password_auth) = &req.auth.identity.password {
                 let req = password_auth.user.clone().try_into()?;
@@ -83,7 +170,7 @@ pub(super) async fn authenticate_request(
                 token_restriction: vsc.inner().token_restriction().cloned(),
             };
             res.push(auth_res);
-        } else if let Some(payload) = req.auth.identity.extra.get(method) {
+        } else if let Some(payload) = effective_extra.get(method) {
             // Unrecognized method name with a matching request body block -
             // dispatch to a loaded `mode = full_auth` dynamic auth plugin
             // (ADR 0025 §4). `NotFound`/`WrongMode` degrade to the same
@@ -91,21 +178,6 @@ pub(super) async fn authenticate_request(
             // anything else fails the whole request closed (ADR §7) - a
             // plugin's internal denial reason is never surfaced here, only
             // audited.
-            let raw_headers: std::collections::HashMap<String, String> = headers
-                .iter()
-                .filter_map(|(name, value)| {
-                    value
-                        .to_str()
-                        .ok()
-                        .map(|v| (name.as_str().to_string(), v.to_string()))
-                })
-                .collect();
-            let xff_header = headers
-                .get(axum::http::header::HeaderName::from_static(
-                    "x-forwarded-for",
-                ))
-                .and_then(|h| h.to_str().ok())
-                .map(str::to_string);
             let plugin_mode = state
                 .config_manager
                 .config
@@ -116,8 +188,8 @@ pub(super) async fn authenticate_request(
                 .map(|p| p.mode);
             let wasm_request = WasmPluginAuthRequest {
                 payload: payload.clone(),
-                raw_headers,
-                xff_header,
+                raw_headers: raw_headers.clone(),
+                xff_header: xff_header.clone(),
                 peer_ip,
             };
             let dispatch_result = match plugin_mode {
@@ -392,5 +464,399 @@ mod tests {
         } else {
             panic!("Should receive Unauthorized");
         }
+    }
+}
+
+/// End-to-end acceptance tests for the pre-dispatch `route` mode pass
+/// (ADR 0025 §4 "Guest Contract - `route` Mode") against the real, compiled
+/// reference plugin - mirrors Phase 3's exit criteria (a)-(e) verbatim.
+/// Builds `ServiceState` directly (not `get_mocked_state`, which uses
+/// `Config::default()` and can't carry a `[dynamic_plugin.*]` section) with
+/// two loaded reference-plugin instances: `router` (`mode = route`,
+/// `inspect_methods = application_credential`, `route_targets =
+/// tf_appcred_handler`) and `tf_appcred_handler` (`mode = full_auth`) - the
+/// allowlisted target the router may redirect to.
+#[cfg(test)]
+mod route_dispatch_tests {
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::sync::Arc;
+
+    use openstack_keystone_config::{Config, ConfigManager, DynamicPluginsSection};
+    use openstack_keystone_core::dynamic_plugin_http::DynamicPluginHttpFetcher;
+    use openstack_keystone_core::dynamic_plugin_startup::load_dynamic_plugins;
+    use openstack_keystone_core_types::identity::UserResponseBuilder;
+    use sha2::{Digest, Sha256};
+
+    use super::super::types::*;
+    use super::*;
+    use crate::dynamic_plugin_identity::MockDynamicPluginIdentityProvider;
+    use crate::identity::MockIdentityProvider;
+    use crate::keystone::{AuditDispatcher, Service};
+    use crate::policy::MockPolicy;
+    use crate::provider::Provider;
+
+    struct UnreachableHttpFetcher;
+
+    #[async_trait::async_trait]
+    impl DynamicPluginHttpFetcher for UnreachableHttpFetcher {
+        async fn fetch(
+            &self,
+            _method: &str,
+            _url: &str,
+            _resolved_addr: std::net::SocketAddr,
+            _headers: &HashMap<String, String>,
+            _body: Option<&str>,
+            _timeout_ms: u64,
+            _auth_header: Option<(&str, &str)>,
+            _max_body_bytes: usize,
+        ) -> Result<openstack_keystone_core::dynamic_plugin_http::FetchResponse, String> {
+            panic!("this test's plugins don't grant http_fetch")
+        }
+    }
+
+    fn fixture_dir() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../dynamic-plugin-runtime/tests/fixtures/reference-plugin")
+    }
+
+    fn build_reference_plugin() -> (PathBuf, String) {
+        let dir = fixture_dir();
+        let status = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string()))
+            .args(["build", "--release", "--target", "wasm32-unknown-unknown"])
+            .current_dir(&dir)
+            .status()
+            .expect("failed to spawn cargo to build the reference plugin fixture");
+        assert!(
+            status.success(),
+            "building the reference plugin fixture failed"
+        );
+
+        let wasm_path = dir.join("target/wasm32-unknown-unknown/release/reference_plugin.wasm");
+        assert!(
+            wasm_path.is_file(),
+            "expected build artifact at {}",
+            wasm_path.display()
+        );
+        let bytes = std::fs::read(&wasm_path).unwrap();
+        let sha256 = {
+            use std::fmt::Write;
+            Sha256::digest(&bytes)
+                .iter()
+                .fold(String::new(), |mut acc, b| {
+                    let _ = write!(acc, "{b:02x}");
+                    acc
+                })
+        };
+        (wasm_path, sha256)
+    }
+
+    fn user_response(
+        id: &str,
+        domain_id: &str,
+    ) -> openstack_keystone_core_types::identity::UserResponse {
+        UserResponseBuilder::default()
+            .id(id.to_string())
+            .domain_id(domain_id.to_string())
+            .name("dave".to_string())
+            .enabled(true)
+            .build()
+            .unwrap()
+    }
+
+    /// Base `DynamicPluginConfig` with every non-essential field at its
+    /// documented default (`crates/config/src/dynamic_plugins.rs`) - no
+    /// `Default` impl exists on the struct itself, so tests fill it in
+    /// directly rather than round-tripping through the `config` crate's INI
+    /// parser (an actual dependency of `openstack-keystone-config`, not of
+    /// this crate).
+    fn base_plugin_config(
+        path: PathBuf,
+        sha256: String,
+        mode: openstack_keystone_config::PluginMode,
+    ) -> openstack_keystone_config::DynamicPluginConfig {
+        openstack_keystone_config::DynamicPluginConfig {
+            path,
+            sha256,
+            mode,
+            capabilities: Vec::new(),
+            exposed_headers: Vec::new(),
+            allowed_hosts: Vec::new(),
+            http_fetch_follow_redirects: false,
+            http_fetch_auth_header: None,
+            http_fetch_auth_secret_env: None,
+            provision_domain_id: None,
+            allowed_provision_domains: Vec::new(),
+            assign_role_allowed: Vec::new(),
+            inspect_methods: Vec::new(),
+            route_targets: Vec::new(),
+            timeout_ms: 1_000,
+            fuel_limit: 10_000_000,
+            memory_limit_mb: 16,
+            invocation_rate_limit_per_source_per_minute: 20,
+            invocation_rate_limit_per_minute: 300,
+            max_concurrent_invocations: 16,
+            valid_since: None,
+        }
+    }
+
+    /// Loads the reference plugin twice under one `ServiceState`: as
+    /// `router` (`mode = route`) and as `tf_appcred_handler`
+    /// (`mode = full_auth`, the router's sole `route_targets` entry).
+    async fn build_route_state(
+        identity_mock: MockIdentityProvider,
+        dpi_mock: MockDynamicPluginIdentityProvider,
+    ) -> ServiceState {
+        let (path, sha256) = build_reference_plugin();
+
+        let mut router_config = base_plugin_config(
+            path.clone(),
+            sha256.clone(),
+            openstack_keystone_config::PluginMode::Route,
+        );
+        router_config.inspect_methods = vec!["application_credential".to_string()];
+        router_config.route_targets = vec!["tf_appcred_handler".to_string()];
+
+        let mut target_config = base_plugin_config(
+            path,
+            sha256,
+            openstack_keystone_config::PluginMode::FullAuth,
+        );
+        target_config.capabilities = vec!["provision_user".to_string()];
+        target_config.provision_domain_id = Some("d".to_string());
+
+        let cfg = Config {
+            dynamic_plugins: DynamicPluginsSection {
+                plugins: vec!["router".to_string(), "tf_appcred_handler".to_string()],
+                ..Default::default()
+            },
+            dynamic_plugin: [
+                ("router".to_string(), router_config),
+                ("tf_appcred_handler".to_string(), target_config),
+            ]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+
+        let (audit_dispatcher, receivers) = AuditDispatcher::new(
+            "test-node",
+            uuid::Uuid::new_v4().to_string(),
+            Arc::from(b"test-hmac-key-32-bytes-long!!!!".as_slice()),
+            0,
+        );
+        std::mem::forget(receivers);
+
+        let provider = Provider::mocked_builder()
+            .mock_identity(identity_mock)
+            .mock_dynamic_plugin_identity(dpi_mock)
+            .build()
+            .unwrap();
+
+        let state = Arc::new(
+            Service::new(
+                ConfigManager::not_watched(cfg),
+                sea_orm::DatabaseConnection::Disconnected,
+                provider,
+                Arc::new(MockPolicy::default()),
+                audit_dispatcher,
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+
+        load_dynamic_plugins(&state, Arc::new(UnreachableHttpFetcher)).await;
+        for name in ["router", "tf_appcred_handler"] {
+            assert!(
+                state.dynamic_plugin_registry.read().await.contains(name),
+                "reference plugin {name} should have loaded"
+            );
+        }
+        state
+    }
+
+    fn appcred_request(cred_id: &str) -> AuthRequest {
+        let mut extra = std::collections::HashMap::new();
+        extra.insert(
+            "application_credential".to_string(),
+            serde_json::json!({"application_credential_id": cred_id}),
+        );
+        AuthRequest {
+            auth: AuthRequestInner {
+                identity: Identity {
+                    methods: vec!["application_credential".to_string()],
+                    password: None,
+                    token: None,
+                    totp: None,
+                    extra,
+                },
+                scope: None,
+            },
+        }
+    }
+
+    fn permissive_mocks() -> (MockIdentityProvider, MockDynamicPluginIdentityProvider) {
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_create_user()
+            .returning(|_, _| Ok(user_response("u1", "d")));
+        identity_mock
+            .expect_get_user()
+            .returning(|_, _| Ok(Some(user_response("u1", "d"))));
+        identity_mock
+            .expect_get_user_domain_id()
+            .returning(|_, _| Ok("d".to_string()));
+
+        let mut dpi_mock = MockDynamicPluginIdentityProvider::default();
+        dpi_mock.expect_find().returning(|_, _, _| Ok(None));
+        dpi_mock
+            .expect_create_or_resolve()
+            .returning(|_, _, _, user_id| Ok(user_id.to_string()));
+
+        (identity_mock, dpi_mock)
+    }
+
+    /// (a) A `password`-only request never invokes the router, even though
+    /// the router is loaded and configured - it's simply never triggered
+    /// (`inspect_methods` doesn't intersect `identity.methods`), so this
+    /// falls through to the same "unsupported method" outcome any
+    /// unconfigured `password` attempt with no `password` block gets.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_password_only_request_never_triggers_router() {
+        let (identity_mock, dpi_mock) = permissive_mocks();
+        let state = build_route_state(identity_mock, dpi_mock).await;
+
+        let rsp = authenticate_request(
+            &state,
+            &AuthRequest {
+                auth: AuthRequestInner {
+                    identity: Identity {
+                        methods: vec!["password".to_string()],
+                        password: None,
+                        token: None,
+                        totp: None,
+                        extra: Default::default(),
+                    },
+                    scope: None,
+                },
+            },
+            &axum::http::HeaderMap::new(),
+            None,
+        )
+        .await;
+        assert!(matches!(
+            rsp.unwrap_err(),
+            KeystoneApiError::UnauthorizedNoContext
+        ));
+    }
+
+    /// (b) A `Route` response to an allowlisted target correctly redispatches
+    /// and the target still independently processes the (relabeled) payload
+    /// - proven by the resulting `AuthenticationContext::WasmPlugin` naming
+    /// `tf_appcred_handler`, not `router`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_route_to_allowlisted_target_redispatches() {
+        let (identity_mock, dpi_mock) = permissive_mocks();
+        let state = build_route_state(identity_mock, dpi_mock).await;
+
+        let res = authenticate_request(
+            &state,
+            &appcred_request("tf-alice"),
+            &axum::http::HeaderMap::new(),
+            None,
+        )
+        .await
+        .expect("routed request should dispatch to the allowlisted target and succeed");
+        assert_eq!(res.len(), 1);
+        let AuthenticationContext::WasmPlugin { plugin_name, .. } = &res[0].context else {
+            panic!("expected WasmPlugin context");
+        };
+        assert_eq!(plugin_name, "tf_appcred_handler");
+    }
+
+    /// (c) A `Route` naming a target outside `route_targets` is rejected,
+    /// not redirected - the request never reaches any dispatch that could
+    /// provision a user.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_off_allowlist_target_is_rejected() {
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock.expect_create_user().times(0);
+        let mut dpi_mock = MockDynamicPluginIdentityProvider::default();
+        dpi_mock.expect_create_or_resolve().times(0);
+        let state = build_route_state(identity_mock, dpi_mock).await;
+
+        // Reconfigure the router's `route_targets` to no longer include
+        // `tf_appcred_handler` - simplest way to force an off-allowlist
+        // response from the same fixture without a second wasm binary.
+        {
+            let mut cfg = state.config_manager.config.write().await;
+            if let Some(router_cfg) = cfg.dynamic_plugin.get_mut("router") {
+                router_cfg.route_targets = vec!["some_other_target".to_string()];
+            }
+        }
+
+        let rsp = authenticate_request(
+            &state,
+            &appcred_request("tf-alice"),
+            &axum::http::HeaderMap::new(),
+            None,
+        )
+        .await;
+        assert!(matches!(
+            rsp.unwrap_err(),
+            KeystoneApiError::UnauthorizedNoContext
+        ));
+    }
+
+    /// (e) A router `Deny` fails the whole request closed without falling
+    /// through to dispatching the original, un-routed `application_credential`
+    /// request.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_router_deny_fails_closed() {
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock.expect_create_user().times(0);
+        let mut dpi_mock = MockDynamicPluginIdentityProvider::default();
+        dpi_mock.expect_create_or_resolve().times(0);
+        let state = build_route_state(identity_mock, dpi_mock).await;
+
+        let rsp = authenticate_request(
+            &state,
+            &appcred_request("deny-me"),
+            &axum::http::HeaderMap::new(),
+            None,
+        )
+        .await;
+        assert!(matches!(
+            rsp.unwrap_err(),
+            KeystoneApiError::UnauthorizedNoContext
+        ));
+    }
+
+    /// (d) Single-shot: the routed request's `effective_methods` going into
+    /// the per-method loop no longer contains the original triggering
+    /// method (`application_credential`) - only the target
+    /// (`tf_appcred_handler`) - proven indirectly by the resulting
+    /// `AuthenticationContext` naming only the target plugin, with exactly
+    /// one result pushed (no second, redundant dispatch of the original
+    /// method).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_routed_request_is_single_shot() {
+        let (identity_mock, dpi_mock) = permissive_mocks();
+        let state = build_route_state(identity_mock, dpi_mock).await;
+
+        let res = authenticate_request(
+            &state,
+            &appcred_request("tf-bob"),
+            &axum::http::HeaderMap::new(),
+            None,
+        )
+        .await
+        .expect("routed request should succeed exactly once");
+        assert_eq!(
+            res.len(),
+            1,
+            "the original application_credential method must not also be dispatched"
+        );
     }
 }

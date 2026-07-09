@@ -216,22 +216,63 @@ pub fn mapping(req: Json<MappingPluginRequest>) -> FnResult<Json<MappingResponse
 
 #[derive(Debug, Deserialize)]
 pub struct RouteRequest {
-    pub target_method: String,
+    pub methods: Vec<String>,
+    #[serde(default)]
+    pub payloads: std::collections::HashMap<String, serde_json::Value>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub headers: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub remote_addr: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct RouteResponse {
-    pub decision: &'static str,
-    pub target_method: String,
+#[serde(rename_all = "snake_case", tag = "decision")]
+pub enum RouteResponse {
+    Passthrough,
+    Route {
+        target_method: String,
+        payload: serde_json::Value,
+    },
+    Deny {
+        reason: String,
+    },
 }
 
-/// Stand-in for the eventual `route` guest entry point (`route` mode).
+/// `route` mode's `route` guest entry point (ADR 0025 §4). Inspects the
+/// `application_credential` payload block (the ADR's own motivating
+/// example): an `application_credential_id` of `"deny-me"` denies outright,
+/// one prefixed `tf-` is rerouted to `tf_appcred_handler` with the rest of
+/// the id relabeled into an `external_id` field (so this fixture composes
+/// end-to-end with the `authenticate` export above in integration tests -
+/// a real router would shape its `payload` however its actual target
+/// method's contract requires), and anything else passes through
+/// unmodified - mirrors the ADR's own reference router example (§5 config
+/// example).
 #[plugin_fn]
 pub fn route(req: Json<RouteRequest>) -> FnResult<Json<RouteResponse>> {
-    Ok(Json(RouteResponse {
-        decision: "route",
-        target_method: req.0.target_method,
-    }))
+    let payload = req.0.payloads.get("application_credential");
+    let cred_id = payload.and_then(|p| p.get("application_credential_id"));
+
+    let Some(serde_json::Value::String(cred_id)) = cred_id else {
+        return Ok(Json(RouteResponse::Passthrough));
+    };
+
+    if cred_id == "deny-me" {
+        return Ok(Json(RouteResponse::Deny {
+            reason: "reference-plugin: deny requested".to_string(),
+        }));
+    }
+
+    if let Some(rest) = cred_id.strip_prefix("tf-") {
+        return Ok(Json(RouteResponse::Route {
+            target_method: "tf_appcred_handler".to_string(),
+            payload: serde_json::json!({"external_id": rest}),
+        }));
+    }
+
+    Ok(Json(RouteResponse::Passthrough))
 }
 
 /// Resource-limit fixture (PR 0.4): burns CPU without ever returning,
