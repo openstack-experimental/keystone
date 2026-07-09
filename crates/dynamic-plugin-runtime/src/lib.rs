@@ -42,6 +42,7 @@ use thiserror::Error;
 
 mod auth_contract;
 mod host_functions;
+mod mapping_contract;
 pub use auth_contract::{
     AuthPluginRequest, AuthPluginResponse, MAX_CLAIM_KEY_BYTES, MAX_CLAIM_VALUE_BYTES, MAX_CLAIMS,
     MAX_RESPONSE_BYTES, RESERVED_ENVELOPE_KEY, RESERVED_KEY_PREFIX, ResponseBoundsError,
@@ -50,6 +51,10 @@ pub use auth_contract::{
 pub use host_functions::{
     AssignRoleRequest, GuestUserCreate, HostFunctions, HttpFetchRequest, HttpFetchResponse,
     ProvisionUserRequest, ResolvedIdentityHandle, RoleAssignmentTarget,
+};
+pub use mapping_contract::{
+    MappingResponse, MappingResponseBoundsError, WORKLOAD_ID_CLAIM_KEY,
+    decode_and_validate_mapping_response,
 };
 
 /// WebAssembly linear memory page size, per the Wasm spec (64 KiB).

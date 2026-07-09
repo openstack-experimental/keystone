@@ -54,6 +54,7 @@ impl From<api::IdentitySource> for core::IdentitySource {
             api::IdentitySource::K8s { cluster_id } => Self::K8s { cluster_id },
             api::IdentitySource::Spiffe { trust_domain } => Self::Spiffe { trust_domain },
             api::IdentitySource::ApiClient { provider_id } => Self::ApiClient { provider_id },
+            api::IdentitySource::WasmPlugin { plugin_name } => Self::WasmPlugin { plugin_name },
         }
     }
 }
@@ -65,6 +66,7 @@ impl From<core::IdentitySource> for api::IdentitySource {
             core::IdentitySource::K8s { cluster_id } => Self::K8s { cluster_id },
             core::IdentitySource::Spiffe { trust_domain } => Self::Spiffe { trust_domain },
             core::IdentitySource::ApiClient { provider_id } => Self::ApiClient { provider_id },
+            core::IdentitySource::WasmPlugin { plugin_name } => Self::WasmPlugin { plugin_name },
         }
     }
 }

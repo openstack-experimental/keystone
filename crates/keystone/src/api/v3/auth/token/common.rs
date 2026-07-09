@@ -14,9 +14,11 @@
 
 use std::net::IpAddr;
 
+use openstack_keystone_config::PluginMode;
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::dynamic_plugin_auth::{
-    WasmPluginAuthError, WasmPluginAuthRequest, authenticate_via_wasm_plugin,
+    WasmPluginAuthError, WasmPluginAuthRequest, authenticate_via_wasm_mapping_plugin,
+    authenticate_via_wasm_plugin,
 };
 
 use crate::api::error::KeystoneApiError;
@@ -104,18 +106,31 @@ pub(super) async fn authenticate_request(
                 ))
                 .and_then(|h| h.to_str().ok())
                 .map(str::to_string);
-            match authenticate_via_wasm_plugin(
-                state,
-                method,
-                WasmPluginAuthRequest {
-                    payload: payload.clone(),
-                    raw_headers,
-                    xff_header,
-                    peer_ip,
-                },
-            )
-            .await
-            {
+            let plugin_mode = state
+                .config_manager
+                .config
+                .read()
+                .await
+                .dynamic_plugin
+                .get(method)
+                .map(|p| p.mode);
+            let wasm_request = WasmPluginAuthRequest {
+                payload: payload.clone(),
+                raw_headers,
+                xff_header,
+                peer_ip,
+            };
+            let dispatch_result = match plugin_mode {
+                Some(PluginMode::Mapping) => {
+                    authenticate_via_wasm_mapping_plugin(state, method, wasm_request).await
+                }
+                // `None` (plugin not configured at all) still goes through
+                // `authenticate_via_wasm_plugin` so its own `NotFound` path
+                // is the single source of truth for "no such plugin" - not
+                // duplicated here.
+                _ => authenticate_via_wasm_plugin(state, method, wasm_request).await,
+            };
+            match dispatch_result {
                 Ok(auth_res) => res.push(auth_res),
                 Err(WasmPluginAuthError::NotFound | WasmPluginAuthError::WrongMode) => {}
                 Err(WasmPluginAuthError::RateLimited(_)) => {

@@ -159,21 +159,59 @@ pub fn authenticate(req: Json<AuthPluginRequest>) -> FnResult<Json<AuthPluginRes
 }
 
 #[derive(Debug, Deserialize)]
-pub struct MappingRequest {
+pub struct MappingPayload {
+    pub external_id: String,
     #[serde(default)]
     pub deny: bool,
 }
 
-#[derive(Debug, Serialize)]
-pub struct MappingResponse {
-    pub decision: &'static str,
+#[derive(Debug, Deserialize)]
+pub struct MappingPluginRequest {
+    pub payload: MappingPayload,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub headers: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub remote_addr: Option<String>,
 }
 
-/// Stand-in for the eventual `mapping` guest entry point (`mapping` mode).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case", tag = "decision")]
+pub enum MappingResponse {
+    Claims {
+        claims: std::collections::HashMap<String, serde_json::Value>,
+    },
+    Deny {
+        reason: String,
+    },
+}
+
+/// `mapping` mode's `mapping` guest entry point (ADR 0025 §4). Denies if the
+/// caller asked to be denied; otherwise returns claims feeding the host's
+/// Mapping Engine, including the reserved `__keystone_workload_id` claim
+/// every `mapping`-mode plugin must supply
+/// (`openstack_keystone_dynamic_plugin_runtime::mapping_contract`).
 #[plugin_fn]
-pub fn mapping(req: Json<MappingRequest>) -> FnResult<Json<MappingResponse>> {
-    let decision = if req.0.deny { "deny" } else { "claims" };
-    Ok(Json(MappingResponse { decision }))
+pub fn mapping(req: Json<MappingPluginRequest>) -> FnResult<Json<MappingResponse>> {
+    let payload = req.0.payload;
+    if payload.deny {
+        return Ok(Json(MappingResponse::Deny {
+            reason: "reference-plugin: deny requested".to_string(),
+        }));
+    }
+
+    let mut claims = std::collections::HashMap::new();
+    claims.insert(
+        "__keystone_workload_id".to_string(),
+        serde_json::Value::String(payload.external_id.clone()),
+    );
+    claims.insert(
+        "external_id".to_string(),
+        serde_json::Value::String(payload.external_id),
+    );
+
+    Ok(Json(MappingResponse::Claims { claims }))
 }
 
 #[derive(Debug, Deserialize)]

@@ -70,6 +70,11 @@ pub enum IdentitySource {
         /// The API Key `provider_id` this ruleset is bound to.
         provider_id: String,
     },
+    /// `mapping`-mode dynamic auth plugin identity source (ADR 0025 §4).
+    WasmPlugin {
+        /// The dynamic plugin's configured name.
+        plugin_name: String,
+    },
 }
 
 // ---------------------------------------------------------------------------
