@@ -114,7 +114,7 @@ async fn test_list_user_roles() -> Result<()> {
                 .build()?,
         )
         .await?,
-        BTreeSet::from([role_a.id.clone(), role_ga.id.clone()]),
+        BTreeSet::from([role_ga.id.clone()]),
         "group has role_ga on the domain"
     );
     //    Ok(())

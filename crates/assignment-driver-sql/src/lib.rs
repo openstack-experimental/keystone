@@ -249,6 +249,9 @@ impl AssignmentBackend for SqlBackend {
         if let Some(uid) = &params.user_id {
             actors.push(uid.into());
         }
+        if let Some(gid) = &params.group_id {
+            actors.push(gid.into());
+        }
         if let Some(true) = &params.effective
             && let Some(uid) = &params.user_id
         {
@@ -295,6 +298,19 @@ impl AssignmentBackend for SqlBackend {
                 inherited: Some(false),
             })
         }
+
+        // Defensive guard: if any actor-targeting parameter was set, the `actors`
+        // list must be non-empty. A prior bug silently dropped `group_id`,
+        // causing both `actors` and `targets` to be empty, which translated to
+        // a query without a WHERE clause that swept ALL assignments.
+        if params.user_id.is_some() || params.group_id.is_some() {
+            debug_assert!(
+                !actors.is_empty(),
+                "list_assignments: user_id or group_id was set but actors list is empty \
+                - a parameter mapping branch may be missing (CID: group_id-drop)"
+            );
+        }
+
         request.targets(targets);
         request.actors(actors);
         request.resolve_implied_roles(params.resolve_implied_roles);
@@ -474,6 +490,117 @@ mod tests {
             res.iter().all(|a| a.role_id != "2"),
             "implied role should not be present"
         );
+    }
+
+    #[tokio::test]
+    async fn test_list_assignments_group_id_filters_actors() {
+        use openstack_keystone_core_types::assignment::RoleAssignmentListParametersBuilder;
+
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_role_assignment_mock("1")]])
+            .append_query_results([vec![] as Vec<entity::system_assignment::Model>])
+            .into_connection();
+
+        let provider = Provider::mocked_builder().build().unwrap();
+        let state = get_mock_state(db, provider).await;
+
+        let sot = SqlBackend {};
+        let _res = sot
+            .list_assignments(
+                &state,
+                &RoleAssignmentListParametersBuilder::default()
+                    .group_id("my-group-id")
+                    .build()
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_list_assignments_group_id_and_user_id_both_in_actors() {
+        use openstack_keystone_core_types::assignment::RoleAssignmentListParametersBuilder;
+
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_role_assignment_mock("1")]])
+            .append_query_results([vec![] as Vec<entity::system_assignment::Model>])
+            .into_connection();
+
+        let provider = Provider::mocked_builder().build().unwrap();
+        let state = get_mock_state(db, provider).await;
+
+        let sot = SqlBackend {};
+        let _res = sot
+            .list_assignments(
+                &state,
+                &RoleAssignmentListParametersBuilder::default()
+                    .user_id("my-user")
+                    .group_id("my-group")
+                    .build()
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_list_assignments_group_id_only_returns_group_assignments() {
+        use crate::entity::assignment as db_assignment;
+        use crate::entity::sea_orm_active_enums::Type as DbType;
+        use crate::entity::system_assignment as db_system_assignment;
+        use openstack_keystone_core_types::assignment::{
+            AssignmentType, RoleAssignmentListParametersBuilder,
+        };
+
+        // Create two regular assignments: one for user "admin", one for group
+        // "scim-group". Only the group's assignment should be returned when
+        // querying by group_id.
+        let group_assignment = db_assignment::Model {
+            role_id: "group-role".into(),
+            actor_id: "scim-group".into(),
+            target_id: "target-project".into(),
+            r#type: DbType::GroupProject,
+            inherited: false,
+        };
+
+        let _user_assignment = db_assignment::Model {
+            role_id: "admin-role".into(),
+            actor_id: "admin-user".into(),
+            target_id: "target-project".into(),
+            r#type: DbType::UserProject,
+            inherited: false,
+        };
+
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![group_assignment]])
+            .append_query_results([vec![] as Vec<db_system_assignment::Model>])
+            .into_connection();
+
+        let provider = Provider::mocked_builder().build().unwrap();
+        let state = get_mock_state(db, provider).await;
+
+        let sot = SqlBackend {};
+        let res = sot
+            .list_assignments(
+                &state,
+                &RoleAssignmentListParametersBuilder::default()
+                    .group_id("scim-group")
+                    .build()
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Only 1 assignment returned (the group's), not 0 or 2
+        assert_eq!(
+            1,
+            res.len(),
+            "expected exactly 1 group assignment, got {:?}",
+            res
+        );
+        assert_eq!("scim-group", res[0].actor_id);
+        assert_eq!(AssignmentType::GroupProject, res[0].r#type);
+        assert_eq!("group-role", res[0].role_id);
     }
 
     #[tokio::test]

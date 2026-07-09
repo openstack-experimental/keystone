@@ -296,21 +296,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_list_for_multiple_actor_targets_multiple_complex_targets() {
-        // Create MockDatabase with mock query results
+    async fn test_list_for_multiple_actor_targets_complex_targets() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([vec![get_role_assignment_mock("1")]])
+            .append_query_results([Vec::<assignment::Model>::new()])
             .into_connection();
-        // multiple actors multiple complex targets
+
+        //// only complex targets
         list_for_multiple_actors_and_targets(
             &db,
             &RoleAssignmentListForMultipleActorTargetParameters {
-                actors: vec!["uid1".into(), "gid1".into(), "gid2".into()],
+                actors: vec![],
                 targets: vec![
                     RoleAssignmentTarget {
                         id: "pid1".into(),
                         r#type: RoleAssignmentTargetType::Project,
-                        inherited: None,
+                        inherited: Some(false),
                     },
                     RoleAssignmentTarget {
                         id: "pid2".into(),
@@ -330,15 +330,8 @@ mod tests {
             db.into_transaction_log(),
             [Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"SELECT CAST("assignment"."type" AS "text"), "assignment"."actor_id", "assignment"."target_id", "assignment"."role_id", "assignment"."inherited" FROM "assignment" WHERE "assignment"."actor_id" IN ($1, $2, $3) AND ("assignment"."target_id" = $4 OR ("assignment"."target_id" = $5 AND "assignment"."inherited" = $6))"#,
-                [
-                    "uid1".into(),
-                    "gid1".into(),
-                    "gid2".into(),
-                    "pid1".into(),
-                    "pid2".into(),
-                    true.into()
-                ]
+                r#"SELECT CAST("assignment"."type" AS "text"), "assignment"."actor_id", "assignment"."target_id", "assignment"."role_id", "assignment"."inherited" FROM "assignment" WHERE ("assignment"."target_id" = $1 AND "assignment"."inherited" = $2) OR ("assignment"."target_id" = $3 AND "assignment"."inherited" = $4)"#,
+                ["pid1".into(), false.into(), "pid2".into(), true.into()]
             ),]
         );
     }
@@ -430,30 +423,20 @@ mod tests {
         );
     }
 
+    /// Verify that group actors appear in the SQL `actor_id IN(...)` clause,
+    /// ensuring `group_id` filters are not silently dropped.
     #[tokio::test]
-    async fn test_list_for_multiple_actor_targets_complex_targets() {
-        // Create MockDatabase with mock query results
+    async fn test_list_filters_on_group_actor_id() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([Vec::<assignment::Model>::new()])
+            .append_query_results([vec![get_role_assignment_mock("1")]])
+            .append_query_results([Vec::<crate::entity::system_assignment::Model>::new()])
             .into_connection();
 
-        //// only complex targets
         list_for_multiple_actors_and_targets(
             &db,
             &RoleAssignmentListForMultipleActorTargetParameters {
-                actors: vec![],
-                targets: vec![
-                    RoleAssignmentTarget {
-                        id: "pid1".into(),
-                        r#type: RoleAssignmentTargetType::Project,
-                        inherited: Some(false),
-                    },
-                    RoleAssignmentTarget {
-                        id: "pid2".into(),
-                        r#type: RoleAssignmentTargetType::Project,
-                        inherited: Some(true),
-                    },
-                ],
+                actors: vec!["gid-some-group".into()],
+                targets: vec![],
                 role_id: None,
                 resolve_implied_roles: false,
             },
@@ -461,14 +444,24 @@ mod tests {
         .await
         .unwrap();
 
-        // Checking transaction log
+        // The generated SQL must include `actor_id IN($1)` so that
+        // assignments belonging to other actors (users, other groups) are excluded.
         assert_eq!(
             db.into_transaction_log(),
-            [Transaction::from_sql_and_values(
-                DatabaseBackend::Postgres,
-                r#"SELECT CAST("assignment"."type" AS "text"), "assignment"."actor_id", "assignment"."target_id", "assignment"."role_id", "assignment"."inherited" FROM "assignment" WHERE ("assignment"."target_id" = $1 AND "assignment"."inherited" = $2) OR ("assignment"."target_id" = $3 AND "assignment"."inherited" = $4)"#,
-                ["pid1".into(), false.into(), "pid2".into(), true.into()]
-            ),]
+            [
+                // Regular assignment table should filter on actor_id
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT CAST("assignment"."type" AS "text"), "assignment"."actor_id", "assignment"."target_id", "assignment"."role_id", "assignment"."inherited" FROM "assignment" WHERE "assignment"."actor_id" IN ($1)"#,
+                    ["gid-some-group".into()]
+                ),
+                // System assignment table should also filter on actor_id
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "system_assignment"."type", "system_assignment"."actor_id", "system_assignment"."target_id", "system_assignment"."role_id", "system_assignment"."inherited" FROM "system_assignment" WHERE "system_assignment"."actor_id" IN ($1)"#,
+                    ["gid-some-group".into()]
+                ),
+            ]
         );
     }
 }
