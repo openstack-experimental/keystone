@@ -16,7 +16,7 @@ use {
     axum::{
         Json,
         extract::rejection::JsonRejection,
-        http::StatusCode,
+        http::{HeaderValue, StatusCode, header},
         response::{IntoResponse, Response},
     },
     serde_json::json,
@@ -42,6 +42,24 @@ use crate::error::KeystoneApiError;
 
 impl IntoResponse for KeystoneApiError {
     fn into_response(self) -> Response {
+        // Rate-limit rejections need a `Retry-After` header in addition to the
+        // JSON body, so they are handled before the generic status-code path
+        // (ADR-0022 Invariants 3 and 4).
+        if let KeystoneApiError::TooManyRequests { retry_after } = &self {
+            let body = Json(json!({
+                "error": {
+                    "code": StatusCode::TOO_MANY_REQUESTS.as_u16(),
+                    "message": self.to_string(),
+                }
+            }));
+            let retry_value = HeaderValue::from(*retry_after);
+            let mut response = (StatusCode::TOO_MANY_REQUESTS, body).into_response();
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, retry_value);
+            return response;
+        }
+
         let status_code = match self {
             KeystoneApiError::Conflict(_) => StatusCode::CONFLICT,
             KeystoneApiError::NotFound { .. } => StatusCode::NOT_FOUND,
@@ -55,7 +73,6 @@ impl IntoResponse for KeystoneApiError {
             KeystoneApiError::InternalError(_) | KeystoneApiError::Other(..) => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
-            KeystoneApiError::TooManyRequests => StatusCode::TOO_MANY_REQUESTS,
             KeystoneApiError::UnprocessableEntity(_) => StatusCode::UNPROCESSABLE_ENTITY,
             _ => StatusCode::BAD_REQUEST,
         };
@@ -651,5 +668,18 @@ mod tests {
             api_err,
             KeystoneApiError::InternalError(msg) if msg.contains("test error")
         ));
+    }
+
+    #[test]
+    fn too_many_requests_returns_429_with_retry_after() {
+        let err = KeystoneApiError::TooManyRequests { retry_after: 42 };
+        assert_eq!(err.to_string(), "Rate limit exceeded. Retry in 42 seconds.");
+        let response = <KeystoneApiError as IntoResponse>::into_response(err);
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        let retry_after = response
+            .headers()
+            .get(header::RETRY_AFTER)
+            .expect("Retry-After header must be present");
+        assert_eq!(retry_after.to_str().unwrap(), "42");
     }
 }

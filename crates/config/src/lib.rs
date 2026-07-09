@@ -79,6 +79,7 @@ mod k8s_auth;
 mod listener;
 mod mapping;
 mod policy;
+mod rate_limit;
 mod resource;
 mod revoke;
 mod role;
@@ -113,6 +114,7 @@ pub use k8s_auth::*;
 pub use listener::*;
 pub use mapping::*;
 pub use policy::*;
+pub use rate_limit::*;
 pub use resource::*;
 pub use revoke::*;
 pub use role::*;
@@ -223,6 +225,19 @@ pub struct Config {
     /// Server listener configuration for the admin interface.
     #[serde(rename = "interface_admin", default)]
     pub interface_admin: Option<AdminInterface>,
+
+    /// Global per-IP rate limiting (ADR-0022, §1).
+    ///
+    /// Maps to the `[rate_limit_global_ip]` INI section. When `enabled =
+    /// false` (the default) the governor is not instantiated and all requests
+    /// bypass the check. Set `enabled = true` together with valid
+    /// `burst_size` and `replenish_rate_per_second` to activate.
+    #[serde(rename = "rate_limit_global_ip", default)]
+    pub rate_limit_global_ip: RateLimitSection,
+
+    /// Reverse proxies trusted by the global per-IP rate limiter.
+    #[serde(rename = "rate_limit_trusted_proxies", default)]
+    pub rate_limit_trusted_proxies: RateLimitTrustedProxiesSection,
 
     /// Resource provider configuration.
     #[serde(default)]
@@ -864,6 +879,7 @@ mod tests {
     node_cluster_addr = "https://localhost:8310"
     node_id = 1
     path = "/keystone/storage"
+    dev_mode = true
 
     [api_key]
     argon2_memory_kib = 0

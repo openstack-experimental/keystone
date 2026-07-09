@@ -258,7 +258,10 @@ async fn main() -> Result<(), Report> {
         .await?,
     );
 
-    spawn(cleanup(cloned_token, shared_state.clone()));
+    spawn(cleanup(cloned_token.clone(), shared_state.clone()));
+    // Evict stale entries from rate-limit keyed state stores every 60 s
+    // (ADR-0022 §Consequences: memory overhead and store eviction).
+    spawn(rate_limit_eviction(cloned_token, shared_state.clone()));
 
     // API Key (SCIM ingress) janitor: proactive inactivity disablement and
     // tombstone purge (ADR 0021 §6.F). Runs on every node; gated to actually
@@ -276,6 +279,10 @@ async fn main() -> Result<(), Report> {
     // stale entries would otherwise keep being served and reintroduce the very
     // timing side-channel the dummy hash exists to close.
     spawn(reset_dummy_hash_on_reload(
+        token.clone(),
+        shared_state.clone(),
+    ));
+    spawn(reload_rate_limits_on_config_change(
         token.clone(),
         shared_state.clone(),
     ));
@@ -1043,6 +1050,66 @@ async fn reset_dummy_hash_on_reload(cancel: CancellationToken, state: ServiceSta
             }
             () = cancel.cancelled() => {
                 info!("Cancellation requested. Stopping dummy-hash reset task.");
+                break;
+            }
+        }
+    }
+}
+
+/// Atomically rebuild rate limiters when their configuration changes.
+///
+/// Invalid runtime replacements are logged and ignored, preserving the
+/// previous validated limiter and its counters. Initial configuration remains
+/// fail-hard in [`KeystoneServiceState::new`].
+async fn reload_rate_limits_on_config_change(cancel: CancellationToken, state: ServiceState) {
+    let mut reload_rx = state.config_manager.notify_tx.subscribe();
+    loop {
+        tokio::select! {
+            recv = reload_rx.recv() => {
+                match recv {
+                    Ok(()) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        let config = state.config_manager.config.read().await;
+                        match state.rate_limiters.reload(&config) {
+                            Ok(true) => info!("Rate-limit configuration reloaded"),
+                            Ok(false) => {}
+                            Err(error) => {
+                                error!(
+                                    %error,
+                                    "Invalid rate-limit configuration reload; retaining last-known-good state"
+                                );
+                            }
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            () = cancel.cancelled() => {
+                info!("Cancellation requested. Stopping rate-limit reload task.");
+                break;
+            }
+        }
+    }
+}
+
+/// Periodically evict stale entries from rate-limit keyed state stores.
+///
+/// Runs every 60 seconds, mirroring the [`cleanup`] task pattern. Calls
+/// [`RateLimitState::retain_recent`] on all active buckets so that keys that
+/// have not been seen within the last quota window are removed, preventing
+/// unbounded memory growth under adversarial unique-key flooding (ADR-0022
+/// §Consequences: memory overhead and store eviction).
+async fn rate_limit_eviction(cancel: CancellationToken, state: ServiceState) {
+    let mut interval = time::interval(Duration::from_secs(60));
+    interval.tick().await;
+    info!("Start the rate-limit eviction task");
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                trace!("rate-limit eviction tick");
+                state.rate_limiters.retain_recent();
+            },
+            () = cancel.cancelled() => {
+                info!("Cancellation requested. Stopping rate-limit eviction task.");
                 break;
             }
         }

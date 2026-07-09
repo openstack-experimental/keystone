@@ -33,6 +33,7 @@ repos:
         language: rust
         types: [rust]
         minimum_pre_commit_version: 2.21.0
+        pass_filenames: false
         require_serial: true
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.27.2

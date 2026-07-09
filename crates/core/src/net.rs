@@ -42,29 +42,33 @@ pub(crate) fn resolve_client_ip(
         .iter()
         .filter_map(|c| c.parse::<IpNet>().ok())
         .collect();
+    resolve_client_ip_from_nets(xff_header, peer_ip, &trusted)
+}
 
-    let is_trusted = |ip: &IpAddr| trusted.iter().any(|net| net.contains(ip));
+/// Resolve the effective client IP using pre-parsed trusted-proxy networks.
+///
+/// Rate limiting stores parsed networks in its hot-reload snapshot so the
+/// request path does not repeatedly parse CIDRs or allocate a proxy chain.
+pub(crate) fn resolve_client_ip_from_nets(
+    xff_header: Option<&str>,
+    peer_ip: Option<IpAddr>,
+    trusted_proxies: &[IpNet],
+) -> Option<IpAddr> {
+    let is_trusted = |ip: &IpAddr| trusted_proxies.iter().any(|net| net.contains(ip));
 
     let peer = peer_ip?;
     if !is_trusted(&peer) {
         return Some(peer);
     }
 
-    let xff_chain: Vec<IpAddr> = xff_header
-        .map(|h| {
-            h.split(',')
-                .filter_map(|s| s.trim().parse::<IpAddr>().ok())
-                .collect()
+    xff_header
+        .and_then(|header| {
+            header
+                .split(',')
+                .rev()
+                .filter_map(|hop| hop.trim().parse::<IpAddr>().ok())
+                .find(|ip| !is_trusted(ip))
         })
-        .unwrap_or_default();
-
-    let mut chain = xff_chain;
-    chain.push(peer);
-
-    chain
-        .into_iter()
-        .rev()
-        .find(|ip| !is_trusted(ip))
         .or(Some(peer))
 }
 

@@ -23,6 +23,7 @@ use std::ops::Deref;
 
 use axum::extract::{ConnectInfo, FromRef, FromRequestParts, Path};
 use axum::http::request::Parts;
+use governor::clock::Clock as _;
 use ipnet::IpNet;
 use tracing::warn;
 
@@ -204,23 +205,24 @@ async fn resolve_verified_api_client(
             // brute-force garbage traffic doesn't bypass rate limiting by
             // sending malformed tokens.
             if let Some(ip) = peer_ip
-                && state
-                    .api_key_rate_limiter
-                    .check_key(&ip.to_string())
-                    .is_err()
+                && let Err(not_until) = state.api_key_rate_limiter.check_key(&ip.to_string())
             {
-                return Err(KeystoneApiError::TooManyRequests);
+                let retry_after = not_until
+                    .wait_time_from(state.api_key_rate_limiter.clock().now())
+                    .as_secs()
+                    .max(1);
+                return Err(KeystoneApiError::TooManyRequests { retry_after });
             }
             return Err(AuthenticationError::Unauthorized.into());
         }
     };
 
-    if state
-        .api_key_rate_limiter
-        .check_key(&parsed.lookup_hash)
-        .is_err()
-    {
-        return Err(KeystoneApiError::TooManyRequests);
+    if let Err(not_until) = state.api_key_rate_limiter.check_key(&parsed.lookup_hash) {
+        let retry_after = not_until
+            .wait_time_from(state.api_key_rate_limiter.clock().now())
+            .as_secs()
+            .max(1);
+        return Err(KeystoneApiError::TooManyRequests { retry_after });
     }
 
     // Step 2: database lookup & IP allowlisting.
