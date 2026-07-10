@@ -47,6 +47,50 @@ services to authorize requests completely offline via memory-bound signature
 verification, cutting the central database and network lookup bottleneck to
 absolute zero.
 
+### Primary Use Cases
+
+Being an authoritative OAuth2/OIDC Provider is not an abstract compliance
+checkbox; it unlocks concrete, high-leverage scenarios that neither Fernet nor
+the Python JWS token provider can serve:
+
+1. **Cloud-native workloads calling OpenStack APIs directly.** Kubernetes
+   operators (Cluster API, Crossplane), CI/CD pipelines (GitHub Actions /
+   GitLab OIDC-style workload federation), and Terraform controllers hold
+   short-lived OIDC credentials natively. Today they must trade them for a
+   Fernet token first (the Circular Token Exchange Trap, above). With the OP in
+   place, a `client_credentials` grant yields a JWT that Nova/Neutron accept
+   directly — no long-lived application credentials embedded in cluster
+   secrets.
+2. **Offline, per-request validation at hyperscaler request rates.** Every
+   Fernet validation is a back-channel keystonemiddleware round trip to
+   Keystone. Signed JWTs are verified in-memory by the downstream middleware
+   (§6), by Envoy/API gateways at the edge, and by service meshes (e.g. Istio
+   `RequestAuthentication`) — removing Keystone from the data path of every
+   OpenStack API call. This is the single largest scalability win in this ADR.
+3. **"Login with OpenStack" for the surrounding ecosystem.** Grafana, Harbor,
+   ArgoCD, internal developer portals, and any standard OIDC RP can
+   authenticate users against Keystone with stock OIDC libraries — Keystone
+   becomes the identity anchor for the whole cloud's tooling, not just for
+   OpenStack services.
+4. **Replacing long-lived machine secrets with short-lived tokens.**
+   Application credentials and EC2 keys are long-lived bearer secrets stored
+   client-side. OAuth2 clients with 15-minute access tokens plus rotating
+   refresh tokens (with family-tree breach detection, §9) shrink the credential
+   theft window from months to minutes.
+5. **Modern CLI login.** The Device Authorization Grant (§7.C) gives
+   `openstack`/`osc` CLI users browser-based login with MFA/passkey support on
+   headless machines — the flow every major cloud CLI (aws sso, gcloud, az)
+   already uses, impossible with password-in-clouds-yaml Fernet flows.
+6. **Standards-based delegation (v2, §12).** Trusts, application credentials,
+   and EC2 delegation re-expressed as RFC 8693 Token Exchange, plus
+   on-behalf-of downscoping for service-to-service hops (Nova → Neutron with a
+   narrowed, short-TTL token instead of forwarding the user's full bearer
+   token).
+
+Use cases 1 and 2 are the strategic drivers: they shed load and unblock
+cloud-native adoption. Use cases 3-5 are adoption accelerators that fall out of
+the same machinery nearly for free.
+
 ### Threat Model & Defensive Boundaries
 
 1. **Malicious or Compromised Relying Parties (RPs):** An external application
@@ -1152,11 +1196,63 @@ spent, `keystone-rs` interprets the event as an active infrastructure breach:
 ## 10. Phased Implementation Approach
 
 ```text
+Phase 0: Token Provider Abstraction & JWS Parity (v3 surface)
+   │
+   ▼
 Phase 1: Crypto & JWKS (Raft Core) ────► Phase 2: Ingress API Routing ────► Phase 3: Client Credentials
                                                                                    │
 Phase 5: Native Control Plane Acceptance ◄──── Phase 4: Auth Code & PKCE ◄─────────┘
 
 ```
+
+### Phase 0: Token Provider Abstraction & Python JWS Parity
+
+This phase exists because of a gap this ADR otherwise ignores: **Python
+Keystone has shipped a second token provider since Stein —
+`[token] provider = jws` (ES256-signed JWS tokens, `keystone-manage
+create_jws_keypair`, filesystem key repositories) — and `keystone-rs` supports
+only Fernet.** `keystone-rs` is deployed in parallel with Python Keystone
+during migration, and both sides must decode each other's v3 tokens. A
+deployment running the JWS provider today cannot put `keystone-rs` behind the
+same VIP at all. Two distinct JWT tracks must therefore not be conflated:
+
+- **v3-surface JWS tokens (this phase):** Python-compatible, _reference_
+  tokens — the JWT payload carries only identity/scope anchors (no roles, no
+  catalog) and keystonemiddleware still validates them back-channel via
+  `GET /v3/auth/tokens`. Purely a token _format_, not an authorization model.
+- **OP-issued access tokens (Phases 1-5):** self-contained
+  `OpenStackAccessTokenClaims` (§4) with embedded roles, verified fully
+  offline (§6). A different product, deliberately not wire-compatible with
+  the above.
+
+**Deliverables:**
+
+- Decouple the token provider layer from Fernet: `TokenBackend::decode/encode`
+  (`crates/core/src/token/backend.rs`) and `TokenApi::encode_token` currently
+  take/return `FernetToken` directly. Introduce a format-neutral token payload
+  type and a `[token] provider = fernet | jws` selector (mirroring Python's
+  config surface) so drivers are interchangeable. This refactor is a hard
+  prerequisite: retrofitting it after OAuth2 code lands on top of the
+  Fernet-typed trait would be strictly more expensive.
+- New `token-driver-jws` crate: ES256 sign/verify, Python-compatible claim
+  layout (`sub`, `exp`, `iat`, `openstack_methods`, `openstack_audit_ids`,
+  `openstack_project_id`/`openstack_domain_id`/`openstack_system`,
+  `openstack_trust_id`, `openstack_app_cred_id`) and Python-compatible
+  key-repository layout, plugged in via the existing `KeySource` abstraction
+  in `crates/key-repository` so filesystem keys shared with Python nodes work
+  unchanged.
+
+**Verification:** Round-trip fixture tests against tokens minted by Python
+Keystone's JWS provider (decode theirs, they validate ours). Config-switch
+tests proving a node can validate both Fernet and JWS tokens during a provider
+transition.
+
+**Strategic payoff beyond parity:** the ES256 signing/verification plumbing,
+key-file handling, and `kid` conventions built here are exactly what Phase 1
+generalizes into the Raft-backed OAuth2 `KeyRepository` — Phase 0 is not a
+detour, it is the first increment of the same cryptographic engine, delivered
+against the existing v3 surface where it immediately widens the set of
+deployments `keystone-rs` can stand in for.
 
 ### Phase 1: Cryptographic Engine & JWKS Infrastructure
 
@@ -1348,3 +1444,83 @@ This section intentionally stops at the shape above - full request/response
 schemas, `OAuth2Client` authorization checks for who may request delegation on
 whose behalf, and CADF event definitions are left to the follow-up ADR amendment
 that actually implements this grant.
+
+---
+
+## 13. Fernet Coexistence & Long-Term Migration Strategy
+
+`keystone-rs` is deployed **in parallel with Python Keystone** during the
+migration phase: both serve the same v3 API behind a shared VIP, and existing
+deployments overwhelmingly run the **Fernet** token provider with a shared,
+filesystem-synchronized key repository. Everything in this ADR is therefore
+additive by construction — the §6 middleware's explicit fall-through to the
+legacy Fernet filter chain is the load-bearing coexistence mechanism, and no
+stage below invalidates a token or breaks a client that worked in the previous
+stage.
+
+### Stage 0 — Today: Fernet Interchangeability (shipped)
+
+Python Keystone is the issuer of record. `keystone-rs` encodes/decodes
+byte-compatible Fernet tokens from the shared key repository
+(`token-driver-fernet` + `crates/key-repository`). Operational constraint:
+Fernet key rotation must remain coordinated across both implementations
+(same rotation tooling, same `max_active_keys` discipline).
+
+### Stage 1 — v3 Token Format Parity (Phase 0)
+
+The provider abstraction and Python-compatible JWS driver (§10, Phase 0) land.
+`keystone-rs` can now stand in for Python Keystone regardless of which
+`[token] provider` the deployment chose, and validates both formats during a
+provider transition. This removes the last v3-surface reason a deployment
+could not shift token _issuance_ traffic to `keystone-rs`.
+
+### Stage 2 — OP Goes Live, Additive Only (Phases 1-5)
+
+The OAuth2/OIDC surface ships. No existing flow changes: Fernet issuance and
+validation continue untouched. New consumers onboard directly to JWT — cloud-
+native workloads via `client_credentials`, third-party RPs via
+`authorization_code`. The §6 middleware is injected into control-plane Paste
+pipelines **in front of** `keystonemiddleware.auth_token`; requests without an
+OP-issued Bearer JWT fall through unchanged. Rollout is therefore incremental
+per service, per region, with instant rollback (remove the filter). Services
+with the loosest revocation-latency requirements (read-heavy, low-criticality)
+convert first; see the revocation gate below.
+
+### Stage 3 — Machine Identity Migration
+
+Highest-volume, lowest-friction migration: automated API consumers (billing
+collectors, monitoring, orchestrators, K8s operators) move from application
+credentials / stored passwords to registered `OAuth2Client`s. This is where
+the validation-load win (§11, "Complete Database Decoupling") is actually
+realized, since machines dominate request volume. Python Keystone is demoted
+to serving legacy human/v3 flows.
+
+### Stage 4 — Human Flow Migration & Python Keystone Retirement
+
+CLI login moves to the Device Authorization Grant; dashboards and portals
+become OIDC RPs. Remaining v3 Fernet issuance is served by `keystone-rs`
+alone (possible since Stage 1), and Python Keystone is removed from the VIP.
+The RFC 8693 Token Exchange grant (§12, v2) eases the long tail: any client
+still holding a valid Fernet token can trade it for a native JWT without
+re-authenticating, inverting the §1 Circular Trap in the direction that helps
+migration.
+
+### Stage 5 — Fernet Sunset
+
+A config switch moves Fernet to validate-only (no new issuance), then off.
+`keystonemiddleware.auth_token` and the §6 fall-through path are removed from
+Paste pipelines; Fernet keys are retired after the last token's `exp`.
+End-state: a single asymmetric key lifecycle (§3) instead of two parallel key
+repositories — retiring the "Increased Key Rotation Surface" risk in §11.
+
+### Cross-Cutting Gate: Revocation Semantics Parity
+
+Fernet validation consults revocation events on every back-channel check;
+stateless JWTs wait out `exp` (§11, "Revocation Durability Gap"). A service
+may only move from Stage 2's fall-through posture to preferring JWTs once its
+operator explicitly accepts the 15-minute revocation window (or wires
+back-channel introspection for its high-criticality operations). This
+acceptance is per-service and must be recorded in the deployment's migration
+runbook — it is the one semantic regression Fernet-to-JWT migration cannot
+paper over, and it is the reason Stages 2-4 are ordered by revocation-latency
+tolerance rather than by implementation convenience.
