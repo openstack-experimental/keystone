@@ -347,6 +347,39 @@ impl IdentityApi for IdentityService {
             }
         }
 
+        // Per-user rate limit (ADR-0022): when the bucket is enabled, resolve
+        // the caller-supplied reference to the canonical user ID with a cheap
+        // existence probe and key the limiter on that ID, before the backend
+        // performs any password verification (Invariants 4 and 8). The
+        // throttle lives here at the provider level so every backend driver
+        // shares a single implementation.
+        if state.rate_limiters.user_auth_enabled() {
+            match self
+                .backend_driver
+                .check_user_exist(
+                    state,
+                    auth.id.as_deref(),
+                    auth.name.as_deref(),
+                    auth.domain.as_ref().and_then(|d| d.id.as_deref()),
+                )
+                .await
+            {
+                Ok(user_id) => {
+                    if let Err(retry_after) = state.rate_limiters.check_user(&user_id) {
+                        return Err(IdentityProviderError::TooManyRequests {
+                            retry_after_secs: retry_after.as_secs(),
+                        });
+                    }
+                }
+                // Unknown users never touch the limiter store (Invariant 8):
+                // fall through to the backend, which burns a dummy hash and
+                // returns the uniform credentials error, preserving the
+                // timing parity of the "user not found" path.
+                Err(IdentityProviderError::UserNotFound(_)) => {}
+                Err(other) => return Err(other),
+            }
+        }
+
         self.backend_driver
             .authenticate_by_password(state, &auth)
             .await
@@ -393,26 +426,44 @@ impl IdentityApi for IdentityService {
         }
 
         // The resolution above guarantees either `auth.id`, or `auth.name` +
-        // `auth.domain.id`, is populated at this point.
-        let user = if let Some(id) = &auth.id {
-            self.get_user(ctx, id)
-                .await?
-                .ok_or(AuthenticationError::TotpPasscodeInvalid)?
-        } else {
-            let params = UserListParametersBuilder::default()
-                .domain_id(auth.domain.as_ref().and_then(|d| d.id.clone()))
-                .name(auth.name.clone())
-                .build()?;
-            self.list_users(ctx, &params)
-                .await?
-                .into_iter()
-                .next()
-                .ok_or(AuthenticationError::TotpPasscodeInvalid)?
+        // `auth.domain.id`, is populated at this point. The cheap existence
+        // probe shared with password authentication resolves the reference to
+        // the canonical user ID and rejects disabled accounts.
+        let user_id = match self
+            .backend_driver
+            .check_user_exist(
+                state,
+                auth.id.as_deref(),
+                auth.name.as_deref(),
+                auth.domain.as_ref().and_then(|d| d.id.as_deref()),
+            )
+            .await
+        {
+            Ok(user_id) => user_id,
+            // Do not disclose account existence through the TOTP flow.
+            Err(IdentityProviderError::UserNotFound(_)) => {
+                return Err(AuthenticationError::TotpPasscodeInvalid.into());
+            }
+            Err(other) => return Err(other),
         };
 
-        if !user.enabled {
-            return Err(AuthenticationError::UserDisabled(user.id.clone()).into());
+        // Per-user rate limit (ADR-0022): keyed on the canonical user ID,
+        // checked only after the user is confirmed to exist (Invariant 8) and
+        // before any passcode verification. TOTP passcodes are 6-digit values
+        // with no lockout counter on this path, so throttling is the only
+        // brute-force control. Shares the `[rate_limit_user_auth]` bucket with
+        // password authentication so alternating methods cannot double the
+        // per-user quota.
+        if let Err(retry_after) = state.rate_limiters.check_user(&user_id) {
+            return Err(IdentityProviderError::TooManyRequests {
+                retry_after_secs: retry_after.as_secs(),
+            });
         }
+
+        let user = self
+            .get_user(ctx, &user_id)
+            .await?
+            .ok_or(AuthenticationError::TotpPasscodeInvalid)?;
 
         let credentials = state
             .provider
@@ -1621,6 +1672,10 @@ mod tests {
         .await;
         let mut backend = MockIdentityBackend::default();
         backend
+            .expect_check_user_exist()
+            .withf(|_, id, name, domain| *id == Some("uid") && name.is_none() && domain.is_none())
+            .returning(|_, _, _, _| Ok("uid".to_string()));
+        backend
             .expect_get_user()
             .withf(|_, uid: &'_ str| uid == "uid")
             .returning(|_, _| Ok(Some(totp_user("uid", "did", true))));
@@ -1642,6 +1697,54 @@ mod tests {
         assert_eq!(result.principal.get_user_id(), "uid");
     }
 
+    /// ADR-0022 Invariants 4 and 8 on the TOTP path: the per-user bucket is
+    /// keyed on the confirmed user ID and fires before any credential is
+    /// listed or passcode verified. The bucket is exhausted directly through
+    /// `check_user` (simulating a prior authentication attempt) so timing
+    /// cannot replenish it mid-test.
+    #[tokio::test]
+    async fn test_authenticate_by_totp_rate_limited() {
+        let mut credential_mock = MockCredentialProvider::default();
+        // Rejected before verification: credentials must never be listed.
+        credential_mock.expect_list_credentials_for_user().times(0);
+        let mut config = openstack_keystone_config::Config::default();
+        config.rate_limit_user_auth = openstack_keystone_config::RateLimitSection {
+            enabled: true,
+            burst_size: 1,
+            replenish_rate_per_second: 1,
+        };
+        let state = get_mocked_state(
+            Some(config),
+            Some(Provider::mocked_builder().mock_credential(credential_mock)),
+        )
+        .await;
+        assert!(state.rate_limiters.check_user("uid").is_ok());
+
+        let mut backend = MockIdentityBackend::default();
+        backend
+            .expect_check_user_exist()
+            .returning(|_, _, _, _| Ok("uid".to_string()));
+        // Rejected before the full user is ever loaded.
+        backend.expect_get_user().times(0);
+        let provider = IdentityService::from_driver(backend);
+
+        let result = provider
+            .authenticate_by_totp(
+                &ExecutionContext::internal(&state),
+                &UserTotpAuthRequestBuilder::default()
+                    .id("uid")
+                    .passcode(TOTP_PASSCODE_COUNTER_0)
+                    .build()
+                    .unwrap(),
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(IdentityProviderError::TooManyRequests { retry_after_secs }) if retry_after_secs >= 1
+        ));
+    }
+
     #[tokio::test]
     async fn test_authenticate_by_totp_wrong_passcode() {
         let mut credential_mock = MockCredentialProvider::default();
@@ -1654,6 +1757,9 @@ mod tests {
         )
         .await;
         let mut backend = MockIdentityBackend::default();
+        backend
+            .expect_check_user_exist()
+            .returning(|_, _, _, _| Ok("uid".to_string()));
         backend
             .expect_get_user()
             .returning(|_, _| Ok(Some(totp_user("uid", "did", true))));
@@ -1691,6 +1797,9 @@ mod tests {
         .await;
         let mut backend = MockIdentityBackend::default();
         backend
+            .expect_check_user_exist()
+            .returning(|_, _, _, _| Ok("uid".to_string()));
+        backend
             .expect_get_user()
             .returning(|_, _| Ok(Some(totp_user("uid", "did", true))));
         let provider = IdentityService::from_driver(backend);
@@ -1724,9 +1833,12 @@ mod tests {
         )
         .await;
         let mut backend = MockIdentityBackend::default();
+        // The cheap probe rejects the disabled account before any credential
+        // work; the full user is never loaded.
         backend
-            .expect_get_user()
-            .returning(|_, _| Ok(Some(totp_user("uid", "did", false))));
+            .expect_check_user_exist()
+            .returning(|_, _, _, _| Err(AuthenticationError::UserDisabled("uid".into()).into()));
+        backend.expect_get_user().times(0);
         let provider = IdentityService::from_driver(backend);
 
         let result = provider
@@ -1752,7 +1864,9 @@ mod tests {
     async fn test_authenticate_by_totp_user_not_found() {
         let state = get_mocked_state(None, None).await;
         let mut backend = MockIdentityBackend::default();
-        backend.expect_get_user().returning(|_, _| Ok(None));
+        backend
+            .expect_check_user_exist()
+            .returning(|_, _, _, _| Err(IdentityProviderError::UserNotFound("uid".into())));
         let provider = IdentityService::from_driver(backend);
 
         let result = provider
@@ -1803,12 +1917,15 @@ mod tests {
         .await;
         let mut backend = MockIdentityBackend::default();
         backend
-            .expect_list_users()
-            .withf(|_, params: &UserListParameters| {
-                params.name.as_deref() == Some("uname_lookup")
-                    && params.domain_id.as_deref() == Some("did")
+            .expect_check_user_exist()
+            .withf(|_, id, name, domain| {
+                id.is_none() && *name == Some("uname_lookup") && *domain == Some("did")
             })
-            .returning(|_, _| Ok(vec![totp_user("uid", "did", true)]));
+            .returning(|_, _, _, _| Ok("uid".to_string()));
+        backend
+            .expect_get_user()
+            .withf(|_, uid: &'_ str| uid == "uid")
+            .returning(|_, _| Ok(Some(totp_user("uid", "did", true))));
         let provider = IdentityService::from_driver(backend);
 
         let result = provider
@@ -1826,6 +1943,164 @@ mod tests {
 
         assert_eq!(result.context, AuthenticationContext::Totp);
         assert_eq!(result.principal.get_user_id(), "uid");
+    }
+
+    /// ADR-0022 Invariants 4 and 8 at the provider level: the enabled
+    /// per-user bucket is keyed on the ID resolved by the cheap probe and
+    /// fires before the backend performs any password verification. The
+    /// bucket is exhausted directly through `check_user` (simulating a prior
+    /// attempt) so timing cannot replenish it mid-test.
+    #[tokio::test]
+    async fn test_authenticate_by_password_rate_limited() {
+        let mut config = openstack_keystone_config::Config::default();
+        config.rate_limit_user_auth = openstack_keystone_config::RateLimitSection {
+            enabled: true,
+            burst_size: 1,
+            replenish_rate_per_second: 1,
+        };
+        let state = get_mocked_state(Some(config), None).await;
+        assert!(state.rate_limiters.check_user("uid").is_ok());
+
+        let mut backend = MockIdentityBackend::default();
+        backend
+            .expect_check_user_exist()
+            .withf(|_, id, name, domain| *id == Some("uid") && name.is_none() && domain.is_none())
+            .returning(|_, _, _, _| Ok("uid".to_string()));
+        // The expensive backend authentication must never be reached.
+        backend.expect_authenticate_by_password().times(0);
+        let provider = IdentityService::from_driver(backend);
+
+        let result = provider
+            .authenticate_by_password(
+                &ExecutionContext::internal(&state),
+                &UserPasswordAuthRequest {
+                    id: Some("uid".into()),
+                    password: "pass".into(),
+                    ..Default::default()
+                },
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(IdentityProviderError::TooManyRequests { retry_after_secs }) if retry_after_secs >= 1
+        ));
+    }
+
+    /// ADR-0022 Invariant 8: unknown users never touch the limiter store.
+    /// The probe misses and the request falls through to the backend, which
+    /// keeps the uniform dummy-hash credentials error — never a 429 — no
+    /// matter how often it is retried.
+    #[tokio::test]
+    async fn test_authenticate_by_password_unknown_user_uniform_error() {
+        let mut config = openstack_keystone_config::Config::default();
+        config.rate_limit_user_auth = openstack_keystone_config::RateLimitSection {
+            enabled: true,
+            burst_size: 1,
+            replenish_rate_per_second: 1,
+        };
+        let state = get_mocked_state(Some(config), None).await;
+
+        let mut backend = MockIdentityBackend::default();
+        backend
+            .expect_check_user_exist()
+            .returning(|_, _, _, _| Err(IdentityProviderError::UserNotFound("ghost".into())));
+        backend
+            .expect_authenticate_by_password()
+            .times(2)
+            .returning(|_, _| Err(AuthenticationError::UserNameOrPasswordWrong.into()));
+        let provider = IdentityService::from_driver(backend);
+
+        for _ in 0..2 {
+            let result = provider
+                .authenticate_by_password(
+                    &ExecutionContext::internal(&state),
+                    &UserPasswordAuthRequest {
+                        id: Some("ghost".into()),
+                        password: "pass".into(),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            assert!(matches!(
+                result,
+                Err(IdentityProviderError::Authentication {
+                    source: AuthenticationError::UserNameOrPasswordWrong
+                })
+            ));
+        }
+    }
+
+    /// With the bucket disabled (the default), the probe is skipped
+    /// entirely: rate limiting adds no extra query to the authentication
+    /// hot path.
+    #[tokio::test]
+    async fn test_authenticate_by_password_probe_skipped_when_disabled() {
+        let state = get_mocked_state(None, None).await;
+
+        let mut backend = MockIdentityBackend::default();
+        backend.expect_check_user_exist().times(0);
+        backend
+            .expect_authenticate_by_password()
+            .once()
+            .returning(|_, _| Err(AuthenticationError::UserNameOrPasswordWrong.into()));
+        let provider = IdentityService::from_driver(backend);
+
+        let result = provider
+            .authenticate_by_password(
+                &ExecutionContext::internal(&state),
+                &UserPasswordAuthRequest {
+                    id: Some("uid".into()),
+                    password: "pass".into(),
+                    ..Default::default()
+                },
+            )
+            .await;
+        assert!(matches!(
+            result,
+            Err(IdentityProviderError::Authentication {
+                source: AuthenticationError::UserNameOrPasswordWrong
+            })
+        ));
+    }
+
+    /// Within quota the request proceeds to the backend normally.
+    #[tokio::test]
+    async fn test_authenticate_by_password_within_quota_reaches_backend() {
+        let mut config = openstack_keystone_config::Config::default();
+        config.rate_limit_user_auth = openstack_keystone_config::RateLimitSection {
+            enabled: true,
+            burst_size: 100,
+            replenish_rate_per_second: 10,
+        };
+        let state = get_mocked_state(Some(config), None).await;
+
+        let mut backend = MockIdentityBackend::default();
+        backend
+            .expect_check_user_exist()
+            .returning(|_, _, _, _| Ok("uid".to_string()));
+        backend
+            .expect_authenticate_by_password()
+            .once()
+            .returning(|_, _| Err(AuthenticationError::UserNameOrPasswordWrong.into()));
+        let provider = IdentityService::from_driver(backend);
+
+        let result = provider
+            .authenticate_by_password(
+                &ExecutionContext::internal(&state),
+                &UserPasswordAuthRequest {
+                    id: Some("uid".into()),
+                    password: "pass".into(),
+                    ..Default::default()
+                },
+            )
+            .await;
+        assert!(matches!(
+            result,
+            Err(IdentityProviderError::Authentication {
+                source: AuthenticationError::UserNameOrPasswordWrong
+            })
+        ));
     }
 
     /// Password regex rejects invalid password on user creation.

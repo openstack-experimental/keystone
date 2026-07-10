@@ -239,6 +239,16 @@ pub struct Config {
     #[serde(rename = "rate_limit_trusted_proxies", default)]
     pub rate_limit_trusted_proxies: RateLimitTrustedProxiesSection,
 
+    /// Per-user authentication rate limiting (ADR-0022, §1).
+    ///
+    /// Maps to the `[rate_limit_user_auth]` INI section. When `enabled =
+    /// false` (the default) the governor is not instantiated and
+    /// authentication requests bypass the check. The limiter is keyed on the
+    /// canonical user ID and is only consulted after the user is confirmed
+    /// to exist (ADR-0022, Invariant 8).
+    #[serde(rename = "rate_limit_user_auth", default)]
+    pub rate_limit_user_auth: RateLimitSection,
+
     /// Resource provider configuration.
     #[serde(default)]
     pub resource: ResourceProvider,

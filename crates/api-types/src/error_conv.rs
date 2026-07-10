@@ -272,6 +272,11 @@ impl From<IdentityProviderError> for KeystoneApiError {
             ref err @ IdentityProviderError::SecurityCompliance(..) => {
                 Self::BadRequest(err.to_string())
             }
+            // Unified 429 shape shared with the global-IP and API-key
+            // limiters (ADR-0022, Invariant 3).
+            IdentityProviderError::TooManyRequests { retry_after_secs } => Self::TooManyRequests {
+                retry_after: retry_after_secs,
+            },
             other => Self::InternalError(other.to_string()),
         }
     }
@@ -739,6 +744,32 @@ mod tests {
             api_err,
             KeystoneApiError::InternalError(msg) if msg.contains("test error")
         ));
+    }
+
+    /// ADR-0022 Invariant 3: the per-user limiter's driver-level rejection
+    /// converts into the same unified 429 variant the global-IP and API-key
+    /// limiters use, carrying `Retry-After` and no identifying information.
+    #[test]
+    fn identity_provider_too_many_requests_maps_to_unified_429() {
+        let err = IdentityProviderError::TooManyRequests {
+            retry_after_secs: 7,
+        };
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(
+            api_err,
+            KeystoneApiError::TooManyRequests { retry_after: 7 }
+        ));
+        let response = <KeystoneApiError as IntoResponse>::into_response(api_err);
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::RETRY_AFTER)
+                .expect("Retry-After header must be present")
+                .to_str()
+                .unwrap(),
+            "7"
+        );
     }
 
     #[test]

@@ -882,6 +882,72 @@ mod tests {
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 
+    /// ADR-0022 phase 2: the per-user limiter trips deep in the identity
+    /// driver (post-lookup, pre-hash); this proves the rejection surfaces
+    /// through the handler as the same uniform 429 + `Retry-After` response
+    /// the global-IP limiter produces (Invariant 3).
+    #[tokio::test]
+    #[traced_test]
+    async fn test_user_rate_limit_from_driver_surfaces_as_429() {
+        let config = Config::default();
+
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_authenticate_by_password()
+            .once()
+            .returning(|_, _| {
+                Err(IdentityProviderError::TooManyRequests {
+                    retry_after_secs: 3,
+                })
+            });
+
+        let provider = Provider::mocked_builder()
+            .mock_identity(identity_mock)
+            .build()
+            .unwrap();
+
+        let state = Arc::new(
+            Service::new(
+                ConfigManager::not_watched(config),
+                DatabaseConnection::Disconnected,
+                provider,
+                Arc::new(MockPolicy::default()),
+                AuditDispatcher::noop(),
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .method("POST")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(auth_body()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::RETRY_AFTER)
+                .expect("429 must carry Retry-After")
+                .to_str()
+                .unwrap(),
+            "3"
+        );
+    }
+
     #[tokio::test]
     #[traced_test]
     async fn test_rate_limit_does_not_apply_without_connect_info() {
