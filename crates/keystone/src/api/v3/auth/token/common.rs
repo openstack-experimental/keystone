@@ -122,8 +122,10 @@ pub(super) async fn authenticate_request(
                     // `Passthrough` (both `None`) leaves `effective_methods`/
                     // `effective_extra` untouched.
                 }
-                Err(WasmPluginAuthError::RateLimited(_)) => {
-                    return Err(KeystoneApiError::TooManyRequests);
+                Err(WasmPluginAuthError::RateLimited(_, retry_after)) => {
+                    return Err(KeystoneApiError::TooManyRequests {
+                        retry_after: retry_after.as_secs().max(1),
+                    });
                 }
                 // Denied/malformed/etc fail the whole request closed - never
                 // fall through to dispatching the original, un-routed
@@ -214,8 +216,10 @@ pub(super) async fn authenticate_request(
             match dispatch_result {
                 Ok(auth_res) => res.push(auth_res),
                 Err(WasmPluginAuthError::NotFound | WasmPluginAuthError::WrongMode) => {}
-                Err(WasmPluginAuthError::RateLimited(_)) => {
-                    return Err(KeystoneApiError::TooManyRequests);
+                Err(WasmPluginAuthError::RateLimited(_, retry_after)) => {
+                    return Err(KeystoneApiError::TooManyRequests {
+                        retry_after: retry_after.as_secs().max(1),
+                    });
                 }
                 Err(_) => return Err(KeystoneApiError::UnauthorizedNoContext),
             }
@@ -483,8 +487,8 @@ mod tests {
 /// `Config::default()` and can't carry a `[auth_plugin.*]` section) with
 /// two loaded reference-plugin instances: `router` (`mode = route`,
 /// `inspect_methods = application_credential`, `route_targets =
-/// tf_appcred_handler`) and `tf_appcred_handler` (`mode = full_auth`) - the
-/// allowlisted target the router may redirect to.
+/// hacked_appcred_handler`) and `hacked_appcred_handler` (`mode = full_auth`) -
+/// the allowlisted target the router may redirect to.
 #[cfg(test)]
 mod route_dispatch_tests {
     use std::path::{Path, PathBuf};
@@ -610,7 +614,7 @@ mod route_dispatch_tests {
     }
 
     /// Loads the reference plugin twice under one `ServiceState`: as
-    /// `router` (`mode = route`) and as `tf_appcred_handler`
+    /// `router` (`mode = route`) and as `hacked_appcred_handler`
     /// (`mode = full_auth`, the router's sole `route_targets` entry).
     async fn build_route_state(
         identity_mock: MockIdentityProvider,
@@ -624,7 +628,7 @@ mod route_dispatch_tests {
             openstack_keystone_config::PluginMode::Route,
         );
         router_config.inspect_methods = vec!["application_credential".to_string()];
-        router_config.route_targets = vec!["tf_appcred_handler".to_string()];
+        router_config.route_targets = vec!["hacked_appcred_handler".to_string()];
 
         let mut target_config = base_plugin_config(
             path,
@@ -636,12 +640,12 @@ mod route_dispatch_tests {
 
         let cfg = Config {
             auth_plugins: DynamicPluginsSection {
-                plugins: vec!["router".to_string(), "tf_appcred_handler".to_string()],
+                plugins: vec!["router".to_string(), "hacked_appcred_handler".to_string()],
                 ..Default::default()
             },
             auth_plugin: [
                 ("router".to_string(), router_config),
-                ("tf_appcred_handler".to_string(), target_config),
+                ("hacked_appcred_handler".to_string(), target_config),
             ]
             .into_iter()
             .collect(),
@@ -676,7 +680,7 @@ mod route_dispatch_tests {
         );
 
         load_auth_plugins(&state, Arc::new(UnreachableHttpFetcher)).await;
-        for name in ["router", "tf_appcred_handler"] {
+        for name in ["router", "hacked_appcred_handler"] {
             assert!(
                 state.auth_plugin_registry.read().await.contains(name),
                 "reference plugin {name} should have loaded"
@@ -763,7 +767,7 @@ mod route_dispatch_tests {
     /// (b) A `Route` response to an allowlisted target correctly redispatches
     /// and the target still independently processes the (relabeled) payload
     /// - proven by the resulting `AuthenticationContext::WasmPlugin` naming
-    /// `tf_appcred_handler`, not `router`.
+    /// `hacked_appcred_handler`, not `router`.
     #[tokio::test(flavor = "multi_thread")]
     async fn test_route_to_allowlisted_target_redispatches() {
         let (identity_mock, dpi_mock) = permissive_mocks();
@@ -781,7 +785,7 @@ mod route_dispatch_tests {
         let AuthenticationContext::WasmPlugin { plugin_name, .. } = &res[0].context else {
             panic!("expected WasmPlugin context");
         };
-        assert_eq!(plugin_name, "tf_appcred_handler");
+        assert_eq!(plugin_name, "hacked_appcred_handler");
     }
 
     /// (c) A `Route` naming a target outside `route_targets` is rejected,
@@ -796,7 +800,7 @@ mod route_dispatch_tests {
         let state = build_route_state(identity_mock, dpi_mock).await;
 
         // Reconfigure the router's `route_targets` to no longer include
-        // `tf_appcred_handler` - simplest way to force an off-allowlist
+        // `hacked_appcred_handler` - simplest way to force an off-allowlist
         // response from the same fixture without a second wasm binary.
         {
             let mut cfg = state.config_manager.config.write().await;
@@ -845,7 +849,7 @@ mod route_dispatch_tests {
     /// (d) Single-shot: the routed request's `effective_methods` going into
     /// the per-method loop no longer contains the original triggering
     /// method (`application_credential`) - only the target
-    /// (`tf_appcred_handler`) - proven indirectly by the resulting
+    /// (`hacked_appcred_handler`) - proven indirectly by the resulting
     /// `AuthenticationContext` naming only the target plugin, with exactly
     /// one result pushed (no second, redundant dispatch of the original
     /// method).

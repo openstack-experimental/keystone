@@ -275,6 +275,15 @@ Custom authentication logic can be added without recompiling Keystone via
 WebAssembly (WASM) plugins. See [Plugins: Auth](./plugins/auth.md) for the
 developer guide.
 
+**Requires distributed storage.** A `full_auth` plugin's
+`(plugin_name, external_id) -> user_id` identity-binding index
+(`[auth_plugin_identity] driver`, defaults to `raft`) is backed by
+`[distributed_storage]`, decoupled from whichever `IdentityBackend` is
+configured. There is currently no SQL driver alternative - `full_auth`-mode
+plugins using `provision_user`/`find_user` are not available in a deployment
+without distributed storage configured. `mapping`- and `route`-mode plugins
+have no such requirement, since they never call those host functions.
+
 ### Plugin Configuration
 
 Plugins are configured in `keystone.conf` under `[auth_plugins]` and
@@ -364,12 +373,13 @@ Audit logging is always enabled; it cannot be disabled.
 | `assign_role_allowed`                         | `full_auth` | Required if `assign_role` used | Comma-separated role names plugin may grant (e.g., `member,reader`)                                                                                |
 | `inspect_methods`                             | `route`     | Required                       | Comma-separated identity methods that trigger this plugin (e.g., `application_credential`)                                                         |
 | `route_targets`                               | `route`     | Required                       | Comma-separated allowlist of methods this plugin may route to; `admin` and `trust` forbidden                                                       |
-| `timeout_ms`                                  | All         | 2000                           | Wall-clock timeout for plugin invocation                                                                                                           |
-| `fuel_limit`                                  | All         | 50000000                       | Instruction budget (protects against infinite loops)                                                                                               |
-| `memory_limit_mb`                             | All         | 32                             | Linear-memory limit for plugin heap                                                                                                                |
+| `timeout_ms`                                  | All         | 1000                           | Wall-clock timeout for plugin invocation, including any `http_fetch` calls (the whole redirect chain shares this one budget, not one per hop)      |
+| `fuel_limit`                                  | All         | 10000000                       | Instruction budget (protects against infinite loops)                                                                                               |
+| `memory_limit_mb`                             | All         | 16                             | Linear-memory limit for plugin heap                                                                                                                |
 | `invocation_rate_limit_per_source_per_minute` | All         | 20                             | Per-source-IP rate limit (sliding window)                                                                                                          |
 | `invocation_rate_limit_per_minute`            | All         | 300                            | Per-plugin global rate limit                                                                                                                       |
 | `max_concurrent_invocations`                  | All         | 16                             | Maximum simultaneous invocations                                                                                                                   |
+| `valid_since`                                 | `full_auth` | None (never rejects)           | RFC 3339 timestamp; a token whose `issued_at` predates this is rejected (`PluginVersionMismatch`) on re-verification. Bump alongside `sha256` for a security fix. Not enforceable for `mapping`-mode tokens today (ADR 0025 §4/§8) |
 
 ### Plugin Loading & Errors
 
@@ -404,11 +414,19 @@ systemctl restart keystone
 # Link a pre-existing (e.g., SCIM-provisioned) user to a plugin
 curl -X POST http://keystone:5000/v4/auth_plugins/{plugin_name}/identity_links \
   -H "X-Auth-Token: $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
   -d '{
-    "external_id": "sso_user_123",
-    "user_id": "existing-keystone-uuid"
+    "identity_link": {
+      "external_id": "sso_user_123",
+      "user_id": "existing-keystone-uuid"
+    }
   }'
 ```
+
+RBAC-tiered: system-scope `admin` may link any user; a domain-scoped
+`admin`/`manager` may link only a non-system user in their own domain.
+Re-linking an already-linked `external_id` returns `409 Conflict` - `DELETE`
+the existing link first.
 
 > **Note:** SCIM convenience fields (`scim_provider_id`, `scim_external_id`) are
 > documented in ADR 0025 §4 but not yet implemented. Track as follow-up work.
@@ -416,13 +434,23 @@ curl -X POST http://keystone:5000/v4/auth_plugins/{plugin_name}/identity_links \
 **Bulk revocation** (on plugin compromise or update):
 
 ```bash
-# Disables all users provisioned by the plugin, revokes granted roles,
-# deletes identity links, invalidates tokens
+# Disables all users provisioned by (or admin-linked to) the plugin, deletes
+# identity links, and revokes tokens for every affected user. System-admin
+# only. Idempotent - a second call against an already-cleaned-up plugin is a
+# no-op (all-zero counts).
 curl -X POST http://keystone:5000/v4/auth_plugins/{plugin_name}/revoke_all \
   -H "X-Auth-Token: $ADMIN_TOKEN"
 
-# Response: { "users_disabled": N, "roles_revoked": N, "links_deleted": N }
+# Response: { "revoke_all": { "users_disabled": N, "links_deleted": N } }
 ```
+
+**This does NOT revoke role assignments** the plugin granted via
+`assign_role` - attributing a stored grant to the plugin that created it
+would require per-record origin bookkeeping this ADR deliberately avoids.
+Disabling the account already denies all access; review a re-enabled user's
+remaining assignments against the CADF audit trail (`plugin_name` recorded on
+every `assign_role` event) and revoke any you deem compromised via the
+ordinary per-grant revocation API before re-enabling.
 
 ### Plugin Errors & Troubleshooting
 
@@ -438,7 +466,9 @@ curl -X POST http://keystone:5000/v4/auth_plugins/{plugin_name}/revoke_all \
 - `401`: Plugin denied the login or returned invalid response
   - Check plugin logs and external service logs (if using `http_fetch`)
   - Verify plugin logic matches expected credential format
-  - Check audit trail: `POST /v4/events` with `resource_type="auth_plugin"`
+  - Check the audit trail: CADF events (`wasm_plugin.*`, ADR 0025 §6.E) are
+    spooled to `[audit] spool_dir`, not queryable via an HTTP API - grep the
+    spool for the plugin's `Target.id` (the plugin name)
 
 - `429`: Rate limit exceeded
   - Check configured limits: `invocation_rate_limit_per_source_per_minute`,
@@ -448,7 +478,9 @@ curl -X POST http://keystone:5000/v4/auth_plugins/{plugin_name}/revoke_all \
 
 **Plugin behavior unexpectedly changes**
 
-- Plugin was patched (SHA-256 mismatch) - check logs for reload
+- Plugin was patched and Keystone restarted with the new `sha256` - there is
+  no hot reload (ADR 0025 §5); a running process never picks up a changed
+  `.wasm`/`sha256` without a restart
 - Mapping rules changed (for `mapping` mode) - verify `MappingRuleSet` config
 - Identity links modified - check audit trail for admin changes
 
@@ -480,10 +512,18 @@ When updating a plugin:
 
 1. **Compute new SHA-256** of the updated `.wasm`
 2. **Update config** with new hash and new `path` if needed
-3. **Restart Keystone** (all nodes, one at a time)
-4. **Outstanding tokens** are invalidated if plugin SHA-256 changed
-   (re-authenticate required)
-5. **Optional:** Run `POST .../revoke_all` if plugin had a security fix
+3. **If this update fixes a security issue, also bump `valid_since`** to the
+   deployment instant. Updating `sha256` alone does **not** invalidate
+   outstanding tokens - version binding is a separate, explicit
+   `valid_since` cutoff compared against each token's `issued_at`
+   (`full_auth` mode only; see the Configuration Reference table below).
+   Forgetting this step leaves tokens minted by the previous (vulnerable)
+   plugin version valid until they expire naturally.
+4. **Restart Keystone** (all nodes, one at a time)
+5. **Optional:** Run `POST .../revoke_all` if the plugin had a security fix,
+   to also disable/unlink/revoke everything the compromised version
+   provisioned or granted - `valid_since` alone only stops *new* uses of
+   already-issued tokens, not cleanup of persistent state
 
 ### Disaster Recovery
 

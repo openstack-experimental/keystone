@@ -40,6 +40,7 @@ pub const RESERVED_AUTH_METHOD_NAMES: &[&str] = &[
     "mapped",
     "k8s",
     "admin",
+    "totp",
 ];
 
 /// Auth methods a `route`-mode plugin's `route_targets` may never name,
@@ -515,7 +516,7 @@ path = /etc/keystone/plugins/tf_appcred_router.wasm
 sha256 = 3b5d5c3712955042212316173ccf37be9de53d6c84a5c7c8e6e0e5e7f5f8a1bc
 mode = route
 inspect_methods = application_credential
-route_targets = tf_appcred_handler
+route_targets = hacked_appcred_handler
 "#;
         let (section, plugins) = parse(ini);
         section.validate_semantics(&plugins).unwrap();
@@ -547,6 +548,23 @@ plugins = acme_risk_sso
         assert_eq!(
             section.validate_semantics(&plugins),
             Err(DynamicPluginConfigError::ReservedName("password".into()))
+        );
+    }
+
+    /// `totp` is a live builtin auth method dispatched ahead of the dynamic
+    /// plugin lookup (`crates/keystone/src/api/v3/auth/token/common.rs`) but
+    /// was missing from `RESERVED_AUTH_METHOD_NAMES` - a plugin named `totp`
+    /// would pass config validation yet be silently unreachable, since the
+    /// builtin branch always wins. Guards against that regressing.
+    #[test]
+    fn test_totp_reserved_name_is_rejected() {
+        let mut ini = valid_full_auth_ini().replace("acme_risk_sso", "totp");
+        assert!(ini.contains("plugins = totp"));
+        ini = ini.replace("provision_domain_id = domain_acme_sso", "");
+        let (section, plugins) = parse(&ini);
+        assert_eq!(
+            section.validate_semantics(&plugins),
+            Err(DynamicPluginConfigError::ReservedName("totp".into()))
         );
     }
 
@@ -648,7 +666,7 @@ plugins = tf_appcred_router
 path = /etc/keystone/plugins/tf_appcred_router.wasm
 sha256 = 3b5d5c3712955042212316173ccf37be9de53d6c84a5c7c8e6e0e5e7f5f8a1bc
 mode = route
-route_targets = tf_appcred_handler
+route_targets = hacked_appcred_handler
 "#;
         let (section, plugins) = parse(ini);
         assert_eq!(

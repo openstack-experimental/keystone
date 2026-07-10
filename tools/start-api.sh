@@ -64,7 +64,7 @@ opa_policies_path = policy
 # mapped is the fixed, plugin-name-independent method every mode=mapping
 # dynamic plugin's issued tokens carry (ADR 0025 section 4); a mode=full_auth
 # plugin's issued tokens carry its own configured name instead
-# (tf_appcred_handler below) - the fernet driver encodes auth_methods
+# (hacked_appcred_handler below) - the fernet driver encodes auth_methods
 # into a token as a bitmask over exactly this list
 # (crates/token-driver-fernet/src/lib.rs), so both must be present here or
 # token issuance 500s with "unsupported authentication methods".

@@ -135,32 +135,32 @@ deliberately hostile plugin author.
 
 ## 2. Decision Summary
 
-| Axis                                                                                                                                                                                        | Decision                                                                                                                                                                                                                                                  |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| WASM runtime                                                                                                                                                                                | [Extism](https://extism.org/) (host runtime built on `wasmtime`)                                                                                                                                                                                          |
-| Hook point                                                                                                                                                                                  | Full custom auth method - a plugin is a peer of `password`/`openid`/`k8s`                                                                                                                                                                                 |
-| Tenancy / trust scope                                                                                                                                                                       | Cluster-global; installed only by system admins via `keystone.conf`                                                                                                                                                                                       |
-| Distribution                                                                                                                                                                                | Local filesystem path, pinned by a SHA-256 checksum in `keystone.conf`                                                                                                                                                                                    |
-| Failure handling                                                                                                                                                                            | Fail closed - any plugin error rejects the login attempt                                                                                                                                                                                                  |
-| Internal-call capability                                                                                                                                                                    | Curated, per-plugin host-function allowlist (no generic RPC)                                                                                                                                                                                              |
-| Resource limits                                                                                                                                                                             | Fuel metering + wall-clock deadline + linear-memory cap, all configurable                                                                                                                                                                                 |
-| Identity binding                                                                                                                                                                            | Host-issued handles into a plugin-owned `(plugin_name, external_id)` namespace - never a raw `user_id`, never a lookup over existing accounts                                                                                                             |
-| Provisioning domain scope                                                                                                                                                                   | Config-declared `provision_domain_id`; `create_user` rejects any other domain                                                                                                                                                                             |
-| Claims                                                                                                                                                                                      | Reserved-key denylist + size/count caps, enforced by the host                                                                                                                                                                                             |
-| Sensitive headers                                                                                                                                                                           | Hard denylist (`Authorization`, `Cookie`, ...) - never exposable via config                                                                                                                                                                               |
-| Invocation rate limiting                                                                                                                                                                    | Per-source-IP token bucket fronting a per-plugin token bucket + global concurrency cap (mirrors ADR 0020 §7.2)                                                                                                                                            |
-| Load-time checksum mismatch                                                                                                                                                                 | That plugin only is disabled + a critical alert is raised; the node and every other configured auth method still start                                                                                                                                    |
-| Plugin-compromise cleanup                                                                                                                                                                   | Bulk admin `revoke_all` endpoint, scoped per `plugin_name` - disables provisioned users, revokes granted roles, deletes identity links, revokes tokens                                                                                                    |
-| `http_fetch` SSRF policy                                                                                                                                                                    | Connect-time IP re-validation against `allowed_hosts`; no redirects by default                                                                                                                                                                            |
-| Outbound secrets                                                                                                                                                                            | Host-injected from config/env; never placed in guest memory                                                                                                                                                                                               |
-| `assign_role` scope                                                                                                                                                                         | Config-declared role allowlist; system-scope grants always forbidden                                                                                                                                                                                      |
-| WASI imports                                                                                                                                                                                | None registered - only the curated host functions in §6                                                                                                                                                                                                   |
-| Token/plugin-version binding                                                                                                                                                                | Per-plugin `valid_since` cutoff in config; verification rejects any token whose `issued_at` predates it (the fixed `FernetToken` payload cannot carry a per-plugin SHA-256)                                                                                 |
-| Auth-method name collisions                                                                                                                                                                 | Plugin names reserved-word-checked against builtins at load time                                                                                                                                                                                          |
-| Pre-existing (e.g. SCIM) users, low-privilege path                                                                                                                                          | `mapping` mode - plugin transforms claims; Mapping Engine (ADR 0020) remains the terminal identity authority, no binding needed                                                                                                                           |
-| Pre-existing (e.g. SCIM) users, full-authority path                                                                                                                                         | `full_auth` mode + admin-authorized external identity linking - never plugin-self-service                                                                                                                                                                 |
-| Coarser "any user in my domain" resolution                                                                                                                                                  | Rejected - always requires explicit per-identity or per-SCIM-realm admin authorization (§4)                                                                                                                                                               |
-| Routing ahead of method dispatch (e.g. a client that only ever sends a fixed method name, such as `application_credential`-shaped auth, but the real handler must vary by credential shape) | `route` mode - plugin sees the raw, pre-dispatch request and may relabel `identity.methods` + hand a payload to exactly one allowlisted target method; single-shot, never touches `scope`, target method still independently verifies the credential (§4) |
+| Axis                                                                                                                                                                                        | Decision                                                                                                                                                                                                                                                                          |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| WASM runtime                                                                                                                                                                                | [Extism](https://extism.org/) (host runtime built on `wasmtime`)                                                                                                                                                                                                                  |
+| Hook point                                                                                                                                                                                  | Full custom auth method - a plugin is a peer of `password`/`openid`/`k8s`                                                                                                                                                                                                         |
+| Tenancy / trust scope                                                                                                                                                                       | Cluster-global; installed only by system admins via `keystone.conf`                                                                                                                                                                                                               |
+| Distribution                                                                                                                                                                                | Local filesystem path, pinned by a SHA-256 checksum in `keystone.conf`                                                                                                                                                                                                            |
+| Failure handling                                                                                                                                                                            | Fail closed - any plugin error rejects the login attempt                                                                                                                                                                                                                          |
+| Internal-call capability                                                                                                                                                                    | Curated, per-plugin host-function allowlist (no generic RPC)                                                                                                                                                                                                                      |
+| Resource limits                                                                                                                                                                             | Fuel metering + wall-clock deadline + linear-memory cap, all configurable                                                                                                                                                                                                         |
+| Identity binding                                                                                                                                                                            | Host-issued handles into a plugin-owned `(plugin_name, external_id)` namespace - never a raw `user_id`, never a lookup over existing accounts                                                                                                                                     |
+| Provisioning domain scope                                                                                                                                                                   | Config-declared `provision_domain_id`; `create_user` rejects any other domain                                                                                                                                                                                                     |
+| Claims                                                                                                                                                                                      | Reserved-key denylist + size/count caps, enforced by the host                                                                                                                                                                                                                     |
+| Sensitive headers                                                                                                                                                                           | Hard denylist (`Authorization`, `Cookie`, ...) - never exposable via config                                                                                                                                                                                                       |
+| Invocation rate limiting                                                                                                                                                                    | Per-source-IP token bucket fronting a per-plugin token bucket + global concurrency cap (mirrors ADR 0020 §7.2)                                                                                                                                                                    |
+| Load-time checksum mismatch                                                                                                                                                                 | That plugin only is disabled + a critical alert is raised; the node and every other configured auth method still start                                                                                                                                                            |
+| Plugin-compromise cleanup                                                                                                                                                                   | Bulk admin `revoke_all` endpoint, scoped per `plugin_name` - disables provisioned users, revokes granted roles, deletes identity links, revokes tokens                                                                                                                            |
+| `http_fetch` SSRF policy                                                                                                                                                                    | Connect-time IP re-validation against `allowed_hosts`; no redirects by default                                                                                                                                                                                                    |
+| Outbound secrets                                                                                                                                                                            | Host-injected from config/env; never placed in guest memory                                                                                                                                                                                                                       |
+| `assign_role` scope                                                                                                                                                                         | Config-declared role allowlist; system-scope grants always forbidden                                                                                                                                                                                                              |
+| WASI imports                                                                                                                                                                                | None registered - only the curated host functions in §6                                                                                                                                                                                                                           |
+| Token/plugin-version binding                                                                                                                                                                | Per-plugin `valid_since` cutoff in config; verification rejects any token whose `issued_at` predates it (the fixed `FernetToken` payload cannot carry a per-plugin SHA-256). `full_auth` only - a `mapping`-mode token carries no plugin-recoverable field, see §4 caveat and §8. |
+| Auth-method name collisions                                                                                                                                                                 | Plugin names reserved-word-checked against builtins at load time                                                                                                                                                                                                                  |
+| Pre-existing (e.g. SCIM) users, low-privilege path                                                                                                                                          | `mapping` mode - plugin transforms claims; Mapping Engine (ADR 0020) remains the terminal identity authority, no binding needed                                                                                                                                                   |
+| Pre-existing (e.g. SCIM) users, full-authority path                                                                                                                                         | `full_auth` mode + admin-authorized external identity linking - never plugin-self-service                                                                                                                                                                                         |
+| Coarser "any user in my domain" resolution                                                                                                                                                  | Rejected - always requires explicit per-identity or per-SCIM-realm admin authorization (§4)                                                                                                                                                                                       |
+| Routing ahead of method dispatch (e.g. a client that only ever sends a fixed method name, such as `application_credential`-shaped auth, but the real handler must vary by credential shape) | `route` mode - plugin sees the raw, pre-dispatch request and may relabel `identity.methods` + hand a payload to exactly one allowlisted target method; single-shot, never touches `scope`, target method still independently verifies the credential (§4)                         |
 
 ---
 
@@ -317,6 +317,21 @@ struct AuthPluginRequest {
     /// (§1 Threat Model, actor 2) forge whatever source address defeats that
     /// logic. `None` when no trusted address can be established, rather than an
     /// untrusted guess.
+    ///
+    /// **Implementation note on a degenerate configuration.** The resolver
+    /// (`crate::net::resolve_client_ip`) walks the `X-Forwarded-For` chain
+    /// right-to-left looking for the first entry *not* in `trusted_proxies`,
+    /// which is the actual, spoof-resistant client address. If every entry in
+    /// the chain - including the raw TCP peer - is itself a configured
+    /// trusted proxy (an operator misconfiguration: a trusted-proxy CIDR that
+    /// also matches real client addresses, or a chain with no genuine client
+    /// hop at all), the resolver falls back to the trusted peer's own
+    /// address rather than `None`. This is still a real, non-spoofable,
+    /// trusted address (never an unverified guess from the request itself),
+    /// just not necessarily the true originating client - a narrower
+    /// deviation from "`None` when no trusted address can be established"
+    /// than it may first appear, but one worth operators being aware of if
+    /// `trusted_proxies` is scoped too broadly.
     remote_addr: Option<String>,
 }
 
@@ -358,12 +373,12 @@ WasmPlugin {
 },
 ```
 
-The variant carries no `plugin_sha256`: the `FernetToken` payload is a
-fixed enum with no plugin-bearing variant (a `WasmPlugin` login mints an
-ordinary scoped token), so there is nowhere to embed and later re-compare a
-module hash. Version binding is instead keyed on `plugin_name` at
-verification time against the plugin's configured `valid_since` cutoff - see
-"Plugin Version Binding" below.
+The variant carries no `plugin_sha256`: the `FernetToken` payload is a fixed
+enum with no plugin-bearing variant (a `WasmPlugin` login mints an ordinary
+scoped token), so there is nowhere to embed and later re-compare a module hash.
+Version binding is instead keyed on `plugin_name` at verification time against
+the plugin's configured `valid_since` cutoff - see "Plugin Version Binding"
+below.
 
 which flows through the existing `ValidatedSecurityContext::new_for_scope()`
 pipeline (`crates/core/src/auth.rs:79-181`) unchanged - a plugin-authenticated
@@ -441,20 +456,38 @@ does for `full_auth` mode:
   worst it can do is cause a mismatch/no-match against rules an admin wrote
   specifically expecting its own output.
 
-**Plugin-version binding for `mapping` mode.** A `mapping`-mode token gets the
-same `valid_since` cutoff as `full_auth` (§4 "Plugin Version Binding," below),
-and for the same reason - the `FernetToken` payload cannot be extended to carry a
-per-plugin hash. `MappingContext`
-(`crates/core-types/src/mapping/auth.rs`, ADR 0020 §5.3) is **not** extended with
-a `wasm_plugin_sha256` field; instead, at verification the host recovers the
-plugin name from the matched ruleset's own
-`IdentitySource::WasmPlugin { plugin_name }` (loaded via the token's
-`mapping_id`, alongside the existing `ruleset_version` TOCTOU read - 0020 §5.6
-step 6) and rejects the token with `PluginVersionMismatch` if its `issued_at`
-predates that plugin's configured `valid_since`. Patching a `mapping`-mode plugin
-invalidates outstanding tokens exactly like patching a `full_auth`-mode one does,
-subject to the same operator obligation to advance `valid_since` when the plugin
-binary changes.
+**Plugin-version binding for `mapping` mode - not enforceable at verification
+today (implementation deviation, recorded here rather than left implicit).** The
+original intent was the same `valid_since` cutoff as `full_auth`, recovering the
+plugin name at verification time from the matched ruleset's
+`IdentitySource::WasmPlugin { plugin_name }` via the token's `mapping_id`. That
+requires the minted token to actually carry a `mapping_id` (or equivalent
+plugin-recoverable linkage) - it does not: a successful `mapping`-mode login
+mints an ordinary `DomainScope`/`ProjectScope`/... token
+(`FernetToken::from_security_context`'s `AuthenticationContext::Mapping(_)` arm,
+`crates/core-types/src/token.rs`) whose payload carries only
+`methods = ["mapped"]`, the same as any OIDC/K8s/SPIFFE-sourced mapped login.
+There is no `mapping_id` field anywhere in a `FernetToken` payload, so
+verification (`TokenService::validate_to_context_impl`,
+`crates/core/src/token/service.rs`) has nothing to recover a plugin name from
+
+- widening the payload to carry one is exactly the kind of per-record
+  bookkeeping this ADR otherwise avoids, and was judged not worth it for this
+  first iteration.
+
+Consequence: a token minted through a `mapping`-mode plugin is **not**
+invalidated by bumping that plugin's `valid_since`, unlike a `full_auth` token
+(whose `methods` does carry the plugin name and is checked at verification, see
+"Plugin Version Binding" below). An operator responding to a compromised
+`mapping`-mode plugin must fall back to the mechanisms every other token-holder
+relies on: issue revocation events for the affected users, or rely on a short
+token TTL. Closing this gap - by adding a plugin-recoverable field to the
+relevant token payloads - is left as future work (§8), not required for this
+ADR's threat model, since `mapping` mode's own structural constraint (the plugin
+never asserts an identity - §4 "Why this needs no identity binding at all")
+already bounds what a compromised `mapping`-mode plugin can do to "produce
+claims the Mapping Engine's already-authored rules for it will match or reject,"
+not "assert an identity directly."
 
 **Capability restriction.** `provision_user`, `find_user`, and `assign_role`
 (§6.B–D) are meaningless in `mapping` mode - the Mapping Engine owns
@@ -588,14 +621,14 @@ look as though the client had requested that method directly, which is exactly
 the wrong picture for an operator investigating a routing plugin gone wrong.
 
 **No router version binding on the issued token - by design.** A `route`-mode
-plugin does not mint a token; the target method it routes to does, and that token
-is subject to the _target's_ version binding (the target `plugin_name`'s
+plugin does not mint a token; the target method it routes to does, and that
+token is subject to the _target's_ version binding (the target `plugin_name`'s
 `valid_since` cutoff, for a `full_auth` or `mapping` target), not the router's.
 This is intentional, not an oversight: the token-version-binding defense (§4
 "Plugin Version Binding") exists to invalidate credentials a _vulnerable
 authenticator_ minted, and a router never authenticates - it cannot mint a
-credential for anyone the target method didn't independently verify (constraint 4
-above). Patching a buggy router therefore has nothing to retroactively
+credential for anyone the target method didn't independently verify (constraint
+4 above). Patching a buggy router therefore has nothing to retroactively
 invalidate: any token that exists was authorized by a target method's own
 still-bound verification, and the router's fix takes effect on the next request
 the instant its new module loads at startup (§5). The one thing a router bug
@@ -651,15 +684,43 @@ Mechanically:
    provision** - a password-authenticated admin account, a user created via the
    API, or an identity provisioned by a _different_ plugin are all structurally
    unreachable, not merely policy-forbidden.
-2. Both return a random, per-invocation opaque `ResolvedIdentityHandle` (e.g. a
-   UUIDv4 unrelated to the real `user_id`), recording
-   `handle -> (user_id, domain_id)` in a map scoped to that `Store`.
-3. If the guest's `Allow.resolved_identity` matches an entry in that map, the
+2. Both return an opaque `ResolvedIdentityHandle` unrelated to the real
+   `user_id`, from which the host can recover `(user_id, domain_id)` on the
+   `Allow.resolved_identity` echo below.
+
+   **Implementation deviation: a signed token, not a per-`Store` map.** The
+   original intent was an in-memory `handle -> (user_id, domain_id)` map scoped
+   to the single `Store` created for that invocation - random, unguessable, and
+   structurally impossible to reuse across invocations because the map itself
+   doesn't outlive one. The actual implementation (`CoreHostFunctions` in
+   `crates/core/src/auth_plugin.rs`) instead HMAC-signs
+   `{plugin_name, user_id, domain_id, expires_at}` with a process-lifetime
+   random key and hands the signed bytes back as the "handle." This is a
+   consequence of how host functions are registered in this implementation (§6
+   deviation, above): the `extism::Function` closures are shared across every
+   concurrent invocation of a plugin's compiled module, not instantiated fresh
+   per `Store`, so there is no per-invocation-scoped place left to keep an
+   in-memory map safely isolated between concurrent requests. A signed, expiring
+   token gives an equivalent security property - unforgeable without the key,
+   and resolves only to exactly what a prior `provision_user`/`find_user` call
+   in _this_ plugin's namespace actually returned - without relying on state
+   scoped to a single invocation. The `expires_at` is set generously past a
+   plugin's own `timeout_ms` budget (default 60 seconds) rather than truly
+   one-shot: the trade-off is a small window in which a captured handle from one
+   invocation could in principle be replayed into a later one, versus the ADR's
+   original "expires with that invocation" property. This is bounded, not
+   open-ended - `find_user`'s live-`domain_id` re-check (step 3,
+   "Admin-Authorized External Identity Linking") still applies to a replayed
+   handle exactly as it would to a fresh one - but it is a real, if narrow,
+   deviation from a strictly per-invocation-scoped handle.
+
+3. If the guest's `Allow.resolved_identity` verifies against the signing key
+   (or, in the originally-intended design, matches an entry in that map), the
    host substitutes the real `(user_id, domain_id)` when constructing the token.
-   If it does not match - a fabricated handle, a handle from a different
-   invocation, or no `provision_user`/`find_user` call was ever made - the
-   request is rejected exactly like any other malformed response (§7), and the
-   mismatch itself is audited as a suspicious event.
+   If it does not verify - a fabricated handle, a tampered handle, one issued
+   for a different plugin, an expired one, or no `provision_user`/`find_user`
+   call was ever made - the request is rejected exactly like any other malformed
+   response (§7), and the mismatch itself is audited as a suspicious event.
 4. A plugin granted **neither** `provision_user` nor `find_user` (§6) has no way
    to produce a valid handle at all, and can therefore only ever `Deny` - this
    is enforced at config-load time: registering a plugin as an `[auth] methods`
@@ -756,8 +817,8 @@ embedded hash**: the `FernetToken` payload is a fixed variant set with no
 plugin-bearing case (a `WasmPlugin` login mints an ordinary scoped token that
 already records its own `issued_at`), so there is no room to embed a
 `plugin_sha256` in the token and re-compare it later. Instead, each plugin's
-config carries an optional `valid_since` timestamp (§5). On every verification of
-a `WasmPlugin`-authenticated token, the host compares the token's `issued_at`
+config carries an optional `valid_since` timestamp (§5). On every verification
+of a `WasmPlugin`-authenticated token, the host compares the token's `issued_at`
 against the `valid_since` configured for that `plugin_name`: if `issued_at`
 predates `valid_since`, the token is rejected with a dedicated
 `PluginVersionMismatch` error, forcing re-authentication against the current
@@ -830,11 +891,11 @@ Each of the above is individually CADF-audited exactly as its single-record
 equivalent already is (§6.E) - this endpoint is a bulk _driver_ of existing,
 already-reviewed disable/revoke/unlink operations, not a new privileged code
 path with its own semantics. It responds with a per-category count (users
-disabled, links deleted) so the operator gets confirmation
-of blast radius covered without a separate audit-trail query, and re-running it
-against a plugin with no remaining state is a no-op (`200`, all-zero counts) -
-safe to include in a standard incident-response runbook without first checking
-whether a prior run already covered it.
+disabled, links deleted) so the operator gets confirmation of blast radius
+covered without a separate audit-trail query, and re-running it against a plugin
+with no remaining state is a no-op (`200`, all-zero counts) - safe to include in
+a standard incident-response runbook without first checking whether a prior run
+already covered it.
 
 **Why plugin-name-scoped, not version-scoped.** The action targets everything
 attributable to `plugin_name`, not only writes made while one specific plugin
@@ -843,19 +904,20 @@ require every provisioning/grant/link record to carry the `sha256` active at
 write time - bookkeeping this ADR does not otherwise need (version binding,
 above, is a single per-plugin `valid_since` timestamp compared to a token's
 `issued_at`, and needs no per-record hash at all) - and would leave state from
-_any other_ version of the same plugin untouched, the wrong default the moment an
-operator's trust in a plugin binary has been broken. An operator confident only
-one version is implicated can still hand-verify individual accounts against the
-audit trail's `plugin_name` + timestamp before re-enabling them; this endpoint
-optimizes for "get everything shut off fast," not selective reinstatement.
+_any other_ version of the same plugin untouched, the wrong default the moment
+an operator's trust in a plugin binary has been broken. An operator confident
+only one version is implicated can still hand-verify individual accounts against
+the audit trail's `plugin_name` + timestamp before re-enabling them; this
+endpoint optimizes for "get everything shut off fast," not selective
+reinstatement.
 
 ### Reserved Auth-Method Names
 
 At config load, a plugin's name is checked against the fixed set of builtin
 method names (`password`, `token`, `openid`, `application_credential`, `trust`,
-`webauthn`, `mapped`, `k8s`, `admin`). A collision is a startup configuration
-error - a plugin can never be registered under a name that would shadow or be
-confused with a compiled-in auth method.
+`webauthn`, `mapped`, `k8s`, `admin`, `totp`). A collision is a startup
+configuration error - a plugin can never be registered under a name that would
+shadow or be confused with a compiled-in auth method.
 
 A `route`-mode plugin's `route_targets` (§5) list is checked against the same
 set, minus the strictly reachable subset: `admin` and `trust` may never appear
@@ -921,7 +983,7 @@ max_concurrent_invocations = 16
 # identity.methods = [application_credential]. This plugin inspects the
 # application_credential_id shape and, for IDs matching its own convention,
 # reroutes the request to a separately-registered full_auth plugin
-# (tf_appcred_handler, not shown) that performs the real verification;
+# (hacked_appcred_handler, not shown) that performs the real verification;
 # every other application_credential request passes through unmodified to
 # the builtin handler.
 [auth_plugin.tf_appcred_router]
@@ -934,7 +996,7 @@ inspect_methods = application_credential
 # Methods this plugin is permitted to reroute a request to. A Route
 # response naming anything else is rejected as malformed (§4 "Guest
 # Contract - route Mode"), never dispatched.
-route_targets = tf_appcred_handler
+route_targets = hacked_appcred_handler
 capabilities =
 timeout_ms = 200
 fuel_limit = 5000000
@@ -987,10 +1049,28 @@ machinery until a per-tenant plugin model is actually needed.
 ## 6. Host Functions: Curated Capability Allowlist
 
 A plugin can only call the host functions listed in its `capabilities` config
-entry (§5). Anything not listed is not registered into that plugin's
-`extism::Plugin` instance at all - an unlisted call is not a permission _check_
-that can be bypassed, it is a function that structurally does not exist in the
-guest's import table.
+entry (§5). The security property is that an unlisted call can never be
+successfully exercised, structurally or otherwise - not merely a permission
+_check_ that could be bypassed by a bug in the check itself.
+
+**Implementation deviation from "not registered at all."** The original intent
+was that an ungranted function is absent from the guest's import table entirely.
+The actual implementation registers all four host functions (§6 A-D) into every
+plugin's compiled `extism::Plugin` module whenever _any_ `HostFunctions`
+provider is configured, and each function's closure independently rejects a call
+its plugin's `capabilities` didn't grant, before doing anything else. This is a
+deliberate, documented substitution
+(`crates/auth-plugin-runtime/src/host_functions.rs`), not an oversight:
+`wasmtime` requires every guest-declared import to resolve at instantiation time
+regardless of whether the compiled module actually calls it - an unresolved
+import fails _every_ invocation of that module, not just the specific call that
+would have used it - so selectively omitting a function's registration per
+plugin is not viable for a single compiled module shared across
+differently-configured invocations. From the guest's perspective the result is
+identical either way: an ungranted capability structurally cannot be exercised,
+since the closure's gate check runs before any host-side effect (DB write,
+outbound HTTP call, etc.) and is not something plugin-supplied input can
+influence or bypass.
 
 ### A. `http_fetch`
 
@@ -1031,6 +1111,12 @@ than an implementation detail:
   (`http_fetch_follow_redirects = true`), and even then each redirect hop is
   re-validated against both `allowed_hosts` and the IP-range check above before
   being followed - a redirect is not permitted to silently escape the allowlist.
+  The whole chain shares a single `timeout_ms` wall-clock budget, not one budget
+  per hop: each hop's own request timeout is the _remaining_ time before that
+  shared deadline, so a redirect chain cannot cost up to `MAX_REDIRECTS + 1`
+  times the plugin's configured budget - the total wall-clock cost of a
+  (possibly multi-hop) `http_fetch` call stays bounded to the same `timeout_ms`
+  §7's per-invocation deadline is sized against.
 - **Outbound secrets are host-injected, never guest-visible.** If a plugin needs
   to authenticate to its external service, the secret value (API key, bearer
   token) is **not** embedded in the `.wasm` binary and is **not** passed into
@@ -1271,6 +1357,18 @@ Defaults are conservative and layered (§5 example: 20/min per source, 300/min
 per plugin, 16 concurrent) and all three are per-plugin, not global, so one
 plugin's traffic cannot starve another's budget.
 
+**Bound 1's keyed store is shrunk on a periodic tick, not per-request.** Every
+distinct source address bound 1 sees - necessarily including anonymous,
+pre-authentication callers (§1 Threat Model, actor 2) - allocates an entry in
+the underlying keyed rate-limit store, which is never freed on its own; left
+unaddressed, a long-running process accumulates one entry per distinct source
+address it has ever seen. The process's existing minute-scale background
+maintenance tick evicts entries whose bucket has fully recovered (i.e. is
+indistinguishable from a source never seen before) for every loaded plugin's
+bound-1 store - a straightforward memory-bookkeeping fix, not a rate-limiting
+behavior change: an evicted, truly-idle source's next request is treated exactly
+as a first-ever request would be, which is already correct.
+
 **Residual gap - deployments without a trusted proxy chain.** Bound 1 depends on
 `remote_addr` being populated from a trusted hop (§4); when no trusted proxy is
 configured, `AuthPluginRequest.remote_addr` is `None` for every caller (Keystone
@@ -1327,6 +1425,15 @@ attacker-influenced content back into logs.
 
 ## 8. Open Questions / Future Work
 
+- **`mapping`-mode version binding at verification - not implemented.** See §4
+  "Plugin-version binding for `mapping` mode." A `mapping`-mode token has no
+  plugin-recoverable field in its `FernetToken` payload, so bumping a
+  `mapping`-mode plugin's `valid_since` does not invalidate outstanding tokens
+  the way it does for `full_auth`. Closing this requires either widening a token
+  payload to carry a plugin-recoverable linkage (the per-record bookkeeping this
+  ADR otherwise avoids) or a different invalidation mechanism entirely. Until
+  then, incident response for a compromised `mapping`-mode plugin relies on
+  revocation events or short token TTLs, not `valid_since`.
 - **Per-domain plugin scoping.** This ADR deliberately restricts plugins to
   cluster-global, system-admin-installed, to keep the trust model simple for a
   first iteration. Extending this to a `(domain_id, provider_id)`-scoped model -
@@ -1357,9 +1464,10 @@ attacker-influenced content back into logs.
   of the token-level protection version binding (§4 "Plugin Version Binding")
   already provides. What remains genuinely open: that endpoint is deliberately
   `plugin_name`-scoped, not scoped to a single plugin binary version (see its
-  "Why plugin-name-scoped" rationale) - an operator who wants to reinstate only the
-  state attributable to a _different_, non-vulnerable version of the same plugin
-  must still identify and re-enable that subset by hand against the audit trail.
+  "Why plugin-name-scoped" rationale) - an operator who wants to reinstate only
+  the state attributable to a _different_, non-vulnerable version of the same
+  plugin must still identify and re-enable that subset by hand against the audit
+  trail.
 - **Coarser domain-scoped resolution (considered, rejected).** An earlier draft
   of this ADR considered letting a `full_auth` plugin resolve any user within
   its `provision_domain_id` without a per-identity admin link, purely to reduce

@@ -169,6 +169,17 @@ impl ValidatedSecurityContext {
             // this plugin (normally alongside a `sha256` bump) past the
             // token's `issued_at`, the token is stale and rejected -
             // forcing re-authentication against the current plugin logic.
+            //
+            // Defense-in-depth only: the real, always-reachable enforcement
+            // point for an already-minted `WasmPlugin` token is
+            // `TokenService::validate_to_context_impl`
+            // (`crates/core/src/token/service.rs`), which checks the
+            // token's `methods` against configured plugins directly - the
+            // context re-verification path there reconstructs an ordinary
+            // `AuthenticationContext::Token`, not `WasmPlugin`, so this arm
+            // is never actually exercised by token re-verification today.
+            // It stays in place in case a future change threads `WasmPlugin`
+            // back through re-verification.
             AuthenticationContext::WasmPlugin { plugin_name, .. } => {
                 if let Some(token) = ctx.token() {
                     let cfg = state.config_manager.config.read().await;
@@ -251,6 +262,20 @@ impl ValidatedSecurityContext {
                 // plugin name is recovered from the ruleset's own
                 // `IdentitySource::WasmPlugin`, so no per-plugin hash has to
                 // be embedded in the (unextendable) `FernetToken` payload.
+                //
+                // Not reachable in production today (ADR §4/§8 amendment):
+                // a `mapping`-mode token carries only `methods = ["mapped"]`
+                // with no `mapping_id`, and `TokenService::
+                // validate_to_context_impl` reconstructs re-verified,
+                // non-ApplicationCredential/Trust tokens as
+                // `AuthenticationContext::Token`, never `Mapping` - so
+                // `ctx.token()` and a `Mapping` context are never both
+                // present outside a hand-built test `SecurityContext`. Kept
+                // as the documented, correct-if-ever-reachable behavior
+                // rather than removed, since the underlying design intent
+                // (recover the plugin from the matched ruleset) is still
+                // right if a future change threads a mapping identifier
+                // through re-verification.
                 if let Some(token) = ctx.token() {
                     let ruleset = state
                         .provider

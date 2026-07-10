@@ -29,6 +29,7 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
+use governor::clock::Clock;
 use governor::{DefaultDirectRateLimiter, DefaultKeyedRateLimiter, Quota, RateLimiter};
 use hmac::{Hmac, KeyInit, Mac};
 use openstack_keystone_audit::{CadfEventPayload, Observer, Target};
@@ -257,32 +258,62 @@ impl PluginInvocationLimiter {
     /// Bound 1 (only meaningful when `remote_addr` is known - a `None`
     /// caller silently skips this bound, falling back to bounds 2/3, per
     /// ADR §7's documented accepted gap for un-proxied deployments).
-    pub(crate) fn check_per_source(&self, remote_addr: Option<&str>) -> Result<(), RateLimitBound> {
+    ///
+    /// On rejection, the paired [`Duration`] is the real wait time governor
+    /// reports (`NotUntil::wait_time_from`), mirroring
+    /// `RateLimitState::check_ip`'s ADR-0022 pattern so both limiter
+    /// families surface an accurate `Retry-After` rather than a guess.
+    pub(crate) fn check_per_source(
+        &self,
+        remote_addr: Option<&str>,
+    ) -> Result<(), (RateLimitBound, std::time::Duration)> {
         match remote_addr {
             Some(addr) => self
                 .per_source
                 .check_key(&addr.to_string())
-                .map_err(|_| RateLimitBound::PerSource),
+                .map_err(|not_until| {
+                    let wait = not_until.wait_time_from(self.per_source.clock().now());
+                    (RateLimitBound::PerSource, wait)
+                }),
             None => Ok(()),
         }
     }
 
     /// Bound 2.
-    pub(crate) fn check_per_plugin(&self) -> Result<(), RateLimitBound> {
-        self.per_plugin
-            .check()
-            .map_err(|_| RateLimitBound::PerPlugin)
+    pub(crate) fn check_per_plugin(&self) -> Result<(), (RateLimitBound, std::time::Duration)> {
+        self.per_plugin.check().map_err(|not_until| {
+            let wait = not_until.wait_time_from(self.per_plugin.clock().now());
+            (RateLimitBound::PerPlugin, wait)
+        })
     }
 
     /// Bound 3 - rejects immediately when saturated, never queues (ADR §7:
     /// "to avoid building an unbounded backlog of pending authentications
-    /// under load").
+    /// under load"). A semaphore has no token-bucket refill schedule, so
+    /// there's no real wait time to report; callers get a fixed 1-second
+    /// hint, the same floor `check_ip` applies to its own worst case.
     pub(crate) fn try_acquire_concurrency_permit(
         &self,
-    ) -> Result<tokio::sync::SemaphorePermit<'_>, RateLimitBound> {
-        self.concurrency
-            .try_acquire()
-            .map_err(|_| RateLimitBound::Concurrency)
+    ) -> Result<tokio::sync::SemaphorePermit<'_>, (RateLimitBound, std::time::Duration)> {
+        self.concurrency.try_acquire().map_err(|_| {
+            (
+                RateLimitBound::Concurrency,
+                std::time::Duration::from_secs(1),
+            )
+        })
+    }
+
+    /// Drop per-source (bound 1) rate-limit state for source addresses that
+    /// haven't been seen recently. Every distinct `remote_addr` bound 1 sees
+    /// (necessarily including anonymous, pre-authentication callers - ADR §1
+    /// Threat Model actor 2) allocates an entry in the keyed store that
+    /// `governor` never expires on its own; left uncalled, a long-running
+    /// process accumulates one entry per distinct source address forever.
+    /// Intended to be called periodically (e.g. from the process's existing
+    /// minute-scale cleanup tick), not per-request.
+    pub fn shrink_idle_sources(&self) {
+        self.per_source.retain_recent();
+        self.per_source.shrink_to_fit();
     }
 }
 
@@ -454,6 +485,24 @@ impl CoreHostFunctions {
         // must resolve the same user, never create a duplicate (ADR §6.B).
         if let Some(user_id) = dpi.find(&ctx, plugin_name, &request.external_id).await? {
             let domain_id = identity.get_user_domain_id(&ctx, &user_id).await?;
+            // Domain restriction is re-checked at *resolve* time, not only
+            // at (initial) provisioning time (ADR §4 "Admin-Authorized
+            // External Identity Linking" - the same live-domain re-check
+            // `find_user_inner` applies below). This entry is not
+            // necessarily one this plugin itself created via
+            // `provision_user`: an admin may have linked a pre-existing
+            // user to this `(plugin_name, external_id)` mapping, and that
+            // user's domain can move after linking. Without this check, a
+            // repeat `provision_user` call for the same `external_id` would
+            // keep signing a handle for a user this plugin is no longer
+            // configured to reach - the exact gap `find_user_inner` closes,
+            // reopened one call path over.
+            if !Self::domain_allowed(&config, &domain_id) {
+                return Err(DynamicPluginHostError::DomainNotAllowed {
+                    plugin_name: plugin_name.to_string(),
+                    domain_id,
+                });
+            }
             return Ok(self.sign_handle(plugin_name, &user_id, &domain_id));
         }
 
@@ -726,6 +775,14 @@ impl CoreHostFunctions {
         } else {
             0
         };
+        // A per-hop timeout of `timeout_ms` each would let a chain of
+        // redirects cost up to `MAX_REDIRECTS + 1` times the plugin's
+        // configured budget in wall-clock time - this call's total
+        // wall-clock cost (already counted against the plugin's overall
+        // invocation `timeout_ms` per §7) must stay bounded to that single
+        // budget regardless of how many hops it takes.
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_millis(config.timeout_ms);
 
         let auth_header = match (
             &config.http_fetch_auth_header,
@@ -758,6 +815,15 @@ impl CoreHostFunctions {
                 .ok_or_else(|| DynamicPluginHostError::UnsupportedScheme(host.clone()))?;
             let addr = resolve_validated_addr(&host, port).await?;
 
+            let remaining_ms = deadline
+                .saturating_duration_since(std::time::Instant::now())
+                .as_millis() as u64;
+            if remaining_ms == 0 {
+                return Err(DynamicPluginHostError::Http(
+                    "timeout_ms budget exhausted following redirects".to_string(),
+                ));
+            }
+
             let response = self
                 .http_fetcher
                 .fetch(
@@ -766,7 +832,7 @@ impl CoreHostFunctions {
                     addr,
                     &request.headers,
                     request.body.as_deref(),
-                    config.timeout_ms,
+                    remaining_ms,
                     auth_header.as_ref().map(|(h, s)| (h.as_str(), s.as_str())),
                     MAX_RESPONSE_BYTES,
                 )
@@ -1261,6 +1327,39 @@ mod tests {
             .expect("repeat provisioning should resolve the existing mapping");
         let (user_id, _) = host.verify_handle("acme", &handle).unwrap();
         assert_eq!(user_id, "u1");
+    }
+
+    /// The idempotent repeat-call path (an entry already exists in the
+    /// `(plugin_name, external_id)` mapping, whether from this plugin's own
+    /// prior `provision_user` or an admin-authorized identity link) must
+    /// re-check the resolved user's *live* domain, exactly like
+    /// `find_user` does - a user moved outside the plugin's configured
+    /// domain(s) since being linked/provisioned must stop being reachable
+    /// immediately, not just via `find_user` (ADR §4 "Admin-Authorized
+    /// External Identity Linking": "Domain restriction is re-checked at
+    /// resolve time, not only at link time").
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_provision_user_repeat_call_denies_after_domain_move() {
+        let mut identity_mock = MockIdentityProvider::default();
+        // The user has since moved outside the plugin's configured domain.
+        identity_mock
+            .expect_get_user_domain_id()
+            .returning(|_, _| Ok("some-other-domain".to_string()));
+        identity_mock.expect_create_user().never();
+
+        let mut dpi_mock = MockDynamicPluginIdentityProvider::default();
+        dpi_mock
+            .expect_find()
+            .returning(|_, _, _| Ok(Some("u1".to_string())));
+        dpi_mock.expect_create_or_resolve().never();
+
+        let (host, _receivers) =
+            host_functions(identity_mock, dpi_mock, "provision_domain_id = d1\n").await;
+
+        let err = host
+            .provision_user("acme", provision_request("ext-1", "d1"))
+            .expect_err("a user moved outside the plugin's domain(s) must not resolve a handle");
+        assert!(err.contains("outside plugin"));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1803,5 +1902,42 @@ mod tests {
         assert_eq!(response.status, 200);
         assert_eq!(response.body, "final");
         assert_eq!(fetcher.calls().len(), 2, "both hops must call the fetcher");
+    }
+
+    /// `shrink_idle_sources` must not evict a source whose bucket hasn't
+    /// actually recovered yet - it exists to reclaim memory from truly idle
+    /// (fully-recovered) sources (ADR §7, unbounded-keyed-store concern), not
+    /// to reset an in-flight rate-limit decision. With a 1-per-minute quota,
+    /// a source that has just consumed its only token is nowhere near
+    /// "indistinguishable from fresh"; if `shrink_idle_sources` wrongly
+    /// dropped it, the immediately-following check would incorrectly
+    /// succeed against a brand-new bucket instead of being rejected.
+    #[test]
+    fn test_shrink_idle_sources_does_not_reset_an_exhausted_bucket() {
+        let ini = "[auth_plugin.p]\npath = /dev/null\nsha256 = 0\nmode = full_auth\ninvocation_rate_limit_per_source_per_minute = 1\n";
+        let config: openstack_keystone_config::DynamicPluginConfig = {
+            use config::{Config as RawConfig, File, FileFormat};
+            #[derive(serde::Deserialize)]
+            struct Wrapper {
+                auth_plugin: HashMap<String, openstack_keystone_config::DynamicPluginConfig>,
+            }
+            let c = RawConfig::builder()
+                .add_source(File::from_str(ini, FileFormat::Ini))
+                .build()
+                .unwrap();
+            let wrapper: Wrapper = c.try_deserialize().unwrap();
+            wrapper.auth_plugin.into_iter().next().unwrap().1
+        };
+
+        let limiter = PluginInvocationLimiter::new(&config);
+        limiter
+            .check_per_source(Some("203.0.113.1"))
+            .expect("first call within quota should succeed");
+        limiter.shrink_idle_sources();
+        let result = limiter.check_per_source(Some("203.0.113.1"));
+        assert!(
+            result.is_err(),
+            "an exhausted source's bucket must not be reset by a shrink pass"
+        );
     }
 }

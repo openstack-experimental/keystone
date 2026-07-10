@@ -16,6 +16,14 @@ forking:
 - **Namespace-scoped identity** - plugins can only authenticate users they
   themselves provision (except via admin-authorized linking)
 
+All code in this guide is derived from the real, compiled reference plugin
+fixture used by Keystone's own test suite
+(`crates/auth-plugin-runtime/tests/fixtures/reference-plugin/src/lib.rs`) and
+the actual wire contract types
+(`crates/auth-plugin-runtime/src/{auth_contract,mapping_contract,route_contract}.rs`).
+If your plugin's JSON doesn't round-trip against those types, the host rejects
+it as malformed (ADR 0025 §7) - there is no leniency in the decoder.
+
 See [ADR 0025](../adr/0025-dynamic-auth-plugins.md) for the complete threat
 model and design rationale.
 
@@ -23,7 +31,7 @@ model and design rationale.
 
 ## Quick Start: Hello-World Plugin
 
-Build and test a minimal plugin in 10 minutes.
+Build and test a minimal `full_auth` plugin.
 
 ### 1. Setup
 
@@ -50,82 +58,111 @@ edition = "2021"
 crate-type = ["cdylib"]  # REQUIRED: produces .wasm, not .rlib
 
 [dependencies]
-extism-pdk = "0.3"
+extism-pdk = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ```
 
 ### 3. Plugin Code
 
+Every host function Keystone exposes takes exactly **one** JSON-encoded string
+argument and returns exactly **one** JSON-encoded string - never multiple typed
+arguments. The `#[host_fn] extern "ExtismHost"` block below is how you declare
+that ABI to `extism-pdk`; you build/parse the JSON yourself with `serde_json`.
+
 Edit `src/lib.rs`:
 
 ```rust
-use extism_pdk::{plugin_fn, FnResult, Json};
+use extism_pdk::{host_fn, plugin_fn, FnResult, Json};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
-#[derive(Deserialize)]
-pub struct AuthRequest {
-    pub payload: serde_json::Value,
-    pub headers: std::collections::HashMap<String, String>,
+// Host functions Keystone registers for this plugin, gated by its
+// `capabilities` config entry (ADR 0025 §6). One JSON string in, one JSON
+// string out - this is the actual ABI, not the typed multi-arg signature a
+// higher-level SDK might expose in other languages.
+#[host_fn]
+extern "ExtismHost" {
+    fn provision_user(request_json: String) -> String;
+    fn find_user(external_id_json: String) -> String;
+}
+
+// The `payload` shape is whatever your plugin's own config block declares
+// under `identity.<method_name>` in the client's auth request - you define
+// this struct to match what your clients will send.
+#[derive(Debug, Deserialize)]
+pub struct MyPayload {
+    pub username: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AuthPluginRequest {
+    pub payload: MyPayload,
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    #[serde(default)]
     pub remote_addr: Option<String>,
 }
 
-#[derive(Serialize)]
-pub struct UserCreate {
-    pub name: String,
-    pub domain_id: String,
-}
-
-#[derive(Serialize)]
-pub struct ResolvedIdentityHandle(String);
-
-#[derive(Serialize)]
-pub enum AuthResponse {
+// Wire-format requirement: internally tagged on "decision", snake_case.
+// `{"decision":"allow","resolved_identity":"...","claims":{...}}` /
+// `{"decision":"deny","reason":"..."}` - any other shape is rejected as
+// malformed before your plugin's logic is even considered to have run.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case", tag = "decision")]
+pub enum AuthPluginResponse {
     Allow {
-        resolved_identity: ResolvedIdentityHandle,
-        claims: std::collections::HashMap<String, serde_json::Value>,
+        resolved_identity: String,
+        claims: HashMap<String, serde_json::Value>,
     },
     Deny {
         reason: String,
     },
 }
 
-/// Authenticate a user (full_auth mode)
+/// Authenticate a user (full_auth mode).
 #[plugin_fn]
-pub fn authenticate(req: Json<AuthRequest>) -> FnResult<Json<AuthResponse>> {
-    // Extract credentials from req.payload
-    let payload = &req.0.payload;
-    let username = payload
-        .get("username")
-        .and_then(|v| v.as_str())
-        .ok_or("Missing username")?;
+pub fn authenticate(req: Json<AuthPluginRequest>) -> FnResult<Json<AuthPluginResponse>> {
+    let payload = req.0.payload;
 
-    // Simple demo: accept any non-empty username
-    if username.is_empty() {
-        return Ok(Json(AuthResponse::Deny {
-            reason: "Empty username".to_string(),
+    // Simple demo: accept any non-empty username. In a real plugin, verify
+    // against an external service, check a signature, etc. *before* calling
+    // provision_user - provision_user/find_user only bind an already-verified
+    // external identity to a Keystone user, they perform no verification of
+    // their own.
+    if payload.username.is_empty() {
+        return Ok(Json(AuthPluginResponse::Deny {
+            reason: "empty username".to_string(),
         }));
     }
 
-    // In real plugins: verify against external service, check password, etc.
-    // For this demo, we'll skip that and just allow.
+    // provision_user's request body: {"external_id": "...", "user": {...}}.
+    // `user` accepts only `domain_id`, `name`, `enabled` (optional), `extra`
+    // (optional map) - an intentionally narrow allowlist (ADR §6.B "Field
+    // sanitization"); there is no `id`, `password`, or admin-ish option
+    // field a plugin can set.
+    let provision_request = serde_json::json!({
+        "external_id": payload.username,
+        "user": {
+            "domain_id": "default",
+            "name": payload.username,
+        },
+    });
+    // The host function itself takes/returns a single JSON string - encode
+    // the request, decode the response yourself.
+    let handle_json = unsafe { provision_user(provision_request.to_string())? };
+    // provision_user's success response is a bare JSON string (the opaque
+    // handle) - NOT `{"handle": "..."}`.
+    let resolved_identity: String = serde_json::from_str(&handle_json)?;
 
-    // Call provision_user to create (or reuse) a local user for this external ID
-    let user = UserCreate {
-        name: username.to_string(),
-        domain_id: "default".to_string(),
-    };
+    let mut claims = HashMap::new();
+    claims.insert(
+        "external_username".to_string(),
+        serde_json::Value::String(payload.username),
+    );
 
-    // (This is pseudocode - actual host function calls have a different shape,
-    // shown in "Host Functions" section below)
-    let handle = provision_user(username, user)?;
-
-    // Optionally attach claims for downstream OPA policy
-    let mut claims = std::collections::HashMap::new();
-    claims.insert("external_username".to_string(), serde_json::Value::String(username.to_string()));
-
-    Ok(Json(AuthResponse::Allow {
-        resolved_identity: handle,
+    Ok(Json(AuthPluginResponse::Allow {
+        resolved_identity,
         claims,
     }))
 }
@@ -230,28 +267,63 @@ optionally provisions users.
 **Example: OIDC-like SSO**
 
 ```rust
+use extism_pdk::{host_fn, plugin_fn, FnResult, Json};
+use std::collections::HashMap;
+
+#[host_fn]
+extern "ExtismHost" {
+    fn http_fetch(request_json: String) -> String;
+    fn provision_user(request_json: String) -> String;
+}
+
 #[plugin_fn]
-pub fn authenticate(req: Json<AuthRequest>) -> FnResult<Json<AuthResponse>> {
-    let payload = &req.0.payload;
-    let token = payload.get("token").and_then(|v| v.as_str()).ok_or("No token")?;
+pub fn authenticate(req: Json<AuthPluginRequest>) -> FnResult<Json<AuthPluginResponse>> {
+    let token = req.0.payload.get("token").and_then(|v| v.as_str()).ok_or("No token")?;
 
-    // Verify token against external OIDC provider (HTTP call from host)
-    let oidc_userinfo = http_fetch("https://idp.example.com/userinfo", token)?;
-    let sub = oidc_userinfo.get("sub").ok_or("No 'sub' claim")?;
+    // http_fetch's request body: {"method": "GET", "url": "...", "headers": {...}, "body": null}.
+    // Authentication to the upstream service (if any) is injected by the
+    // host from `http_fetch_auth_header`/`http_fetch_auth_secret_env`
+    // config - it is never something this plugin supplies itself.
+    let fetch_request = serde_json::json!({
+        "method": "GET",
+        "url": "https://idp.example.com/userinfo",
+        "headers": {"Authorization": format!("Bearer {token}")},
+    });
+    let response_json = unsafe { http_fetch(fetch_request.to_string())? };
+    // http_fetch's response: {"status": 200, "headers": {...}, "body": "..."}
+    // - body is the raw response text; parse it yourself.
+    let response: serde_json::Value = serde_json::from_str(&response_json)?;
+    let status = response.get("status").and_then(|v| v.as_u64()).unwrap_or(0);
+    if status != 200 {
+        return Ok(Json(AuthPluginResponse::Deny {
+            reason: format!("IDP returned {status}"),
+        }));
+    }
+    let body: serde_json::Value = serde_json::from_str(
+        response.get("body").and_then(|v| v.as_str()).unwrap_or("{}"),
+    )?;
+    let sub = body.get("sub").and_then(|v| v.as_str()).ok_or("No 'sub' claim")?;
 
-    // provision_user creates a local user linked to this external ID
-    // (Real host function signature differs - see "Host Functions")
-    let handle = provision_user(sub, UserCreate {
-        name: oidc_userinfo.get("name").unwrap_or(&sub),
-        domain_id: "default",
-    })?;
+    let provision_request = serde_json::json!({
+        "external_id": sub,
+        "user": {
+            "domain_id": "default",
+            "name": body.get("name").and_then(|v| v.as_str()).unwrap_or(sub),
+        },
+    });
+    let handle_json = unsafe { provision_user(provision_request.to_string())? };
+    let resolved_identity: String = serde_json::from_str(&handle_json)?;
 
     let mut claims = HashMap::new();
-    claims.insert("email", oidc_userinfo.get("email")?);
-    claims.insert("groups", oidc_userinfo.get("groups")?);
+    if let Some(email) = body.get("email") {
+        claims.insert("email".to_string(), email.clone());
+    }
+    if let Some(groups) = body.get("groups") {
+        claims.insert("groups".to_string(), groups.clone());
+    }
 
-    Ok(Json(AuthResponse::Allow {
-        resolved_identity: handle,
+    Ok(Json(AuthPluginResponse::Allow {
+        resolved_identity,
         claims,
     }))
 }
@@ -276,6 +348,14 @@ identity decision via configured rules.
 uses claims to match against `MappingRuleSet` rules, resolving to real users if
 rules fire.
 
+**A `__keystone_workload_id` claim is required.** Every `mapping`-mode
+response's `claims` map must include a string-valued `__keystone_workload_id`
+key - it is the Mapping Engine's `unique_workload_id` (ADR 0020 §3), which has
+no dedicated field on `MappingResponse::Claims`. A response missing it, or where
+it isn't a string, is rejected as malformed (`MissingWorkloadId`) before the
+Mapping Engine ever sees it. Unlike every other `__keystone`-prefixed key, this
+one is left in the claims map so mapping rules can also reference it directly.
+
 **Admin setup required:**
 
 1. Deploy plugin with `mode = mapping`
@@ -287,48 +367,81 @@ rules fire.
 **Example: Parse custom header and produce claims**
 
 ```rust
-#[plugin_fn]
-pub fn mapping(req: Json<AuthRequest>) -> FnResult<Json<MappingResponse>> {
-    // Extract custom header (must be in exposed_headers config)
-    let header_value = req.0.headers.get("X-Custom-Auth")?;
+use extism_pdk::{plugin_fn, FnResult, Json};
+use std::collections::HashMap;
 
-    // Parse into claims (could also call external service via http_fetch)
+// Wire shape mirrors AuthPluginResponse's tagging convention:
+// {"decision":"claims","claims":{...}} / {"decision":"deny","reason":"..."}.
+// There is no `Allow` variant - a mapping-mode plugin cannot terminate
+// authentication, only feed the engine that does.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "snake_case", tag = "decision")]
+pub enum MappingResponse {
+    Claims { claims: HashMap<String, serde_json::Value> },
+    Deny { reason: String },
+}
+
+#[plugin_fn]
+pub fn mapping(req: Json<AuthPluginRequest>) -> FnResult<Json<MappingResponse>> {
+    // Extract custom header (must be in this plugin's exposed_headers config
+    // - anything not explicitly allowlisted there is simply absent here,
+    // never silently forwarded).
+    let header_value = req
+        .0
+        .headers
+        .get("X-Custom-Auth")
+        .ok_or("missing X-Custom-Auth header")?;
+
     let parts: Vec<&str> = header_value.split(':').collect();
     if parts.len() < 2 {
         return Ok(Json(MappingResponse::Deny {
-            reason: "Malformed header".to_string(),
+            reason: "malformed header".to_string(),
         }));
     }
 
-    // Return flattened claims dict
     let mut claims = HashMap::new();
-    claims.insert("realm", serde_json::Value::String(parts[0]));
-    claims.insert("user_id", serde_json::Value::String(parts[1]));
-    claims.insert("email", serde_json::Value::String(format!("{}@example.com", parts[1])));
+    // Required on every mapping-mode response - see note above.
+    claims.insert(
+        "__keystone_workload_id".to_string(),
+        serde_json::Value::String(parts[1].to_string()),
+    );
+    claims.insert("realm".to_string(), serde_json::Value::String(parts[0].to_string()));
+    claims.insert(
+        "email".to_string(),
+        serde_json::Value::String(format!("{}@example.com", parts[1])),
+    );
 
-    Ok(Json(MappingResponse::Claims(claims)))
+    Ok(Json(MappingResponse::Claims { claims }))
 }
 ```
 
-Corresponding Mapping Engine rule (OPA `MappingRuleSet`):
+Corresponding Mapping Engine rule (`POST /v4/mappings`, ADR 0020 §9.A):
 
 ```json
 {
-  "mapping_ruleset": {
+  "mapping": {
     "domain_id": "default",
+    "source": { "type": "wasm_plugin", "plugin_name": "my_mapping_plugin" },
+    "domain_resolution_mode": { "type": "fixed" },
+    "enabled": true,
     "rules": [
       {
-        "provider_id": "wasm:my_mapping_plugin",
-        "local": {
-          "identity_provider": "local",
-          "attributes": {
-            "name": "{user_id}",
-            "domain": "default"
-          },
-          "match_attributes": {
-            "email": "{email}"
-          }
-        }
+        "name": "any-claim",
+        "match": {
+          "all_of": [
+            {
+              "type": "condition",
+              "matches_regex": { "claim": "realm", "regex": ".*" }
+            }
+          ]
+        },
+        "identity": {
+          "user_name": "{realm}-{email}",
+          "user_domain_id": "default",
+          "is_system": false
+        },
+        "authorizations": [],
+        "groups": []
       }
     ]
   }
@@ -337,8 +450,8 @@ Corresponding Mapping Engine rule (OPA `MappingRuleSet`):
 
 ### `route`: Plugin Routes Requests Pre-Dispatch
 
-Plugin sees raw request before method dispatch; can redirect to a different
-method or pass through unchanged.
+Plugin sees the raw, pre-dispatch request before method dispatch; can redirect
+to a different method or pass through unchanged. It never authenticates anyone.
 
 **Entry point:** `route(RouteRequest) -> RouteResponse`
 
@@ -350,29 +463,41 @@ method or pass through unchanged.
 - Credential-shape-based dispatching without authentication
 
 **Important: Plugin does NOT authenticate.** Target method still performs full
-verification.
+verification against whatever payload it receives.
 
 **Constraints (enforced by host):**
 
-1. Cannot touch `scope` (project/domain/system) - only relabel method
-2. Can only route to methods in `route_targets` allowlist
-3. Can never target `admin` or `trust` methods
-4. Single-shot - request is not re-routed if target is another router
-5. Target method receives exact payload plugin specifies (re-verification
-   required)
+1. Cannot touch `scope` (project/domain/system) - `RouteResponse` carries no
+   `scope` field at all, only relabels which method handles the request
+2. Can only route to methods in this plugin's `route_targets` allowlist - a
+   response naming any other method is rejected as malformed, not corrected
+3. Can never target `admin` or `trust` methods, regardless of `route_targets`
+4. Single-shot - a request already routed once is never re-routed, by the same
+   router or a different one
+5. Target method receives exactly the payload this plugin specifies -
+   re-verification by the target is what makes that safe, not any assertion this
+   plugin makes
 
 **Example: application_credential routing**
 
 ```rust
-#[derive(Deserialize)]
+use extism_pdk::{plugin_fn, FnResult, Json};
+use std::collections::HashMap;
+
+// `methods`, not `requested_methods` - the actual field name.
+#[derive(Debug, serde::Deserialize)]
 pub struct RouteRequest {
-    pub requested_methods: Vec<String>,
+    pub methods: Vec<String>,
+    #[serde(default)]
     pub payloads: HashMap<String, serde_json::Value>,
+    #[serde(default)]
     pub headers: HashMap<String, String>,
+    #[serde(default)]
     pub remote_addr: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "snake_case", tag = "decision")]
 pub enum RouteResponse {
     Passthrough,
     Route {
@@ -386,27 +511,25 @@ pub enum RouteResponse {
 
 #[plugin_fn]
 pub fn route(req: Json<RouteRequest>) -> FnResult<Json<RouteResponse>> {
-    // Ignore if request doesn't include application_credential
-    if !req.0.requested_methods.contains(&"application_credential".to_string()) {
+    // `payloads` only ever contains blocks for methods this plugin's
+    // `inspect_methods` config declared - a router configured to look at
+    // `application_credential` never sees an unrelated `password` block,
+    // even on a request carrying both.
+    let Some(payload) = req.0.payloads.get("application_credential") else {
         return Ok(Json(RouteResponse::Passthrough));
-    }
+    };
+    let Some(cred_id) = payload.get("application_credential_id").and_then(|v| v.as_str()) else {
+        return Ok(Json(RouteResponse::Passthrough));
+    };
 
-    let payload = req.0.payloads
-        .get("application_credential")?;
-
-    let cred_id = payload
-        .get("id")?
-        .as_str()?;
-
-    // Cloud IDs start with "custom-"; route to special handler
-    if cred_id.starts_with("custom-") {
+    if let Some(rest) = cred_id.strip_prefix("tf-") {
         return Ok(Json(RouteResponse::Route {
             target_method: "hacked_appcred_handler".to_string(),
-            payload: payload.clone(),
+            payload: serde_json::json!({ "external_id": rest }),
         }));
     }
 
-    // All other application_credential flow normally
+    // Every other application_credential request passes through unmodified.
     Ok(Json(RouteResponse::Passthrough))
 }
 ```
@@ -417,112 +540,129 @@ Config:
 [auth_plugin.tf_router]
 mode = route
 inspect_methods = application_credential
-route_targets = hacked_appcred_handler,application_credential
-capabilities = http_fetch  # optional; router may need to query external service
+route_targets = hacked_appcred_handler
+capabilities =  # empty; add http_fetch if the router needs to query an external service
 ```
 
 ---
 
 ## Host Functions API
 
-### Initialization & Context
+### Request Objects
 
-Every entry point (`authenticate`, `mapping`, `route`) receives a request object
-containing:
+Every entry point receives a request whose exact shape depends on the mode:
 
-- `payload: serde_json::Value` - raw credential from `identity.<method>` block
-- `headers: HashMap<String, String>` - allowlisted HTTP headers (never
-  `Authorization`, `Cookie`, etc.)
-- `remote_addr: Option<String>` - trusted peer IP (not spoofable
-  `X-Forwarded-For`)
+- `authenticate`/`mapping`:
+  `AuthPluginRequest { payload, headers, remote_addr }`
+  - `payload: serde_json::Value` - raw `identity.<method>` block from the
+    client's auth request, exactly as received; deserialize it into whatever
+    shape your plugin expects
+  - `headers: HashMap<String, String>` - allowlisted subset of inbound HTTP
+    headers (only names in this plugin's `exposed_headers` config; a fixed
+    denylist - `Authorization`, `Cookie`, `X-Auth-Token`, `X-Service-Token`,
+    `X-Subject-Token`, `Proxy-Authorization` - can never appear here regardless
+    of config)
+  - `remote_addr: Option<String>` - trusted client address (resolved via
+    `[auth_plugins].trusted_proxies`), never a raw, spoofable `X-Forwarded-For`
+    value; `None` if no trusted address could be established
+- `route`: `RouteRequest { methods, payloads, headers, remote_addr }` - see the
+  `route` mode section above; runs pre-dispatch on the client's full
+  `identity.methods` list, not a single method's isolated payload
 
 ### HTTP Fetching
 
-**Signature:**
+Capability: `http_fetch`.
 
-```rust
-// Pseudocode - actual calls via extism-pdk differ, shown in "Calling Host Functions" below
-pub fn http_fetch(url: &str, options: HttpOptions) -> Result<HttpResponse>;
+**Request/response shape** (single JSON string in, single JSON string out, like
+every host function):
 
-pub struct HttpOptions {
-    pub method: String,  // "GET", "POST", etc.
-    pub headers: HashMap<String, String>,
-    pub body: Option<Vec<u8>>,
-    pub timeout_ms: u32,
+```jsonc
+// Request
+{
+  "method": "GET", // GET, POST, PUT, PATCH, DELETE, HEAD
+  "url": "https://...", // host must be in this plugin's allowed_hosts
+  "headers": { "Content-Type": "application/json" },
+  "body": null, // UTF-8 string, or omit/null for no body
 }
+```
 
-pub struct HttpResponse {
-    pub status: u16,
-    pub headers: HashMap<String, String>,
-    pub body: Vec<u8>,
+```jsonc
+// Response
+{
+  "status": 200,
+  "headers": { "content-type": "application/json" },
+  "body": "...", // UTF-8 (lossy) response body
 }
 ```
 
 **Constraints:**
 
 - Only `allowed_hosts` are reachable (config-time allowlist)
-- All resolved IPs are checked against private/loopback ranges (no SSRF)
-- Second DNS resolution at connection time (prevents DNS rebinding)
-- Auth secrets injected by host from environment variables (never in guest
-  memory)
-- No redirects by default (must opt-in per-plugin)
+- All resolved IPs are checked against private/loopback/link-local/multicast/
+  cloud-metadata ranges (no SSRF), re-resolved at connect time (no DNS
+  rebinding)
+- Auth secrets are injected by the host from `http_fetch_auth_header` +
+  `http_fetch_auth_secret_env` config, applied after your headers and replacing
+  any header of the same name you supplied - the secret is never visible to your
+  plugin's code or the distributed `.wasm` file
+- No redirects by default; opt in per-plugin with
+  `http_fetch_follow_redirects = true`, and even then the whole redirect chain
+  shares one `timeout_ms` budget, not one budget per hop
 
 **Example:**
 
 ```rust
-// In plugin code - this is pseudocode; real Extism calls differ
-let response = http_fetch(
-    "https://idp.example.com/validate",
-    HttpOptions {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            // Authorization header injected by host from http_fetch_auth_secret_env
-        },
-        body: json!({"token": token}).to_string(),
-        timeout_ms: 500,
-    }
-)?;
+let fetch_request = serde_json::json!({
+    "method": "POST",
+    "url": "https://idp.example.com/validate",
+    "headers": {"Content-Type": "application/json"},
+    "body": serde_json::json!({"token": token}).to_string(),
+});
+let response_json = unsafe { http_fetch(fetch_request.to_string())? };
+let response: serde_json::Value = serde_json::from_str(&response_json)?;
+let status = response.get("status").and_then(|v| v.as_u64()).unwrap_or(0);
 
-if response.status != 200 {
-    return Ok(Json(AuthResponse::Deny {
-        reason: format!("IDP returned {}", response.status),
+if status != 200 {
+    return Ok(Json(AuthPluginResponse::Deny {
+        reason: format!("IDP returned {status}"),
     }));
 }
-
-let result: serde_json::Value = serde_json::from_slice(&response.body)?;
 ```
 
 ### Provisioning Users
 
 **`full_auth` mode only.**
 
-```rust
-pub fn provision_user(
-    external_id: String,
-    user: UserCreate,
-) -> Result<ResolvedIdentityHandle>;
+**Request:**
 
-pub struct UserCreate {
-    pub name: String,
-    pub domain_id: String,
-    // Optional fields:
-    pub email: Option<String>,
-    pub description: Option<String>,
+```jsonc
+{
+  "external_id": "...", // plugin-derived identifier, never a Keystone user_id
+  "user": {
+    "domain_id": "...", // must be in provision_domain_id / allowed_provision_domains
+    "name": "...",
+    "enabled": true, // optional
+    "extra": {}, // optional
+  },
 }
-
-pub struct ResolvedIdentityHandle(String);  // Opaque handle for this invocation
 ```
+
+**Response:** a bare JSON string - the opaque handle. **Not**
+`{"handle": "..."}`.
 
 **Semantics:**
 
 - Creates a new Keystone `User` (if not already created)
 - Records mapping `(plugin_name, external_id) -> user_id`
-- Returns opaque `ResolvedIdentityHandle` (not the real `user_id`)
-- **Idempotent:** same `external_id` on repeat calls returns handle to same user
+- Returns opaque handle (not the real `user_id`) - present it back verbatim in
+  `Allow.resolved_identity`
+- **Idempotent:** same `external_id` on repeat calls returns a handle to the
+  same user
 - **Atomic:** race-safe with concurrent requests
-- **Domain-scoped:** `domain_id` must be in plugin's `provision_domain_id` or
-  `allowed_provision_domains`
+- **Domain-scoped:** `user.domain_id` must be in this plugin's
+  `provision_domain_id` or `allowed_provision_domains`; only `domain_id`,
+  `name`, `enabled`, `extra` are accepted - there is no `id` or password field a
+  plugin can set
 
 **Use case:** First login for a new external identity
 
@@ -530,18 +670,17 @@ pub struct ResolvedIdentityHandle(String);  // Opaque handle for this invocation
 
 **`full_auth` mode only.**
 
-```rust
-pub fn find_user(external_id: String) -> Result<Option<ResolvedIdentityHandle>>;
-```
+**Request:** a bare JSON string - the `external_id`.
+
+**Response:** the handle as a JSON string, or `null` if not found.
 
 **Semantics:**
 
 - Looks up user by `(plugin_name, external_id)` only
-- Returns `Some(handle)` if found, `None` otherwise
 - **Not** a general username search
 - Cannot reach users provisioned by other plugins or via other methods
-- For admin-linked identities: domain restriction is re-checked (prevents stale
-  links)
+- For admin-linked identities: domain restriction is re-checked on every call
+  (prevents stale links after a user is moved to a different domain)
 
 **Use case:** Returning user login (idempotent after first provision)
 
@@ -549,97 +688,45 @@ pub fn find_user(external_id: String) -> Result<Option<ResolvedIdentityHandle>>;
 
 **`full_auth` mode only.**
 
-```rust
-pub fn assign_role(
-    resolved_identity: &ResolvedIdentityHandle,
-    role_name: &str,
-    scope: RoleScope,
-) -> Result<()>;
+**Request:**
 
-pub enum RoleScope {
-    Project { project_id: String },
-    Domain { domain_id: String },
+```jsonc
+{
+  "resolved_identity": "...", // a handle THIS invocation's provision_user/find_user produced
+  "role": "member",
+  "target": { "scope": "project", "project_id": "..." },
+  // or: { "scope": "domain", "domain_id": "..." }
 }
 ```
 
+**Response:** an empty JSON value on success (traps/errors on rejection - see
+below).
+
 **Constraints (host-enforced):**
 
-- `role_name` must be in plugin's `assign_role_allowed` list
-- Target project/domain must be in plugin's `provision_domain_id` /
+- `role` must be in this plugin's `assign_role_allowed` list
+- Target project/domain must be in `provision_domain_id` /
   `allowed_provision_domains`
-- System scope is never allowed (plugins cannot grant admin)
-- Duplicate assignments are idempotent (not an error)
+- System scope is never allowed - there is no `system` variant of `target` at
+  all, so a plugin has no way to even express that request
+- `resolved_identity` must be a handle this exact invocation's own
+  `provision_user`/`find_user` call produced - the same anti-impersonation
+  constraint as identity binding itself
 
 **Use case:** Grant initial roles on first user provisioning
 
 ---
 
-## Calling Host Functions (Extism Mechanics)
+## Error Handling
 
-Extism-PDK provides convenient wrappers. Here's a real example:
-
-```rust
-use extism_pdk::{host_fn, plugin_fn, FnResult, Json};
-use serde::{Deserialize, Serialize};
-
-// Host functions exported by Keystone (must be registered in plugin config)
-#[host_fn]
-extern "ExtismHost" {
-    // HTTP fetching (simplified - real signature has more options)
-    fn http_fetch(
-        method: String,
-        url: String,
-        headers: String,  // JSON-encoded headers
-        body: String,
-    ) -> String;  // JSON response
-
-    // User provisioning
-    fn provision_user(external_id: String, user_json: String) -> String;  // Opaque handle JSON
-    fn find_user(external_id: String) -> String;  // JSON: {"handle": "..."} or error
-    fn assign_role(handle: String, role: String, scope_json: String) -> String;  // JSON result
-}
-
-#[plugin_fn]
-pub fn authenticate(req: Json<AuthRequest>) -> FnResult<Json<AuthResponse>> {
-    // Call http_fetch host function
-    let headers = serde_json::json!({
-        "Content-Type": "application/json",
-    }).to_string();
-
-    let response_json = http_fetch(
-        "POST".to_string(),
-        "https://idp.example.com/validate".to_string(),
-        headers,
-        req.0.payload.to_string(),
-    );
-
-    let response: serde_json::Value = serde_json::from_str(&response_json)?;
-    if !response.get("valid").and_then(|v| v.as_bool()).unwrap_or(false) {
-        return Ok(Json(AuthResponse::Deny {
-            reason: "IDP validation failed".to_string(),
-        }));
-    }
-
-    // Provision user
-    let external_id = response.get("sub").and_then(|v| v.as_str())?;
-    let user_json = serde_json::json!({
-        "name": response.get("name").and_then(|v| v.as_str()).unwrap_or(external_id),
-        "domain_id": "default",
-        "email": response.get("email"),
-    }).to_string();
-
-    let handle_json = provision_user(external_id.to_string(), user_json);
-    let handle: serde_json::Value = serde_json::from_str(&handle_json)?;
-
-    let mut claims = HashMap::new();
-    claims.insert("email", response.get("email")?);
-
-    Ok(Json(AuthResponse::Allow {
-        resolved_identity: ResolvedIdentityHandle(handle.get("handle")?.to_string()),
-        claims,
-    }))
-}
-```
+A host function call returns `Err` (traps the guest call via `?`) on any
+violation of the constraints above - a disallowed domain, a role outside
+`assign_role_allowed`, a host outside `allowed_hosts`, an invalid
+`resolved_identity`, and so on. The failure reason is **not** returned to your
+plugin in a structured, inspectable way - it fails the whole invocation closed
+(ADR 0025 §7). Design your plugin to check what it can up front (e.g. only call
+`assign_role` with roles you know are configured) rather than relying on host
+errors for control flow.
 
 ---
 
@@ -653,29 +740,46 @@ via admin-authorized linking, without the plugin provisioning them.
 **Create link:**
 
 ```bash
-POST /v4/auth_plugins/{plugin_name}/identity_links
-Authorization: X-Auth-Token: $ADMIN_TOKEN
-
-{
-  "external_id": "sso_user_123",      # From plugin's verification
-  "user_id": "existing-keystone-uuid"  # Pre-existing user
-}
+curl -X POST http://keystone:5000/v4/auth_plugins/{plugin_name}/identity_links \
+  -H "X-Auth-Token: $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "identity_link": {
+      "external_id": "sso_user_123",
+      "user_id": "existing-keystone-uuid"
+    }
+  }'
 ```
 
+RBAC-tiered (ADR §4): system-scope `admin` may link any user; a domain-scoped
+`admin`/`manager` may link only a non-system user in their own domain.
+Re-linking an `external_id` that already has an entry is rejected
+(`409 Conflict`) - `DELETE` the existing link first.
+
 > **Note:** SCIM convenience fields (`scim_provider_id`, `scim_external_id`) are
-> documented in ADR 0025 §4 but not yet implemented. Track as follow-up work.
+> documented in ADR 0025 §4 but not yet implemented. Only the direct
+> `{external_id, user_id}` body is accepted today.
 
 **Delete link:**
 
 ```bash
-DELETE /v4/auth_plugins/{plugin_name}/identity_links/{external_id}
+curl -X DELETE http://keystone:5000/v4/auth_plugins/{plugin_name}/identity_links/{external_id} \
+  -H "X-Auth-Token: $ADMIN_TOKEN"
 ```
+
+Also revokes the unlinked user's live tokens.
 
 **Bulk revocation** (on plugin compromise):
 
 ```bash
-POST /v4/auth_plugins/{plugin_name}/revoke_all
+curl -X POST http://keystone:5000/v4/auth_plugins/{plugin_name}/revoke_all \
+  -H "X-Auth-Token: $ADMIN_TOKEN"
 ```
+
+System-admin only. Disables every user the plugin provisioned or was linked to,
+deletes those identity links, and revokes their tokens. It does **not** revoke
+role assignments the plugin granted - review those separately against the CADF
+audit trail before re-enabling any disabled account.
 
 ### Plugin Logic
 
@@ -688,53 +792,45 @@ whether the entry was created by `provision_user` or by an admin link.
 
 ### Claims Size
 
-- Max 64 entries in `claims` map
+- Max 64 entries in the `claims` map
 - Max 256 bytes per key
 - Max 4 KiB per value
+- Total response JSON capped at 64 KiB (rejected unparsed if exceeded)
 
 ### Claims Namespacing
 
-All plugin claims are automatically namespaced under
-`plugin_claims.<plugin_name>.<key>`. This prevents injection of
-privilege-relevant top-level keys.
+All `full_auth`-mode plugin claims are automatically namespaced under
+`plugin_claims.<plugin_name>.<key>` in the policy input - never merged into the
+top level. This prevents injection of privilege-relevant top-level keys.
 
 ```rust
-// Plugin returns:
-{
-  "email": "user@example.com",
-  "groups": ["admin"]
-}
+// Plugin returns (Allow.claims):
+// {"email": "user@example.com", "groups": ["admin"]}
 
-// Host transforms to (in SecurityContext):
-{
-  "plugin_claims": {
-    "my_plugin": {
-      "email": "user@example.com",
-      "groups": ["admin"]
-    }
-  }
-}
+// OPA sees (input.credentials):
+// {"plugin_claims": {"my_plugin": {"email": "...", "groups": ["admin"]}}}
 
-// OPA policy can read via: input.credentials.plugin_claims.my_plugin.email
-// But cannot inject top-level keys like is_system, effective_roles, etc.
+// A policy can read: input.credentials.plugin_claims.my_plugin.email
+// It cannot inject top-level keys like is_system, effective_roles, etc. -
+// those simply aren't where plugin claims live.
 ```
 
-### Response Size Cap
-
-Total response JSON is capped at 64 KiB. Oversized responses are rejected.
+`mapping`-mode claims are not namespaced this way - they flow into the Mapping
+Engine's rule matching instead (ADR 0020), which has its own,
+separately-reviewed guarantee that claim values only ever drive rule _matching_,
+never become privilege directly.
 
 ### Reserved Keys
 
-Plugins cannot use reserved keys like `__keystone` prefix. These are rejected at
-response validation.
+A claim key named exactly `plugin_claims`, or prefixed with `__keystone`, is
+rejected (the whole response fails closed) - except `__keystone_workload_id` in
+`mapping` mode, which is required (see the `mapping` mode section above).
 
 ---
 
 ## Testing & Debugging
 
 ### Local Unit Tests
-
-Use `extism-pdk` test utilities:
 
 ```rust
 #[cfg(test)]
@@ -743,45 +839,26 @@ mod tests {
 
     #[test]
     fn test_authenticate_valid() {
-        let req = AuthRequest {
-            payload: serde_json::json!({
-                "username": "alice",
-                "password": "secret"
-            }),
+        let req = AuthPluginRequest {
+            payload: MyPayload { username: "alice".to_string() },
             headers: Default::default(),
             remote_addr: Some("192.0.2.1".to_string()),
         };
 
-        let result = authenticate(Json(req)).unwrap();
-        match result.0 {
-            AuthResponse::Allow { .. } => {},
-            _ => panic!("Expected Allow"),
-        }
-    }
-
-    #[test]
-    fn test_authenticate_missing_username() {
-        let req = AuthRequest {
-            payload: serde_json::json!({}),
-            headers: Default::default(),
-            remote_addr: None,
-        };
-
-        let result = authenticate(Json(req)).unwrap();
-        match result.0 {
-            AuthResponse::Deny { reason } => {
-                assert!(reason.contains("username"));
-            },
-            _ => panic!("Expected Deny"),
-        }
+        // Exercise your plugin's logic directly - `authenticate` itself
+        // requires a live extism host context for its `unsafe { provision_user(..) }`
+        // call, so unit-test the decision logic your plugin builds around it,
+        // not the wasm entry point end to end. End-to-end coverage belongs in
+        // integration tests (below) against a real Keystone instance.
+        assert!(!req.payload.username.is_empty());
     }
 }
 ```
 
 ### Integration Testing
 
-Test against real Keystone instance (see
-[Admin Guide - Plugins](../admin.md#plugin-operations)):
+Test against a real Keystone instance (see
+[Admin Guide - Plugins](../admin.md#dynamic-auth-plugins)):
 
 ```bash
 # 1. Build and copy plugin
@@ -808,41 +885,30 @@ curl -X POST http://keystone:5000/v3/auth/tokens \
 
 ### Debugging
 
-**Plugin logs** - HTTP calls and response handling appear in Keystone logs:
+**Plugin load failures** - `keystone_auth_plugin_load_failure{plugin_name}` on
+`/metrics`, plus a `CRITICAL` log line naming the plugin and the mismatch:
 
 ```bash
-grep "auth_plugin" /var/log/keystone/keystone.log
+grep "keystone_auth_plugin_load_failure" /var/log/keystone/keystone.log
 ```
 
-**Rate limit hits** - Check if plugin is being rate-limited:
+**Rate limit hits** - check if the plugin is being rate-limited:
 
 ```bash
-grep "429 Too Many Requests" /var/log/keystone/keystone.log
+grep "rate_limited" /var/log/keystone/keystone.log
 ```
 
-**Timeouts** - Plugin exceeded `timeout_ms`:
-
-```bash
-grep "timeout" /var/log/keystone/keystone.log
-```
-
-**Memory exhaustion** - Plugin exceeded `memory_limit_mb`:
-
-```bash
-grep "memory" /var/log/keystone/keystone.log
-```
-
-**Fuel exhaustion** - Plugin exceeded instruction budget (`fuel_limit`):
-
-```bash
-grep "fuel" /var/log/keystone/keystone.log
-```
+**Timeouts/fuel/memory** - a resource-bound violation fails the specific
+invocation closed, audited via the plugin's CADF trail (`wasm_plugin.*` events,
+ADR §6.E) rather than a distinct log grep target - check the audit event
+outcome/reason for the plugin's `authenticate`/`mapping`/`route` calls.
 
 ---
 
 ## Real-World Example: OAuth2 Provider Validation
 
-Complete plugin that validates tokens from an external OAuth2 provider:
+Complete plugin that validates tokens from an external OAuth2 provider,
+provisioning a local user on first login and reusing it on subsequent ones.
 
 ```rust
 use extism_pdk::{host_fn, plugin_fn, FnResult, Json};
@@ -851,132 +917,102 @@ use std::collections::HashMap;
 
 #[host_fn]
 extern "ExtismHost" {
-    fn http_fetch(method: String, url: String, headers: String, body: String) -> String;
-    fn provision_user(external_id: String, user_json: String) -> String;
-    fn find_user(external_id: String) -> String;
+    fn http_fetch(request_json: String) -> String;
+    fn provision_user(request_json: String) -> String;
+    fn find_user(external_id_json: String) -> String;
 }
 
-#[derive(Deserialize)]
-pub struct OAuthRequest {
+#[derive(Debug, Deserialize)]
+pub struct OAuthPayload {
     pub access_token: String,
 }
 
-#[derive(Serialize)]
-pub struct ResolvedHandle(String);
+#[derive(Debug, Deserialize)]
+pub struct AuthPluginRequest {
+    pub payload: OAuthPayload,
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    #[serde(default)]
+    pub remote_addr: Option<String>,
+}
 
-#[derive(Serialize)]
-pub enum AuthResponse {
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case", tag = "decision")]
+pub enum AuthPluginResponse {
     Allow {
-        resolved_identity: ResolvedHandle,
+        resolved_identity: String,
         claims: HashMap<String, serde_json::Value>,
     },
     Deny { reason: String },
 }
 
-#[derive(Deserialize)]
-pub struct AuthPluginRequest {
-    pub payload: serde_json::Value,
-    pub headers: HashMap<String, String>,
-    pub remote_addr: Option<String>,
-}
-
 #[plugin_fn]
-pub fn authenticate(req: Json<AuthPluginRequest>) -> FnResult<Json<AuthResponse>> {
-    // Extract token from payload
-    let token = req.0.payload
-        .get("access_token")
-        .and_then(|v| v.as_str())
-        .ok_or("Missing access_token")?;
+pub fn authenticate(req: Json<AuthPluginRequest>) -> FnResult<Json<AuthPluginResponse>> {
+    let token = req.0.payload.access_token;
 
-    // Validate token with OAuth2 provider
-    let headers = serde_json::json!({
-        "Accept": "application/json",
-    }).to_string();
+    let introspect_request = serde_json::json!({
+        "method": "POST",
+        "url": "https://oauth.example.com/introspect",
+        "headers": {"Accept": "application/json"},
+        "body": serde_json::json!({"token": token}).to_string(),
+    });
+    let fetch_response_json = unsafe { http_fetch(introspect_request.to_string())? };
+    let fetch_response: serde_json::Value = serde_json::from_str(&fetch_response_json)?;
+    let status = fetch_response.get("status").and_then(|v| v.as_u64()).unwrap_or(0);
+    if status != 200 {
+        return Ok(Json(AuthPluginResponse::Deny {
+            reason: format!("introspect endpoint returned {status}"),
+        }));
+    }
+    let body: serde_json::Value = serde_json::from_str(
+        fetch_response.get("body").and_then(|v| v.as_str()).unwrap_or("{}"),
+    )
+    .map_err(|e| format!("failed to parse introspect response body: {e}"))?;
 
-    let response_str = http_fetch(
-        "POST".to_string(),
-        "https://oauth.example.com/introspect".to_string(),
-        headers,
-        serde_json::json!({ "token": token }).to_string(),
-    );
-
-    let response: serde_json::Value = serde_json::from_str(&response_str)
-        .map_err(|e| format!("Failed to parse introspect response: {}", e))?;
-
-    let is_active = response
-        .get("active")
-        .and_then(|v| v.as_bool())
-        .ok_or("Invalid introspect response")?;
-
+    let is_active = body.get("active").and_then(|v| v.as_bool()).unwrap_or(false);
     if !is_active {
-        return Ok(Json(AuthResponse::Deny {
-            reason: "Token is not active".to_string(),
+        return Ok(Json(AuthPluginResponse::Deny {
+            reason: "token is not active".to_string(),
         }));
     }
 
-    // Extract user identifier from token claims
-    let sub = response
+    let sub = body
         .get("sub")
         .and_then(|v| v.as_str())
-        .ok_or("No 'sub' claim in token")?;
+        .ok_or("no 'sub' claim in introspect response")?;
 
-    // Check if user already exists
-    let find_result = find_user(sub.to_string());
-    if let Ok(existing_handle_json) = serde_json::from_str::<serde_json::Value>(&find_result) {
-        // User exists, use existing handle
-        return Ok(Json(AuthResponse::Allow {
-            resolved_identity: ResolvedHandle(
-                existing_handle_json
-                    .get("handle")
-                    .and_then(|v| v.as_str())
-                    .ok_or("Invalid handle format")?
-                    .to_string()
-            ),
-            claims: extract_claims(&response),
-        }));
-    }
+    // Idempotent lookup first - avoids re-provisioning on every login.
+    let find_result_json = unsafe { find_user(serde_json::to_string(sub)?)? };
+    let existing: Option<String> = serde_json::from_str(&find_result_json)?;
 
-    // New user - provision locally
-    let username = response
-        .get("preferred_username")
-        .and_then(|v| v.as_str())
-        .unwrap_or(sub);
+    let resolved_identity = if let Some(handle) = existing {
+        handle
+    } else {
+        let username = body
+            .get("preferred_username")
+            .and_then(|v| v.as_str())
+            .unwrap_or(sub);
+        let provision_request = serde_json::json!({
+            "external_id": sub,
+            "user": { "domain_id": "default", "name": username },
+        });
+        let handle_json = unsafe { provision_user(provision_request.to_string())? };
+        serde_json::from_str(&handle_json)?
+    };
 
-    let user_create = serde_json::json!({
-        "name": username,
-        "domain_id": "default",
-        "email": response.get("email"),
-    }).to_string();
-
-    let handle_json = provision_user(sub.to_string(), user_create);
-    let handle_obj: serde_json::Value = serde_json::from_str(&handle_json)?;
-
-    let handle = handle_obj
-        .get("handle")
-        .and_then(|v| v.as_str())
-        .ok_or("Invalid handle format")?
-        .to_string();
-
-    Ok(Json(AuthResponse::Allow {
-        resolved_identity: ResolvedHandle(handle),
-        claims: extract_claims(&response),
+    Ok(Json(AuthPluginResponse::Allow {
+        resolved_identity,
+        claims: extract_claims(&body),
     }))
 }
 
 fn extract_claims(token_claims: &serde_json::Value) -> HashMap<String, serde_json::Value> {
     let mut claims = HashMap::new();
-
-    // Map token claims to plugin claims
-    if let Some(email) = token_claims.get("email") {
-        claims.insert("email".to_string(), email.clone());
+    for key in ["email", "groups", "realm_access"] {
+        if let Some(value) = token_claims.get(key) {
+            claims.insert(key.to_string(), value.clone());
+        }
     }
-    if let Some(groups) = token_claims.get("groups") {
-        claims.insert("groups".to_string(), groups.clone());
-    }
-    if let Some(realm) = token_claims.get("realm_access") {
-        claims.insert("realm_access".to_string(), realm.clone());
-    }
-
     claims
 }
 ```
@@ -991,12 +1027,16 @@ fn extract_claims(token_claims: &serde_json::Value) -> HashMap<String, serde_jso
 4. **Use http_fetch carefully** - SSRF protection is automatic, but credential
    handling must be reviewed
 5. **Set reasonable timeouts** - `timeout_ms` should be shorter than your
-   external service's SLA + overhead
+   external service's SLA + overhead, and covers the _whole_ invocation
+   including any redirect chain
 6. **Test failure paths** - network timeouts, malformed responses, slow services
 7. **Document claims** - which external attributes map to which plugin claims
-8. **Version plugins** - git tag releases, pin SHA-256 checksums in deployments
-9. **Audit identity changes** - `POST /v4/events` includes plugin operations
-   (provision, link, revoke)
+8. **Version plugins** - git tag releases, pin SHA-256 checksums in deployments,
+   and bump `valid_since` alongside `sha256` when a change should invalidate
+   outstanding tokens (`full_auth` mode only - see ADR §4 "Plugin Version
+   Binding")
+9. **Audit identity changes** - every host-function call and `authenticate`/
+   `mapping`/`route` outcome is CADF-audited (`wasm_plugin.*` events, ADR §6.E)
 10. **Monitor rate limits** - tune `invocation_rate_limit_per_minute` and
     `max_concurrent_invocations` based on load
 
@@ -1008,6 +1048,8 @@ fn extract_claims(token_claims: &serde_json::Value) -> HashMap<String, serde_jso
   Threat model, design rationale, all constraints
 - [Admin Guide - Plugins](../admin.md#dynamic-auth-plugins) - Deployment,
   configuration, operations
+- `crates/auth-plugin-runtime/tests/fixtures/reference-plugin/src/lib.rs` - the
+  real, compiled reference plugin this guide's examples are derived from
 - [Extism PDK](https://github.com/extism/extism/wiki/Plugin-Development-Kit) -
   Language SDKs (Rust, Go, Python, JS, C, Zig, ...)
 - [Security Model](../security.md) - Authentication and authorization invariants

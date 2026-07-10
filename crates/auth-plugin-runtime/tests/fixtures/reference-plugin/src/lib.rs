@@ -243,7 +243,7 @@ pub enum RouteResponse {
 /// `route` mode's `route` guest entry point (ADR 0025 §4). Inspects the
 /// `application_credential` payload block (the ADR's own motivating
 /// example): an `application_credential_id` of `"deny-me"` denies outright,
-/// one prefixed `tf-` is rerouted to `tf_appcred_handler` with the rest of
+/// one prefixed `tf-` is rerouted to `hacked_appcred_handler` with the rest of
 /// the id relabeled into an `external_id` field (so this fixture composes
 /// end-to-end with the `authenticate` export above in integration tests -
 /// a real router would shape its `payload` however its actual target

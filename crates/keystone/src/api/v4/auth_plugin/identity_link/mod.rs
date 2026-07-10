@@ -121,7 +121,7 @@ mod tests {
 
     use super::super::openapi_router;
 
-    const PLUGIN: &str = "tf_appcred_handler";
+    const PLUGIN: &str = "hacked_appcred_handler";
     // Matches the domain of the principal `test_fixture_scoped` mints.
     const DOMAIN: &str = "domain_id";
 

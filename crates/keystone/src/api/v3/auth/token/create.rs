@@ -1376,19 +1376,19 @@ mod auth_plugin_http_tests {
         let (path, sha256) = build_reference_plugin();
         let mut router_cfg = base_plugin_config(path.clone(), sha256.clone(), PluginMode::Route);
         router_cfg.inspect_methods = vec!["application_credential".to_string()];
-        router_cfg.route_targets = vec!["tf_appcred_handler".to_string()];
+        router_cfg.route_targets = vec!["hacked_appcred_handler".to_string()];
         let mut target_cfg = base_plugin_config(path, sha256, PluginMode::FullAuth);
         target_cfg.capabilities = vec!["provision_user".to_string()];
         target_cfg.provision_domain_id = Some("d".to_string());
 
         let cfg = Config {
             auth_plugins: DynamicPluginsSection {
-                plugins: vec!["router".to_string(), "tf_appcred_handler".to_string()],
+                plugins: vec!["router".to_string(), "hacked_appcred_handler".to_string()],
                 ..Default::default()
             },
             auth_plugin: [
                 ("router".to_string(), router_cfg),
-                ("tf_appcred_handler".to_string(), target_cfg),
+                ("hacked_appcred_handler".to_string(), target_cfg),
             ]
             .into_iter()
             .collect(),
@@ -1414,7 +1414,7 @@ mod auth_plugin_http_tests {
 
         let (mut token_mock, catalog_mock) = mock_token_and_catalog();
         let vsc = canned_vsc(AuthenticationContext::WasmPlugin {
-            plugin_name: "tf_appcred_handler".to_string(),
+            plugin_name: "hacked_appcred_handler".to_string(),
             claims: std::collections::HashMap::new(),
             token: None,
         });
@@ -1430,7 +1430,7 @@ mod auth_plugin_http_tests {
             .build()
             .unwrap();
 
-        let state = build_state(cfg, provider, &["router", "tf_appcred_handler"]).await;
+        let state = build_state(cfg, provider, &["router", "hacked_appcred_handler"]).await;
 
         let response = post(
             &state,

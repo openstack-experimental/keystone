@@ -117,13 +117,25 @@ impl DynamicPluginHttpFetcher for KeystoneDynamicPluginHttpFetcher {
 
         let client = self.get_or_build_client(&host, resolved_addr, timeout_ms)?;
 
+        // `RequestBuilder::header` *appends* to `reqwest`'s underlying
+        // `HeaderMap` rather than replacing an existing value - adding the
+        // host secret after a guest-supplied header of the same name would
+        // therefore send *both* values on the wire (multiple header lines),
+        // not override the guest's. Drop any guest header colliding with the
+        // host-injected secret's name (case-insensitive) before it's ever
+        // added, so the secret is the sole value the origin server sees -
+        // the guest cannot smuggle a second value in alongside it.
+        let auth_header_name_lower = auth_header.map(|(name, _)| name.to_ascii_lowercase());
         let mut builder = client.request(method, parsed);
         for (name, value) in headers {
+            if auth_header_name_lower
+                .as_deref()
+                .is_some_and(|auth_name| name.eq_ignore_ascii_case(auth_name))
+            {
+                continue;
+            }
             builder = builder.header(name, value);
         }
-        // Host-injected secret header applied last, after guest headers, so
-        // it can never be shadowed or overridden by a guest-supplied header
-        // of the same name (ADR §6.A).
         if let Some((name, value)) = auth_header {
             builder = builder.header(name, value);
         }
@@ -217,6 +229,50 @@ mod tests {
                 .iter()
                 .any(|(k, v)| k.eq_ignore_ascii_case("content-type") && v == "text/plain")
         );
+    }
+
+    /// A guest-supplied header colliding (case-insensitively) with the
+    /// host-injected `http_fetch_auth_header` name must not reach the origin
+    /// server at all - not merely be "overridden" (`RequestBuilder::header`
+    /// appends rather than replaces, so without the fix this would send
+    /// *both* values as separate header lines, ADR §6.A "Outbound secrets
+    /// are host-injected, never guest-visible").
+    #[tokio::test]
+    async fn test_guest_header_colliding_with_injected_secret_name_is_dropped() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::GET).path("/secure").is_true(|req| {
+                let matches: Vec<&(String, String)> = req
+                    .headers_vec()
+                    .iter()
+                    .filter(|(k, _)| k.eq_ignore_ascii_case("x-injected"))
+                    .collect();
+                // Exactly one value for the header name, and it must be the
+                // host secret - the guest's spoofed value never arrives.
+                matches.len() == 1 && matches[0].1 == "secret-value"
+            });
+            then.status(200);
+        });
+
+        let mut guest_headers = HashMap::new();
+        guest_headers.insert("X-Injected".to_string(), "guest-spoofed-value".to_string());
+
+        let fetcher = KeystoneDynamicPluginHttpFetcher::new();
+        fetcher
+            .fetch(
+                "GET",
+                &format!("http://{}/secure", host_port(&server)),
+                addr_of(&server),
+                &guest_headers,
+                None,
+                5_000,
+                Some(("x-injected", "secret-value")),
+                1_000_000,
+            )
+            .await
+            .unwrap();
+
+        mock.assert();
     }
 
     #[tokio::test]

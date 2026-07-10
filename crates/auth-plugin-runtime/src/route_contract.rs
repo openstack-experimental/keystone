@@ -142,7 +142,7 @@ mod tests {
     fn test_decode_valid_route() {
         let raw = serde_json::to_vec(&serde_json::json!({
             "decision": "route",
-            "target_method": "tf_appcred_handler",
+            "target_method": "hacked_appcred_handler",
             "payload": {"application_credential_id": "abc"},
         }))
         .unwrap();
@@ -151,7 +151,7 @@ mod tests {
                 target_method,
                 payload,
             } => {
-                assert_eq!(target_method, "tf_appcred_handler");
+                assert_eq!(target_method, "hacked_appcred_handler");
                 assert_eq!(payload["application_credential_id"], "abc");
             }
             other => panic!("expected Route, got {other:?}"),
@@ -195,7 +195,7 @@ mod tests {
         let value = "v".repeat(MAX_PAYLOAD_BYTES + 1);
         let raw = serde_json::to_vec(&serde_json::json!({
             "decision": "route",
-            "target_method": "tf_appcred_handler",
+            "target_method": "hacked_appcred_handler",
             "payload": {"blob": value},
         }))
         .unwrap();

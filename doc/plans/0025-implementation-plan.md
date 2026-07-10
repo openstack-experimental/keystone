@@ -1,5 +1,11 @@
 # ADR 0025 Implementation Plan: Dynamic Auth Plugins via WebAssembly
 
+**Status (post-review update): Phases 0–4 all implemented and tested,
+including Phase 3 (`route` mode) and PR 2.2, which were previously unmarked
+here despite being merged.** The ADR itself remains `Status: Proposed` -
+implementation completeness and ADR acceptance are being tracked separately.
+See each phase below for its actual (not just planned) status.
+
 This document breaks ADR 0025 (`0025-dynamic-auth-plugins.md`) into an
 incremental, independently-mergeable sequence of PRs. It is a working plan, not
 a design document — all design decisions live in the ADR itself; this file only
@@ -53,7 +59,7 @@ on it.
   dependency direction one-way (core will depend on this crate, not vice versa),
   matching the `*-driver-*` crate pattern already used for backends.
 
-### PR 0.1 — Crate skeleton + `[auth_plugins]` config parsing
+### PR 0.1 — Crate skeleton + `[auth_plugins]` config parsing — DONE
 
 - `crates/auth-plugin-runtime/Cargo.toml`, empty `lib.rs`.
 - `crates/config/src/auth_plugins.rs`: `DynamicPluginsConfig` (plugin name
@@ -76,7 +82,7 @@ on it.
 - **Acceptance:** `cargo test -p openstack-keystone-config` covers every
   fail-loud rule in ADR §4/§5 with a dedicated test; no other crate touched.
 
-### PR 0.2 — Plugin loading, checksum verification, `WasmPluginRegistry`
+### PR 0.2 — Plugin loading, checksum verification, `WasmPluginRegistry` — DONE
 
 - `WasmPluginRegistry`: loads each configured plugin at startup, computes
   SHA-256 of the file on disk, compares to the pinned `sha256`. On mismatch: log
@@ -93,7 +99,7 @@ on it.
   process successfully with every _other_ method available, per ADR §5
   "Cross-node divergence is the trade-off... accepted explicitly."
 
-### PR 0.3 — Reference test plugin (Rust, Extism PDK)
+### PR 0.3 — Reference test plugin (Rust, Extism PDK) — DONE
 
 - New crate under e.g.
   `crates/auth-plugin-runtime/tests/fixtures/reference-plugin` (or a
@@ -113,7 +119,7 @@ on it.
   `.wasm` artifact consumed by Phase 1+ integration tests; CI caches/ rebuilds
   it as part of the normal test job.
 
-### PR 0.4 — Resource limits (fuel / wall-clock / memory) + isolation
+### PR 0.4 — Resource limits (fuel / wall-clock / memory) + isolation — DONE
 
 - Wire `fuel_limit`, `timeout_ms`, `memory_limit_mb` into the `Store`
   construction per invocation (fresh `Store` per call, per ADR §7 "Isolation
@@ -132,7 +138,7 @@ Goal: a plugin can be configured as a real `[auth] methods` entry and
 authenticate a request it provisions itself. This is the ADR's primary mechanism
 and the only mode needed to satisfy requirements 1–3 from ADR §1.
 
-### PR 1.1 — Host functions A–D (capability-gated) + mandatory audit (§6.E)
+### PR 1.1 — Host functions A–D (capability-gated) + mandatory audit (§6.E) — DONE
 
 - Implement `http_fetch` (§6.A, including connect-time IP re-validation against
   the resolved `IpAddr`, no-redirect-by-default, host-injected secrets),
@@ -154,7 +160,7 @@ and the only mode needed to satisfy requirements 1–3 from ADR §1.
   `user_id` provisioned by a different `plugin_name`), plus one test per
   function proving the audit event fires on both success and failure.
 
-### PR 1.2 — `AuthenticationContext::WasmPlugin` + auth-method dispatch
+### PR 1.2 — `AuthenticationContext::WasmPlugin` + auth-method dispatch — DONE
 
 - Extend `AuthenticationContext` (`crates/core-types/src/auth.rs`) with the
   `WasmPlugin { plugin_name, plugin_sha256, claims, token }` variant.
@@ -175,7 +181,7 @@ and the only mode needed to satisfy requirements 1–3 from ADR §1.
   second login (idempotency), denies on a bad handle, and confirms claims land
   under `plugin_claims.<plugin_name>.*` only.
 
-### PR 1.3 — Rate limiting & concurrency (§7)
+### PR 1.3 — Rate limiting & concurrency (§7) — DONE
 
 - Per-source token bucket → per-plugin token bucket → concurrency semaphore,
   using `governor` (already a workspace dependency), mirroring ADR 0020 §7.2's
@@ -186,7 +192,7 @@ and the only mode needed to satisfy requirements 1–3 from ADR §1.
   independently rejects with `429`/audit `RateLimited` once exceeded, and that
   one plugin's exhausted budget doesn't affect another plugin's.
 
-### PR 1.4 — Plugin Version Binding + token verification
+### PR 1.4 — Plugin Version Binding + token verification — DONE
 
 - Version binding is a per-plugin `valid_since` timestamp in config, not a
   token-embedded hash — the `FernetToken` payload is a fixed variant set with no
@@ -196,11 +202,26 @@ and the only mode needed to satisfy requirements 1–3 from ADR §1.
   `plugin_name`, and if `issued_at` predates that plugin's configured
   `valid_since`, rejects with `PluginVersionMismatch`. Fresh mints have no token
   yet, so a past `valid_since` never blocks new logins.
-- **Acceptance:** unit test — a token with `issued_at` before `valid_since` fails
-  verification with `PluginVersionMismatch`; one with `issued_at` after it
-  verifies; a fresh mint (no token) is unaffected by a past `valid_since`.
-  (`crates/core/src/auth.rs::tests::test_wasm_plugin_stale_token_is_rejected` and
-  siblings.)
+- **Post-merge review finding, fixed:** the original landing only added this
+  check inside `ValidatedSecurityContext::new_for_scope`'s `WasmPlugin`/
+  `Mapping` match arms, gated on `ctx.token().is_some()`. Real token
+  re-verification (`TokenService::validate_to_context_impl`,
+  `crates/core/src/token/service.rs`) reconstructs a plain
+  `AuthenticationContext::Token` for a plugin-authenticated token (only
+  `ApplicationCredential`/`Trust` get their original context restored), so
+  those arms were never actually reachable on the real verification path -
+  the check was dead code; a stale token stayed valid indefinitely regardless
+  of `valid_since`. Fixed by adding the authoritative check directly in
+  `validate_to_context_impl`, keyed on the token's own `methods` list (which
+  carries the plugin name for a `full_auth` login). The original arms are
+  kept as harmless defense-in-depth, documented as unreachable via this path.
+- **Acceptance:** unit tests on the real verification path -
+  `crates/core/src/token/service.rs::tests::test_validate_wasm_plugin_stale_token_is_rejected`
+  and `test_validate_wasm_plugin_fresh_token_after_cutoff_is_accepted` - plus
+  the original defense-in-depth-arm tests
+  (`crates/core/src/auth.rs::tests::test_wasm_plugin_stale_token_is_rejected`
+  and siblings), now documented as exercising a path real token verification
+  doesn't take.
 
 **Phase 1 exit criteria:** a `mode = full_auth` plugin is usable end-to-end in a
 real `[auth] methods` deployment: load, checksum-verify, rate-limit,
@@ -216,7 +237,7 @@ instead of terminating authentication itself — the direct path to authenticati
 SCIM-provisioned and other pre-existing users without new identity-binding
 machinery.
 
-### PR 2.1 — `IdentitySource::WasmPlugin` + `mapping` entry point
+### PR 2.1 — `IdentitySource::WasmPlugin` + `mapping` entry point — DONE
 
 - `crates/core-types/src/mapping/resolution.rs`: add
   `WasmPlugin { plugin_name }`.
@@ -231,15 +252,33 @@ machinery.
   pre-existing local user and that a plugin with no ruleset authored gets
   `MappingNotFound` (fail-closed by construction, §4 step 4).
 
-### PR 2.2 — `mapping`-mode version binding via `valid_since`
+### PR 2.2 — `mapping`-mode version binding via `valid_since` — LANDED, NOT FUNCTIONAL (documented gap)
 
-- No new `MappingContext` field (ADR §4 "Plugin-version binding for `mapping`
-  mode"): at verification, recover the plugin name from the matched ruleset's
-  `IdentitySource::WasmPlugin` (loaded via the token's `mapping_id`, alongside the
-  existing `ruleset_version` read) and apply the same `valid_since`-vs-`issued_at`
-  cutoff as `full_auth`.
-- **Acceptance:** same cutoff test pattern as PR 1.4, applied to the mapping path
-  (`crates/core/src/auth.rs::tests::test_mapping_wasm_plugin_stale_token_is_rejected`).
+- Original plan: recover the plugin name from the matched ruleset's
+  `IdentitySource::WasmPlugin` at verification (loaded via the token's
+  `mapping_id`) and apply the same `valid_since`-vs-`issued_at` cutoff as
+  `full_auth`.
+- **Post-merge review finding:** this is not achievable with the current
+  token format and was never actually wired into the real verification path.
+  A `mapping`-mode login mints an ordinary scoped token whose payload carries
+  only `methods = ["mapped"]` - there is no `mapping_id` (or any other
+  plugin-recoverable field) anywhere in a `FernetToken` payload for
+  `TokenService::validate_to_context_impl` to key off. The code that exists
+  (`ValidatedSecurityContext::new_for_scope`'s `Mapping` arm,
+  `crates/core/src/auth.rs`) only runs against a hand-built test
+  `SecurityContext` that sets both a `Mapping` context and a token
+  simultaneously - a combination production token re-verification never
+  produces. **Decision (recorded in ADR §4/§8): document as a known gap
+  rather than force a fix.** Closing it properly requires widening a token
+  payload to carry a plugin-recoverable identifier, which is out of scope for
+  this plan; tracked as ADR §8 future work. Operator remediation for a
+  compromised `mapping`-mode plugin today is revocation events or a short
+  token TTL, not `valid_since`.
+- **Acceptance:** the arm's own unit test
+  (`crates/core/src/auth.rs::tests::test_mapping_wasm_plugin_stale_token_is_rejected`)
+  passes but exercises only the unreachable-in-production code path; there is
+  no test proving mapping-mode version binding end-to-end because the
+  property doesn't hold end-to-end.
 
 **Phase 2 exit criteria:** `mapping` mode fully covers the SCIM/pre-existing-
 user login case without touching `full_auth`'s identity-binding code at all.
@@ -251,7 +290,7 @@ user login case without touching `full_auth`'s identity-binding code at all.
 Goal: pre-dispatch request routing for clients that can't send a custom method
 name (Terraform `application_credential` case).
 
-### PR 3.1 — `route` entry point + host-side dispatch rewrite
+### PR 3.1 — `route` entry point + host-side dispatch rewrite — DONE
 
 - `route(request: RouteRequest) -> RouteResponse` guest contract.
 - Host-side: `inspect_methods` trigger scoping (invoke only when
@@ -293,6 +332,15 @@ and incident-response tooling.
   `crates/keystone/src/api/v4/auth_plugin/identity_link/{create,delete}.rs`,
   Rego in `policy/auth_plugin/identity_link/{create,delete}.rego`, types in
   `crates/api-types/src/v4/auth_plugin.rs`.
+- **Post-merge review finding, fixed:** the original Rego (`allow if { "admin"
+  in input.credentials.roles }`, no scope check) let a project-scoped `admin`
+  - not just a system-scope one - link any user, including one holding a
+  system-scope role. Tightened to require `input.credentials.system ==
+  "all"` alongside `admin` for the system tier, matching `revoke_all.rego`'s
+  existing posture and the ADR text's actual intent. Verified with `opa eval`
+  against four scenarios (system-admin/system-target,
+  project-admin/system-target, domain-manager/own-domain,
+  domain-admin/other-domain).
 - `find_user` (PR 1.1) updated to re-validate live `domain_id` on every
   resolution for admin-linked entries (§4 "Domain restriction is re-checked at
   resolve time").
@@ -353,9 +401,53 @@ incident-response tooling.
 - **Metrics/alerting wiring:** `keystone_auth_plugin_load_failure` (PR 0.2)
   and rate-limit counters (PR 1.3) should get dashboard/alert examples in ops
   docs once Phase 1 ships — not a blocking code change, tracked as a follow-up.
+  **DONE (post-review):** `keystone_auth_plugin_load_failure{plugin_name}` was
+  originally only a `tracing::error!` log line, not a real metric despite the
+  ADR/admin docs describing it as one - fixed by adding
+  `Service::auth_plugin_load_failures` and serving it as a real Prometheus
+  counter from the existing `/metrics` handler
+  (`crates/core/src/auth_plugin_startup.rs::format_load_failure_metrics`).
 - **Fuzzing:** `AuthPluginResponse`/`RouteResponse` deserialization (attacker-
   shaped guest output, §7 "Response Payload Bounds") is a good `cargo-fuzz`
   target once Phase 1/3 land; not required to ship either phase.
+- **Post-review hardening (fixed):**
+  - `LoadedPlugin::invoke` (synchronous, up to `timeout_ms` of wall-clock
+    work) now runs under `tokio::task::block_in_place` at all three dispatch
+    call sites (`crates/core/src/auth_plugin_auth.rs`) - previously ran
+    directly on the async executor's reactor thread, risking stalling
+    unrelated work under a slow/spinning plugin.
+  - `provision_user`'s idempotent repeat-call path (an entry already exists
+    for this `external_id`, whether self-provisioned or admin-linked) now
+    re-checks the resolved user's live `domain_id`, matching `find_user`'s
+    existing behavior - previously only `find_user` enforced this, so a
+    `provision_user` call could keep resolving a handle for a user moved
+    outside the plugin's domain(s) after linking.
+  - `http_fetch`'s redirect chain now shares one `timeout_ms` budget across
+    all hops instead of a fresh budget per hop (previously up to
+    `MAX_REDIRECTS + 1`× the configured budget).
+  - A guest-supplied header colliding with the host-injected
+    `http_fetch_auth_header` name is now dropped before the secret is added,
+    rather than sent alongside it as a second header value (`reqwest`'s
+    `RequestBuilder::header` appends, it does not replace).
+  - `totp` added to `RESERVED_AUTH_METHOD_NAMES` - it's a live builtin
+    dispatched ahead of the plugin lookup but was missing from the reserved
+    list, so a plugin named `totp` would have passed config validation while
+    being silently unreachable.
+  - Per-source keyed rate-limit state (`PluginInvocationLimiter::per_source`)
+    is now periodically shrunk (`shrink_idle_sources`, called from the
+    existing minute-scale cleanup tick in
+    `crates/keystone/src/bin/keystone.rs`) - previously grew one entry per
+    distinct source address forever.
+  - The shared reference-plugin fixture's route target and `[auth_plugin.*]`
+    example name were renamed `hacked_appcred_handler` →
+    `hacked_appcred_handler` across the fixture, `tools/start-api.sh`, the
+    real-server test file, and this doc's examples - the old name was both
+    an unprofessional label and, in one in-process unit test
+    (`auth_plugin_auth::route_acceptance_tests::test_route_to_allowlisted_target_succeeds`),
+    an actual pre-existing test bug (the test configured `route_targets =
+    "hacked_appcred_handler"` while the shared fixture's `route()` hardcoded
+    `"hacked_appcred_handler"` as its output, so the test failed
+    deterministically before this rename).
 
 ## Explicitly out of scope for this plan (per ADR §8)
 

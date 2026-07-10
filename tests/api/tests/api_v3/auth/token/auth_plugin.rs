@@ -16,7 +16,7 @@
 //! `tools/start-api.sh`, which loads three real compiled instances of the
 //! reference plugin fixture: `mapper` (`mode = mapping`), `router`
 //! (`mode = route`, `inspect_methods = application_credential`,
-//! `route_targets = tf_appcred_handler`), and `tf_appcred_handler`
+//! `route_targets = hacked_appcred_handler`), and `hacked_appcred_handler`
 //! (`mode = full_auth`, `provision_domain_id = default`).
 //!
 //! `test_off_allowlist_target_is_rejected` is deliberately NOT included
@@ -258,7 +258,7 @@ async fn test_mapping_plugin_ruleset_lifecycle() -> Result<()> {
 /// is genuinely exercised (the in-process handler tests mock the enforcer).
 ///
 /// Only the deny path is checked here: `revoke_all` is plugin-scoped and this
-/// shared server has a single `tf_appcred_handler`, so an actually-revoking
+/// shared server has a single `hacked_appcred_handler`, so an actually-revoking
 /// positive test would disable users other tests provision through it under
 /// nextest's parallelism. The 200/idempotency behavior is covered by the
 /// in-process handler unit tests instead.

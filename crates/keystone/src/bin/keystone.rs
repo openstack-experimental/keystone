@@ -260,10 +260,10 @@ async fn main() -> Result<(), Report> {
         .await?,
     );
 
-    spawn(cleanup(cloned_token.clone(), shared_state.clone()));
-    // Evict stale entries from rate-limit keyed state stores every 60 s
-    // (ADR-0022 §Consequences: memory overhead and store eviction).
-    spawn(rate_limit_eviction(cloned_token, shared_state.clone()));
+    // Also evicts stale rate-limit keyed-store entries (ADR-0022) and
+    // shrinks idle auth-plugin invocation limiters (ADR-0025 §7) on the
+    // same 60 s tick.
+    spawn(cleanup(cloned_token, shared_state.clone()));
 
     // API Key (SCIM ingress) janitor: proactive inactivity disablement and
     // tombstone purge (ADR 0021 §6.F). Runs on every node; gated to actually
@@ -1123,12 +1123,19 @@ fn spawn_admin_listener(
     }
 }
 
-/// Prometheus scrape endpoint — returns the three audit counters in text
+/// Prometheus scrape endpoint — returns the three audit counters plus the
+/// ADR 0025 `keystone_auth_plugin_load_failure{plugin_name}` counter in text
 /// exposition format (v0.0.4). No authentication required; operators are
 /// expected to firewall `:5000/metrics` (or expose it only on an internal
 /// interface).
 async fn metrics_handler(State(state): State<ServiceState>) -> impl IntoResponse {
-    let body = openstack_keystone_audit::metrics::format_prometheus_text(&state.audit_dispatcher);
+    let mut body =
+        openstack_keystone_audit::metrics::format_prometheus_text(&state.audit_dispatcher);
+    body.push_str(
+        &openstack_keystone_core::auth_plugin_startup::format_load_failure_metrics(
+            &*state.auth_plugin_load_failures.read().await,
+        ),
+    );
     (
         StatusCode::OK,
         [(
@@ -1150,6 +1157,20 @@ async fn cleanup(cancel: CancellationToken, state: ServiceState) {
                 if let Err(e) = state.provider.get_federation_provider().cleanup(&ExecutionContext::internal(&state)).await {
                     error!("Error during cleanup job: {}", e);
                 }
+                // ADR 0025 §7: shrink each loaded auth plugin's per-source
+                // rate-limit keyed store - unbounded otherwise, since every
+                // distinct source address bound 1 sees allocates an entry
+                // `governor` never expires on its own.
+                for limiter in state.auth_plugin_limiters.read().await.values() {
+                    limiter.shrink_idle_sources();
+                }
+                // ADR-0022 §Consequences: evict stale entries from the
+                // global rate-limit keyed state stores, preventing
+                // unbounded memory growth under adversarial unique-key
+                // flooding. Shares this task's tick rather than running on
+                // its own timer - both are best-effort, minute-scale
+                // housekeeping over independent state.
+                state.rate_limiters.retain_recent();
             },
             () = cancel.cancelled() => {
                 info!("Cancellation requested. Stopping cleanup task.");
@@ -1230,31 +1251,6 @@ async fn reload_rate_limits_on_config_change(cancel: CancellationToken, state: S
             }
             () = cancel.cancelled() => {
                 info!("Cancellation requested. Stopping rate-limit reload task.");
-                break;
-            }
-        }
-    }
-}
-
-/// Periodically evict stale entries from rate-limit keyed state stores.
-///
-/// Runs every 60 seconds, mirroring the [`cleanup`] task pattern. Calls
-/// [`RateLimitState::retain_recent`] on all active buckets so that keys that
-/// have not been seen within the last quota window are removed, preventing
-/// unbounded memory growth under adversarial unique-key flooding (ADR-0022
-/// §Consequences: memory overhead and store eviction).
-async fn rate_limit_eviction(cancel: CancellationToken, state: ServiceState) {
-    let mut interval = time::interval(Duration::from_secs(60));
-    interval.tick().await;
-    info!("Start the rate-limit eviction task");
-    loop {
-        tokio::select! {
-            _ = interval.tick() => {
-                trace!("rate-limit eviction tick");
-                state.rate_limiters.retain_recent();
-            },
-            () = cancel.cancelled() => {
-                info!("Cancellation requested. Stopping rate-limit eviction task.");
                 break;
             }
         }

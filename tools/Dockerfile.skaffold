@@ -28,6 +28,14 @@ COPY tests tests
 COPY Cargo.toml Cargo.toml
 COPY Cargo.lock Cargo.lock
 
+# Compile the wasm auth plugins
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    rustup target add wasm32-unknown-unknown &&\
+    cd crates/auth-plugin-runtime/tests/fixtures/reference-plugin &&\
+    cargo build --release --target wasm32-unknown-unknown &&\
+    cp /app/target/wasm32-unknown-unknown/release/reference_plugin.wasm /app/reference_plugin.wasm
+
 # Compile keystone + keystone-manage binaries
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
@@ -82,6 +90,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /app/keystone /usr/local/bin/
 COPY --from=builder /app/keystone-manage /usr/local/bin/
+COPY --from=builder /app/reference_plugin.wasm /usr/local/lib/reference_plugin.wasm
 
 ADD https://github.com/open-policy-agent/opa/releases/download/v${OPA_VERSION}/opa_linux_amd64_static /usr/local/bin/opa
 RUN chmod 755 /usr/local/bin/opa

@@ -8,9 +8,17 @@ package identity.auth_plugin.revoke_all
 # domains and role grants can span any domain), so unlike identity-link
 # create/delete there is no domain-scoped `manager` tier.
 #
-# input.target.plugin_name: the plugin whose state is being revoked.
+# The `input.target` is the plugin revocation parameters:
+#   plugin_name:  string   The dynamic auth plugin whose persistent state is
+#                          being revoked.
+#
+# The `input.existing` is null.
 
 default allow := false
+
+allow if {
+	input.credentials.is_admin
+}
 
 allow if {
 	"admin" in input.credentials.roles

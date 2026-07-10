@@ -72,7 +72,7 @@ pub enum WasmPluginAuthError {
     #[error("resolved_identity handle failed verification")]
     InvalidHandle,
     #[error("invocation rate/concurrency limit exceeded: {0}")]
-    RateLimited(&'static str),
+    RateLimited(&'static str, std::time::Duration),
     #[error("denied by plugin")]
     Denied(String),
     #[error("fetching the resolved user failed: {0}")]
@@ -136,7 +136,7 @@ pub async fn authenticate_via_wasm_plugin(
     // most-specific first, before the plugin is ever invoked - a single
     // hammering source is rejected without ever touching the shared
     // per-plugin budget or a concurrency slot.
-    if let Err(bound) = limiter.check_per_source(remote_addr.as_deref()) {
+    if let Err((bound, retry_after)) = limiter.check_per_source(remote_addr.as_deref()) {
         let _ = emit_wasm_plugin_audit(
             state,
             plugin_name,
@@ -145,9 +145,12 @@ pub async fn authenticate_via_wasm_plugin(
             Some(bound.as_str().to_string()),
         )
         .await;
-        return Err(WasmPluginAuthError::RateLimited(bound.as_str()));
+        return Err(WasmPluginAuthError::RateLimited(
+            bound.as_str(),
+            retry_after,
+        ));
     }
-    if let Err(bound) = limiter.check_per_plugin() {
+    if let Err((bound, retry_after)) = limiter.check_per_plugin() {
         let _ = emit_wasm_plugin_audit(
             state,
             plugin_name,
@@ -156,11 +159,14 @@ pub async fn authenticate_via_wasm_plugin(
             Some(bound.as_str().to_string()),
         )
         .await;
-        return Err(WasmPluginAuthError::RateLimited(bound.as_str()));
+        return Err(WasmPluginAuthError::RateLimited(
+            bound.as_str(),
+            retry_after,
+        ));
     }
     let _permit = match limiter.try_acquire_concurrency_permit() {
         Ok(permit) => permit,
-        Err(bound) => {
+        Err((bound, retry_after)) => {
             let _ = emit_wasm_plugin_audit(
                 state,
                 plugin_name,
@@ -169,7 +175,10 @@ pub async fn authenticate_via_wasm_plugin(
                 Some(bound.as_str().to_string()),
             )
             .await;
-            return Err(WasmPluginAuthError::RateLimited(bound.as_str()));
+            return Err(WasmPluginAuthError::RateLimited(
+                bound.as_str(),
+                retry_after,
+            ));
         }
     };
 
@@ -198,7 +207,12 @@ pub async fn authenticate_via_wasm_plugin(
     let input = serde_json::to_vec(&auth_request)
         .map_err(|e| WasmPluginAuthError::InvokeFailed(e.to_string()))?;
 
-    let raw_response = match loaded.invoke("authenticate", &input) {
+    // `LoadedPlugin::invoke` runs the guest module synchronously (up to
+    // `timeout_ms` of wall-clock time) - `block_in_place` hands this worker
+    // thread's other work to a different thread for the duration, so a slow
+    // or spinning plugin invocation doesn't stall unrelated async tasks
+    // sharing this runtime.
+    let raw_response = match tokio::task::block_in_place(|| loaded.invoke("authenticate", &input)) {
         Ok(bytes) => bytes,
         Err(e) => {
             let _ = emit_wasm_plugin_audit(
@@ -418,7 +432,7 @@ pub async fn authenticate_via_wasm_mapping_plugin(
     )
     .map(|ip| ip.to_string());
 
-    if let Err(bound) = limiter.check_per_source(remote_addr.as_deref()) {
+    if let Err((bound, retry_after)) = limiter.check_per_source(remote_addr.as_deref()) {
         let _ = emit_wasm_plugin_audit(
             state,
             plugin_name,
@@ -427,9 +441,12 @@ pub async fn authenticate_via_wasm_mapping_plugin(
             Some(bound.as_str().to_string()),
         )
         .await;
-        return Err(WasmPluginAuthError::RateLimited(bound.as_str()));
+        return Err(WasmPluginAuthError::RateLimited(
+            bound.as_str(),
+            retry_after,
+        ));
     }
-    if let Err(bound) = limiter.check_per_plugin() {
+    if let Err((bound, retry_after)) = limiter.check_per_plugin() {
         let _ = emit_wasm_plugin_audit(
             state,
             plugin_name,
@@ -438,11 +455,14 @@ pub async fn authenticate_via_wasm_mapping_plugin(
             Some(bound.as_str().to_string()),
         )
         .await;
-        return Err(WasmPluginAuthError::RateLimited(bound.as_str()));
+        return Err(WasmPluginAuthError::RateLimited(
+            bound.as_str(),
+            retry_after,
+        ));
     }
     let _permit = match limiter.try_acquire_concurrency_permit() {
         Ok(permit) => permit,
-        Err(bound) => {
+        Err((bound, retry_after)) => {
             let _ = emit_wasm_plugin_audit(
                 state,
                 plugin_name,
@@ -451,7 +471,10 @@ pub async fn authenticate_via_wasm_mapping_plugin(
                 Some(bound.as_str().to_string()),
             )
             .await;
-            return Err(WasmPluginAuthError::RateLimited(bound.as_str()));
+            return Err(WasmPluginAuthError::RateLimited(
+                bound.as_str(),
+                retry_after,
+            ));
         }
     };
 
@@ -476,7 +499,10 @@ pub async fn authenticate_via_wasm_mapping_plugin(
     let input = serde_json::to_vec(&auth_request)
         .map_err(|e| WasmPluginAuthError::InvokeFailed(e.to_string()))?;
 
-    let raw_response = match loaded.invoke("mapping", &input) {
+    // See the `authenticate` dispatch's identical comment above -
+    // `block_in_place` keeps a slow/spinning guest invocation from stalling
+    // unrelated async work on this runtime.
+    let raw_response = match tokio::task::block_in_place(|| loaded.invoke("mapping", &input)) {
         Ok(bytes) => bytes,
         Err(e) => {
             let _ = emit_wasm_plugin_audit(
@@ -638,7 +664,7 @@ pub async fn route_via_wasm_plugin(
     // independent budget") - falls out for free since `limiter` is looked
     // up by this router's own `plugin_name`, a separate
     // `PluginInvocationLimiter` instance from any target method's.
-    if let Err(bound) = limiter.check_per_source(remote_addr.as_deref()) {
+    if let Err((bound, retry_after)) = limiter.check_per_source(remote_addr.as_deref()) {
         let _ = emit_wasm_route_audit(
             state,
             plugin_name,
@@ -648,9 +674,12 @@ pub async fn route_via_wasm_plugin(
             Some(bound.as_str().to_string()),
         )
         .await;
-        return Err(WasmPluginAuthError::RateLimited(bound.as_str()));
+        return Err(WasmPluginAuthError::RateLimited(
+            bound.as_str(),
+            retry_after,
+        ));
     }
-    if let Err(bound) = limiter.check_per_plugin() {
+    if let Err((bound, retry_after)) = limiter.check_per_plugin() {
         let _ = emit_wasm_route_audit(
             state,
             plugin_name,
@@ -660,11 +689,14 @@ pub async fn route_via_wasm_plugin(
             Some(bound.as_str().to_string()),
         )
         .await;
-        return Err(WasmPluginAuthError::RateLimited(bound.as_str()));
+        return Err(WasmPluginAuthError::RateLimited(
+            bound.as_str(),
+            retry_after,
+        ));
     }
     let _permit = match limiter.try_acquire_concurrency_permit() {
         Ok(permit) => permit,
-        Err(bound) => {
+        Err((bound, retry_after)) => {
             let _ = emit_wasm_route_audit(
                 state,
                 plugin_name,
@@ -674,7 +706,10 @@ pub async fn route_via_wasm_plugin(
                 Some(bound.as_str().to_string()),
             )
             .await;
-            return Err(WasmPluginAuthError::RateLimited(bound.as_str()));
+            return Err(WasmPluginAuthError::RateLimited(
+                bound.as_str(),
+                retry_after,
+            ));
         }
     };
 
@@ -699,7 +734,10 @@ pub async fn route_via_wasm_plugin(
     let input = serde_json::to_vec(&route_request)
         .map_err(|e| WasmPluginAuthError::InvokeFailed(e.to_string()))?;
 
-    let raw_response = match loaded.invoke("route", &input) {
+    // See the `authenticate` dispatch's identical comment above -
+    // `block_in_place` keeps a slow/spinning guest invocation from stalling
+    // unrelated async work on this runtime.
+    let raw_response = match tokio::task::block_in_place(|| loaded.invoke("route", &input)) {
         Ok(bytes) => bytes,
         Err(e) => {
             let _ = emit_wasm_route_audit(
@@ -1150,7 +1188,7 @@ mod acceptance_tests {
             .expect_err("second call from the same source should exceed the per-source bucket");
         assert!(matches!(
             err,
-            WasmPluginAuthError::RateLimited("per_source")
+            WasmPluginAuthError::RateLimited("per_source", _)
         ));
     }
 
@@ -1184,7 +1222,7 @@ mod acceptance_tests {
         .expect_err("second call should exceed the shared per-plugin bucket");
         assert!(matches!(
             err,
-            WasmPluginAuthError::RateLimited("per_plugin")
+            WasmPluginAuthError::RateLimited("per_plugin", _)
         ));
     }
 
@@ -1218,7 +1256,7 @@ mod acceptance_tests {
         let err = limiter
             .try_acquire_concurrency_permit()
             .expect_err("second acquire should be rejected while the slot is held");
-        assert_eq!(err, crate::auth_plugin::RateLimitBound::Concurrency);
+        assert_eq!(err.0, crate::auth_plugin::RateLimitBound::Concurrency);
         drop(permit);
         let _permit = limiter
             .try_acquire_concurrency_permit()
@@ -1246,7 +1284,7 @@ mod acceptance_tests {
             .expect_err("p1's second call should exceed its own per-plugin bucket");
         assert!(matches!(
             err,
-            WasmPluginAuthError::RateLimited("per_plugin")
+            WasmPluginAuthError::RateLimited("per_plugin", _)
         ));
 
         authenticate_via_wasm_plugin(&state, "p2", request("carol", None))
@@ -1809,7 +1847,7 @@ mod route_acceptance_tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_passthrough_when_no_matching_credential_shape() {
-        let state = build_route_state("p", "tf_appcred_handler").await;
+        let state = build_route_state("p", "hacked_appcred_handler").await;
         let decision = route_via_wasm_plugin(
             &state,
             "p",
@@ -1827,7 +1865,7 @@ mod route_acceptance_tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_route_to_allowlisted_target_succeeds() {
-        let state = build_route_state("p", "tf_appcred_handler").await;
+        let state = build_route_state("p", "hacked_appcred_handler").await;
         let decision = route_via_wasm_plugin(
             &state,
             "p",
@@ -1841,7 +1879,7 @@ mod route_acceptance_tests {
         .expect("route to an allowlisted target should succeed");
         assert_eq!(
             decision.target_method.as_deref(),
-            Some("tf_appcred_handler")
+            Some("hacked_appcred_handler")
         );
         assert_eq!(
             decision.payload,
@@ -1852,7 +1890,7 @@ mod route_acceptance_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_route_to_non_allowlisted_target_is_rejected() {
         // route_targets allowlists a *different* method than the plugin
-        // actually reroutes to (`tf_appcred_handler`), so the host's own
+        // actually reroutes to (`hacked_appcred_handler`), so the host's own
         // allowlist check must reject it - the plugin cannot direct traffic
         // to a target the operator never authorized, even though the wire
         // response itself is well-formed.
@@ -1873,7 +1911,7 @@ mod route_acceptance_tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_deny_fails_closed() {
-        let state = build_route_state("p", "tf_appcred_handler").await;
+        let state = build_route_state("p", "hacked_appcred_handler").await;
         let err = route_via_wasm_plugin(
             &state,
             "p",
@@ -1890,7 +1928,7 @@ mod route_acceptance_tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_full_auth_dispatch_rejects_route_mode_plugin() {
-        let state = build_route_state("p", "tf_appcred_handler").await;
+        let state = build_route_state("p", "hacked_appcred_handler").await;
         let err = authenticate_via_wasm_plugin(
             &state,
             "p",
