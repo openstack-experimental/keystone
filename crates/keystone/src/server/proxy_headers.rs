@@ -30,7 +30,7 @@
 //! peer matches the operator-configured `trusted_proxies` allowlist, and the
 //! effective client is the rightmost address in the chain that is not itself a
 //! trusted proxy — the same rightmost-non-trusted-proxy algorithm the API-Key
-//! ingress uses ([`openstack_keystone_core::api::forwarded`]). A client able to
+//! ingress uses ([`openstack_keystone_core::net`]). A client able to
 //! reach the listener directly therefore cannot spoof its apparent address, and
 //! an empty allowlist trusts no one (the raw peer is always kept).
 
@@ -44,7 +44,7 @@ use axum::middleware::Next;
 use axum::response::Response;
 use ipnet::IpNet;
 
-use openstack_keystone_core::api::forwarded::resolve_client_ip;
+use openstack_keystone_core::net::resolve_client_ip_from_headers;
 
 /// Axum middleware that overwrites the request's [`ConnectInfo<SocketAddr>`]
 /// with the proxy-resolved client address when the immediate peer is a trusted
@@ -65,7 +65,8 @@ pub async fn rewrite_client_addr(
         .get::<ConnectInfo<SocketAddr>>()
         .map(|ConnectInfo(addr)| addr.ip());
 
-    if let Some(client_ip) = resolve_client_ip(req.headers(), peer_ip, &trusted_proxies)
+    if let Some(client_ip) =
+        resolve_client_ip_from_headers(req.headers(), peer_ip, &trusted_proxies)
         && Some(client_ip) != peer_ip
     {
         req.extensions_mut()
@@ -161,5 +162,22 @@ mod tests {
         // With no trusted proxies configured, the header is never honoured.
         let addr = observed_addr(&[], "10.0.0.9:4444", &[("x-forwarded-for", "203.0.113.7")]).await;
         assert_eq!(addr, "10.0.0.9:4444");
+    }
+
+    #[tokio::test]
+    async fn rfc7239_forwarded_is_preferred_over_xff() {
+        // The middleware delegates to the shared resolver: RFC 7239
+        // `Forwarded` decides the rewrite even when X-Forwarded-For is also
+        // present.
+        let addr = observed_addr(
+            &["10.0.0.0/8"],
+            "10.0.0.9:5555",
+            &[
+                ("forwarded", "for=203.0.113.7;proto=https"),
+                ("x-forwarded-for", "198.51.100.1"),
+            ],
+        )
+        .await;
+        assert_eq!(addr, "203.0.113.7:0");
     }
 }

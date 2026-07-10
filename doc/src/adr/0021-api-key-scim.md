@@ -133,10 +133,11 @@ short-circuiting pipeline.
 2. It verifies `enabled: true` and `current_utc_seconds < expires_at`.
 3. It determines the effective client IP using the **rightmost non-trusted-proxy
    IP** algorithm: append the raw TCP peer address to the right of the
-   `X-Forwarded-For` header chain, then walk right-to-left, returning the first
-   address that is **not** in the statically configured `trusted_proxies` CIDR
-   array. If the raw TCP peer is not in `trusted_proxies`, it is used directly
-   (XFF is not consulted). This prevents leftmost-entry XFF spoofing through
+   forwarding-header chain (RFC 7239 `Forwarded`, preferred, falling back to
+   `X-Forwarded-For`), then walk right-to-left, returning the first address
+   that is **not** in the statically configured `trusted_proxies` CIDR array.
+   If the raw TCP peer is not in `trusted_proxies`, it is used directly (the
+   headers are not consulted). This prevents leftmost-entry spoofing through
    untrusted intermediate hops. The resulting effective IP is then validated
    against `allowed_ips` CIDR blocks. If `allowed_ips` is `None`, the IP check
    is skipped (no restriction applies).
@@ -358,16 +359,17 @@ traffic migrates seamlessly, and Key A is subsequently revoked.
 3. The Axum middleware actively scrubs the `Authorization` header from all
    internal application traces.
 
-### E. X-Forwarded-For Spoofing
+### E. Forwarding-Header Spoofing
 
 - **Measures:** IP allowlisting uses the **rightmost non-trusted-proxy IP**
-  algorithm (§3 Step 2): the raw TCP peer is appended to the right of the XFF
-  chain, then the chain is walked right-to-left and the first address not in
+  algorithm (§3 Step 2): the raw TCP peer is appended to the right of the
+  forwarding chain (RFC 7239 `Forwarded`, preferred, else `X-Forwarded-For`),
+  then the chain is walked right-to-left and the first address not in
   `trusted_proxies` is used as the effective client IP. If the TCP peer is
-  untrusted, XFF is not consulted at all. This prevents an attacker from
-  bypassing `allowed_ips` by routing through an untrusted intermediate proxy
-  that prepends a spoofed originating IP to `X-Forwarded-For` before a trusted
-  proxy. `allowed_ips: None` means no IP restriction is applied.
+  untrusted, the headers are not consulted at all. This prevents an attacker
+  from bypassing `allowed_ips` by routing through an untrusted intermediate
+  proxy that prepends a spoofed originating IP to the forwarding chain before
+  a trusted proxy. `allowed_ips: None` means no IP restriction is applied.
 
 ### F. Janitor Disablement, Asynchronous Drift & Physical Reclamation
 

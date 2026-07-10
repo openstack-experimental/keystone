@@ -100,7 +100,7 @@ pub mod idmapping;
 pub mod k8s_auth;
 pub mod keystone;
 pub mod mapping;
-mod net;
+pub mod net;
 pub mod plugin_manager;
 pub mod policy;
 pub mod provider;

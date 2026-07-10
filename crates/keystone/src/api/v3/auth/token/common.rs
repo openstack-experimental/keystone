@@ -47,6 +47,10 @@ pub(super) async fn authenticate_request(
                 .map(|v| (name.as_str().to_string(), v.to_string()))
         })
         .collect();
+    let forwarded_header = headers
+        .get(axum::http::header::HeaderName::from_static("forwarded"))
+        .and_then(|h| h.to_str().ok())
+        .map(str::to_string);
     let xff_header = headers
         .get(axum::http::header::HeaderName::from_static(
             "x-forwarded-for",
@@ -101,6 +105,7 @@ pub(super) async fn authenticate_request(
                 &effective_methods,
                 payloads,
                 raw_headers.clone(),
+                forwarded_header.clone(),
                 xff_header.clone(),
                 peer_ip,
             )
@@ -200,6 +205,7 @@ pub(super) async fn authenticate_request(
             let wasm_request = WasmPluginAuthRequest {
                 payload: payload.clone(),
                 raw_headers: raw_headers.clone(),
+                forwarded_header: forwarded_header.clone(),
                 xff_header: xff_header.clone(),
                 peer_ip,
             };

@@ -35,11 +35,11 @@ use openstack_keystone_core_types::mapping::resolution::IdentitySource;
 use openstack_keystone_core_types::mapping::virtual_user::MatchResult;
 
 use crate::api::KeystoneApiError;
-use crate::api::forwarded::resolve_client_ip;
 use crate::api_key::{crypto, token};
 use crate::auth::{ExecutionContext, ValidatedSecurityContext};
 use crate::keystone::ServiceState;
 use crate::mapping::engine;
+use crate::net::resolve_client_ip_from_headers;
 
 /// Ephemeral, single-scope [`ValidatedSecurityContext`] hydrated from a
 /// verified API Key, for use exclusively on the SCIM sub-router.
@@ -257,7 +257,8 @@ async fn resolve_verified_api_client(
     // Resolve the effective client IP behind trusted proxies from the RFC 7239
     // `Forwarded` header (preferred) or `X-Forwarded-For` (#358 follow-up),
     // honouring the header only when the immediate peer is a trusted proxy.
-    let effective_ip = resolve_client_ip(&parts.headers, peer_ip, &cfg.trusted_proxies);
+    let effective_ip =
+        resolve_client_ip_from_headers(&parts.headers, peer_ip, &cfg.trusted_proxies);
     if !ip_allowed(effective_ip, &resource.allowed_ips) {
         return Err(AuthenticationError::Unauthorized.into());
     }

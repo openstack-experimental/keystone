@@ -30,9 +30,10 @@
 //! not cause a startup failure, so the bound cannot be a field-level
 //! `validator` range that would fire unconditionally.
 
+use ipnet::IpNet;
 use serde::Deserialize;
 
-use crate::common::csv;
+use crate::common::csv_ipnet;
 
 /// Default burst capacity when the key is absent from the config file.
 fn default_burst_size() -> u32 {
@@ -80,9 +81,11 @@ pub struct RateLimitSection {
 /// lists because each protects a different ingress trust boundary.
 #[derive(Debug, Default, Deserialize, Clone, PartialEq, Eq)]
 pub struct RateLimitTrustedProxiesSection {
-    /// CIDR ranges allowed to contribute `X-Forwarded-For` hops.
-    #[serde(default, deserialize_with = "csv")]
-    pub trusted_proxies: Vec<String>,
+    /// CIDR ranges allowed to contribute `Forwarded` / `X-Forwarded-For`
+    /// hops. Parsed into [`IpNet`] networks at configuration-load time (not
+    /// on every request); a malformed CIDR fails configuration loading.
+    #[serde(default, deserialize_with = "csv_ipnet")]
+    pub trusted_proxies: Vec<IpNet>,
 }
 
 impl Default for RateLimitSection {
@@ -142,7 +145,20 @@ mod tests {
             serde_json::from_value(json!({"trusted_proxies": "10.0.0.0/8,192.0.2.0/24"})).unwrap();
         assert_eq!(
             section.trusted_proxies,
-            vec!["10.0.0.0/8".to_string(), "192.0.2.0/24".to_string()]
+            vec![
+                "10.0.0.0/8".parse::<IpNet>().unwrap(),
+                "192.0.2.0/24".parse::<IpNet>().unwrap()
+            ]
         );
+    }
+
+    #[test]
+    fn deserialize_malformed_trusted_proxy_fails() {
+        // A malformed CIDR must fail configuration loading up front rather
+        // than being silently skipped on the request path.
+        let result = serde_json::from_value::<RateLimitTrustedProxiesSection>(
+            json!({"trusted_proxies": "10.0.0.0/8,not-a-cidr"}),
+        );
+        assert!(result.is_err());
     }
 }

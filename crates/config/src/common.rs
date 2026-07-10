@@ -48,8 +48,9 @@ where
         .map(str::trim)
         .filter(|res| !res.is_empty())
         .map(|cidr| {
-            cidr.parse::<IpNet>()
-                .map_err(|error| serde::de::Error::custom(format!("invalid CIDR {cidr:?}: {error}")))
+            cidr.parse::<IpNet>().map_err(|error| {
+                serde::de::Error::custom(format!("invalid CIDR {cidr:?}: {error}"))
+            })
         })
         .collect()
 }
