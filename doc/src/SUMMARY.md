@@ -41,6 +41,7 @@
   - [Distributed Encrypted Storage](raft_storage.md)
 - [Policy enforcement](policy.md)
 - [Security model](security.md)
+- [Security architecture review](security-architecture-review.md)
 - [Fernet token]()
   - [Token payloads]()
 
