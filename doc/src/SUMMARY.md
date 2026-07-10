@@ -64,6 +64,18 @@
 
 ---
 
+# Operations & Deployment
+
+- [Administrator guide](admin.md)
+
+---
+
+# Plugin Development
+
+- [Auth Plugin Development](plugins/auth.md)
+
+---
+
 [API](./swagger-ui.html)
 [Performance comparison](performance.md)
 [Developer's guide](developer.md)
