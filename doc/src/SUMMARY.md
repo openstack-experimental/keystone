@@ -37,6 +37,7 @@
     - [SCIM v2 Resource Provisioning](adr/0024-scim-v2-provisioning.md)
     - [Dynamic Auth Plugins](adr/0025-dynamic-auth-plugins.md)
     - [OAuth2 / OIDC Provider](adr/0026-oauth2-oidc-provider.md)
+    - [LDAP / Identity provider backend](adr/0027-ldap-identity-driver.md)
   - [Distributed Encrypted Storage](raft_storage.md)
 - [Policy enforcement](policy.md)
 - [Security model](security.md)
