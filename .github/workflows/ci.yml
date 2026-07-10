@@ -50,15 +50,19 @@ jobs:
 
   test:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
     strategy:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
+    name: Test (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
 
     steps:
+      - name: Skip if no code changes
+        if: needs.changes.outputs.code != 'true'
+        run: echo "No code changes, skipping."
+
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
@@ -156,6 +160,9 @@ jobs:
 
       - name: Run REST API v3 tests
         run: cargo nextest run -p test_api --profile ci-api --test integration_api_v3
+
+      - name: Invalidate eventual openstack_sdk cache
+        run: rm -rf $HOME/.osc
 
       - name: Run REST API SCIMv2 tests
         run: cargo nextest run -p test_api --profile ci-api --test scim_v2
