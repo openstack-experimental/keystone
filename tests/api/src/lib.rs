@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 pub mod api_key;
+pub mod assignment;
 pub mod auth;
 pub mod common;
 pub mod credential;
