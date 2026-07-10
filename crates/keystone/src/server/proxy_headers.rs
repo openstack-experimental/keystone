@@ -42,6 +42,7 @@ use axum::extract::Request;
 use axum::extract::State;
 use axum::middleware::Next;
 use axum::response::Response;
+use ipnet::IpNet;
 
 use openstack_keystone_core::api::forwarded::resolve_client_ip;
 
@@ -55,7 +56,7 @@ use openstack_keystone_core::api::forwarded::resolve_client_ip;
 /// untouched so the real source port is preserved. The recovered address has no
 /// meaningful source port, so port `0` is used.
 pub async fn rewrite_client_addr(
-    State(trusted_proxies): State<Arc<Vec<String>>>,
+    State(trusted_proxies): State<Arc<Vec<IpNet>>>,
     mut req: Request,
     next: Next,
 ) -> Response {
@@ -90,7 +91,12 @@ mod tests {
     /// drive it with `peer` as the raw TCP peer, and return the address the
     /// handler observed.
     async fn observed_addr(trusted: &[&str], peer: &str, headers: &[(&str, &str)]) -> String {
-        let trusted = Arc::new(trusted.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        let trusted = Arc::new(
+            trusted
+                .iter()
+                .map(|s| s.parse::<IpNet>().unwrap())
+                .collect::<Vec<_>>(),
+        );
         let app =
             Router::new()
                 .route("/echo", get(echo))

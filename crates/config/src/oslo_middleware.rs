@@ -16,9 +16,10 @@
 //! Mirrors the subset of upstream Python Keystone's `[oslo_middleware]`
 //! section that is relevant to client-address capture.
 
+use ipnet::IpNet;
 use serde::Deserialize;
 
-use crate::common::csv;
+use crate::common::csv_ipnet;
 
 /// `[oslo_middleware]` section.
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -42,8 +43,11 @@ pub struct OsloMiddleware {
     /// that is not itself a trusted proxy. Empty (the default) means no proxy
     /// is trusted, so the raw peer address is always used even when parsing is
     /// enabled.
-    #[serde(default, deserialize_with = "csv")]
-    pub trusted_proxies: Vec<String>,
+    ///
+    /// Parsed into [`IpNet`] networks at configuration-load time (not on every
+    /// request); a malformed CIDR fails configuration loading.
+    #[serde(default, deserialize_with = "csv_ipnet")]
+    pub trusted_proxies: Vec<IpNet>,
 }
 
 #[cfg(test)]
@@ -88,7 +92,22 @@ mod tests {
         let sot: OsloMiddleware = c.try_deserialize().unwrap();
         assert_eq!(
             sot.trusted_proxies,
-            vec!["10.0.0.0/8".to_string(), "192.168.0.0/16".to_string()]
+            vec![
+                "10.0.0.0/8".parse::<IpNet>().unwrap(),
+                "192.168.0.0/16".parse::<IpNet>().unwrap()
+            ]
         );
+    }
+
+    #[test]
+    fn malformed_trusted_proxy_cidr_fails_load() {
+        let c = Config::builder()
+            .add_source(File::from_str(
+                "trusted_proxies = not-a-cidr",
+                FileFormat::Ini,
+            ))
+            .build()
+            .unwrap();
+        assert!(c.try_deserialize::<OsloMiddleware>().is_err());
     }
 }

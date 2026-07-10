@@ -19,6 +19,7 @@ use std::path::PathBuf;
 use chrono::TimeDelta;
 use derive_builder::Builder;
 use eyre::{Context, Report};
+use ipnet::IpNet;
 use secrecy::SecretSlice;
 use serde::{Deserialize, Deserializer};
 
@@ -31,6 +32,26 @@ where
         .filter(|res| !res.is_empty())
         .map(Into::into)
         .collect())
+}
+
+/// Deserialize a comma-separated list of CIDR blocks directly into parsed
+/// [`IpNet`] networks. Like [`csv`], but each entry is parsed into its target
+/// type at configuration-load time rather than on every request, so the hot
+/// path only borrows an already-parsed `&[IpNet]`. A malformed CIDR fails
+/// configuration loading up front instead of being silently ignored later.
+pub fn csv_ipnet<'de, D>(deserializer: D) -> Result<Vec<IpNet>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    String::deserialize(deserializer)?
+        .split(',')
+        .map(str::trim)
+        .filter(|res| !res.is_empty())
+        .map(|cidr| {
+            cidr.parse::<IpNet>()
+                .map_err(|error| serde::de::Error::custom(format!("invalid CIDR {cidr:?}: {error}")))
+        })
+        .collect()
 }
 
 // /// Deserializes an i64 and interprets it as total SECONDS for

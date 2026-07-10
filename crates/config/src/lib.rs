@@ -872,7 +872,10 @@ mod tests {
         let cfg = Config::load_all(config_file.path().to_path_buf()).unwrap();
         assert_eq!(
             cfg.api_key.trusted_proxies,
-            vec!["10.0.0.0/8".to_string(), "192.168.1.0/24".to_string()]
+            vec![
+                "10.0.0.0/8".parse::<ipnet::IpNet>().unwrap(),
+                "192.168.1.0/24".parse::<ipnet::IpNet>().unwrap()
+            ]
         );
     }
 

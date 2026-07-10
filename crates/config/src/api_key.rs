@@ -15,10 +15,11 @@
 //!
 //! See ADR 0021 (Stateless API-Key Ingress & Ephemeral Security Contexts for
 //! SCIM).
+use ipnet::IpNet;
 use serde::Deserialize;
 use validator::Validate;
 
-use crate::common::{csv, default_raft_driver};
+use crate::common::{csv_ipnet, default_raft_driver};
 
 /// API Key (SCIM ingress) provider configuration.
 #[derive(Debug, Deserialize, Clone, Validate)]
@@ -62,12 +63,13 @@ pub struct ApiKeyProvider {
     #[validate(range(min = 1))]
     pub janitor_tombstone_retention_days: u32,
 
-    /// CIDR blocks of reverse proxies trusted to prepend `X-Forwarded-For`
-    /// entries. Used to compute the effective client IP via the
-    /// rightmost-non-trusted algorithm (ADR 0021 §3 Step 2, §6.E,
-    /// Invariant 4).
-    #[serde(deserialize_with = "csv", default)]
-    pub trusted_proxies: Vec<String>,
+    /// CIDR blocks of reverse proxies trusted to prepend `Forwarded` /
+    /// `X-Forwarded-For` entries. Used to compute the effective client IP via
+    /// the rightmost-non-trusted algorithm (ADR 0021 §3 Step 2, §6.E,
+    /// Invariant 4). Parsed into [`IpNet`] networks at configuration-load time
+    /// (not on every request); a malformed CIDR fails configuration loading.
+    #[serde(deserialize_with = "csv_ipnet", default)]
+    pub trusted_proxies: Vec<IpNet>,
 
     /// Maximum burst of SCIM ingress authentication attempts accepted
     /// instantaneously, per rate-limit key (`lookup_hash`, or source IP when

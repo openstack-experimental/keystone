@@ -30,6 +30,7 @@ futures-util.workspace = true
 hyper-util.workspace = true
 hyper.workspace = true
 inventory.workspace = true
+ipnet = { workspace = true }
 jsonwebtoken = { version = "10.4", features = ["rust_crypto"] }
 nix = { workspace = true, features = ["socket", "user"] }
 openstack-keystone-api-key-driver-raft.workspace = true

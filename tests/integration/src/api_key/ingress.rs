@@ -193,7 +193,7 @@ async fn test_xff_spoof_through_trusted_proxy_is_rejected() -> Result<()> {
     let domain = create_domain!(state)?;
     {
         let mut cfg = state.config_manager.config.write().await;
-        cfg.api_key.trusted_proxies = vec!["10.0.0.0/8".to_string()];
+        cfg.api_key.trusted_proxies = vec!["10.0.0.0/8".parse().unwrap()];
     }
     let (token, _guard) = provision_working_api_key(
         &state,

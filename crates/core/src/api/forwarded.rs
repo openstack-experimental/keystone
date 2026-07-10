@@ -39,18 +39,15 @@ const MAX_FORWARDED_HOPS: usize = 10;
 /// `trusted_proxies`. If the immediate peer is itself not trusted, the headers
 /// are ignored entirely and the peer is returned unchanged.
 ///
-/// `trusted_proxies` is a list of CIDR blocks (e.g. `10.0.0.0/8`); unparsable
-/// entries are skipped. Returns `None` only when no peer address is available.
+/// `trusted_proxies` is a slice of CIDR networks parsed once at
+/// configuration-load time (never per request). Returns `None` only when no
+/// peer address is available.
 pub fn resolve_client_ip(
     headers: &HeaderMap,
     peer_ip: Option<IpAddr>,
-    trusted_proxies: &[String],
+    trusted_proxies: &[IpNet],
 ) -> Option<IpAddr> {
-    let trusted: Vec<IpNet> = trusted_proxies
-        .iter()
-        .filter_map(|c| c.trim().parse::<IpNet>().ok())
-        .collect();
-    let is_trusted = |ip: &IpAddr| trusted.iter().any(|net| net.contains(ip));
+    let is_trusted = |ip: &IpAddr| trusted_proxies.iter().any(|net| net.contains(ip));
 
     let peer = peer_ip?;
     // The immediate peer must be a trusted proxy before any header is honoured.
@@ -151,8 +148,8 @@ mod tests {
 
     const TRUSTED: &[&str] = &["10.0.0.0/8"];
 
-    fn trusted() -> Vec<String> {
-        TRUSTED.iter().map(|s| s.to_string()).collect()
+    fn trusted() -> Vec<IpNet> {
+        TRUSTED.iter().map(|s| s.parse().unwrap()).collect()
     }
 
     #[test]
