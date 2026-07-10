@@ -17,7 +17,9 @@
 
 use std::io;
 use std::net::SocketAddr;
+use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -315,7 +317,7 @@ async fn main() -> Result<(), Report> {
     let mut handles: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
 
     start_raft(&cfg, &concrete_storage, &token, &mut handles).await?;
-    spawn_opa_subprocess(&cfg, &token, &mut handles)?;
+    spawn_opa_subprocess(&cfg, &token, &mut handles).await?;
     spawn_public_listener(&cfg, app.clone(), &token, &mut handles).await?;
     spawn_internal_listener(&cfg, app.clone(), &token, &mut handles)?;
     spawn_admin_listener(&cfg, app, &token, &mut handles);
@@ -782,14 +784,21 @@ async fn start_raft(
 }
 
 /// Launch the local OPA subprocess when `api_policy.opa_policies_path` is
-/// configured, and watch it for unexpected exit / cancellation.
-fn spawn_opa_subprocess(
+/// configured, capture its log output, and wait for it to become ready before
+/// returning.
+///
+/// Redirects OPA stdout/stderr and routes each line through the configured
+/// tracing logger.  Polls `/health` with a back-off until OPA reports a
+/// healthy status or the startup timeout expires.  This prevents a race where
+/// Keystone listeners accept requests (and run policy checks) before the
+/// embedded OPA is actually serving.
+async fn spawn_opa_subprocess(
     cfg: &Config,
-    token: &CancellationToken,
+    _token: &CancellationToken,
     handles: &mut tokio::task::JoinSet<()>,
 ) -> Result<(), Report> {
     if let Some(policies_path) = &cfg.api_policy.opa_policies_path {
-        let opa_url = &cfg.api_policy.opa_base_url;
+        let opa_url = cfg.api_policy.opa_base_url.clone();
         let addr = match opa_url.scheme() {
             "http" | "https" => format!(
                 "{}:{}",
@@ -804,6 +813,28 @@ fn spawn_opa_subprocess(
             ),
         };
 
+        let opa_socket_path = match opa_url.scheme() {
+            "unix" | "http+unix" => Some(PathBuf::from(opa_url.path())),
+            _ => None,
+        };
+
+        let health_url = match &opa_socket_path {
+            Some(_) => "http://localhost/health".parse().unwrap(),
+            None => opa_url.join("/health").unwrap_or_else(|_| opa_url.clone()),
+        };
+
+        // Build the reqwest client.  When OPA listens on a Unix socket, the
+        // client must use `.unix_socket()` so that HTTP requests are routed
+        // over the socket rather than a TCP connection to localhost.
+        let health_client = if let Some(ref socket_path) = opa_socket_path {
+            reqwest::Client::builder()
+                .unix_socket(socket_path.clone())
+                .build()
+                .wrap_err("failed to build reqwest client for OPA health check")?
+        } else {
+            reqwest::Client::new()
+        };
+
         info!(
             "Starting OPA subprocess with policies from {:?} listening on {}",
             policies_path, addr
@@ -815,28 +846,142 @@ fn spawn_opa_subprocess(
             .arg(policies_path)
             .arg("--addr")
             .arg(&addr)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .kill_on_drop(true);
 
-        match opa_cmd.spawn() {
-            Ok(mut child) => {
-                let opa_cancel_token = token.clone();
-                handles.spawn(async move {
-                    tokio::select! {
-                        status = child.wait() => {
-                            error!("OPA subprocess exited unexpectedly: {:?}", status);
-                        }
-                        () = opa_cancel_token.cancelled() => {
-                            info!("Killing OPA subprocess");
-                            child.kill().await.ok();
-                        }
+        let mut child = opa_cmd.spawn().wrap_err_with(|| {
+            format!("failed to start OPA subprocess: is `opa` installed and on PATH?")
+        })?;
+
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| eyre::eyre!("OPA stdout pipe unexpectedly missing"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| eyre::eyre!("OPA stderr pipe unexpectedly missing"))?;
+
+        // Forward OPA stdout lines to the tracing logger.
+        let stdout_task = async move {
+            let mut reader = tokio::io::BufReader::new(stdout);
+            let mut buf = String::new();
+            use tokio::io::AsyncBufReadExt as _;
+            loop {
+                buf.clear();
+                match reader.read_line(&mut buf).await {
+                    Ok(0) => break, // EOF
+                    Ok(_) => {
+                        info!(target: "opa", "{}", buf.trim_end());
                     }
-                });
+                    Err(e) => {
+                        warn!(error = %e, "failed to read OPA stdout line");
+                        break;
+                    }
+                }
             }
-            Err(e) => {
-                error!("Failed to start OPA subprocess: {}", e);
-                return Err(e).wrap_err("Failed to start OPA subprocess");
+        };
+
+        // Forward OPA stderr lines to the tracing logger.
+        let stderr_task = async move {
+            let mut reader = tokio::io::BufReader::new(stderr);
+            let mut buf = String::new();
+            use tokio::io::AsyncBufReadExt as _;
+            loop {
+                buf.clear();
+                match reader.read_line(&mut buf).await {
+                    Ok(0) => break, // EOF
+                    Ok(_) => {
+                        warn!(target: "opa", "{}", buf.trim_end());
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "failed to read OPA stderr line");
+                        break;
+                    }
+                }
             }
+        };
+
+        // Wait for OPA to be ready so that policy checks won't fail on first
+        // request.  Uses the same `/health` endpoint that OPA exposes.
+        let ready_timeout = Duration::from_secs(10);
+        let health_url_clone = health_url.clone();
+        let ready_result = time::timeout(ready_timeout, async move {
+            let client = &health_client;
+            let mut backoff = Duration::from_millis(50);
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep(backoff) => {
+                        match client.get(health_url_clone.as_str()).send().await {
+                            Ok(resp) => {
+                                if resp.status().is_success() {
+                                    return true;
+                                }
+                                warn!(
+                                    status = %resp.status(),
+                                    "OPA health check returned non-success, retrying"
+                                );
+                            }
+                            Err(e) => {
+                                trace!(error = %e, "OPA not yet ready, retrying");
+                            }
+                        }
+                        backoff = backoff
+                            .saturating_mul(2)
+                            .min(Duration::from_secs(1));
+                    }
+                }
+            }
+        })
+        .await;
+
+        // Spawn the log-forwarding tasks so they keep draining pipes even after
+        // we return; otherwise the child could block on a full pipe and deadlock.
+        handles.spawn(stdout_task);
+        handles.spawn(stderr_task);
+
+        if ready_result.is_err() {
+            error!(
+                error_msg = "OPA subprocess failed to become healthy within \
+                             timeout",
+                timeout_secs = ready_timeout.as_secs(),
+                addr = %addr,
+                "OPA did not become healthy"
+            );
+            info!("the health url used was: {}", health_url);
+            return Err(eyre::eyre!(
+                "OPA did not become healthy within {} seconds",
+                ready_timeout.as_secs()
+            ));
         }
+
+        info!(
+            "OPA subprocess is ready on {}, health: {}",
+            addr, health_url
+        );
+
+        handles.spawn(async move {
+            match child.wait().await {
+                Ok(code) => {
+                    if code.success() {
+                        info!("OPA subprocess exited cleanly with status {}", code);
+                    } else if let Some(exit_code) = code.code() {
+                        error!(
+                            exit_code = exit_code,
+                            "OPA subprocess exited with error code"
+                        );
+                    } else if let Some(signal) = code.signal() {
+                        error!(signal = signal, "OPA subprocess was killed by signal");
+                    } else {
+                        error!("OPA subprocess exited abnormally (status unknown)");
+                    }
+                }
+                Err(e) => {
+                    error!(error = %e, "failed to wait on OPA subprocess");
+                }
+            }
+        });
     }
     Ok(())
 }
