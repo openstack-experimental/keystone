@@ -31,12 +31,12 @@ use openstack_keystone_core::application_credential::{
 };
 use openstack_keystone_core::assignment::backend::AssignmentBackend;
 use openstack_keystone_core::assignment::error::AssignmentProviderError;
+use openstack_keystone_core::auth_plugin_identity::AuthPluginIdentityProviderError;
+use openstack_keystone_core::auth_plugin_identity::backend::DynamicPluginIdentityBackend;
 use openstack_keystone_core::catalog::backend::CatalogBackend;
 use openstack_keystone_core::catalog::error::CatalogProviderError;
 use openstack_keystone_core::credential::CredentialProviderError;
 use openstack_keystone_core::credential::backend::CredentialBackend;
-use openstack_keystone_core::dynamic_plugin_identity::DynamicPluginIdentityProviderError;
-use openstack_keystone_core::dynamic_plugin_identity::backend::DynamicPluginIdentityBackend;
 use openstack_keystone_core::federation::backend::FederationBackend;
 use openstack_keystone_core::federation::error::FederationProviderError;
 use openstack_keystone_core::identity::backend::IdentityBackend;
@@ -79,7 +79,7 @@ pub struct PluginManager {
     /// Credential backend plugins.
     credential_backends: HashMap<String, Arc<dyn CredentialBackend>>,
     /// Dynamic plugin identity-binding index backend plugins.
-    dynamic_plugin_identity_backends: HashMap<String, Arc<dyn DynamicPluginIdentityBackend>>,
+    auth_plugin_identity_backends: HashMap<String, Arc<dyn DynamicPluginIdentityBackend>>,
     /// Federation backend plugins.
     federation_backends: HashMap<String, Arc<dyn FederationBackend>>,
     /// Identity backend plugins.
@@ -213,17 +213,15 @@ impl PluginManagerApi for PluginManager {
     /// # Returns
     /// A `Result` containing a reference to the
     /// `DynamicPluginIdentityBackend` if found, or a
-    /// `DynamicPluginIdentityProviderError`.
+    /// `AuthPluginIdentityProviderError`.
     #[allow(clippy::borrowed_box)]
-    fn get_dynamic_plugin_identity_backend<S: AsRef<str>>(
+    fn get_auth_plugin_identity_backend<S: AsRef<str>>(
         &self,
         name: S,
-    ) -> Result<&Arc<dyn DynamicPluginIdentityBackend>, DynamicPluginIdentityProviderError> {
-        self.dynamic_plugin_identity_backends
-            .get(name.as_ref())
-            .ok_or(DynamicPluginIdentityProviderError::UnsupportedDriver(
-                name.as_ref().to_string(),
-            ))
+    ) -> Result<&Arc<dyn DynamicPluginIdentityBackend>, AuthPluginIdentityProviderError> {
+        self.auth_plugin_identity_backends.get(name.as_ref()).ok_or(
+            AuthPluginIdentityProviderError::UnsupportedDriver(name.as_ref().to_string()),
+        )
     }
 
     /// Get registered federation backend.
@@ -549,12 +547,12 @@ impl PluginManagerApi for PluginManager {
     /// # Parameters
     /// * `name` - The name of the backend to register.
     /// * `plugin` - The backend implementation.
-    fn register_dynamic_plugin_identity_backend<S: AsRef<str>>(
+    fn register_auth_plugin_identity_backend<S: AsRef<str>>(
         &mut self,
         name: S,
         plugin: Arc<dyn DynamicPluginIdentityBackend>,
     ) {
-        self.dynamic_plugin_identity_backends
+        self.auth_plugin_identity_backends
             .insert(name.as_ref().to_string(), plugin);
     }
 
@@ -797,7 +795,7 @@ impl PluginManager {
             assignment_backends: HashMap::new(),
             catalog_backends: HashMap::new(),
             credential_backends: HashMap::new(),
-            dynamic_plugin_identity_backends: HashMap::new(),
+            auth_plugin_identity_backends: HashMap::new(),
             federation_backends: HashMap::new(),
             identity_backends: HashMap::new(),
             idmapping_backends: HashMap::new(),
@@ -837,11 +835,9 @@ impl PluginManager {
             Arc::new(openstack_keystone_scim_driver_raft::RaftBackend::default());
         slf.register_scim_realm_backend("raft", scim_raft_backend.clone());
         slf.register_scim_resource_backend("raft", scim_raft_backend);
-        slf.register_dynamic_plugin_identity_backend(
+        slf.register_auth_plugin_identity_backend(
             "raft",
-            Arc::new(
-                openstack_keystone_dynamic_plugin_identity_driver_raft::RaftBackend::default(),
-            ),
+            Arc::new(openstack_keystone_auth_plugin_identity_driver_raft::RaftBackend::default()),
         );
         Ok(slf)
     }

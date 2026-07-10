@@ -155,7 +155,7 @@ deliberately hostile plugin author.
 | Outbound secrets                                                                                                                                                                            | Host-injected from config/env; never placed in guest memory                                                                                                                                                                                               |
 | `assign_role` scope                                                                                                                                                                         | Config-declared role allowlist; system-scope grants always forbidden                                                                                                                                                                                      |
 | WASI imports                                                                                                                                                                                | None registered - only the curated host functions in §6                                                                                                                                                                                                   |
-| Token/plugin-version binding                                                                                                                                                                | Token embeds the plugin's loaded SHA-256; verification rejects on drift                                                                                                                                                                                   |
+| Token/plugin-version binding                                                                                                                                                                | Per-plugin `valid_since` cutoff in config; verification rejects any token whose `issued_at` predates it (the fixed `FernetToken` payload cannot carry a per-plugin SHA-256)                                                                                 |
 | Auth-method name collisions                                                                                                                                                                 | Plugin names reserved-word-checked against builtins at load time                                                                                                                                                                                          |
 | Pre-existing (e.g. SCIM) users, low-privilege path                                                                                                                                          | `mapping` mode - plugin transforms claims; Mapping Engine (ADR 0020) remains the terminal identity authority, no binding needed                                                                                                                           |
 | Pre-existing (e.g. SCIM) users, full-authority path                                                                                                                                         | `full_auth` mode + admin-authorized external identity linking - never plugin-self-service                                                                                                                                                                 |
@@ -353,13 +353,17 @@ gains one variant:
 ```rust
 WasmPlugin {
     plugin_name: String,
-    /// SHA-256 of the plugin module that produced this result, captured
-    /// at invocation time - see "Plugin Version Binding" below.
-    plugin_sha256: [u8; 32],
     claims: HashMap<String, serde_json::Value>,
     token: Option<FernetToken>,
 },
 ```
+
+The variant carries no `plugin_sha256`: the `FernetToken` payload is a
+fixed enum with no plugin-bearing variant (a `WasmPlugin` login mints an
+ordinary scoped token), so there is nowhere to embed and later re-compare a
+module hash. Version binding is instead keyed on `plugin_name` at
+verification time against the plugin's configured `valid_since` cutoff - see
+"Plugin Version Binding" below.
 
 which flows through the existing `ValidatedSecurityContext::new_for_scope()`
 pipeline (`crates/core/src/auth.rs:79-181`) unchanged - a plugin-authenticated
@@ -437,15 +441,20 @@ does for `full_auth` mode:
   worst it can do is cause a mismatch/no-match against rules an admin wrote
   specifically expecting its own output.
 
-**Plugin-version binding for `mapping` mode.** `MappingContext`
-(`crates/core-types/src/mapping/auth.rs:59`, ADR 0020 §5.3) gains an optional
-field, `wasm_plugin_sha256: Option<[u8; 32]>`, populated whenever the claims
-source was a `mapping`-mode plugin. Verification checks it alongside the
-existing `ruleset_version` (0020 §5.6 step 6): if the currently-loaded plugin's
-hash differs from the one embedded at issuance, the token is rejected the same
-way a `ruleset_version` mismatch is - patching a `mapping`-mode plugin
-invalidates outstanding tokens exactly like patching a `full_auth`-mode one does
-(§4 "Plugin Version Binding," below, for the `full_auth` case).
+**Plugin-version binding for `mapping` mode.** A `mapping`-mode token gets the
+same `valid_since` cutoff as `full_auth` (§4 "Plugin Version Binding," below),
+and for the same reason - the `FernetToken` payload cannot be extended to carry a
+per-plugin hash. `MappingContext`
+(`crates/core-types/src/mapping/auth.rs`, ADR 0020 §5.3) is **not** extended with
+a `wasm_plugin_sha256` field; instead, at verification the host recovers the
+plugin name from the matched ruleset's own
+`IdentitySource::WasmPlugin { plugin_name }` (loaded via the token's
+`mapping_id`, alongside the existing `ruleset_version` TOCTOU read - 0020 §5.6
+step 6) and rejects the token with `PluginVersionMismatch` if its `issued_at`
+predates that plugin's configured `valid_since`. Patching a `mapping`-mode plugin
+invalidates outstanding tokens exactly like patching a `full_auth`-mode one does,
+subject to the same operator obligation to advance `valid_since` when the plugin
+binary changes.
 
 **Capability restriction.** `provision_user`, `find_user`, and `assign_role`
 (§6.B–D) are meaningless in `mapping` mode - the Mapping Engine owns
@@ -578,20 +587,20 @@ eventually-authenticated request would show only the routed-to method, making it
 look as though the client had requested that method directly, which is exactly
 the wrong picture for an operator investigating a routing plugin gone wrong.
 
-**No router hash in the issued token - by design.** A `route`-mode plugin does
-not mint a token; the target method it routes to does, and that token embeds the
-_target's_ version binding (its `plugin_sha256` for a `full_auth` target, or its
-`wasm_plugin_sha256` for a `mapping` target), not the router's. This is
-intentional, not an oversight: the token-version-binding defense (§4 "Plugin
-Version Binding") exists to invalidate credentials a _vulnerable authenticator_
-minted, and a router never authenticates - it cannot mint a credential for
-anyone the target method didn't independently verify (constraint 4 above).
-Patching a buggy router therefore has nothing to retroactively invalidate: any
-token that exists was authorized by a target method's own still-bound
-verification, and the router's fix takes effect on the next request the instant
-its new hash loads at startup (§5). The one thing the router hash _does_ get
-bound into is the audit trail, which is where a routing bug actually needs to be
-reconstructable.
+**No router version binding on the issued token - by design.** A `route`-mode
+plugin does not mint a token; the target method it routes to does, and that token
+is subject to the _target's_ version binding (the target `plugin_name`'s
+`valid_since` cutoff, for a `full_auth` or `mapping` target), not the router's.
+This is intentional, not an oversight: the token-version-binding defense (§4
+"Plugin Version Binding") exists to invalidate credentials a _vulnerable
+authenticator_ minted, and a router never authenticates - it cannot mint a
+credential for anyone the target method didn't independently verify (constraint 4
+above). Patching a buggy router therefore has nothing to retroactively
+invalidate: any token that exists was authorized by a target method's own
+still-bound verification, and the router's fix takes effect on the next request
+the instant its new module loads at startup (§5). The one thing a router bug
+_does_ get bound into is the audit trail, which is where a routing bug actually
+needs to be reconstructable.
 
 ### Identity Binding (`full_auth` Mode): Handles Into a Plugin-Owned Namespace, Not Raw `user_id`
 
@@ -705,7 +714,7 @@ authenticate as anyone in that domain, not just identities someone deliberately
 opted in. The per-identity (or per-realm, below) authorization step is the
 load-bearing control; nothing here is meant to be bypassable for convenience.
 
-**API.** `POST /v4/dynamic_plugins/{plugin_name}/identity_links` with body
+**API.** `POST /v4/auth_plugins/{plugin_name}/identity_links` with body
 `{external_id, user_id}`. RBAC-tiered the same way ADR 0020 §9.A gates mapping
 writes: system-admin authorization is required to link a user who holds any
 system-scope role assignment; domain-admin authorization, scoped to the target
@@ -741,15 +750,33 @@ than the plugin ever being able to decide that for itself.
 
 Mirroring the `ruleset_version` TOCTOU defense in ADR 0020 §5.5–§5.6 (a token
 issued under one mapping ruleset is rejected if the live ruleset has since
-changed), a token minted via `WasmPlugin` embeds the SHA-256 of the plugin
-module that authenticated it (`plugin_sha256`, above - the same hash pinned in
-`keystone.conf`, §5). On every subsequent verification of that token, the host
-compares the embedded hash against the hash of the plugin currently loaded under
-that `plugin_name`. If they differ - the plugin was patched, downgraded, or
-removed - the token is rejected with a dedicated `PluginVersionMismatch` error,
-forcing re-authentication against the current plugin logic. Without this,
-patching a plugin to fix a security bug would not invalidate tokens minted by
-the vulnerable version still floating around with unexpired lifetimes.
+changed), a token minted via `WasmPlugin` is invalidated when the plugin behind
+its `plugin_name` is patched. The mechanism is a **timestamp cutoff, not an
+embedded hash**: the `FernetToken` payload is a fixed variant set with no
+plugin-bearing case (a `WasmPlugin` login mints an ordinary scoped token that
+already records its own `issued_at`), so there is no room to embed a
+`plugin_sha256` in the token and re-compare it later. Instead, each plugin's
+config carries an optional `valid_since` timestamp (§5). On every verification of
+a `WasmPlugin`-authenticated token, the host compares the token's `issued_at`
+against the `valid_since` configured for that `plugin_name`: if `issued_at`
+predates `valid_since`, the token is rejected with a dedicated
+`PluginVersionMismatch` error, forcing re-authentication against the current
+plugin logic. An operator patching a plugin to fix a security bug bumps
+`valid_since` (normally alongside the pinned `sha256`) to the cutover instant,
+which invalidates every token the vulnerable version minted while leaving the
+rest of the process running. This is verification-time only: a brand-new login
+has no token yet (`issued_at` is set as the token is minted), so a past
+`valid_since` never blocks fresh authentication - it only invalidates
+already-outstanding tokens.
+
+The trade-off relative to an automatic hash-drift check is that invalidation is
+driven by an operator action (bumping `valid_since`) rather than falling out of
+the `sha256` change itself: an operator who swaps the `.wasm` and updates
+`sha256` but forgets to advance `valid_since` leaves the old version's tokens
+valid until they expire naturally. Treating `valid_since` as a mandatory
+companion to any `sha256` change - the same "plugin config change is a staged
+rollout, not an ordinary edit" discipline §5 already calls for - is the
+load-bearing operator convention here.
 
 ### Bulk Revocation on Plugin Compromise (`full_auth` Mode)
 
@@ -765,7 +792,7 @@ or by hand-querying the CADF audit trail (§6.E, which records `plugin_name` on
 every such write) for everything to walk back, is only manual, error-prone
 rollback under incident-response time pressure.
 
-**API.** `POST /v4/dynamic_plugins/{plugin_name}/revoke_all`. System-admin only
+**API.** `POST /v4/auth_plugins/{plugin_name}/revoke_all`. System-admin only
 
 - this is a cross-domain action by construction, since a plugin's
   `provision_domain_id`/`allowed_provision_domains` (§6.B) can span multiple
@@ -778,34 +805,45 @@ rollback under incident-response time pressure.
    admin-authorized identity link to it (above) - reusing the same disable path
    ADR 0020 §9.F already uses for a disabled virtual user, not a new deletion
    code path.
-2. **Revokes** every role assignment the plugin granted via `assign_role`,
-   individually, rather than disabling the target project/domain wholesale - a
-   provisioned user may also hold assignments from an unrelated source that must
-   survive this operation untouched.
-3. **Deletes** every remaining `identity_links` entry for that plugin - the
+2. **Deletes** every remaining `identity_links` entry for that plugin - the
    batched equivalent of the existing per-`external_id` `DELETE`, above.
-4. **Triggers the existing token-revocation pipeline** for every affected
+3. **Triggers the existing token-revocation pipeline** for every affected
    `user_id`, so a token minted before the operation ran cannot keep working on
    a since-disabled account - the same window the per-identity `DELETE` already
    closes for one identity at a time, now closed for all of them at once.
+
+It deliberately does **not** revoke the role assignments the plugin granted via
+`assign_role`. Attributing a stored assignment to the plugin that created it
+would require every grant to carry a per-record origin marker - exactly the kind
+of per-write bookkeeping this ADR rejects for version scoping (below), and which
+the assignment store does not otherwise need. Because disabling the account
+already denies all access, a leftover grant is inert unless an operator later
+re-enables that user; at that point it is the operator's responsibility to
+review the re-enabled user's assignments against the CADF audit trail (§6.E
+records `plugin_name` on every `assign_role`) and revoke any they deem
+compromised via the existing per-grant revocation API. This keeps "get
+everything shut off fast" free of schema additions, and leaves selective
+assignment cleanup - like the selective account reinstatement discussed below -
+a deliberate manual step rather than an automatic one.
 
 Each of the above is individually CADF-audited exactly as its single-record
 equivalent already is (§6.E) - this endpoint is a bulk _driver_ of existing,
 already-reviewed disable/revoke/unlink operations, not a new privileged code
 path with its own semantics. It responds with a per-category count (users
-disabled, assignments revoked, links deleted) so the operator gets confirmation
+disabled, links deleted) so the operator gets confirmation
 of blast radius covered without a separate audit-trail query, and re-running it
 against a plugin with no remaining state is a no-op (`200`, all-zero counts) -
 safe to include in a standard incident-response runbook without first checking
 whether a prior run already covered it.
 
 **Why plugin-name-scoped, not version-scoped.** The action targets everything
-attributable to `plugin_name`, not only writes made while one specific
-`plugin_sha256` was loaded. Scoping to a single vulnerable version would require
-every provisioning/grant/link record to carry the `plugin_sha256` active at
+attributable to `plugin_name`, not only writes made while one specific plugin
+binary (`sha256`) was loaded. Scoping to a single vulnerable version would
+require every provisioning/grant/link record to carry the `sha256` active at
 write time - bookkeeping this ADR does not otherwise need (version binding,
-above, only needs the hash at token-mint time) - and would leave state from _any
-other_ version of the same plugin untouched, the wrong default the moment an
+above, is a single per-plugin `valid_since` timestamp compared to a token's
+`issued_at`, and needs no per-record hash at all) - and would leave state from
+_any other_ version of the same plugin untouched, the wrong default the moment an
 operator's trust in a plugin binary has been broken. An operator confident only
 one version is implicated can still hand-verify individual accounts against the
 audit trail's `plugin_name` + timestamp before re-enabling them; this endpoint
@@ -834,12 +872,18 @@ sub-entry per plugin, follows the existing per-subsystem `[section] key = value`
 convention (e.g. `crates/config/src/k8s_auth.rs`):
 
 ```
-[dynamic_plugins]
+[auth_plugins]
 plugins = acme_risk_sso,tf_appcred_router
 
-[dynamic_plugin.acme_risk_sso]
+[auth_plugin.acme_risk_sso]
 path = /etc/keystone/plugins/acme_risk_sso.wasm
 sha256 = 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+# Plugin version binding (§4 "Plugin Version Binding"): any token whose
+# issued_at predates this instant is rejected with PluginVersionMismatch,
+# forcing re-auth against the current module. Bump this to "now" whenever
+# `sha256` changes so tokens minted by the previous binary stop verifying.
+# Optional - omit it and no token is ever rejected on version grounds.
+valid_since = 2026-07-02T00:00:00Z
 # full_auth (default): plugin is the terminal identity authority, may call
 # provision_user/find_user/assign_role, can reach pre-existing users only
 # via an admin-created identity_link (§4). mapping: plugin only produces
@@ -880,7 +924,7 @@ max_concurrent_invocations = 16
 # (tf_appcred_handler, not shown) that performs the real verification;
 # every other application_credential request passes through unmodified to
 # the builtin handler.
-[dynamic_plugin.tf_appcred_router]
+[auth_plugin.tf_appcred_router]
 path = /etc/keystone/plugins/tf_appcred_router.wasm
 sha256 = 3b5d5c3712955042212316173ccf37be9de53d6c84a5c7c8e6e0e5e7f5f8a1b
 mode = route
@@ -904,7 +948,7 @@ independently, once, at process startup. If a given plugin's file is missing or
 its SHA-256 does not match the pinned value, **that plugin is disabled** - not
 registered as an auth method, not reachable by any `identity.methods` entry -
 and the host emits a `CRITICAL`-level structured log line plus a dedicated
-metric/counter (e.g. `keystone_dynamic_plugin_load_failure{plugin_name}`) naming
+metric/counter (e.g. `keystone_auth_plugin_load_failure{plugin_name}`) naming
 the plugin and the mismatch, wired to whatever alerting an operator already has
 on Keystone process health. The node itself, every other correctly verified
 plugin, and every builtin auth method (`password`, `openid`, `k8s`, ...) start
@@ -1308,12 +1352,12 @@ attacker-influenced content back into logs.
   restart) is future work, not required for this ADR's threat model (§1).
 - **Remediation after a plugin is pulled for a security bug - addressed.**
   Resolved by "Bulk Revocation on Plugin Compromise" (§4): a single
-  `POST /v4/dynamic_plugins/{plugin_name}/revoke_all` disables everything the
+  `POST /v4/auth_plugins/{plugin_name}/revoke_all` disables everything the
   plugin provisioned/granted/was linked to and revokes affected tokens, on top
   of the token-level protection version binding (§4 "Plugin Version Binding")
   already provides. What remains genuinely open: that endpoint is deliberately
-  `plugin_name`-scoped, not `plugin_sha256`-scoped (see its "Why
-  plugin-name-scoped" rationale) - an operator who wants to reinstate only the
+  `plugin_name`-scoped, not scoped to a single plugin binary version (see its
+  "Why plugin-name-scoped" rationale) - an operator who wants to reinstate only the
   state attributable to a _different_, non-vulnerable version of the same plugin
   must still identify and re-enable that subset by hand against the audit trail.
 - **Coarser domain-scoped resolution (considered, rejected).** An earlier draft
@@ -1452,8 +1496,9 @@ attacker-influenced content back into logs.
   tiering, all extended or reused by `mapping` mode and identity linking (§4).
 - [`openstack_keystone_core_types::mapping::resolution::IdentitySource`] enum,
   gains the `WasmPlugin` variant for `mapping` mode.
-- [`MappingContext`], gains the `wasm_plugin_sha256` field for `mapping`-mode
-  token invalidation.
+- [`MappingContext`] - `mapping`-mode token invalidation reuses its existing
+  `mapping_id` to recover the plugin's `valid_since` from the matched ruleset's
+  `IdentitySource::WasmPlugin`; no new field is added.
 - `doc/src/adr/0023-audit.md` - CADF audit event model reused for plugin
   invocation auditing.
 - `doc/src/adr/0024-scim-v2-provisioning.md` §3.A–B - `ScimResourceIndex` and

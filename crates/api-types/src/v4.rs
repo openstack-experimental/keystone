@@ -14,6 +14,7 @@
 //! # V4 API types
 pub mod api_key;
 pub mod auth;
+pub mod auth_plugin;
 pub mod mapping;
 pub mod scim_realm;
 pub mod token_restriction;

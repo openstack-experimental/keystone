@@ -154,7 +154,7 @@ impl ValidatedSecurityContext {
             AuthenticationContext::Totp => {}
             // The `resolved_identity` handle a dynamic auth plugin
             // presented is already verified once, at dispatch time, in
-            // `crate::dynamic_plugin_auth::authenticate_via_wasm_plugin`
+            // `crate::auth_plugin_auth::authenticate_via_wasm_plugin`
             // (ADR 0025 §4 "Identity Binding") - by the time an
             // `AuthenticationContext::WasmPlugin` exists here, the real
             // user is already resolved and the handle itself was never
@@ -172,10 +172,8 @@ impl ValidatedSecurityContext {
             AuthenticationContext::WasmPlugin { plugin_name, .. } => {
                 if let Some(token) = ctx.token() {
                     let cfg = state.config_manager.config.read().await;
-                    if let Some(valid_since) = cfg
-                        .dynamic_plugin
-                        .get(plugin_name)
-                        .and_then(|p| p.valid_since)
+                    if let Some(valid_since) =
+                        cfg.auth_plugin.get(plugin_name).and_then(|p| p.valid_since)
                         && *token.issued_at() < valid_since
                     {
                         return Err(AuthenticationError::PluginVersionMismatch(
@@ -241,6 +239,45 @@ impl ValidatedSecurityContext {
             AuthenticationContext::Token(..) => {}
             AuthenticationContext::WebauthN => {}
             AuthenticationContext::Mapping(mc) => {
+                // Plugin version binding for a `mapping`-mode dynamic auth
+                // plugin (ADR 0025 §4 "Plugin-version binding for mapping
+                // mode"), mirroring the `full_auth` `valid_since` check
+                // above. On token re-verification (`ctx.token()` is `Some`;
+                // `None` during a fresh mint), if the ruleset that produced
+                // this mapping is sourced from a WASM plugin whose
+                // `valid_since` was bumped past the token's `issued_at`, the
+                // token is stale and rejected exactly like a `full_auth`
+                // plugin patch invalidates its outstanding tokens. The
+                // plugin name is recovered from the ruleset's own
+                // `IdentitySource::WasmPlugin`, so no per-plugin hash has to
+                // be embedded in the (unextendable) `FernetToken` payload.
+                if let Some(token) = ctx.token() {
+                    let ruleset = state
+                        .provider
+                        .get_mapping_provider()
+                        .get_ruleset(&ExecutionContext::internal(state), &mc.mapping_id)
+                        .await
+                        .auth_context("loading mapping ruleset for plugin version binding")?;
+                    if let Some(
+                        openstack_keystone_core_types::mapping::resolution::IdentitySource::WasmPlugin {
+                            plugin_name,
+                        },
+                    ) = ruleset.as_ref().map(|r| &r.source)
+                    {
+                        let cfg = state.config_manager.config.read().await;
+                        if let Some(valid_since) = cfg
+                            .auth_plugin
+                            .get(plugin_name)
+                            .and_then(|p| p.valid_since)
+                            && *token.issued_at() < valid_since
+                        {
+                            return Err(AuthenticationError::PluginVersionMismatch(
+                                plugin_name.clone(),
+                            ));
+                        }
+                    }
+                }
+
                 // Extract data from mc before modifying ctx (mc borrows ctx).
                 let virtual_user_id = mc.virtual_user_id.clone();
                 let is_system = mc.is_system;
@@ -3432,7 +3469,7 @@ mod tests {
         assert!(matches!(result, Err(AuthenticationError::ScopeNotAllowed)));
     }
 
-    /// Builds a `Config` with a single `[dynamic_plugin.<name>]` section
+    /// Builds a `Config` with a single `[auth_plugin.<name>]` section
     /// whose only fields under test are `valid_since` (ADR 0025 §4 "Plugin
     /// Version Binding").
     fn wasm_plugin_config(
@@ -3444,11 +3481,11 @@ mod tests {
 
         #[derive(serde::Deserialize)]
         struct Wrapper {
-            dynamic_plugin: StdHashMap<String, openstack_keystone_config::DynamicPluginConfig>,
+            auth_plugin: StdHashMap<String, openstack_keystone_config::DynamicPluginConfig>,
         }
 
         let mut ini = format!(
-            "[dynamic_plugin.{name}]\npath = /dev/null\nsha256 = {}\nmode = full_auth\n",
+            "[auth_plugin.{name}]\npath = /dev/null\nsha256 = {}\nmode = full_auth\n",
             "0".repeat(64),
         );
         if let Some(vs) = valid_since {
@@ -3460,7 +3497,7 @@ mod tests {
             .unwrap();
         let wrapper: Wrapper = c.try_deserialize().unwrap();
         openstack_keystone_config::Config {
-            dynamic_plugin: wrapper.dynamic_plugin,
+            auth_plugin: wrapper.auth_plugin,
             ..Default::default()
         }
     }
@@ -3486,7 +3523,6 @@ mod tests {
         let ctx = SecurityContextTestingBuilder::default()
             .authentication_context(AuthenticationContext::WasmPlugin {
                 plugin_name: "p".to_string(),
-                plugin_sha256: [0u8; 32],
                 claims: HashMap::new(),
                 token: None,
             })
@@ -3512,7 +3548,6 @@ mod tests {
         let ctx = SecurityContextTestingBuilder::default()
             .authentication_context(AuthenticationContext::WasmPlugin {
                 plugin_name: "p".to_string(),
-                plugin_sha256: [0u8; 32],
                 claims: HashMap::new(),
                 token: None,
             })
@@ -3537,7 +3572,6 @@ mod tests {
         let ctx = SecurityContextTestingBuilder::default()
             .authentication_context(AuthenticationContext::WasmPlugin {
                 plugin_name: "p".to_string(),
-                plugin_sha256: [0u8; 32],
                 claims: HashMap::new(),
                 token: None,
             })
@@ -3547,5 +3581,66 @@ mod tests {
         let result =
             ValidatedSecurityContext::new_for_scope(ctx, ScopeInfo::Unscoped, &state).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_mapping_wasm_plugin_stale_token_is_rejected() {
+        use openstack_keystone_core_types::mapping::ruleset::MappingRuleSet;
+        use openstack_keystone_core_types::mapping::{DomainResolutionMode, IdentitySource};
+
+        // A `mapping`-mode plugin's version binding is enforced via the same
+        // `valid_since` cutoff as `full_auth`, recovering the plugin name
+        // from the ruleset's `IdentitySource::WasmPlugin` instead of a
+        // token-embedded hash the (unextendable) `FernetToken` can't carry
+        // (ADR 0025 §4 "Plugin-version binding for mapping mode").
+        let valid_since = Utc::now();
+        let issued_at = valid_since - chrono::TimeDelta::seconds(60);
+
+        let ruleset = MappingRuleSet {
+            mapping_id: "map-1".to_string(),
+            domain_id: Some("d".to_string()),
+            source: IdentitySource::WasmPlugin {
+                plugin_name: "p".to_string(),
+            },
+            domain_resolution_mode: DomainResolutionMode::Fixed,
+            enabled: true,
+            rules: vec![],
+            ruleset_version: 1,
+        };
+        let mut mapping_mock = MockMappingProvider::new();
+        mapping_mock
+            .expect_get_ruleset()
+            .returning(move |_e, id: &str| {
+                if id == "map-1" {
+                    Ok(Some(ruleset.clone()))
+                } else {
+                    Ok(None)
+                }
+            });
+
+        let state = get_mocked_state(
+            Some(wasm_plugin_config("p", Some(valid_since))),
+            Some(Provider::mocked_builder().mock_mapping(mapping_mock)),
+        )
+        .await;
+
+        let mc = MappingContext {
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "rule-1".to_string(),
+            virtual_user_id: "vu-1".to_string(),
+            is_system: false,
+        };
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Mapping(mc))
+            .principal(make_user_identity("vu-1"))
+            .token(wasm_plugin_token("p", issued_at))
+            .build();
+
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, ScopeInfo::Unscoped, &state).await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::PluginVersionMismatch(ref name)) if name == "p"
+        ));
     }
 }

@@ -33,12 +33,12 @@ openssl x509 -req -in "${SSL_DIR}/ks.csr" \
     -days 30 -copy_extensions copyall 2>/dev/null
 rm -f "${SSL_DIR}/ks.csr"
 
-# Build the ADR 0025 reference dynamic-auth-plugin fixture (mapping/route/
+# Build the ADR 0025 reference auth-plugin fixture (mapping/route/
 # full_auth entry points) and hash it, so the real server can load it just
 # like a genuine operator-supplied plugin.
-(cd crates/dynamic-plugin-runtime/tests/fixtures/reference-plugin && \
+(cd crates/auth-plugin-runtime/tests/fixtures/reference-plugin && \
     cargo build --release --target wasm32-unknown-unknown)
-PLUGIN_WASM="$(pwd)/crates/dynamic-plugin-runtime/tests/fixtures/reference-plugin/target/wasm32-unknown-unknown/release/reference_plugin.wasm"
+PLUGIN_WASM="$(pwd)/crates/auth-plugin-runtime/tests/fixtures/reference-plugin/target/wasm32-unknown-unknown/release/reference_plugin.wasm"
 PLUGIN_SHA256="$(sha256sum "$PLUGIN_WASM" | awk '{print $1}')"
 
 cleanup() {
@@ -61,7 +61,14 @@ enable = true
 opa_policies_path = policy
 
 [auth]
-methods = password,token,openid,application_credential,x509
+# mapped is the fixed, plugin-name-independent method every mode=mapping
+# dynamic plugin's issued tokens carry (ADR 0025 section 4); a mode=full_auth
+# plugin's issued tokens carry its own configured name instead
+# (tf_appcred_handler below) - the fernet driver encodes auth_methods
+# into a token as a bitmask over exactly this list
+# (crates/token-driver-fernet/src/lib.rs), so both must be present here or
+# token issuance 500s with "unsupported authentication methods".
+methods = password,token,openid,application_credential,x509,mapped,hacked_appcred_handler
 
 [DEFAULT]
 use_stderr = false
@@ -110,27 +117,27 @@ cluster_salt = "fbb27433d07ab307cc1fc899d0e174cf197fd398fbcff7285a63fe2f94eec2fe
 [audit]
 spool_dir = ${STATE_DIR}/audit
 
-[dynamic_plugins]
-plugins = mapper,router,tf_appcred_handler
+[auth_plugins]
+plugins = mapper,router,hacked_appcred_handler
 
-[dynamic_plugin.mapper]
+[auth_plugin.mapper]
 path = ${PLUGIN_WASM}
 sha256 = ${PLUGIN_SHA256}
 mode = mapping
 
-[dynamic_plugin.router]
+[auth_plugin.router]
 path = ${PLUGIN_WASM}
 sha256 = ${PLUGIN_SHA256}
 mode = route
 inspect_methods = application_credential
-route_targets = tf_appcred_handler
+route_targets = hacked_appcred_handler
 
-[dynamic_plugin.tf_appcred_handler]
+[auth_plugin.hacked_appcred_handler]
 path = ${PLUGIN_WASM}
 sha256 = ${PLUGIN_SHA256}
 mode = full_auth
 capabilities = provision_user
-provision_domain_id = default
+provision_domain_id = d
 
 EOF
 

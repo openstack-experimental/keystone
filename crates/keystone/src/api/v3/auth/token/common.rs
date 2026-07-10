@@ -17,7 +17,7 @@ use std::net::IpAddr;
 
 use openstack_keystone_config::PluginMode;
 use openstack_keystone_core::auth::ExecutionContext;
-use openstack_keystone_core::dynamic_plugin_auth::{
+use openstack_keystone_core::auth_plugin_auth::{
     WasmPluginAuthError, WasmPluginAuthRequest, authenticate_via_wasm_mapping_plugin,
     authenticate_via_wasm_plugin, route_via_wasm_plugin,
 };
@@ -67,8 +67,17 @@ pub(super) async fn authenticate_request(
     {
         let router = {
             let cfg = state.config_manager.config.read().await;
-            cfg.dynamic_plugin
+            // Deterministic "first configured" selection: walk the ordered
+            // `[auth_plugins] plugins` list rather than the unordered
+            // `auth_plugin` map. A `HashMap` iteration order is
+            // unspecified, so two `mode = route` plugins with overlapping
+            // `inspect_methods` could otherwise pick a different router
+            // across restarts - here the operator's configured order is the
+            // stable, documented tiebreaker.
+            cfg.auth_plugins
+                .plugins
                 .iter()
+                .filter_map(|name| cfg.auth_plugin.get(name).map(|p| (name, p)))
                 .filter(|(_, p)| p.mode == PluginMode::Route)
                 .find(|(_, p)| {
                     p.inspect_methods
@@ -183,7 +192,7 @@ pub(super) async fn authenticate_request(
                 .config
                 .read()
                 .await
-                .dynamic_plugin
+                .auth_plugin
                 .get(method)
                 .map(|p| p.mode);
             let wasm_request = WasmPluginAuthRequest {
@@ -471,7 +480,7 @@ mod tests {
 /// (ADR 0025 §4 "Guest Contract - `route` Mode") against the real, compiled
 /// reference plugin - mirrors Phase 3's exit criteria (a)-(e) verbatim.
 /// Builds `ServiceState` directly (not `get_mocked_state`, which uses
-/// `Config::default()` and can't carry a `[dynamic_plugin.*]` section) with
+/// `Config::default()` and can't carry a `[auth_plugin.*]` section) with
 /// two loaded reference-plugin instances: `router` (`mode = route`,
 /// `inspect_methods = application_credential`, `route_targets =
 /// tf_appcred_handler`) and `tf_appcred_handler` (`mode = full_auth`) - the
@@ -483,14 +492,14 @@ mod route_dispatch_tests {
     use std::sync::Arc;
 
     use openstack_keystone_config::{Config, ConfigManager, DynamicPluginsSection};
-    use openstack_keystone_core::dynamic_plugin_http::DynamicPluginHttpFetcher;
-    use openstack_keystone_core::dynamic_plugin_startup::load_dynamic_plugins;
+    use openstack_keystone_core::auth_plugin_http::DynamicPluginHttpFetcher;
+    use openstack_keystone_core::auth_plugin_startup::load_auth_plugins;
     use openstack_keystone_core_types::identity::UserResponseBuilder;
     use sha2::{Digest, Sha256};
 
     use super::super::types::*;
     use super::*;
-    use crate::dynamic_plugin_identity::MockDynamicPluginIdentityProvider;
+    use crate::auth_plugin_identity::MockDynamicPluginIdentityProvider;
     use crate::identity::MockIdentityProvider;
     use crate::keystone::{AuditDispatcher, Service};
     use crate::policy::MockPolicy;
@@ -510,14 +519,14 @@ mod route_dispatch_tests {
             _timeout_ms: u64,
             _auth_header: Option<(&str, &str)>,
             _max_body_bytes: usize,
-        ) -> Result<openstack_keystone_core::dynamic_plugin_http::FetchResponse, String> {
+        ) -> Result<openstack_keystone_core::auth_plugin_http::FetchResponse, String> {
             panic!("this test's plugins don't grant http_fetch")
         }
     }
 
     fn fixture_dir() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../dynamic-plugin-runtime/tests/fixtures/reference-plugin")
+            .join("../auth-plugin-runtime/tests/fixtures/reference-plugin")
     }
 
     fn build_reference_plugin() -> (PathBuf, String) {
@@ -565,7 +574,7 @@ mod route_dispatch_tests {
     }
 
     /// Base `DynamicPluginConfig` with every non-essential field at its
-    /// documented default (`crates/config/src/dynamic_plugins.rs`) - no
+    /// documented default (`crates/config/src/auth_plugins.rs`) - no
     /// `Default` impl exists on the struct itself, so tests fill it in
     /// directly rather than round-tripping through the `config` crate's INI
     /// parser (an actual dependency of `openstack-keystone-config`, not of
@@ -626,11 +635,11 @@ mod route_dispatch_tests {
         target_config.provision_domain_id = Some("d".to_string());
 
         let cfg = Config {
-            dynamic_plugins: DynamicPluginsSection {
+            auth_plugins: DynamicPluginsSection {
                 plugins: vec!["router".to_string(), "tf_appcred_handler".to_string()],
                 ..Default::default()
             },
-            dynamic_plugin: [
+            auth_plugin: [
                 ("router".to_string(), router_config),
                 ("tf_appcred_handler".to_string(), target_config),
             ]
@@ -649,7 +658,7 @@ mod route_dispatch_tests {
 
         let provider = Provider::mocked_builder()
             .mock_identity(identity_mock)
-            .mock_dynamic_plugin_identity(dpi_mock)
+            .mock_auth_plugin_identity(dpi_mock)
             .build()
             .unwrap();
 
@@ -666,10 +675,10 @@ mod route_dispatch_tests {
             .unwrap(),
         );
 
-        load_dynamic_plugins(&state, Arc::new(UnreachableHttpFetcher)).await;
+        load_auth_plugins(&state, Arc::new(UnreachableHttpFetcher)).await;
         for name in ["router", "tf_appcred_handler"] {
             assert!(
-                state.dynamic_plugin_registry.read().await.contains(name),
+                state.auth_plugin_registry.read().await.contains(name),
                 "reference plugin {name} should have loaded"
             );
         }
@@ -791,7 +800,7 @@ mod route_dispatch_tests {
         // response from the same fixture without a second wasm binary.
         {
             let mut cfg = state.config_manager.config.write().await;
-            if let Some(router_cfg) = cfg.dynamic_plugin.get_mut("router") {
+            if let Some(router_cfg) = cfg.auth_plugin.get_mut("router") {
                 router_cfg.route_targets = vec!["some_other_target".to_string()];
             }
         }

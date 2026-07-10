@@ -26,6 +26,7 @@ use openstack_keystone_core_types::api_key::ApiKeyProviderError;
 use openstack_keystone_core_types::application_credential::ApplicationCredentialProviderError;
 use openstack_keystone_core_types::assignment::AssignmentProviderError;
 use openstack_keystone_core_types::auth::AuthenticationError;
+use openstack_keystone_core_types::auth_plugin_identity::AuthPluginIdentityProviderError;
 use openstack_keystone_core_types::catalog::CatalogProviderError;
 use openstack_keystone_core_types::credential::CredentialProviderError;
 use openstack_keystone_core_types::error::BuilderError;
@@ -313,6 +314,15 @@ impl From<ApiKeyProviderError> for KeystoneApiError {
             // `AuthenticationError::Unauthorized` before this conversion runs.
             other => Self::InternalError(other.to_string()),
         }
+    }
+}
+
+impl From<AuthPluginIdentityProviderError> for KeystoneApiError {
+    fn from(value: AuthPluginIdentityProviderError) -> Self {
+        // Every variant is an infra/storage failure with no client-actionable
+        // distinction (ADR 0025 §6.B/§6.C); surface as a generic 500 without
+        // leaking backend detail on the linking path.
+        Self::InternalError(value.to_string())
     }
 }
 

@@ -59,10 +59,10 @@ use uuid::Uuid;
 
 use openstack_keystone::application_credential::ApplicationCredentialHook;
 use openstack_keystone::assignment::AssignmentHook;
+use openstack_keystone::auth_plugin_http_client::KeystoneDynamicPluginHttpFetcher;
+use openstack_keystone::auth_plugin_identity::DynamicPluginIdentityHook;
 use openstack_keystone::catalog::CatalogHook;
 use openstack_keystone::config::{Config, ConfigManager, Interface, ListenerConfig};
-use openstack_keystone::dynamic_plugin_http_client::KeystoneDynamicPluginHttpFetcher;
-use openstack_keystone::dynamic_plugin_identity::DynamicPluginIdentityHook;
 use openstack_keystone::federation::FederationHook;
 use openstack_keystone::identity::IdentityHook;
 use openstack_keystone::idmapping::IdMappingHook;
@@ -86,9 +86,9 @@ use openstack_keystone_audit::spool::{replay_spool, run_spool_writer, spool_path
 use openstack_keystone_audit::{AuditDispatcher, HmacKeyStore, derive_audit_hmac_key};
 use openstack_keystone_core::api_key::janitor as api_key_janitor;
 use openstack_keystone_core::auth::ExecutionContext;
+use openstack_keystone_core::auth_plugin_startup::load_auth_plugins;
 use openstack_keystone_core::cadf_hook::CadfAuditHook;
 use openstack_keystone_core::db::sync_schema;
-use openstack_keystone_core::dynamic_plugin_startup::load_dynamic_plugins;
 use openstack_keystone_core::error::KeystoneError;
 use openstack_keystone_core::scim_resource::janitor as scim_resource_janitor;
 use openstack_keystone_credential_driver_sql::fernet::FernetKeyRepository;
@@ -293,9 +293,9 @@ async fn main() -> Result<(), Report> {
 
     // Dynamic auth plugins (ADR 0025): loaded post-construction, since
     // `CoreHostFunctions` needs a fully-built `ServiceState` - see
-    // `load_dynamic_plugins`'s doc comment. A per-plugin load failure
+    // `load_auth_plugins`'s doc comment. A per-plugin load failure
     // disables only that plugin; every other auth method still starts.
-    load_dynamic_plugins(
+    load_auth_plugins(
         &shared_state,
         Arc::new(KeystoneDynamicPluginHttpFetcher::new()),
     )
@@ -524,7 +524,7 @@ async fn init_audit(cfg: &Config) -> Result<Arc<AuditDispatcher>, Report> {
 }
 
 /// Subscribe all provider event hooks (application-credential, assignment,
-/// catalog, dynamic-plugin-identity, federation, identity, ID-mapping,
+/// catalog, auth-plugin-identity, federation, identity, ID-mapping,
 /// k8s-auth, resource, revoke, role, token, trust) plus the CADF audit hook
 /// to `shared_state`'s event dispatcher.
 async fn subscribe_event_hooks(shared_state: &ServiceState) {
@@ -619,7 +619,7 @@ async fn warn_on_unresolvable_auth_methods(shared_state: &ServiceState) {
         .auth
         .methods
         .clone();
-    let registry = shared_state.dynamic_plugin_registry.read().await;
+    let registry = shared_state.auth_plugin_registry.read().await;
     for method in &methods {
         if !BUILTIN_AUTH_METHODS.contains(&method.as_str()) && !registry.contains(method) {
             warn!(

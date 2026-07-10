@@ -12,8 +12,8 @@ to an implementer (crate layout, test strategy, rollout order).
   and leave `main` in a releasable state — no phase depends on a later phase's
   code existing, only on its own preceding PRs.
 - No phase changes the public behavior of an existing, already-shipped auth
-  method. Everything is additive behind `[dynamic_plugins]` /
-  `[dynamic_plugin.*]` config sections that default to empty (no plugins
+  method. Everything is additive behind `[auth_plugins]` /
+  `[auth_plugin.*]` config sections that default to empty (no plugins
   configured → zero behavioral change, zero new dependencies pulled into a
   running node's request path).
 - Every PR that adds a host-callable capability must land its CADF audit
@@ -28,7 +28,7 @@ readers don't have to re-derive them.)
 | Decision                                    | Choice                                                                                                                                         |
 | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | Phasing strategy                            | Incremental, mode-by-mode: runtime + `full_auth` → `mapping` → `route` → admin APIs                                                            |
-| Crate layout                                | New dedicated crate `crates/dynamic-plugin-runtime` (Extism/wasmtime isolated from `core`)                                                     |
+| Crate layout                                | New dedicated crate `crates/auth-plugin-runtime` (Extism/wasmtime isolated from `core`)                                                     |
 | Test plugin                                 | A minimal Rust reference plugin, built via the Extism Rust PDK, checked into the repo and compiled to `.wasm` in CI, used by integration tests |
 | Admin APIs (`identity_links`, `revoke_all`) | Deferred to Phase 4, after `full_auth` self-provisioning is proven                                                                             |
 | This document's scope                       | Plan only — no scaffolding code included in this change                                                                                        |
@@ -43,8 +43,8 @@ request. This isolates the highest-uncertainty new dependency (a WASM runtime
 that has never existed in this codebase) from the auth-method logic that depends
 on it.
 
-**New crate:** `crates/dynamic-plugin-runtime`
-(`openstack-keystone-dynamic-plugin-runtime`)
+**New crate:** `crates/auth-plugin-runtime`
+(`openstack-keystone-auth-plugin-runtime`)
 
 - Depends on `extism` (host SDK) and transitively `wasmtime`; depends on
   `openstack-keystone-config` for its config types and
@@ -53,10 +53,10 @@ on it.
   dependency direction one-way (core will depend on this crate, not vice versa),
   matching the `*-driver-*` crate pattern already used for backends.
 
-### PR 0.1 — Crate skeleton + `[dynamic_plugins]` config parsing
+### PR 0.1 — Crate skeleton + `[auth_plugins]` config parsing
 
-- `crates/dynamic-plugin-runtime/Cargo.toml`, empty `lib.rs`.
-- `crates/config/src/dynamic_plugins.rs`: `DynamicPluginsConfig` (plugin name
+- `crates/auth-plugin-runtime/Cargo.toml`, empty `lib.rs`.
+- `crates/config/src/auth_plugins.rs`: `DynamicPluginsConfig` (plugin name
   list) + `DynamicPluginConfig` (per-plugin: `path`, `sha256`, `mode`,
   `capabilities`, `exposed_headers`, `allowed_hosts`,
   `http_fetch_auth_header`/`_secret_env`, `provision_domain_id` /
@@ -80,7 +80,7 @@ on it.
 
 - `WasmPluginRegistry`: loads each configured plugin at startup, computes
   SHA-256 of the file on disk, compares to the pinned `sha256`. On mismatch: log
-  `CRITICAL`, increment `keystone_dynamic_plugin_load_failure{plugin_name}`,
+  `CRITICAL`, increment `keystone_auth_plugin_load_failure{plugin_name}`,
   **do not** register that plugin, continue loading the rest (§5). On match:
   compile once via `wasmtime`/`extism::Plugin` and cache the compiled module.
 - No host functions registered yet in this PR — registry only proves load +
@@ -96,7 +96,7 @@ on it.
 ### PR 0.3 — Reference test plugin (Rust, Extism PDK)
 
 - New crate under e.g.
-  `crates/dynamic-plugin-runtime/tests/fixtures/reference-plugin` (or a
+  `crates/auth-plugin-runtime/tests/fixtures/reference-plugin` (or a
   top-level `test-fixtures/` dir — keep it out of the release workspace member
   list so it doesn't affect the shipped binary's dependency graph), implementing
   `authenticate`, `mapping`, and `route` entry points behind compile-time
@@ -188,12 +188,19 @@ and the only mode needed to satisfy requirements 1–3 from ADR §1.
 
 ### PR 1.4 — Plugin Version Binding + token verification
 
-- Token minted via `WasmPlugin` embeds `plugin_sha256`; verification path
-  compares against the currently-loaded hash for that `plugin_name` and rejects
-  with `PluginVersionMismatch` on drift.
-- **Acceptance:** integration test — mint a token, "patch" the plugin (swap the
-  loaded module + hash in a test harness), confirm the old token now fails
-  verification while a fresh login against the new plugin succeeds.
+- Version binding is a per-plugin `valid_since` timestamp in config, not a
+  token-embedded hash — the `FernetToken` payload is a fixed variant set with no
+  plugin-bearing case, so there is nowhere to embed and re-compare a
+  `plugin_sha256`. A `WasmPlugin`-authenticated token mints as an ordinary scoped
+  token carrying its own `issued_at`; verification looks up the token's
+  `plugin_name`, and if `issued_at` predates that plugin's configured
+  `valid_since`, rejects with `PluginVersionMismatch`. Fresh mints have no token
+  yet, so a past `valid_since` never blocks new logins.
+- **Acceptance:** unit test — a token with `issued_at` before `valid_since` fails
+  verification with `PluginVersionMismatch`; one with `issued_at` after it
+  verifies; a fresh mint (no token) is unaffected by a past `valid_since`.
+  (`crates/core/src/auth.rs::tests::test_wasm_plugin_stale_token_is_rejected` and
+  siblings.)
 
 **Phase 1 exit criteria:** a `mode = full_auth` plugin is usable end-to-end in a
 real `[auth] methods` deployment: load, checksum-verify, rate-limit,
@@ -224,12 +231,15 @@ machinery.
   pre-existing local user and that a plugin with no ruleset authored gets
   `MappingNotFound` (fail-closed by construction, §4 step 4).
 
-### PR 2.2 — `MappingContext.wasm_plugin_sha256` + verification
+### PR 2.2 — `mapping`-mode version binding via `valid_since`
 
-- Add the optional field (ADR §4 "Plugin-version binding for `mapping` mode"),
-  populate on issuance, check alongside `ruleset_version` at verification.
-- **Acceptance:** same drift test pattern as PR 1.4, applied to the mapping
-  path.
+- No new `MappingContext` field (ADR §4 "Plugin-version binding for `mapping`
+  mode"): at verification, recover the plugin name from the matched ruleset's
+  `IdentitySource::WasmPlugin` (loaded via the token's `mapping_id`, alongside the
+  existing `ruleset_version` read) and apply the same `valid_since`-vs-`issued_at`
+  cutoff as `full_auth`.
+- **Acceptance:** same cutoff test pattern as PR 1.4, applied to the mapping path
+  (`crates/core/src/auth.rs::tests::test_mapping_wasm_plugin_stale_token_is_rejected`).
 
 **Phase 2 exit criteria:** `mapping` mode fully covers the SCIM/pre-existing-
 user login case without touching `full_auth`'s identity-binding code at all.
@@ -274,30 +284,60 @@ Goal: admin-authorized external identity linking (the `full_auth` path to
 pre-existing users the ADR frames as required for the SCIM full-authority case)
 and incident-response tooling.
 
-### PR 4.1 — `POST/DELETE /v4/dynamic_plugins/{plugin_name}/identity_links`
+### PR 4.1 — `POST/DELETE /v4/auth_plugins/{plugin_name}/identity_links` — DONE
 
 - RBAC-tiered per ADR §4 (system-admin if target holds system-scope;
   domain-admin scoped to target's own domain otherwise), enforces the plugin's
   `provision_domain_id`/`allowed_provision_domains` against the target user's
-  domain, `409` on re-link without prior `DELETE`.
-- `{scim_provider_id, scim_external_id}` convenience form resolving via the
-  existing ADR 0024 §3.B index.
+  domain, `409` on re-link without prior `DELETE`. Done: handlers in
+  `crates/keystone/src/api/v4/auth_plugin/identity_link/{create,delete}.rs`,
+  Rego in `policy/auth_plugin/identity_link/{create,delete}.rego`, types in
+  `crates/api-types/src/v4/auth_plugin.rs`.
 - `find_user` (PR 1.1) updated to re-validate live `domain_id` on every
   resolution for admin-linked entries (§4 "Domain restriction is re-checked at
   resolve time").
 - `DELETE` triggers existing token-revocation pipeline for the unlinked user.
-- **Acceptance:** integration tests for the domain-move-revokes-reach case, the
-  `409` conflict case, and the SCIM-convenience resolution path.
+- **Acceptance:** 11 handler unit tests (`cargo test -p openstack-keystone
+  --lib auth_plugin::identity_link`) cover the `409` conflict, the
+  domain-outside-plugin `400`, policy `403`, unauth `401`, unknown-plugin /
+  non-full_auth / unknown-user `404`/`400`, and the delete-revokes-tokens path
+  (`create_revocation_event` asserted). Enforcer is mocked, so the Rego is
+  exercised at the real-server layer, not here.
+- **Deferred:** the `{scim_provider_id, scim_external_id}` convenience form
+  (needs realm→domain resolution over the ADR 0024 §3.B index) is not yet
+  wired; only the direct `{external_id, user_id}` body is accepted.
 
-### PR 4.2 — `POST /v4/dynamic_plugins/{plugin_name}/revoke_all`
+### PR 4.2 — `POST /v4/auth_plugins/{plugin_name}/revoke_all` — DONE
 
-- System-admin only; disables provisioned users, revokes plugin-granted role
-  assignments individually, deletes `identity_links` entries, triggers token
-  revocation for every affected user; returns per-category counts; idempotent
-  no-op on a plugin with no remaining state.
-- **Acceptance:** integration test proving a provisioned user with an unrelated
-  (non-plugin) role assignment keeps that assignment after `revoke_all`, and
-  that re-running the endpoint twice is safe.
+- System-admin only (cross-domain by construction); disables every user the
+  plugin provisioned or that an admin linked to it, deletes those
+  `identity_links` entries, and triggers token revocation for each affected
+  user; returns per-category counts (`users_disabled`, `links_deleted`);
+  idempotent no-op on a plugin with no remaining state. Done: handler in
+  `crates/keystone/src/api/v4/auth_plugin/revoke_all.rs`, Rego in
+  `policy/auth_plugin/revoke_all.rego` (system-scope `admin` only), types in
+  `crates/api-types/src/v4/auth_plugin.rs`.
+- Enumeration is a new `DynamicPluginIdentityApi::list_by_plugin` (prefix scan
+  on the existing `auth_plugin_identity:v1:<plugin_name>:` key layout, no new
+  index/migration — plugin names are colon-free). Both provisioned and
+  admin-linked users share that table, so one scan covers every affected user.
+- **ADR deviation (recorded in the ADR):** the endpoint does **not** revoke the
+  plugin's role assignments. Attributing a stored grant to the plugin would
+  require per-record origin bookkeeping the ADR rejects for version scoping.
+  Disabling the account already denies all access; it is the operator's
+  responsibility to review a re-enabled user's assignments against the CADF
+  audit trail (`plugin_name` on every `assign_role`) and revoke any they deem
+  compromised via the existing per-grant API.
+- **Acceptance:** 7 handler unit tests (`cargo test -p openstack-keystone --lib
+  auth_plugin`) — happy path, user de-dup, empty no-op, policy `403`,
+  unauth `401`, unknown-plugin `404`, non-full_auth `400` — plus 2 raft-driver
+  tests for `list_by_plugin` (plugin isolation + `external_id` containing `:`).
+  The enforcer is mocked in those, so the system-scope Rego gate is verified at
+  the real-server layer: `test_revoke_all_requires_system_scope`
+  (`tests/api/.../token/auth_plugin.rs`) asserts a project-scoped admin gets
+  `403`. Only the deny path runs there — `revoke_all` is plugin-scoped and the
+  shared real server has a single `full_auth` plugin, so an actually-revoking
+  test would disturb other tests provisioning through it.
 
 **Phase 4 exit criteria:** full ADR 0025 scope implemented, including
 incident-response tooling.
@@ -306,11 +346,11 @@ incident-response tooling.
 
 ## Cross-cutting, tracked but not blocking any phase
 
-- **Documentation:** operator-facing docs for `[dynamic_plugins]` config, a
+- **Documentation:** operator-facing docs for `[auth_plugins]` config, a
   "writing your first plugin" guide referencing the reference plugin (PR 0.3)
   and the Extism PDK, added once Phase 1 ships (real, usable guidance) rather
   than speculatively earlier.
-- **Metrics/alerting wiring:** `keystone_dynamic_plugin_load_failure` (PR 0.2)
+- **Metrics/alerting wiring:** `keystone_auth_plugin_load_failure` (PR 0.2)
   and rate-limit counters (PR 1.3) should get dashboard/alert examples in ops
   docs once Phase 1 ships — not a blocking code change, tracked as a follow-up.
 - **Fuzzing:** `AuthPluginResponse`/`RouteResponse` deserialization (attacker-

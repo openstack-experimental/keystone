@@ -20,7 +20,7 @@ chrono = { workspace = true, default-features = false }
 crc32fast.workspace = true
 data-encoding.workspace = true
 derive_builder.workspace = true
-openstack-keystone-dynamic-plugin-runtime.workspace = true
+openstack-keystone-auth-plugin-runtime.workspace = true
 eyre.workspace = true
 governor.workspace = true
 hmac.workspace = true

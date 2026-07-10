@@ -38,8 +38,18 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cp target/skaffold/keystone-manage /app/keystone-manage
 
 # Compile all test_api functional test binaries (single RUN for shared incremental cache)
+# The cargo registry/target cache mounts persist across builds, so stale
+# hash-suffixed binaries from earlier builds accumulate in target/skaffold/deps
+# alongside the freshly rebuilt one. Purge old matches for each test name
+# before building so the post-build find below matches exactly one file -
+# otherwise cp receives multiple source args and fails with "No such file or
+# directory" trying to treat /app/test-api-v3 as a directory.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
+    find target/skaffold/deps -maxdepth 1 -type f -executable \
+    \( -name "integration_api_v3-*" -o -name "integration_api_v4-*" \
+    -o -name "k8s_auth-*" -o -name "raft_spiffe-*" -o -name "keycloak-*" \
+    -o -name "dex-*" -o -name "github-*" \) -delete 2>/dev/null; \
     cargo test --profile skaffold \
     -p test_api \
     -p test_federation \

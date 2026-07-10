@@ -1036,14 +1036,14 @@ mod tests {
 /// `openapi_router()`/`oneshot()` (like this file's own `test_post`) with a
 /// real compiled reference plugin loaded (like `common.rs`'s
 /// `route_dispatch_tests`), proving the full round trip: HTTP request in ->
-/// `authenticate_request` -> dynamic-plugin dispatch -> `get_authz_info` ->
+/// `authenticate_request` -> auth-plugin dispatch -> `get_authz_info` ->
 /// `issue_token_context` -> `X-Subject-Token` HTTP response out. Every
-/// existing dynamic-plugin test stops one layer short of this (calls
+/// existing auth-plugin test stops one layer short of this (calls
 /// `authenticate_via_wasm_*`/`authenticate_request` directly) - this module
 /// fills that gap for `mapping` mode and for `route` mode redirecting to a
 /// real `full_auth` target.
 #[cfg(test)]
-mod dynamic_plugin_http_tests {
+mod auth_plugin_http_tests {
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::sync::Arc;
@@ -1061,15 +1061,15 @@ mod dynamic_plugin_http_tests {
 
     use openstack_keystone_audit::AuditDispatcher;
     use openstack_keystone_config::{Config, ConfigManager, DynamicPluginsSection, PluginMode};
-    use openstack_keystone_core::dynamic_plugin_http::DynamicPluginHttpFetcher;
-    use openstack_keystone_core::dynamic_plugin_startup::load_dynamic_plugins;
+    use openstack_keystone_core::auth_plugin_http::DynamicPluginHttpFetcher;
+    use openstack_keystone_core::auth_plugin_startup::load_auth_plugins;
     use openstack_keystone_core_types::auth::*;
     use openstack_keystone_core_types::identity::UserResponseBuilder;
     use openstack_keystone_core_types::resource::DomainBuilder;
 
     use crate::api::v3::auth::token::types::*;
+    use crate::auth_plugin_identity::MockDynamicPluginIdentityProvider;
     use crate::catalog::MockCatalogProvider;
-    use crate::dynamic_plugin_identity::MockDynamicPluginIdentityProvider;
     use crate::identity::MockIdentityProvider;
     use crate::keystone::{Service, ServiceState};
     use crate::mapping::MockMappingProvider;
@@ -1093,14 +1093,14 @@ mod dynamic_plugin_http_tests {
             _timeout_ms: u64,
             _auth_header: Option<(&str, &str)>,
             _max_body_bytes: usize,
-        ) -> Result<openstack_keystone_core::dynamic_plugin_http::FetchResponse, String> {
+        ) -> Result<openstack_keystone_core::auth_plugin_http::FetchResponse, String> {
             panic!("this test's plugins don't grant http_fetch")
         }
     }
 
     fn fixture_dir() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../dynamic-plugin-runtime/tests/fixtures/reference-plugin")
+            .join("../auth-plugin-runtime/tests/fixtures/reference-plugin")
     }
 
     fn build_reference_plugin() -> (PathBuf, String) {
@@ -1135,7 +1135,7 @@ mod dynamic_plugin_http_tests {
     }
 
     /// Base `DynamicPluginConfig` with every non-essential field at its
-    /// documented default (`crates/config/src/dynamic_plugins.rs`) - no
+    /// documented default (`crates/config/src/auth_plugins.rs`) - no
     /// `Default` impl exists on the struct itself.
     fn base_plugin_config(
         path: PathBuf,
@@ -1189,10 +1189,10 @@ mod dynamic_plugin_http_tests {
             .unwrap(),
         );
 
-        load_dynamic_plugins(&state, Arc::new(UnreachableHttpFetcher)).await;
+        load_auth_plugins(&state, Arc::new(UnreachableHttpFetcher)).await;
         for name in plugin_names {
             assert!(
-                state.dynamic_plugin_registry.read().await.contains(name),
+                state.auth_plugin_registry.read().await.contains(name),
                 "reference plugin {name} should have loaded"
             );
         }
@@ -1286,11 +1286,11 @@ mod dynamic_plugin_http_tests {
         let mut plugin_cfg = base_plugin_config(path, sha256, PluginMode::Mapping);
         plugin_cfg.inspect_methods = Vec::new();
         let cfg = Config {
-            dynamic_plugins: DynamicPluginsSection {
+            auth_plugins: DynamicPluginsSection {
                 plugins: vec!["mapper".to_string()],
                 ..Default::default()
             },
-            dynamic_plugin: [("mapper".to_string(), plugin_cfg)].into_iter().collect(),
+            auth_plugin: [("mapper".to_string(), plugin_cfg)].into_iter().collect(),
             ..Default::default()
         };
 
@@ -1382,11 +1382,11 @@ mod dynamic_plugin_http_tests {
         target_cfg.provision_domain_id = Some("d".to_string());
 
         let cfg = Config {
-            dynamic_plugins: DynamicPluginsSection {
+            auth_plugins: DynamicPluginsSection {
                 plugins: vec!["router".to_string(), "tf_appcred_handler".to_string()],
                 ..Default::default()
             },
-            dynamic_plugin: [
+            auth_plugin: [
                 ("router".to_string(), router_cfg),
                 ("tf_appcred_handler".to_string(), target_cfg),
             ]
@@ -1415,7 +1415,6 @@ mod dynamic_plugin_http_tests {
         let (mut token_mock, catalog_mock) = mock_token_and_catalog();
         let vsc = canned_vsc(AuthenticationContext::WasmPlugin {
             plugin_name: "tf_appcred_handler".to_string(),
-            plugin_sha256: [0u8; 32],
             claims: std::collections::HashMap::new(),
             token: None,
         });
@@ -1425,7 +1424,7 @@ mod dynamic_plugin_http_tests {
 
         let provider = Provider::mocked_builder()
             .mock_identity(identity_mock)
-            .mock_dynamic_plugin_identity(dpi_mock)
+            .mock_auth_plugin_identity(dpi_mock)
             .mock_token(token_mock)
             .mock_catalog(catalog_mock)
             .build()
@@ -1465,11 +1464,11 @@ mod dynamic_plugin_http_tests {
         let (path, sha256) = build_reference_plugin();
         let plugin_cfg = base_plugin_config(path, sha256, PluginMode::Mapping);
         let cfg = Config {
-            dynamic_plugins: DynamicPluginsSection {
+            auth_plugins: DynamicPluginsSection {
                 plugins: vec!["mapper".to_string()],
                 ..Default::default()
             },
-            dynamic_plugin: [("mapper".to_string(), plugin_cfg)].into_iter().collect(),
+            auth_plugin: [("mapper".to_string(), plugin_cfg)].into_iter().collect(),
             ..Default::default()
         };
 

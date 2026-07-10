@@ -10,8 +10,8 @@ members = [
   "crates/core",
   "crates/core-types",
   "crates/credential-driver-sql",
-  "crates/dynamic-plugin-identity-driver-raft",
-  "crates/dynamic-plugin-runtime",
+  "crates/auth-plugin-identity-driver-raft",
+  "crates/auth-plugin-runtime",
   "crates/federation-driver-sql",
   "crates/identity-driver-sql",
   "crates/idmapping-driver-sql",
@@ -114,8 +114,8 @@ openstack-keystone-core = { version = "0.1.0", path = "crates/core" }
 openstack-keystone-core-types = { version = "0.1.0", path = "crates/core-types" }
 openstack-keystone-credential-driver-sql = { version = "0.1", path = "crates/credential-driver-sql/" }
 openstack-keystone-distributed-storage = { version = "0.1.0", path = "crates/storage"}
-openstack-keystone-dynamic-plugin-identity-driver-raft = { version = "0.1.0", path = "crates/dynamic-plugin-identity-driver-raft" }
-openstack-keystone-dynamic-plugin-runtime = { version = "0.1.0", path = "crates/dynamic-plugin-runtime" }
+openstack-keystone-auth-plugin-identity-driver-raft = { version = "0.1.0", path = "crates/auth-plugin-identity-driver-raft" }
+openstack-keystone-auth-plugin-runtime = { version = "0.1.0", path = "crates/auth-plugin-runtime" }
 openstack-keystone-storage-api = { version = "0.1.0", path = "crates/storage-api" }
 openstack-keystone-storage-crypto = { version = "0.1.0", path = "crates/storage-crypto" }
 openstack-keystone-storage-crypto-pkcs11 = { version = "0.1.0", path = "crates/storage-crypto-pkcs11" }
