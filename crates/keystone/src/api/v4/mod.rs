@@ -30,6 +30,7 @@ use crate::keystone::ServiceState;
 
 pub mod api_key;
 pub mod auth;
+pub mod auth_plugin;
 pub mod group;
 pub mod mapping;
 pub mod role;
@@ -45,6 +46,7 @@ use crate::api::types::*;
 #[openapi(
     nest(
       (path = "api-keys", api = api_key::ApiDoc),
+      (path = "auth_plugins", api = auth_plugin::ApiDoc),
       (path = "federation", api = federation::ApiDoc),
       (path = "k8s_auth", api = k8s_auth::ApiDoc),
       (path = "mappings", api = mapping::ApiDoc),
@@ -59,6 +61,7 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
         .nest("/api-keys", api_key::openapi_router())
         .nest("/auth", auth::openapi_router())
+        .nest("/auth_plugins", auth_plugin::openapi_router())
         .nest("/groups", group::openapi_router())
         .nest("/mappings", mapping::openapi_router())
         .nest("/federation", federation::openapi_router())

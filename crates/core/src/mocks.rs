@@ -246,12 +246,10 @@ mod credential {
 }
 pub use credential::MockCredentialProvider;
 
-mod dynamic_plugin_identity {
+mod auth_plugin_identity {
     use super::*;
 
-    use crate::dynamic_plugin_identity::{
-        DynamicPluginIdentityApi, DynamicPluginIdentityProviderError,
-    };
+    use crate::auth_plugin_identity::{AuthPluginIdentityProviderError, DynamicPluginIdentityApi};
 
     mock! {
         pub DynamicPluginIdentityProvider {}
@@ -264,31 +262,37 @@ mod dynamic_plugin_identity {
                 plugin_name: &'a str,
                 external_id: &'a str,
                 user_id: &'a str,
-            ) -> Result<String, DynamicPluginIdentityProviderError>;
+            ) -> Result<String, AuthPluginIdentityProviderError>;
 
             async fn find<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
                 plugin_name: &'a str,
                 external_id: &'a str,
-            ) -> Result<Option<String>, DynamicPluginIdentityProviderError>;
+            ) -> Result<Option<String>, AuthPluginIdentityProviderError>;
 
             async fn purge<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
                 plugin_name: &'a str,
                 external_id: &'a str,
-            ) -> Result<(), DynamicPluginIdentityProviderError>;
+            ) -> Result<(), AuthPluginIdentityProviderError>;
 
             async fn purge_by_user<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
                 user_id: &'a str,
-            ) -> Result<(), DynamicPluginIdentityProviderError>;
+            ) -> Result<(), AuthPluginIdentityProviderError>;
+
+            async fn list_by_plugin<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                plugin_name: &'a str,
+            ) -> Result<Vec<(String, String)>, AuthPluginIdentityProviderError>;
         }
     }
 }
-pub use dynamic_plugin_identity::MockDynamicPluginIdentityProvider;
+pub use auth_plugin_identity::MockDynamicPluginIdentityProvider;
 
 mod assignment {
     use super::*;

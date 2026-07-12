@@ -31,15 +31,15 @@ use crate::application_credential::MockApplicationCredentialProvider;
 use crate::assignment::AssignmentApi;
 #[cfg(any(test, feature = "mock"))]
 use crate::assignment::MockAssignmentProvider;
+use crate::auth_plugin_identity::DynamicPluginIdentityApi;
+#[cfg(any(test, feature = "mock"))]
+use crate::auth_plugin_identity::MockDynamicPluginIdentityProvider;
 use crate::catalog::CatalogApi;
 #[cfg(any(test, feature = "mock"))]
 use crate::catalog::MockCatalogProvider;
 use crate::credential::CredentialApi;
 #[cfg(any(test, feature = "mock"))]
 use crate::credential::MockCredentialProvider;
-use crate::dynamic_plugin_identity::DynamicPluginIdentityApi;
-#[cfg(any(test, feature = "mock"))]
-use crate::dynamic_plugin_identity::MockDynamicPluginIdentityProvider;
 use crate::error::KeystoneError;
 use crate::federation::FederationApi;
 #[cfg(any(test, feature = "mock"))]
@@ -95,7 +95,7 @@ pub struct Provider {
     /// Credential provider.
     credential: Box<dyn CredentialApi>,
     /// Dynamic plugin identity-binding index provider.
-    dynamic_plugin_identity: Box<dyn DynamicPluginIdentityApi>,
+    auth_plugin_identity: Box<dyn DynamicPluginIdentityApi>,
     /// Federation provider.
     federation: Box<dyn FederationApi>,
     /// Identity provider.
@@ -205,12 +205,9 @@ impl ProviderBuilder {
         new
     }
 
-    pub fn mock_dynamic_plugin_identity(
-        self,
-        value: impl DynamicPluginIdentityApi + 'static,
-    ) -> Self {
+    pub fn mock_auth_plugin_identity(self, value: impl DynamicPluginIdentityApi + 'static) -> Self {
         let mut new = self;
-        new.dynamic_plugin_identity = Some(Box::new(value));
+        new.auth_plugin_identity = Some(Box::new(value));
         new
     }
 
@@ -259,8 +256,8 @@ impl Provider {
             cfg,
             plugin_manager,
         )?);
-        let dynamic_plugin_identity = Box::new(
-            crate::dynamic_plugin_identity::DynamicPluginIdentityService::new(cfg, plugin_manager)?,
+        let auth_plugin_identity = Box::new(
+            crate::auth_plugin_identity::DynamicPluginIdentityService::new(cfg, plugin_manager)?,
         );
         let federation = Box::new(crate::federation::FederationService::new(
             cfg,
@@ -296,7 +293,7 @@ impl Provider {
             assignment,
             catalog,
             credential,
-            dynamic_plugin_identity,
+            auth_plugin_identity,
             federation,
             identity,
             idmapping,
@@ -321,7 +318,7 @@ impl Provider {
             .mock_assignment(MockAssignmentProvider::default())
             .mock_catalog(MockCatalogProvider::default())
             .mock_credential(MockCredentialProvider::default())
-            .mock_dynamic_plugin_identity(MockDynamicPluginIdentityProvider::default())
+            .mock_auth_plugin_identity(MockDynamicPluginIdentityProvider::default())
             .mock_identity(MockIdentityProvider::default())
             .mock_idmapping(MockIdMappingProvider::default())
             .mock_mapping(MockMappingProvider::default())
@@ -402,8 +399,8 @@ impl Provider {
     }
 
     /// Get the dynamic plugin identity-binding index provider.
-    pub fn get_dynamic_plugin_identity_provider(&self) -> &dyn DynamicPluginIdentityApi {
-        &*self.dynamic_plugin_identity
+    pub fn get_auth_plugin_identity_provider(&self) -> &dyn DynamicPluginIdentityApi {
+        &*self.auth_plugin_identity
     }
 
     /// Get the SCIM realm provider.

@@ -20,9 +20,9 @@ use crate::api_key::ApiKeyProviderError;
 use crate::application_credential::ApplicationCredentialProviderError;
 use crate::assignment::AssignmentProviderError;
 use crate::auth::AuthenticationError;
+use crate::auth_plugin_identity::AuthPluginIdentityProviderError;
 use crate::catalog::CatalogProviderError;
 use crate::credential::CredentialProviderError;
-use crate::dynamic_plugin_identity::DynamicPluginIdentityProviderError;
 use crate::federation::FederationProviderError;
 use crate::identity::IdentityProviderError;
 use crate::idmapping::IdMappingProviderError;
@@ -113,12 +113,12 @@ pub enum KeystoneError {
         source: CredentialProviderError,
     },
 
-    /// Dynamic plugin identity-binding index provider.
+    /// Auth plugin identity-binding index provider.
     #[error(transparent)]
-    DynamicPluginIdentityProvider {
+    AuthPluginIdentityProvider {
         /// The source of the error.
         #[from]
-        source: DynamicPluginIdentityProviderError,
+        source: AuthPluginIdentityProviderError,
     },
 
     /// Federation provider.

@@ -140,6 +140,7 @@ pub fn sanitize_authentication_error(e: &AuthenticationError) -> &'static str {
         AuthenticationError::Ec2TimestampExpired => "Ec2TimestampExpired",
         AuthenticationError::Ec2CredentialScopeDateMismatch => "Ec2CredentialScopeDateMismatch",
         AuthenticationError::TotpPasscodeInvalid => "TotpPasscodeInvalid",
+        AuthenticationError::PluginVersionMismatch(_) => "PluginVersionMismatch",
     }
 }
 

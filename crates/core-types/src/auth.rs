@@ -84,6 +84,11 @@ pub enum AuthenticationError {
     #[error("security context is not resolved")]
     SecurityContextNotResolved,
 
+    /// A dynamic auth plugin token was minted before the currently
+    /// configured `valid_since` cutoff for that plugin (ADR 0025 §4).
+    #[error("dynamic plugin `{0}` was updated since this token was issued")]
+    PluginVersionMismatch(String),
+
     /// Scope is not allowed with the current SecurityContext.
     #[error("target scope is not allowed with the current authentication context")]
     ScopeNotAllowed,
@@ -1307,18 +1312,21 @@ pub enum AuthenticationContext {
     /// 0025 §4). The handle a plugin presented back via
     /// `Allow.resolved_identity` is deliberately not carried here - it's
     /// verified once, at dispatch time
-    /// (`openstack_keystone_core::dynamic_plugin_auth::authenticate_via_wasm_plugin`),
+    /// (`openstack_keystone_core::auth_plugin_auth::authenticate_via_wasm_plugin`),
     /// and expires with that invocation; by the time an
     /// `AuthenticationContext` exists, the real user is already resolved
     /// and there is nothing left to verify a handle against.
     WasmPlugin {
-        /// The plugin's configured `[auth] methods` name.
+        /// The plugin's configured `[auth] methods` name. This is the only
+        /// plugin-version-binding anchor carried here: the `FernetToken`
+        /// payload cannot be extended with a per-plugin SHA-256 (its variant
+        /// set is fixed and a `WasmPlugin` login mints an ordinary
+        /// `DomainScope` token), so version binding is enforced at
+        /// verification time by comparing the token's own `issued_at`
+        /// against the plugin's configured `valid_since` (ADR 0025 §4
+        /// "Plugin Version Binding"), keyed on this `plugin_name` - not by
+        /// embedding and re-comparing a module hash.
         plugin_name: String,
-        /// SHA-256 of the exact compiled module that authenticated this
-        /// request - not yet consulted by anything in Phase 1 PR 1.2; PR
-        /// 1.4 (Plugin Version Binding) verifies a minted token's embedded
-        /// hash against the currently-loaded one for this `plugin_name`.
-        plugin_sha256: [u8; 32],
         /// Extra claims the plugin's `authenticate` response attached,
         /// surfaced to policy as `plugin_claims.<plugin_name>.*`
         /// (`Credentials::plugin_claims`) - never a top-level,

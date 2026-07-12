@@ -6,16 +6,16 @@ import data.identity.mapping as mapping_common
 
 # List MappingRuleSets.
 #
-# input.target.mapping is the query parameters (MappingRuleSetListParameters):
-#   domain_id:    string (optional)
-#   enabled:      boolean (optional)
-#   limit:        number (optional)
-#   marker:       string (optional)
+# The `input.target.mapping` is the query parameters (MappingRuleSetListParameters):
+#   domain_id:    string (optional)   Filter by domain.
+#   enabled:      boolean (optional)   Filter by enabled state.
+#   limit:        number (optional)    Pagination limit.
+#   marker:       string (optional)    Pagination marker.
 #
-# input.existing is null.
+# The `input.existing` is null.
+#
 # can_see_other_domain_resources indicates to the handler whether the caller
 # is allowed to query rulesets belonging to other domains.
-
 default allow := false
 
 default can_see_other_domain_resources := false

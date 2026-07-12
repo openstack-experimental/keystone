@@ -1,0 +1,24 @@
+[package]
+name = "openstack-keystone-auth-plugin-identity-driver-raft"
+description = "OpenStack Keystone Raft driver for the dynamic plugin identity-binding index provider"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+exclude.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+openstack-keystone-core.workspace = true
+openstack-keystone-distributed-storage.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+openstack-keystone-distributed-storage = { workspace = true, features = ["mock"] }
+tokio = { workspace = true, features = ["rt"] }
+
+[lints]
+workspace = true

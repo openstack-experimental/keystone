@@ -61,14 +61,14 @@ mod application_credentials;
 mod assignment;
 mod audit;
 mod auth;
+mod auth_plugin_identity;
+mod auth_plugins;
 mod catalog;
 mod common;
 mod credential;
 mod database;
 mod default;
 mod distributed_storage;
-mod dynamic_plugin_identity;
-mod dynamic_plugins;
 mod ec2;
 mod federation;
 mod fernet_token;
@@ -96,14 +96,14 @@ pub use application_credentials::*;
 pub use assignment::*;
 pub use audit::*;
 pub use auth::*;
+pub use auth_plugin_identity::*;
+pub use auth_plugins::*;
 pub use catalog::*;
 pub use common::*;
 pub use credential::*;
 pub use database::*;
 pub use default::*;
 pub use distributed_storage::*;
-pub use dynamic_plugin_identity::*;
-pub use dynamic_plugins::*;
 pub use ec2::*;
 pub use federation::*;
 pub use fernet_token::*;
@@ -142,6 +142,10 @@ pub struct Config {
     #[serde(default)]
     pub audit: AuditConfig,
 
+    /// Auth plugin identity-binding index provider configuration.
+    #[serde(default)]
+    pub auth_plugin_identity: AuthPluginIdentityProvider,
+
     /// API policy enforcement.
     #[serde(default)]
     pub api_policy: PolicyProvider,
@@ -161,10 +165,6 @@ pub struct Config {
     #[serde(default)]
     pub credential: CredentialProvider,
 
-    /// Dynamic plugin identity-binding index provider configuration.
-    #[serde(default)]
-    pub dynamic_plugin_identity: DynamicPluginIdentityProvider,
-
     /// Database configuration.
     //#[serde(default)]
     pub database: DatabaseSection,
@@ -180,11 +180,11 @@ pub struct Config {
 
     /// Dynamic (WebAssembly) auth plugins configuration - ADR 0025.
     #[serde(default)]
-    pub dynamic_plugins: DynamicPluginsSection,
+    pub auth_plugins: DynamicPluginsSection,
 
-    /// Per-plugin `[dynamic_plugin.<name>]` sections - ADR 0025.
+    /// Per-plugin `[auth_plugin.<name>]` sections - ADR 0025.
     #[serde(default)]
-    pub dynamic_plugin: HashMap<String, DynamicPluginConfig>,
+    pub auth_plugin: HashMap<String, DynamicPluginConfig>,
 
     /// `POST /v3/ec2tokens` configuration.
     #[serde(default)]
@@ -339,12 +339,12 @@ impl Config {
             .wrap_err("compiling password_regex")?;
         // Validate the config after loading all the referred files.
         cfg.validate().wrap_err("Configuration validation failed")?;
-        // Cross-field validation for [dynamic_plugins]/[dynamic_plugin.*]
+        // Cross-field validation for [auth_plugins]/[auth_plugin.*]
         // (ADR 0025 §4/§5 fail-loud invariants) - not expressible via
         // `#[validate(...)]` derive since it needs both sections at once.
-        cfg.dynamic_plugins
-            .validate_semantics(&cfg.dynamic_plugin)
-            .wrap_err("validating [dynamic_plugins] configuration")?;
+        cfg.auth_plugins
+            .validate_semantics(&cfg.auth_plugin)
+            .wrap_err("validating [auth_plugins] configuration")?;
         Ok(cfg)
     }
 

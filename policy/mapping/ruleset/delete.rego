@@ -6,9 +6,14 @@ import data.identity.mapping as mapping_common
 
 # Delete MappingRuleSet.
 #
-# input.target.mapping is null.
-# input.existing.mapping is the stored MappingRuleSet object.
-
+# The `input.target` is null.
+#
+# The `input.existing.mapping` is the stored MappingRuleSet object:
+#   mapping_id:               string               The ruleset ID.
+#   domain_id:                string | null        Domain (null means global).
+#   enabled:                  boolean              Enabled state.
+#   rules:                    array                Mapping rules. Each rule may
+#                                                  have identity.is_system.
 default allow := false
 
 allow if {

@@ -6,15 +6,16 @@ import data.identity.mapping as mapping_common
 
 # Create MappingRuleSet (MappingRuleSetCreate).
 #
-# input.target.mapping fields:
-#   mapping_id:               string (optional)
-#   domain_id:                string (optional)  -- null == global
-#   source:                   object       IdentitySource { type, idp_id/cluster_id/trust_domain }
-#   domain_resolution_mode:   object       { type: "fixed" | "claims_or_mapping" | "claims_only", allowed_domains }
-#   enabled:                  boolean
-#   rules:                    array        of MappingRule
+# The `input.target.mapping` is the new ruleset object (MappingRuleSetCreate):
+#   mapping_id:               string (optional)    Explicit ruleset ID.
+#   domain_id:                string (optional)    Domain scope; null == global.
+#   source:                   object               IdentitySource: { type, idp_id/cluster_id/trust_domain }.
+#   domain_resolution_mode:   object               { type: "fixed" | "claims_or_mapping" | "claims_only", allowed_domains }.
+#   enabled:                  boolean              Enabled state.
+#   rules:                    array                Array of MappingRule. Each
+#                                                  rule may have identity.is_system.
 #
-# input.existing is null.
+# The `input.existing` is null.
 #
 # Rules:
 # - Only admin can create rulesets with domain_id unset (global).

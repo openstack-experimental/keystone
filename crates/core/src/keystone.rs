@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Keystone state
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use governor::{DefaultKeyedRateLimiter, Quota, RateLimiter};
@@ -20,11 +21,11 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 use openstack_keystone_audit::AuditDispatcher;
+use openstack_keystone_auth_plugin_runtime::WasmPluginRegistry;
 use openstack_keystone_config::ConfigManager;
-use openstack_keystone_dynamic_plugin_runtime::WasmPluginRegistry;
 use openstack_keystone_storage_api::StorageApi;
 
-use crate::dynamic_plugin::CoreHostFunctions;
+use crate::auth_plugin::{CoreHostFunctions, PluginInvocationLimiter};
 use crate::error::KeystoneError;
 use crate::events::EventDispatcher;
 use crate::policy::PolicyEnforcer;
@@ -62,19 +63,19 @@ pub struct Service {
     pub api_key_rate_limiter: Arc<DefaultKeyedRateLimiter<String>>,
 
     /// Loaded dynamic auth plugins (ADR 0025). Empty until
-    /// `crate::dynamic_plugin_startup::load_dynamic_plugins` runs
+    /// `crate::auth_plugin_startup::load_auth_plugins` runs
     /// post-construction - `CoreHostFunctions` needs a `ServiceState`,
     /// which doesn't exist until `Service::new` returns, so this can't be
     /// populated inline here (mirrors how `subscribe_event_hooks` wires
     /// provider hooks onto an already-`Arc`-wrapped `Service` at process
     /// startup, in `crates/keystone/src/bin/keystone.rs`).
-    pub dynamic_plugin_registry: RwLock<Arc<WasmPluginRegistry>>,
+    pub auth_plugin_registry: RwLock<Arc<WasmPluginRegistry>>,
 
     /// The [`CoreHostFunctions`] instance the dynamic plugin registry above
     /// was loaded with - kept alongside the registry so dispatch code can
     /// call [`CoreHostFunctions::verify_handle`] using the *same*
     /// process-lifetime HMAC key the registry's plugins were loaded with.
-    /// `None` until `load_dynamic_plugins` runs, same as the registry.
+    /// `None` until `load_auth_plugins` runs, same as the registry.
     pub core_host_functions: RwLock<Option<Arc<CoreHostFunctions>>>,
 
     /// Rate-limiting state (ADR-0022).
@@ -83,6 +84,21 @@ pub struct Service {
     /// mean the corresponding bucket is disabled in `keystone.conf` and
     /// requests bypass that check entirely.
     pub rate_limiters: RateLimitState,
+
+    /// Per-plugin invocation rate/concurrency limiters (ADR 0025 §7), keyed
+    /// by plugin name - populated alongside `auth_plugin_registry` by
+    /// `crate::auth_plugin_startup::load_auth_plugins`, one entry per
+    /// successfully loaded plugin.
+    pub auth_plugin_limiters: RwLock<HashMap<String, Arc<PluginInvocationLimiter>>>,
+
+    /// Cumulative dynamic auth plugin load failure count, keyed by plugin
+    /// name (ADR 0025 §5: a checksum mismatch, missing file, or compile
+    /// error at load time is never fatal to the process - this is the
+    /// backing counter for the `keystone_auth_plugin_load_failure{plugin_name}`
+    /// metric §5 calls for, incremented by
+    /// `crate::auth_plugin_startup::load_auth_plugins` alongside its
+    /// `CRITICAL` log line).
+    pub auth_plugin_load_failures: RwLock<HashMap<String, u64>>,
 
     /// Shutdown flag.
     pub shutdown: bool,
@@ -144,9 +160,11 @@ impl Service {
             policy_enforcer,
             storage,
             api_key_rate_limiter,
-            dynamic_plugin_registry: RwLock::new(Arc::new(WasmPluginRegistry::default())),
+            auth_plugin_registry: RwLock::new(Arc::new(WasmPluginRegistry::default())),
             core_host_functions: RwLock::new(None),
             rate_limiters,
+            auth_plugin_limiters: RwLock::new(HashMap::new()),
+            auth_plugin_load_failures: RwLock::new(HashMap::new()),
             shutdown: false,
         })
     }

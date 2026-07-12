@@ -40,7 +40,7 @@ openstack-keystone-assignment-driver-sql.workspace = true
 openstack-keystone-catalog-driver-sql.workspace = true
 openstack-keystone-config.workspace = true
 openstack-keystone-credential-driver-sql.workspace = true
-openstack-keystone-dynamic-plugin-identity-driver-raft.workspace = true
+openstack-keystone-auth-plugin-identity-driver-raft.workspace = true
 openstack-keystone-core = { workspace = true, features = ["api"] }
 openstack-keystone-core-types.workspace = true
 openstack-keystone-distributed-storage.workspace = true

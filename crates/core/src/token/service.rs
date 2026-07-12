@@ -285,6 +285,38 @@ impl TokenService {
             return Err(TokenProviderError::Expired);
         }
 
+        // Plugin version binding (ADR 0025 §4 "Plugin Version Binding"): a
+        // token minted via a `mode = full_auth` dynamic auth plugin records
+        // that plugin's name in its `methods` (see
+        // `crate::auth_plugin_auth::authenticate_via_wasm_plugin`). If the
+        // operator has since advanced the plugin's `valid_since` past this
+        // token's `issued_at` (normally alongside a `sha256` bump for a
+        // security fix), the token is stale and rejected, forcing
+        // re-authentication against the currently loaded plugin logic. This
+        // is the authoritative enforcement point: on validation the
+        // reconstructed context below is always `AuthenticationContext::
+        // Token` for a plugin-authenticated token (only ApplicationCredential/
+        // Trust get their original context restored), so the defense-in-depth
+        // arms in `ValidatedSecurityContext::new_for_scope` guarding
+        // `WasmPlugin`/`Mapping` contexts are unreachable via this path and
+        // exist only for a fresh mint (`ctx.token()` is `None` there).
+        //
+        // `mapping`-mode tokens carry only `methods = ["mapped"]` with no
+        // plugin/mapping linkage anywhere in the payload, so no equivalent
+        // check is possible for them here - this is a known, ADR-documented
+        // gap (ADR §4 "Plugin-version binding for `mapping` mode").
+        {
+            let cfg = state.config_manager.config.read().await;
+            for method in token.methods() {
+                if let Some(plugin) = cfg.auth_plugin.get(method)
+                    && let Some(valid_since) = plugin.valid_since
+                    && *token.issued_at() < valid_since
+                {
+                    return Err(AuthenticationError::PluginVersionMismatch(method.clone()).into());
+                }
+            }
+        }
+
         // For special token types restore the original resource (ApplicationCredential,
         // Trust, etc) to use it for the corresponding AuthenticationContext.
         // Otherwise the AuthenticationContext remains just Token
@@ -857,5 +889,161 @@ mod tests {
                 panic!("token must be revoked: {:?}", other)
             }
         }
+    }
+
+    /// Builds a `Config` with a single `[auth_plugin.<name>]` section whose
+    /// only field under test is `valid_since` (ADR 0025 §4 "Plugin Version
+    /// Binding").
+    fn config_with_plugin_valid_since(
+        name: &str,
+        valid_since: Option<chrono::DateTime<Utc>>,
+    ) -> Config {
+        let mut config = setup_config();
+        config.auth_plugin.insert(
+            name.to_string(),
+            openstack_keystone_config::DynamicPluginConfig {
+                path: std::path::PathBuf::from("/nonexistent.wasm"),
+                sha256: "0".repeat(64),
+                mode: openstack_keystone_config::PluginMode::FullAuth,
+                capabilities: Vec::new(),
+                exposed_headers: Vec::new(),
+                allowed_hosts: Vec::new(),
+                http_fetch_follow_redirects: false,
+                http_fetch_auth_header: None,
+                http_fetch_auth_secret_env: None,
+                provision_domain_id: None,
+                allowed_provision_domains: Vec::new(),
+                assign_role_allowed: Vec::new(),
+                inspect_methods: Vec::new(),
+                route_targets: Vec::new(),
+                timeout_ms: 1_000,
+                fuel_limit: 10_000_000,
+                memory_limit_mb: 16,
+                invocation_rate_limit_per_source_per_minute: 20,
+                invocation_rate_limit_per_minute: 300,
+                max_concurrent_invocations: 16,
+                valid_since,
+            },
+        );
+        config
+    }
+
+    fn generate_wasm_plugin_token(
+        plugin_name: &str,
+        issued_at: chrono::DateTime<Utc>,
+    ) -> FernetToken {
+        FernetToken::Unscoped(openstack_keystone_core_types::token::UnscopedPayload {
+            user_id: Uuid::new_v4().simple().to_string(),
+            methods: vec![plugin_name.to_string()],
+            audit_ids: vec!["Zm9vCg".into()],
+            expires_at: issued_at + TimeDelta::hours(1),
+            issued_at,
+            user: None,
+        })
+    }
+
+    /// A token minted via a `full_auth` plugin whose `valid_since` was
+    /// bumped past the token's `issued_at` is rejected at verification,
+    /// forcing re-authentication against the current plugin logic (ADR 0025
+    /// §4 "Plugin Version Binding") - the authoritative enforcement point,
+    /// since the reconstructed context here is `AuthenticationContext::Token`,
+    /// not `WasmPlugin`
+    /// (`crate::auth::tests::test_wasm_plugin_stale_token_is_rejected` only
+    /// proves the defense-in-depth arm that guards a context this path
+    /// never actually constructs).
+    #[tokio::test]
+    async fn test_validate_wasm_plugin_stale_token_is_rejected() {
+        let valid_since = Utc::now();
+        let issued_at = valid_since - TimeDelta::seconds(60);
+        let token = generate_wasm_plugin_token("p", issued_at);
+        let token_clone = token.clone();
+
+        let mut backend_driver_mock = MockTokenBackend::default();
+        backend_driver_mock
+            .expect_encode()
+            .returning(|_| Ok("token".to_string()));
+        backend_driver_mock
+            .expect_decode()
+            .returning(move |_| Ok(token_clone.clone()));
+
+        let config = config_with_plugin_valid_since("p", Some(valid_since));
+        let token_provider = get_provider(&config, Some(backend_driver_mock));
+        let state = get_mocked_state(Some(config), None).await;
+
+        let credential = token_provider.encode_token(&token).unwrap();
+        let ctx = ExecutionContext::internal(&state);
+        let result = token_provider
+            .validate_to_context(&ctx, &credential, Some(false), None)
+            .await;
+        assert!(matches!(
+            result,
+            Err(TokenProviderError::Authentication(
+                AuthenticationError::PluginVersionMismatch(ref name)
+            )) if name == "p"
+        ));
+    }
+
+    /// A token issued after the plugin's `valid_since` cutoff verifies
+    /// normally (ADR 0025 §4).
+    #[tokio::test]
+    async fn test_validate_wasm_plugin_fresh_token_after_cutoff_is_accepted() {
+        let valid_since = Utc::now();
+        let issued_at = valid_since + TimeDelta::seconds(60);
+        let token = generate_wasm_plugin_token("p", issued_at);
+        let token_clone = token.clone();
+
+        let mut backend_driver_mock = MockTokenBackend::default();
+        backend_driver_mock
+            .expect_encode()
+            .returning(|_| Ok("token".to_string()));
+        backend_driver_mock
+            .expect_decode()
+            .returning(move |_| Ok(token_clone.clone()));
+
+        let config = config_with_plugin_valid_since("p", Some(valid_since));
+        let token_provider = get_provider(&config, Some(backend_driver_mock));
+
+        let mut identity_mock = MockIdentityProvider::default();
+        let token_clone2 = token.clone();
+        identity_mock
+            .expect_get_user()
+            .withf(move |_, id: &'_ str| id == token_clone2.user_id())
+            .returning(|_, id: &'_ str| {
+                Ok(Some(
+                    UserResponseBuilder::default()
+                        .domain_id("user_domain_id")
+                        .enabled(true)
+                        .name("name")
+                        .id(id)
+                        .build()
+                        .unwrap(),
+                ))
+            });
+        let mut resource_mock = MockResourceProvider::default();
+        resource_mock.expect_get_domain().returning(|_, id| {
+            Ok(Some(Domain {
+                id: id.to_string(),
+                name: "domain".to_string(),
+                enabled: true,
+                ..Default::default()
+            }))
+        });
+        let mut revoke_mock = MockRevokeProvider::default();
+        revoke_mock
+            .expect_is_token_revoked()
+            .returning(|_, _| Ok(false));
+
+        let provider = Provider::mocked_builder()
+            .mock_identity(identity_mock)
+            .mock_revoke(revoke_mock)
+            .mock_resource(resource_mock);
+        let state = get_mocked_state(Some(config), Some(provider)).await;
+
+        let credential = token_provider.encode_token(&token).unwrap();
+        let ctx = ExecutionContext::internal(&state);
+        let result = token_provider
+            .validate_to_context(&ctx, &credential, Some(false), None)
+            .await;
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
     }
 }

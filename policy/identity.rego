@@ -163,3 +163,8 @@ domain_matches_domain_scope if {
 	any_domain_id != null
 	any_domain_id = input.credentials.domain_id
 }
+
+is_system_admin if {
+	"admin" in input.credentials.roles
+	input.credentials.system == "all"
+}

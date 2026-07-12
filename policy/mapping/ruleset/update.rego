@@ -8,8 +8,18 @@ import data.identity.mapping as mapping_common
 # (POST /v4/mappings/{mapping_id}/rules/mutate) via RuleMutations.
 # Shared policy: identity/mapping/ruleset/update
 #
-# input.target.mapping: MappingRuleSetUpdate / RuleMutations payload
-# input.existing.mapping: stored MappingRuleSet object
+# The `input.target.mapping` is the update payload (MappingRuleSetUpdate) or
+# rule mutations (RuleMutations):
+#   enabled:                  boolean (optional)   Enable/disable the ruleset.
+#   domain_resolution_mode:   object (optional)    Domain resolution configuration.
+#   rules:                    array (optional)     Updated mapping rules.
+#
+# The `input.existing.mapping` is the stored MappingRuleSet object:
+#   mapping_id:               string               The ruleset ID.
+#   domain_id:                string | null        Domain (null means global).
+#   enabled:                  boolean              Current enabled state.
+#   rules:                    array                Current mapping rules.
+#                                                Each rule may have identity.is_system.
 
 default allow := false
 

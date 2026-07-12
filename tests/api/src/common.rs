@@ -284,3 +284,18 @@ pub async fn get_session_by_user_password<U: AsRef<str>, D: AsRef<str>, P: AsRef
     };
     Ok(Arc::new(AsyncOpenStack::new(&config).await?))
 }
+
+/// Get AsyncOpenStack session system scope
+pub async fn get_system_scope_session() -> Result<Arc<AsyncOpenStack>> {
+    let mut test_client = AsyncOpenStack::new(&CloudConfig::from_env()?).await?;
+    test_client
+        .authorize(
+            Some(openstack_sdk::auth::authtoken::AuthTokenScope::System(
+                openstack_sdk::types::identity::v3::System { all: Some(true) },
+            )),
+            false,
+            false,
+        )
+        .await?;
+    Ok(Arc::new(test_client))
+}

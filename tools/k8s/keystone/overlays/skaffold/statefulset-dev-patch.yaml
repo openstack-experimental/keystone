@@ -11,7 +11,7 @@ spec:
           imagePullPolicy: IfNotPresent
           command: ['sh', '-c', 'echo "Waiting for PostgreSQL to be available..."; while ! nc -z -w 1 keystone-db-rw 5432; do echo "Still waiting for postgres-service..."; sleep 2; done; echo "PostgreSQL is available! Starting application."']
         - name: identity-generator
-          image: busybox
+          image: keystone-rs
           env:
             - name: POD_NAME
               valueFrom:
@@ -28,7 +28,10 @@ spec:
           args:
             - |
               NODE_ID=$(echo $POD_NAME | grep -o '[0-9]\+$')
+              PLUGIN_SHA256=$(sha256sum /usr/local/lib/reference_plugin.wasm | awk '{print $1}')
               cat <<EOF > /etc/keystone/site.toml
+              [auth]
+              methods = "password,token,openid,application_credential,x509,mapped,hacked_appcred_handler"
               [distributed_storage]
               node_id = $NODE_ID
               node_cluster_addr = "https://$POD_NAME.keystone-rs-internal.default.svc.cluster.local:8300"
@@ -38,6 +41,24 @@ spec:
               allowed_peer_svids = ["spiffe://example.org/ns/default/sa/keystone"]
               dev_mode = true
               retry_join_nodes = "0=https://keystone-rs-0.keystone-rs-internal.default.svc.cluster.local:8300,1=https://keystone-rs-1.keystone-rs-internal.default.svc.cluster.local:8300"
+              [auth_plugins]
+              plugins = "mapper,router,hacked_appcred_handler"
+              [auth_plugin.mapper]
+              path = "/usr/local/lib/reference_plugin.wasm"
+              sha256 = "$PLUGIN_SHA256"
+              mode = "mapping"
+              [auth_plugin.router]
+              path = "/usr/local/lib/reference_plugin.wasm"
+              sha256 = "$PLUGIN_SHA256"
+              mode = "route"
+              inspect_methods = "application_credential"
+              route_targets = "hacked_appcred_handler"
+              [auth_plugin.hacked_appcred_handler]
+              path = "/usr/local/lib/reference_plugin.wasm"
+              sha256 = "$PLUGIN_SHA256"
+              mode = "full_auth"
+              capabilities = "provision_user"
+              provision_domain_id = "d"
               EOF
               cat /etc/keystone/site.toml
       containers:

@@ -65,6 +65,13 @@ pub enum IdentitySource {
         /// The API Key `provider_id` this ruleset is bound to.
         provider_id: String,
     },
+    /// `mapping`-mode dynamic auth plugin, feeding claims into the Mapping
+    /// Engine instead of authenticating directly (ADR 0025 §4 "mapping
+    /// Mode").
+    WasmPlugin {
+        /// The dynamic plugin's configured name.
+        plugin_name: String,
+    },
 }
 
 impl IdentitySource {
@@ -78,6 +85,20 @@ impl IdentitySource {
             Self::K8s { cluster_id } => format!("k8s:{cluster_id}"),
             Self::Spiffe { trust_domain } => format!("spiffe:{trust_domain}"),
             Self::ApiClient { provider_id } => format!("api_client:{provider_id}"),
+            Self::WasmPlugin { plugin_name } => format!("wasm:{plugin_name}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_wasm_plugin_to_string_key() {
+        let source = IdentitySource::WasmPlugin {
+            plugin_name: "acme_scim_bridge".to_string(),
+        };
+        assert_eq!(source.to_string_key(), "wasm:acme_scim_bridge");
     }
 }

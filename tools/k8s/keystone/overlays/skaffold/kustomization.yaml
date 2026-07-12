@@ -1,3 +1,10 @@
+
+configMapGenerator:
+  - name: keystone
+    behavior: replace
+    files:
+      - conf/keystone.conf
+
 resources:
   - ../../base
 
