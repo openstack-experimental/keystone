@@ -336,8 +336,9 @@ async fn main() -> Result<(), Report> {
 /// stops buffered log lines from being flushed.
 fn init_tracing(verbose: u8, cfg: &Config) -> Option<tracing_appender::non_blocking::WorkerGuard> {
     let external_deps_log_level = match verbose {
-        0 => LevelFilter::WARN,
-        1 => LevelFilter::INFO,
+        0 => LevelFilter::ERROR,
+        1 => LevelFilter::WARN,
+        2 => LevelFilter::INFO,
         _ => LevelFilter::DEBUG,
     };
     let stderr_log_filter = Targets::new()
@@ -347,6 +348,9 @@ fn init_tracing(verbose: u8, cfg: &Config) -> Option<tracing_appender::non_block
             2 => LevelFilter::DEBUG,
             _ => LevelFilter::TRACE,
         })
+        .with_target("cranelift_codegen", LevelFilter::ERROR)
+        .with_target("wasmtime_internal_cranelift", LevelFilter::ERROR)
+        .with_target("wasmtime", LevelFilter::ERROR)
         .with_target("h2", external_deps_log_level)
         .with_target("rustls", external_deps_log_level)
         .with_target("tower", external_deps_log_level)
@@ -381,6 +385,9 @@ fn init_tracing(verbose: u8, cfg: &Config) -> Option<tracing_appender::non_block
             } else {
                 LevelFilter::INFO
             })
+            .with_target("cranelift_codegen", LevelFilter::ERROR)
+            .with_target("wasmtime_internal_cranelift", LevelFilter::ERROR)
+            .with_target("wasmtime", LevelFilter::ERROR)
             .with_target("h2", external_deps_log_level)
             .with_target("rustls", external_deps_log_level)
             .with_target("tower", external_deps_log_level)
