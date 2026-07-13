@@ -90,10 +90,8 @@ impl FernetUtils {
         &self,
         insecure_allow_null_key: bool,
     ) -> Result<CachedKeyRepository<FilesystemKeySource>, FernetDriverError> {
-        let repo = KeyRepository::new(
-            FilesystemKeySource::watched(self.key_repository.clone(), POLL_INTERVAL),
-            self.max_active_keys,
-        );
+        let source = FilesystemKeySource::watched(self.key_repository.clone(), POLL_INTERVAL);
+        let repo = KeyRepository::new(source, self.max_active_keys);
         CachedKeyRepository::start(repo, insecure_allow_null_key)
             .await
             .map_err(Into::into)

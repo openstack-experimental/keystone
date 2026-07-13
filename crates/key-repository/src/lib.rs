@@ -259,6 +259,7 @@ impl<S: KeySource> KeyRepository<S> {
 pub struct CachedKeyRepository<S: KeySource + 'static> {
     repo: Arc<KeyRepository<S>>,
     keys: watch::Receiver<Arc<LoadedKeys>>,
+    refresh_handle: tokio::task::JoinHandle<()>,
 }
 
 impl<S: KeySource + 'static> CachedKeyRepository<S> {
@@ -277,7 +278,7 @@ impl<S: KeySource + 'static> CachedKeyRepository<S> {
 
         let mut changes = repo.source().subscribe();
         let repo_for_task = Arc::clone(&repo);
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             loop {
                 // `Lagged` just means we missed some notifications while
                 // busy — since a reload always fetches the *current* state
@@ -299,7 +300,11 @@ impl<S: KeySource + 'static> CachedKeyRepository<S> {
             }
         });
 
-        Ok(Self { repo, keys: rx })
+        Ok(Self {
+            repo,
+            keys: rx,
+            refresh_handle: handle,
+        })
     }
 
     /// The current snapshot. Cheap (an `Arc` clone); safe to call on every
@@ -311,6 +316,21 @@ impl<S: KeySource + 'static> CachedKeyRepository<S> {
     /// The underlying repository, e.g. to call [`KeyRepository::rotate`].
     pub fn repository(&self) -> &KeyRepository<S> {
         &self.repo
+    }
+}
+
+impl<S: KeySource + 'static> Drop for CachedKeyRepository<S> {
+    fn drop(&mut self) {
+        // Signal the source's background resources (e.g. a filesystem
+        // watcher task) to stop immediately. Synchronous, unlike waiting for
+        // `refresh_handle`'s abort below to actually release its
+        // `Arc<KeyRepository<S>>` clone — that happens whenever the runtime
+        // gets around to dropping the aborted task, not right away.
+        self.repo.source().request_shutdown();
+        // Abort the background refresh task so it releases its Arc ref to
+        // the KeyRepository, letting the source (and its broadcast sender)
+        // actually drop once this function returns.
+        self.refresh_handle.abort();
     }
 }
 
@@ -475,12 +495,7 @@ mod tests {
 
         cached.repository().rotate().await.unwrap();
 
-        // Poll until the background task has picked up the rotation. Key
-        // count (not hash) is the reliable signal here: the first rotation
-        // promotes the staged key's *bytes* unchanged (just a rename), so
-        // `primary_key_hash` is identical before/after by design — only
-        // `key_count` (1 -> 2, staged + newly-promoted primary) is
-        // guaranteed to change.
+        // Poll until the background task has picked up the rotation.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         loop {
             if cached.current().key_count == 2 {
@@ -492,5 +507,8 @@ mod tests {
             );
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
+
+        drop(cached);
+        tokio::time::sleep(Duration::from_millis(200)).await;
     }
 }

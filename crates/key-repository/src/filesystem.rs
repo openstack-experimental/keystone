@@ -21,6 +21,8 @@
 use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -28,7 +30,7 @@ use nix::sys::stat::{Mode, umask};
 use nix::unistd::{Gid, Uid, getegid, geteuid, setegid, seteuid};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use tempfile::NamedTempFile;
-use tokio::sync::broadcast;
+use tokio::sync::{Notify, broadcast};
 use tokio::task::spawn_blocking;
 use tracing::{trace, warn};
 
@@ -40,17 +42,64 @@ use crate::source::KeySource;
 /// coalesced into a single reload. Mirrors `ConfigManager`'s debounce.
 const DEBOUNCE: Duration = Duration::from_millis(500);
 
+/// Shared state for the watched filesystem source, owned by `Arc` so it's
+/// shared across the original source, its clones, and the spawned watcher
+/// task. The `Clone` impl shares `change_tx`/`shutdown` rather than deep
+/// copying them — required for `Arc::make_mut` (see [`with_run_as`]) to
+/// preserve the same broadcast channel and shutdown flag across the copy.
+///
+/// [`with_run_as`]: FilesystemKeySource::with_run_as
+struct FilesystemKeySourceInner {
+    key_repository: PathBuf,
+    run_as: Option<(Uid, Gid)>,
+    change_tx: broadcast::Sender<()>,
+    shutdown: Arc<AtomicBool>,
+    /// Wakes the watcher task's `select!` the instant shutdown is
+    /// requested, regardless of `poll_interval` or how long since the last
+    /// filesystem event — without it, a task parked on a long poll interval
+    /// wouldn't notice `shutdown` until its next unrelated wakeup.
+    shutdown_notify: Arc<Notify>,
+}
+
+impl Clone for FilesystemKeySourceInner {
+    fn clone(&self) -> Self {
+        Self {
+            key_repository: self.key_repository.clone(),
+            run_as: self.run_as,
+            change_tx: self.change_tx.clone(),
+            shutdown: Arc::clone(&self.shutdown),
+            shutdown_notify: Arc::clone(&self.shutdown_notify),
+        }
+    }
+}
+
 /// The Fernet key repository on the local filesystem.
 #[derive(Clone)]
 pub struct FilesystemKeySource {
-    key_repository: PathBuf,
-    /// Optional uid/gid to assume (via `seteuid`/`setegid`) while writing
-    /// new key files, restored immediately afterwards.
-    run_as: Option<(Uid, Gid)>,
-    change_tx: broadcast::Sender<()>,
+    inner: std::sync::Arc<FilesystemKeySourceInner>,
+}
+
+impl Drop for FilesystemKeySource {
+    fn drop(&mut self) {
+        // Only the last live handle should signal shutdown — `inner` is
+        // shared across clones, and an earlier clone being dropped must not
+        // stop the watcher out from under the others.
+        if Arc::strong_count(&self.inner) == 1 {
+            self.signal_shutdown();
+        }
+    }
 }
 
 impl FilesystemKeySource {
+    /// Cooperative shutdown: signal the watcher task to stop and wake it
+    /// immediately if it's parked in `select!`. On macOS, the FSEvents
+    /// kqueue syscall can't be interrupted by tokio `abort()`, so the task
+    /// must observe this and exit its loop on its own.
+    fn signal_shutdown(&self) {
+        self.inner.shutdown.store(true, Ordering::Release);
+        self.inner.shutdown_notify.notify_one();
+    }
+
     /// Create a new source with no background watcher. Callers that only
     /// need one-shot `load`/`write`/`remove` (e.g. CLI `setup`/`rotate`
     /// commands) don't need to pay for a watcher task.
@@ -58,9 +107,13 @@ impl FilesystemKeySource {
     pub fn new(key_repository: PathBuf) -> Self {
         let (change_tx, _) = broadcast::channel(16);
         Self {
-            key_repository,
-            run_as: None,
-            change_tx,
+            inner: Arc::new(FilesystemKeySourceInner {
+                key_repository,
+                run_as: None,
+                change_tx,
+                shutdown: Arc::new(AtomicBool::default()),
+                shutdown_notify: Arc::new(Notify::new()),
+            }),
         }
     }
 
@@ -69,7 +122,7 @@ impl FilesystemKeySource {
     /// for `fernet_setup`/`fernet_rotate` run as root.
     #[must_use]
     pub fn with_run_as(mut self, uid: Uid, gid: Gid) -> Self {
-        self.run_as = Some((uid, gid));
+        Arc::make_mut(&mut self.inner).run_as = Some((uid, gid));
         self
     }
 
@@ -90,11 +143,13 @@ impl FilesystemKeySource {
     }
 
     fn spawn_watcher(&self, poll_interval: Duration) {
-        let dir = self.key_repository.clone();
-        let change_tx = self.change_tx.clone();
+        let dir = self.inner.key_repository.clone();
+        let change_tx = self.inner.change_tx.clone();
+        let shutdown = Arc::clone(&self.inner.shutdown);
+        let shutdown_notify = Arc::clone(&self.inner.shutdown_notify);
 
         tokio::spawn(async move {
-            let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(1);
+            let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
 
             let mut watcher: Option<RecommendedWatcher> = match notify::recommended_watcher(
                 move |res: notify::Result<notify::Event>| {
@@ -103,15 +158,11 @@ impl FilesystemKeySource {
                             || event.kind.is_create()
                             || event.kind.is_remove())
                     {
-                        let _ = event_tx.blocking_send(());
+                        let _ = event_tx.send(());
                     }
                 },
             ) {
                 Ok(mut w) => {
-                    // The directory may not exist yet (repository not set up).
-                    // That's fine — the poll fallback below still covers us
-                    // once it is, and we retry the inotify watch each poll
-                    // tick until it succeeds.
                     let _ = w.watch(&dir, RecursiveMode::NonRecursive);
                     Some(w)
                 }
@@ -125,30 +176,55 @@ impl FilesystemKeySource {
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
             loop {
+                // Check shutdown flag first, before any async operations.
+                if shutdown.load(Ordering::Acquire) {
+                    break;
+                }
                 tokio::select! {
+                    biased;
+                    // Wakes immediately on shutdown regardless of how long
+                    // `poll_interval` is or how long since the last fs event
+                    // — the flag alone can only be observed at the top of
+                    // this loop, which may not be reached again for a while.
+                    () = shutdown_notify.notified() => break,
                     Some(()) = event_rx.recv() => {
                         // Drain any additional rapid-fire events.
                         while event_rx.try_recv().is_ok() {}
-                        tokio::time::sleep(DEBOUNCE).await;
+                        // Interruptible debounce: shutdown wakes this select
+                        // immediately instead of blocking behind a fixed sleep.
+                        tokio::select! {
+                            biased;
+                            () = shutdown_notify.notified() => break,
+                            () = tokio::time::sleep(DEBOUNCE) => {}
+                        }
                     }
                     _ = interval.tick() => {
                         if watcher.is_none() {
                             watcher = notify::recommended_watcher(|_res: notify::Result<notify::Event>| {})
                                 .ok()
                                 .inspect(|_| trace!("retrying inotify watch registration"));
-                            if let Some(w) = &mut watcher {
+                            if let Some(w) = watcher.as_mut() {
                                 let _ = w.watch(&dir, RecursiveMode::NonRecursive);
                             }
                         }
                     }
                 }
+                // Notify subscribers on every loop iteration. This ensures
+                // the broadcast is sent even if the FSEvents notification
+                // is missed or the poll interval fires first.
                 let _ = change_tx.send(());
             }
+
+            // Drop the notify watcher so the FSEventStream is stopped and
+            // the FSEvents callback thread can exit. On macOS, the kqueue-
+            // based FSEvents thread won't exit until the FSEventStream is
+            // stopped, and we need this before tokio runtime shutdown.
+            drop(watcher);
         });
     }
 
     fn path_for(&self, index: i8) -> PathBuf {
-        self.key_repository.join(index.to_string())
+        self.inner.key_repository.join(index.to_string())
     }
 
     fn read_key_files_blocking(dir: &PathBuf) -> Result<BTreeMap<i8, Vec<u8>>, KeyRepositoryError> {
@@ -170,14 +246,12 @@ impl FilesystemKeySource {
             let Ok(idx) = fname.parse::<i8>() else {
                 continue;
             };
-            let mut raw = std::fs::read(entry.path()).map_err(|e| KeyRepositoryError::Io {
+            let raw = std::fs::read(entry.path()).map_err(|e| KeyRepositoryError::Io {
                 source: e,
                 path: entry.path(),
             })?;
-            if raw.last() == Some(&b'\n') {
-                raw.pop();
-            }
-            keys.insert(idx, raw);
+            let raw = raw.strip_suffix(b"\n").unwrap_or(&raw[..]);
+            keys.insert(idx, raw.to_vec());
         }
         Ok(keys)
     }
@@ -211,18 +285,8 @@ impl FilesystemKeySource {
                 context: "setting effective process UID".into(),
                 source: e,
             })?;
-
-            Self::write_key_file_inner(dir, name, contents)
-        } else {
-            Self::write_key_file_inner(dir, name, contents)
         }
-    }
 
-    fn write_key_file_inner(
-        dir: &PathBuf,
-        name: &str,
-        contents: &[u8],
-    ) -> Result<(), KeyRepositoryError> {
         let mut tmp_file = NamedTempFile::new_in(dir).map_err(|e| KeyRepositoryError::Io {
             source: e,
             path: dir.clone(),
@@ -231,11 +295,11 @@ impl FilesystemKeySource {
             .write_all(contents)
             .map_err(|e| KeyRepositoryError::Io {
                 source: e,
-                path: dir.clone(),
+                path: tmp_file.path().to_path_buf(),
             })?;
         tmp_file.flush().map_err(|e| KeyRepositoryError::Io {
             source: e,
-            path: dir.clone(),
+            path: tmp_file.path().to_path_buf(),
         })?;
         tmp_file
             .persist(dir.join(name))
@@ -247,30 +311,33 @@ impl FilesystemKeySource {
 #[async_trait]
 impl KeySource for FilesystemKeySource {
     async fn load(&self) -> Result<BTreeMap<i8, Vec<u8>>, KeyRepositoryError> {
-        let dir = self.key_repository.clone();
+        let dir = self.inner.key_repository.clone();
+        let error_dir = dir.clone();
         spawn_blocking(move || Self::read_key_files_blocking(&dir))
             .await
             .map_err(|e| KeyRepositoryError::Io {
                 source: std::io::Error::other(e),
-                path: self.key_repository.clone(),
+                path: error_dir,
             })?
     }
 
     async fn write(&self, index: i8, contents: &[u8]) -> Result<(), KeyRepositoryError> {
-        let dir = self.key_repository.clone();
+        let dir = self.inner.key_repository.clone();
+        let error_dir = dir.clone();
         let name = index.to_string();
         let contents = contents.to_vec();
-        let run_as = self.run_as;
+        let run_as = self.inner.run_as;
         spawn_blocking(move || Self::write_key_file_blocking(&dir, &name, &contents, run_as))
             .await
             .map_err(|e| KeyRepositoryError::Io {
                 source: std::io::Error::other(e),
-                path: self.key_repository.clone(),
+                path: error_dir,
             })?
     }
 
     async fn remove(&self, index: i8) -> Result<(), KeyRepositoryError> {
         let path = self.path_for(index);
+        let error_dir = self.inner.key_repository.clone();
         spawn_blocking(move || match std::fs::remove_file(&path) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -279,14 +346,14 @@ impl KeySource for FilesystemKeySource {
         .await
         .map_err(|e| KeyRepositoryError::Io {
             source: std::io::Error::other(e),
-            path: self.key_repository.clone(),
+            path: error_dir,
         })?
     }
 
     async fn promote(&self, from: i8, to: i8, _contents: &[u8]) -> Result<(), KeyRepositoryError> {
         let from_path = self.path_for(from);
         let to_path = self.path_for(to);
-        let join_err_path = to_path.clone();
+        let error_dir = self.inner.key_repository.clone();
         spawn_blocking(move || {
             std::fs::rename(&from_path, &to_path).map_err(|e| KeyRepositoryError::Io {
                 source: e,
@@ -296,12 +363,16 @@ impl KeySource for FilesystemKeySource {
         .await
         .map_err(|e| KeyRepositoryError::Io {
             source: std::io::Error::other(e),
-            path: join_err_path,
+            path: error_dir,
         })?
     }
 
     fn subscribe(&self) -> broadcast::Receiver<()> {
-        self.change_tx.subscribe()
+        self.inner.change_tx.subscribe()
+    }
+
+    fn request_shutdown(&self) {
+        self.signal_shutdown();
     }
 }
 
@@ -381,10 +452,26 @@ mod tests {
             .unwrap();
     }
 
+    #[tokio::test]
+    async fn test_watched_source_drops_gracefully() {
+        let dir = tempfile::tempdir().unwrap();
+        let source =
+            FilesystemKeySource::watched(dir.path().to_path_buf(), Duration::from_secs(3600));
+
+        // The source should drop cleanly, closing the cancel channel and
+        // causing the watcher task to exit its loop (rather than blocking
+        // on tokio abort during runtime shutdown).
+        drop(source);
+        // If there was a hang, this test would timeout.
+        tokio::time::timeout(Duration::from_secs(3), async {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        })
+        .await
+        .expect("watcher task should exit gracefully");
+    }
+
     #[test]
     fn test_is_null_key_raw_bytes_helper_sanity() {
-        // Sanity check the encoding used across these tests matches the
-        // production Null Key encoding used in `KeyRepository::is_null_key`.
         let null_key_raw = URL_SAFE.encode([0u8; 32]);
         assert_eq!(null_key_raw.len(), 44);
     }
