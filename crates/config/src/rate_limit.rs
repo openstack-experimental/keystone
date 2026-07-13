@@ -33,7 +33,7 @@
 use ipnet::IpNet;
 use serde::Deserialize;
 
-use crate::common::csv_ipnet;
+use crate::common::{ProxyHeader, csv_ipnet};
 
 /// Default burst capacity when the key is absent from the config file.
 fn default_burst_size() -> u32 {
@@ -81,11 +81,17 @@ pub struct RateLimitSection {
 /// lists because each protects a different ingress trust boundary.
 #[derive(Debug, Default, Deserialize, Clone, PartialEq, Eq)]
 pub struct RateLimitTrustedProxiesSection {
-    /// CIDR ranges allowed to contribute `Forwarded` / `X-Forwarded-For`
-    /// hops. Parsed into [`IpNet`] networks at configuration-load time (not
-    /// on every request); a malformed CIDR fails configuration loading.
+    /// CIDR ranges allowed to contribute hops to the configured trusted
+    /// forwarding header. Parsed into [`IpNet`] networks at
+    /// configuration-load time (not on every request); a malformed CIDR
+    /// fails configuration loading.
     #[serde(default, deserialize_with = "csv_ipnet")]
     pub trusted_proxies: Vec<IpNet>,
+
+    /// The one forwarding header trusted proxies are required to sanitize.
+    /// Defaults to the pre-existing `x_forwarded_for` behavior.
+    #[serde(default)]
+    pub trusted_header: ProxyHeader,
 }
 
 impl Default for RateLimitSection {
@@ -150,6 +156,14 @@ mod tests {
                 "192.0.2.0/24".parse::<IpNet>().unwrap()
             ]
         );
+        assert_eq!(section.trusted_header, ProxyHeader::XForwardedFor);
+    }
+
+    #[test]
+    fn deserialize_forwarded_header_opt_in() {
+        let section: RateLimitTrustedProxiesSection =
+            serde_json::from_value(json!({"trusted_header": "forwarded"})).unwrap();
+        assert_eq!(section.trusted_header, ProxyHeader::Forwarded);
     }
 
     #[test]

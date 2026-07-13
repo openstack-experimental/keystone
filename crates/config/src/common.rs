@@ -55,6 +55,31 @@ where
         .collect()
 }
 
+/// Forwarding header an operator asserts its trusted proxies sanitize.
+///
+/// Exactly one header is selected for each ingress trust boundary. Trusting
+/// both implicitly would allow a proxy that only owns `X-Forwarded-For` to
+/// pass through a client-forged RFC 7239 `Forwarded` header (or vice versa).
+#[derive(Debug, Default, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProxyHeader {
+    /// The de-facto standard header used by the existing ingress paths.
+    #[default]
+    XForwardedFor,
+    /// RFC 7239 `Forwarded`; opt in only when every trusted proxy sanitizes it.
+    Forwarded,
+}
+
+impl ProxyHeader {
+    /// Lowercase HTTP field name used by `HeaderMap` and normalized maps.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::XForwardedFor => "x-forwarded-for",
+            Self::Forwarded => "forwarded",
+        }
+    }
+}
+
 // /// Deserializes an i64 and interprets it as total SECONDS for
 // /// chrono::TimeDelta.
 // fn timedelta_from_seconds<'de, D>(deserializer: D) -> Result<TimeDelta,

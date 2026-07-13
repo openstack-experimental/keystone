@@ -133,9 +133,11 @@ short-circuiting pipeline.
 2. It verifies `enabled: true` and `current_utc_seconds < expires_at`.
 3. It determines the effective client IP using the **rightmost non-trusted-proxy
    IP** algorithm: append the raw TCP peer address to the right of the
-   forwarding-header chain (RFC 7239 `Forwarded`, preferred, falling back to
-   `X-Forwarded-For`), then walk right-to-left, returning the first address
-   that is **not** in the statically configured `trusted_proxies` CIDR array.
+   configured `trusted_header` chain (`X-Forwarded-For` by default, or RFC 7239
+   `Forwarded` by explicit opt-in), then walk right-to-left, returning the first
+   address that is **not** in the statically configured `trusted_proxies` CIDR
+   array. Exactly one header is trusted because each proxy must be configured
+   to strip client-supplied values for that header.
    If the raw TCP peer is not in `trusted_proxies`, it is used directly (the
    headers are not consulted). This prevents leftmost-entry spoofing through
    untrusted intermediate hops. The resulting effective IP is then validated
@@ -363,10 +365,13 @@ traffic migrates seamlessly, and Key A is subsequently revoked.
 
 - **Measures:** IP allowlisting uses the **rightmost non-trusted-proxy IP**
   algorithm (§3 Step 2): the raw TCP peer is appended to the right of the
-  forwarding chain (RFC 7239 `Forwarded`, preferred, else `X-Forwarded-For`),
-  then the chain is walked right-to-left and the first address not in
-  `trusted_proxies` is used as the effective client IP. If the TCP peer is
-  untrusted, the headers are not consulted at all. This prevents an attacker
+  configured `trusted_header` chain (`X-Forwarded-For` by default; RFC 7239
+  `Forwarded` requires explicit opt-in), then the chain is walked right-to-left
+  and the first address not in `trusted_proxies` is used as the effective
+  client IP. If the TCP peer is untrusted, the header is not consulted at all.
+  Trusting one explicitly selected header prevents a client-forged alternative
+  header from overriding the chain actually sanitized by the proxy. This also
+  prevents an attacker
   from bypassing `allowed_ips` by routing through an untrusted intermediate
   proxy that prepends a spoofed originating IP to the forwarding chain before
   a trusted proxy. `allowed_ips: None` means no IP restriction is applied.

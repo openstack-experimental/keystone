@@ -17,7 +17,7 @@ use std::net::SocketAddr;
 
 use axum::{
     Json,
-    extract::{ConnectInfo, FromRequestParts, Query, State},
+    extract::{FromRequestParts, Query, State},
     http::{HeaderMap, StatusCode, request::Parts},
     response::{IntoResponse, Response},
 };
@@ -29,6 +29,7 @@ use openstack_keystone_core_types::auth::*;
 
 use openstack_keystone_core::api::common::get_authz_info;
 use openstack_keystone_core::auth::ExecutionContext;
+use openstack_keystone_core::net::public_ingress_peer_addr;
 use openstack_keystone_core_types::scope::Scope as ProviderScope;
 
 use crate::api::v3::auth::token::common::authenticate_request;
@@ -41,22 +42,19 @@ use crate::audit::{
 use crate::common::TracedJson;
 use crate::keystone::ServiceState;
 
-/// Raw TCP peer address, if the connection came in through a listener
-/// configured with `into_make_service_with_connect_info` (the public
-/// interface) - `None` on interfaces that don't populate `ConnectInfo`
-/// (e.g. the SPIFFE admin interface), never a request-rejection.
+/// Raw TCP peer address for the public interface only.
+///
+/// Internal/admin requests return `None` even when `ConnectInfo` is populated
+/// for audit logging. If proxy middleware rewrote `ConnectInfo`, the preserved
+/// original peer is returned so each security control applies its own trust
+/// boundary.
 pub(super) struct PeerAddr(Option<SocketAddr>);
 
 impl<S: Send + Sync> FromRequestParts<S> for PeerAddr {
     type Rejection = std::convert::Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        Ok(PeerAddr(
-            parts
-                .extensions
-                .get::<ConnectInfo<SocketAddr>>()
-                .map(|ConnectInfo(addr)| *addr),
-        ))
+        Ok(PeerAddr(public_ingress_peer_addr(&parts.extensions)))
     }
 }
 
@@ -109,17 +107,10 @@ async fn create_inner(
     // Global per-IP rate-limit check (ADR-0022, Invariant 4).
     // Fires BEFORE authenticate_request to avoid consuming CPU on password
     // hashing for rejected requests.
-    let forwarded_header = headers
-        .get("forwarded")
-        .and_then(|value| value.to_str().ok());
-    let xff_header = headers
-        .get("x-forwarded-for")
-        .and_then(|value| value.to_str().ok());
-    if let Err(retry_after) = state.rate_limiters.check_ip(
-        forwarded_header,
-        xff_header,
-        peer_addr.map(|addr| addr.ip()),
-    ) {
+    if let Err(retry_after) = state
+        .rate_limiters
+        .check_ip(headers, peer_addr.map(|addr| addr.ip()))
+    {
         return Err(KeystoneApiError::TooManyRequests {
             retry_after: retry_after.as_secs(),
         });
@@ -200,7 +191,9 @@ mod tests {
     use tracing_test::traced_test;
 
     use openstack_keystone_audit::AuditDispatcher;
-    use openstack_keystone_config::{Config, ConfigManager, RateLimitSection};
+    use openstack_keystone_config::{
+        Config, ConfigManager, Interface, ProxyHeader, RateLimitSection,
+    };
     use openstack_keystone_core_types::auth::*;
     use openstack_keystone_core_types::identity::{IdentityProviderError, UserPasswordAuthRequest};
     use openstack_keystone_core_types::resource::{Domain, DomainBuilder, Project};
@@ -955,10 +948,9 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_rate_limit_honours_rfc7239_forwarded_header() {
-        // End-to-end through the real handler: an RFC 7239 `Forwarded` header
-        // from a trusted proxy buckets by the designated client, takes
-        // precedence over a co-present X-Forwarded-For, and throttles the
-        // third hit on the same Forwarded client.
+        // End-to-end through the real handler: explicitly selecting RFC 7239
+        // `Forwarded` buckets by that client, ignores a co-present XFF value,
+        // and throttles the third hit on the same Forwarded client.
         let mut config = Config {
             rate_limit_global_ip: RateLimitSection {
                 enabled: true,
@@ -971,6 +963,7 @@ mod tests {
             .rate_limit_trusted_proxies
             .trusted_proxies
             .push("10.0.0.0/8".parse().unwrap());
+        config.rate_limit_trusted_proxies.trusted_header = ProxyHeader::Forwarded;
 
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock
@@ -998,8 +991,8 @@ mod tests {
             .layer(TraceLayer::new_for_http())
             .with_state(state);
 
-        // Two distinct Forwarded clients — each gets its own bucket even
-        // though the XFF value is identical (Forwarded takes precedence).
+        // Two distinct Forwarded clients each get their own bucket. The
+        // co-present XFF is ignored because this boundary selected Forwarded.
         for client_ip in ["203.0.113.1", "203.0.113.2"] {
             let mut request = Request::builder()
                 .uri("/")
@@ -1014,7 +1007,7 @@ mod tests {
             assert_ne!(response.status(), StatusCode::TOO_MANY_REQUESTS);
         }
 
-        // Same Forwarded client again — throttled, even with a fresh XFF.
+        // Same Forwarded client again is throttled, even with a fresh ignored XFF.
         let mut request = Request::builder()
             .uri("/")
             .method("POST")
@@ -1030,9 +1023,9 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_rate_limit_does_not_apply_without_connect_info() {
-        // When there is no ConnectInfo in extensions (SPIFFE/internal interface),
-        // requests must never be rate-limited regardless of the configured quota.
+    async fn test_rate_limit_does_not_apply_to_internal_connect_info() {
+        // The SPIFFE listener now records ConnectInfo for audit logging. The
+        // explicit Internal interface must still bypass the public limiter.
         let config = Config {
             rate_limit_global_ip: RateLimitSection {
                 enabled: true,
@@ -1071,20 +1064,18 @@ mod tests {
             .layer(TraceLayer::new_for_http())
             .with_state(state.clone());
 
-        // Neither request carries ConnectInfo — both must reach identity.
+        let peer: SocketAddr = "10.0.0.1:1234".parse().unwrap();
+        // Both requests carry the shared mesh peer but must still reach identity.
         for _ in 0..2 {
-            let resp = api
-                .as_service()
-                .oneshot(
-                    Request::builder()
-                        .uri("/")
-                        .method("POST")
-                        .header(header::CONTENT_TYPE, "application/json")
-                        .body(Body::from(auth_body()))
-                        .unwrap(),
-                )
-                .await
+            let mut request = Request::builder()
+                .uri("/")
+                .method("POST")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(auth_body()))
                 .unwrap();
+            request.extensions_mut().insert(ConnectInfo(peer));
+            request.extensions_mut().insert(Interface::Internal);
+            let resp = api.as_service().oneshot(request).await.unwrap();
             assert_ne!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
         }
     }

@@ -34,7 +34,8 @@ use tracing::warn;
 use openstack_keystone_config::{Config, RateLimitSection, RateLimitTrustedProxiesSection};
 use openstack_keystone_core_types::error::KeystoneError;
 
-use crate::net::resolve_client_ip;
+#[cfg(any(feature = "api", test))]
+use crate::net::resolve_client_ip_from_headers;
 
 /// Allocation-free global-IP bucket key.
 ///
@@ -137,25 +138,25 @@ impl RateLimitState {
 
     /// Check the global per-IP bucket for an inbound request.
     ///
-    /// The effective address is the rightmost non-trusted forwarding-chain
-    /// hop (RFC 7239 `Forwarded` preferred, else `X-Forwarded-For`) when the
-    /// TCP peer is trusted. An absent peer identifies an internal/admin
-    /// interface and bypasses this public-ingress limiter.
+    /// The effective address is the rightmost non-trusted hop in the one
+    /// operator-selected forwarding header when the TCP peer is trusted. An
+    /// absent peer identifies an internal/admin interface and bypasses this
+    /// public-ingress limiter.
+    #[cfg(any(feature = "api", test))]
     pub fn check_ip(
         &self,
-        forwarded_header: Option<&str>,
-        xff_header: Option<&str>,
+        headers: &axum::http::HeaderMap,
         peer_ip: Option<IpAddr>,
     ) -> Result<(), Duration> {
         let snapshot = self.snapshot.load();
         let Some(limiter) = snapshot.global_ip_limiter.as_ref() else {
             return Ok(());
         };
-        let Some(client_ip) = resolve_client_ip(
-            forwarded_header,
-            xff_header,
+        let Some(client_ip) = resolve_client_ip_from_headers(
+            headers,
             peer_ip,
             &snapshot.trusted_proxies,
+            snapshot.applied_config.trusted_proxies.trusted_header,
         ) else {
             return Ok(());
         };
@@ -283,6 +284,9 @@ fn rate_limit_key_for_ip(ip: IpAddr) -> IpRateLimitKey {
 mod tests {
     use std::net::{IpAddr, Ipv4Addr};
 
+    use axum::http::{HeaderMap, HeaderName, HeaderValue};
+    use openstack_keystone_config::ProxyHeader;
+
     use super::*;
 
     fn config(enabled: bool, burst: u32, replenish: u32) -> Config {
@@ -297,7 +301,18 @@ mod tests {
     }
 
     fn check(state: &RateLimitState, ip: IpAddr) -> Result<(), Duration> {
-        state.check_ip(None, None, Some(ip))
+        state.check_ip(&HeaderMap::new(), Some(ip))
+    }
+
+    fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        for (name, value) in pairs {
+            headers.insert(
+                HeaderName::from_bytes(name.as_bytes()).unwrap(),
+                HeaderValue::from_str(value).unwrap(),
+            );
+        }
+        headers
     }
 
     #[test]
@@ -403,9 +418,21 @@ mod tests {
         let state = RateLimitState::from_config(&cfg).unwrap();
         let peer = Some("10.0.0.1".parse().unwrap());
 
-        assert!(state.check_ip(None, Some("203.0.113.1"), peer).is_ok());
-        assert!(state.check_ip(None, Some("203.0.113.1"), peer).is_err());
-        assert!(state.check_ip(None, Some("203.0.113.2"), peer).is_ok());
+        assert!(
+            state
+                .check_ip(&headers(&[("x-forwarded-for", "203.0.113.1")]), peer)
+                .is_ok()
+        );
+        assert!(
+            state
+                .check_ip(&headers(&[("x-forwarded-for", "203.0.113.1")]), peer)
+                .is_err()
+        );
+        assert!(
+            state
+                .check_ip(&headers(&[("x-forwarded-for", "203.0.113.2")]), peer)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -414,49 +441,66 @@ mod tests {
         // own buckets exactly like one emitting X-Forwarded-For.
         let mut cfg = config(true, 1, 1);
         cfg.rate_limit_trusted_proxies.trusted_proxies = vec!["10.0.0.0/8".parse().unwrap()];
+        cfg.rate_limit_trusted_proxies.trusted_header = ProxyHeader::Forwarded;
         let state = RateLimitState::from_config(&cfg).unwrap();
         let peer = Some("10.0.0.1".parse().unwrap());
 
         assert!(
             state
-                .check_ip(Some("for=203.0.113.1;proto=https"), None, peer)
+                .check_ip(
+                    &headers(&[("forwarded", "for=203.0.113.1;proto=https")]),
+                    peer,
+                )
                 .is_ok()
         );
         assert!(
             state
-                .check_ip(Some("for=203.0.113.1;proto=https"), None, peer)
+                .check_ip(
+                    &headers(&[("forwarded", "for=203.0.113.1;proto=https")]),
+                    peer,
+                )
                 .is_err()
         );
         assert!(
             state
-                .check_ip(Some("for=203.0.113.2;proto=https"), None, peer)
+                .check_ip(
+                    &headers(&[("forwarded", "for=203.0.113.2;proto=https")]),
+                    peer,
+                )
                 .is_ok()
         );
     }
 
     #[test]
-    fn forwarded_header_takes_precedence_over_xff_for_bucketing() {
-        // Both headers present: the RFC 7239 chain decides the bucket, so a
-        // stale/attacker-supplied XFF cannot move a client to another bucket.
+    fn default_xff_ignores_client_forged_forwarded_header() {
         let mut cfg = config(true, 1, 1);
         cfg.rate_limit_trusted_proxies.trusted_proxies = vec!["10.0.0.0/8".parse().unwrap()];
         let state = RateLimitState::from_config(&cfg).unwrap();
         let peer = Some("10.0.0.1".parse().unwrap());
 
-        // Exhaust the Forwarded-designated client's bucket ...
         assert!(
             state
-                .check_ip(Some("for=203.0.113.1"), Some("198.51.100.7"), peer)
+                .check_ip(
+                    &headers(&[
+                        ("forwarded", "for=203.0.113.1"),
+                        ("x-forwarded-for", "198.51.100.7"),
+                    ]),
+                    peer,
+                )
                 .is_ok()
         );
-        // ... same Forwarded client is throttled even with a fresh XFF value.
+        // Changing only the untrusted Forwarded value cannot mint a new bucket.
         assert!(
             state
-                .check_ip(Some("for=203.0.113.1"), Some("198.51.100.8"), peer)
+                .check_ip(
+                    &headers(&[
+                        ("forwarded", "for=203.0.113.2"),
+                        ("x-forwarded-for", "198.51.100.7"),
+                    ]),
+                    peer,
+                )
                 .is_err()
         );
-        // The XFF-named address never consumed anything.
-        assert!(state.check_ip(None, Some("198.51.100.7"), peer).is_ok());
     }
 
     #[test]
@@ -468,12 +512,24 @@ mod tests {
 
         assert!(
             state
-                .check_ip(Some("for=203.0.113.1"), Some("203.0.113.1"), peer)
+                .check_ip(
+                    &headers(&[
+                        ("forwarded", "for=203.0.113.1"),
+                        ("x-forwarded-for", "203.0.113.1"),
+                    ]),
+                    peer,
+                )
                 .is_ok()
         );
         assert!(
             state
-                .check_ip(Some("for=203.0.113.2"), Some("203.0.113.2"), peer)
+                .check_ip(
+                    &headers(&[
+                        ("forwarded", "for=203.0.113.2"),
+                        ("x-forwarded-for", "203.0.113.2"),
+                    ]),
+                    peer,
+                )
                 .is_err()
         );
     }
@@ -481,8 +537,9 @@ mod tests {
     #[test]
     fn missing_peer_bypasses_public_ingress_limiter() {
         let state = RateLimitState::from_config(&config(true, 1, 1)).unwrap();
-        assert!(state.check_ip(None, Some("203.0.113.1"), None).is_ok());
-        assert!(state.check_ip(None, Some("203.0.113.1"), None).is_ok());
+        let headers = headers(&[("x-forwarded-for", "203.0.113.1")]);
+        assert!(state.check_ip(&headers, None).is_ok());
+        assert!(state.check_ip(&headers, None).is_ok());
     }
 
     #[test]

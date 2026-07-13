@@ -26,7 +26,7 @@ use ipnet::IpNet;
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::common::{csv, csv_ipnet};
+use crate::common::{ProxyHeader, csv, csv_ipnet};
 
 /// Auth method names that are compiled into `keystone-rs` and can therefore
 /// never be shadowed by a dynamic plugin name, per ADR 0025 §4 "Reserved
@@ -93,8 +93,8 @@ pub struct DynamicPluginsSection {
     #[serde(default, deserialize_with = "csv")]
     pub plugins: Vec<String>,
 
-    /// CIDR blocks of reverse proxies trusted to prepend `Forwarded` /
-    /// `X-Forwarded-For` entries for `full_auth`-mode dispatch's
+    /// CIDR blocks of reverse proxies trusted to append entries to the
+    /// configured forwarding header for `full_auth`-mode dispatch's
     /// `remote_addr` (ADR 0025 §4 Guest Contract). Deliberately separate
     /// from `[api_key].trusted_proxies` - SCIM ingress and anonymous
     /// pre-auth auth-plugin login are different trust boundaries and
@@ -103,6 +103,12 @@ pub struct DynamicPluginsSection {
     /// malformed CIDR fails configuration loading.
     #[serde(default, deserialize_with = "csv_ipnet")]
     pub trusted_proxies: Vec<IpNet>,
+
+    /// The one forwarding header trusted proxies are required to sanitize.
+    /// Defaults to the pre-existing `x_forwarded_for` behavior. Opt in to
+    /// `forwarded` only when every trusted proxy owns that header.
+    #[serde(default)]
+    pub trusted_header: ProxyHeader,
 }
 
 /// A single `[auth_plugin.<name>]` section - ADR 0025 §5.

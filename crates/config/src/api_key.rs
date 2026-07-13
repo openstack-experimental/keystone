@@ -19,7 +19,7 @@ use ipnet::IpNet;
 use serde::Deserialize;
 use validator::Validate;
 
-use crate::common::{csv_ipnet, default_raft_driver};
+use crate::common::{ProxyHeader, csv_ipnet, default_raft_driver};
 
 /// API Key (SCIM ingress) provider configuration.
 #[derive(Debug, Deserialize, Clone, Validate)]
@@ -63,13 +63,20 @@ pub struct ApiKeyProvider {
     #[validate(range(min = 1))]
     pub janitor_tombstone_retention_days: u32,
 
-    /// CIDR blocks of reverse proxies trusted to prepend `Forwarded` /
-    /// `X-Forwarded-For` entries. Used to compute the effective client IP via
-    /// the rightmost-non-trusted algorithm (ADR 0021 §3 Step 2, §6.E,
+    /// CIDR blocks of reverse proxies trusted to append entries to the
+    /// configured [`trusted_header`](Self::trusted_header). Used to compute
+    /// the effective client IP via the rightmost-non-trusted algorithm (ADR
+    /// 0021 §3 Step 2, §6.E,
     /// Invariant 4). Parsed into [`IpNet`] networks at configuration-load time
     /// (not on every request); a malformed CIDR fails configuration loading.
     #[serde(deserialize_with = "csv_ipnet", default)]
     pub trusted_proxies: Vec<IpNet>,
+
+    /// The one forwarding header trusted proxies are required to sanitize.
+    /// `x_forwarded_for` is the backward-compatible default. RFC 7239
+    /// `forwarded` must be opted into explicitly.
+    #[serde(default)]
+    pub trusted_header: ProxyHeader,
 
     /// Maximum burst of SCIM ingress authentication attempts accepted
     /// instantaneously, per rate-limit key (`lookup_hash`, or source IP when
@@ -129,6 +136,7 @@ impl Default for ApiKeyProvider {
             janitor_grace_days: default_janitor_grace_days(),
             janitor_tombstone_retention_days: default_janitor_tombstone_retention_days(),
             trusted_proxies: Vec::new(),
+            trusted_header: ProxyHeader::default(),
             rate_limit_burst_size: default_rate_limit_burst_size(),
             rate_limit_replenish_per_minute: default_rate_limit_replenish_per_minute(),
         }

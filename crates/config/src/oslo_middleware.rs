@@ -19,15 +19,14 @@
 use ipnet::IpNet;
 use serde::Deserialize;
 
-use crate::common::csv_ipnet;
+use crate::common::{ProxyHeader, csv_ipnet};
 
 /// `[oslo_middleware]` section.
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct OsloMiddleware {
-    /// Whether to parse proxy forwarding headers (`Forwarded` per RFC 7239,
-    /// falling back to `X-Forwarded-For`) on the public interface to recover
-    /// the originating client address, overwriting the raw TCP peer captured
-    /// in `ConnectInfo<SocketAddr>`.
+    /// Whether to parse the configured trusted proxy header on the public
+    /// interface to recover the originating client address, overwriting the
+    /// raw TCP peer captured in `ConnectInfo<SocketAddr>`.
     ///
     /// The name and default (**off**) match upstream oslo.middleware's
     /// `HTTPProxyToWSGI`. Even when enabled, a header is only honoured when the
@@ -35,6 +34,13 @@ pub struct OsloMiddleware {
     /// a client reaching the listener directly cannot spoof its address.
     #[serde(default)]
     pub enable_proxy_headers_parsing: bool,
+
+    /// The one forwarding header trusted proxies are required to sanitize.
+    /// Defaults to `x_forwarded_for`, preserving the established deployment
+    /// behavior. Set to `forwarded` only when every trusted proxy removes any
+    /// client-supplied RFC 7239 `Forwarded` value before writing its own.
+    #[serde(default)]
+    pub trusted_header: ProxyHeader,
 
     /// CIDR blocks of reverse proxies trusted to set the forwarding headers
     /// (e.g. `10.0.0.0/8, 192.168.0.0/16`). The client address is recovered
@@ -60,6 +66,7 @@ mod tests {
     fn defaults_to_disabled() {
         let sot = OsloMiddleware::default();
         assert!(!sot.enable_proxy_headers_parsing);
+        assert_eq!(sot.trusted_header, ProxyHeader::XForwardedFor);
     }
 
     #[test]
@@ -109,5 +116,18 @@ mod tests {
             .build()
             .unwrap();
         assert!(c.try_deserialize::<OsloMiddleware>().is_err());
+    }
+
+    #[test]
+    fn parses_explicit_forwarded_header_opt_in() {
+        let c = Config::builder()
+            .add_source(File::from_str(
+                "trusted_header = forwarded",
+                FileFormat::Ini,
+            ))
+            .build()
+            .unwrap();
+        let sot: OsloMiddleware = c.try_deserialize().unwrap();
+        assert_eq!(sot.trusted_header, ProxyHeader::Forwarded);
     }
 }

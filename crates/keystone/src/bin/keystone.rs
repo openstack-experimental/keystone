@@ -1024,8 +1024,8 @@ async fn spawn_public_listener(
             let listener = TcpListener::bind(&cfg.interface_public.tcp_address).await?;
             let rest_cancel_token = token.clone();
             // When operating behind a trusted reverse proxy (config-gated,
-            // off by default), parse `Forwarded`/`X-Forwarded-For` and rewrite
-            // the raw-peer `ConnectInfo` with the originating client address
+            // off by default), parse the explicitly selected forwarding
+            // header and rewrite the raw-peer `ConnectInfo` with the client
             // *before* the tracing span and handlers read it. The header is
             // honoured only when the immediate peer matches `trusted_proxies`,
             // so an empty allowlist keeps the raw peer. The layer is added only
@@ -1034,11 +1034,12 @@ async fn spawn_public_listener(
             let rest_app = if cfg.oslo_middleware.enable_proxy_headers_parsing {
                 info!(
                     trusted_proxies = cfg.oslo_middleware.trusted_proxies.len(),
+                    trusted_header = cfg.oslo_middleware.trusted_header.as_str(),
                     "Proxy header parsing enabled on the public interface"
                 );
-                let trusted = Arc::new(cfg.oslo_middleware.trusted_proxies.clone());
+                let proxy_config = Arc::new(cfg.oslo_middleware.clone());
                 app.layer(axum::middleware::from_fn_with_state(
-                    trusted,
+                    proxy_config,
                     proxy_headers::rewrite_client_addr,
                 ))
             } else {
@@ -1055,9 +1056,9 @@ async fn spawn_public_listener(
                 // extension (the analogue of Python Keystone's WSGI REMOTE_ADDR).
                 // Behind a reverse proxy/LB this is the proxy's address; the
                 // `rewrite_client_addr` layer wired above (when
-                // `enable_proxy_headers_parsing` is on) overwrites it with the
-                // trusted-proxy-resolved client address before any consumer
-                // reads it.
+                // `enable_proxy_headers_parsing` is on) preserves this raw
+                // value separately before overwriting `ConnectInfo` with the
+                // proxy-resolved client address.
                 let cancel_token = rest_cancel_token.clone();
                 if let Err(e) = axum::serve(
                     listener,

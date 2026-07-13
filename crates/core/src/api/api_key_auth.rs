@@ -18,10 +18,10 @@
 //! accepted *only* on the SCIM sub-router, never on core OpenStack
 //! endpoints. Mounting this extractor exclusively on SCIM route handlers
 //! achieves that isolation structurally, without needing a path allowlist.
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 use std::ops::Deref;
 
-use axum::extract::{ConnectInfo, FromRef, FromRequestParts, Path};
+use axum::extract::{FromRef, FromRequestParts, Path};
 use axum::http::request::Parts;
 use governor::clock::Clock as _;
 use ipnet::IpNet;
@@ -39,7 +39,7 @@ use crate::api_key::{crypto, token};
 use crate::auth::{ExecutionContext, ValidatedSecurityContext};
 use crate::keystone::ServiceState;
 use crate::mapping::engine;
-use crate::net::resolve_client_ip_from_headers;
+use crate::net::{public_ingress_peer_addr, resolve_client_ip_from_headers};
 
 /// Ephemeral, single-scope [`ValidatedSecurityContext`] hydrated from a
 /// verified API Key, for use exclusively on the SCIM sub-router.
@@ -184,10 +184,7 @@ async fn resolve_verified_api_client(
         .ok_or(KeystoneApiError::from(AuthenticationError::Unauthorized))?
         .clone();
 
-    let peer_ip = parts
-        .extensions
-        .get::<ConnectInfo<SocketAddr>>()
-        .map(|ConnectInfo(addr)| addr.ip());
+    let peer_ip = public_ingress_peer_addr(&parts.extensions).map(|addr| addr.ip());
 
     let presented_token = parts
         .headers
@@ -254,11 +251,14 @@ async fn resolve_verified_api_client(
         return Err(AuthenticationError::Unauthorized.into());
     }
 
-    // Resolve the effective client IP behind trusted proxies from the RFC 7239
-    // `Forwarded` header (preferred) or `X-Forwarded-For` (#358 follow-up),
-    // honouring the header only when the immediate peer is a trusted proxy.
-    let effective_ip =
-        resolve_client_ip_from_headers(&parts.headers, peer_ip, &cfg.trusted_proxies);
+    // Resolve the effective client IP using only the header this trust
+    // boundary explicitly configured its proxies to sanitize.
+    let effective_ip = resolve_client_ip_from_headers(
+        &parts.headers,
+        peer_ip,
+        &cfg.trusted_proxies,
+        cfg.trusted_header,
+    );
     if !ip_allowed(effective_ip, &resource.allowed_ips) {
         return Err(AuthenticationError::Unauthorized.into());
     }
@@ -603,5 +603,29 @@ mod tests {
     fn missing_client_ip_with_restriction_is_denied() {
         let allowed = Some(vec!["10.0.0.0/8".to_string()]);
         assert!(!ip_allowed(None, &allowed));
+    }
+
+    #[test]
+    fn internal_connect_info_cannot_satisfy_api_key_allowlist() {
+        use axum::extract::ConnectInfo;
+        use openstack_keystone_config::{Interface, ProxyHeader};
+
+        let mut extensions = axum::http::Extensions::new();
+        extensions.insert(ConnectInfo(
+            "10.0.0.9:8443".parse::<std::net::SocketAddr>().unwrap(),
+        ));
+        extensions.insert(Interface::Internal);
+
+        let peer_ip = public_ingress_peer_addr(&extensions).map(|addr| addr.ip());
+        let effective_ip = resolve_client_ip_from_headers(
+            &axum::http::HeaderMap::new(),
+            peer_ip,
+            &[],
+            ProxyHeader::XForwardedFor,
+        );
+        assert!(!ip_allowed(
+            effective_ip,
+            &Some(vec!["10.0.0.0/8".to_string()])
+        ));
     }
 }

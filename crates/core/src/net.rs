@@ -19,12 +19,12 @@
 //! auth plugin dispatch (ADR 0025 §4), and the public-listener proxy header
 //! middleware (`[oslo_middleware] enable_proxy_headers_parsing`).
 //!
-//! It implements the trusted-proxy model: forwarding headers (RFC 7239
-//! `Forwarded` preferred, else `X-Forwarded-For`) are consulted **only** when
-//! the immediate TCP peer is a configured trusted proxy, and the effective
-//! client is the rightmost address in the chain that is not itself a trusted
-//! proxy. A client able to reach the listener directly therefore cannot spoof
-//! its apparent address by prepending a forwarding-header entry.
+//! It implements the trusted-proxy model: each ingress boundary selects one
+//! forwarding header that its proxies are required to sanitize. That header is
+//! consulted **only** when the immediate TCP peer is a configured trusted
+//! proxy, and the effective client is the rightmost address in the chain that
+//! is not itself a trusted proxy. A client able to reach the listener directly
+//! therefore cannot spoof its apparent address by prepending an entry.
 //!
 //! Each consumer passes its **own** `trusted_proxies` list — these are
 //! different trust boundaries (SCIM ingress, anonymous pre-auth login, public
@@ -34,20 +34,61 @@
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 
 use ipnet::IpNet;
+use openstack_keystone_config::ProxyHeader;
+
+#[cfg(any(feature = "api", test))]
+use openstack_keystone_config::Interface;
 
 /// Upper bound on forwarding-chain entries parsed, guarding against an
-/// unbounded comma list (parsing DoS). Only the rightmost hops are relevant to
-/// the rightmost-non-trusted walk, so any excess left-hand entries are ignored.
+/// unbounded comma list (parsing DoS). A chain exceeding the bound is ignored
+/// in full rather than truncated: trusting a partial chain would create an
+/// ambiguous trust window at the cutoff.
 const MAX_FORWARDED_HOPS: usize = 10;
+
+/// Bound quote-aware RFC 7239 parsing even when an attacker supplies one very
+/// large quoted element without commas.
+const MAX_FORWARDING_HEADER_BYTES: usize = 4096;
+
+/// Raw TCP peer saved before proxy middleware rewrites `ConnectInfo`.
+///
+/// Security controls use this value so their own trusted-proxy configuration
+/// cannot be bypassed by an earlier middleware with a different trust boundary.
+#[cfg(any(feature = "api", test))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OriginalPeerAddr(pub SocketAddr);
+
+/// Return the raw peer only for public-ingress requests.
+///
+/// Internal and admin interfaces deliberately return `None` even when they
+/// carry `ConnectInfo` for audit logging. When no `Interface` extension is
+/// present, the request is treated as public for compatibility with direct
+/// router tests and the public listener's make-service path.
+#[cfg(any(feature = "api", test))]
+pub fn public_ingress_peer_addr(extensions: &axum::http::Extensions) -> Option<SocketAddr> {
+    if extensions
+        .get::<Interface>()
+        .is_some_and(|interface| interface != &Interface::Public)
+    {
+        return None;
+    }
+
+    extensions
+        .get::<OriginalPeerAddr>()
+        .map(|peer| peer.0)
+        .or_else(|| {
+            extensions
+                .get::<axum::extract::ConnectInfo<SocketAddr>>()
+                .map(|connect_info| connect_info.0)
+        })
+}
 
 /// Resolve the effective client IP behind trusted reverse proxies.
 ///
-/// The raw TCP `peer_ip` is appended to the right of the forwarding chain
-/// (`forwarded_header`, the RFC 7239 `Forwarded` value, preferred;
-/// `xff_header`, the `X-Forwarded-For` value, as fallback); the chain is then
-/// walked right to left, returning the first address that is not a member of
-/// `trusted_proxies`. If the immediate peer is itself not trusted, the headers
-/// are ignored entirely and the peer is returned unchanged.
+/// The raw TCP `peer_ip` is appended to the right of the selected forwarding
+/// chain; the chain is then walked right to left, returning the first address
+/// that is not a member of `trusted_proxies`. If the immediate peer is itself
+/// not trusted, the header is ignored entirely and the peer is returned
+/// unchanged.
 ///
 /// Takes already-extracted header values (not a raw header map) so this helper
 /// has no dependency on any particular HTTP framework type — callers extract
@@ -56,8 +97,8 @@ const MAX_FORWARDED_HOPS: usize = 10;
 ///
 /// Returns `None` only when no peer address is available.
 pub fn resolve_client_ip(
-    forwarded_header: Option<&str>,
-    xff_header: Option<&str>,
+    header_value: Option<&str>,
+    trusted_header: ProxyHeader,
     peer_ip: Option<IpAddr>,
     trusted_proxies: &[IpNet],
 ) -> Option<IpAddr> {
@@ -69,7 +110,9 @@ pub fn resolve_client_ip(
         return Some(peer);
     }
 
-    let mut chain = forwarded_chain(forwarded_header, xff_header);
+    let mut chain = header_value
+        .and_then(|value| forwarding_chain(value, trusted_header))
+        .unwrap_or_default();
     chain.push(peer);
     chain
         .into_iter()
@@ -79,8 +122,8 @@ pub fn resolve_client_ip(
 }
 
 /// [`resolve_client_ip`] for callers holding an `axum::http::HeaderMap`:
-/// extracts the RFC 7239 `Forwarded` and `X-Forwarded-For` values and
-/// delegates to the framework-neutral resolver.
+/// extracts only `trusted_header` and delegates to the framework-neutral
+/// resolver.
 ///
 /// Gated like [`crate::api`]: `axum` is an optional dependency pulled in by
 /// the `api` feature (and unconditionally as a dev-dependency for tests).
@@ -89,55 +132,114 @@ pub fn resolve_client_ip_from_headers(
     headers: &axum::http::HeaderMap,
     peer_ip: Option<IpAddr>,
     trusted_proxies: &[IpNet],
+    trusted_header: ProxyHeader,
 ) -> Option<IpAddr> {
     resolve_client_ip(
-        headers.get("forwarded").and_then(|v| v.to_str().ok()),
-        headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()),
+        proxy_header_value(headers, trusted_header),
+        trusted_header,
         peer_ip,
         trusted_proxies,
     )
 }
 
-/// Parse the forwarding chain in left-to-right order, capped to the rightmost
-/// [`MAX_FORWARDED_HOPS`] entries. Prefers the RFC 7239 `Forwarded` header;
-/// `X-Forwarded-For` is consulted only when no `Forwarded` header is present
-/// (header-level precedence, not per-entry fallback).
-fn forwarded_chain(forwarded_header: Option<&str>, xff_header: Option<&str>) -> Vec<IpAddr> {
-    if let Some(value) = forwarded_header {
-        return capped_chain(value, forwarded_element_ip);
-    }
-    if let Some(value) = xff_header {
-        return capped_chain(value, |s| parse_ip_maybe_port(s.trim()));
-    }
-    Vec::new()
+/// Extract the one operator-selected forwarding header.
+#[cfg(any(feature = "api", test))]
+pub fn proxy_header_value(
+    headers: &axum::http::HeaderMap,
+    trusted_header: ProxyHeader,
+) -> Option<&str> {
+    headers
+        .get(trusted_header.as_str())
+        .and_then(|value| value.to_str().ok())
 }
 
-/// Take the rightmost [`MAX_FORWARDED_HOPS`] comma-separated elements of a
-/// header value, parse each with `parse`, and return them in left-to-right
-/// order. Bounding the split before parsing caps the work an attacker can force.
-fn capped_chain(value: &str, parse: impl Fn(&str) -> Option<IpAddr>) -> Vec<IpAddr> {
-    let mut ips: Vec<IpAddr> = value
-        .rsplit(',')
-        .take(MAX_FORWARDED_HOPS)
-        .filter_map(parse)
-        .collect();
-    ips.reverse();
-    ips
+/// Parse a complete forwarding chain in left-to-right order. Malformed,
+/// oversized, or over-hop-limit chains are rejected in full.
+fn forwarding_chain(value: &str, trusted_header: ProxyHeader) -> Option<Vec<IpAddr>> {
+    if value.len() > MAX_FORWARDING_HEADER_BYTES {
+        return None;
+    }
+
+    let elements = match trusted_header {
+        ProxyHeader::XForwardedFor => value.split(',').collect::<Vec<_>>(),
+        ProxyHeader::Forwarded => split_quoted(value, ',')?,
+    };
+    if elements.len() > MAX_FORWARDED_HOPS {
+        return None;
+    }
+
+    elements
+        .into_iter()
+        .map(|element| match trusted_header {
+            ProxyHeader::XForwardedFor => parse_ip_maybe_port(element.trim()),
+            ProxyHeader::Forwarded => forwarded_element_ip(element),
+        })
+        .collect()
 }
 
 /// Extract the `for=` IP from a single RFC 7239 `Forwarded` list element such as
 /// `for=192.0.2.60;proto=http;by=203.0.113.43`. Obfuscated identifiers
 /// (`for=_hidden`) yield `None`.
 fn forwarded_element_ip(element: &str) -> Option<IpAddr> {
-    for param in element.split(';') {
-        let mut kv = param.trim().splitn(2, '=');
-        let key = kv.next()?.trim();
+    let mut result = None;
+    for param in split_quoted(element, ';')? {
+        let (key, value) = param.trim().split_once('=')?;
         if key.eq_ignore_ascii_case("for") {
-            let raw = kv.next()?.trim().trim_matches('"');
-            return parse_ip_maybe_port(raw);
+            if result.is_some() {
+                return None;
+            }
+            let raw = value.trim();
+            let unquoted = if let Some(inner) = raw
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+            {
+                // IP literals never require quoted-pair escaping. Rejecting it
+                // keeps parsing strict and prevents delimiters being hidden.
+                if inner.contains('\\') {
+                    return None;
+                }
+                inner
+            } else {
+                if raw.contains('"') {
+                    return None;
+                }
+                raw
+            };
+            result = Some(parse_ip_maybe_port(unquoted)?);
         }
     }
-    None
+    result
+}
+
+/// Split an RFC 7239 list/parameter sequence without treating delimiters
+/// inside quoted strings as structure. Invalid quoting fails closed.
+fn split_quoted(value: &str, delimiter: char) -> Option<Vec<&str>> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut quoted = false;
+    let mut escaped = false;
+
+    for (index, ch) in value.char_indices() {
+        if quoted {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                quoted = false;
+            }
+        } else if ch == '"' {
+            quoted = true;
+        } else if ch == delimiter {
+            parts.push(&value[start..index]);
+            start = index + ch.len_utf8();
+        }
+    }
+    if quoted || escaped {
+        return None;
+    }
+    parts.push(&value[start..]);
+    Some(parts)
 }
 
 /// Parse an address token that may be a bare IP, an `ip:port`, or a bracketed
@@ -151,6 +253,15 @@ fn parse_ip_maybe_port(s: &str) -> Option<IpAddr> {
     // Bracketed IPv6 (RFC 7239 form), with an optional trailing port.
     if let Some(rest) = s.strip_prefix('[') {
         let end = rest.find(']')?;
+        let trailing = &rest[end + 1..];
+        if !trailing.is_empty()
+            && trailing
+                .strip_prefix(':')
+                .and_then(|port| port.parse::<u16>().ok())
+                .is_none()
+        {
+            return None;
+        }
         return rest[..end].parse::<Ipv6Addr>().ok().map(IpAddr::V6);
     }
     // `ip:port` (only unambiguous for IPv4; a bare IPv6 has many colons and is
@@ -182,16 +293,23 @@ mod tests {
 
     #[test]
     fn no_peer_ip_resolves_to_none() {
-        assert_eq!(resolve_client_ip(None, None, None, &trusted()), None);
+        assert_eq!(
+            resolve_client_ip(None, ProxyHeader::XForwardedFor, None, &trusted()),
+            None
+        );
     }
 
     #[test]
     fn untrusted_peer_ignores_headers_entirely() {
-        // Peer is not a trusted proxy: neither header may be consulted, even
-        // when present (prevents spoofing via a direct connection).
+        // Peer is not a trusted proxy: the header may not be consulted.
         let peer = Some(ip("203.0.113.5"));
         assert_eq!(
-            resolve_client_ip(Some("for=1.2.3.4"), Some("1.2.3.4"), peer, &trusted()),
+            resolve_client_ip(
+                Some("1.2.3.4"),
+                ProxyHeader::XForwardedFor,
+                peer,
+                &trusted()
+            ),
             Some(ip("203.0.113.5"))
         );
     }
@@ -201,7 +319,7 @@ mod tests {
         // No proxy is trusted: headers are never honoured.
         let peer = Some(ip("10.0.0.1"));
         assert_eq!(
-            resolve_client_ip(None, Some("1.2.3.4"), peer, &[]),
+            resolve_client_ip(Some("1.2.3.4"), ProxyHeader::XForwardedFor, peer, &[]),
             Some(ip("10.0.0.1"))
         );
     }
@@ -214,7 +332,12 @@ mod tests {
     fn trusted_peer_walks_xff_rightmost_non_trusted() {
         let peer = Some(ip("10.0.0.1"));
         assert_eq!(
-            resolve_client_ip(None, Some("1.2.3.4, 10.0.0.5"), peer, &trusted()),
+            resolve_client_ip(
+                Some("1.2.3.4, 10.0.0.5"),
+                ProxyHeader::XForwardedFor,
+                peer,
+                &trusted()
+            ),
             Some(ip("1.2.3.4"))
         );
     }
@@ -224,8 +347,8 @@ mod tests {
         // Attacker prepends a spoofed leftmost entry; it must not be returned.
         let peer = Some(ip("10.0.0.1"));
         let effective = resolve_client_ip(
-            None,
             Some("203.0.113.99, 1.2.3.4, 10.0.0.5"),
+            ProxyHeader::XForwardedFor,
             peer,
             &trusted(),
         );
@@ -237,7 +360,12 @@ mod tests {
     fn all_hops_trusted_falls_back_to_peer() {
         let peer = Some(ip("10.0.0.1"));
         assert_eq!(
-            resolve_client_ip(None, Some("10.0.0.9"), peer, &trusted()),
+            resolve_client_ip(
+                Some("10.0.0.9"),
+                ProxyHeader::XForwardedFor,
+                peer,
+                &trusted()
+            ),
             Some(ip("10.0.0.1"))
         );
     }
@@ -246,38 +374,9 @@ mod tests {
     fn xff_ipv4_with_port_strips_port() {
         let peer = Some(ip("10.0.0.1"));
         assert_eq!(
-            resolve_client_ip(None, Some("203.0.113.7:5555"), peer, &trusted()),
-            Some(ip("203.0.113.7"))
-        );
-    }
-
-    #[test]
-    fn hop_count_is_capped_against_long_chains() {
-        // 12 spoofed public entries followed by two trusted hops and the peer.
-        // The cap keeps only the rightmost 10 parsed hops, but the real client
-        // (first non-trusted from the right) is still resolved correctly.
-        let spoof = std::iter::repeat_n("203.0.113.1", 12)
-            .collect::<Vec<_>>()
-            .join(", ");
-        let value = format!("{spoof}, 8.8.8.8, 10.0.0.5");
-        let peer = Some(ip("10.0.0.1"));
-        assert_eq!(
-            resolve_client_ip(None, Some(value.as_str()), peer, &trusted()),
-            Some(ip("8.8.8.8"))
-        );
-    }
-
-    // ---------------------------------------------------------------------
-    // RFC 7239 Forwarded parsing & precedence
-    // ---------------------------------------------------------------------
-
-    #[test]
-    fn forwarded_header_is_preferred_and_walked_right_to_left() {
-        let peer = Some(ip("10.0.0.1"));
-        assert_eq!(
             resolve_client_ip(
-                Some("for=203.0.113.7;proto=https, for=10.0.0.5;proto=https"),
-                Some("198.51.100.1"),
+                Some("203.0.113.7:5555"),
+                ProxyHeader::XForwardedFor,
                 peer,
                 &trusted()
             ),
@@ -286,14 +385,77 @@ mod tests {
     }
 
     #[test]
-    fn forwarded_precedence_is_header_level_not_per_entry() {
-        // When a Forwarded header is present but yields no usable address,
-        // XFF must NOT be consulted as a fallback — a proxy that emits
-        // Forwarded owns the chain, and mixing headers would let an attacker
-        // smuggle an XFF entry past a Forwarded-emitting proxy.
+    fn hop_count_is_capped_against_long_chains() {
+        // The entire over-limit chain is ignored instead of creating a trust
+        // window by considering only one side of the cutoff.
+        let spoof = std::iter::repeat_n("203.0.113.1", 12)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let value = format!("{spoof}, 8.8.8.8, 10.0.0.5");
         let peer = Some(ip("10.0.0.1"));
         assert_eq!(
-            resolve_client_ip(Some("for=_hidden"), Some("1.2.3.4"), peer, &trusted()),
+            resolve_client_ip(
+                Some(value.as_str()),
+                ProxyHeader::XForwardedFor,
+                peer,
+                &trusted()
+            ),
+            peer
+        );
+    }
+
+    #[test]
+    fn malformed_xff_entry_rejects_the_entire_chain() {
+        let peer = Some(ip("10.0.0.1"));
+        assert_eq!(
+            resolve_client_ip(
+                Some("203.0.113.7, not-an-ip, 10.0.0.5"),
+                ProxyHeader::XForwardedFor,
+                peer,
+                &trusted()
+            ),
+            peer
+        );
+    }
+
+    #[test]
+    fn oversized_header_rejects_the_entire_chain() {
+        let value = "1".repeat(MAX_FORWARDING_HEADER_BYTES + 1);
+        let peer = Some(ip("10.0.0.1"));
+        assert_eq!(
+            resolve_client_ip(Some(&value), ProxyHeader::XForwardedFor, peer, &trusted()),
+            peer
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // RFC 7239 Forwarded parsing & precedence
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn forwarded_header_is_walked_right_to_left_when_selected() {
+        let peer = Some(ip("10.0.0.1"));
+        assert_eq!(
+            resolve_client_ip(
+                Some("for=203.0.113.7;proto=https, for=10.0.0.5;proto=https"),
+                ProxyHeader::Forwarded,
+                peer,
+                &trusted()
+            ),
+            Some(ip("203.0.113.7"))
+        );
+    }
+
+    #[test]
+    fn malformed_forwarded_value_falls_back_to_peer() {
+        let peer = Some(ip("10.0.0.1"));
+        assert_eq!(
+            resolve_client_ip(
+                Some("for=_hidden"),
+                ProxyHeader::Forwarded,
+                peer,
+                &trusted()
+            ),
             Some(ip("10.0.0.1"))
         );
     }
@@ -304,7 +466,7 @@ mod tests {
         assert_eq!(
             resolve_client_ip(
                 Some(r#"for="[2001:db8:cafe::17]:4711""#),
-                None,
+                ProxyHeader::Forwarded,
                 peer,
                 &trusted()
             ),
@@ -316,7 +478,12 @@ mod tests {
     fn forwarded_obfuscated_identifier_falls_back_to_peer() {
         let peer = Some(ip("10.0.0.1"));
         assert_eq!(
-            resolve_client_ip(Some("for=_hidden"), None, peer, &trusted()),
+            resolve_client_ip(
+                Some("for=_hidden"),
+                ProxyHeader::Forwarded,
+                peer,
+                &trusted()
+            ),
             Some(ip("10.0.0.1"))
         );
     }
@@ -325,8 +492,83 @@ mod tests {
     fn forwarded_for_key_is_case_insensitive() {
         let peer = Some(ip("10.0.0.1"));
         assert_eq!(
-            resolve_client_ip(Some("For=203.0.113.7;Proto=https"), None, peer, &trusted()),
+            resolve_client_ip(
+                Some("For=203.0.113.7;Proto=https"),
+                ProxyHeader::Forwarded,
+                peer,
+                &trusted()
+            ),
             Some(ip("203.0.113.7"))
+        );
+    }
+
+    #[test]
+    fn forwarded_quoted_comma_is_not_split_as_a_hop() {
+        let peer = Some(ip("10.0.0.1"));
+        assert_eq!(
+            resolve_client_ip(
+                Some(r#"for=203.0.113.7;ext="a,b", for=10.0.0.5"#),
+                ProxyHeader::Forwarded,
+                peer,
+                &trusted()
+            ),
+            Some(ip("203.0.113.7"))
+        );
+    }
+
+    #[test]
+    fn forwarded_for_hidden_inside_quoted_parameter_is_ignored() {
+        let peer = Some(ip("10.0.0.1"));
+        assert_eq!(
+            resolve_client_ip(
+                Some(r#"ext="x;for=198.51.100.99";for=203.0.113.7"#),
+                ProxyHeader::Forwarded,
+                peer,
+                &trusted()
+            ),
+            Some(ip("203.0.113.7"))
+        );
+    }
+
+    #[test]
+    fn malformed_bracketed_ipv6_suffix_is_rejected() {
+        let peer = Some(ip("10.0.0.1"));
+        assert_eq!(
+            resolve_client_ip(
+                Some(r#"for="[2001:db8::1]garbage""#),
+                ProxyHeader::Forwarded,
+                peer,
+                &trusted()
+            ),
+            peer
+        );
+    }
+
+    #[test]
+    fn unterminated_forwarded_quote_rejects_the_entire_chain() {
+        let peer = Some(ip("10.0.0.1"));
+        assert_eq!(
+            resolve_client_ip(
+                Some(r#"for=203.0.113.7;ext="unterminated"#),
+                ProxyHeader::Forwarded,
+                peer,
+                &trusted()
+            ),
+            peer
+        );
+    }
+
+    #[test]
+    fn duplicate_forwarded_for_parameter_rejects_the_entire_chain() {
+        let peer = Some(ip("10.0.0.1"));
+        assert_eq!(
+            resolve_client_ip(
+                Some("for=203.0.113.7;for=198.51.100.9"),
+                ProxyHeader::Forwarded,
+                peer,
+                &trusted()
+            ),
+            peer
         );
     }
 
@@ -351,24 +593,27 @@ mod tests {
         }
 
         #[test]
-        fn extracts_forwarded_and_prefers_it_over_xff() {
+        fn extracts_only_explicitly_selected_forwarded_header() {
             let h = headers(&[
                 ("forwarded", "for=203.0.113.7"),
                 ("x-forwarded-for", "198.51.100.1"),
             ]);
             let peer = Some(ip("10.0.0.1"));
             assert_eq!(
-                resolve_client_ip_from_headers(&h, peer, &trusted()),
+                resolve_client_ip_from_headers(&h, peer, &trusted(), ProxyHeader::Forwarded),
                 Some(ip("203.0.113.7"))
             );
         }
 
         #[test]
-        fn extracts_xff_when_no_forwarded() {
-            let h = headers(&[("x-forwarded-for", "1.2.3.4, 10.0.0.5")]);
+        fn default_xff_selection_ignores_forged_forwarded_header() {
+            let h = headers(&[
+                ("forwarded", "for=203.0.113.99"),
+                ("x-forwarded-for", "1.2.3.4, 10.0.0.5"),
+            ]);
             let peer = Some(ip("10.0.0.1"));
             assert_eq!(
-                resolve_client_ip_from_headers(&h, peer, &trusted()),
+                resolve_client_ip_from_headers(&h, peer, &trusted(), ProxyHeader::XForwardedFor),
                 Some(ip("1.2.3.4"))
             );
         }
@@ -378,7 +623,7 @@ mod tests {
             let h = headers(&[("x-forwarded-for", "1.2.3.4")]);
             let peer = Some(ip("203.0.113.5"));
             assert_eq!(
-                resolve_client_ip_from_headers(&h, peer, &trusted()),
+                resolve_client_ip_from_headers(&h, peer, &trusted(), ProxyHeader::XForwardedFor),
                 Some(ip("203.0.113.5"))
             );
         }
@@ -387,8 +632,65 @@ mod tests {
         fn no_headers_resolves_to_peer() {
             let peer = Some(ip("10.0.0.1"));
             assert_eq!(
-                resolve_client_ip_from_headers(&HeaderMap::new(), peer, &trusted()),
+                resolve_client_ip_from_headers(
+                    &HeaderMap::new(),
+                    peer,
+                    &trusted(),
+                    ProxyHeader::XForwardedFor
+                ),
                 Some(ip("10.0.0.1"))
+            );
+        }
+    }
+
+    mod public_peer {
+        use axum::extract::ConnectInfo;
+
+        use super::*;
+
+        fn extensions(interface: Option<Interface>) -> axum::http::Extensions {
+            let mut extensions = axum::http::Extensions::new();
+            extensions.insert(ConnectInfo("10.0.0.1:1234".parse::<SocketAddr>().unwrap()));
+            if let Some(interface) = interface {
+                extensions.insert(interface);
+            }
+            extensions
+        }
+
+        #[test]
+        fn internal_connect_info_is_not_public_ingress() {
+            assert_eq!(
+                public_ingress_peer_addr(&extensions(Some(Interface::Internal))),
+                None
+            );
+        }
+
+        #[test]
+        fn admin_connect_info_is_not_public_ingress() {
+            assert_eq!(
+                public_ingress_peer_addr(&extensions(Some(Interface::Admin))),
+                None
+            );
+        }
+
+        #[test]
+        fn missing_interface_defaults_to_public() {
+            assert_eq!(
+                public_ingress_peer_addr(&extensions(None)),
+                Some("10.0.0.1:1234".parse().unwrap())
+            );
+        }
+
+        #[test]
+        fn original_peer_wins_over_rewritten_connect_info() {
+            let mut extensions = extensions(Some(Interface::Public));
+            extensions.insert(ConnectInfo("203.0.113.7:0".parse::<SocketAddr>().unwrap()));
+            extensions.insert(OriginalPeerAddr(
+                "10.0.0.1:1234".parse::<SocketAddr>().unwrap(),
+            ));
+            assert_eq!(
+                public_ingress_peer_addr(&extensions),
+                Some("10.0.0.1:1234".parse().unwrap())
             );
         }
     }

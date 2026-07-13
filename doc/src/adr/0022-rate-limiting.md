@@ -85,8 +85,11 @@ burst_size = 5
 replenish_rate_per_second = 1
 
 [rate_limit_trusted_proxies]
-# Comma-separated list of CIDR ranges whose forwarding headers (RFC 7239
-# `Forwarded`, preferred, or `X-Forwarded-For`) are trusted for IP extraction.
+# Exactly one header trusted proxies sanitize. The default is x_forwarded_for;
+# use forwarded only when every trusted proxy strips client-supplied RFC 7239
+# Forwarded values before writing its own.
+trusted_header = x_forwarded_for
+# Comma-separated list of trusted proxy CIDR ranges.
 # Leave empty to use the direct peer address (suitable for non-proxied
 # deployments). Example: 10.0.0.0/8,192.168.1.0/24
 trusted_proxies =
@@ -207,9 +210,8 @@ with its own quota.
 
 The client IP used for per-IP limiting MUST be the originating client address,
 not the reverse proxy's address. `resolve_client_ip` (see Invariant 9) extracts
-the correct IP by consulting the forwarding headers (RFC 7239 `Forwarded`,
-preferred, falling back to `X-Forwarded-For`) only when the direct peer appears
-in the configured `trusted_proxies` list.
+the correct IP by consulting exactly the configured `trusted_header` only when
+the direct peer appears in the configured `trusted_proxies` list.
 
 ```rust
 pub async fn create_token(
@@ -294,12 +296,12 @@ Any code change violating the following is rejected at review:
 9. **Trusted Proxy Source IP:** The IP address used as a rate-limit key MUST be
    the originating client IP, not the address of any intermediate reverse proxy.
    When `trusted_proxies` is non-empty, the client IP MUST be extracted from the
-   first untrusted hop in the forwarding chain (RFC 7239 `Forwarded`, preferred,
-   falling back to `X-Forwarded-For`) only when the direct peer IP falls within
-   a configured trusted CIDR range. When `trusted_proxies` is empty, the direct
-   peer address MUST be used. Accepting forwarding headers unconditionally from
-   untrusted peers allows any client to spoof its apparent IP and defeat per-IP
-   limiting entirely.
+   first untrusted hop in exactly the configured `trusted_header`
+   (`X-Forwarded-For` by default; RFC 7239 `Forwarded` by explicit opt-in), and
+   only when the direct peer IP falls within a configured trusted CIDR range.
+   When `trusted_proxies` is empty, the direct peer address MUST be used.
+   Accepting both headers implicitly, or accepting a header from an untrusted
+   peer, allows a client to spoof its apparent IP and defeat per-IP limiting.
 10. **Minimum `Retry-After`:** The `Retry-After` header value MUST be at least 1
     second. Sub-second wait durations MUST be rounded up to 1. A value of 0 is
     valid per RFC 7231 ("retry immediately") and causes a thundering herd when

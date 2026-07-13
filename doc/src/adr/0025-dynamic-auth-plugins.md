@@ -308,10 +308,11 @@ struct AuthPluginRequest {
     headers: HashMap<String, String>,
     /// The trusted transport peer address only. This is the socket peer
     /// Keystone actually accepted the connection from, **not** a value parsed
-    /// from `X-Forwarded-For`/`Forwarded` unless that header arrived over a
-    /// hop the deployment has explicitly configured as a trusted proxy - the
-    /// same trusted-proxy resolution Keystone already applies before believing
-    /// a forwarded client address. A plugin will predictably build IP
+    /// from a forwarding header unless the public TCP peer is an explicitly
+    /// configured trusted proxy. `[auth_plugins] trusted_header` selects
+    /// exactly one header that those proxies must sanitize (`x_forwarded_for`
+    /// by default, or `forwarded` by explicit opt-in). A plugin will predictably
+    /// build IP
     /// allowlisting, geo, or step-up logic on this field; handing it a
     /// client-spoofable `X-Forwarded-For` value would let an anonymous caller
     /// (§1 Threat Model, actor 2) forge whatever source address defeats that
@@ -319,7 +320,7 @@ struct AuthPluginRequest {
     /// untrusted guess.
     ///
     /// **Implementation note on a degenerate configuration.** The resolver
-    /// (`crate::net::resolve_client_ip`) walks the `X-Forwarded-For` chain
+    /// (`crate::net::resolve_client_ip`) walks the configured header chain
     /// right-to-left looking for the first entry *not* in `trusted_proxies`,
     /// which is the actual, spoof-resistant client address. If every entry in
     /// the chain - including the raw TCP peer - is itself a configured
@@ -936,6 +937,10 @@ convention (e.g. `crates/config/src/k8s_auth.rs`):
 ```
 [auth_plugins]
 plugins = acme_risk_sso,tf_appcred_router
+# Header every trusted proxy sanitizes. Defaults to x_forwarded_for.
+trusted_header = x_forwarded_for
+# Comma-separated proxy CIDRs; empty trusts no forwarding header.
+trusted_proxies =
 
 [auth_plugin.acme_risk_sso]
 path = /etc/keystone/plugins/acme_risk_sso.wasm
@@ -1369,19 +1374,13 @@ bound-1 store - a straightforward memory-bookkeeping fix, not a rate-limiting
 behavior change: an evicted, truly-idle source's next request is treated exactly
 as a first-ever request would be, which is already correct.
 
-**Residual gap - deployments without a trusted proxy chain.** Bound 1 depends on
-`remote_addr` being populated from a trusted hop (§4); when no trusted proxy is
-configured, `AuthPluginRequest.remote_addr` is `None` for every caller (Keystone
-deliberately does not guess from a spoofable header), so bound 1 cannot key
-anything meaningfully and the design falls back to bounds 2 and 3 only -
-reopening the single-attacker-exhausts-the-shared-budget failure mode those two
-bounds alone have, for that method specifically. This is a known, accepted gap
-for un-proxied deployments rather than a defect in the mitigation: production
-deployments terminating anonymous, pre-authentication traffic are already
-expected to sit behind a proxy for TLS termination and the same trusted-address
-resolution `remote_addr` reuses elsewhere in this design (§4), so this is a
-deployment-topology requirement to get the full protection, not a gap this ADR
-leaves unaddressed for the common case.
+**Internal/admin interface behavior.** Bound 1 applies only to public ingress.
+An unproxied public request is keyed by its raw TCP peer; a proxied public
+request is keyed by the client resolved through `trusted_header`. Internal mTLS
+and admin requests deliberately pass `remote_addr = None`, even though the mTLS
+listener records its shared mesh peer for audit logging, so unrelated internal
+services cannot exhaust one another's per-source bucket. Those requests retain
+bounds 2 and 3.
 
 ### Response Payload Bounds
 

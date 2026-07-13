@@ -237,12 +237,16 @@ pub(crate) mod tests {
         let normalized = NormalizePathLayer::trim_trailing_slash().layer(router);
         // The raw peer (10.0.0.9) must be a trusted proxy for the header to be
         // honoured, mirroring the `[oslo_middleware] trusted_proxies` allowlist.
-        let trusted = std::sync::Arc::new(vec!["10.0.0.0/8".parse::<ipnet::IpNet>().unwrap()]);
+        let proxy_config = std::sync::Arc::new(openstack_keystone_config::OsloMiddleware {
+            enable_proxy_headers_parsing: true,
+            trusted_header: openstack_keystone_config::ProxyHeader::XForwardedFor,
+            trusted_proxies: vec!["10.0.0.0/8".parse::<ipnet::IpNet>().unwrap()],
+        });
         let app =
             Router::new()
                 .fallback_service(normalized)
                 .layer(axum::middleware::from_fn_with_state(
-                    trusted,
+                    proxy_config,
                     crate::server::proxy_headers::rewrite_client_addr,
                 ));
 
