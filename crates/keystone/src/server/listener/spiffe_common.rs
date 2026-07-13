@@ -52,7 +52,7 @@ pub async fn build_spiffe_config(
     let source = tokio::select! {
         res = spiffe::X509Source::new() => { res? }
         _ = token.cancelled() => {
-            tracing::info!("Ctrl+C signal received while waiting for the SPIFFE communication");
+            tracing::info!("Cancelled while waiting for SPIFFE X509 source");
             return Ok(None);
         }
     };
