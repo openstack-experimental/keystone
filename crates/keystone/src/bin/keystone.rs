@@ -793,8 +793,11 @@ async fn start_raft(
                 error!("Raft gRPC listener error: {:#}", e);
                 raft_task_token.cancel();
             }
+            debug!("Raft gRPC task exited");
         });
+        debug!("Raft task spawned, calling ensure_raft_initialized...");
         raft_grpc::ensure_raft_initialized(raft_storage_init, cfg.clone(), raft_bound_rx).await?;
+        debug!("Raft initialized and ready");
     }
     Ok(())
 }
