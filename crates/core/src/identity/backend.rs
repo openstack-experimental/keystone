@@ -89,6 +89,34 @@ pub trait IdentityBackend: Send + Sync {
         auth: &UserPasswordAuthRequest,
     ) -> Result<AuthenticationResult, IdentityProviderError>;
 
+    /// Cheaply resolve a user reference (ID, or name with domain ID) to the
+    /// canonical user ID, verifying that the account exists and is enabled.
+    ///
+    /// This is the inexpensive existence probe backing per-user rate
+    /// limiting at the provider level (ADR-0022, Invariant 8): the service
+    /// keys the `[rate_limit_user_auth]` bucket on the returned ID before
+    /// invoking any expensive credential verification. Implementations MUST
+    /// keep this cheap: point lookups only, no joins, no password or option
+    /// loading.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The user ID, when the caller authenticates by ID.
+    /// - `name`: The user name, when the caller authenticates by name.
+    /// - `domain_id`: The resolved domain ID owning `name`.
+    ///
+    /// # Returns
+    /// The canonical user ID, [`IdentityProviderError::UserNotFound`] when no
+    /// such user exists, or an authentication error when the user is
+    /// disabled.
+    async fn check_user_exist<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: Option<&'a str>,
+        name: Option<&'a str>,
+        domain_id: Option<&'a str>,
+    ) -> Result<String, IdentityProviderError>;
+
     /// Create group.
     ///
     /// # Parameters

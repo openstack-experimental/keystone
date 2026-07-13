@@ -48,10 +48,20 @@ enum IpRateLimitKey {
 
 type IpRateLimiter = DefaultKeyedRateLimiter<IpRateLimitKey>;
 
+/// Per-user authentication bucket, keyed on the canonical user ID.
+///
+/// The key is the immutable `user.id` loaded from the backend, never a
+/// caller-supplied username. ADR-0022 Invariant 7 (NFKC + case-fold
+/// normalization of user-input keys) is therefore satisfied structurally:
+/// no user-input-derived key exists to normalize, and Unicode homoglyph
+/// usernames cannot mint distinct buckets for the same account.
+type UserRateLimiter = DefaultKeyedRateLimiter<String>;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct AppliedRateLimitConfig {
     global_ip: RateLimitSection,
     trusted_proxies: RateLimitTrustedProxiesSection,
+    user_auth: RateLimitSection,
 }
 
 impl AppliedRateLimitConfig {
@@ -59,6 +69,7 @@ impl AppliedRateLimitConfig {
         Self {
             global_ip: config.rate_limit_global_ip.clone(),
             trusted_proxies: config.rate_limit_trusted_proxies.clone(),
+            user_auth: config.rate_limit_user_auth.clone(),
         }
     }
 }
@@ -67,6 +78,7 @@ struct RateLimitSnapshot {
     applied_config: AppliedRateLimitConfig,
     global_ip_limiter: Option<Arc<IpRateLimiter>>,
     trusted_proxies: Vec<IpNet>,
+    user_auth_limiter: Option<Arc<UserRateLimiter>>,
 }
 
 impl RateLimitSnapshot {
@@ -75,9 +87,11 @@ impl RateLimitSnapshot {
             applied_config: AppliedRateLimitConfig {
                 global_ip: RateLimitSection::default(),
                 trusted_proxies: RateLimitTrustedProxiesSection::default(),
+                user_auth: RateLimitSection::default(),
             },
             global_ip_limiter: None,
             trusted_proxies: Vec::new(),
+            user_auth_limiter: None,
         }
     }
 }
@@ -149,14 +163,42 @@ impl RateLimitState {
         })
     }
 
+    /// Check the per-user authentication bucket (ADR-0022, Invariant 8).
+    ///
+    /// Callers MUST pass the canonical user ID of a user that is already
+    /// confirmed to exist in the backend, and MUST run this check before any
+    /// CPU-intensive credential verification (Invariant 4). Keying on
+    /// unverified input would let an attacker mint unlimited fresh buckets
+    /// from novel usernames.
+    pub fn check_user(&self, user_id: &str) -> Result<(), Duration> {
+        let snapshot = self.snapshot.load();
+        let Some(limiter) = snapshot.user_auth_limiter.as_ref() else {
+            return Ok(());
+        };
+
+        limiter.check_key(&user_id.to_owned()).map_err(|not_until| {
+            let wait = not_until.wait_time_from(limiter.clock().now());
+            wait.max(Duration::from_secs(1))
+        })
+    }
+
     /// Return whether the global-IP limiter is active.
     pub fn global_ip_enabled(&self) -> bool {
         self.snapshot.load().global_ip_limiter.is_some()
     }
 
+    /// Return whether the per-user authentication limiter is active.
+    pub fn user_auth_enabled(&self) -> bool {
+        self.snapshot.load().user_auth_limiter.is_some()
+    }
+
     /// Evict stale entries from every active keyed state store.
     pub fn retain_recent(&self) {
-        if let Some(limiter) = self.snapshot.load().global_ip_limiter.as_ref() {
+        let snapshot = self.snapshot.load();
+        if let Some(limiter) = snapshot.global_ip_limiter.as_ref() {
+            limiter.retain_recent();
+        }
+        if let Some(limiter) = snapshot.user_auth_limiter.as_ref() {
             limiter.retain_recent();
         }
     }
@@ -177,6 +219,7 @@ fn validated_scalar(value: u32, field: &str, name: &str) -> Result<NonZeroU32, K
 fn build_snapshot(config: &Config) -> Result<RateLimitSnapshot, KeystoneError> {
     let applied_config = AppliedRateLimitConfig::from_config(config);
     let global_ip_limiter = build_limiter(&applied_config.global_ip, "rate_limit_global_ip")?;
+    let user_auth_limiter = build_limiter(&applied_config.user_auth, "rate_limit_user_auth")?;
     let trusted_proxies = if global_ip_limiter.is_some() {
         let parsed = applied_config
             .trusted_proxies
@@ -205,13 +248,14 @@ fn build_snapshot(config: &Config) -> Result<RateLimitSnapshot, KeystoneError> {
         applied_config,
         global_ip_limiter,
         trusted_proxies,
+        user_auth_limiter,
     })
 }
 
-fn build_limiter(
+fn build_limiter<K: Clone + Eq + std::hash::Hash>(
     section: &RateLimitSection,
     name: &str,
-) -> Result<Option<Arc<IpRateLimiter>>, KeystoneError> {
+) -> Result<Option<Arc<DefaultKeyedRateLimiter<K>>>, KeystoneError> {
     if !section.enabled {
         return Ok(None);
     }
@@ -224,7 +268,7 @@ fn build_limiter(
     let burst = validated_scalar(section.burst_size, "burst_size", name)?;
     let quota = Quota::per_second(replenish).allow_burst(burst);
 
-    Ok(Some(Arc::new(IpRateLimiter::keyed(quota))))
+    Ok(Some(Arc::new(DefaultKeyedRateLimiter::keyed(quota))))
 }
 
 fn rate_limit_key_for_ip(ip: IpAddr) -> IpRateLimitKey {
@@ -424,5 +468,110 @@ mod tests {
         let mut cfg = config(true, 1, 1);
         cfg.rate_limit_trusted_proxies.trusted_proxies = vec!["not-a-cidr".to_string()];
         assert!(RateLimitState::from_config(&cfg).is_err());
+    }
+
+    fn user_config(enabled: bool, burst: u32, replenish: u32) -> Config {
+        Config {
+            rate_limit_user_auth: RateLimitSection {
+                enabled,
+                burst_size: burst,
+                replenish_rate_per_second: replenish,
+            },
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn user_auth_disabled_by_default() {
+        let state = RateLimitState::from_config(&Config::default()).unwrap();
+        assert!(!state.user_auth_enabled());
+        for _ in 0..1000 {
+            assert!(state.check_user("uid").is_ok());
+        }
+    }
+
+    #[test]
+    fn user_auth_enabled_section_yields_limiter() {
+        let state = RateLimitState::from_config(&user_config(true, 5, 1)).unwrap();
+        assert!(state.user_auth_enabled());
+    }
+
+    #[test]
+    fn user_auth_invalid_bounds_fail_hard() {
+        for (burst, replenish) in [
+            (0, 1),
+            (5, 0),
+            (MAX_RATE_LIMIT_VALUE + 1, 1),
+            (5, MAX_RATE_LIMIT_VALUE + 1),
+        ] {
+            assert!(RateLimitState::from_config(&user_config(true, burst, replenish)).is_err());
+        }
+    }
+
+    #[test]
+    fn user_auth_allows_burst_then_rejects_with_min_wait() {
+        let state = RateLimitState::from_config(&user_config(true, 3, 1)).unwrap();
+        assert!(state.check_user("uid").is_ok());
+        assert!(state.check_user("uid").is_ok());
+        assert!(state.check_user("uid").is_ok());
+        assert!(state.check_user("uid").unwrap_err() >= Duration::from_secs(1));
+    }
+
+    #[test]
+    fn different_users_have_independent_quotas() {
+        let state = RateLimitState::from_config(&user_config(true, 1, 1)).unwrap();
+        assert!(state.check_user("alice").is_ok());
+        assert!(state.check_user("alice").is_err());
+        assert!(state.check_user("bob").is_ok());
+    }
+
+    /// ADR-0022 Invariant 5: the IP and user buckets are physically separate
+    /// limiters — exhausting one must not consume cells from the other.
+    #[test]
+    fn user_and_ip_buckets_are_distinct() {
+        let mut cfg = config(true, 1, 1);
+        cfg.rate_limit_user_auth = RateLimitSection {
+            enabled: true,
+            burst_size: 1,
+            replenish_rate_per_second: 1,
+        };
+        let state = RateLimitState::from_config(&cfg).unwrap();
+        let ip: IpAddr = "203.0.113.9".parse().unwrap();
+
+        assert!(state.check_user("uid").is_ok());
+        assert!(state.check_user("uid").is_err());
+        assert!(check(&state, ip).is_ok(), "ip bucket unaffected");
+    }
+
+    #[test]
+    fn user_auth_reload_change_is_applied() {
+        let state = RateLimitState::from_config(&user_config(true, 1, 1)).unwrap();
+        assert!(state.check_user("uid").is_ok());
+        assert!(state.check_user("uid").is_err());
+
+        assert!(state.reload(&user_config(true, 2, 1)).unwrap());
+        assert!(state.check_user("uid").is_ok());
+        assert!(state.check_user("uid").is_ok());
+        assert!(state.check_user("uid").is_err());
+    }
+
+    #[test]
+    fn user_auth_unchanged_reload_preserves_counters() {
+        let cfg = user_config(true, 1, 1);
+        let state = RateLimitState::from_config(&cfg).unwrap();
+        assert!(state.check_user("uid").is_ok());
+        assert!(!state.reload(&cfg).unwrap());
+        assert!(state.check_user("uid").is_err());
+    }
+
+    #[test]
+    fn retain_recent_covers_user_bucket() {
+        let state = RateLimitState::from_config(&user_config(true, 1, 1)).unwrap();
+        assert!(state.check_user("uid").is_ok());
+        state.retain_recent();
+        assert!(
+            state.check_user("uid").is_err(),
+            "fresh entry survives trim"
+        );
     }
 }

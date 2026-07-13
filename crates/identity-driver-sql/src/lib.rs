@@ -155,6 +155,29 @@ impl IdentityBackend for SqlBackend {
         Ok(authenticate::authenticate_by_password(&config, &state.db, auth).await?)
     }
 
+    /// Cheaply resolve a user reference to the canonical user ID, verifying
+    /// the account exists and is enabled (per-user rate-limiting probe,
+    /// ADR-0022 Invariant 8).
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user_id`: The user ID, when resolving by ID.
+    /// - `name`: The user name, when resolving by name.
+    /// - `domain_id`: The domain ID owning `name`.
+    ///
+    /// # Returns
+    /// A `Result` containing the canonical user ID, or an `Error`.
+    #[tracing::instrument(skip(self, state))]
+    async fn check_user_exist<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: Option<&'a str>,
+        name: Option<&'a str>,
+        domain_id: Option<&'a str>,
+    ) -> Result<String, IdentityProviderError> {
+        user::check_user_exist(&state.db, user_id, name, domain_id).await
+    }
+
     /// Create group.
     ///
     /// # Parameters

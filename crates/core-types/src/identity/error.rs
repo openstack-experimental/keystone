@@ -108,6 +108,17 @@ pub enum IdentityProviderError {
         source: BuilderError,
     },
 
+    /// Per-user authentication rate limit exceeded (ADR-0022).
+    ///
+    /// The message deliberately carries no identifying information (no user
+    /// ID, no bucket key) so the 429 response stays uniform across limiters
+    /// (ADR-0022, Invariant 3).
+    #[error("too many requests")]
+    TooManyRequests {
+        /// Seconds the client must wait before retrying (>= 1).
+        retry_after_secs: u64,
+    },
+
     /// Unsupported driver.
     #[error("unsupported driver `{0}` for the identity provider")]
     UnsupportedDriver(String),

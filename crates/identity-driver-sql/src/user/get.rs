@@ -17,13 +17,14 @@ use sea_orm::entity::*;
 use sea_orm::query::*;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core::auth::AuthenticationError;
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::identity::IdentityProviderError;
 use openstack_keystone_core_types::identity::{UserOptions, UserResponse, UserResponseBuilder};
 
 use crate::entity::{
-    nonlocal_user as db_nonlocal_user,
-    prelude::{FederatedUser, NonlocalUser, User as DbUser, UserOption},
+    local_user as db_local_user, nonlocal_user as db_nonlocal_user,
+    prelude::{FederatedUser, LocalUser, NonlocalUser, User as DbUser, UserOption},
     user as db_user,
 };
 use crate::federated_user::MergeFederatedUserData;
@@ -124,6 +125,69 @@ pub async fn get(
     }
 
     Ok(None)
+}
+
+/// Cheaply resolve a user reference (ID, or exact name and domain ID) to the
+/// canonical user ID and verify the account exists and is enabled.
+///
+/// This is the inexpensive existence probe backing per-user rate limiting
+/// (ADR-0022, Invariant 8): point queries only, no joins, no password or
+/// option loading. Name resolution mirrors the authentication lookups with
+/// an exact match against `local_user`, falling back to `nonlocal_user`
+/// (federated users authenticate through mapping, not by name here).
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `user_id`: The user ID, when resolving by ID.
+/// - `name`: The user name, when resolving by name.
+/// - `domain_id`: The domain ID owning `name`.
+///
+/// # Returns
+/// A `Result` containing the canonical user ID, or an `Error`
+/// (`UserNotFound` when absent, `UserDisabled` when disabled).
+#[tracing::instrument(skip_all)]
+pub async fn check_user_exist(
+    db: &DatabaseConnection,
+    user_id: Option<&str>,
+    name: Option<&str>,
+    domain_id: Option<&str>,
+) -> Result<String, IdentityProviderError> {
+    let user_id: String = if let Some(id) = user_id {
+        id.to_string()
+    } else {
+        let name = name.ok_or(IdentityProviderError::UserIdOrNameWithDomain)?;
+        let domain_id = domain_id.ok_or(IdentityProviderError::UserIdOrNameWithDomain)?;
+        let local: Option<String> = LocalUser::find()
+            .select_only()
+            .column(db_local_user::Column::UserId)
+            .filter(db_local_user::Column::Name.eq(name))
+            .filter(db_local_user::Column::DomainId.eq(domain_id))
+            .into_tuple()
+            .one(db)
+            .await
+            .context("resolving local user by name")?;
+        match local {
+            Some(id) => id,
+            None => NonlocalUser::find()
+                .select_only()
+                .column(db_nonlocal_user::Column::UserId)
+                .filter(db_nonlocal_user::Column::Name.eq(name))
+                .filter(db_nonlocal_user::Column::DomainId.eq(domain_id))
+                .into_tuple()
+                .one(db)
+                .await
+                .context("resolving nonlocal user by name")?
+                .ok_or_else(|| IdentityProviderError::UserNotFound(name.to_string()))?,
+        }
+    };
+
+    let user = get_main_entry(db, &user_id)
+        .await?
+        .ok_or_else(|| IdentityProviderError::UserNotFound(user_id.clone()))?;
+    if !user.enabled.unwrap_or(false) {
+        return Err(AuthenticationError::UserDisabled(user_id).into());
+    }
+    Ok(user_id)
 }
 
 /// Get the `domain_id` of the user specified by the `user_id`.
@@ -247,6 +311,112 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn test_check_user_exist_by_id_enabled() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_user_mock("1")]])
+            .into_connection();
+
+        assert_eq!(
+            check_user_exist(&db, Some("1"), None, None).await.unwrap(),
+            "1"
+        );
+        // Exactly one point query against the `user` table, no joins.
+        let log = db.into_transaction_log();
+        assert_eq!(log.len(), 1);
+        let sql = &log[0].statements()[0].sql;
+        assert!(!sql.contains("JOIN"), "probe must not join: {sql}");
+    }
+
+    #[tokio::test]
+    async fn test_check_user_exist_by_id_disabled() {
+        let mut user = get_user_mock("1");
+        user.enabled = Some(false);
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![user]])
+            .into_connection();
+
+        assert!(matches!(
+            check_user_exist(&db, Some("1"), None, None).await,
+            Err(IdentityProviderError::Authentication {
+                source:
+                    openstack_keystone_core::auth::AuthenticationError::UserDisabled(id),
+            }) if id == "1"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_check_user_exist_by_id_missing() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([Vec::<db_user::Model>::new()])
+            .into_connection();
+
+        assert!(matches!(
+            check_user_exist(&db, Some("1"), None, None).await,
+            Err(IdentityProviderError::UserNotFound(id)) if id == "1"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_check_user_exist_by_name_and_domain() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            // local_user resolution returns the user_id tuple.
+            .append_query_results([vec![
+                BTreeMap::from([("user_id", Into::<Value>::into("1"))]).into_mock_row(),
+            ]])
+            // user table entry for the enabled check.
+            .append_query_results([vec![get_user_mock("1")]])
+            .into_connection();
+
+        assert_eq!(
+            check_user_exist(&db, None, Some("Apple Cake"), Some("foo_domain"))
+                .await
+                .unwrap(),
+            "1"
+        );
+        // Two point queries (local_user, then user), still no joins.
+        let log = db.into_transaction_log();
+        assert_eq!(log.len(), 2);
+        for txn in &log {
+            let sql = &txn.statements()[0].sql;
+            assert!(!sql.contains("JOIN"), "probe must not join: {sql}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_check_user_exist_by_name_falls_back_to_nonlocal() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            // No local_user row for the name.
+            .append_query_results([Vec::<BTreeMap<&str, Value>>::new()])
+            // nonlocal_user resolution returns the user_id tuple.
+            .append_query_results([vec![
+                BTreeMap::from([("user_id", Into::<Value>::into("1"))]).into_mock_row(),
+            ]])
+            .append_query_results([vec![get_user_mock("1")]])
+            .into_connection();
+
+        assert_eq!(
+            check_user_exist(&db, None, Some("Apple Cake"), Some("foo_domain"))
+                .await
+                .unwrap(),
+            "1"
+        );
+        assert_eq!(db.into_transaction_log().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_check_user_exist_name_requires_domain() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
+        assert!(matches!(
+            check_user_exist(&db, None, Some("Apple Cake"), None).await,
+            Err(IdentityProviderError::UserIdOrNameWithDomain)
+        ));
+        assert!(matches!(
+            check_user_exist(&db, None, None, None).await,
+            Err(IdentityProviderError::UserIdOrNameWithDomain)
+        ));
     }
 
     #[tokio::test]
