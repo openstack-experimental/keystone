@@ -777,13 +777,22 @@ async fn start_raft(
 
         // Signal channel: start_raft_app sends `true` once the gRPC listener
         // is bound. `ensure_raft_initialized` waits for this before calling
-        // join_cluster, ensuring the new node's listener can accept replication
-        // traffic from the leader immediately.
+        // join_cluster, ensuring the new node's listener is ready to accept
+        // replication traffic from the leader.
         let (raft_bound_tx, raft_bound_rx) = tokio::sync::watch::channel(false);
+        let raft_task_token = token.clone();
         handles.spawn(async move {
-            raft_grpc::start_raft_app(raft_storage, raft_config, raft_cancel_token, raft_bound_tx)
-                .await
-                .unwrap()
+            if let Err(e) = raft_grpc::start_raft_app(
+                raft_storage,
+                raft_config,
+                raft_cancel_token,
+                raft_bound_tx,
+            )
+            .await
+            {
+                error!("Raft gRPC listener error: {:#}", e);
+                raft_task_token.cancel();
+            }
         });
         raft_grpc::ensure_raft_initialized(raft_storage_init, cfg.clone(), raft_bound_rx).await?;
     }
