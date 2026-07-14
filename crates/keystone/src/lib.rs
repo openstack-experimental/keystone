@@ -94,6 +94,7 @@ pub mod keystone;
 pub mod mapping;
 pub mod oauth2_client;
 pub mod oauth2_key;
+pub mod oauth2_session;
 
 // Force inventory::submit! sections from each plugin crate to remain
 // linked. The build.rs script discovers all openstack-keystone-*

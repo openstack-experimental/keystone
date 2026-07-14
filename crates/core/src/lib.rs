@@ -103,6 +103,7 @@ pub mod mapping;
 pub mod net;
 pub mod oauth2_client;
 pub mod oauth2_key;
+pub mod oauth2_session;
 pub mod plugin_manager;
 pub mod policy;
 pub mod provider;

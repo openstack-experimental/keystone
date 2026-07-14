@@ -11,23 +11,24 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # OAuth2 client (relying party registration) provider (ADR 0026 §5, Phase 2)
+//! # OAuth2 browser session provider (ADR 0026 §10 Phase 4)
 //!
-//! Admin CRUD for `OAuth2Client` registrations: storage schema and
-//! validation only in Phase 2 -- wiring into the mapping engine's
-//! `IdentitySource` for actual `/token` issuance is Phase 3/4.
+//! Internal plumbing consumed directly by the `/authorize` and `/token`
+//! handlers -- not an admin-facing CRUD resource, so (like
+//! [`crate::oauth2_key`]) this provider takes `&ServiceState` directly
+//! rather than routing through [`crate::auth::ExecutionContext`]'s policy
+//! layer.
 
 pub mod backend;
-pub mod crypto;
 pub mod error;
-pub mod pkce;
-mod provider_api;
+pub mod provider_api;
 pub mod service;
-pub mod token;
 
 #[cfg(any(test, feature = "mock"))]
-pub use crate::mocks::MockOauth2ClientProvider;
-pub use error::Oauth2ClientProviderError;
-pub use provider_api::Oauth2ClientApi;
-pub use service::Oauth2ClientService;
-pub use token::{build_access_token_claims, hydrate_client_credentials_context};
+pub use crate::mocks::MockOauth2SessionProvider;
+pub use error::Oauth2SessionProviderError;
+pub use provider_api::{
+    IssueAuthorizationCodeRequest, IssueRefreshTokenRequest, Oauth2SessionApi,
+    RefreshTokenRedemption, StartPreAuthSessionRequest,
+};
+pub use service::Oauth2SessionService;

@@ -11,26 +11,15 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # Integration tests
+//! # OAuth2 browser session state (ADR 0026 §10 Phase 4)
 //!
-//! Test the functionality on the provider level (not through the API).
+//! Stateful records backing the `authorization_code` grant's interactive
+//! flow: the pre-authentication browser session created at
+//! `GET /authorize`, the single-use authorization code minted on consent,
+//! and the `refresh_token` family tree (ADR 0026 §2, §9).
 
-mod api_key;
-mod application_credential;
-mod assignment;
-mod audit;
-mod catalog;
-mod common;
-mod credential;
-mod identity;
-mod k8s_auth;
-mod mapping;
-mod oauth2_session;
+mod error;
 mod resource;
-mod revoke;
-mod role;
-mod scim_realm;
-mod token;
 
-#[macro_use]
-mod macros;
+pub use error::*;
+pub use resource::*;

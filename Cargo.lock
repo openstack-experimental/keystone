@@ -257,6 +257,59 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f02882884d3e1bc524fb12c79f107f6ad0e1cfd498c536ffb494301740995dfe"
 
 [[package]]
+name = "askama"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1bf825125edd887a019d0a3a837dcc5499a68b0d034cc3eb594070c3e18addc"
+dependencies = [
+ "askama_macros",
+ "itoa",
+ "percent-encoding",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "askama_derive"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1c7065972a130eafa84215f21352ae15b4a7393da48c1f5e103904490736738"
+dependencies = [
+ "askama_parser",
+ "basic-toml",
+ "glob",
+ "memchr",
+ "proc-macro2",
+ "quote",
+ "rustc-hash",
+ "serde",
+ "serde_derive",
+ "syn 2.0.118",
+]
+
+[[package]]
+name = "askama_macros"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e23b1d2c4bd39a41971f6124cef4cc6fd0540913ecb90919b69ab3bbe44ae1a"
+dependencies = [
+ "askama_derive",
+]
+
+[[package]]
+name = "askama_parser"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7db09fde9143e7ac4513358fb32ee32847125b63b18ea715afd487956da715da"
+dependencies = [
+ "rustc-hash",
+ "serde",
+ "serde_derive",
+ "unicode-ident",
+ "winnow 1.0.3",
+]
+
+[[package]]
 name = "asn1-rs"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -498,6 +551,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "axum-extra"
+version = "0.12.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be44683b41ccb9ab2d23a5230015c9c3c55be97a25e4428366de8873103f7970"
+dependencies = [
+ "axum-core",
+ "bytes",
+ "cookie",
+ "futures-core",
+ "futures-util",
+ "http",
+ "http-body",
+ "http-body-util",
+ "mime",
+ "pin-project-lite",
+ "tower-layer",
+ "tower-service",
+]
+
+[[package]]
 name = "axum-macros"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -567,6 +640,15 @@ checksum = "b08e33815c87d8cadcddb1e74ac307368a3751fbe40c961538afa21a1899f21c"
 dependencies = [
  "base64 0.21.7",
  "pastey 0.1.1",
+ "serde",
+]
+
+[[package]]
+name = "basic-toml"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba62675e8242a4c4e806d12f11d136e626e6c8361d6b829310732241652a178a"
+dependencies = [
  "serde",
 ]
 
@@ -1302,6 +1384,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "633458d4ef8c78b72454de2d54fd6ab2e60f9e02be22f3c6104cdc8a4e0fceb9"
 dependencies = [
  "unicode-segmentation",
+]
+
+[[package]]
+name = "cookie"
+version = "0.18.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ddef33a339a91ea89fb53151bd0a4689cfce27055c291dfa69945475d22c747"
+dependencies = [
+ "percent-encoding",
+ "time",
+ "version_check",
 ]
 
 [[package]]
@@ -4434,8 +4527,10 @@ dependencies = [
 name = "openstack-keystone"
 version = "0.1.1"
 dependencies = [
+ "askama",
  "async-trait",
  "axum",
+ "axum-extra",
  "base64 0.22.1",
  "chrono",
  "clap",
@@ -4445,6 +4540,7 @@ dependencies = [
  "eyre",
  "futures-util",
  "governor",
+ "hmac 0.13.0",
  "http-body-util",
  "httpmock",
  "hyper",
@@ -4474,6 +4570,7 @@ dependencies = [
  "openstack-keystone-mapping-driver-raft",
  "openstack-keystone-oauth2-client-driver-raft",
  "openstack-keystone-oauth2-key-driver-raft",
+ "openstack-keystone-oauth2-session-driver-raft",
  "openstack-keystone-resource-driver-sql",
  "openstack-keystone-revoke-driver-sql",
  "openstack-keystone-role-driver-sql",
@@ -5025,6 +5122,20 @@ dependencies = [
  "openstack-keystone-key-repository",
  "rmp-serde",
  "secrecy",
+ "serde",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "openstack-keystone-oauth2-session-driver-raft"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "openstack-keystone-core",
+ "openstack-keystone-core-types",
+ "openstack-keystone-distributed-storage",
+ "rmp-serde",
  "serde",
  "tokio",
  "tracing",

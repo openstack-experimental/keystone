@@ -18,7 +18,9 @@ path="src/bin/keystone.rs"
 
 [dependencies]
 async-trait.workspace = true
+askama = { workspace = true, features = ["derive"] }
 axum = { workspace = true, features = ["form", "http1", "http2", "macros", "matched-path", "original-uri", "query", "tokio", "tracing"] }
+axum-extra = { workspace = true, features = ["cookie"] }
 base64.workspace = true
 chrono.workspace = true
 clap = { workspace = true, features = ["derive"] }
@@ -28,6 +30,7 @@ derive_builder.workspace = true
 eyre.workspace = true
 futures-util.workspace = true
 governor.workspace = true
+hmac.workspace = true
 hyper-util.workspace = true
 hyper.workspace = true
 inventory.workspace = true
@@ -53,6 +56,7 @@ openstack-keystone-k8s-auth-driver-raft.workspace = true
 openstack-keystone-mapping-driver-raft.workspace = true
 openstack-keystone-oauth2-client-driver-raft.workspace = true
 openstack-keystone-oauth2-key-driver-raft.workspace = true
+openstack-keystone-oauth2-session-driver-raft.workspace = true
 openstack-keystone-key-repository.workspace = true
 openstack-keystone-identity-driver-sql.workspace = true
 openstack-keystone-idmapping-driver-sql.workspace = true

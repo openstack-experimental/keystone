@@ -28,18 +28,25 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use base64::{Engine as _, engine::general_purpose::STANDARD};
+use base64::{
+    Engine as _, engine::general_purpose::STANDARD, engine::general_purpose::URL_SAFE_NO_PAD,
+};
 use governor::clock::Clock as _;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use openstack_keystone_core::oauth2_client::hydrate_client_credentials_context;
-use openstack_keystone_core::oauth2_client::{build_access_token_claims, crypto};
-use openstack_keystone_core_types::oauth2_client::GrantType;
+use openstack_keystone_core::oauth2_client::{build_access_token_claims, crypto, pkce};
+use openstack_keystone_core::oauth2_session::{IssueRefreshTokenRequest, RefreshTokenRedemption};
+use openstack_keystone_core_types::oauth2_client::{
+    GrantType, IdTokenClaims, OidcAccessTokenClaims,
+};
 use openstack_keystone_key_repository::asymmetric::{jwt_algorithm, to_encoding_key};
 
 use crate::api::common::PeerAddr;
 use crate::audit::{
     CorrelationId, build_initiator_from_vsc, build_initiator_unknown,
+    emit_oauth2_refresh_reuse_critical_event, emit_oauth2_session_event,
     emit_perimeter_authenticate_event,
 };
 use crate::keystone::ServiceState;
@@ -56,6 +63,19 @@ pub(super) struct TokenForm {
     client_secret: Option<String>,
     #[serde(default)]
     scope: Option<String>,
+    /// `authorization_code` grant only (RFC 6749 §4.1.3).
+    #[serde(default)]
+    code: Option<String>,
+    /// `authorization_code` grant only -- must exact-match the value
+    /// recorded at `/authorize`.
+    #[serde(default)]
+    redirect_uri: Option<String>,
+    /// `authorization_code` grant only: PKCE verifier (RFC 7636 §4.5).
+    #[serde(default)]
+    code_verifier: Option<String>,
+    /// `refresh_token` grant only (RFC 6749 §6).
+    #[serde(default)]
+    refresh_token: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -64,6 +84,13 @@ struct TokenResponse {
     token_type: &'static str,
     expires_in: i64,
     scope: String,
+    /// `authorization_code` grant only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id_token: Option<String>,
+    /// Present when the authenticated client also holds `refresh_token` in
+    /// `grant_types` (ADR 0026 §2, §9).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    refresh_token: Option<String>,
 }
 
 /// RFC 6749 §5.2 token endpoint error response.
@@ -109,6 +136,10 @@ impl Oauth2TokenError {
 
     fn invalid_scope(description: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, "invalid_scope", description)
+    }
+
+    fn invalid_grant(description: impl Into<String>) -> Self {
+        Self::new(StatusCode::BAD_REQUEST, "invalid_grant", description)
     }
 
     fn too_many_requests(retry_after: u64) -> Self {
@@ -206,10 +237,39 @@ pub(super) async fn token(
             "missing required parameter: grant_type",
         ));
     };
-    if grant_type != "client_credentials" {
-        return Err(Oauth2TokenError::unsupported_grant_type(format!(
-            "grant_type `{grant_type}` is not supported; only `client_credentials` is implemented"
-        )));
+
+    let oauth2_cfg = state.config_manager.config.read().await.oauth2.clone();
+
+    match grant_type {
+        "client_credentials" => {}
+        "authorization_code" => {
+            return handle_authorization_code_grant(
+                &state,
+                &domain_id,
+                &headers,
+                &form,
+                &oauth2_cfg,
+                &correlation_id.0,
+            )
+            .await;
+        }
+        "refresh_token" => {
+            return handle_refresh_token_grant(
+                &state,
+                &domain_id,
+                &headers,
+                peer_addr,
+                &form,
+                &oauth2_cfg,
+                &correlation_id.0,
+            )
+            .await;
+        }
+        other => {
+            return Err(Oauth2TokenError::unsupported_grant_type(format!(
+                "grant_type `{other}` is not supported"
+            )));
+        }
     }
 
     let Some((client_id, client_secret)) = client_credentials_from_request(&headers, &form) else {
@@ -217,8 +277,6 @@ pub(super) async fn token(
             "missing required parameter: client_id",
         ));
     };
-
-    let oauth2_cfg = state.config_manager.config.read().await.oauth2.clone();
 
     // Step 1 (ADR 0026 §7.A "Pre-Hash Enforcement"): rate limit on the raw,
     // unverified client_id string, before any storage lookup or Argon2id
@@ -245,10 +303,13 @@ pub(super) async fn token(
     let Some(client) = client.filter(|c| c.domain_id == domain_id) else {
         // Enumeration defense (ADR 0026 §7.A / mirrors ADR 0021 Invariant
         // 7): burn the same Argon2id cost a real "found but wrong secret"
-        // verification would. Only normalizes cost *after* the lookup --
-        // the pre-hash rate limiter above (keyed on raw client_id, checked
-        // before this DB query) is the actual defense against the DB
-        // lookup's own variable timing revealing client_id existence.
+        // verification would, so a missing client_id can't be distinguished
+        // from a wrong secret by response latency alone. This does NOT mask
+        // the DB lookup's own variable timing (unknown client_id: fast
+        // reject; known client_id: lookup + Argon2id) -- that gap is
+        // accepted as defense-in-depth residual, bounded by the pre-hash
+        // rate limiter above (keyed on raw client_id, checked before this
+        // DB query), mirroring ADR 0021's API key posture.
         let _ = crypto::generate_dummy_hash(&oauth2_cfg).await;
         return Err(Oauth2TokenError::invalid_client(
             "client authentication failed",
@@ -378,8 +439,428 @@ pub(super) async fn token(
         token_type: "Bearer",
         expires_in: lifetime_seconds,
         scope: granted_scope.join(" "),
+        // `client_credentials` never issues an `id_token` (no RP identity
+        // display surface) or a `refresh_token` (the client re-authenticates
+        // with its own credentials on every mint instead of rotating one).
+        id_token: None,
+        refresh_token: None,
     };
 
+    Ok((StatusCode::OK, Json(response)).into_response())
+}
+
+/// Sign `claims` into a compact JWS using the domain's active OAuth2
+/// signing key (shared by every grant that mints a token).
+async fn sign_jwt<T: Serialize>(
+    state: &ServiceState,
+    domain_id: &str,
+    claims: &T,
+) -> Result<String, Oauth2TokenError> {
+    let signing_key = state
+        .provider
+        .get_oauth2_key_provider()
+        .active_signing_key(state, domain_id)
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "oauth2 signing key lookup failed");
+            Oauth2TokenError::internal("token issuance failed")
+        })?;
+    let encoding_key = to_encoding_key(&signing_key).map_err(|e| {
+        tracing::warn!(error = %e, "oauth2 signing key conversion failed");
+        Oauth2TokenError::internal("token issuance failed")
+    })?;
+    let mut header = jsonwebtoken::Header::new(jwt_algorithm(signing_key.algorithm));
+    header.kid = Some(openstack_keystone_key_repository::asymmetric::derive_kid(
+        &signing_key.public_key_der,
+    ));
+    jsonwebtoken::encode(&header, claims, &encoding_key).map_err(|e| {
+        tracing::warn!(error = %e, "oauth2 token signing failed");
+        Oauth2TokenError::internal("token issuance failed")
+    })
+}
+
+/// OIDC Core §3.2.2.10 `at_hash`: left half of `SHA-256(access_token)`,
+/// base64url-encoded. Binds an `id_token` to its co-issued `access_token`.
+fn compute_at_hash(access_token: &str) -> String {
+    let digest = Sha256::digest(access_token.as_bytes());
+    URL_SAFE_NO_PAD.encode(&digest[..digest.len() / 2])
+}
+
+/// Authenticate a client for the `authorization_code`/`refresh_token`
+/// grants, where -- unlike `client_credentials` (RFC 6749 §4.4, confidential
+/// only) -- a public client (no `client_secret_hash`) is allowed: PKCE
+/// stands in for client authentication on that path (ADR 0026 §1).
+/// Confidential clients still must present and verify a correct secret.
+/// Every rejection path burns the same Argon2id cost as a real verification
+/// (ADR 0026 §7.A enumeration defense), mirroring the `client_credentials`
+/// grant's posture.
+async fn authenticate_client(
+    state: &ServiceState,
+    oauth2_cfg: &openstack_keystone_config::Oauth2Provider,
+    domain_id: &str,
+    client_id: &str,
+    client_secret: Option<&str>,
+) -> Result<openstack_keystone_core_types::oauth2_client::OAuth2ClientResource, Oauth2TokenError> {
+    let exec = openstack_keystone_core::auth::ExecutionContext::internal(state);
+    let client = state
+        .provider
+        .get_oauth2_client_provider()
+        .get_by_client_id(&exec, client_id)
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "oauth2 client lookup failed");
+            Oauth2TokenError::internal("client lookup failed")
+        })?;
+
+    let Some(client) = client.filter(|c| c.domain_id == domain_id) else {
+        let _ = crypto::generate_dummy_hash(oauth2_cfg).await;
+        return Err(Oauth2TokenError::invalid_client(
+            "client authentication failed",
+        ));
+    };
+    if !client.enabled || client.deleted_at.is_some() {
+        let _ = crypto::generate_dummy_hash(oauth2_cfg).await;
+        return Err(Oauth2TokenError::invalid_client(
+            "client authentication failed",
+        ));
+    }
+
+    match (client.client_secret_hash.as_deref(), client_secret) {
+        (Some(hash), Some(secret)) => {
+            let verified = crypto::verify_secret(secret, hash).await.map_err(|e| {
+                tracing::warn!(error = %e, "oauth2 client secret argon2 verification errored");
+                Oauth2TokenError::internal("client authentication failed")
+            })?;
+            if !verified {
+                return Err(Oauth2TokenError::invalid_client(
+                    "client authentication failed",
+                ));
+            }
+        }
+        (Some(_hash), None) => {
+            // Confidential client must authenticate even on this grant.
+            let _ = crypto::generate_dummy_hash(oauth2_cfg).await;
+            return Err(Oauth2TokenError::invalid_client(
+                "client authentication failed",
+            ));
+        }
+        (None, _) => {
+            // Public client: no secret to verify. PKCE (authorization_code)
+            // or the caller's own prior possession of the refresh token
+            // bearer value (refresh_token) is the proof instead.
+        }
+    }
+
+    Ok(client)
+}
+
+/// `authorization_code` grant (RFC 6749 §4.1.3, ADR 0026 §10 Phase 4).
+async fn handle_authorization_code_grant(
+    state: &ServiceState,
+    domain_id: &str,
+    headers: &HeaderMap,
+    form: &TokenForm,
+    oauth2_cfg: &openstack_keystone_config::Oauth2Provider,
+    correlation_id: &str,
+) -> Result<Response, Oauth2TokenError> {
+    let Some((client_id, client_secret)) = client_credentials_from_request(headers, form) else {
+        return Err(Oauth2TokenError::invalid_request(
+            "missing required parameter: client_id",
+        ));
+    };
+    let Some(code) = form.code.clone() else {
+        return Err(Oauth2TokenError::invalid_request(
+            "missing required parameter: code",
+        ));
+    };
+    let Some(redirect_uri) = form.redirect_uri.clone() else {
+        return Err(Oauth2TokenError::invalid_request(
+            "missing required parameter: redirect_uri",
+        ));
+    };
+    let Some(code_verifier) = form.code_verifier.clone() else {
+        return Err(Oauth2TokenError::invalid_request(
+            "missing required parameter: code_verifier",
+        ));
+    };
+
+    // Step 1 (ADR 0026 §7.A): pre-hash rate limit, before any lookup.
+    if let Err(not_until) = state.oauth2_token_rate_limiter.check_key(&client_id) {
+        let retry_after = not_until
+            .wait_time_from(state.oauth2_token_rate_limiter.clock().now())
+            .as_secs()
+            .max(1);
+        return Err(Oauth2TokenError::too_many_requests(retry_after));
+    }
+
+    let client = authenticate_client(
+        state,
+        oauth2_cfg,
+        domain_id,
+        &client_id,
+        client_secret.as_deref(),
+    )
+    .await?;
+    if !client.grant_types.contains(&GrantType::AuthorizationCode) {
+        return Err(Oauth2TokenError::unauthorized_client(
+            "client is not authorized to use the authorization_code grant",
+        ));
+    }
+
+    let record = state
+        .provider
+        .get_oauth2_session_provider()
+        .redeem_authorization_code(state, &code)
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "oauth2 authorization code redemption failed");
+            Oauth2TokenError::internal("token issuance failed")
+        })?;
+    let Some(record) = record else {
+        return Err(Oauth2TokenError::invalid_grant(
+            "authorization code is invalid, expired, or already redeemed",
+        ));
+    };
+
+    if record.client_id != client_id
+        || record.domain_id != domain_id
+        || record.redirect_uri != redirect_uri
+    {
+        return Err(Oauth2TokenError::invalid_grant(
+            "authorization code does not match this client_id/redirect_uri",
+        ));
+    }
+    if record.code_challenge_method != "S256"
+        || !pkce::verify_code_challenge(&code_verifier, &record.code_challenge)
+    {
+        return Err(Oauth2TokenError::invalid_grant("PKCE verification failed"));
+    }
+
+    if record.scope.iter().any(|s| s == "openstack:api") {
+        // Full `OpenStackAccessTokenClaims` issuance on this grant requires
+        // resolving a project/domain authorization scope for the token,
+        // which the `/authorize` consent step does not yet collect in this
+        // phase (its own scope validation already rejects `openstack:api`
+        // outright for the same reason -- this is the token-minting side
+        // of that same guard, defense in depth against ever silently
+        // downgrading a client that explicitly asked for OpenStack
+        // authorization data to a bare identity token).
+        return Err(Oauth2TokenError::invalid_scope(
+            "openstack:api on the authorization_code grant is not yet supported",
+        ));
+    }
+
+    let base = base_url(state, headers).await;
+    let issuer = format!("{base}/v4/oauth2/{domain_id}");
+    let now = chrono::Utc::now().timestamp();
+    let access_lifetime = i64::from(oauth2_cfg.access_token_lifetime_minutes) * 60;
+    let id_lifetime = i64::from(oauth2_cfg.id_token_lifetime_minutes) * 60;
+
+    let access_claims = OidcAccessTokenClaims {
+        iss: issuer.clone(),
+        sub: record.user_id.clone(),
+        aud: client_id.clone(),
+        exp: now + access_lifetime,
+        iat: now,
+        nbf: now,
+        jti: uuid::Uuid::new_v4().to_string(),
+        scope: record.scope.join(" "),
+        token_use: "access".to_string(),
+    };
+    let access_token = sign_jwt(state, domain_id, &access_claims).await?;
+
+    let id_claims = IdTokenClaims {
+        iss: issuer,
+        sub: record.user_id.clone(),
+        aud: client_id.clone(),
+        exp: now + id_lifetime,
+        iat: now,
+        nbf: now,
+        auth_time: record.auth_time,
+        nonce: record.nonce.clone(),
+        amr: record.amr.clone(),
+        at_hash: Some(compute_at_hash(&access_token)),
+        token_use: "id".to_string(),
+        extra_claims: Default::default(),
+    };
+    let id_token = sign_jwt(state, domain_id, &id_claims).await?;
+
+    let refresh_token = if client.grant_types.contains(&GrantType::RefreshToken) {
+        let (_, bearer) = state
+            .provider
+            .get_oauth2_session_provider()
+            .issue_refresh_token(
+                state,
+                IssueRefreshTokenRequest {
+                    domain_id: domain_id.to_string(),
+                    client_id: client.client_id.clone(),
+                    user_id: record.user_id.clone(),
+                    scope: record.scope.clone(),
+                },
+            )
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = %e, "oauth2 refresh token issuance failed");
+                Oauth2TokenError::internal("token issuance failed")
+            })?;
+        Some(bearer)
+    } else {
+        None
+    };
+
+    emit_oauth2_session_event(
+        &state.audit_dispatcher,
+        correlation_id,
+        "authenticate",
+        build_initiator_unknown(),
+        &client.client_id,
+        "success",
+        None,
+    );
+
+    let response = TokenResponse {
+        access_token,
+        token_type: "Bearer",
+        expires_in: access_lifetime,
+        scope: record.scope.join(" "),
+        id_token: Some(id_token),
+        refresh_token,
+    };
+    Ok((StatusCode::OK, Json(response)).into_response())
+}
+
+/// `refresh_token` grant (RFC 6749 §6, ADR 0026 §9 rotation + reuse
+/// detection).
+async fn handle_refresh_token_grant(
+    state: &ServiceState,
+    domain_id: &str,
+    headers: &HeaderMap,
+    peer_addr: Option<std::net::SocketAddr>,
+    form: &TokenForm,
+    oauth2_cfg: &openstack_keystone_config::Oauth2Provider,
+    correlation_id: &str,
+) -> Result<Response, Oauth2TokenError> {
+    let Some((client_id, client_secret)) = client_credentials_from_request(headers, form) else {
+        return Err(Oauth2TokenError::invalid_request(
+            "missing required parameter: client_id",
+        ));
+    };
+    let Some(presented_refresh_token) = form.refresh_token.clone() else {
+        return Err(Oauth2TokenError::invalid_request(
+            "missing required parameter: refresh_token",
+        ));
+    };
+
+    // Unlike `client_credentials` (where `client_id` is public per-client),
+    // the refresh token bearer value is itself the secret -- rate limiting
+    // only by `client_id` lets a holder of one stolen token brute-rotate it
+    // at the client's full configured rate. Add the same global per-IP
+    // limiter the `/authorize/login` browser path uses (§7.B) as a second,
+    // independent dimension of defense.
+    if let Err(retry_after) = state
+        .rate_limiters
+        .check_ip(headers, peer_addr.map(|a| a.ip()))
+    {
+        return Err(Oauth2TokenError::too_many_requests(
+            retry_after.as_secs().max(1),
+        ));
+    }
+
+    if let Err(not_until) = state.oauth2_token_rate_limiter.check_key(&client_id) {
+        let retry_after = not_until
+            .wait_time_from(state.oauth2_token_rate_limiter.clock().now())
+            .as_secs()
+            .max(1);
+        return Err(Oauth2TokenError::too_many_requests(retry_after));
+    }
+
+    let client = authenticate_client(
+        state,
+        oauth2_cfg,
+        domain_id,
+        &client_id,
+        client_secret.as_deref(),
+    )
+    .await?;
+    if !client.grant_types.contains(&GrantType::RefreshToken) {
+        return Err(Oauth2TokenError::unauthorized_client(
+            "client is not authorized to use the refresh_token grant",
+        ));
+    }
+
+    let redemption = state
+        .provider
+        .get_oauth2_session_provider()
+        .redeem_refresh_token(state, &presented_refresh_token)
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "oauth2 refresh token redemption failed");
+            Oauth2TokenError::internal("token issuance failed")
+        })?;
+
+    let (record, bearer) = match redemption {
+        RefreshTokenRedemption::Invalid => {
+            return Err(Oauth2TokenError::invalid_grant(
+                "refresh_token is invalid, expired, or already used",
+            ));
+        }
+        RefreshTokenRedemption::ReuseDetected { family_id } => {
+            emit_oauth2_refresh_reuse_critical_event(
+                &state.audit_dispatcher,
+                correlation_id,
+                build_initiator_unknown(),
+                &family_id,
+            )
+            .await;
+            return Err(Oauth2TokenError::invalid_grant(
+                "refresh_token has already been used; the session has been revoked",
+            ));
+        }
+        RefreshTokenRedemption::Rotated { record, bearer } => (record, bearer),
+    };
+
+    if record.client_id != client_id || record.domain_id != domain_id {
+        return Err(Oauth2TokenError::invalid_grant(
+            "refresh_token does not belong to this client",
+        ));
+    }
+
+    let base = base_url(state, headers).await;
+    let issuer = format!("{base}/v4/oauth2/{domain_id}");
+    let now = chrono::Utc::now().timestamp();
+    let access_lifetime = i64::from(oauth2_cfg.access_token_lifetime_minutes) * 60;
+
+    let access_claims = OidcAccessTokenClaims {
+        iss: issuer,
+        sub: record.user_id.clone(),
+        aud: client_id.clone(),
+        exp: now + access_lifetime,
+        iat: now,
+        nbf: now,
+        jti: uuid::Uuid::new_v4().to_string(),
+        scope: record.scope.join(" "),
+        token_use: "access".to_string(),
+    };
+    let access_token = sign_jwt(state, domain_id, &access_claims).await?;
+
+    emit_oauth2_session_event(
+        &state.audit_dispatcher,
+        correlation_id,
+        "authenticate",
+        build_initiator_unknown(),
+        &client_id,
+        "success",
+        None,
+    );
+
+    let response = TokenResponse {
+        access_token,
+        token_type: "Bearer",
+        expires_in: access_lifetime,
+        scope: record.scope.join(" "),
+        id_token: None,
+        refresh_token: Some(bearer),
+    };
     Ok((StatusCode::OK, Json(response)).into_response())
 }
 
@@ -426,6 +907,7 @@ mod tests {
     use crate::oauth2_client::MockOauth2ClientProvider;
     use crate::oauth2_key::MockOauth2KeyProvider;
     use crate::provider::Provider;
+    use crate::resource::MockResourceProvider;
 
     async fn confidential_client() -> provider_types::OAuth2ClientResource {
         let cfg = openstack_keystone_config::Oauth2Provider {
@@ -585,7 +1067,7 @@ mod tests {
 
         let response = api
             .as_service()
-            .oneshot(request("grant_type=authorization_code&client_id=client-1"))
+            .oneshot(request("grant_type=password&client_id=client-1"))
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
@@ -730,9 +1212,21 @@ mod tests {
             .expect_authenticate_by_mapping()
             .returning(|_, _| Ok(successful_auth_result()));
 
+        let mut resource_mock = MockResourceProvider::default();
+        resource_mock.expect_get_domain().returning(|_, _| {
+            Ok(Some(openstack_keystone_core_types::resource::Domain {
+                id: "domain-1".to_string(),
+                name: "domain-1".to_string(),
+                description: None,
+                enabled: true,
+                extra: Default::default(),
+            }))
+        });
+
         let provider = Provider::mocked_builder()
             .mock_oauth2_client(client_mock)
             .mock_mapping(mapping_mock)
+            .mock_resource(resource_mock)
             .mock_oauth2_key(ok_key_mock());
         let state = get_mocked_state(provider, true, None).await;
         let mut api = openapi_router()
@@ -807,6 +1301,400 @@ mod tests {
         // Second request for the same client_id, burst exhausted: rejected
         // by the rate limiter before any further client lookup or Argon2id
         // work (ADR 0026 §7.A).
+        assert_eq!(
+            api.as_service().oneshot(req2).await.unwrap().status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+    }
+
+    use openstack_keystone_core::oauth2_session::RefreshTokenRedemption;
+    use openstack_keystone_core_types::oauth2_session::{AuthorizationCode, RefreshToken};
+
+    use crate::oauth2_session::MockOauth2SessionProvider;
+
+    async fn public_authz_code_client() -> provider_types::OAuth2ClientResource {
+        provider_types::OAuth2ClientResource {
+            client_id: "client-1".into(),
+            provider_id: "provider-1".into(),
+            domain_id: "domain-1".into(),
+            client_secret_hash: None,
+            redirect_uris: vec!["https://rp.example.com/callback".into()],
+            token_endpoint_auth_method: "none".into(),
+            grant_types: vec![provider_types::GrantType::AuthorizationCode],
+            require_pkce: true,
+            allowed_scopes: vec!["openid".into()],
+            pre_authorized: false,
+            enabled: true,
+            claims_template: Default::default(),
+            created_at: 0,
+            updated_at: 0,
+            deleted_at: None,
+        }
+    }
+
+    // RFC 7636 Appendix B worked example.
+    const PKCE_VERIFIER: &str = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    const PKCE_CHALLENGE: &str = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+
+    fn sample_authz_code(scope: Vec<String>) -> AuthorizationCode {
+        AuthorizationCode {
+            code: "code-1".to_string(),
+            domain_id: "domain-1".to_string(),
+            client_id: "client-1".to_string(),
+            user_id: "user-1".to_string(),
+            redirect_uri: "https://rp.example.com/callback".to_string(),
+            code_challenge: PKCE_CHALLENGE.to_string(),
+            code_challenge_method: "S256".to_string(),
+            scope,
+            nonce: Some("nonce-1".to_string()),
+            auth_time: 1000,
+            amr: vec!["pwd".to_string()],
+            created_at: 1000,
+            expires_at: 1060,
+        }
+    }
+
+    fn authz_code_form(code_verifier: &str) -> String {
+        format!(
+            "grant_type=authorization_code&client_id=client-1&code=code-1&redirect_uri=https://rp.example.com/callback&code_verifier={code_verifier}"
+        )
+    }
+
+    #[tokio::test]
+    async fn test_authorization_code_missing_code_is_invalid_request() {
+        let provider = Provider::mocked_builder();
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(request("grant_type=authorization_code&client_id=client-1"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(response).await["error"], "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn test_authorization_code_pkce_mismatch_is_invalid_grant() {
+        let client = public_authz_code_client().await;
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_get_by_client_id()
+            .returning(move |_, _| Ok(Some(client.clone())));
+
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_redeem_authorization_code()
+            .returning(|_, _| Ok(Some(sample_authz_code(vec!["openid".to_string()]))));
+
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock)
+            .mock_oauth2_session(session_mock);
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(request(&authz_code_form("wrong-verifier")))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(response).await["error"], "invalid_grant");
+    }
+
+    #[tokio::test]
+    async fn test_authorization_code_redemption_miss_is_invalid_grant() {
+        let client = public_authz_code_client().await;
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_get_by_client_id()
+            .returning(move |_, _| Ok(Some(client.clone())));
+
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_redeem_authorization_code()
+            .returning(|_, _| Ok(None));
+
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock)
+            .mock_oauth2_session(session_mock);
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(request(&authz_code_form(PKCE_VERIFIER)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(response).await["error"], "invalid_grant");
+    }
+
+    #[tokio::test]
+    async fn test_authorization_code_openstack_api_scope_is_rejected() {
+        let client = public_authz_code_client().await;
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_get_by_client_id()
+            .returning(move |_, _| Ok(Some(client.clone())));
+
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_redeem_authorization_code()
+            .returning(|_, _| {
+                Ok(Some(sample_authz_code(vec![
+                    "openid".to_string(),
+                    "openstack:api".to_string(),
+                ])))
+            });
+
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock)
+            .mock_oauth2_session(session_mock);
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(request(&authz_code_form(PKCE_VERIFIER)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(response).await["error"], "invalid_scope");
+    }
+
+    #[tokio::test]
+    async fn test_authorization_code_success_issues_id_and_access_token() {
+        let client = public_authz_code_client().await;
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_get_by_client_id()
+            .returning(move |_, _| Ok(Some(client.clone())));
+
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_redeem_authorization_code()
+            .returning(|_, _| Ok(Some(sample_authz_code(vec!["openid".to_string()]))));
+
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock)
+            .mock_oauth2_session(session_mock)
+            .mock_oauth2_key(ok_key_mock());
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(request(&authz_code_form(PKCE_VERIFIER)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["access_token"].as_str().unwrap().split('.').count(), 3);
+        assert_eq!(body["id_token"].as_str().unwrap().split('.').count(), 3);
+        assert!(body.get("refresh_token").is_none());
+    }
+
+    fn refresh_token_form(token: &str) -> String {
+        format!("grant_type=refresh_token&client_id=client-1&refresh_token={token}")
+    }
+
+    fn sample_refresh_record(spent_at: Option<i64>) -> RefreshToken {
+        RefreshToken {
+            token_id: "irrelevant".to_string(),
+            family_id: "family-1".to_string(),
+            parent_token_id: None,
+            domain_id: "domain-1".to_string(),
+            client_id: "client-1".to_string(),
+            user_id: "user-1".to_string(),
+            scope: vec!["openid".to_string()],
+            issued_at: 1000,
+            spent_at,
+            expires_at: 1000 + 2_592_000,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_refresh_token_missing_param_is_invalid_request() {
+        let provider = Provider::mocked_builder();
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(request("grant_type=refresh_token&client_id=client-1"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(response).await["error"], "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn test_refresh_token_reuse_detected_is_invalid_grant() {
+        let mut client = public_authz_code_client().await;
+        client.grant_types = vec![
+            provider_types::GrantType::AuthorizationCode,
+            provider_types::GrantType::RefreshToken,
+        ];
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_get_by_client_id()
+            .returning(move |_, _| Ok(Some(client.clone())));
+
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_redeem_refresh_token()
+            .returning(|_, _| {
+                Ok(RefreshTokenRedemption::ReuseDetected {
+                    family_id: "family-1".to_string(),
+                })
+            });
+
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock)
+            .mock_oauth2_session(session_mock);
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(request(&refresh_token_form("stolen-token")))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(response).await["error"], "invalid_grant");
+    }
+
+    #[tokio::test]
+    async fn test_refresh_token_rotation_success() {
+        let mut client = public_authz_code_client().await;
+        client.grant_types = vec![
+            provider_types::GrantType::AuthorizationCode,
+            provider_types::GrantType::RefreshToken,
+        ];
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_get_by_client_id()
+            .returning(move |_, _| Ok(Some(client.clone())));
+
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_redeem_refresh_token()
+            .returning(|_, _| {
+                Ok(RefreshTokenRedemption::Rotated {
+                    record: sample_refresh_record(None),
+                    bearer: "new-bearer-token".to_string(),
+                })
+            });
+
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock)
+            .mock_oauth2_session(session_mock)
+            .mock_oauth2_key(ok_key_mock());
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(request(&refresh_token_form("old-bearer-token")))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["access_token"].as_str().unwrap().split('.').count(), 3);
+        assert_eq!(body["refresh_token"], "new-bearer-token");
+        assert!(body.get("id_token").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_refresh_token_grant_rate_limited_by_ip_before_lookup() {
+        // A stolen refresh token bearer is itself the secret (unlike
+        // client_credentials' public client_id) -- the global per-IP
+        // limiter must reject brute-rotation attempts from one source IP
+        // even before the (mocked, would otherwise always succeed) session
+        // lookup runs.
+        let config = Config {
+            rate_limit_global_ip: openstack_keystone_config::RateLimitSection {
+                enabled: true,
+                burst_size: 1,
+                replenish_rate_per_second: 1,
+            },
+            ..Config::default()
+        };
+
+        let mut client = public_authz_code_client().await;
+        client.grant_types = vec![
+            provider_types::GrantType::AuthorizationCode,
+            provider_types::GrantType::RefreshToken,
+        ];
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_get_by_client_id()
+            .returning(move |_, _| Ok(Some(client.clone())));
+
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_redeem_refresh_token()
+            .returning(|_, _| {
+                Ok(RefreshTokenRedemption::Rotated {
+                    record: sample_refresh_record(None),
+                    bearer: "new-bearer-token".to_string(),
+                })
+            });
+
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock)
+            .mock_oauth2_session(session_mock)
+            .mock_oauth2_key(ok_key_mock())
+            .build()
+            .unwrap();
+
+        let state = Arc::new(
+            Service::new(
+                ConfigManager::not_watched(config),
+                DatabaseConnection::Disconnected,
+                provider,
+                Arc::new(MockPolicy::default()),
+                AuditDispatcher::noop(),
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+
+        let client_addr: SocketAddr = "203.0.113.9:1234".parse().unwrap();
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let mut req1 = request(&refresh_token_form("old-bearer-token"));
+        req1.extensions_mut().insert(ConnectInfo(client_addr));
+        assert_eq!(
+            api.as_service().oneshot(req1).await.unwrap().status(),
+            StatusCode::OK
+        );
+
+        let mut req2 = request(&refresh_token_form("another-bearer-token"));
+        req2.extensions_mut().insert(ConnectInfo(client_addr));
+        // Burst exhausted: rejected by the IP limiter regardless of which
+        // (still-valid, per the mock) token is presented next.
         assert_eq!(
             api.as_service().oneshot(req2).await.unwrap().status(),
             StatusCode::TOO_MANY_REQUESTS

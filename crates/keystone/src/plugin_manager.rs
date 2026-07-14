@@ -51,6 +51,8 @@ use openstack_keystone_core::oauth2_client::Oauth2ClientProviderError;
 use openstack_keystone_core::oauth2_client::backend::Oauth2ClientBackend;
 use openstack_keystone_core::oauth2_key::Oauth2KeyProviderError;
 use openstack_keystone_core::oauth2_key::backend::Oauth2KeyBackend;
+use openstack_keystone_core::oauth2_session::Oauth2SessionProviderError;
+use openstack_keystone_core::oauth2_session::backend::Oauth2SessionBackend;
 use openstack_keystone_core::resource::backend::ResourceBackend;
 use openstack_keystone_core::resource::error::ResourceProviderError;
 use openstack_keystone_core::revoke::RevokeProviderError;
@@ -96,6 +98,8 @@ pub struct PluginManager {
     oauth2_client_backends: HashMap<String, Arc<dyn Oauth2ClientBackend>>,
     /// OAuth2 signing key backend plugins.
     oauth2_key_backends: HashMap<String, Arc<dyn Oauth2KeyBackend>>,
+    /// OAuth2 browser session backend plugins.
+    oauth2_session_backends: HashMap<String, Arc<dyn Oauth2SessionBackend>>,
     /// K8s auth backend plugins.
     k8s_auth_backends: HashMap<String, Arc<dyn K8sAuthBackend>>,
     /// Resource backend plugins.
@@ -343,6 +347,24 @@ impl PluginManagerApi for PluginManager {
     ) -> Result<&Arc<dyn Oauth2KeyBackend>, Oauth2KeyProviderError> {
         self.oauth2_key_backends.get(name.as_ref()).ok_or(
             Oauth2KeyProviderError::UnsupportedDriver(name.as_ref().to_string()),
+        )
+    }
+
+    /// Get registered OAuth2 browser session backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing a reference to the `Oauth2SessionBackend` if
+    /// found, or a `Oauth2SessionProviderError`.
+    #[allow(clippy::borrowed_box)]
+    fn get_oauth2_session_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn Oauth2SessionBackend>, Oauth2SessionProviderError> {
+        self.oauth2_session_backends.get(name.as_ref()).ok_or(
+            Oauth2SessionProviderError::UnsupportedDriver(name.as_ref().to_string()),
         )
     }
 
@@ -684,6 +706,20 @@ impl PluginManagerApi for PluginManager {
             .insert(name.as_ref().to_string(), plugin);
     }
 
+    /// Register OAuth2 browser session backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to register.
+    /// * `plugin` - The backend implementation to register.
+    fn register_oauth2_session_backend<S: AsRef<str>>(
+        &mut self,
+        name: S,
+        plugin: Arc<dyn Oauth2SessionBackend>,
+    ) {
+        self.oauth2_session_backends
+            .insert(name.as_ref().to_string(), plugin);
+    }
+
     /// Register k8s_auth backend.
     ///
     /// # Parameters
@@ -872,6 +908,7 @@ impl PluginManager {
             mapping_backends: HashMap::new(),
             oauth2_client_backends: HashMap::new(),
             oauth2_key_backends: HashMap::new(),
+            oauth2_session_backends: HashMap::new(),
             k8s_auth_backends: HashMap::new(),
             resource_backends: HashMap::new(),
             revoke_backends: HashMap::new(),
@@ -920,6 +957,12 @@ impl PluginManager {
             "raft",
             Arc::new(
                 openstack_keystone_oauth2_client_driver_raft::RaftOauth2ClientBackend::default(),
+            ),
+        );
+        slf.register_oauth2_session_backend(
+            "raft",
+            Arc::new(
+                openstack_keystone_oauth2_session_driver_raft::RaftOauth2SessionBackend::default(),
             ),
         );
         slf.register_api_key_backend(

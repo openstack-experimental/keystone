@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sign in</title>
+</head>
+<body>
+<h1>Sign in</h1>
+<p>{{ client_id }} is requesting access to your account.</p>
+{% if let Some(msg) = error %}
+<p class="error">{{ msg }}</p>
+{% endif %}
+<form method="post" action="{{ action }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<label>Username <input type="text" name="username" autocomplete="username" required></label>
+<label>Password <input type="password" name="password" autocomplete="current-password" required></label>
+<button type="submit">Sign in</button>
+</form>
+</body>
+</html>

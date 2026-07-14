@@ -63,6 +63,9 @@ use crate::oauth2_client::Oauth2ClientApi;
 #[cfg(any(test, feature = "mock"))]
 use crate::oauth2_key::MockOauth2KeyProvider;
 use crate::oauth2_key::Oauth2KeyApi;
+#[cfg(any(test, feature = "mock"))]
+use crate::oauth2_session::MockOauth2SessionProvider;
+use crate::oauth2_session::Oauth2SessionApi;
 use crate::plugin_manager::PluginManagerApi;
 #[cfg(any(test, feature = "mock"))]
 use crate::resource::MockResourceProvider;
@@ -114,6 +117,8 @@ pub struct Provider {
     oauth2_client: Box<dyn Oauth2ClientApi>,
     /// OAuth2 signing key provider.
     oauth2_key: Box<dyn Oauth2KeyApi>,
+    /// OAuth2 browser session provider.
+    oauth2_session: Box<dyn Oauth2SessionApi>,
     /// K8s auth provider.
     k8s_auth: Box<dyn K8sAuthApi>,
     /// Resource provider.
@@ -200,6 +205,12 @@ impl ProviderBuilder {
     pub fn mock_oauth2_key(self, value: impl Oauth2KeyApi + 'static) -> Self {
         let mut new = self;
         new.oauth2_key = Some(Box::new(value));
+        new
+    }
+
+    pub fn mock_oauth2_session(self, value: impl Oauth2SessionApi + 'static) -> Self {
+        let mut new = self;
+        new.oauth2_session = Some(Box::new(value));
         new
     }
 
@@ -299,6 +310,10 @@ impl Provider {
             cfg,
             plugin_manager,
         )?);
+        let oauth2_session = Box::new(crate::oauth2_session::Oauth2SessionService::new(
+            cfg,
+            plugin_manager,
+        )?);
         let k8s_auth = Box::new(
             crate::k8s_auth::K8sAuthService::new(cfg, plugin_manager, k8s_http_client)
                 .map_err(|e| KeystoneError::K8sAuthProvider { source: e })?,
@@ -330,6 +345,7 @@ impl Provider {
             mapping,
             oauth2_client,
             oauth2_key,
+            oauth2_session,
             k8s_auth,
             resource,
             revoke,
@@ -356,6 +372,7 @@ impl Provider {
             .mock_mapping(MockMappingProvider::default())
             .mock_oauth2_client(MockOauth2ClientProvider::default())
             .mock_oauth2_key(MockOauth2KeyProvider::default())
+            .mock_oauth2_session(MockOauth2SessionProvider::default())
             .mock_federation(MockFederationProvider::default())
             .mock_k8s_auth(MockK8sAuthProvider::default())
             .mock_resource(MockResourceProvider::default())
@@ -420,6 +437,11 @@ impl Provider {
     /// Get the OAuth2 signing key provider.
     pub fn get_oauth2_key_provider(&self) -> &dyn Oauth2KeyApi {
         &*self.oauth2_key
+    }
+
+    /// Get the OAuth2 browser session provider.
+    pub fn get_oauth2_session_provider(&self) -> &dyn Oauth2SessionApi {
+        &*self.oauth2_session
     }
 
     /// Get the K8s auth provider.

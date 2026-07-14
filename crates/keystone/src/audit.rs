@@ -251,6 +251,93 @@ pub fn emit_api_key_control_event(
     dispatcher.dispatch(event);
 }
 
+/// Emit a best-effort CADF event for an OAuth2 browser-flow lifecycle step
+/// (ADR 0026 §10 Phase 4): `/authorize` request, login attempt, consent
+/// granted/denied, authorization code redeemed, refresh token rotated.
+/// Uses the dispatcher's `dispatch()` (best-effort), same posture as
+/// [`emit_api_key_control_event`] -- these are low-to-moderate volume
+/// administrative/session-lifecycle events, not the critical breach path.
+pub fn emit_oauth2_session_event(
+    dispatcher: &Arc<AuditDispatcher>,
+    correlation_id: &str,
+    action: &str,
+    initiator: Initiator,
+    client_id: &str,
+    outcome: &str,
+    outcome_reason: Option<String>,
+) {
+    let node_id = dispatcher.node_id().to_string();
+    let event_id = format!("{}:{}", node_id, Uuid::new_v4());
+    let payload = CadfEventPayload::new(
+        event_id,
+        "1.0".to_string(),
+        "default".to_string(),
+        correlation_id.to_string(),
+        chrono::Utc::now().to_rfc3339(),
+        action.to_string(),
+        outcome.to_string(),
+        outcome_reason,
+        initiator,
+        Target {
+            id: client_id.to_string(),
+            type_uri: "data/security/keystone/oauth2_client".to_string(),
+        },
+        Observer {
+            node_id: node_id.clone(),
+            id: format!("service/security/keystone/{node_id}"),
+        },
+    );
+    let event = payload.sign(dispatcher);
+    dispatcher.dispatch(event);
+}
+
+/// Emit the critical `OAUTH2_REFRESH_REUSE_DETECTED` CADF event (ADR 0026
+/// §9, "Token Compromise Alerts") when a `refresh_token` is presented a
+/// second time outside the reuse grace window and its family has just been
+/// revoked. Fail-closed dispatch via
+/// [`AuditDispatcher::dispatch_critical`]: on channel death, bumps the
+/// post-audit drop metric and logs an error, mirroring
+/// `openstack_keystone_core::cadf_hook::CadfAuditHook`'s own `Err` handling
+/// for the identical failure mode.
+pub async fn emit_oauth2_refresh_reuse_critical_event(
+    dispatcher: &Arc<AuditDispatcher>,
+    correlation_id: &str,
+    initiator: Initiator,
+    family_id: &str,
+) {
+    let node_id = dispatcher.node_id().to_string();
+    let event_id = format!("{}:{}", node_id, Uuid::new_v4());
+    let payload = CadfEventPayload::new(
+        event_id,
+        "1.0".to_string(),
+        "default".to_string(),
+        correlation_id.to_string(),
+        chrono::Utc::now().to_rfc3339(),
+        "OAUTH2_REFRESH_REUSE_DETECTED".to_string(),
+        "failure".to_string(),
+        Some(format!(
+            "refresh_token family {family_id} revoked: reuse detected outside grace window"
+        )),
+        initiator,
+        Target {
+            id: family_id.to_string(),
+            type_uri: "data/security/keystone/oauth2_refresh_family".to_string(),
+        },
+        Observer {
+            node_id: node_id.clone(),
+            id: format!("service/security/keystone/{node_id}"),
+        },
+    );
+    let event = payload.sign(dispatcher);
+    if dispatcher.dispatch_critical(event).await.is_err() {
+        dispatcher.record_postaudit_drop();
+        tracing::error!(
+            family_id,
+            "failed to dispatch OAUTH2_REFRESH_REUSE_DETECTED critical audit event: audit channel dead"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,5 +405,36 @@ mod tests {
         assert_eq!(i.id(), "unknown");
         assert!(i.project_id().is_none());
         assert!(i.domain_id().is_none());
+    }
+
+    #[test]
+    fn emit_oauth2_session_event_does_not_panic() {
+        let dispatcher = AuditDispatcher::noop();
+        emit_oauth2_session_event(
+            &dispatcher,
+            "req-1",
+            "authenticate",
+            build_initiator_unknown(),
+            "client-1",
+            "success",
+            None,
+        );
+    }
+
+    #[tokio::test]
+    async fn emit_oauth2_refresh_reuse_critical_event_records_drop_on_dead_channel() {
+        // `noop()` drops its channel receivers immediately, so
+        // `dispatch_critical` observes a dead channel here -- exercising
+        // the fail-closed drop-accounting path.
+        let dispatcher = AuditDispatcher::noop();
+        let before = dispatcher.postaudit_dropped_count();
+        emit_oauth2_refresh_reuse_critical_event(
+            &dispatcher,
+            "req-1",
+            build_initiator_unknown(),
+            "family-1",
+        )
+        .await;
+        assert_eq!(dispatcher.postaudit_dropped_count(), before + 1);
     }
 }

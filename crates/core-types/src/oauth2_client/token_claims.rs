@@ -13,14 +13,93 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # OAuth2 outbound access token claims (ADR 0026 §4)
 //!
-//! Phase 3 (`client_credentials`) scope only: [`OpenStackAccessTokenClaims`]
-//! is the authorization claim set consumed by downstream OpenStack services,
-//! issued unconditionally on the `client_credentials` grant (the client
-//! itself is always the OpenStack-facing subject there). `IdTokenClaims` and
-//! `OidcAccessTokenClaims` (the RP-facing identity tracks) are Phase 4's
-//! `authorization_code` deliverable, not defined here.
+//! [`OpenStackAccessTokenClaims`] is the authorization claim set consumed by
+//! downstream OpenStack services: issued unconditionally on the
+//! `client_credentials` grant (Phase 3), and on `authorization_code`/
+//! `refresh_token` grants (Phase 4) only when `openstack:api` was requested
+//! and granted. [`IdTokenClaims`] (identity for the relying party) and
+//! [`OidcAccessTokenClaims`] (the minimal RP-facing access token issued when
+//! `openstack:api` was not granted) are Phase 4's `authorization_code`
+//! deliverable.
+use std::collections::HashMap;
+
 use crate::role::RoleRef;
 use serde::{Deserialize, Serialize};
+
+/// Identity claims delivered to the relying party (OIDC Core §2), issued as
+/// the `id_token` on the `authorization_code` grant (ADR 0026 §4).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdTokenClaims {
+    /// Issuer URL bound to the domain: `/v4/oauth2/{domain_id}`.
+    pub iss: String,
+    /// Keystone `user_id` (or virtual identity via HMAC-SHA256).
+    pub sub: String,
+    /// `OAuth2Client.client_id` of the consuming relying party.
+    pub aud: String,
+    /// Expiration, Unix seconds. Default 15 minutes
+    /// (`[oauth2] id_token_lifetime_minutes`).
+    pub exp: i64,
+    /// Issued-at, Unix seconds.
+    pub iat: i64,
+    /// Not-before, always equal to `iat` (defense-in-depth per the Token
+    /// Replay Model, ADR 0026 §4); verified by relying parties per OIDC
+    /// Core §2.
+    pub nbf: i64,
+    /// Epoch timestamp of primary authentication (for `max_age`, OIDC Core
+    /// §3.1.2.1).
+    pub auth_time: i64,
+    /// Echoed verbatim from the `/authorize` request (replay prevention).
+    pub nonce: Option<String>,
+    /// Authentication methods references: `"pwd"`, `"mfa_totp"`,
+    /// `"webauthn"`, etc.
+    pub amr: Vec<String>,
+    /// Per OIDC Core §3.2.2.10: `SHA-256(access_token)[:96 bits, base64url]`.
+    /// Binds the `id_token` to its co-issued `access_token`, preventing
+    /// access-token substitution attacks at the RP. Omitted when no
+    /// `access_token` is issued alongside it.
+    pub at_hash: Option<String>,
+    /// Fixed `"id"` (OIDC Core §3.1.3.4). Downstream services reject this
+    /// token as authorization.
+    pub token_use: String,
+    /// Per-`OAuth2Client` `claims_template` output (ADR 0026 §4, "Claim
+    /// Safety"): interpolated `email`, `groups`, `roles`, etc.
+    #[serde(flatten)]
+    pub extra_claims: HashMap<String, String>,
+}
+
+/// Minimal `access_token` issued on `authorization_code`/`refresh_token`
+/// grants that did NOT request (or were not granted) the `openstack:api`
+/// scope (ADR 0026 §4, "Scope Validation"). Carries no OpenStack
+/// authorization data at all -- no `openstack_context`, no roles, no
+/// `openstack-apis:{domain_id}` audience. Exists purely as the standard
+/// RFC 6749 access token for calling Keystone's own `/userinfo` endpoint
+/// (OIDC Core §5.3). This is what closes ADR 0026 §1 Threat Model item 1: a
+/// compromised RP holding only this token has no `aud` value any downstream
+/// OpenStack middleware will ever accept.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OidcAccessTokenClaims {
+    /// Issuer URL bound to the domain.
+    pub iss: String,
+    /// Keystone `user_id`.
+    pub sub: String,
+    /// The requesting `OAuth2Client.client_id` itself, NEVER
+    /// `"openstack-apis:{domain_id}"`.
+    pub aud: String,
+    /// Expiration, Unix seconds. Mirrors `id_token` lifetime (default 15
+    /// minutes).
+    pub exp: i64,
+    /// Issued-at, Unix seconds.
+    pub iat: i64,
+    /// Not-before, always equal to `iat`.
+    pub nbf: i64,
+    /// Unique token UUID.
+    pub jti: String,
+    /// Granted scope string, echoed per RFC 6749 §5.1.
+    pub scope: String,
+    /// Fixed `"access"` (mirrors [`IdTokenClaims::token_use`]); downstream
+    /// middleware checks this alongside `openstack_context` presence.
+    pub token_use: String,
+}
 
 /// Authorization claims consumed by downstream OpenStack services (ADR 0026
 /// §4). Issued as the `access_token` on `client_credentials` grants.
@@ -195,5 +274,47 @@ mod tests {
         assert_eq!(value["domain_id"], "d1");
         assert_eq!(value["user_id"], "shadow-user");
         assert!(value.get("openstack_context").is_none());
+    }
+
+    #[test]
+    fn test_id_token_claims_flattens_extra_claims() {
+        let mut extra_claims = HashMap::new();
+        extra_claims.insert("email".to_string(), "user@example.com".to_string());
+        let claims = IdTokenClaims {
+            iss: "https://ks.example/v4/oauth2/d1".to_string(),
+            sub: "user-1".to_string(),
+            aud: "client-1".to_string(),
+            exp: 1000,
+            iat: 900,
+            nbf: 900,
+            auth_time: 900,
+            nonce: Some("abc".to_string()),
+            amr: vec!["pwd".to_string()],
+            at_hash: None,
+            token_use: "id".to_string(),
+            extra_claims,
+        };
+        let value = serde_json::to_value(&claims).unwrap();
+        assert_eq!(value["email"], "user@example.com");
+        assert_eq!(value["token_use"], "id");
+        assert!(value.get("extra_claims").is_none());
+    }
+
+    #[test]
+    fn test_oidc_access_token_claims_aud_is_client_id() {
+        let claims = OidcAccessTokenClaims {
+            iss: "https://ks.example/v4/oauth2/d1".to_string(),
+            sub: "user-1".to_string(),
+            aud: "client-1".to_string(),
+            exp: 1000,
+            iat: 900,
+            nbf: 900,
+            jti: "jti-1".to_string(),
+            scope: "openid profile".to_string(),
+            token_use: "access".to_string(),
+        };
+        let value = serde_json::to_value(&claims).unwrap();
+        assert_eq!(value["aud"], "client-1");
+        assert_eq!(value["token_use"], "access");
     }
 }

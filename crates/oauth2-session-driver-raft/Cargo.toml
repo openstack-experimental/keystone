@@ -1,0 +1,27 @@
+[package]
+name = "openstack-keystone-oauth2-session-driver-raft"
+description = "OpenStack Keystone Raft driver for OAuth2 browser session state (pre-auth session, authorization codes, refresh token families)"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+exclude.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+openstack-keystone-core.workspace = true
+openstack-keystone-core-types.workspace = true
+openstack-keystone-distributed-storage.workspace = true
+rmp-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tracing.workspace = true
+
+[dev-dependencies]
+openstack-keystone-distributed-storage = { workspace = true, features = ["mock"] }
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[lints]
+workspace = true

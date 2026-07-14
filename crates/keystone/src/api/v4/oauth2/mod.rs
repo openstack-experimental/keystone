@@ -24,6 +24,7 @@
 use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
+mod authorize;
 mod clients;
 mod jwks;
 mod token;
@@ -45,5 +46,8 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .routes(routes!(jwks::jwks))
         .routes(routes!(well_known::well_known))
         .routes(routes!(token::token))
+        .routes(routes!(authorize::authorize))
+        .routes(routes!(authorize::authorize_login))
+        .routes(routes!(authorize::authorize_consent))
         .merge(clients::openapi_router())
 }

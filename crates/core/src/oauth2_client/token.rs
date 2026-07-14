@@ -31,9 +31,9 @@ use openstack_keystone_core_types::oauth2_client::{
     DelegationContext, OAuth2ClientResource, OpenStackAccessTokenClaims, OpenStackContext,
     OpenStackScope,
 };
-use openstack_keystone_core_types::resource::{Domain, Project};
+use openstack_keystone_core_types::resource::ResourceProviderError;
 
-use crate::auth::{ExecutionContext, ValidatedSecurityContext};
+use crate::auth::{ExecutionContext, IntoAuthContext, ValidatedSecurityContext};
 use crate::keystone::ServiceState;
 use crate::mapping::engine;
 use crate::oauth2_client::Oauth2ClientProviderError;
@@ -109,7 +109,7 @@ pub async fn hydrate_client_credentials_context(
         Some(mr) => &mr.authorizations[0],
     };
 
-    let scope = scope_info_from_authorization(authorization);
+    let scope = scope_info_from_authorization(state, &exec, authorization).await?;
     scope.validate()?;
 
     let mapping_req = MappingAuthRequest {
@@ -135,39 +135,59 @@ pub async fn hydrate_client_credentials_context(
     Ok((vsc, ruleset.ruleset_version))
 }
 
-fn scope_info_from_authorization(authorization: &Authorization) -> ScopeInfo {
+/// Resolve the mapping-matched [`Authorization`] into a [`ScopeInfo`] backed
+/// by the resource provider's live `Project`/`Domain` records, not by
+/// ruleset-declared placeholders.
+///
+/// A ruleset is operator-authored configuration, but the `project_id`/
+/// `domain_id` it names can still go stale (the resource deleted or
+/// disabled after the ruleset was written, without the ruleset itself being
+/// updated). Fetching the real record here -- rather than fabricating one
+/// with `enabled: true` hardcoded -- is what makes the subsequent
+/// `ScopeInfo::validate()` call in `hydrate_client_credentials_context`
+/// meaningful: without it, `validate()` would only ever be checking its own
+/// placeholder's `true` against itself.
+///
+/// # Errors
+/// [`AuthenticationError::Provider`] if the named project/domain no longer
+/// exists -- deliberately not a more specific "not found" surfaced to the
+/// caller, mirroring this module's existing posture of not leaking pipeline
+/// internals to an unauthenticated client.
+async fn scope_info_from_authorization(
+    state: &ServiceState,
+    exec: &ExecutionContext<'_>,
+    authorization: &Authorization,
+) -> Result<ScopeInfo, AuthenticationError> {
+    let resource_provider = state.provider.get_resource_provider();
     match authorization {
-        Authorization::Project {
-            project_id,
-            project_domain_id,
-            ..
-        } => ScopeInfo::Project {
-            project: Project {
-                id: project_id.clone(),
-                domain_id: project_domain_id.clone(),
-                name: String::new(),
-                description: None,
-                enabled: true,
-                is_domain: false,
-                parent_id: None,
-                extra: Default::default(),
-            },
-            project_domain: Domain {
-                id: project_domain_id.clone(),
-                name: String::new(),
-                description: None,
-                enabled: true,
-                extra: Default::default(),
-            },
-        },
-        Authorization::Domain { domain_id, .. } => ScopeInfo::Domain(Domain {
-            id: domain_id.clone(),
-            name: String::new(),
-            description: None,
-            enabled: true,
-            extra: Default::default(),
-        }),
-        Authorization::System { system_id, .. } => ScopeInfo::System(system_id.clone()),
+        Authorization::Project { project_id, .. } => {
+            let project = resource_provider
+                .get_project(exec, project_id)
+                .await
+                .auth_context("fetching oauth2 client_credentials scope project")?
+                .ok_or_else(|| ResourceProviderError::ProjectNotFound(project_id.clone()))
+                .auth_context("fetching oauth2 client_credentials scope project")?;
+            let project_domain = resource_provider
+                .get_domain(exec, &project.domain_id)
+                .await
+                .auth_context("fetching oauth2 client_credentials scope project domain")?
+                .ok_or_else(|| ResourceProviderError::DomainNotFound(project.domain_id.clone()))
+                .auth_context("fetching oauth2 client_credentials scope project domain")?;
+            Ok(ScopeInfo::Project {
+                project,
+                project_domain,
+            })
+        }
+        Authorization::Domain { domain_id, .. } => {
+            let domain = resource_provider
+                .get_domain(exec, domain_id)
+                .await
+                .auth_context("fetching oauth2 client_credentials scope domain")?
+                .ok_or_else(|| ResourceProviderError::DomainNotFound(domain_id.clone()))
+                .auth_context("fetching oauth2 client_credentials scope domain")?;
+            Ok(ScopeInfo::Domain(domain))
+        }
+        Authorization::System { system_id, .. } => Ok(ScopeInfo::System(system_id.clone())),
     }
 }
 

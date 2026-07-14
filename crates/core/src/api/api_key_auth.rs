@@ -442,15 +442,23 @@ async fn hydrate_ephemeral_context(
     let Authorization::Domain { domain_id, .. } = authorization else {
         return Err(AuthenticationError::NonDomainScopeForbiddenForApiKey.into());
     };
-    let scope = openstack_keystone_core_types::auth::ScopeInfo::Domain(
-        openstack_keystone_core_types::resource::Domain {
-            id: domain_id.clone(),
-            name: String::new(),
-            description: None,
-            enabled: true,
-            extra: Default::default(),
-        },
-    );
+    // Fetch the live domain record rather than fabricating one with
+    // `enabled: true` hardcoded -- the ruleset naming this `domain_id` is
+    // operator-authored config, but the domain itself can still have been
+    // disabled or deleted after the ruleset was written. Without this,
+    // `scope.validate()` below would only ever check its own placeholder's
+    // `true` against itself.
+    let domain = state
+        .provider
+        .get_resource_provider()
+        .get_domain(&exec, domain_id)
+        .await
+        .map_err(|e| {
+            warn!(error = %e, "api_key scope domain lookup failed");
+            AuthenticationError::Unauthorized
+        })?
+        .ok_or(AuthenticationError::Unauthorized)?;
+    let scope = openstack_keystone_core_types::auth::ScopeInfo::Domain(domain);
     scope.validate()?;
 
     // Invariant 6: user_id derived exclusively from client_id, never from

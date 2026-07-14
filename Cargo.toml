@@ -22,6 +22,7 @@ members = [
   "crates/mapping-driver-raft",
   "crates/oauth2-client-driver-raft",
   "crates/oauth2-key-driver-raft",
+  "crates/oauth2-session-driver-raft",
   "crates/resource-driver-sql",
   "crates/role-driver-sql",
   "crates/revoke-driver-sql",
@@ -68,8 +69,10 @@ exclude = [
 aes-gcm = { version = "0.11" }
 arc-swap = { version = "1.7" }
 argon2 = { version = "0.5" }
+askama = { version = "0.16" }
 async-trait = { version = "0.1" }
 axum = { version = "0.8", default-features = false }
+axum-extra = { version = "0.12", default-features = false }
 axum-server = { version = "0.8", default-features = false }
 crc32fast = { version = "1.4" }
 base64 = { version = "0.22" }
@@ -130,6 +133,7 @@ openstack-keystone-key-repository = { version = "0.1.0", path = "crates/key-repo
 openstack-keystone-mapping-driver-raft = { version = "0.1", path = "crates/mapping-driver-raft/" }
 openstack-keystone-oauth2-client-driver-raft = { version = "0.1", path = "crates/oauth2-client-driver-raft/" }
 openstack-keystone-oauth2-key-driver-raft = { version = "0.1", path = "crates/oauth2-key-driver-raft/" }
+openstack-keystone-oauth2-session-driver-raft = { version = "0.1", path = "crates/oauth2-session-driver-raft/" }
 openstack-keystone-identity-driver-sql = { version = "0.1", path = "crates/identity-driver-sql" }
 openstack-keystone-idmapping-driver-sql = { version = "0.1", path = "crates/idmapping-driver-sql/" }
 openstack-keystone-resource-driver-sql = { version = "0.1", path = "crates/resource-driver-sql/" }

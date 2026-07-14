@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Authorize application</title>
+</head>
+<body>
+<h1>Authorize application</h1>
+<p><strong>{{ client_id }}</strong> is requesting the following access:</p>
+<ul>
+{% for scope in scopes %}
+<li>{{ scope }}</li>
+{% endfor %}
+</ul>
+<form method="post" action="{{ action }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<button type="submit" name="decision" value="allow">Allow</button>
+<button type="submit" name="decision" value="deny">Deny</button>
+</form>
+</body>
+</html>

@@ -11,26 +11,6 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # Integration tests
-//!
-//! Test the functionality on the provider level (not through the API).
+//! # OAuth2 browser session provider re-export.
 
-mod api_key;
-mod application_credential;
-mod assignment;
-mod audit;
-mod catalog;
-mod common;
-mod credential;
-mod identity;
-mod k8s_auth;
-mod mapping;
-mod oauth2_session;
-mod resource;
-mod revoke;
-mod role;
-mod scim_realm;
-mod token;
-
-#[macro_use]
-mod macros;
+pub use openstack_keystone_core::oauth2_session::*;

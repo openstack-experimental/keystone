@@ -49,6 +49,8 @@ use crate::oauth2_client::Oauth2ClientProviderError;
 use crate::oauth2_client::backend::Oauth2ClientBackend;
 use crate::oauth2_key::Oauth2KeyProviderError;
 use crate::oauth2_key::backend::Oauth2KeyBackend;
+use crate::oauth2_session::Oauth2SessionProviderError;
+use crate::oauth2_session::backend::Oauth2SessionBackend;
 use crate::resource::backend::ResourceBackend;
 use crate::resource::error::ResourceProviderError;
 use crate::revoke::RevokeProviderError;
@@ -222,6 +224,19 @@ pub trait PluginManagerApi {
         &self,
         name: S,
     ) -> Result<&Arc<dyn Oauth2KeyBackend>, Oauth2KeyProviderError>;
+
+    /// Get registered OAuth2 browser session backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn Oauth2SessionBackend>)` if found, otherwise
+    ///   `Err(Oauth2SessionProviderError)`.
+    fn get_oauth2_session_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn Oauth2SessionBackend>, Oauth2SessionProviderError>;
 
     /// Get registered k8s auth backend.
     ///
@@ -458,6 +473,17 @@ pub trait PluginManagerApi {
         &mut self,
         name: S,
         plugin: Arc<dyn Oauth2KeyBackend>,
+    );
+
+    /// Register OAuth2 browser session backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name to register the backend under.
+    /// - `plugin`: The backend implementation.
+    fn register_oauth2_session_backend<S: AsRef<str>>(
+        &mut self,
+        name: S,
+        plugin: Arc<dyn Oauth2SessionBackend>,
     );
 
     /// Register k8s_auth backend.

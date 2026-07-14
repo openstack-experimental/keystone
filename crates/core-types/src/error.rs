@@ -30,6 +30,7 @@ use crate::k8s_auth::K8sAuthProviderError;
 use crate::mapping::MappingProviderError;
 use crate::oauth2_client::Oauth2ClientProviderError;
 use crate::oauth2_key::Oauth2KeyProviderError;
+use crate::oauth2_session::Oauth2SessionProviderError;
 use crate::resource::ResourceProviderError;
 use crate::revoke::RevokeProviderError;
 use crate::role::RoleProviderError;
@@ -169,6 +170,14 @@ pub enum KeystoneError {
         /// The source of the error.
         #[from]
         source: Oauth2KeyProviderError,
+    },
+
+    /// OAuth2 browser session provider.
+    #[error(transparent)]
+    Oauth2SessionProvider {
+        /// The source of the error.
+        #[from]
+        source: Oauth2SessionProviderError,
     },
 
     /// IO error.

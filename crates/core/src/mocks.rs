@@ -211,6 +211,85 @@ mod oauth2_key {
 }
 pub use oauth2_key::MockOauth2KeyProvider;
 
+mod oauth2_session {
+    use super::*;
+
+    use openstack_keystone_core_types::oauth2_session::{
+        AuthorizationCode, PreAuthSession, RefreshToken,
+    };
+
+    use crate::oauth2_session::provider_api::{
+        IssueAuthorizationCodeRequest, IssueRefreshTokenRequest, RefreshTokenRedemption,
+        StartPreAuthSessionRequest,
+    };
+    use crate::oauth2_session::{Oauth2SessionApi, Oauth2SessionProviderError};
+
+    mock! {
+        pub Oauth2SessionProvider {}
+
+        #[async_trait]
+        impl Oauth2SessionApi for Oauth2SessionProvider {
+            async fn start_pre_auth_session(
+                &self,
+                state: &ServiceState,
+                req: StartPreAuthSessionRequest,
+            ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
+
+            async fn get_pre_auth_session(
+                &self,
+                state: &ServiceState,
+                session_id: &str,
+            ) -> Result<Option<PreAuthSession>, Oauth2SessionProviderError>;
+
+            async fn mark_authenticated(
+                &self,
+                state: &ServiceState,
+                session_id: &str,
+                user_id: &str,
+                auth_time: i64,
+            ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
+
+            async fn mark_consent(
+                &self,
+                state: &ServiceState,
+                session_id: &str,
+                granted: bool,
+            ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
+
+            async fn complete_pre_auth_session(
+                &self,
+                state: &ServiceState,
+                session_id: &str,
+            ) -> Result<(), Oauth2SessionProviderError>;
+
+            async fn issue_authorization_code(
+                &self,
+                state: &ServiceState,
+                req: IssueAuthorizationCodeRequest,
+            ) -> Result<String, Oauth2SessionProviderError>;
+
+            async fn redeem_authorization_code(
+                &self,
+                state: &ServiceState,
+                code: &str,
+            ) -> Result<Option<AuthorizationCode>, Oauth2SessionProviderError>;
+
+            async fn issue_refresh_token(
+                &self,
+                state: &ServiceState,
+                req: IssueRefreshTokenRequest,
+            ) -> Result<(RefreshToken, String), Oauth2SessionProviderError>;
+
+            async fn redeem_refresh_token(
+                &self,
+                state: &ServiceState,
+                presented_bearer: &str,
+            ) -> Result<RefreshTokenRedemption, Oauth2SessionProviderError>;
+        }
+    }
+}
+pub use oauth2_session::MockOauth2SessionProvider;
+
 mod application_credential {
     use super::*;
 

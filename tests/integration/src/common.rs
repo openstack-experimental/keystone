@@ -132,6 +132,21 @@ pub async fn get_isolated_database() -> Result<DatabaseConnection> {
 
 #[allow(unsafe_code)]
 pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
+    get_state_with_config(|_| {}).await
+}
+
+/// Like [`get_state`], but lets the caller adjust the [`Config`] before the
+/// [`Provider`] (and every service that captures a `Clone` of a config
+/// section at construction time, e.g. `Oauth2SessionService`) is built.
+/// Mutating `state.config_manager` *after* construction is not equivalent
+/// for those services -- they read their captured copy, not the live
+/// config -- so tests that need e.g. a non-default
+/// `[oauth2] refresh_token_reuse_grace_minutes` must go through this
+/// entry point instead.
+#[allow(unsafe_code)]
+pub async fn get_state_with_config(
+    mutate: impl FnOnce(&mut Config),
+) -> Result<(Arc<Service>, TempDir)> {
     let db = get_isolated_database().await?;
 
     let tmp_dir = TempDir::new()?;
@@ -152,6 +167,7 @@ pub async fn get_state() -> Result<(Arc<Service>, TempDir)> {
             .to_string()
             .into(),
     ));
+    mutate(&mut cfg);
 
     if std::env::var("USE_RAFT").is_ok() {
         let tmp_db_dir = tmp_dir.path().join("certs");
