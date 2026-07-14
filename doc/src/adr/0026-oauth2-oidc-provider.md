@@ -401,6 +401,29 @@ pub enum OpenStackScope {
 
 ```
 
+### Amendment: `scope_roles` Wire Rename (Found in Phase 5)
+
+The struct layout above, as originally specified, has `OpenStackContext.roles`
+(`Vec<String>`, the effective role *names* the §6 middleware reads via
+`ctx['roles']`) and each `OpenStackScope` variant's `roles: Vec<RoleRef>`
+both flatten into the same JSON object via nested `#[serde(flatten)]`. Since
+both fields serialize to the identical wire key `"roles"`, the actual JSON
+produced contains a duplicate key -- valid to *write* (`serde_json` silently
+overwrites the earlier entry) but never valid to *read back*: flattened
+deserialization resolves each Rust field by name against the first matching
+key in the source object, not the last, so no `OpenStackAccessTokenClaims`
+with a `Project`/`Domain`/`System` scope could ever be decoded back into this
+type at all. This went unnoticed through Phases 3-4 because the only existing
+tests serialized claims one-way and never round-tripped them. Phase 5's
+offline verifier is the first code to actually decode a signed token, and it
+surfaced the defect immediately.
+
+**Fix:** each `OpenStackScope` variant's `roles: Vec<RoleRef>` field carries
+`#[serde(rename = "scope_roles")]`, keeping the Rust field name (and every
+existing call site) unchanged while giving it a distinct wire key. The outer
+`OpenStackContext.roles: Vec<String>` -- the one the §6 middleware actually
+reads -- keeps the unrenamed `"roles"` key.
+
 ### Token Replay Model
 
 Access tokens are bearer tokens with no DPoP (RFC 9449) demonstrable proof of
@@ -1303,6 +1326,18 @@ deployments `keystone-rs` can stand in for.
   that the Python service parses, cryptographically validates, and completes the
   authorization cycle locally without executing a single back-channel database
   lookup.
+
+**Implementation note:** the Python middleware itself, and its injection into
+Nova/Neutron, are out of scope for the `keystone-rs` repository -- that code
+runs in downstream service repos, not here. What this repository delivers for
+Phase 5 is the Rust-side surface the middleware depends on plus a Rust-native
+reference implementation of the exact same §6 verification algorithm
+(`openstack_keystone_core::oauth2_client::verify_openstack_access_token`,
+a pure function over an already-fetched JWKS/JTI-revocation set), and an
+integration test that mints a real token through the same pipeline
+`POST /token` uses and verifies it fully offline. This is the closest in-repo
+proof of the Phase 5 verification bullet available without a second
+repository in the loop.
 
 ---
 

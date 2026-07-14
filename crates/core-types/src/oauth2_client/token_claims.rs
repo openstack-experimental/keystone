@@ -191,6 +191,18 @@ pub struct OpenStackContext {
 /// distinct, outbound wire type: it additionally carries `Unscoped`, and is
 /// tagged `scope_type` (the ADR 0026 §4 outbound claim name) rather than the
 /// internal mapping type's `type` tag.
+///
+/// Each variant's `roles: Vec<RoleRef>` is wire-renamed to `scope_roles`
+/// (`#[serde(rename = "scope_roles")]`) to avoid colliding with
+/// [`OpenStackContext::roles`] (`Vec<String>`, the effective role *names*
+/// the ADR §6 middleware reads via `ctx['roles']`): both fields flatten
+/// into the same JSON object via nested `#[serde(flatten)]`, so an
+/// unrenamed `roles` key here would silently duplicate that key on the
+/// wire -- valid to write (`serde_json` simply overwrites the earlier
+/// entry) but not valid to read back, since flattened deserialization
+/// resolves each field by name against the *first* matching key rather
+/// than the last. A signed token minted before this fix could never be
+/// decoded back into this type at all.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "scope_type", rename_all = "snake_case")]
 pub enum OpenStackScope {
@@ -201,6 +213,7 @@ pub enum OpenStackScope {
         /// Domain UUID the project belongs to.
         project_domain_id: String,
         /// Roles granted on this scope.
+        #[serde(rename = "scope_roles")]
         roles: Vec<RoleRef>,
     },
     /// Domain-scoped authorization.
@@ -208,6 +221,7 @@ pub enum OpenStackScope {
         /// Domain UUID.
         domain_id: String,
         /// Roles granted on this scope.
+        #[serde(rename = "scope_roles")]
         roles: Vec<RoleRef>,
     },
     /// System-scoped authorization.
@@ -215,6 +229,7 @@ pub enum OpenStackScope {
         /// System scope identifier (e.g. `"all"`).
         system_id: String,
         /// Roles granted on this scope.
+        #[serde(rename = "scope_roles")]
         roles: Vec<RoleRef>,
     },
     /// No authorization scope.

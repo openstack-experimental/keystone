@@ -26,6 +26,7 @@ mod identity;
 mod k8s_auth;
 mod mapping;
 mod oauth2_session;
+mod oauth2_token_verify;
 mod resource;
 mod revoke;
 mod role;
