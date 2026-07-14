@@ -15,6 +15,7 @@
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
+use sea_orm::sea_query::Query;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core::auth::AuthenticationError;
@@ -23,7 +24,8 @@ use openstack_keystone_core::identity::IdentityProviderError;
 use openstack_keystone_core_types::identity::{UserOptions, UserResponse, UserResponseBuilder};
 
 use crate::entity::{
-    local_user as db_local_user, nonlocal_user as db_nonlocal_user,
+    federated_user as db_federated_user, local_user as db_local_user,
+    nonlocal_user as db_nonlocal_user,
     prelude::{FederatedUser, LocalUser, NonlocalUser, User as DbUser, UserOption},
     user as db_user,
 };
@@ -132,9 +134,10 @@ pub async fn get(
 ///
 /// This is the inexpensive existence probe backing per-user rate limiting
 /// (ADR-0022, Invariant 8): point queries only, no joins, no password or
-/// option loading. Name resolution mirrors the authentication lookups with
-/// an exact match against `local_user`, falling back to `nonlocal_user`
-/// (federated users authenticate through mapping, not by name here).
+/// option loading. Name resolution checks `local_user`, `nonlocal_user`, and
+/// `federated_user`, in the same order as [`get`]. The federated lookup uses a
+/// subquery against the main user table because federation details do not
+/// carry a domain ID.
 ///
 /// # Parameters
 /// - `db`: The database connection.
@@ -168,16 +171,38 @@ pub async fn check_user_exist(
             .context("resolving local user by name")?;
         match local {
             Some(id) => id,
-            None => NonlocalUser::find()
-                .select_only()
-                .column(db_nonlocal_user::Column::UserId)
-                .filter(db_nonlocal_user::Column::Name.eq(name))
-                .filter(db_nonlocal_user::Column::DomainId.eq(domain_id))
-                .into_tuple()
-                .one(db)
-                .await
-                .context("resolving nonlocal user by name")?
-                .ok_or_else(|| IdentityProviderError::UserNotFound(name.to_string()))?,
+            None => {
+                let nonlocal: Option<String> = NonlocalUser::find()
+                    .select_only()
+                    .column(db_nonlocal_user::Column::UserId)
+                    .filter(db_nonlocal_user::Column::Name.eq(name))
+                    .filter(db_nonlocal_user::Column::DomainId.eq(domain_id))
+                    .into_tuple()
+                    .one(db)
+                    .await
+                    .context("resolving nonlocal user by name")?;
+                match nonlocal {
+                    Some(id) => id,
+                    None => DbUser::find()
+                        .select_only()
+                        .column(db_user::Column::Id)
+                        .filter(db_user::Column::DomainId.eq(domain_id))
+                        .filter(
+                            db_user::Column::Id.in_subquery(
+                                Query::select()
+                                    .column(db_federated_user::Column::UserId)
+                                    .from(FederatedUser)
+                                    .and_where(db_federated_user::Column::DisplayName.eq(name))
+                                    .to_owned(),
+                            ),
+                        )
+                        .into_tuple()
+                        .one(db)
+                        .await
+                        .context("resolving federated user by name and domain")?
+                        .ok_or_else(|| IdentityProviderError::UserNotFound(name.to_string()))?,
+                }
+            }
         }
     };
 
@@ -403,6 +428,54 @@ mod tests {
                 .unwrap(),
             "1"
         );
+        assert_eq!(db.into_transaction_log().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_check_user_exist_by_name_falls_back_to_federated() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            // No local_user row for the name.
+            .append_query_results([Vec::<BTreeMap<&str, Value>>::new()])
+            // No nonlocal_user row for the name.
+            .append_query_results([Vec::<BTreeMap<&str, Value>>::new()])
+            // A federated user with this display name exists in the domain.
+            .append_query_results([vec![
+                BTreeMap::from([("id", Into::<Value>::into("1"))]).into_mock_row(),
+            ]])
+            // Main user table entry for the enabled check.
+            .append_query_results([vec![get_user_mock("1")]])
+            .into_connection();
+
+        assert_eq!(
+            check_user_exist(&db, None, Some("Apple Cake"), Some("foo_domain"))
+                .await
+                .unwrap(),
+            "1"
+        );
+
+        let log = db.into_transaction_log();
+        assert_eq!(log.len(), 4);
+        assert!(log[0].statements()[0].sql.contains("local_user"));
+        assert!(log[1].statements()[0].sql.contains("nonlocal_user"));
+        let federated_sql = &log[2].statements()[0].sql;
+        assert!(federated_sql.contains("federated_user"));
+        assert!(federated_sql.contains("display_name"));
+        assert!(federated_sql.contains("domain_id"));
+        assert!(!federated_sql.contains("JOIN"));
+    }
+
+    #[tokio::test]
+    async fn test_check_user_exist_by_name_missing_after_all_user_types() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([Vec::<BTreeMap<&str, Value>>::new()])
+            .append_query_results([Vec::<BTreeMap<&str, Value>>::new()])
+            .append_query_results([Vec::<BTreeMap<&str, Value>>::new()])
+            .into_connection();
+
+        assert!(matches!(
+            check_user_exist(&db, None, Some("Nobody"), Some("foo_domain")).await,
+            Err(IdentityProviderError::UserNotFound(name)) if name == "Nobody"
+        ));
         assert_eq!(db.into_transaction_log().len(), 3);
     }
 
