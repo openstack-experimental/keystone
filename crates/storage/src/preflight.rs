@@ -27,11 +27,26 @@
 //! CI and developer workstations — which commonly cannot raise `RLIMIT_MEMLOCK`
 //! or set `PR_SET_DUMPABLE` — can still run the storage stack.
 
-use nix::sys::resource::{Resource, getrlimit, setrlimit};
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd"
+))]
+use nix::sys::resource::getrlimit;
+use nix::sys::resource::{Resource, setrlimit};
 use tracing::error;
 
 /// Minimum bytes of mlockable memory the process should be allowed.
 /// 64 KiB: ample headroom for one DEK + sub-keys held in normal memory.
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd"
+))]
 const MIN_MEMLOCK_BYTES: u64 = 64 * 1024;
 
 /// Run security pre-flight checks.
@@ -95,6 +110,15 @@ fn check_dumpable() -> Result<(), String> {
 }
 
 /// Verify that the process has enough mlockable memory headroom.
+/// No-op on platforms where `nix` does not expose `RLIMIT_MEMLOCK`
+/// (e.g. macOS), returning `Ok`.
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd"
+))]
 fn check_memlock() -> Result<(), String> {
     let (soft, _hard) = getrlimit(Resource::RLIMIT_MEMLOCK)
         .map_err(|e| format!("could not read RLIMIT_MEMLOCK: {e}"))?;
@@ -107,6 +131,22 @@ fn check_memlock() -> Result<(), String> {
         ));
     }
 
+    Ok(())
+}
+
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd"
+)))]
+fn check_memlock() -> Result<(), String> {
+    tracing::warn!(
+        "SECURITY: RLIMIT_MEMLOCK is not supported on this platform — \
+         mlock headroom for key material cannot be verified or enforced \
+         (ADR 0016-v2 §9 invariant 12 is unchecked here)"
+    );
     Ok(())
 }
 

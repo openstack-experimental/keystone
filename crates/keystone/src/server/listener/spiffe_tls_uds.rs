@@ -36,6 +36,7 @@ use crate::server::listener::spiffe_common;
 ///
 /// Returns `Ok(())` when all configured checks pass, or `Err` if any configured
 /// value does not match the connecting process's credentials.
+#[cfg(target_os = "linux")]
 fn verify_peer_credentials(
     stream: &tokio::net::UnixStream,
     expected_uid: Option<u32>,
@@ -43,7 +44,7 @@ fn verify_peer_credentials(
 ) -> Result<(), Report> {
     use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
 
-    let creds = getsockopt(&stream, PeerCredentials)
+    let creds = getsockopt(stream, PeerCredentials)
         .wrap_err("failed to get peer credentials via SO_PEERCRED")?;
 
     if let Some(expected) = expected_uid
@@ -62,6 +63,73 @@ fn verify_peer_credentials(
             "UDS peer GID {} does not match expected {}",
             creds.gid(),
             expected
+        ));
+    }
+    Ok(())
+}
+
+/// Verify peer credentials obtained via `LOCAL_PEERCRED` against expected
+/// UID/GID.
+///
+/// Covers the platforms where `nix` implements `LocalPeerCred`/`XuCred`: Apple
+/// targets and FreeBSD-like BSDs (FreeBSD, DragonFly BSD).
+///
+/// Returns `Ok(())` when all configured checks pass, or `Err` if any configured
+/// value does not match the connecting process's credentials.
+#[cfg(any(
+    target_vendor = "apple",
+    target_os = "freebsd",
+    target_os = "dragonfly"
+))]
+fn verify_peer_credentials(
+    stream: &tokio::net::UnixStream,
+    expected_uid: Option<u32>,
+    expected_gid: Option<u32>,
+) -> Result<(), Report> {
+    use nix::sys::socket::{getsockopt, sockopt::LocalPeerCred};
+
+    let creds = getsockopt(stream, LocalPeerCred)
+        .wrap_err("failed to get peer credentials via LOCAL_PEERCRED")?;
+
+    if let Some(expected) = expected_uid
+        && creds.uid() != expected
+    {
+        return Err(color_eyre::eyre::eyre!(
+            "UDS peer UID {} does not match expected {}",
+            creds.uid(),
+            expected
+        ));
+    }
+    if let Some(expected) = expected_gid {
+        let effective_gid = creds.groups().first().copied();
+        if effective_gid != Some(expected) {
+            return Err(color_eyre::eyre::eyre!(
+                "UDS peer GID {:?} does not match expected {}",
+                effective_gid,
+                expected
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Peer credential verification is unavailable on this platform: fail closed
+/// whenever a UID/GID check was actually requested, rather than silently
+/// accepting an unverified peer.
+#[cfg(not(any(
+    target_os = "linux",
+    target_vendor = "apple",
+    target_os = "freebsd",
+    target_os = "dragonfly"
+)))]
+fn verify_peer_credentials(
+    _stream: &tokio::net::UnixStream,
+    expected_uid: Option<u32>,
+    expected_gid: Option<u32>,
+) -> Result<(), Report> {
+    if expected_uid.is_some() || expected_gid.is_some() {
+        return Err(color_eyre::eyre::eyre!(
+            "UDS peer credential verification (peer_uid/peer_gid) is not supported on this platform"
         ));
     }
     Ok(())

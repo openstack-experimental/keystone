@@ -76,4 +76,13 @@ pub trait KeySource: Send + Sync {
     /// construction may never send anything; that's a valid (if useless)
     /// implementation.
     fn subscribe(&self) -> broadcast::Receiver<()>;
+
+    /// Request that any background resources (e.g. a filesystem watcher
+    /// task) begin shutting down immediately.
+    ///
+    /// Called synchronously by [`crate::CachedKeyRepository`]'s `Drop` so
+    /// teardown starts right away rather than depending on how long it
+    /// takes some other task to release its last `Arc` clone of this
+    /// source. Sources with no background resources use the default no-op.
+    fn request_shutdown(&self) {}
 }
