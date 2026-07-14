@@ -13,15 +13,20 @@
 // SPDX-License-Identifier: Apache-2.0
 //! OAuth2/OIDC provider public API (ADR 0026).
 //!
-//! Phase 1 scope only: per-domain signing key publication. Unlike every
-//! other v4 resource, these routes carry no `Auth` extractor and no policy
-//! check — the JWKS endpoint must be reachable by relying parties and edge
-//! proxies without a Keystone token (ADR 0026 §3).
+//! Phase 1 added `jwks`; Phase 2 (ADR 0026 §10) adds the unauthenticated
+//! `well_known` OIDC discovery document and the `clients` admin CRUD API for
+//! `OAuth2Client` (relying party) registration. Unlike `jwks`/`well_known`,
+//! every route under `clients` carries an `Auth` extractor and a Rego policy
+//! check (ADR 0026 §5) -- `jwks` and `well_known` remain unauthenticated by
+//! design so relying parties and edge proxies can fetch them without a
+//! Keystone token (ADR 0026 §3).
 
 use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
+mod clients;
 mod jwks;
+mod well_known;
 
 use crate::keystone::ServiceState;
 
@@ -35,5 +40,8 @@ use crate::keystone::ServiceState;
 pub struct ApiDoc;
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
-    OpenApiRouter::new().routes(routes!(jwks::jwks))
+    OpenApiRouter::new()
+        .routes(routes!(jwks::jwks))
+        .routes(routes!(well_known::well_known))
+        .merge(clients::openapi_router())
 }

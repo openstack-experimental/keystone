@@ -112,6 +112,71 @@ mod api_key {
 }
 pub use api_key::MockApiKeyProvider;
 
+mod oauth2_client {
+    use super::*;
+
+    use openstack_keystone_core_types::oauth2_client::*;
+
+    use crate::auth::ExecutionContext;
+    use crate::oauth2_client::{Oauth2ClientApi, Oauth2ClientProviderError};
+
+    mock! {
+        pub Oauth2ClientProvider {}
+
+        #[async_trait]
+        impl Oauth2ClientApi for Oauth2ClientProvider {
+            async fn create<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                data: OAuth2ClientResourceCreate,
+                confidential: bool,
+            ) -> Result<(OAuth2ClientResource, Option<String>), Oauth2ClientProviderError>;
+
+            async fn get<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+                provider_id: &'a str,
+            ) -> Result<Option<OAuth2ClientResource>, Oauth2ClientProviderError>;
+
+            async fn get_by_client_id<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                client_id: &'a str,
+            ) -> Result<Option<OAuth2ClientResource>, Oauth2ClientProviderError>;
+
+            async fn list<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                params: &OAuth2ClientResourceListParameters,
+            ) -> Result<Vec<OAuth2ClientResource>, Oauth2ClientProviderError>;
+
+            async fn update<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+                provider_id: &'a str,
+                data: OAuth2ClientResourceUpdate,
+            ) -> Result<OAuth2ClientResource, Oauth2ClientProviderError>;
+
+            async fn rotate_secret<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+                provider_id: &'a str,
+            ) -> Result<(OAuth2ClientResource, String), Oauth2ClientProviderError>;
+
+            async fn delete<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+                provider_id: &'a str,
+            ) -> Result<OAuth2ClientResource, Oauth2ClientProviderError>;
+        }
+    }
+}
+pub use oauth2_client::MockOauth2ClientProvider;
+
 mod oauth2_key {
     use super::*;
 

@@ -92,6 +92,7 @@ pub mod k8s_auth;
 pub mod k8s_auth_client;
 pub mod keystone;
 pub mod mapping;
+pub mod oauth2_client;
 pub mod oauth2_key;
 
 // Force inventory::submit! sections from each plugin crate to remain

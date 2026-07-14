@@ -57,10 +57,39 @@ pub struct Oauth2Provider {
     #[serde(default = "default_signing_key_rotation_days")]
     #[validate(range(min = 1))]
     pub signing_key_rotation_days: u32,
+
+    /// Argon2id memory cost, in KiB, for `OAuth2Client` confidential-client
+    /// secret hashing (ADR 0026 §5). A separate knob set from `[api_key]`
+    /// so the two credential classes can be tuned independently.
+    #[serde(default = "default_argon2_memory_kib")]
+    #[validate(range(min = 1))]
+    pub argon2_memory_kib: u32,
+
+    /// Argon2id time cost (iterations) for client secret hashing.
+    #[serde(default = "default_argon2_time_cost")]
+    #[validate(range(min = 1))]
+    pub argon2_time_cost: u32,
+
+    /// Argon2id parallelism (lanes) for client secret hashing.
+    #[serde(default = "default_argon2_parallelism")]
+    #[validate(range(min = 1))]
+    pub argon2_parallelism: u32,
 }
 
 fn default_signing_key_rotation_days() -> u32 {
     90
+}
+
+fn default_argon2_memory_kib() -> u32 {
+    65536
+}
+
+fn default_argon2_time_cost() -> u32 {
+    3
+}
+
+fn default_argon2_parallelism() -> u32 {
+    4
 }
 
 impl Default for Oauth2Provider {
@@ -68,6 +97,9 @@ impl Default for Oauth2Provider {
         Self {
             signing_algorithm: SigningAlgorithm::default(),
             signing_key_rotation_days: default_signing_key_rotation_days(),
+            argon2_memory_kib: default_argon2_memory_kib(),
+            argon2_time_cost: default_argon2_time_cost(),
+            argon2_parallelism: default_argon2_parallelism(),
         }
     }
 }

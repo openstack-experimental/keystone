@@ -101,6 +101,7 @@ pub mod k8s_auth;
 pub mod keystone;
 pub mod mapping;
 pub mod net;
+pub mod oauth2_client;
 pub mod oauth2_key;
 pub mod plugin_manager;
 pub mod policy;

@@ -1082,6 +1082,7 @@ single consolidated partition layer in FjallDB.
 | **OIDC Crypto Resource**        | `data:federation:oidc:<domain_id>:<provider_id>` | `OidcProviderResource` (Struct)               |
 | **K8s Crypto Resource**         | `data:k8s_auth:<domain_id>:<provider_id>`        | `K8sClusterResource` (Struct object)          |
 | **SPIFFE Crypto Resource**      | `data:spiffe:<domain_id>:<provider_id>`          | `SpiffeTrustResource` (Struct object)         |
+| **OAuth2 Client Resource**      | `data:oauth2:client:<domain_id>:<provider_id>`   | `OAuth2ClientResource` (Struct object)        |
 | **Unified ABAC Ruleset**        | `data:mapping:<domain_id>:<provider_id>`         | `MappingRuleSet` (Contains named rule vector) |
 
 ---
