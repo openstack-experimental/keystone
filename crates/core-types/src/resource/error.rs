@@ -15,6 +15,7 @@
 use thiserror::Error;
 
 use crate::credential::CredentialProviderError;
+use crate::oauth2_key::Oauth2KeyProviderError;
 
 #[derive(Error, Debug)]
 pub enum ResourceProviderError {
@@ -33,6 +34,15 @@ pub enum ResourceProviderError {
     /// Domain not found.
     #[error("domain {0} not found")]
     DomainNotFound(String),
+
+    /// OAuth2 signing key provider error, surfaced when provisioning a
+    /// domain's initial signing keypair synchronously on domain creation
+    /// (ADR 0026 §3, "Domain creation").
+    #[error(transparent)]
+    Oauth2KeyProvider {
+        #[from]
+        source: Oauth2KeyProviderError,
+    },
 
     /// Driver error.
     #[error("backend driver error: {0}")]

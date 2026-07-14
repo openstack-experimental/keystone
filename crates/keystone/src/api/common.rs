@@ -12,16 +12,36 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Common API helpers
+use std::net::SocketAddr;
+
+use axum::{extract::FromRequestParts, http::request::Parts};
 use serde::Serialize;
 use url::Url;
 
 use openstack_keystone_api_types::Link;
 use openstack_keystone_config::Config;
+use openstack_keystone_core::net::public_ingress_peer_addr;
 use openstack_keystone_core_types::resource::Domain;
 
 use crate::api::KeystoneApiError;
 use crate::auth::ExecutionContext;
 use crate::keystone::ServiceState;
+
+/// Raw TCP peer address for the public interface only.
+///
+/// Internal/admin requests return `None` even when `ConnectInfo` is populated
+/// for audit logging. If proxy middleware rewrote `ConnectInfo`, the preserved
+/// original peer is returned so each security control applies its own trust
+/// boundary.
+pub struct PeerAddr(pub Option<SocketAddr>);
+
+impl<S: Send + Sync> FromRequestParts<S> for PeerAddr {
+    type Rejection = axum::http::StatusCode;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        Ok(PeerAddr(public_ingress_peer_addr(&parts.extensions)))
+    }
+}
 
 /// Get the domain by ID or Name.
 ///

@@ -112,6 +112,34 @@ mod api_key {
 }
 pub use api_key::MockApiKeyProvider;
 
+mod oauth2_key {
+    use super::*;
+
+    use openstack_keystone_key_repository::asymmetric::KeyMaterial;
+
+    use crate::oauth2_key::{Oauth2KeyApi, Oauth2KeyProviderError};
+
+    mock! {
+        pub Oauth2KeyProvider {}
+
+        #[async_trait]
+        impl Oauth2KeyApi for Oauth2KeyProvider {
+            async fn ensure_domain_keys(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+            ) -> Result<KeyMaterial, Oauth2KeyProviderError>;
+
+            async fn jwks(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+            ) -> Result<jsonwebtoken::jwk::JwkSet, Oauth2KeyProviderError>;
+        }
+    }
+}
+pub use oauth2_key::MockOauth2KeyProvider;
+
 mod application_credential {
     use super::*;
 

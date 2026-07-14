@@ -57,6 +57,9 @@ use crate::k8s_auth::MockK8sAuthProvider;
 use crate::mapping::MappingApi;
 #[cfg(any(test, feature = "mock"))]
 use crate::mapping::MockMappingProvider;
+#[cfg(any(test, feature = "mock"))]
+use crate::oauth2_key::MockOauth2KeyProvider;
+use crate::oauth2_key::Oauth2KeyApi;
 use crate::plugin_manager::PluginManagerApi;
 #[cfg(any(test, feature = "mock"))]
 use crate::resource::MockResourceProvider;
@@ -104,6 +107,8 @@ pub struct Provider {
     idmapping: Box<dyn IdMappingApi>,
     /// Mapping provider.
     mapping: Box<dyn MappingApi>,
+    /// OAuth2 signing key provider.
+    oauth2_key: Box<dyn Oauth2KeyApi>,
     /// K8s auth provider.
     k8s_auth: Box<dyn K8sAuthApi>,
     /// Resource provider.
@@ -178,6 +183,12 @@ impl ProviderBuilder {
     pub fn mock_mapping(self, value: impl MappingApi + 'static) -> Self {
         let mut new = self;
         new.mapping = Some(Box::new(value));
+        new
+    }
+
+    pub fn mock_oauth2_key(self, value: impl Oauth2KeyApi + 'static) -> Self {
+        let mut new = self;
+        new.oauth2_key = Some(Box::new(value));
         new
     }
 
@@ -269,6 +280,10 @@ impl Provider {
             plugin_manager,
         )?);
         let mapping = Box::new(crate::mapping::MappingService::new(cfg, plugin_manager)?);
+        let oauth2_key = Box::new(crate::oauth2_key::Oauth2KeyService::new(
+            cfg,
+            plugin_manager,
+        )?);
         let k8s_auth = Box::new(
             crate::k8s_auth::K8sAuthService::new(cfg, plugin_manager, k8s_http_client)
                 .map_err(|e| KeystoneError::K8sAuthProvider { source: e })?,
@@ -298,6 +313,7 @@ impl Provider {
             identity,
             idmapping,
             mapping,
+            oauth2_key,
             k8s_auth,
             resource,
             revoke,
@@ -322,6 +338,7 @@ impl Provider {
             .mock_identity(MockIdentityProvider::default())
             .mock_idmapping(MockIdMappingProvider::default())
             .mock_mapping(MockMappingProvider::default())
+            .mock_oauth2_key(MockOauth2KeyProvider::default())
             .mock_federation(MockFederationProvider::default())
             .mock_k8s_auth(MockK8sAuthProvider::default())
             .mock_resource(MockResourceProvider::default())
@@ -376,6 +393,11 @@ impl Provider {
     /// Get the mapping provider.
     pub fn get_mapping_provider(&self) -> &dyn MappingApi {
         &*self.mapping
+    }
+
+    /// Get the OAuth2 signing key provider.
+    pub fn get_oauth2_key_provider(&self) -> &dyn Oauth2KeyApi {
+        &*self.oauth2_key
     }
 
     /// Get the K8s auth provider.

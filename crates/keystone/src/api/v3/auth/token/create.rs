@@ -17,8 +17,8 @@ use std::net::SocketAddr;
 
 use axum::{
     Json,
-    extract::{FromRequestParts, Query, State},
-    http::{HeaderMap, StatusCode, request::Parts},
+    extract::{Query, State},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use validator::Validate;
@@ -29,9 +29,9 @@ use openstack_keystone_core_types::auth::*;
 
 use openstack_keystone_core::api::common::get_authz_info;
 use openstack_keystone_core::auth::ExecutionContext;
-use openstack_keystone_core::net::public_ingress_peer_addr;
 use openstack_keystone_core_types::scope::Scope as ProviderScope;
 
+use crate::api::common::PeerAddr;
 use crate::api::v3::auth::token::common::authenticate_request;
 use crate::api::v3::auth::token::types::{AuthRequest, CreateTokenParameters, TokenResponse};
 use crate::api::{Catalog, CatalogService, error::KeystoneApiError};
@@ -42,22 +42,6 @@ use crate::audit::{
 use crate::common::TracedJson;
 use crate::keystone::ServiceState;
 
-/// Raw TCP peer address for the public interface only.
-///
-/// Internal/admin requests return `None` even when `ConnectInfo` is populated
-/// for audit logging. If proxy middleware rewrote `ConnectInfo`, the preserved
-/// original peer is returned so each security control applies its own trust
-/// boundary.
-pub(super) struct PeerAddr(Option<SocketAddr>);
-
-impl<S: Send + Sync> FromRequestParts<S> for PeerAddr {
-    type Rejection = std::convert::Infallible;
-
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        Ok(PeerAddr(public_ingress_peer_addr(&parts.extensions)))
-    }
-}
-
 /// Authenticate user issuing a new token.
 #[utoipa::path(
     post,
@@ -66,6 +50,7 @@ impl<S: Send + Sync> FromRequestParts<S> for PeerAddr {
     params(CreateTokenParameters),
     responses(
         (status = OK, description = "Token object", body = TokenResponse),
+        (status = TOO_MANY_REQUESTS, description = "Rate limit exceeded"),
     ),
     tag="auth"
 )]

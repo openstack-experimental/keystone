@@ -67,7 +67,7 @@ fn build_query_filters(
                 params
                     .domain_ids
                     .as_ref()
-                    .and_then(|val| if val.is_empty() { None } else { Some(val) })
+                    .filter(|&val| !val.is_empty())
                     .map(|val| db_revocation_event::Column::DomainId.is_in(val)),
             ),
     );
@@ -110,7 +110,7 @@ fn build_query_filters(
                 params
                     .role_ids
                     .as_ref()
-                    .and_then(|val| if val.is_empty() { None } else { Some(val) })
+                    .filter(|&val| !val.is_empty())
                     .map(|val| db_revocation_event::Column::RoleId.is_in(val)),
             ),
     );
@@ -121,7 +121,7 @@ fn build_query_filters(
                 params
                     .user_ids
                     .as_ref()
-                    .and_then(|val| if val.is_empty() { None } else { Some(val) })
+                    .filter(|&val| !val.is_empty())
                     .map(|val| db_revocation_event::Column::UserId.is_in(val)),
             ),
     );

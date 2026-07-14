@@ -47,6 +47,8 @@ use openstack_keystone_core::k8s_auth::K8sAuthProviderError;
 use openstack_keystone_core::k8s_auth::backend::K8sAuthBackend;
 use openstack_keystone_core::mapping::MappingBackend;
 use openstack_keystone_core::mapping::MappingProviderError;
+use openstack_keystone_core::oauth2_key::Oauth2KeyProviderError;
+use openstack_keystone_core::oauth2_key::backend::Oauth2KeyBackend;
 use openstack_keystone_core::resource::backend::ResourceBackend;
 use openstack_keystone_core::resource::error::ResourceProviderError;
 use openstack_keystone_core::revoke::RevokeProviderError;
@@ -88,6 +90,8 @@ pub struct PluginManager {
     idmapping_backends: HashMap<String, Arc<dyn IdMappingBackend>>,
     /// Mapping backend plugins.
     mapping_backends: HashMap<String, Arc<dyn MappingBackend>>,
+    /// OAuth2 signing key backend plugins.
+    oauth2_key_backends: HashMap<String, Arc<dyn Oauth2KeyBackend>>,
     /// K8s auth backend plugins.
     k8s_auth_backends: HashMap<String, Arc<dyn K8sAuthBackend>>,
     /// Resource backend plugins.
@@ -300,6 +304,24 @@ impl PluginManagerApi for PluginManager {
             .ok_or(MappingProviderError::UnsupportedDriver(
                 name.as_ref().to_string(),
             ))
+    }
+
+    /// Get registered OAuth2 signing key backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing a reference to the `Oauth2KeyBackend` if found,
+    /// or a `Oauth2KeyProviderError`.
+    #[allow(clippy::borrowed_box)]
+    fn get_oauth2_key_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn Oauth2KeyBackend>, Oauth2KeyProviderError> {
+        self.oauth2_key_backends.get(name.as_ref()).ok_or(
+            Oauth2KeyProviderError::UnsupportedDriver(name.as_ref().to_string()),
+        )
     }
 
     /// Get registered k8s auth backend.
@@ -612,6 +634,20 @@ impl PluginManagerApi for PluginManager {
             .insert(name.as_ref().to_string(), plugin);
     }
 
+    /// Register OAuth2 signing key backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to register.
+    /// * `plugin` - The backend implementation to register.
+    fn register_oauth2_key_backend<S: AsRef<str>>(
+        &mut self,
+        name: S,
+        plugin: Arc<dyn Oauth2KeyBackend>,
+    ) {
+        self.oauth2_key_backends
+            .insert(name.as_ref().to_string(), plugin);
+    }
+
     /// Register k8s_auth backend.
     ///
     /// # Parameters
@@ -798,6 +834,7 @@ impl PluginManager {
             identity_backends: HashMap::new(),
             idmapping_backends: HashMap::new(),
             mapping_backends: HashMap::new(),
+            oauth2_key_backends: HashMap::new(),
             k8s_auth_backends: HashMap::new(),
             resource_backends: HashMap::new(),
             revoke_backends: HashMap::new(),
@@ -837,6 +874,10 @@ impl PluginManager {
         slf.register_mapping_backend(
             "raft",
             Arc::new(openstack_keystone_mapping_driver_raft::RaftBackend::default()),
+        );
+        slf.register_oauth2_key_backend(
+            "raft",
+            Arc::new(openstack_keystone_oauth2_key_driver_raft::RaftOauth2KeyBackend::default()),
         );
         slf.register_api_key_backend(
             "raft",

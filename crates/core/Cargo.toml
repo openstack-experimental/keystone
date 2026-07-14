@@ -30,9 +30,13 @@ ipnet.workspace = true
 openstack-keystone-api-types = { workspace = true, optional = true }
 openstack-keystone-core-types.workspace = true
 openstack-keystone-config.workspace = true
+openstack-keystone-key-repository.workspace = true
 openstack-keystone-storage-api.workspace = true
+jsonwebtoken = { version = "10.4", features = ["rust_crypto"] }
 mockall = { workspace = true, optional = true }
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
 rand.workspace = true
+rsa = "0.9"
 regex.workspace = true
 regex-syntax.workspace = true
 sea-orm.workspace = true

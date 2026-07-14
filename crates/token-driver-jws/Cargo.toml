@@ -1,6 +1,6 @@
 [package]
 name = "openstack-keystone-token-driver-jws"
-description = "OpenStack Keystone JWS token driver (ADR 0026 §10, Phase 0)"
+description = "OpenStack Keystone JWS token driver"
 version = "0.1.0"
 rust-version.workspace = true
 edition.workspace = true

@@ -4469,7 +4469,9 @@ dependencies = [
  "openstack-keystone-idmapping-driver-sql",
  "openstack-keystone-k8s-auth-driver-raft",
  "openstack-keystone-k8s-auth-driver-sql",
+ "openstack-keystone-key-repository",
  "openstack-keystone-mapping-driver-raft",
+ "openstack-keystone-oauth2-key-driver-raft",
  "openstack-keystone-resource-driver-sql",
  "openstack-keystone-revoke-driver-sql",
  "openstack-keystone-role-driver-sql",
@@ -4734,16 +4736,20 @@ dependencies = [
  "httpmock",
  "inventory",
  "ipnet",
+ "jsonwebtoken",
  "mockall",
  "openstack-keystone-api-types",
  "openstack-keystone-audit",
  "openstack-keystone-auth-plugin-runtime",
  "openstack-keystone-config",
  "openstack-keystone-core-types",
+ "openstack-keystone-key-repository",
  "openstack-keystone-storage-api",
+ "p256",
  "rand 0.10.1",
  "regex",
  "regex-syntax",
+ "rsa",
  "rstest",
  "scrypt",
  "sea-orm",
@@ -4987,6 +4993,23 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "openstack-keystone-oauth2-key-driver-raft"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "openstack-keystone-core",
+ "openstack-keystone-core-types",
+ "openstack-keystone-distributed-storage",
+ "openstack-keystone-key-repository",
+ "rmp-serde",
+ "secrecy",
+ "serde",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

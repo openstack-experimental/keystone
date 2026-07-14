@@ -45,6 +45,8 @@ use crate::k8s_auth::K8sAuthProviderError;
 use crate::k8s_auth::backend::K8sAuthBackend;
 use crate::mapping::MappingBackend;
 use crate::mapping::error::MappingProviderError;
+use crate::oauth2_key::Oauth2KeyProviderError;
+use crate::oauth2_key::backend::Oauth2KeyBackend;
 use crate::resource::backend::ResourceBackend;
 use crate::resource::error::ResourceProviderError;
 use crate::revoke::RevokeProviderError;
@@ -192,6 +194,19 @@ pub trait PluginManagerApi {
         &self,
         name: S,
     ) -> Result<&Arc<dyn MappingBackend>, MappingProviderError>;
+
+    /// Get registered OAuth2 signing key backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn Oauth2KeyBackend>)` if found, otherwise
+    ///   `Err(Oauth2KeyProviderError)`.
+    fn get_oauth2_key_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn Oauth2KeyBackend>, Oauth2KeyProviderError>;
 
     /// Get registered k8s auth backend.
     ///
@@ -407,6 +422,17 @@ pub trait PluginManagerApi {
     /// - `name`: The name to register the backend under.
     /// - `plugin`: The backend implementation.
     fn register_mapping_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn MappingBackend>);
+
+    /// Register OAuth2 signing key backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name to register the backend under.
+    /// - `plugin`: The backend implementation.
+    fn register_oauth2_key_backend<S: AsRef<str>>(
+        &mut self,
+        name: S,
+        plugin: Arc<dyn Oauth2KeyBackend>,
+    );
 
     /// Register k8s_auth backend.
     ///

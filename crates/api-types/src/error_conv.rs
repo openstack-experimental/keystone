@@ -33,6 +33,7 @@ use openstack_keystone_core_types::error::BuilderError;
 use openstack_keystone_core_types::error::KeystoneError;
 use openstack_keystone_core_types::identity::IdentityProviderError;
 use openstack_keystone_core_types::mapping::MappingProviderError;
+use openstack_keystone_core_types::oauth2_key::Oauth2KeyProviderError;
 use openstack_keystone_core_types::resource::ResourceProviderError;
 use openstack_keystone_core_types::revoke::RevokeProviderError;
 use openstack_keystone_core_types::role::RoleProviderError;
@@ -317,6 +318,18 @@ impl From<ApiKeyProviderError> for KeystoneApiError {
             // never leak detail to the client (ADR 0021 §6.D OPSEC leakage);
             // callers on that path should prefer mapping these to a generic
             // `AuthenticationError::Unauthorized` before this conversion runs.
+            other => Self::InternalError(other.to_string()),
+        }
+    }
+}
+
+impl From<Oauth2KeyProviderError> for KeystoneApiError {
+    fn from(value: Oauth2KeyProviderError) -> Self {
+        match value {
+            Oauth2KeyProviderError::NotFound(x) => Self::NotFound {
+                resource: "oauth2_signing_key".into(),
+                identifier: x,
+            },
             other => Self::InternalError(other.to_string()),
         }
     }

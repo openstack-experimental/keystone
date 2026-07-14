@@ -429,6 +429,39 @@ mod tests {
     use crate::provider::Provider;
     use crate::resource::backend::MockResourceBackend;
     use crate::tests::get_mocked_state;
+    use openstack_keystone_core_types::resource::DomainBuilder;
+
+    #[tokio::test]
+    async fn test_create_domain_succeeds() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockResourceBackend::default();
+        backend.expect_create_domain().returning(|_, _| {
+            Ok(DomainBuilder::default()
+                .id("did")
+                .name("dname")
+                .enabled(true)
+                .build()
+                .unwrap())
+        });
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        let created = provider
+            .create_domain(
+                &ExecutionContext::internal(&state),
+                DomainCreate {
+                    id: Some("did".to_string()),
+                    name: "dname".to_string(),
+                    enabled: true,
+                    description: None,
+                    extra: Default::default(),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(created.id, "did");
+    }
 
     #[tokio::test]
     async fn test_delete_project_cascades_credentials() {

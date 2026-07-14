@@ -31,6 +31,7 @@ pub mod identity;
 pub mod idmapping;
 pub mod k8s_auth;
 pub mod mapping;
+pub mod oauth2_key;
 pub mod resource;
 pub mod revoke;
 pub mod role;

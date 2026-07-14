@@ -70,6 +70,7 @@ use openstack_keystone::k8s_auth::K8sAuthHook;
 use openstack_keystone::k8s_auth_client::KeystoneK8sHttpClient;
 use openstack_keystone::keystone::Service as KeystoneServiceState;
 use openstack_keystone::keystone::ServiceState;
+use openstack_keystone::oauth2_key::Oauth2KeyHook;
 use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone::policy::HttpPolicyEnforcer;
 use openstack_keystone::provider::Provider;
@@ -574,6 +575,10 @@ async fn subscribe_event_hooks(shared_state: &ServiceState) {
         .await;
     shared_state
         .event_dispatcher
+        .subscribe(Arc::new(Oauth2KeyHook::new(shared_state.clone())))
+        .await;
+    shared_state
+        .event_dispatcher
         .subscribe(Arc::new(ResourceHook::new(shared_state.clone())))
         .await;
     shared_state
@@ -876,7 +881,7 @@ async fn spawn_opa_subprocess(
             .kill_on_drop(true);
 
         let mut child = opa_cmd.spawn().wrap_err_with(|| {
-            format!("failed to start OPA subprocess: is `opa` installed and on PATH?")
+            "failed to start OPA subprocess: is `opa` installed and on PATH?".to_string()
         })?;
 
         let stdout = child

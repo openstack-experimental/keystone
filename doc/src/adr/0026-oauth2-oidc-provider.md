@@ -1371,6 +1371,29 @@ deployments `keystone-rs` can stand in for.
   CSRF, clickjacking, and open-redirect vectors that the rest of Keystone's
   API-only design has never had to defend. RFC 9700 mitigations are specified in
   §8.
+- **`domain_id` Enumeration via JWKS:** `GET /v4/oauth2/{domain_id}/jwks` is
+  unauthenticated by design (relying parties must fetch it without a Keystone
+  token) and returns `404` for an unknown `domain_id` versus `200` for a
+  provisioned one, letting an anonymous caller confirm whether a given
+  `domain_id` exists. This is accepted, not mitigated further: every major
+  multi-tenant OIDC provider (Auth0 tenant name, Okta org subdomain, Keycloak
+  realm name, Google Workspace `hd` domain) treats the tenant identifier in the
+  issuer/JWKS URL as public, not secret — it is embedded in every issued
+  token's `iss` claim and handed to every RP's configuration, so it cannot be
+  kept confidential once a single client is onboarded. Since `domain_id` is a
+  server-generated 128-bit UUIDv4 (`crates/core/src/resource/service.rs`,
+  `Uuid::new_v4()`), brute-force guessing across the ID space is
+  computationally infeasible and further bounded by the endpoint's per-IP rate
+  limit (ADR-0022). The one exception is the bootstrap domain, whose ID
+  defaults to the literal string `"default"`
+  (`[identity] default_domain_id`, `crates/config/src/identity.rs`) rather than
+  a UUID — its existence is trivially guessable, but this is the same "Default
+  domain exists" fact every OpenStack Keystone deployment has always exposed
+  via other unauthenticated-adjacent surfaces (e.g. `clouds.yaml` conventions,
+  federation metadata), and confirming its existence discloses nothing beyond
+  that fact. No code change is planned; operators who consider even this
+  disclosure unacceptable may override `[identity] default_domain_id` to a
+  random value at bootstrap time.
 - **Client ID Claim Enumeration:** `OpenStackAccessTokenClaims` carries
   `client_id`, which identifies the registering OAuth2 client
   (`OidcAccessTokenClaims`, §4, does not). If an attacker obtains an

@@ -28,6 +28,7 @@ use crate::identity::IdentityProviderError;
 use crate::idmapping::IdMappingProviderError;
 use crate::k8s_auth::K8sAuthProviderError;
 use crate::mapping::MappingProviderError;
+use crate::oauth2_key::Oauth2KeyProviderError;
 use crate::resource::ResourceProviderError;
 use crate::revoke::RevokeProviderError;
 use crate::role::RoleProviderError;
@@ -151,6 +152,14 @@ pub enum KeystoneError {
         /// The source of the error.
         #[from]
         source: MappingProviderError,
+    },
+
+    /// OAuth2 signing key provider.
+    #[error(transparent)]
+    Oauth2KeyProvider {
+        /// The source of the error.
+        #[from]
+        source: Oauth2KeyProviderError,
     },
 
     /// IO error.

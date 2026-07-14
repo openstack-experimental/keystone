@@ -698,7 +698,7 @@ impl FjallStateMachine {
                 // Try retired DEK epochs — legacy records have no recorded
                 // dek_version, so this is the only way to locate the right key.
                 let old_map = self.old_deks.lock().unwrap_or_else(|p| p.into_inner());
-                for (_, old) in old_map.iter() {
+                for old in old_map.values() {
                     if let Ok((pt, _)) = state_decrypt(old.state_dek(), stored, tier, keyspace, pk)
                     {
                         tracing::warn!(
