@@ -75,9 +75,11 @@ mod fernet_token;
 mod identity;
 mod idmapping;
 mod interface;
+mod jws_token;
 mod k8s_auth;
 mod listener;
 mod mapping;
+mod oauth2;
 mod oslo_middleware;
 mod policy;
 mod rate_limit;
@@ -111,9 +113,11 @@ pub use fernet_token::*;
 pub use identity::*;
 pub use idmapping::*;
 pub use interface::*;
+pub use jws_token::*;
 pub use k8s_auth::*;
 pub use listener::*;
 pub use mapping::*;
+pub use oauth2::*;
 pub use oslo_middleware::*;
 pub use policy::*;
 pub use rate_limit::*;
@@ -200,6 +204,10 @@ pub struct Config {
     #[serde(default)]
     pub fernet_tokens: FernetTokenProvider,
 
+    /// JWS tokens provider configuration (ADR 0026 §10, Phase 0).
+    #[serde(default)]
+    pub jws_tokens: JwsTokenProvider,
+
     /// Identity provider configuration.
     #[serde(default)]
     pub identity: IdentityProvider,
@@ -215,6 +223,11 @@ pub struct Config {
     /// Mapping provider configuration.
     #[serde(default)]
     pub mapping: MappingProvider,
+
+    /// OAuth2/OIDC provider configuration (ADR 0026).
+    #[serde(default)]
+    #[validate(nested)]
+    pub oauth2: Oauth2Provider,
 
     /// `[oslo_middleware]` configuration (proxy header parsing).
     #[serde(default)]

@@ -150,6 +150,13 @@ impl From<KeyRepositoryError> for FernetDriverError {
             KeyRepositoryError::IndexOverflow => Self::IndexOverflow,
             KeyRepositoryError::Persist(msg) => Self::KeyPersistFailed(msg),
             KeyRepositoryError::NixErrno { context, source } => Self::NixErrno { context, source },
+            // Unreachable in practice: `RoleMissing`/`Crypto` are produced
+            // only by the asymmetric (ES256/RS256) key repository (ADR
+            // 0026), which the symmetric Fernet token repository never
+            // uses. Mapped rather than left a `match` gap so this
+            // conversion stays exhaustive if that ever changes.
+            KeyRepositoryError::RoleMissing(_) => Self::FernetKeysMissing,
+            KeyRepositoryError::Crypto(msg) => Self::KeyPersistFailed(msg),
         }
     }
 }

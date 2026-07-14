@@ -30,8 +30,8 @@ pub struct OsloMiddleware {
     ///
     /// The name and default (**off**) match upstream oslo.middleware's
     /// `HTTPProxyToWSGI`. Even when enabled, a header is only honoured when the
-    /// immediate TCP peer matches [`trusted_proxies`](Self::trusted_proxies), so
-    /// a client reaching the listener directly cannot spoof its address.
+    /// immediate TCP peer matches [`trusted_proxies`](Self::trusted_proxies),
+    /// so a client reaching the listener directly cannot spoof its address.
     #[serde(default)]
     pub enable_proxy_headers_parsing: bool,
 

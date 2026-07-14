@@ -30,6 +30,7 @@ members = [
   "crates/storage-crypto-pkcs11",
   "crates/storage-crypto-tpm",
   "crates/token-driver-fernet",
+  "crates/token-driver-jws",
   "crates/token-restriction-driver-sql",
   "crates/trust-driver-sql",
   "crates/webauthn",
@@ -132,6 +133,7 @@ openstack-keystone-revoke-driver-sql = { version = "0.1", path = "crates/revoke-
 openstack-keystone-role-driver-sql = { version = "0.1", path = "crates/role-driver-sql/" }
 openstack-keystone-scim-driver-raft = { version = "0.1", path = "crates/scim-driver-raft/" }
 openstack-keystone-token-driver-fernet = { version = "0.1.0", path = "crates/token-driver-fernet" }
+openstack-keystone-token-driver-jws = { version = "0.1.0", path = "crates/token-driver-jws" }
 openstack-keystone-token-restriction-driver-sql = { version = "0.1", path = "crates/token-restriction-driver-sql/" }
 openstack-keystone-trust-driver-sql = { version = "0.1", path = "crates/trust-driver-sql/" }
 openstack-keystone-webauthn = { version = "0.1", path = "crates/webauthn/"}

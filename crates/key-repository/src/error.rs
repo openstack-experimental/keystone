@@ -54,4 +54,13 @@ pub enum KeyRepositoryError {
     /// Dropping to the configured `run_as` uid/gid failed.
     #[error("{context}: {source}")]
     NixErrno { context: String, source: nix::Error },
+
+    /// No asymmetric key material is present for the requested
+    /// [`crate::asymmetric::KeyRole`].
+    #[error("no key material present for role {0:?}")]
+    RoleMissing(crate::asymmetric::KeyRole),
+
+    /// Asymmetric keypair generation or DER encoding/decoding failed.
+    #[error("asymmetric keypair operation failed: {0}")]
+    Crypto(String),
 }

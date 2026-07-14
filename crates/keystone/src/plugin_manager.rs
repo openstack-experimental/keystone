@@ -786,9 +786,7 @@ impl PluginManager {
     ///
     /// # Returns
     /// A new instance of `PluginManager`.
-    pub async fn with_config(
-        config: &Config,
-    ) -> Result<Self, openstack_keystone_token_driver_fernet::FernetDriverError> {
+    pub async fn with_config(config: &Config) -> eyre::Result<Self> {
         let mut slf = Self {
             api_key_backends: HashMap::new(),
             application_credential_backends: HashMap::new(),
@@ -819,6 +817,19 @@ impl PluginManager {
         // `load_keys` to have already run.
         fernet_token_provider.load_keys().await?;
         slf.register_token_backend("fernet", Arc::new(fernet_token_provider));
+        // Only load/register the JWS backend when actually selected: unlike
+        // Fernet (always eagerly loaded, ADR 0019), a `[jws_tokens]` key
+        // repository need not exist for a Fernet-only deployment, and
+        // eagerly requiring one would break every existing installation.
+        // When `[token] provider = jws` *is* selected, fail loudly here
+        // (ADR 0026 §10, Phase 0) rather than silently falling back to
+        // Fernet if the repository is empty or unloadable.
+        if config.token.provider == openstack_keystone_config::TokenProviderDriver::Jws {
+            let mut jws_token_provider =
+                openstack_keystone_token_driver_jws::JwsTokenProvider::new(config.clone());
+            jws_token_provider.load_keys().await?;
+            slf.register_token_backend("jws", Arc::new(jws_token_provider));
+        }
         slf.register_k8s_auth_backend(
             "raft",
             Arc::new(openstack_keystone_k8s_auth_driver_raft::RaftBackend::default()),

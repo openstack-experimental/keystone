@@ -26,10 +26,16 @@ pub use error::*;
 pub use payload::*;
 pub use restriction::*;
 
-/// Fernet Token.
+/// Format-neutral token payload (ADR 0026 §10, Phase 0).
+///
+/// Historically this type was Fernet-only and named `FernetToken`. The name
+/// `TokenPayload` reflects that any [`crate::token::backend`]-style token
+/// backend — Fernet or JWS — produces/consumes this same shape; only the
+/// wire encoding differs per backend. [`FernetToken`] remains as a
+/// compatibility alias so existing call sites are unaffected.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(untagged)]
-pub enum FernetToken {
+pub enum TokenPayload {
     /// Application credential.
     ApplicationCredential(ApplicationCredentialPayload),
     /// Domain scoped.
@@ -51,6 +57,10 @@ pub enum FernetToken {
     /// Unscoped.
     Unscoped(UnscopedPayload),
 }
+
+/// Compatibility alias for [`TokenPayload`]'s former name, predating the
+/// ADR 0026 Phase 0 token-provider-abstraction rename.
+pub type FernetToken = TokenPayload;
 
 impl FernetToken {
     /// Construct the [`FernetToken`] for the requested [`ScopeInfo`] with the

@@ -50,18 +50,45 @@ impl Default for TokenProvider {
 }
 
 /// Token provider driver.
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Clone, PartialEq, Eq)]
 pub enum TokenProviderDriver {
     /// Fernet.
     #[default]
     #[serde(rename = "fernet")]
     Fernet,
+    /// Asymmetric ES256/RS256-signed JWS tokens, wire-compatible with
+    /// Python Keystone's `[token] provider = jws` (ADR 0026 §10, Phase 0).
+    #[serde(rename = "jws")]
+    Jws,
 }
 
 impl fmt::Display for TokenProviderDriver {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::Fernet => write!(f, "fernet"),
+            Self::Jws => write!(f, "jws"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_token_provider_driver_default_is_fernet() {
+        assert_eq!(TokenProviderDriver::default(), TokenProviderDriver::Fernet);
+    }
+
+    #[test]
+    fn test_token_provider_driver_display() {
+        assert_eq!(TokenProviderDriver::Fernet.to_string(), "fernet");
+        assert_eq!(TokenProviderDriver::Jws.to_string(), "jws");
+    }
+
+    #[test]
+    fn test_token_provider_driver_deserialize_jws() {
+        let parsed: TokenProviderDriver = serde_json::from_str("\"jws\"").unwrap();
+        assert_eq!(parsed, TokenProviderDriver::Jws);
     }
 }

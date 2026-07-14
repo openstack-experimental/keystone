@@ -16,7 +16,7 @@
 use openstack_keystone_config::Config;
 
 use openstack_keystone_core_types::token::{
-    FernetToken, TokenRestriction, TokenRestrictionCreate, TokenRestrictionListParameters,
+    TokenPayload, TokenRestriction, TokenRestrictionCreate, TokenRestrictionListParameters,
     TokenRestrictionUpdate,
 };
 
@@ -24,6 +24,10 @@ use crate::keystone::ServiceState;
 use crate::token::TokenProviderError;
 
 /// Token Provider backend interface.
+///
+/// Format-neutral (ADR 0026 §10, Phase 0): a backend encodes/decodes
+/// [`TokenPayload`], not a Fernet-specific wire type. `TokenBackend`
+/// implementations (Fernet, JWS, ...) each own their own wire encoding.
 #[cfg_attr(test, mockall::automock)]
 pub trait TokenBackend: Send + Sync {
     /// Set config.
@@ -39,7 +43,7 @@ pub trait TokenBackend: Send + Sync {
     ///
     /// # Returns
     /// - `Result<Token, TokenProviderError>` - The decoded token or an error.
-    fn decode(&self, credential: &str) -> Result<FernetToken, TokenProviderError>;
+    fn decode(&self, credential: &str) -> Result<TokenPayload, TokenProviderError>;
 
     /// Encode the token into a string.
     ///
@@ -48,7 +52,7 @@ pub trait TokenBackend: Send + Sync {
     ///
     /// # Returns
     /// - `Result<String, TokenProviderError>` - The encoded string or an error.
-    fn encode(&self, token: &FernetToken) -> Result<String, TokenProviderError>;
+    fn encode(&self, token: &TokenPayload) -> Result<String, TokenProviderError>;
 }
 
 /// Token restrictions backend interface.

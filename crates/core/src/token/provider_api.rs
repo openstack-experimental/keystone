@@ -98,7 +98,7 @@ pub trait TokenApi: Send + Sync {
     ///
     /// # Returns
     /// - `Result<String, TokenProviderError>` - The encoded string or an error.
-    fn encode_token(&self, token: &FernetToken) -> Result<String, TokenProviderError>;
+    fn encode_token(&self, token: &TokenPayload) -> Result<String, TokenProviderError>;
 
     /// Get the token restriction by the ID.
     ///

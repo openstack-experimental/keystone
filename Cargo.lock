@@ -4476,6 +4476,7 @@ dependencies = [
  "openstack-keystone-scim-driver-raft",
  "openstack-keystone-storage-api",
  "openstack-keystone-token-driver-fernet",
+ "openstack-keystone-token-driver-jws",
  "openstack-keystone-token-restriction-driver-sql",
  "openstack-keystone-trust-driver-sql",
  "openstack-keystone-webauthn",
@@ -4952,11 +4953,19 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
+ "chrono",
  "fernet",
  "nix 0.31.3",
  "notify",
+ "p256",
+ "pem",
+ "pkcs8",
+ "rand_core 0.6.4",
+ "rsa",
  "scopeguard",
+ "secrecy",
  "sha1 0.11.0",
+ "sha2 0.11.0",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -5119,6 +5128,29 @@ dependencies = [
  "tracing",
  "uuid",
  "validator",
+]
+
+[[package]]
+name = "openstack-keystone-token-driver-jws"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "config",
+ "jsonwebtoken",
+ "openstack-keystone-config",
+ "openstack-keystone-core",
+ "openstack-keystone-core-types",
+ "openstack-keystone-key-repository",
+ "p256",
+ "rsa",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

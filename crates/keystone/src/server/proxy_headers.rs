@@ -49,11 +49,11 @@ use openstack_keystone_core::net::{OriginalPeerAddr, resolve_client_ip_from_head
 /// with the proxy-resolved client address when the immediate peer is a trusted
 /// proxy and a forwarding header carries a different upstream client.
 ///
-/// `trusted_proxies` is the operator-configured CIDR allowlist (`[oslo_middleware]
-/// trusted_proxies`). When the resolved client equals the raw peer (direct
-/// client, untrusted peer, or an all-trusted chain), `ConnectInfo` is left
-/// untouched so the real source port is preserved. The recovered address has no
-/// meaningful source port, so port `0` is used.
+/// `trusted_proxies` is the operator-configured CIDR allowlist
+/// (`[oslo_middleware] trusted_proxies`). When the resolved client equals the
+/// raw peer (direct client, untrusted peer, or an all-trusted chain),
+/// `ConnectInfo` is left untouched so the real source port is preserved. The
+/// recovered address has no meaningful source port, so port `0` is used.
 pub async fn rewrite_client_addr(
     State(config): State<Arc<OsloMiddleware>>,
     mut req: Request,

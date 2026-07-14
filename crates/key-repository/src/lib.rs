@@ -40,6 +40,7 @@ use sha1::{Digest, Sha1};
 use tokio::sync::watch;
 use tracing::info;
 
+pub mod asymmetric;
 pub mod error;
 pub mod filesystem;
 mod source;

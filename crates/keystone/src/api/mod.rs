@@ -215,16 +215,17 @@ pub(crate) mod tests {
         assert_eq!(&body[..], b"192.0.2.4:5555");
     }
 
-    /// Issue #358 follow-up: when proxy-header parsing is enabled (config-gated,
-    /// off by default), the public listener wraps the router with the
-    /// `rewrite_client_addr` layer, exactly as `spawn_public_listener` does:
-    /// the layer sits on the outer `Router`, *outside* the #734
-    /// `NormalizePathLayer` fallback. This drives that full production
-    /// composition in-process and asserts that a `/echo/` request carrying
-    /// `X-Forwarded-For` (a) still normalizes the trailing slash, (b) reaches
-    /// the handler, and (c) delivers the *proxy-resolved* client address — not
-    /// the raw TCP peer — proving the layer runs before routing/normalization
-    /// and rewrites `ConnectInfo` end to end.
+    /// Issue #358 follow-up: when proxy-header parsing is enabled
+    /// (config-gated, off by default), the public listener wraps the router
+    /// with the `rewrite_client_addr` layer, exactly as
+    /// `spawn_public_listener` does: the layer sits on the outer `Router`,
+    /// *outside* the #734 `NormalizePathLayer` fallback. This drives that
+    /// full production composition in-process and asserts that a `/echo/`
+    /// request carrying `X-Forwarded-For` (a) still normalizes the trailing
+    /// slash, (b) reaches the handler, and (c) delivers the
+    /// *proxy-resolved* client address — not the raw TCP peer — proving the
+    /// layer runs before routing/normalization and rewrites `ConnectInfo`
+    /// end to end.
     #[tokio::test]
     async fn proxy_headers_rewrite_client_addr_and_normalize() {
         async fn echo_addr(ConnectInfo(addr): ConnectInfo<SocketAddr>) -> String {

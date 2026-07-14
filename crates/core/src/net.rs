@@ -177,8 +177,8 @@ fn forwarding_chain(value: &str, trusted_header: ProxyHeader) -> Option<Vec<IpAd
         .collect()
 }
 
-/// Extract the `for=` IP from a single RFC 7239 `Forwarded` list element such as
-/// `for=192.0.2.60;proto=http;by=203.0.113.43`. Obfuscated identifiers
+/// Extract the `for=` IP from a single RFC 7239 `Forwarded` list element such
+/// as `for=192.0.2.60;proto=http;by=203.0.113.43`. Obfuscated identifiers
 /// (`for=_hidden`) yield `None`.
 fn forwarded_element_ip(element: &str) -> Option<IpAddr> {
     let mut result = None;

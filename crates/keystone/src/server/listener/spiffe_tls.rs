@@ -129,8 +129,8 @@ pub async fn start_axum_app(
 ///   * the peer's validated [`CoreSpiffeId`], when present;
 ///   * the raw TCP peer address in the same [`ConnectInfo<SocketAddr>`]
 ///     extension the public listener populates via
-///     `into_make_service_with_connect_info` (issue #358), so `client.addr`
-///     is captured on the internal interface too;
+///     `into_make_service_with_connect_info` (issue #358), so `client.addr` is
+///     captured on the internal interface too;
 ///   * the [`Interface`] the request arrived on.
 fn attach_request_context(
     extensions: &mut axum::http::Extensions,

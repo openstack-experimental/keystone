@@ -57,6 +57,7 @@ openstack-keystone-revoke-driver-sql.workspace = true
 openstack-keystone-role-driver-sql.workspace = true
 openstack-keystone-scim-driver-raft.workspace = true
 openstack-keystone-token-driver-fernet.workspace = true
+openstack-keystone-token-driver-jws.workspace = true
 openstack-keystone-token-restriction-driver-sql.workspace = true
 openstack-keystone-trust-driver-sql.workspace = true
 openstack-keystone-webauthn.workspace = true

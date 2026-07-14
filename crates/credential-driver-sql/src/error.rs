@@ -75,6 +75,15 @@ impl From<KeyRepositoryError> for CredentialFernetError {
             KeyRepositoryError::NixErrno { context, source } => {
                 Self::Persist(format!("{context}: {source}"))
             }
+            // Unreachable in practice: `RoleMissing`/`Crypto` are produced
+            // only by the asymmetric (ES256/RS256) key repository (ADR
+            // 0026), which the symmetric Fernet credential repository
+            // never uses. Mapped rather than left a `match` gap so this
+            // conversion stays exhaustive if that ever changes.
+            KeyRepositoryError::RoleMissing(role) => {
+                Self::Persist(format!("unexpected asymmetric key role missing: {role:?}"))
+            }
+            KeyRepositoryError::Crypto(msg) => Self::Persist(msg),
         }
     }
 }
