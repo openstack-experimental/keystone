@@ -77,6 +77,15 @@ impl Oauth2KeyApi for Oauth2KeyService {
         let active = self.backend_driver.active_keys(state, domain_id).await?;
         active_keys_to_jwk_set(&active)
     }
+
+    async fn active_signing_key(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<KeyMaterial, Oauth2KeyProviderError> {
+        let active = self.backend_driver.active_keys(state, domain_id).await?;
+        Ok(active.primary)
+    }
 }
 
 #[cfg(test)]
@@ -121,5 +130,27 @@ mod tests {
 
         let jwks = service.jwks(&state, "domain-1").await.unwrap();
         assert_eq!(jwks.keys.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_active_signing_key_returns_primary() {
+        let mut backend = MockOauth2KeyBackend::default();
+        backend.expect_active_keys().returning(|_, _| {
+            Ok(openstack_keystone_key_repository::asymmetric::ActiveKeys {
+                primary: generate_keypair(KeySigningAlgorithm::Es256).unwrap(),
+                previous: None,
+            })
+        });
+        let service = Oauth2KeyService {
+            backend_driver: Arc::new(backend),
+            signing_algorithm: KeySigningAlgorithm::Es256,
+        };
+        let state = get_mocked_state(None, None).await;
+
+        let key = service
+            .active_signing_key(&state, "domain-1")
+            .await
+            .unwrap();
+        assert_eq!(key.algorithm, KeySigningAlgorithm::Es256);
     }
 }

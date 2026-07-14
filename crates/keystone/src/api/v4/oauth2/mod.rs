@@ -26,6 +26,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod clients;
 mod jwks;
+mod token;
 mod well_known;
 
 use crate::keystone::ServiceState;
@@ -43,5 +44,6 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
         .routes(routes!(jwks::jwks))
         .routes(routes!(well_known::well_known))
+        .routes(routes!(token::token))
         .merge(clients::openapi_router())
 }

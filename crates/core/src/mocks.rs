@@ -200,6 +200,12 @@ mod oauth2_key {
                 state: &ServiceState,
                 domain_id: &str,
             ) -> Result<jsonwebtoken::jwk::JwkSet, Oauth2KeyProviderError>;
+
+            async fn active_signing_key(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+            ) -> Result<KeyMaterial, Oauth2KeyProviderError>;
         }
     }
 }

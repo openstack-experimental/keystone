@@ -15,6 +15,8 @@
 
 mod error;
 mod resource;
+mod token_claims;
 
 pub use error::*;
 pub use resource::*;
+pub use token_claims::*;

@@ -19,12 +19,14 @@
 //! ES256/RS256 signing keys follow a Primary/Previous/Pending model
 //! (ADR 0026 §3), not a flat N-key ring.
 pub mod filesystem;
+mod jwt_bridge;
 mod keygen;
 mod kid;
 mod repository;
 mod source;
 
 pub use filesystem::FilesystemAsymmetricKeySource;
+pub use jwt_bridge::{jwt_algorithm, to_decoding_key, to_encoding_key};
 pub use keygen::generate_keypair;
 pub use kid::derive_kid;
 pub use repository::{ActiveKeys, AsymmetricKeyRepository};

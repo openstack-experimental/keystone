@@ -62,6 +62,13 @@ pub struct Service {
     /// presented token fails the format check) (ADR 0021 §6.A).
     pub api_key_rate_limiter: Arc<DefaultKeyedRateLimiter<String>>,
 
+    /// Sliding-window rate limiter for `POST /v4/oauth2/{domain_id}/token`,
+    /// keyed on the raw, unverified `client_id` string presented in the
+    /// request (ADR 0026 §7.A "Pre-Hash Enforcement") - checked before any
+    /// storage lookup or Argon2id verification. A separate pool from
+    /// `api_key_rate_limiter` above, own tunable blast radius.
+    pub oauth2_token_rate_limiter: Arc<DefaultKeyedRateLimiter<String>>,
+
     /// Loaded dynamic auth plugins (ADR 0025). Empty until
     /// `crate::auth_plugin_startup::load_auth_plugins` runs
     /// post-construction - `CoreHostFunctions` needs a `ServiceState`,
@@ -144,6 +151,21 @@ impl Service {
         );
         let api_key_rate_limiter = Arc::new(RateLimiter::keyed(quota));
 
+        let oauth2_cfg = cfg.config.read().await.oauth2.clone();
+        let oauth2_token_quota = Quota::per_minute(
+            oauth2_cfg
+                .token_rate_limit_replenish_per_minute
+                .try_into()
+                .unwrap_or(std::num::NonZeroU32::MAX),
+        )
+        .allow_burst(
+            oauth2_cfg
+                .token_rate_limit_burst_size
+                .try_into()
+                .unwrap_or(std::num::NonZeroU32::MAX),
+        );
+        let oauth2_token_rate_limiter = Arc::new(RateLimiter::keyed(oauth2_token_quota));
+
         // Build rate-limiting state from config. Fails fast (Invariant 2) if
         // any enabled bucket has zero burst or replenish rate.
         let rate_limiters = {
@@ -160,6 +182,7 @@ impl Service {
             policy_enforcer,
             storage,
             api_key_rate_limiter,
+            oauth2_token_rate_limiter,
             auth_plugin_registry: RwLock::new(Arc::new(WasmPluginRegistry::default())),
             core_host_functions: RwLock::new(None),
             rate_limiters,

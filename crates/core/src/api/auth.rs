@@ -235,6 +235,9 @@ mod tests {
             api_key_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
                 governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
             )),
+            oauth2_token_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
+                governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
+            )),
             auth_plugin_registry: tokio::sync::RwLock::new(Arc::new(
                 openstack_keystone_auth_plugin_runtime::WasmPluginRegistry::default(),
             )),
@@ -351,6 +354,9 @@ mod tests {
             api_key_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
                 governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
             )),
+            oauth2_token_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
+                governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
+            )),
             auth_plugin_registry: tokio::sync::RwLock::new(Arc::new(
                 openstack_keystone_auth_plugin_runtime::WasmPluginRegistry::default(),
             )),
@@ -461,6 +467,9 @@ mod tests {
             api_key_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
                 governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
             )),
+            oauth2_token_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
+                governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
+            )),
             auth_plugin_registry: tokio::sync::RwLock::new(Arc::new(
                 openstack_keystone_auth_plugin_runtime::WasmPluginRegistry::default(),
             )),
@@ -535,6 +544,9 @@ mod tests {
             api_key_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
                 governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
             )),
+            oauth2_token_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
+                governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
+            )),
             auth_plugin_registry: tokio::sync::RwLock::new(Arc::new(
                 openstack_keystone_auth_plugin_runtime::WasmPluginRegistry::default(),
             )),
@@ -606,6 +618,9 @@ mod tests {
 
             storage: None,
             api_key_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
+                governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
+            )),
+            oauth2_token_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
                 governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
             )),
             auth_plugin_registry: tokio::sync::RwLock::new(Arc::new(

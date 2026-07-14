@@ -72,6 +72,14 @@ pub enum IdentitySource {
         /// The dynamic plugin's configured name.
         plugin_name: String,
     },
+    /// OAuth2 `client_credentials` machine identity ingress (ADR 0026 §5
+    /// amendment to ADR 0020 §3). The client authenticated at `/token` is
+    /// the ingress principal; `provider_id` anchors the owning
+    /// `OAuth2Client` resource, same two-component shape as `ApiClient`.
+    OAuth2Client {
+        /// The OAuth2 client's `provider_id` this ruleset is bound to.
+        provider_id: String,
+    },
 }
 
 impl IdentitySource {
@@ -86,6 +94,7 @@ impl IdentitySource {
             Self::Spiffe { trust_domain } => format!("spiffe:{trust_domain}"),
             Self::ApiClient { provider_id } => format!("api_client:{provider_id}"),
             Self::WasmPlugin { plugin_name } => format!("wasm:{plugin_name}"),
+            Self::OAuth2Client { provider_id } => format!("oauth2_client:{provider_id}"),
         }
     }
 }

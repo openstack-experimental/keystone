@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # OAuth2 client secret generation & Argon2id hashing (ADR 0026 §5)
-use argon2::password_hash::{PasswordHasher, SaltString};
+use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
 use rand::RngExt;
@@ -26,6 +26,11 @@ use crate::oauth2_client::Oauth2ClientProviderError;
 const SECRET_PREFIX: &str = "kosc";
 /// ~256 bits of entropy over the 62-character alphanumeric alphabet.
 const ENTROPY_LEN: usize = 43;
+
+/// Fixed non-secret input used only to burn CPU time equivalent to a real
+/// verification, never compared against a stored hash (ADR 0022, mirrors
+/// ADR 0021 Invariant 7). Deliberately not derived from any request data.
+const DUMMY_ENTROPY: &str = "keystone-oauth2-client-dummy-entropy-constant-time-padding";
 
 fn generate_salt() -> String {
     let mut bytes = [0u8; 16];
@@ -73,6 +78,34 @@ pub async fn hash_secret(
     .map_err(Oauth2ClientProviderError::crypto)?
 }
 
+/// Verify a plaintext client secret against a stored PHC-formatted Argon2id
+/// hash. Verification uses the algorithm/version/parameters embedded in
+/// `phc` itself, not the caller's current configuration. Comparison is
+/// constant-time, performed internally by the `argon2` crate.
+pub async fn verify_secret(entropy: &str, phc: &str) -> Result<bool, Oauth2ClientProviderError> {
+    let entropy = entropy.to_string();
+    let phc = phc.to_string();
+    tokio::task::spawn_blocking(move || {
+        let parsed = PasswordHash::new(&phc).map_err(Oauth2ClientProviderError::crypto)?;
+        Ok(Argon2::default()
+            .verify_password(entropy.as_bytes(), &parsed)
+            .is_ok())
+    })
+    .await
+    .map_err(Oauth2ClientProviderError::crypto)?
+}
+
+/// Generate a dummy Argon2id hash using the current configured parameters,
+/// for the caller to verify a `/token` request against when the presented
+/// `client_id` doesn't resolve to a confidential client. Ensures that path
+/// costs the same wall time as a real "found but wrong secret" verification,
+/// preventing timing-based enumeration of valid client IDs (ADR 0026 §7.A).
+pub async fn generate_dummy_hash(
+    config: &Oauth2Provider,
+) -> Result<String, Oauth2ClientProviderError> {
+    hash_secret(&SecretString::from(DUMMY_ENTROPY.to_string()), config).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,5 +144,22 @@ mod tests {
                 .verify_password(wrong.expose_secret().as_bytes(), &parsed)
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn test_verify_secret_roundtrip() {
+        let config = test_config();
+        let secret = generate_secret();
+        let phc = hash_secret(&secret, &config).await.unwrap();
+        assert!(verify_secret(secret.expose_secret(), &phc).await.unwrap());
+        assert!(!verify_secret("wrong-entropy", &phc).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_generate_dummy_hash_is_valid_phc_not_matching_real_secrets() {
+        let config = test_config();
+        let phc = generate_dummy_hash(&config).await.unwrap();
+        assert!(verify_secret(DUMMY_ENTROPY, &phc).await.unwrap());
+        assert!(!verify_secret("attacker-guess", &phc).await.unwrap());
     }
 }

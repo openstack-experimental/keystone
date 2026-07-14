@@ -55,6 +55,7 @@ impl From<api::IdentitySource> for core::IdentitySource {
             api::IdentitySource::Spiffe { trust_domain } => Self::Spiffe { trust_domain },
             api::IdentitySource::ApiClient { provider_id } => Self::ApiClient { provider_id },
             api::IdentitySource::WasmPlugin { plugin_name } => Self::WasmPlugin { plugin_name },
+            api::IdentitySource::OAuth2Client { provider_id } => Self::OAuth2Client { provider_id },
         }
     }
 }
@@ -67,6 +68,9 @@ impl From<core::IdentitySource> for api::IdentitySource {
             core::IdentitySource::Spiffe { trust_domain } => Self::Spiffe { trust_domain },
             core::IdentitySource::ApiClient { provider_id } => Self::ApiClient { provider_id },
             core::IdentitySource::WasmPlugin { plugin_name } => Self::WasmPlugin { plugin_name },
+            core::IdentitySource::OAuth2Client { provider_id } => {
+                Self::OAuth2Client { provider_id }
+            }
         }
     }
 }

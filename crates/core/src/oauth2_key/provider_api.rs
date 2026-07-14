@@ -56,4 +56,22 @@ pub trait Oauth2KeyApi: Send + Sync {
         state: &ServiceState,
         domain_id: &str,
     ) -> Result<jsonwebtoken::jwk::JwkSet, Oauth2KeyProviderError>;
+
+    /// Fetch the domain's current `Primary` signing key, including private
+    /// key material, for signing a newly minted `/token` JWT (ADR 0026 §7,
+    /// Phase 3). Unlike [`Self::jwks`] this is never exposed over HTTP.
+    ///
+    /// # Arguments
+    /// * `state` - Service state.
+    /// * `domain_id` - The domain to fetch the signing key for.
+    ///
+    /// # Returns
+    /// * Success with the domain's `Primary` [`KeyMaterial`].
+    /// * [`Oauth2KeyProviderError::NotFound`] if no keys are provisioned for
+    ///   this domain.
+    async fn active_signing_key(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<KeyMaterial, Oauth2KeyProviderError>;
 }

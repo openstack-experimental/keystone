@@ -25,16 +25,16 @@ use openstack_keystone_core::token::TokenProviderError;
 use openstack_keystone_core::token::backend::TokenBackend;
 use openstack_keystone_core_types::token::TokenPayload;
 use openstack_keystone_key_repository::asymmetric::{
-    ActiveKeys, AsymmetricKeyRepository, FilesystemAsymmetricKeySource,
+    ActiveKeys, AsymmetricKeyRepository, FilesystemAsymmetricKeySource, to_decoding_key,
+    to_encoding_key,
 };
 
 mod claims;
 pub mod error;
-mod keys;
 
 pub use claims::JwsClaims;
 pub use error::JwsDriverError;
-pub use keys::jwt_algorithm;
+pub use openstack_keystone_key_repository::asymmetric::jwt_algorithm;
 
 /// Linkage anchor — see ADR-0018. Referenced by the `keystone` crate's
 /// `build.rs`-generated `_ANCHORS` static so the linker extracts `.rlib`
@@ -103,10 +103,10 @@ impl TokenBackend for JwsTokenProvider {
         let candidates = std::iter::once(&active.primary).chain(active.previous.iter());
         let mut last_err: Option<JwsDriverError> = None;
         for material in candidates {
-            let decoding_key = match keys::to_decoding_key(material) {
+            let decoding_key = match to_decoding_key(material) {
                 Ok(k) => k,
                 Err(e) => {
-                    last_err = Some(e);
+                    last_err = Some(JwsDriverError::from(e));
                     continue;
                 }
             };
@@ -128,8 +128,9 @@ impl TokenBackend for JwsTokenProvider {
     fn encode(&self, token: &TokenPayload) -> Result<String, TokenProviderError> {
         let active = self.active().map_err(TokenProviderError::from)?;
         let claims = JwsClaims::try_from(token).map_err(TokenProviderError::from)?;
-        let encoding_key =
-            keys::to_encoding_key(&active.primary).map_err(TokenProviderError::from)?;
+        let encoding_key = to_encoding_key(&active.primary)
+            .map_err(JwsDriverError::from)
+            .map_err(TokenProviderError::from)?;
         let header = Header::new(jwt_algorithm(active.primary.algorithm));
         encode(&header, &claims, &encoding_key)
             .map_err(|e| TokenProviderError::from(JwsDriverError::from(e)))

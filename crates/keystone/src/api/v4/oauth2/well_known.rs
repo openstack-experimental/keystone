@@ -34,7 +34,7 @@ use crate::api::common::PeerAddr;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 
-async fn base_url(state: &ServiceState, headers: &HeaderMap) -> String {
+pub(super) async fn base_url(state: &ServiceState, headers: &HeaderMap) -> String {
     // Mirrors the fallback chain used by `api::v4::version`:
     // `public_endpoint` -> `Host` header -> `http://localhost`.
     state

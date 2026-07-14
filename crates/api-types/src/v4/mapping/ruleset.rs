@@ -75,6 +75,11 @@ pub enum IdentitySource {
         /// The dynamic plugin's configured name.
         plugin_name: String,
     },
+    /// OAuth2 `client_credentials` machine identity source (ADR 0026 §5).
+    OAuth2Client {
+        /// The OAuth2 client's `provider_id` this ruleset is bound to.
+        provider_id: String,
+    },
 }
 
 // ---------------------------------------------------------------------------

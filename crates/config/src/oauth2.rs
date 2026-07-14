@@ -74,6 +74,27 @@ pub struct Oauth2Provider {
     #[serde(default = "default_argon2_parallelism")]
     #[validate(range(min = 1))]
     pub argon2_parallelism: u32,
+
+    /// Lifetime, in minutes, of an `access_token` minted at `/token` (ADR
+    /// 0026 §4).
+    #[serde(default = "default_access_token_lifetime_minutes")]
+    #[validate(range(min = 1))]
+    pub access_token_lifetime_minutes: u32,
+
+    /// Maximum burst of `/token` requests accepted instantaneously, per
+    /// rate-limit key (the presented, unverified `client_id`), before
+    /// throttling kicks in (ADR 0026 §7.A). A separate pool from
+    /// `[api_key] rate_limit_burst_size` so SCIM ingress and OAuth2 ingress
+    /// have independently tunable blast radii.
+    #[serde(default = "default_token_rate_limit_burst_size")]
+    #[validate(range(min = 1))]
+    pub token_rate_limit_burst_size: u32,
+
+    /// Sustained `/token` requests allowed per minute, per rate-limit key,
+    /// once the burst allowance is exhausted.
+    #[serde(default = "default_token_rate_limit_replenish_per_minute")]
+    #[validate(range(min = 1))]
+    pub token_rate_limit_replenish_per_minute: u32,
 }
 
 fn default_signing_key_rotation_days() -> u32 {
@@ -92,6 +113,18 @@ fn default_argon2_parallelism() -> u32 {
     4
 }
 
+fn default_access_token_lifetime_minutes() -> u32 {
+    15
+}
+
+fn default_token_rate_limit_burst_size() -> u32 {
+    10
+}
+
+fn default_token_rate_limit_replenish_per_minute() -> u32 {
+    60
+}
+
 impl Default for Oauth2Provider {
     fn default() -> Self {
         Self {
@@ -100,6 +133,9 @@ impl Default for Oauth2Provider {
             argon2_memory_kib: default_argon2_memory_kib(),
             argon2_time_cost: default_argon2_time_cost(),
             argon2_parallelism: default_argon2_parallelism(),
+            access_token_lifetime_minutes: default_access_token_lifetime_minutes(),
+            token_rate_limit_burst_size: default_token_rate_limit_burst_size(),
+            token_rate_limit_replenish_per_minute: default_token_rate_limit_replenish_per_minute(),
         }
     }
 }
@@ -113,6 +149,9 @@ mod tests {
         let cfg = Oauth2Provider::default();
         assert_eq!(cfg.signing_algorithm, SigningAlgorithm::Es256);
         assert_eq!(cfg.signing_key_rotation_days, 90);
+        assert_eq!(cfg.access_token_lifetime_minutes, 15);
+        assert_eq!(cfg.token_rate_limit_burst_size, 10);
+        assert_eq!(cfg.token_rate_limit_replenish_per_minute, 60);
         assert!(cfg.validate().is_ok());
     }
 
