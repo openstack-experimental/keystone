@@ -45,6 +45,8 @@ struct StoredKeyMaterial {
     public_key_der: Vec<u8>,
     kid: String,
     created_at: chrono::DateTime<chrono::Utc>,
+    #[serde(default)]
+    demoted_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -79,6 +81,7 @@ impl From<&KeyMaterial> for StoredKeyMaterial {
             public_key_der: value.public_key_der.clone(),
             kid: value.kid.clone(),
             created_at: value.created_at,
+            demoted_at: value.demoted_at,
         }
     }
 }
@@ -91,9 +94,16 @@ impl From<StoredKeyMaterial> for KeyMaterial {
             public_key_der: value.public_key_der,
             kid: value.kid,
             created_at: value.created_at,
+            demoted_at: value.demoted_at,
         }
     }
 }
+
+/// Prefix shared by every domain's signing-key entries, for the cross-domain
+/// janitor scan (`list_all_active_keys_impl`). Assumes domain IDs never
+/// contain `:` (true for identity domain IDs, which are opaque UUIDs/slugs),
+/// so the tail of a full key unambiguously splits into `<domain_id>:<role>`.
+const ALL_SIGNING_KEYS_PREFIX: &str = "oauth2:signing_key:v1:";
 
 fn role_str(role: KeyRole) -> &'static str {
     match role {
@@ -104,11 +114,11 @@ fn role_str(role: KeyRole) -> &'static str {
 }
 
 fn key_name(domain_id: &str, role: KeyRole) -> String {
-    format!("oauth2:signing_key:v1:{domain_id}:{}", role_str(role))
+    format!("{ALL_SIGNING_KEYS_PREFIX}{domain_id}:{}", role_str(role))
 }
 
 fn key_prefix(domain_id: &str) -> String {
-    format!("oauth2:signing_key:v1:{domain_id}:")
+    format!("{ALL_SIGNING_KEYS_PREFIX}{domain_id}:")
 }
 
 fn role_from_key(key: &str, prefix: &str) -> Option<KeyRole> {
@@ -118,6 +128,18 @@ fn role_from_key(key: &str, prefix: &str) -> Option<KeyRole> {
         "pending" => Some(KeyRole::Pending),
         _ => None,
     }
+}
+
+fn parse_domain_and_role(key: &str) -> Option<(String, KeyRole)> {
+    let rest = key.strip_prefix(ALL_SIGNING_KEYS_PREFIX)?;
+    let (domain_id, role_str) = rest.rsplit_once(':')?;
+    let role = match role_str {
+        "primary" => KeyRole::Primary,
+        "previous" => KeyRole::Previous,
+        "pending" => KeyRole::Pending,
+        _ => return None,
+    };
+    Some((domain_id.to_string(), role))
 }
 
 /// A per-domain, Raft-backed [`AsymmetricKeySource`].
@@ -338,12 +360,16 @@ impl RaftOauth2KeyBackend {
         let fresh = repo
             .generate_keypair(algorithm)
             .map_err(Oauth2KeyProviderError::crypto)?;
+        let demoted_primary = KeyMaterial {
+            demoted_at: Some(chrono::Utc::now()),
+            ..active.primary
+        };
 
         let mutations = vec![
             key_set_mutation(domain_id, KeyRole::Primary, &fresh)
                 .map_err(store_err_to_key_repo_err)
                 .map_err(Oauth2KeyProviderError::crypto)?,
-            key_set_mutation(domain_id, KeyRole::Previous, &active.primary)
+            key_set_mutation(domain_id, KeyRole::Previous, &demoted_primary)
                 .map_err(store_err_to_key_repo_err)
                 .map_err(Oauth2KeyProviderError::crypto)?,
         ];
@@ -470,12 +496,16 @@ impl RaftOauth2KeyBackend {
 
         let new_primary = KeyMaterial::from(record.key);
         let active = self.active_keys_impl(storage, domain_id).await?;
+        let demoted_primary = KeyMaterial {
+            demoted_at: Some(chrono::Utc::now()),
+            ..active.primary
+        };
 
         let mutations = vec![
             key_set_mutation(domain_id, KeyRole::Primary, &new_primary)
                 .map_err(store_err_to_key_repo_err)
                 .map_err(Oauth2KeyProviderError::crypto)?,
-            key_set_mutation(domain_id, KeyRole::Previous, &active.primary)
+            key_set_mutation(domain_id, KeyRole::Previous, &demoted_primary)
                 .map_err(store_err_to_key_repo_err)
                 .map_err(Oauth2KeyProviderError::crypto)?,
             Mutation::remove(pending_emergency_key_name(domain_id), None::<&str>, None),
@@ -554,6 +584,82 @@ impl RaftOauth2KeyBackend {
             .filter(|(_, expires_at)| *expires_at > now)
             .map(|(jti, _)| jti)
             .collect())
+    }
+
+    /// Cross-domain scan for the previous-key/JTI janitor: every domain
+    /// that currently has a `Primary` signing key, with its `Previous` (if
+    /// any). Mirrors `api-key-driver-raft`'s `list_all_impl` cross-domain
+    /// prefix scan.
+    async fn list_all_active_keys_impl(
+        &self,
+        storage: &dyn StorageApi,
+    ) -> Result<Vec<(String, ActiveKeys)>, Oauth2KeyProviderError> {
+        let entries = storage
+            .prefix(ALL_SIGNING_KEYS_PREFIX.as_bytes(), None)
+            .await
+            .map_err(|e| Oauth2KeyProviderError::raft(store_err_to_key_repo_err(e)))?;
+
+        let mut by_domain: BTreeMap<String, BTreeMap<KeyRole, KeyMaterial>> = BTreeMap::new();
+        for (key, envelope) in entries {
+            let Some((domain_id, role)) = parse_domain_and_role(&key) else {
+                continue;
+            };
+            let stored: StoreDataEnvelope<StoredKeyMaterial> = envelope
+                .try_deserialize()
+                .map_err(|e| Oauth2KeyProviderError::raft(store_err_to_key_repo_err(e)))?;
+            by_domain
+                .entry(domain_id)
+                .or_default()
+                .insert(role, KeyMaterial::from(stored.data));
+        }
+
+        Ok(by_domain
+            .into_iter()
+            .filter_map(|(domain_id, mut roles)| {
+                let primary = roles.remove(&KeyRole::Primary)?;
+                let previous = roles.remove(&KeyRole::Previous);
+                Some((domain_id, ActiveKeys { primary, previous }))
+            })
+            .collect())
+    }
+
+    /// Remove `domain_id`'s `Previous` signing key, if present. Idempotent:
+    /// returns `false` (not an error) when there was nothing to remove, so
+    /// the janitor can safely call this every sweep without tracking state
+    /// across passes.
+    async fn retire_previous_key_impl(
+        &self,
+        storage: &dyn StorageApi,
+        domain_id: &str,
+    ) -> Result<bool, Oauth2KeyProviderError> {
+        let key = key_name(domain_id, KeyRole::Previous);
+        let existed = storage
+            .get_by_key(key.as_bytes(), None)
+            .await
+            .map_err(|e| Oauth2KeyProviderError::raft(store_err_to_key_repo_err(e)))?
+            .is_some();
+        if existed {
+            storage
+                .remove(key, None)
+                .await
+                .map_err(|e| Oauth2KeyProviderError::raft(store_err_to_key_repo_err(e)))?;
+        }
+        Ok(existed)
+    }
+
+    /// Proactively sweep `domain_id`'s JTI revocation list for expired
+    /// entries. `add_revoked_jtis_impl` already lazy-sweeps on every write
+    /// (ADR 0020 §4.A posture); this just triggers that same rewrite with no
+    /// new entries, for domains that see no emergency rotations to trigger
+    /// it otherwise.
+    async fn prune_expired_jtis_impl(
+        &self,
+        storage: &dyn StorageApi,
+        domain_id: &str,
+        jti_ttl_secs: i64,
+    ) -> Result<(), Oauth2KeyProviderError> {
+        self.add_revoked_jtis_impl(storage, domain_id, vec![], jti_ttl_secs)
+            .await
     }
 }
 
@@ -656,6 +762,51 @@ impl Oauth2KeyBackend for RaftOauth2KeyBackend {
             .as_deref()
             .ok_or(Oauth2KeyProviderError::RaftNotAvailable)?;
         self.revoked_jtis_impl(storage, domain_id).await
+    }
+
+    async fn list_all_active_keys(
+        &self,
+        state: &ServiceState,
+    ) -> Result<Vec<(String, ActiveKeys)>, Oauth2KeyProviderError> {
+        let storage = state
+            .storage
+            .as_deref()
+            .ok_or(Oauth2KeyProviderError::RaftNotAvailable)?;
+        self.list_all_active_keys_impl(storage).await
+    }
+
+    async fn retire_previous_key(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<bool, Oauth2KeyProviderError> {
+        let storage = state
+            .storage
+            .as_deref()
+            .ok_or(Oauth2KeyProviderError::RaftNotAvailable)?;
+        self.retire_previous_key_impl(storage, domain_id).await
+    }
+
+    async fn prune_expired_jtis(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<(), Oauth2KeyProviderError> {
+        let storage = state
+            .storage
+            .as_deref()
+            .ok_or(Oauth2KeyProviderError::RaftNotAvailable)?;
+        let jti_ttl_secs = i64::from(
+            state
+                .config_manager
+                .config
+                .read()
+                .await
+                .oauth2
+                .access_token_lifetime_minutes,
+        ) * 60;
+        self.prune_expired_jtis_impl(storage, domain_id, jti_ttl_secs)
+            .await
     }
 }
 

@@ -135,6 +135,10 @@ impl FilesystemAsymmetricKeySource {
             public_key_der,
             kid,
             created_at,
+            // Not persisted to disk: this source has no rotation janitor
+            // (ADR 0026 §10 Phase 0, JWS-only single-node use), so there is
+            // nothing that needs to measure time-since-demotion here.
+            demoted_at: None,
         }))
     }
 

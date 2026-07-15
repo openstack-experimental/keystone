@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::oauth2_key::PendingRotationInfo;
 use openstack_keystone_key_repository::asymmetric::{
-    KeyMaterial, SigningAlgorithm as KeySigningAlgorithm,
+    ActiveKeys, KeyMaterial, SigningAlgorithm as KeySigningAlgorithm,
 };
 
 use crate::keystone::ServiceState;
@@ -129,6 +129,33 @@ impl Oauth2KeyApi for Oauth2KeyService {
         domain_id: &str,
     ) -> Result<HashSet<String>, Oauth2KeyProviderError> {
         self.backend_driver.revoked_jtis(state, domain_id).await
+    }
+
+    async fn list_all_active_keys(
+        &self,
+        state: &ServiceState,
+    ) -> Result<Vec<(String, ActiveKeys)>, Oauth2KeyProviderError> {
+        self.backend_driver.list_all_active_keys(state).await
+    }
+
+    async fn retire_previous_key(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<bool, Oauth2KeyProviderError> {
+        self.backend_driver
+            .retire_previous_key(state, domain_id)
+            .await
+    }
+
+    async fn prune_expired_jtis(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<(), Oauth2KeyProviderError> {
+        self.backend_driver
+            .prune_expired_jtis(state, domain_id)
+            .await
     }
 }
 

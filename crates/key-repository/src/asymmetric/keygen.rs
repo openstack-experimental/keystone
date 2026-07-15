@@ -68,6 +68,7 @@ pub fn generate_keypair(algorithm: SigningAlgorithm) -> Result<KeyMaterial, KeyR
         public_key_der,
         kid,
         created_at: Utc::now(),
+        demoted_at: None,
     })
 }
 
