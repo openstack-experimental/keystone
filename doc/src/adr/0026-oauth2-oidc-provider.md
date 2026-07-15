@@ -1503,6 +1503,51 @@ schemas, `OAuth2Client` authorization checks for who may request delegation on
 whose behalf, and CADF event definitions are left to the follow-up ADR amendment
 that actually implements this grant.
 
+### Implemented (Phase 6 Amendment)
+
+The grant above is now built, as the follow-up amendment this section itself
+anticipated. Concrete choices made during implementation:
+
+- **`Trust` and `AppCred` only, not `Ec2`.** `Trust`'s and
+  `ApplicationCredential`'s immutable project (`Trust.project_id`,
+  `ApplicationCredential.project_id`) is already carried on the object embedded in
+  `AuthenticationContext::Trust`/`ApplicationCredential` once `subject_token` is
+  validated through the existing `TokenApi::validate_to_context` pipeline - no
+  new provider lookup needed. `AuthenticationContext::Ec2Credential` carries no
+  such object (by design - see its own doc comment: a plain EC2 credential has no
+  delegation metadata of its own unless it was itself minted through a trust or
+  app-cred, in which case the *outer* `Trust`/`ApplicationCredential` context
+  already applies). Deriving an EC2 credential's own bound project would need a
+  provider lookup this phase does not add; guessing wrong on I2's boundary is
+  not an acceptable risk, so `Ec2Credential` is rejected outright
+  (`invalid_grant`) rather than approximated. A future increment can add it once
+  that lookup exists.
+- **Authorization gating:** the exchanging `OAuth2Client` must hold
+  `token-exchange` in its own `grant_types`, the same Tier-1/Tier-2-agnostic
+  mechanism every other grant uses (`client.grant_types.contains(...)`) -
+  enabling the grant on a client is itself an ordinary client update, gated by
+  the existing `policy/oauth2/client/update.rego`. No new admin-only carve-out
+  was added specifically for this grant (unlike `pre_authorized`), since -
+  unlike pre-authorization skipping user consent entirely - a Token Exchange
+  grant only ever re-expresses a delegation the presented `subject_token`
+  already proves the caller holds; it grants no new authority beyond what that
+  token's own chain already carries.
+- **`keystone_ruleset_version`:** set to `0` (a sentinel, not a real ruleset
+  hash) - a token-exchange grant does not go through a `MappingRuleSet` at all
+  (the subject is an already-authenticated native Keystone credential, not an
+  external ingress source), so there is no ruleset state to anchor to. The
+  claim remains advisory-only (§11) and this sentinel does not affect
+  downstream enforcement.
+- **No audit-log-derived jti backfill dependency:** unlike §3's emergency
+  rotation, Token Exchange needed no new audit query capability - the grantor
+  object needed is already embedded in the validated
+  `ValidatedSecurityContext`, no separate lookup or log query required.
+- **CADF event:** reuses the existing `emit_oauth2_session_event` best-effort
+  path (the same one `client_credentials`/`authorization_code` use), keyed on
+  `client_id` - no new event type was needed since delegation-specific detail
+  already lives in the returned `delegation_context` claim itself, and no
+  emergency/critical posture applies to a routine token mint.
+
 ---
 
 ## 13. Fernet Coexistence & Long-Term Migration Strategy

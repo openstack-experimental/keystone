@@ -338,6 +338,94 @@ pub async fn emit_oauth2_refresh_reuse_critical_event(
     }
 }
 
+/// Emit the best-effort `OAUTH2_KEY_ROTATION` CADF event (ADR 0026 §3,
+/// "Normal Rotation Flow", step 5) after a domain's signing key rotates.
+/// Uses `dispatch()` (best-effort), same posture as
+/// [`emit_oauth2_session_event`] -- routine, operator-triggered rotation,
+/// not the emergency/breach path.
+pub fn emit_oauth2_key_rotation_event(
+    dispatcher: &Arc<AuditDispatcher>,
+    correlation_id: &str,
+    initiator: Initiator,
+    domain_id: &str,
+    new_kid: &str,
+) {
+    let node_id = dispatcher.node_id().to_string();
+    let event_id = format!("{}:{}", node_id, Uuid::new_v4());
+    let payload = CadfEventPayload::new(
+        event_id,
+        "1.0".to_string(),
+        "default".to_string(),
+        correlation_id.to_string(),
+        chrono::Utc::now().to_rfc3339(),
+        "OAUTH2_KEY_ROTATION".to_string(),
+        "success".to_string(),
+        Some(format!(
+            "domain {domain_id} rotated to new signing key {new_kid}"
+        )),
+        initiator,
+        Target {
+            id: domain_id.to_string(),
+            type_uri: "data/security/keystone/oauth2_signing_key".to_string(),
+        },
+        Observer {
+            node_id: node_id.clone(),
+            id: format!("service/security/keystone/{node_id}"),
+        },
+    );
+    let event = payload.sign(dispatcher);
+    dispatcher.dispatch(event);
+}
+
+/// Emit the critical `OAUTH2_EMERGENCY_KEY_ROTATION` CADF event (ADR 0026
+/// §3, "Emergency Rotation and Signing Key Compromise", step 4) once a
+/// pending emergency rotation is confirmed and the compromised key's JTIs
+/// are revoked. Fail-closed dispatch via
+/// [`AuditDispatcher::dispatch_critical`], mirroring
+/// [`emit_oauth2_refresh_reuse_critical_event`] -- this is the breach-
+/// response path, not routine key hygiene.
+pub async fn emit_oauth2_emergency_key_rotation_critical_event(
+    dispatcher: &Arc<AuditDispatcher>,
+    correlation_id: &str,
+    initiator: Initiator,
+    domain_id: &str,
+    new_kid: &str,
+    revoked_jtis: &[String],
+) {
+    let node_id = dispatcher.node_id().to_string();
+    let event_id = format!("{}:{}", node_id, Uuid::new_v4());
+    let payload = CadfEventPayload::new(
+        event_id,
+        "1.0".to_string(),
+        "default".to_string(),
+        correlation_id.to_string(),
+        chrono::Utc::now().to_rfc3339(),
+        "OAUTH2_EMERGENCY_KEY_ROTATION".to_string(),
+        "success".to_string(),
+        Some(format!(
+            "domain {domain_id} emergency-rotated to new signing key {new_kid}; revoked_jtis={revoked_jtis:?}"
+        )),
+        initiator,
+        Target {
+            id: domain_id.to_string(),
+            type_uri: "data/security/keystone/oauth2_signing_key".to_string(),
+        },
+        Observer {
+            node_id: node_id.clone(),
+            id: format!("service/security/keystone/{node_id}"),
+        },
+    );
+    let event = payload.sign(dispatcher);
+    if dispatcher.dispatch_critical(event).await.is_err() {
+        dispatcher.record_postaudit_drop();
+        tracing::error!(
+            domain_id,
+            new_kid,
+            "failed to dispatch OAUTH2_EMERGENCY_KEY_ROTATION critical audit event: audit channel dead"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -433,6 +521,34 @@ mod tests {
             "req-1",
             build_initiator_unknown(),
             "family-1",
+        )
+        .await;
+        assert_eq!(dispatcher.postaudit_dropped_count(), before + 1);
+    }
+
+    #[test]
+    fn emit_oauth2_key_rotation_event_does_not_panic() {
+        let dispatcher = AuditDispatcher::noop();
+        emit_oauth2_key_rotation_event(
+            &dispatcher,
+            "req-1",
+            build_initiator_unknown(),
+            "domain-1",
+            "kid-new",
+        );
+    }
+
+    #[tokio::test]
+    async fn emit_oauth2_emergency_key_rotation_critical_event_records_drop_on_dead_channel() {
+        let dispatcher = AuditDispatcher::noop();
+        let before = dispatcher.postaudit_dropped_count();
+        emit_oauth2_emergency_key_rotation_critical_event(
+            &dispatcher,
+            "req-1",
+            build_initiator_unknown(),
+            "domain-1",
+            "kid-new",
+            &["jti-1".to_string()],
         )
         .await;
         assert_eq!(dispatcher.postaudit_dropped_count(), before + 1);

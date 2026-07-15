@@ -34,6 +34,9 @@ pub enum GrantType {
     DeviceCode,
     /// RFC 6749 `refresh_token`.
     RefreshToken,
+    /// RFC 8693 Token Exchange (ADR 0026 §12 v2 shape).
+    #[serde(rename = "urn:ietf:params:oauth:grant-type:token-exchange")]
+    TokenExchange,
 }
 
 /// A registered OAuth2/OIDC relying party. Never carries `client_secret` or

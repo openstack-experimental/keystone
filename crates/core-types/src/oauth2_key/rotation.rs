@@ -11,10 +11,16 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # OAuth2 per-domain signing key provider (ADR 0026 §3)
+//! # Signing key rotation DTOs (ADR 0026 §3)
 
-mod error;
-mod rotation;
-
-pub use error::*;
-pub use rotation::PendingRotationInfo;
+/// Returned when an emergency rotation is staged: the confirming operator
+/// needs `rotation_id`, and callers surface `expires_at` so they know the
+/// dual-control confirmation window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingRotationInfo {
+    /// Opaque identifier the second operator passes to confirm the
+    /// rotation.
+    pub rotation_id: String,
+    /// Unix epoch seconds after which this pending rotation auto-aborts.
+    pub expires_at: i64,
+}
