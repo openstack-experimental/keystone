@@ -104,6 +104,38 @@ deploy:
         - host:
             # Join non-zero Raft nodes to the cluster (node 0 initialized by bootstrap)
             command: ["sh", "-c", 'REPLICAS=$(kubectl get sts keystone-rs -o jsonpath="{.spec.replicas}"); for i in $(seq 1 $(($REPLICAS - 1))); do kubectl exec keystone-rs-$i -- keystone-manage storage join https://keystone-rs-0.keystone-rs-internal.default.svc.cluster.local:8300 || true; done']
+        - host:
+            # ADR 0026 §3: `default` is bootstrapped by the legacy Python
+            # `keystone-manage bootstrap` (bootstrap-job.yaml), which writes
+            # straight to the DB and never fires the Rust API's
+            # `Oauth2KeyHook`, so `default` would otherwise never get an
+            # OAuth2 signing key. Run the idempotent
+            # `keystone-manage oauth2 ensure-signing-key` via `kubectl exec`
+            # into the already-running keystone-rs-0 pod (same pod/SPIFFE
+            # identity as `[interface_admin] admin_svid`, so it
+            # auto-authenticates as SystemAdmin -- see
+            # `crates/core/src/api/auth.rs`). Retried here, from the host,
+            # rather than from an in-pod hook/sidecar: raft may not have a
+            # leader yet and OPA may not have bound its socket yet on a
+            # fresh cluster, both transient.
+            command:
+              - sh
+              - -c
+              - |
+                attempt=0
+                max_attempts=60
+                until kubectl exec keystone-rs-0 -c keystone -- keystone-manage oauth2 ensure-signing-key --domain default; do
+                  attempt=$((attempt + 1))
+                  if [ "$attempt" -ge "$max_attempts" ]; then
+                    echo "ensure-signing-key failed after $attempt attempts, giving up"
+                    exit 1
+                  fi
+                  backoff=12
+                  [ "$attempt" -lt 6 ] && backoff=$((attempt * 2))
+                  echo "ensure-signing-key attempt $attempt failed, retrying in ${backoff}s"
+                  sleep "$backoff"
+                done
+                echo "OAuth2 signing key ensured for domain default"
 
 verify:
   - &api_test_v3
@@ -140,7 +172,7 @@ verify:
       command: ["/tests/test-api-v4"]
       env:
         - name: "RUST_LOG"
-          value: "info,reqwest=off,h2=off,hyper=off"
+          value: "debug,reqwest=off,h2=off,hyper=off"
         - name: "KEYSTONE_URL"
           value: "http://keystone-rs.default.svc.cluster.local:8080"
         - name: "OS_AUTH_URL"
@@ -155,6 +187,8 @@ verify:
           value: "admin"
         - name: "OS_PROJECT_DOMAIN_ID"
           value: "default"
+        - name: "WEBAUTHN_URL"
+          value: "https://keystone.local"
     executionMode:
       kubernetesCluster: {}
 

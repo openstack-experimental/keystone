@@ -29,6 +29,7 @@ mod clients;
 mod confirm_rotate_signing_key;
 mod device;
 mod device_authorization;
+mod ensure_signing_key;
 mod html;
 mod jwks;
 mod jwks_revocation;
@@ -64,5 +65,6 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .routes(routes!(
             confirm_rotate_signing_key::confirm_rotate_signing_key
         ))
+        .routes(routes!(ensure_signing_key::ensure_signing_key))
         .merge(clients::openapi_router())
 }

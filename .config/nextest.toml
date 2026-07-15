@@ -2,7 +2,7 @@ experimental = ["setup-scripts"]
 
 [profile.default]
 # exclude raft-only tests from the integration test binary only
-default-filter = 'not (binary(integration) and (test(/spiffe/) or test(/mapping/) or test(/test_cluster/) or test(/api_key/) or test(/scim_realm/) or test(/oauth2_session/) or test(/oauth2_token_verify/)))'
+default-filter = 'not (binary(integration) and (test(/spiffe/) or test(/mapping/) or test(/test_cluster/) or test(/api_key/) or test(/scim_realm/) or test(/oauth2_session/) or test(/oauth2_token_verify/) or test(/oauth2_device_grant/) or test(/oauth2_token_exchange/) or test(/oauth2_key_janitor/) or test(/oauth2_emergency_rotation/)))'
 # Global default settings
 #
 [scripts.setup.setup-pg]

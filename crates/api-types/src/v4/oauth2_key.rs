@@ -62,3 +62,12 @@ pub struct ConfirmRotateSigningKeyResponse {
     /// The newly active `Primary` key's `kid`.
     pub kid: String,
 }
+
+/// Response body for `POST /v4/oauth2/{domain_id}/ensure-signing-key`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct EnsureSigningKeyResponse {
+    /// The domain's `Primary` key's `kid` -- pre-existing if one was
+    /// already provisioned, freshly generated otherwise.
+    pub kid: String,
+}

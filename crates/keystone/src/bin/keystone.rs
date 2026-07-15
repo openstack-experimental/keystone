@@ -830,7 +830,7 @@ async fn start_raft(
 /// embedded OPA is actually serving.
 async fn spawn_opa_subprocess(
     cfg: &Config,
-    _token: &CancellationToken,
+    token: &CancellationToken,
     handles: &mut tokio::task::JoinSet<()>,
 ) -> Result<(), Report> {
     if let Some(policies_path) = &cfg.api_policy.opa_policies_path {
@@ -997,24 +997,47 @@ async fn spawn_opa_subprocess(
             addr, health_url
         );
 
+        let opa_cancel_token = token.clone();
         handles.spawn(async move {
-            match child.wait().await {
-                Ok(code) => {
-                    if code.success() {
-                        info!("OPA subprocess exited cleanly with status {}", code);
-                    } else if let Some(exit_code) = code.code() {
-                        error!(
-                            exit_code = exit_code,
-                            "OPA subprocess exited with error code"
-                        );
-                    } else if let Some(signal) = code.signal() {
-                        error!(signal = signal, "OPA subprocess was killed by signal");
-                    } else {
-                        error!("OPA subprocess exited abnormally (status unknown)");
+            tokio::select! {
+                // Normal path: OPA exited on its own (crash, `opa` binary
+                // missing mid-run, etc).
+                result = child.wait() => {
+                    match result {
+                        Ok(code) => {
+                            if code.success() {
+                                info!("OPA subprocess exited cleanly with status {}", code);
+                            } else if let Some(exit_code) = code.code() {
+                                error!(
+                                    exit_code = exit_code,
+                                    "OPA subprocess exited with error code"
+                                );
+                            } else if let Some(signal) = code.signal() {
+                                error!(signal = signal, "OPA subprocess was killed by signal");
+                            } else {
+                                error!("OPA subprocess exited abnormally (status unknown)");
+                            }
+                        }
+                        Err(e) => {
+                            error!(error = %e, "failed to wait on OPA subprocess");
+                        }
                     }
                 }
-                Err(e) => {
-                    error!(error = %e, "failed to wait on OPA subprocess");
+                // Shutdown path: without this arm, nothing ever signals OPA
+                // to stop -- `kill_on_drop(true)` on the `Command` is dead
+                // weight here because `child` is parked inside `.wait()`
+                // above and never dropped while the process is running, so
+                // OPA would otherwise outlive `main()`'s
+                // `handles.join_all().await` as an orphan on every shutdown,
+                // graceful or not.
+                () = opa_cancel_token.cancelled() => {
+                    info!("Shutdown requested, stopping OPA subprocess");
+                    if let Err(e) = child.start_kill() {
+                        error!(error = %e, "failed to signal OPA subprocess to stop");
+                    }
+                    if let Err(e) = child.wait().await {
+                        error!(error = %e, "failed to reap OPA subprocess after shutdown");
+                    }
                 }
             }
         });

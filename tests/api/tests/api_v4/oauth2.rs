@@ -11,24 +11,10 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-pub mod api_key;
-pub mod assignment;
-pub mod auth;
-pub mod common;
-pub mod credential;
-pub mod federation;
-pub mod guard;
-pub mod identity;
-pub mod mapping;
-pub mod oauth2;
-pub mod resource;
-pub mod role;
-pub mod scim;
-pub mod scim_realm;
-pub mod token_restriction;
-pub mod webauthn;
+//! `/v4/oauth2/*` functional tests (ADR 0026).
 
-pub mod k8s_auth {
-    pub mod auth;
-    pub mod instance;
-}
+mod device_authorization;
+mod device_browser;
+mod discovery;
+mod jwks_revocation;
+mod token_device_grant;

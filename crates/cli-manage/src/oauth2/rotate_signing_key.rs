@@ -100,3 +100,49 @@ impl PerformAction for RotateSigningKeyCommand {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::*;
+
+    #[derive(Parser)]
+    struct Wrapper {
+        #[command(flatten)]
+        inner: RotateSigningKeyCommand,
+    }
+
+    #[test]
+    fn test_parses_domain_and_emergency_flags() {
+        let wrapper = Wrapper::parse_from(["oauth2", "--domain", "domain-1", "--emergency"]);
+        assert_eq!(wrapper.inner.domain, "domain-1");
+        assert!(wrapper.inner.emergency);
+    }
+
+    #[test]
+    fn test_emergency_defaults_to_false() {
+        let wrapper = Wrapper::parse_from(["oauth2", "--domain", "domain-1"]);
+        assert_eq!(wrapper.inner.domain, "domain-1");
+        assert!(!wrapper.inner.emergency);
+    }
+
+    #[tokio::test]
+    async fn test_take_action_rejects_missing_admin_interface_config() {
+        // `get_admin_client` is the first thing `take_action` calls: a
+        // `Config` with no `[interface_admin]` section (the default) must
+        // fail fast with a clear error rather than attempting SPIFFE mTLS
+        // setup against a nonexistent socket.
+        let cfg = Config::default();
+        let command = RotateSigningKeyCommand {
+            domain: "domain-1".to_string(),
+            emergency: false,
+        };
+
+        let err = command.take_action(&cfg).await.unwrap_err();
+        assert!(
+            err.to_string().contains("admin interface not configured"),
+            "unexpected error: {err}"
+        );
+    }
+}

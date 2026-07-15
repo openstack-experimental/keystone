@@ -392,13 +392,13 @@ pub(super) async fn device_login(
         }
     };
 
-    let IdentityInfo::Principal(pinfo) = &auth_result.principal.identity else {
+    let IdentityInfo::User(user_info) = &auth_result.principal.identity else {
         return Ok(error_page(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal error",
         ));
     };
-    let user_id = pinfo.id.clone();
+    let user_id = user_info.user_id.clone();
     let now = chrono::Utc::now().timestamp();
 
     let grant = match state

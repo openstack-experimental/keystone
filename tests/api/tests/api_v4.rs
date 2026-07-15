@@ -17,6 +17,7 @@
 
 mod api_v4 {
     mod mapping;
+    mod oauth2;
     mod scim_realm;
     mod webauthn;
 }

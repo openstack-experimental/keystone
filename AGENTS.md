@@ -67,6 +67,39 @@ Backend traits in `crates/core/src/backend.rs` follow CRUD naming:
   invalid auth
 - Policy enforcement via OPA Rego in `policy/` directory
 
+## Running `test_api` (live-server API tests)
+
+- `cargo nextest run --profile api -p test_api` spawns SPIRE + OPA + a real
+  `keystone` server via `tools/start-api.sh` as a nextest setup script, and
+  by default leaves them running after the run finishes (no auto-teardown).
+  Re-running without cleanup can pile up stale daemons across sessions; check
+  `ps aux | grep -E 'tmp/nextest|spire-ci-test-harness'` and kill leftovers
+  (or run `tools/teardown-api.sh`) before starting a fresh run if a prior run
+  was interrupted/killed.
+- **Never pipe the run through `tail`/`tail -N`** (e.g.
+  `cargo nextest run ... | tail -200`). `tail` without `-f` buffers until
+  EOF, and the setup script's long-running daemons (keystone/spire/opa)
+  inherit the pipe's write fd, so it never closes even after nextest itself
+  exits — the whole invocation looks permanently hung even though the test
+  run actually finished. Redirect to a file instead
+  (`cargo nextest run ... > /tmp/out.log 2>&1 &`) and read the file.
+- The `default` domain is seeded directly in the DB at bootstrap, **not**
+  created through `POST /v3/domains`. `Oauth2KeyHook` (ADR 0026) only
+  provisions a domain's OAuth2 signing keys on the domain-*creation event*,
+  so `default` never gets keys and `/v4/oauth2/default/jwks` and
+  `/v4/oauth2/default/.well-known/openid-configuration` 404 forever. Tests
+  needing real OAuth2 signing/jwks/discovery must create a fresh domain via
+  the API first (key provisioning is async — poll before asserting).
+- `AuthenticationResult.principal.identity` from
+  `authenticate_by_password`/password auth is always `IdentityInfo::User`,
+  never `IdentityInfo::Principal` (that variant is for SPIFFE/workload
+  identities only). Handler code and its unit-test mocks must agree on this
+  — a mismatch here doesn't fail to compile, it 500s silently at runtime
+  with no log line (an unlogged `Err(_) => error_page(500, ...)` branch), so
+  crate-level unit tests with a mock built the same wrong way won't catch
+  it. Only a live-server request through the real password-auth path
+  surfaces it.
+
 ## Commit Message Rules
 
 - **Format**: Conventional Commits (`type: subject body`) enforced by

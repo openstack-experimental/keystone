@@ -22,10 +22,12 @@ use spiffe_rustls::{authorizer, mtls_client};
 use openstack_keystone_config::Config;
 
 mod confirm_rotate_signing_key;
+mod ensure_signing_key;
 mod rotate_signing_key;
 
 use crate::PerformAction;
 use crate::oauth2::confirm_rotate_signing_key::ConfirmRotateSigningKeyCommand;
+use crate::oauth2::ensure_signing_key::EnsureSigningKeyCommand;
 use crate::oauth2::rotate_signing_key::RotateSigningKeyCommand;
 
 /// OAuth2/OIDC provider administration (ADR 0026).
@@ -41,6 +43,7 @@ impl PerformAction for Oauth2Command {
         match self.command {
             Oauth2Commands::RotateSigningKey(e) => e.take_action(config).await,
             Oauth2Commands::ConfirmRotateSigningKey(e) => e.take_action(config).await,
+            Oauth2Commands::EnsureSigningKey(e) => e.take_action(config).await,
         }
     }
 }
@@ -49,6 +52,7 @@ impl PerformAction for Oauth2Command {
 enum Oauth2Commands {
     RotateSigningKey(RotateSigningKeyCommand),
     ConfirmRotateSigningKey(ConfirmRotateSigningKeyCommand),
+    EnsureSigningKey(EnsureSigningKeyCommand),
 }
 
 /// Build a `reqwest::Client` bound to the admin interface's Unix domain
@@ -71,4 +75,52 @@ async fn get_admin_client(config: &Config) -> Result<Client, Report> {
         .tls_backend_preconfigured(client_config)
         .build()
         .wrap_err("Building reqwest client failed")
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::*;
+
+    #[derive(Parser)]
+    struct Wrapper {
+        #[command(subcommand)]
+        command: Oauth2Commands,
+    }
+
+    #[test]
+    fn test_parses_rotate_signing_key_subcommand() {
+        let wrapper = Wrapper::parse_from(["oauth2", "rotate-signing-key", "--domain", "domain-1"]);
+        assert!(matches!(
+            wrapper.command,
+            Oauth2Commands::RotateSigningKey(_)
+        ));
+    }
+
+    #[test]
+    fn test_parses_confirm_rotate_signing_key_subcommand() {
+        let wrapper = Wrapper::parse_from([
+            "oauth2",
+            "confirm-rotate-signing-key",
+            "--domain",
+            "domain-1",
+            "--rotation-id",
+            "rot-1",
+        ]);
+        assert!(matches!(
+            wrapper.command,
+            Oauth2Commands::ConfirmRotateSigningKey(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_get_admin_client_rejects_missing_admin_interface_config() {
+        let cfg = Config::default();
+        let err = get_admin_client(&cfg).await.unwrap_err();
+        assert!(
+            err.to_string().contains("admin interface not configured"),
+            "unexpected error: {err}"
+        );
+    }
 }
