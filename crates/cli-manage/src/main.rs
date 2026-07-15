@@ -26,12 +26,14 @@ mod bootstrap;
 mod common;
 mod credential;
 mod db;
+mod oauth2;
 mod storage;
 mod token;
 
 use crate::bootstrap::*;
 use crate::credential::*;
 use crate::db::*;
+use crate::oauth2::*;
 use crate::storage::*;
 use crate::token::*;
 
@@ -66,6 +68,9 @@ enum Command {
     /// Database management commands.
     Db(DbCommand),
 
+    /// OAuth2/OIDC provider administration (ADR 0026).
+    Oauth2(Oauth2Command),
+
     /// Distributed storage management.
     Storage(StorageCommand),
 
@@ -87,6 +92,7 @@ async fn main() -> Result<(), Report> {
         Command::Bootstrap(x) => x.take_action(&cfg).await?,
         Command::Credential(x) => x.take_action(&cfg).await?,
         Command::Db(x) => x.take_action(&cfg).await?,
+        Command::Oauth2(x) => x.take_action(&cfg).await?,
         Command::Storage(x) => x.take_action(&cfg).await?,
         Command::Token(x) => x.take_action(&cfg).await?,
     }

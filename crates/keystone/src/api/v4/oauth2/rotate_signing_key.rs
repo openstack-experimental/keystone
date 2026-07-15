@@ -30,39 +30,15 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+
+use openstack_keystone_api_types::v4::oauth2_key::{
+    RotateSigningKeyRequest, RotateSigningKeyResponse,
+};
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::audit::{CorrelationId, build_initiator_from_vsc, emit_oauth2_key_rotation_event};
 use crate::keystone::ServiceState;
-
-/// Request body for `rotate-signing-key`.
-#[derive(Debug, Deserialize, ToSchema)]
-pub(super) struct RotateSigningKeyRequest {
-    /// Stage an emergency (dual-control) rotation instead of committing
-    /// immediately.
-    #[serde(default)]
-    emergency: bool,
-}
-
-/// Response body for `rotate-signing-key`.
-#[derive(Debug, Serialize, ToSchema)]
-pub(super) struct RotateSigningKeyResponse {
-    /// Set when `emergency` was `false`: the newly active `Primary` key's
-    /// `kid`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    kid: Option<String>,
-    /// Set when `emergency` was `true`: pass this to
-    /// `confirm-rotate-signing-key`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pending_rotation_id: Option<String>,
-    /// Set when `emergency` was `true`: Unix epoch seconds after which the
-    /// pending rotation auto-aborts.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    expires_at: Option<i64>,
-}
 
 #[utoipa::path(
     post,
