@@ -24,6 +24,7 @@ pub mod pkce;
 mod provider_api;
 pub mod service;
 pub mod token;
+pub mod verify;
 
 #[cfg(any(test, feature = "mock"))]
 pub use crate::mocks::MockOauth2ClientProvider;
@@ -31,3 +32,4 @@ pub use error::Oauth2ClientProviderError;
 pub use provider_api::Oauth2ClientApi;
 pub use service::Oauth2ClientService;
 pub use token::{build_access_token_claims, hydrate_client_credentials_context};
+pub use verify::{TokenVerificationError, verify_openstack_access_token};
