@@ -27,6 +27,7 @@
 pub mod backend;
 pub mod error;
 pub mod hook;
+pub mod janitor;
 pub mod jwks;
 mod provider_api;
 pub mod service;

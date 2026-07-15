@@ -16,7 +16,7 @@ use std::collections::HashSet;
 
 use async_trait::async_trait;
 
-use openstack_keystone_key_repository::asymmetric::KeyMaterial;
+use openstack_keystone_key_repository::asymmetric::{ActiveKeys, KeyMaterial};
 
 use crate::keystone::ServiceState;
 use crate::oauth2_key::Oauth2KeyProviderError;
@@ -142,4 +142,33 @@ pub trait Oauth2KeyApi: Send + Sync {
         state: &ServiceState,
         domain_id: &str,
     ) -> Result<HashSet<String>, Oauth2KeyProviderError>;
+
+    /// Cross-domain scan of every domain currently holding a `Primary`
+    /// signing key with its `Previous` (if any), for the previous-key/JTI
+    /// janitor (`crate::oauth2_key::janitor`). There is no cluster-wide
+    /// domain listing elsewhere in this provider (every other method is
+    /// scoped to a single `domain_id`), so this is the janitor's only entry
+    /// point for discovering which domains to sweep.
+    async fn list_all_active_keys(
+        &self,
+        state: &ServiceState,
+    ) -> Result<Vec<(String, ActiveKeys)>, Oauth2KeyProviderError>;
+
+    /// Remove `domain_id`'s `Previous` signing key, if present (ADR 0026
+    /// §3: one full access-token lifetime after demotion). Idempotent:
+    /// returns `Ok(false)`, not an error, if there was nothing to remove.
+    async fn retire_previous_key(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<bool, Oauth2KeyProviderError>;
+
+    /// Proactively sweep `domain_id`'s JTI revocation list for entries past
+    /// their TTL, for domains with no emergency rotation to otherwise
+    /// trigger the lazy sweep in [`Self::confirm_emergency_rotation`].
+    async fn prune_expired_jtis(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<(), Oauth2KeyProviderError>;
 }

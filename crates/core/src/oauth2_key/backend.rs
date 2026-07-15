@@ -95,4 +95,28 @@ pub trait Oauth2KeyBackend: Send + Sync {
         state: &ServiceState,
         domain_id: &str,
     ) -> Result<HashSet<String>, Oauth2KeyProviderError>;
+
+    /// Cross-domain scan of every domain currently holding a `Primary`
+    /// signing key, for the previous-key/JTI janitor.
+    /// See [`crate::oauth2_key::Oauth2KeyApi::list_all_active_keys`].
+    async fn list_all_active_keys(
+        &self,
+        state: &ServiceState,
+    ) -> Result<Vec<(String, ActiveKeys)>, Oauth2KeyProviderError>;
+
+    /// Remove `domain_id`'s `Previous` signing key, if present.
+    /// See [`crate::oauth2_key::Oauth2KeyApi::retire_previous_key`].
+    async fn retire_previous_key(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<bool, Oauth2KeyProviderError>;
+
+    /// Proactively sweep `domain_id`'s JTI revocation list for expired
+    /// entries. See [`crate::oauth2_key::Oauth2KeyApi::prune_expired_jtis`].
+    async fn prune_expired_jtis(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<(), Oauth2KeyProviderError>;
 }
