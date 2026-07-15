@@ -84,3 +84,57 @@ impl PerformAction for ConfirmRotateSigningKeyCommand {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::*;
+
+    #[derive(Parser)]
+    struct Wrapper {
+        #[command(flatten)]
+        inner: ConfirmRotateSigningKeyCommand,
+    }
+
+    #[test]
+    fn test_parses_repeated_revoke_jti_flags() {
+        let wrapper = Wrapper::parse_from([
+            "oauth2",
+            "--domain",
+            "domain-1",
+            "--rotation-id",
+            "rot-1",
+            "--revoke-jti",
+            "jti-a",
+            "--revoke-jti",
+            "jti-b",
+        ]);
+        assert_eq!(wrapper.inner.domain, "domain-1");
+        assert_eq!(wrapper.inner.rotation_id, "rot-1");
+        assert_eq!(wrapper.inner.revoke_jtis, vec!["jti-a", "jti-b"]);
+    }
+
+    #[test]
+    fn test_revoke_jti_defaults_to_empty() {
+        let wrapper =
+            Wrapper::parse_from(["oauth2", "--domain", "domain-1", "--rotation-id", "rot-1"]);
+        assert!(wrapper.inner.revoke_jtis.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_take_action_rejects_missing_admin_interface_config() {
+        let cfg = Config::default();
+        let command = ConfirmRotateSigningKeyCommand {
+            domain: "domain-1".to_string(),
+            rotation_id: "rot-1".to_string(),
+            revoke_jtis: vec![],
+        };
+
+        let err = command.take_action(&cfg).await.unwrap_err();
+        assert!(
+            err.to_string().contains("admin interface not configured"),
+            "unexpected error: {err}"
+        );
+    }
+}

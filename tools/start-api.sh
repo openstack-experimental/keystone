@@ -167,9 +167,27 @@ for i in {1..30}; do
 
         echo "✅ Keystone bootstrap completed!"
 
+        # ADR 0026 §3: the `default` domain's OAuth2 signing keys are
+        # provisioned by `Oauth2KeyHook` firing off the generic
+        # fire-and-forget `EventDispatcher` on domain creation, not
+        # synchronously within `bootstrap`'s own request/response cycle (see
+        # `tests/integration/src/oauth2_token_verify.rs`'s comment on the
+        # same race). Poll `/v4/oauth2/default/jwks` until it actually
+        # returns a non-empty key set so oauth2 API tests never race key
+        # provisioning at suite start.
+        for j in {1..30}; do
+            JWKS_KEYS=$(curl -s "$URL/v4/oauth2/default/jwks" | grep -c '"kty"' || true)
+            if [ "$JWKS_KEYS" -gt 0 ]; then
+                echo "✅ OAuth2 default-domain signing keys are provisioned!"
+                break
+            fi
+            sleep 0.5
+        done
+
         # Export env vars for nextest to inject into test processes
         echo "KEYSTONE_URL=http://localhost:8080" >> "$NEXTEST_ENV"
         echo "OS_AUTH_URL=http://localhost:8080" >> "$NEXTEST_ENV"
+        echo "WEBAUTHN_URL=http://localhost:8080" >> "$NEXTEST_ENV"
         echo "OS_USERNAME=admin" >> "$NEXTEST_ENV"
         echo "OS_PASSWORD=password" >> "$NEXTEST_ENV"
         echo "OS_USER_DOMAIN_ID=default" >> "$NEXTEST_ENV"

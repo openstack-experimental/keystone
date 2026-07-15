@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use std::env;
 use std::sync::Arc;
 
 use eyre::{Result, WrapErr};
@@ -42,7 +43,9 @@ async fn test_register_empty_description() -> Result<()> {
 
     let authenticator_backend = SoftToken::new(true)?.0;
     let mut authenticator = WebauthnAuthenticator::new(authenticator_backend);
-    let origin = Url::parse("https://keystone.local")?;
+    let origin: Url = env::var("WEBAUTHN_URL")
+        .wrap_err("WEBAUTHN_URL must be set. It must be https for non localhost.")?
+        .parse()?;
 
     register_user_passkey(
         &test_client,
@@ -72,7 +75,9 @@ async fn test_register_description() -> Result<()> {
 
     let authenticator_backend = SoftToken::new(true)?.0;
     let mut authenticator = WebauthnAuthenticator::new(authenticator_backend);
-    let origin = Url::parse("https://keystone.local").wrap_err("parsing origin")?;
+    let origin: Url = env::var("WEBAUTHN_URL")
+        .wrap_err("WEBAUTHN_URL must be set. It must be https for non localhost.")?
+        .parse()?;
 
     register_user_passkey(
         &test_client,

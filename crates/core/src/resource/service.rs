@@ -100,7 +100,7 @@ impl ResourceApi for ResourceService {
             let backend_driver = &self.backend_driver;
             let state = ctx.state();
             let new_domain_clone = new_domain.clone();
-            crate::audited_op! {
+            let domain = crate::audited_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -111,7 +111,25 @@ impl ResourceApi for ResourceService {
                     backend_driver.create_domain(state, new_domain_clone).await
                 },
                 on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
-            }?
+            }?;
+
+            // `audited_op!` only dispatches to `AuditHook` subscribers
+            // (ADR 0023's fail-closed audit path) -- it never notifies
+            // `ProviderHooks` subscribers (e.g. `Oauth2KeyHook`, which
+            // provisions OAuth2 signing keys per ADR 0026 §3). Emit here too
+            // so real, authenticated domain creation actually fires them,
+            // matching the internal/no-context branch below.
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::Domain {
+                        id: domain.id.clone(),
+                    },
+                ))
+                .await;
+
+            domain
         } else {
             let domain = self
                 .backend_driver
@@ -425,11 +443,46 @@ impl ResourceApi for ResourceService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use async_trait::async_trait as async_trait_hook;
+
+    use crate::auth::ValidatedSecurityContext;
     use crate::credential::MockCredentialProvider;
+    use crate::events::ProviderHooks;
     use crate::provider::Provider;
     use crate::resource::backend::MockResourceBackend;
     use crate::tests::get_mocked_state;
+    use openstack_keystone_core_types::auth::{
+        AuthenticationContext, IdentityInfo, PrincipalInfo, SecurityContext,
+        UserIdentityInfoBuilder,
+    };
     use openstack_keystone_core_types::resource::DomainBuilder;
+
+    fn make_vsc() -> ValidatedSecurityContext {
+        let user = UserIdentityInfoBuilder::default()
+            .user_id("test-user-id".to_string())
+            .build()
+            .unwrap();
+        let sc = SecurityContext::test_build()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(user),
+            })
+            .build();
+        ValidatedSecurityContext::test_new(sc)
+    }
+
+    struct CountingHook {
+        count: Arc<AtomicUsize>,
+    }
+
+    #[async_trait_hook]
+    impl ProviderHooks for CountingHook {
+        async fn on_event(&self, _event: &Event) {
+            self.count.fetch_add(1, Ordering::SeqCst);
+        }
+    }
 
     #[tokio::test]
     async fn test_create_domain_succeeds() {
@@ -461,6 +514,60 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(created.id, "did");
+    }
+
+    /// `audited_op!` (ADR 0023) only dispatches to `AuditHook` subscribers --
+    /// it never notifies `ProviderHooks` subscribers like `Oauth2KeyHook`
+    /// (ADR 0026 §3, provisions a domain's OAuth2 signing keys). Real,
+    /// authenticated domain creation (`ctx.ctx()` is `Some`) must still emit
+    /// a `ProviderHooks` event, same as the internal/no-context branch does.
+    #[tokio::test]
+    async fn test_create_domain_with_authenticated_context_notifies_provider_hooks() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let count = Arc::new(AtomicUsize::new(0));
+        state
+            .event_dispatcher
+            .subscribe(Arc::new(CountingHook {
+                count: Arc::clone(&count),
+            }))
+            .await;
+
+        let mut backend = MockResourceBackend::default();
+        backend.expect_create_domain().returning(|_, _| {
+            Ok(DomainBuilder::default()
+                .id("did")
+                .name("dname")
+                .enabled(true)
+                .build()
+                .unwrap())
+        });
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        let vsc = make_vsc();
+        let ctx = ExecutionContext::from_auth(&state, &vsc);
+        provider
+            .create_domain(
+                &ctx,
+                DomainCreate {
+                    id: Some("did".to_string()),
+                    name: "dname".to_string(),
+                    enabled: true,
+                    description: None,
+                    extra: Default::default(),
+                },
+            )
+            .await
+            .unwrap();
+
+        // `emit()` spawns the hook dispatch; give it a beat to run.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            1,
+            "ProviderHooks must be notified for domain creation through the authenticated path"
+        );
     }
 
     #[tokio::test]

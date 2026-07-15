@@ -520,13 +520,13 @@ pub(super) async fn authorize_login(
         }
     };
 
-    let IdentityInfo::Principal(pinfo) = &auth_result.principal.identity else {
+    let IdentityInfo::User(user_info) = &auth_result.principal.identity else {
         return Ok(error_page(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal error",
         ));
     };
-    let user_id = pinfo.id.clone();
+    let user_id = user_info.user_id.clone();
     let now = chrono::Utc::now().timestamp();
 
     let session = match state
@@ -741,7 +741,7 @@ mod tests {
     use openstack_keystone_core_types::auth::AuthenticationError;
     use openstack_keystone_core_types::auth::{
         AuthenticationContext, AuthenticationResultBuilder, AuthzInfoBuilder, IdentityInfo,
-        PrincipalIdentityInfoBuilder, PrincipalInfo, ScopeInfo,
+        PrincipalInfo, ScopeInfo, UserIdentityInfoBuilder,
     };
     use openstack_keystone_core_types::identity::IdentityProviderError;
     use openstack_keystone_core_types::oauth2_client as provider_types;
@@ -1049,11 +1049,9 @@ mod tests {
         AuthenticationResultBuilder::default()
             .context(AuthenticationContext::Password)
             .principal(PrincipalInfo {
-                identity: IdentityInfo::Principal(
-                    PrincipalIdentityInfoBuilder::default()
-                        .id("user-1")
-                        .resolved_user_name("alice")
-                        .issuer("local")
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id("user-1")
                         .build()
                         .unwrap(),
                 ),

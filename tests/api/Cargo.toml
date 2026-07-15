@@ -24,7 +24,7 @@ http.workspace = true
 openstack-keystone-api-types = { workspace = true, features = ["builder"] }
 openstack-keystone-distributed-storage = { workspace = true }
 openstack_sdk = { version = "0.22", default-features = false, features = ["async", "identity" ] }
-reqwest = { workspace = true, features = ["json", "http2", "multipart", "gzip", "deflate"] }
+reqwest = { workspace = true, features = ["json", "http2", "multipart", "gzip", "deflate", "cookies"] }
 secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
