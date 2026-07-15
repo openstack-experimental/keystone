@@ -74,7 +74,7 @@ pub trait ApplicationCredentialApi: Send + Sync {
     ///
     /// # Parameters
     /// - `state`: The current service state.
-    /// - `id`: The ID of the application credential to delete.
+    /// - `rec`: The application credential deletion request.
     ///
     /// # Returns
     /// - `Result<(), ApplicationCredentialProviderError>` - Unit on success, or
@@ -82,7 +82,7 @@ pub trait ApplicationCredentialApi: Send + Sync {
     async fn delete_application_credential<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
-        id: &'a str,
+        rec: ApplicationCredential,
     ) -> Result<(), ApplicationCredentialProviderError>;
 
     /// Get a user's access rule by its ID.

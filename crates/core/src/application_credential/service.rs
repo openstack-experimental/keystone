@@ -294,7 +294,7 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     ///
     /// # Parameters
     /// - `state`: The current service state.
-    /// - `id`: The ID of the application credential to delete.
+    /// - `rec`: The application credential deletion request.
     ///
     /// # Returns
     /// - `Result<(), ApplicationCredentialProviderError>` - Unit on success, or
@@ -302,33 +302,39 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     async fn delete_application_credential<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
-        id: &'a str,
+        rec: ApplicationCredential,
     ) -> Result<(), ApplicationCredentialProviderError> {
-        // Fetch first to get project_id for the event — mirrors Python fetching before delete
-        let app_cred = self
-            .backend_driver
-            .get_application_credential(ctx.state(), id)
-            .await?
-            .ok_or_else(|| {
-                ApplicationCredentialProviderError::ApplicationCredentialNotFound(id.to_string())
-            })?;
-
-        let project_id = app_cred.project_id.clone();
-
-        self.backend_driver
-            .delete_application_credential(ctx.state(), id)
-            .await?;
-
-        ctx.state()
-            .event_dispatcher
-            .emit(Event::new(
-                Operation::Delete,
-                EventPayload::ApplicationCredential {
-                    id: id.to_string(),
-                    project_id,
+        if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Delete,
+                    EventPayload::ApplicationCredential { id: rec.id.to_string(), project_id: rec.project_id.to_string() } ,
+                ),
+                operation: async {
+                    backend_driver.delete_application_credential(ctx.state(), &rec.id).await
                 },
-            ))
-            .await;
+                on_audit_error: |_: AuditDispatchError| {
+                    ApplicationCredentialProviderError::Driver("audit dispatch failed".into())
+                },
+            }?;
+        } else {
+            self.backend_driver
+                .delete_application_credential(ctx.state(), &rec.id)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Delete,
+                    EventPayload::ApplicationCredential {
+                        id: rec.id.to_string(),
+                        project_id: rec.project_id.to_string(),
+                    },
+                ))
+                .await;
+        }
 
         Ok(())
     }

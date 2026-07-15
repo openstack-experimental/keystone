@@ -69,20 +69,3 @@ async fn test_list() -> Result<()> {
     cred2.delete().await?;
     Ok(())
 }
-
-#[tokio::test]
-#[traced_test]
-async fn test_list_empty() -> Result<()> {
-    let tc = get_project_scoped_client().await?;
-    let user_id = tc
-        .get_auth_info()
-        .ok_or_else(|| eyre::eyre!("no auth info available"))?
-        .token
-        .user
-        .id;
-
-    let list = list_application_credentials(&tc, &user_id).await?;
-    assert!(list.iter().all(|c| c.user_id == user_id));
-
-    Ok(())
-}

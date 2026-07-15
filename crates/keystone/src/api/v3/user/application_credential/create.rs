@@ -28,6 +28,7 @@ use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
+use openstack_keystone_core_types::application_credential as core_type_application_credential;
 use openstack_keystone_core_types::auth::ScopeInfo;
 /// Create application credential.
 ///
@@ -46,7 +47,6 @@ use openstack_keystone_core_types::auth::ScopeInfo;
     ),
     tag = "application_credentials"
 )]
-
 pub(super) async fn create(
     Auth(user_auth): Auth,
     Path(user_id): Path<String>,
@@ -54,23 +54,7 @@ pub(super) async fn create(
     Json(payload): Json<ApplicationCredentialCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     payload.validate()?;
-
-    // Verify user exists — 404 if not found
-    state
-        .provider
-        .get_identity_provider()
-        .get_user(&ExecutionContext::from_auth(&state, &user_auth), &user_id)
-        .await?
-        .ok_or_else(|| KeystoneApiError::not_found("user", &user_id))?;
-
-    // Security check — cannot create credentials for another user
-    let ctx_user_id = user_auth.principal().get_user_id();
-    if ctx_user_id != user_id {
-        return Err(KeystoneApiError::forbidden(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "Cannot create an application credential for another user.",
-        )));
-    }
+    let execution_context = ExecutionContext::from_auth(&state, &user_auth);
 
     // project_id must come from the token scope, not the request body
     let project_id = match user_auth.authorization().map(|a| &a.scope) {
@@ -82,27 +66,39 @@ pub(super) async fn create(
         }
     };
 
+    let mut target = serde_json::to_value(&payload.application_credential)?;
+    target["user_id"] = json!(user_id);
+
     state
         .policy_enforcer
         .enforce(
             "identity/user/application_credential/create",
             &user_auth,
-            json!({"user_id": user_id}),
+            json!({"application_credential": target}),
             None,
         )
         .await?;
 
-    let mut app_cred: openstack_keystone_core_types::application_credential::ApplicationCredentialCreate
-        = payload.application_credential.into();
+    let app_cred = core_type_application_credential::ApplicationCredentialCreateBuilder::from(
+        payload.application_credential,
+    )
+    .user_id(user_id.clone())
+    .project_id(project_id)
+    .build()
+    .unwrap();
 
-    // Inject server-side fields — never trust the request body for these
-    app_cred.user_id = user_id.clone();
-    app_cred.project_id = project_id;
+    // Verify user exists — 404 if not found
+    state
+        .provider
+        .get_identity_provider()
+        .get_user(&execution_context, &user_id)
+        .await?
+        .ok_or_else(|| KeystoneApiError::not_found("user", &user_id))?;
 
     let created = state
         .provider
         .get_application_credential_provider()
-        .create_application_credential(&ExecutionContext::from_auth(&state, &user_auth), app_cred)
+        .create_application_credential(&execution_context, app_cred)
         .await
         .map_err(KeystoneApiError::from)?;
 
@@ -113,7 +109,6 @@ pub(super) async fn create(
         }),
     ))
 }
-
 #[cfg(test)]
 mod tests {
     use axum::{
@@ -355,16 +350,8 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn test_create_not_allowed() {
-        let mut identity_mock = MockIdentityProvider::default();
-        mock_user(&mut identity_mock);
-
         let vsc = test_fixture_scoped();
-        let state = get_mocked_state(
-            Provider::mocked_builder().mock_identity(identity_mock),
-            false,
-            None,
-        )
-        .await;
+        let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
 
         let response = openapi_router()
             .layer(TraceLayer::new_for_http())

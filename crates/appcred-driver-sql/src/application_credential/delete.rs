@@ -28,20 +28,11 @@ pub async fn delete(
     db: &DatabaseConnection,
     id: &str,
 ) -> Result<(), ApplicationCredentialProviderError> {
-    let app_cred = DbApplicationCredential::find()
+    let res = DbApplicationCredential::delete_many()
         .filter(db_application_credential::Column::Id.eq(id))
-        .one(db)
-        .await
-        .context("fetching application credential for delete")?
-        .ok_or_else(|| {
-            ApplicationCredentialProviderError::ApplicationCredentialNotFound(id.to_string())
-        })?;
-
-    DbApplicationCredential::delete_by_id(app_cred.internal_id)
         .exec(db)
         .await
         .context("deleting application credential")?;
-
     Ok(())
 }
 #[cfg(test)]

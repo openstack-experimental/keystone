@@ -440,7 +440,7 @@ mod application_credential {
             async fn delete_application_credential<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
-                id: &'a str,
+                rec: ApplicationCredential,
             ) -> Result<(), ApplicationCredentialProviderError>;
 
             async fn get_access_rule<'a>(

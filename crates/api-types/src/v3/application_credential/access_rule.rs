@@ -14,6 +14,11 @@
 
 use serde::{Deserialize, Serialize};
 /// Short access rule representation.
+///
+/// Access rules are fine-grained permissions attached to application
+/// credentials. Each rule constrains the credential to a specific service
+/// type, HTTP method, and API path. Once created, an access rule can be
+/// viewed and deleted independently of the application credential.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(
     feature = "builder",
@@ -26,23 +31,30 @@ use serde::{Deserialize, Serialize};
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct AccessRule {
-    /// The ID of the access rule.
+    /// Unique identifier of the access rule. This ID can be used to reuse an
+    /// existing access rule when creating a new application credential.
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub id: String,
 
-    /// The HTTP method permitted.
+    /// HTTP method that this access rule permits (e.g., `GET`, `POST`, `PUT`,
+    /// `DELETE`, `PATCH`).
     #[cfg_attr(feature = "builder", builder(default))]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 16)))]
     pub method: Option<String>,
 
-    /// The API path permitted.
+    /// API path pattern that this access rule permits. Supports wildcard
+    /// syntax: `*` matches a single path segment, `**` matches any number
+    /// of segments recursively, and `{variable}` matches a named path
+    /// parameter. For example, `/v2.1/servers/*/ips` or `/v2.1/**`.
     #[cfg_attr(feature = "builder", builder(default))]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 128)))]
     pub path: Option<String>,
 
-    /// The service type permitted.
+    /// OpenStack service type that this access rule applies to
+    /// (e.g., `compute`, `monitoring`, `identity`). Matched against the
+    /// service catalog.
     #[cfg_attr(feature = "builder", builder(default))]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
@@ -50,6 +62,11 @@ pub struct AccessRule {
 }
 
 /// Access rule for creation (id is optional).
+///
+/// When creating an application credential, access rules can either be
+/// defined inline (with `method`, `path`, and `service`) or reference an
+/// existing rule by its `id`. All fields are optional so that both creation
+/// patterns are supported.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(
     feature = "builder",
@@ -62,21 +79,34 @@ pub struct AccessRule {
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct AccessRuleCreate {
+    /// Optional identifier of an existing access rule to reuse. When
+    /// provided, the other fields (`method`, `path`, `service`) are ignored
+    /// and the referenced rule is attached to the new application credential.
     #[cfg_attr(feature = "builder", builder(default))]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub id: Option<String>,
 
+    /// HTTP method that this access rule permits (e.g., `GET`, `POST`, `PUT`,
+    /// `DELETE`, `PATCH`). Required when creating a new rule inline (i.e.,
+    /// without specifying `id`).
     #[cfg_attr(feature = "builder", builder(default))]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 16)))]
     pub method: Option<String>,
 
+    /// API path pattern that this access rule permits. Supports wildcard
+    /// syntax: `*` matches a single path segment, `**` matches any number
+    /// of segments recursively, and `{variable}` matches a named path
+    /// parameter. Required when creating a new rule inline.
     #[cfg_attr(feature = "builder", builder(default))]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 128)))]
     pub path: Option<String>,
 
+    /// OpenStack service type that this access rule applies to
+    /// (e.g., `compute`, `monitoring`, `identity`). Matched against the
+    /// service catalog. Required when creating a new rule inline.
     #[cfg_attr(feature = "builder", builder(default))]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]

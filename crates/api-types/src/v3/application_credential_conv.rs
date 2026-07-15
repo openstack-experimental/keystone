@@ -29,18 +29,6 @@ impl From<provider_types::AccessRule> for api_types_access_rule::AccessRule {
     }
 }
 
-impl From<api_types_access_rule::AccessRuleCreate> for provider_types::AccessRuleCreate {
-    fn from(value: api_types_access_rule::AccessRuleCreate) -> Self {
-        Self {
-            id: value.id,
-            method: value.method,
-            path: value.path,
-            service: value.service,
-            user_id: String::new(), // assigned server-side
-        }
-    }
-}
-
 impl From<provider_types::ApplicationCredential>
     for api_types_application_credential::ApplicationCredential
 {
@@ -56,41 +44,6 @@ impl From<provider_types::ApplicationCredential>
             project_id: value.project_id,
             roles: value.roles.into_iter().map(Into::into).collect(),
             unrestricted: value.unrestricted,
-            user_id: value.user_id,
-        }
-    }
-}
-
-impl From<api_types_application_credential::ApplicationCredentialCreate>
-    for provider_types::ApplicationCredentialCreate
-{
-    fn from(value: api_types_application_credential::ApplicationCredentialCreate) -> Self {
-        Self {
-            access_rules: value
-                .access_rules
-                .map(|rules| rules.into_iter().map(Into::into).collect()),
-            description: value.description,
-            expires_at: value.expires_at,
-            id: value.id,
-            name: value.name,
-            project_id: String::new(), // assigned server-side from token
-            roles: value.roles.into_iter().map(Into::into).collect(),
-            secret: None, // generated server-side
-            unrestricted: value.unrestricted,
-            user_id: String::new(), // assigned server-side from token
-        }
-    }
-}
-
-impl From<api_types_application_credential::ApplicationCredentialListParameters>
-    for provider_types::ApplicationCredentialListParameters
-{
-    fn from(value: api_types_application_credential::ApplicationCredentialListParameters) -> Self {
-        Self {
-            limit: Default::default(),
-            marker: Default::default(),
-            name: value.name,
-            user_id: String::new(), // injected from auth context, not from request body
         }
     }
 }
@@ -111,7 +64,71 @@ impl From<provider_types::ApplicationCredentialCreateResponse>
             roles: value.roles.into_iter().map(Into::into).collect(),
             secret: value.secret.expose_secret().to_string(),
             unrestricted: value.unrestricted,
-            user_id: value.user_id,
         }
+    }
+}
+
+impl From<api_types_application_credential::ApplicationCredentialCreate>
+    for provider_types::ApplicationCredentialCreateBuilder
+{
+    fn from(value: api_types_application_credential::ApplicationCredentialCreate) -> Self {
+        let mut builder = provider_types::ApplicationCredentialCreateBuilder::default();
+        builder.name(value.name);
+        builder.roles(value.roles.into_iter().map(Into::into).collect::<Vec<_>>());
+        if let Some(v) = value.access_rules {
+            builder.access_rules(
+                v.into_iter()
+                    .map(|r| {
+                        provider_types::AccessRuleCreateBuilder::from(r)
+                            .build()
+                            .unwrap()
+                    })
+                    .collect::<Vec<_>>(),
+            );
+        }
+        if let Some(v) = value.description {
+            builder.description(v);
+        }
+        if let Some(v) = value.expires_at {
+            builder.expires_at(v);
+        }
+        if let Some(v) = value.id {
+            builder.id(v);
+        }
+        if let Some(v) = value.unrestricted {
+            builder.unrestricted(v);
+        }
+        builder
+    }
+}
+
+impl From<api_types_access_rule::AccessRuleCreate> for provider_types::AccessRuleCreateBuilder {
+    fn from(value: api_types_access_rule::AccessRuleCreate) -> Self {
+        let mut builder = provider_types::AccessRuleCreateBuilder::default();
+        if let Some(v) = value.id {
+            builder.id(v);
+        }
+        if let Some(v) = value.method {
+            builder.method(v);
+        }
+        if let Some(v) = value.path {
+            builder.path(v);
+        }
+        if let Some(v) = value.service {
+            builder.service(v);
+        }
+        builder
+    }
+}
+
+impl From<api_types_application_credential::ApplicationCredentialListParameters>
+    for provider_types::ApplicationCredentialListParametersBuilder
+{
+    fn from(value: api_types_application_credential::ApplicationCredentialListParameters) -> Self {
+        let mut builder = provider_types::ApplicationCredentialListParametersBuilder::default();
+        if let Some(v) = value.name {
+            builder.name(v);
+        }
+        builder
     }
 }

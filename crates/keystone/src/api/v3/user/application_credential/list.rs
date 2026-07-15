@@ -28,6 +28,7 @@ use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
+use openstack_keystone_core_types::application_credential as core_type_application_credential;
 
 #[utoipa::path(
     get,
@@ -48,32 +49,38 @@ pub(super) async fn list(
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     payload.validate()?;
+    let execution_context = ExecutionContext::from_auth(&state, &user_auth);
 
-    // Verify user exists — returns 404 if not found per OpenStack API spec
-    state
-        .provider
-        .get_identity_provider()
-        .get_user(&ExecutionContext::from_auth(&state, &user_auth), &user_id)
-        .await?
-        .ok_or_else(|| KeystoneApiError::not_found("user", &user_id))?;
-
+    // Policy check first
+    let mut target = serde_json::to_value(&payload)?;
+    target["user_id"] = json!(user_id);
     state
         .policy_enforcer
         .enforce(
             "identity/user/application_credential/list",
             &user_auth,
-            json!({"user_id": user_id}),
+            json!({"application_credential": target}),
             None,
         )
         .await?;
 
-    // Set the user_id in the payload to ensure the list is scoped to the correct user
-    let mut filter: openstack_keystone_core_types::application_credential::ApplicationCredentialListParameters = payload.into();
-    filter.user_id = user_id.clone();
+    // Verify user exists
+    state
+        .provider
+        .get_identity_provider()
+        .get_user(&execution_context, &user_id)
+        .await?
+        .ok_or_else(|| KeystoneApiError::not_found("user", &user_id))?;
+
+    let filter =
+        core_type_application_credential::ApplicationCredentialListParametersBuilder::from(payload)
+            .user_id(user_id.clone())
+            .build()
+            .unwrap();
     let application_credentials = state
         .provider
         .get_application_credential_provider()
-        .list_application_credentials(&ExecutionContext::from_auth(&state, &user_auth), &filter)
+        .list_application_credentials(&execution_context, &filter)
         .await
         .map_err(KeystoneApiError::from)?;
 
@@ -266,23 +273,8 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn test_list_not_allowed() {
-        let mut identity_mock = MockIdentityProvider::default();
-        mock_user(&mut identity_mock);
-
-        let mut app_cred_mock = MockApplicationCredentialProvider::default();
-        app_cred_mock
-            .expect_list_application_credentials()
-            .returning(|_, _| Ok(vec![]));
-
         let vsc = test_fixture_scoped();
-        let state = get_mocked_state(
-            Provider::mocked_builder()
-                .mock_identity(identity_mock)
-                .mock_application_credential(app_cred_mock),
-            false,
-            None,
-        )
-        .await;
+        let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
 
         let response = openapi_router()
             .layer(TraceLayer::new_for_http())

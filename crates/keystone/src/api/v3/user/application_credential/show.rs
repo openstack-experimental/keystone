@@ -43,36 +43,37 @@ pub(super) async fn show(
     Path((user_id, application_credential_id)): Path<(String, String)>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
-    // Verify user exists first — per OpenStack API spec
-    state
-        .provider
-        .get_identity_provider()
-        .get_user(&ExecutionContext::from_auth(&state, &user_auth), &user_id)
-        .await?
-        .ok_or_else(|| KeystoneApiError::not_found("user", &user_id))?;
+    let execution_context = ExecutionContext::from_auth(&state, &user_auth);
 
+    // Fetch credential first — needed for policy
     let current = state
         .provider
         .get_application_credential_provider()
-        .get_application_credential(
-            &ExecutionContext::from_auth(&state, &user_auth),
-            &application_credential_id,
-        )
+        .get_application_credential(&execution_context, &application_credential_id)
         .await
         .map_err(KeystoneApiError::from)?
         .ok_or_else(|| {
             KeystoneApiError::not_found("application_credential", &application_credential_id)
         })?;
 
+    // Policy check — uses stored object's real user_id
     state
         .policy_enforcer
         .enforce(
             "identity/user/application_credential/show",
             &user_auth,
-            json!({"user_id": current.user_id}),
+            json!({"application_credential": serde_json::to_value(&current)?}),
             None,
         )
         .await?;
+
+    // Verify user exists
+    state
+        .provider
+        .get_identity_provider()
+        .get_user(&execution_context, &user_id)
+        .await?
+        .ok_or_else(|| KeystoneApiError::not_found("user", &user_id))?;
 
     Ok((
         StatusCode::OK,
@@ -176,7 +177,6 @@ mod tests {
             ApiApplicationCredentialBuilder::default()
                 .id("existing-id")
                 .name("test-cred")
-                .user_id("uid")
                 .project_id("pid")
                 .unrestricted(false)
                 .roles(vec![])
@@ -192,14 +192,20 @@ mod tests {
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock.expect_get_user().returning(|_, _| Ok(None));
 
+        let mut app_cred_mock = MockApplicationCredentialProvider::default();
+        app_cred_mock
+            .expect_get_application_credential()
+            .returning(|_, _| Ok(Some(mock_credential())));
+
         let vsc = test_fixture_scoped();
         let state = get_mocked_state(
-            Provider::mocked_builder().mock_identity(identity_mock),
+            Provider::mocked_builder()
+                .mock_identity(identity_mock)
+                .mock_application_credential(app_cred_mock),
             true,
             None,
         )
         .await;
-
         let response = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state)
@@ -220,9 +226,6 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn test_show_credential_not_found() {
-        let mut identity_mock = MockIdentityProvider::default();
-        mock_user(&mut identity_mock);
-
         let mut app_cred_mock = MockApplicationCredentialProvider::default();
         app_cred_mock
             .expect_get_application_credential()
@@ -230,14 +233,11 @@ mod tests {
 
         let vsc = test_fixture_scoped();
         let state = get_mocked_state(
-            Provider::mocked_builder()
-                .mock_identity(identity_mock)
-                .mock_application_credential(app_cred_mock),
+            Provider::mocked_builder().mock_application_credential(app_cred_mock),
             true,
             None,
         )
         .await;
-
         let response = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state)
@@ -258,9 +258,6 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn test_show_not_allowed() {
-        let mut identity_mock = MockIdentityProvider::default();
-        mock_user(&mut identity_mock);
-
         let mut app_cred_mock = MockApplicationCredentialProvider::default();
         app_cred_mock
             .expect_get_application_credential()
@@ -268,9 +265,7 @@ mod tests {
 
         let vsc = test_fixture_scoped();
         let state = get_mocked_state(
-            Provider::mocked_builder()
-                .mock_identity(identity_mock)
-                .mock_application_credential(app_cred_mock),
+            Provider::mocked_builder().mock_application_credential(app_cred_mock),
             false,
             None,
         )

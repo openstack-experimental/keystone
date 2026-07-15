@@ -70,15 +70,27 @@ impl RestEndpoint for AppCredDeleteRequest {
     }
 }
 
+pub struct DeletableApplicationCredential {
+    pub credential: ApplicationCredentialCreated,
+    pub user_id: String,
+}
+
 #[async_trait::async_trait]
-impl DeletableResource for ApplicationCredentialCreated {
+impl DeletableResource for DeletableApplicationCredential {
     async fn delete(&self, state: &Arc<AsyncOpenStack>) -> Result<()> {
         Ok(openstack_sdk::api::ignore(AppCredDeleteRequest {
             user_id: self.user_id.clone(),
-            id: self.id.clone(),
+            id: self.credential.id.clone(),
         })
         .query_async(state.as_ref())
         .await?)
+    }
+}
+
+impl std::ops::Deref for DeletableApplicationCredential {
+    type Target = ApplicationCredentialCreated;
+    fn deref(&self) -> &Self::Target {
+        &self.credential
     }
 }
 
@@ -86,14 +98,20 @@ pub async fn create_application_credential(
     tc: &Arc<AsyncOpenStack>,
     user_id: &str,
     app_cred: ApplicationCredentialCreate,
-) -> Result<AsyncResourceGuard<ApplicationCredentialCreated>> {
+) -> Result<AsyncResourceGuard<DeletableApplicationCredential>> {
     let obj: ApplicationCredentialCreated = AppCredCreateRequest {
         user_id: user_id.to_string(),
         app_cred,
     }
     .query_async(tc.as_ref())
     .await?;
-    Ok(AsyncResourceGuard::new(obj, tc.clone()))
+    Ok(AsyncResourceGuard::new(
+        DeletableApplicationCredential {
+            credential: obj,
+            user_id: user_id.to_string(),
+        },
+        tc.clone(),
+    ))
 }
 
 struct AppCredGetRequest {
