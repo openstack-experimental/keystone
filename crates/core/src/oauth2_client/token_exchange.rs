@@ -36,6 +36,17 @@ use crate::keystone::ServiceState;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum TokenExchangeError {
+    /// The subject_token's resolved scope belongs to a domain other than
+    /// the one the exchange is being performed against. `aud` is bound to
+    /// the *issuing* domain (ADR 0026 §5 domain key isolation) precisely so
+    /// a minted token can never assert authority outside it; since a
+    /// subject_token may belong to any domain in the deployment, this must
+    /// be checked explicitly here rather than assumed, unlike every other
+    /// grant whose claims are derived from an already domain-scoped client
+    /// or mapping ruleset.
+    #[error("subject_token's scope belongs to a different domain than this token endpoint")]
+    CrossDomainSubjectToken,
+
     /// `subject_token` failed the same validation every other endpoint
     /// applies to a bearer token: invalid, expired, or revoked.
     #[error("subject_token failed validation: {0}")]
@@ -154,6 +165,17 @@ pub fn build_token_exchange_claims(
         .inner()
         .authorization()
         .ok_or(TokenExchangeError::NoAuthorization)?;
+
+    let scope_domain_id: Option<&str> = match &authz.scope {
+        ScopeInfo::Project { project_domain, .. } => Some(project_domain.id.as_str()),
+        ScopeInfo::TrustProject(info) => Some(info.project_domain.id.as_str()),
+        ScopeInfo::Domain(domain) => Some(domain.id.as_str()),
+        ScopeInfo::System(_) | ScopeInfo::Unscoped => None,
+    };
+    if scope_domain_id != Some(client.domain_id.as_str()) {
+        return Err(TokenExchangeError::CrossDomainSubjectToken);
+    }
+
     let role_refs = authz.effective_roles().unwrap_or(&[]).to_vec();
     let role_names: Vec<String> = role_refs.iter().filter_map(|r| r.name.clone()).collect();
 
@@ -386,6 +408,73 @@ mod tests {
                 project_id: "project-1".to_string()
             }
         );
+    }
+
+    #[test]
+    fn test_build_token_exchange_claims_rejects_cross_domain_subject() {
+        // subject_token's scope belongs to `domain-2`, but the client (and
+        // thus the token endpoint/`aud`) belongs to `domain-1` -- exactly
+        // the cross-domain forgery the domain-binding check exists to stop.
+        let user = UserResponseBuilder::default()
+            .id("user-1")
+            .domain_id("domain-2")
+            .enabled(true)
+            .name("trustor")
+            .build()
+            .unwrap();
+        let authz = AuthzInfoBuilder::default()
+            .roles(vec![])
+            .scope(ScopeInfo::Project {
+                project: Project {
+                    id: "project-2".to_string(),
+                    domain_id: "domain-2".to_string(),
+                    enabled: true,
+                    name: "project".to_string(),
+                    ..Default::default()
+                },
+                project_domain: Domain {
+                    id: "domain-2".to_string(),
+                    name: "domain-2".to_string(),
+                    enabled: true,
+                    ..Default::default()
+                },
+            })
+            .build()
+            .unwrap();
+        let sc = SecurityContext::test_build()
+            .authentication_context(trust_context(Some("project-2")))
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id("user-1")
+                        .user(user)
+                        .user_domain(Domain {
+                            id: "domain-2".to_string(),
+                            name: "domain-2".to_string(),
+                            enabled: true,
+                            ..Default::default()
+                        })
+                        .build()
+                        .unwrap(),
+                ),
+            })
+            .authorization(authz)
+            .build();
+        let vsc = ValidatedSecurityContext::test_new(sc);
+
+        let err = build_token_exchange_claims(
+            &sample_client(), // domain_id: "domain-1"
+            &vsc,
+            DelegationContext::Trust {
+                project_id: "project-2".to_string(),
+            },
+            "https://ks.example/v4/oauth2/domain-1",
+            "jti-1".to_string(),
+            1000,
+            1900,
+        )
+        .unwrap_err();
+        assert!(matches!(err, TokenExchangeError::CrossDomainSubjectToken));
     }
 
     #[test]
