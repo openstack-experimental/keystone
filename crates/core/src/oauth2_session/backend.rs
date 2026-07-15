@@ -119,4 +119,64 @@ pub trait Oauth2SessionBackend: Send + Sync {
         state: &ServiceState,
         family_id: &str,
     ) -> Result<(), Oauth2SessionProviderError>;
+
+    /// Persist a new RFC 8628 Device Authorization Grant (ADR 0026 §7.C).
+    async fn create_device_code_grant(
+        &self,
+        state: &ServiceState,
+        data: DeviceCodeGrantCreate,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError>;
+
+    /// Fetch a device code grant by the `device_code` the polling device
+    /// holds.
+    async fn get_device_code_grant(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+    ) -> Result<Option<DeviceCodeGrant>, Oauth2SessionProviderError>;
+
+    /// Fetch a device code grant by the short `user_code` entered at the
+    /// verification page.
+    async fn get_device_code_grant_by_user_code(
+        &self,
+        state: &ServiceState,
+        user_code: &str,
+    ) -> Result<Option<DeviceCodeGrant>, Oauth2SessionProviderError>;
+
+    /// Stamp `user_id`/`auth_time`/`amr` once the verification page's login
+    /// step succeeds.
+    async fn mark_device_code_grant_authenticated(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+        user_id: &str,
+        auth_time: i64,
+        amr: Vec<String>,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError>;
+
+    /// Stamp the terminal `status` once the verification page's consent
+    /// step completes.
+    async fn mark_device_code_grant_decision(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+        status: DeviceGrantStatus,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError>;
+
+    /// Stamp `last_polled_at`, for RFC 8628 §3.5 poll-interval enforcement.
+    async fn mark_device_code_grant_polled(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+        polled_at: i64,
+    ) -> Result<(), Oauth2SessionProviderError>;
+
+    /// Atomically fetch and delete a device code grant -- a second call for
+    /// the same `device_code` returns `Ok(None)`, never the same record
+    /// twice (single-use redemption at `/token`).
+    async fn take_device_code_grant(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+    ) -> Result<Option<DeviceCodeGrant>, Oauth2SessionProviderError>;
 }

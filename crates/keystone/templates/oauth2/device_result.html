@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{% if granted %}Device connected{% else %}Request denied{% endif %}</title>
+</head>
+<body>
+{% if granted %}
+<h1>Device connected</h1>
+<p>You have granted <strong>{{ client_id }}</strong> access. You may now close this window.</p>
+{% else %}
+<h1>Request denied</h1>
+<p>You denied <strong>{{ client_id }}</strong> access. You may now close this window.</p>
+{% endif %}
+</body>
+</html>

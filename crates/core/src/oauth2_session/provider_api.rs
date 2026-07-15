@@ -16,7 +16,7 @@
 use async_trait::async_trait;
 
 use openstack_keystone_core_types::oauth2_session::{
-    AuthorizationCode, PreAuthSession, RefreshToken,
+    AuthorizationCode, DeviceCodeGrant, PreAuthSession, RefreshToken,
 };
 
 use crate::keystone::ServiceState;
@@ -112,6 +112,56 @@ pub enum RefreshTokenRedemption {
     Invalid,
 }
 
+/// Input to [`Oauth2SessionApi::start_device_authorization`].
+#[derive(Debug, Clone)]
+pub struct StartDeviceAuthorizationRequest {
+    /// Domain the `/device_authorization` request targets.
+    pub domain_id: String,
+    /// Requesting `OAuth2Client.client_id`.
+    pub client_id: String,
+    /// Requested scope values.
+    pub scope: Vec<String>,
+}
+
+/// Outcome of [`Oauth2SessionApi::start_device_authorization`]. Deliberately
+/// narrower than [`DeviceCodeGrant`]: the HTTP handler builds
+/// `verification_uri`/`verification_uri_complete` (it alone knows the
+/// request's base URL) and the wire-level `expires_in` (seconds from now),
+/// neither of which the service layer should compute.
+#[derive(Debug, Clone)]
+pub struct DeviceAuthorizationStart {
+    /// 256-bit-entropy value the polling device holds.
+    pub device_code: String,
+    /// Short, human-typeable code displayed to the user.
+    pub user_code: String,
+    /// UTC epoch seconds after which the grant expires unclaimed.
+    pub expires_at: i64,
+    /// Minimum seconds between `/token` polls (RFC 8628 §3.2 `interval`).
+    pub interval: u32,
+}
+
+/// Outcome of [`Oauth2SessionApi::poll_device_code_grant`] (RFC 8628 §3.4,
+/// §3.5): the `/token` handler maps each variant directly to the matching
+/// wire-level error code (or successful issuance for `Authorized`).
+#[derive(Debug, Clone)]
+pub enum DevicePollOutcome {
+    /// Unknown `device_code`, or it does not belong to the polling
+    /// `client_id`.
+    InvalidGrant,
+    /// Past `expires_at`.
+    Expired,
+    /// Polled again before `interval` seconds have elapsed since the last
+    /// poll.
+    SlowDown,
+    /// Awaiting the user to complete the verification page.
+    Pending,
+    /// The user denied consent.
+    Denied,
+    /// Consent granted; the grant has been redeemed (deleted) as part of
+    /// this call and must not be polled again.
+    Authorized(Box<DeviceCodeGrant>),
+}
+
 /// The trait for the OAuth2 browser session provider (ADR 0026 §10 Phase
 /// 4): pre-auth session, authorization code, and refresh token family
 /// lifecycle, including the reuse-detection state machine.
@@ -192,4 +242,61 @@ pub trait Oauth2SessionApi: Send + Sync {
         state: &ServiceState,
         presented_bearer: &str,
     ) -> Result<RefreshTokenRedemption, Oauth2SessionProviderError>;
+
+    /// Mint a new RFC 8628 Device Authorization Grant at
+    /// `POST /device_authorization` (ADR 0026 §7.C).
+    async fn start_device_authorization(
+        &self,
+        state: &ServiceState,
+        req: StartDeviceAuthorizationRequest,
+    ) -> Result<DeviceAuthorizationStart, Oauth2SessionProviderError>;
+
+    /// Fetch a device code grant by `user_code`, for the verification page.
+    /// Returns `Ok(None)` for an unknown or expired code (expiry enforced
+    /// here, lazily, on read -- mirrors [`Self::get_pre_auth_session`]).
+    async fn get_device_code_grant_by_user_code(
+        &self,
+        state: &ServiceState,
+        user_code: &str,
+    ) -> Result<Option<DeviceCodeGrant>, Oauth2SessionProviderError>;
+
+    /// Fetch a device code grant by `device_code`, for the verification
+    /// page's login/consent POST handlers (which hold `device_code` in a
+    /// cookie, not `user_code`). Same lazy-expiry semantics as
+    /// [`Self::get_device_code_grant_by_user_code`].
+    async fn get_device_code_grant(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+    ) -> Result<Option<DeviceCodeGrant>, Oauth2SessionProviderError>;
+
+    /// Stamp `user_id`/`auth_time`/`amr` once the verification page's login
+    /// step succeeds.
+    async fn mark_device_authenticated(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+        user_id: &str,
+        auth_time: i64,
+        amr: Vec<String>,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError>;
+
+    /// Stamp the terminal decision once the verification page's consent
+    /// step completes.
+    async fn mark_device_decision(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+        granted: bool,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError>;
+
+    /// Poll a device code grant from the `/token` handler (RFC 8628 §3.4):
+    /// validates ownership, expiry, and the minimum poll interval, and
+    /// redeems (deletes) the grant on success. See [`DevicePollOutcome`].
+    async fn poll_device_code_grant(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+        client_id: &str,
+    ) -> Result<DevicePollOutcome, Oauth2SessionProviderError>;
 }

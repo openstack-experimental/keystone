@@ -28,7 +28,8 @@ pub mod service;
 pub use crate::mocks::MockOauth2SessionProvider;
 pub use error::Oauth2SessionProviderError;
 pub use provider_api::{
-    IssueAuthorizationCodeRequest, IssueRefreshTokenRequest, Oauth2SessionApi,
-    RefreshTokenRedemption, StartPreAuthSessionRequest,
+    DeviceAuthorizationStart, DevicePollOutcome, IssueAuthorizationCodeRequest,
+    IssueRefreshTokenRequest, Oauth2SessionApi, RefreshTokenRedemption,
+    StartDeviceAuthorizationRequest, StartPreAuthSessionRequest,
 };
 pub use service::Oauth2SessionService;

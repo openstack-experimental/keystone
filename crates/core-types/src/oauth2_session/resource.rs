@@ -188,6 +188,84 @@ pub struct RefreshToken {
     pub expires_at: i64,
 }
 
+/// Status of an RFC 8628 Device Authorization Grant (ADR 0026 §7.C).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceGrantStatus {
+    /// Awaiting the user to complete the verification-page login/consent
+    /// flow.
+    Pending,
+    /// Consent granted; the device may redeem `device_code` at `/token`
+    /// exactly once.
+    Authorized,
+    /// Consent denied; polling returns `access_denied`.
+    Denied,
+}
+
+/// An RFC 8628 Device Authorization Grant, minted at
+/// `POST /device_authorization` and completed via the browser verification
+/// page (ADR 0026 §7.C). Single-use like [`AuthorizationCode`]: redeemed
+/// exactly once at `/token` while `Authorized`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeviceCodeGrant {
+    /// 256-bit-entropy value the polling device holds; also the storage
+    /// key. Never displayed to the user.
+    pub device_code: String,
+    /// Short, human-typeable code displayed to the user and entered at the
+    /// verification page.
+    pub user_code: String,
+    /// Owning domain.
+    pub domain_id: String,
+    /// The `OAuth2Client.client_id` this grant was issued to.
+    pub client_id: String,
+    /// Requested scope values.
+    pub scope: Vec<String>,
+    /// Current lifecycle state.
+    pub status: DeviceGrantStatus,
+    /// Set once the verification page's login step succeeds.
+    pub user_id: Option<String>,
+    /// Set once the verification page's login step succeeds: epoch seconds
+    /// of primary authentication.
+    pub auth_time: Option<i64>,
+    /// Authentication methods references, set alongside `user_id`.
+    pub amr: Vec<String>,
+    /// OIDC `nonce`, if the polling device supplied one.
+    pub nonce: Option<String>,
+    /// Server-side secret used to derive the CSRF token for the
+    /// verification page's login/consent POST forms, mirroring
+    /// `PreAuthSession.server_side_session_secret`.
+    pub server_side_session_secret: String,
+    /// Epoch seconds of the most recent `/token` poll for this
+    /// `device_code`, for RFC 8628 §3.5 `slow_down` interval enforcement.
+    /// `None` before the first poll.
+    pub last_polled_at: Option<i64>,
+    /// UTC epoch seconds.
+    pub created_at: i64,
+    /// UTC epoch seconds (`[oauth2] device_code_lifetime_minutes`).
+    pub expires_at: i64,
+}
+
+/// Input to create a new [`DeviceCodeGrant`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeviceCodeGrantCreate {
+    /// 256-bit-entropy value the polling device holds.
+    pub device_code: String,
+    /// Short, human-typeable code displayed to the user.
+    pub user_code: String,
+    /// Owning domain.
+    pub domain_id: String,
+    /// The `OAuth2Client.client_id` this grant is issued to.
+    pub client_id: String,
+    /// Requested scope values.
+    pub scope: Vec<String>,
+    /// Server-side CSRF-derivation secret.
+    pub server_side_session_secret: String,
+    /// UTC epoch seconds.
+    pub created_at: i64,
+    /// UTC epoch seconds.
+    pub expires_at: i64,
+}
+
 /// Input to create a new [`RefreshToken`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RefreshTokenCreate {

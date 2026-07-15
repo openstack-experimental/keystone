@@ -263,11 +263,12 @@ mod oauth2_session {
     use super::*;
 
     use openstack_keystone_core_types::oauth2_session::{
-        AuthorizationCode, PreAuthSession, RefreshToken,
+        AuthorizationCode, DeviceCodeGrant, PreAuthSession, RefreshToken,
     };
 
     use crate::oauth2_session::provider_api::{
-        IssueAuthorizationCodeRequest, IssueRefreshTokenRequest, RefreshTokenRedemption,
+        DeviceAuthorizationStart, DevicePollOutcome, IssueAuthorizationCodeRequest,
+        IssueRefreshTokenRequest, RefreshTokenRedemption, StartDeviceAuthorizationRequest,
         StartPreAuthSessionRequest,
     };
     use crate::oauth2_session::{Oauth2SessionApi, Oauth2SessionProviderError};
@@ -333,6 +334,47 @@ mod oauth2_session {
                 state: &ServiceState,
                 presented_bearer: &str,
             ) -> Result<RefreshTokenRedemption, Oauth2SessionProviderError>;
+
+            async fn start_device_authorization(
+                &self,
+                state: &ServiceState,
+                req: StartDeviceAuthorizationRequest,
+            ) -> Result<DeviceAuthorizationStart, Oauth2SessionProviderError>;
+
+            async fn get_device_code_grant_by_user_code(
+                &self,
+                state: &ServiceState,
+                user_code: &str,
+            ) -> Result<Option<DeviceCodeGrant>, Oauth2SessionProviderError>;
+
+            async fn get_device_code_grant(
+                &self,
+                state: &ServiceState,
+                device_code: &str,
+            ) -> Result<Option<DeviceCodeGrant>, Oauth2SessionProviderError>;
+
+            async fn mark_device_authenticated(
+                &self,
+                state: &ServiceState,
+                device_code: &str,
+                user_id: &str,
+                auth_time: i64,
+                amr: Vec<String>,
+            ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError>;
+
+            async fn mark_device_decision(
+                &self,
+                state: &ServiceState,
+                device_code: &str,
+                granted: bool,
+            ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError>;
+
+            async fn poll_device_code_grant(
+                &self,
+                state: &ServiceState,
+                device_code: &str,
+                client_id: &str,
+            ) -> Result<DevicePollOutcome, Oauth2SessionProviderError>;
         }
     }
 }
