@@ -27,16 +27,13 @@ use askama::Template;
 use axum::{
     Form,
     extract::{Path, Query, State},
-    http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header},
+    http::{HeaderMap, StatusCode},
     response::{Html, IntoResponse, Redirect, Response},
 };
 use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, SameSite};
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use hmac::{Hmac, KeyInit, Mac};
 use secrecy::SecretString;
 use serde::Deserialize;
-use sha2::Sha256;
 
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::oauth2_session::{
@@ -49,6 +46,9 @@ use openstack_keystone_core_types::identity::{
 use openstack_keystone_core_types::oauth2_client::GrantType;
 use openstack_keystone_core_types::oauth2_session::PreAuthSession;
 
+use super::html::{
+    ConsentTemplate, LoginTemplate, error_page, security_headers, too_many_requests,
+};
 use crate::api::common::PeerAddr;
 use crate::audit::{CorrelationId, build_initiator_unknown, emit_oauth2_session_event};
 use crate::keystone::ServiceState;
@@ -86,68 +86,6 @@ pub(super) struct LoginForm {
 pub(super) struct ConsentForm {
     csrf_token: String,
     decision: String,
-}
-
-#[derive(Template)]
-#[template(path = "oauth2/login.html")]
-struct LoginTemplate<'a> {
-    client_id: &'a str,
-    csrf_token: &'a str,
-    error: Option<&'a str>,
-    action: String,
-}
-
-#[derive(Template)]
-#[template(path = "oauth2/consent.html")]
-struct ConsentTemplate<'a> {
-    client_id: &'a str,
-    scopes: &'a [String],
-    csrf_token: &'a str,
-    action: String,
-}
-
-#[derive(Template)]
-#[template(path = "oauth2/error.html")]
-struct ErrorTemplate<'a> {
-    message: &'a str,
-}
-
-/// ADR 0026 §8: defense-in-depth headers on every server-rendered OP
-/// response (HTML pages and the redirects between them alike).
-fn security_headers(mut response: Response) -> Response {
-    let headers = response.headers_mut();
-    headers.insert(
-        HeaderName::from_static("content-security-policy"),
-        HeaderValue::from_static("default-src 'self'"),
-    );
-    headers.insert(
-        HeaderName::from_static("x-frame-options"),
-        HeaderValue::from_static("DENY"),
-    );
-    headers.insert(
-        header::X_CONTENT_TYPE_OPTIONS,
-        HeaderValue::from_static("nosniff"),
-    );
-    headers.insert(
-        HeaderName::from_static("x-xss-protection"),
-        HeaderValue::from_static("0"),
-    );
-    response
-}
-
-fn error_page(status: StatusCode, message: &str) -> Response {
-    let body = ErrorTemplate { message }
-        .render()
-        .unwrap_or_else(|_| message.to_string());
-    security_headers((status, Html(body)).into_response())
-}
-
-fn too_many_requests(retry_after: u64) -> Response {
-    let mut response = error_page(StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded");
-    response
-        .headers_mut()
-        .insert(header::RETRY_AFTER, retry_after.into());
-    response
 }
 
 /// Append query parameters to `redirect_uri` and return a
@@ -195,28 +133,15 @@ fn redirect_with_code(redirect_uri: &str, code: &str, state_param: &str) -> Resp
 /// input -- generated server-side and never sent to the client in cleartext --
 /// is what an attacker crafting a link for a victim to click cannot supply.
 fn compute_csrf_token(session: &PreAuthSession) -> Option<String> {
-    let mut mac =
-        Hmac::<Sha256>::new_from_slice(session.server_side_session_secret.as_bytes()).ok()?;
-    mac.update(session.session_id.as_bytes());
-    mac.update(session.state.as_bytes());
-    mac.update(session.code_challenge.as_bytes());
-    Some(URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes()))
-}
-
-fn constant_time_eq(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff: u8 = 0;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
+    super::html::compute_csrf_token(
+        &session.server_side_session_secret,
+        &[&session.session_id, &session.state, &session.code_challenge],
+    )
 }
 
 fn verify_csrf_token(session: &PreAuthSession, presented: &str) -> bool {
-    compute_csrf_token(session).is_some_and(|expected| constant_time_eq(&expected, presented))
+    compute_csrf_token(session)
+        .is_some_and(|expected| super::html::constant_time_eq(&expected, presented))
 }
 
 fn is_https(headers: &HeaderMap) -> bool {

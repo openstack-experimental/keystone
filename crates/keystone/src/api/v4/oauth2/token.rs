@@ -37,7 +37,9 @@ use sha2::{Digest, Sha256};
 
 use openstack_keystone_core::oauth2_client::hydrate_client_credentials_context;
 use openstack_keystone_core::oauth2_client::{build_access_token_claims, crypto, pkce};
-use openstack_keystone_core::oauth2_session::{IssueRefreshTokenRequest, RefreshTokenRedemption};
+use openstack_keystone_core::oauth2_session::{
+    DevicePollOutcome, IssueRefreshTokenRequest, RefreshTokenRedemption,
+};
 use openstack_keystone_core_types::oauth2_client::{
     GrantType, IdTokenClaims, OidcAccessTokenClaims,
 };
@@ -93,6 +95,10 @@ pub(super) struct TokenForm {
     #[serde(default)]
     #[allow(dead_code)]
     requested_token_type: Option<String>,
+    /// RFC 8628 `device_code` grant only (§3.4): the value returned by
+    /// `/device_authorization`.
+    #[serde(default)]
+    device_code: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -131,15 +137,15 @@ impl Oauth2TokenError {
         }
     }
 
-    fn invalid_request(description: impl Into<String>) -> Self {
+    pub(super) fn invalid_request(description: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, "invalid_request", description)
     }
 
-    fn invalid_client(description: impl Into<String>) -> Self {
+    pub(super) fn invalid_client(description: impl Into<String>) -> Self {
         Self::new(StatusCode::UNAUTHORIZED, "invalid_client", description)
     }
 
-    fn unauthorized_client(description: impl Into<String>) -> Self {
+    pub(super) fn unauthorized_client(description: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, "unauthorized_client", description)
     }
 
@@ -151,12 +157,50 @@ impl Oauth2TokenError {
         )
     }
 
-    fn invalid_scope(description: impl Into<String>) -> Self {
+    pub(super) fn invalid_scope(description: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, "invalid_scope", description)
     }
 
     fn invalid_grant(description: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, "invalid_grant", description)
+    }
+
+    /// RFC 8628 §3.5: the device grant is still awaiting the user to
+    /// complete the verification page.
+    fn authorization_pending() -> Self {
+        Self::new(
+            StatusCode::BAD_REQUEST,
+            "authorization_pending",
+            "the device grant is still pending user verification",
+        )
+    }
+
+    /// RFC 8628 §3.5: the device polled more frequently than `interval`
+    /// allows; it must back off.
+    fn slow_down() -> Self {
+        Self::new(
+            StatusCode::BAD_REQUEST,
+            "slow_down",
+            "polling too frequently; increase the interval",
+        )
+    }
+
+    /// RFC 8628 §3.5: the user denied the device grant.
+    fn access_denied() -> Self {
+        Self::new(
+            StatusCode::BAD_REQUEST,
+            "access_denied",
+            "the user denied the device grant",
+        )
+    }
+
+    /// RFC 8628 §3.5: the `device_code` has expired.
+    fn expired_token() -> Self {
+        Self::new(
+            StatusCode::BAD_REQUEST,
+            "expired_token",
+            "the device_code has expired; restart the device authorization flow",
+        )
     }
 
     fn too_many_requests(retry_after: u64) -> Self {
@@ -172,7 +216,7 @@ impl Oauth2TokenError {
         }
     }
 
-    fn internal(description: impl Into<String>) -> Self {
+    pub(super) fn internal(description: impl Into<String>) -> Self {
         Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             "invalid_request",
@@ -284,6 +328,17 @@ pub(super) async fn token(
         }
         "urn:ietf:params:oauth:grant-type:token-exchange" => {
             return handle_token_exchange_grant(
+                &state,
+                &domain_id,
+                &headers,
+                &form,
+                &oauth2_cfg,
+                &correlation_id.0,
+            )
+            .await;
+        }
+        "urn:ietf:params:oauth:grant-type:device_code" => {
+            return handle_device_code_grant(
                 &state,
                 &domain_id,
                 &headers,
@@ -998,6 +1053,158 @@ async fn handle_token_exchange_grant(
         scope: "openstack:api".to_string(),
         id_token: None,
         refresh_token: None,
+    };
+    Ok((StatusCode::OK, Json(response)).into_response())
+}
+
+/// RFC 8628 Device Authorization Grant polling arm (§3.4, §3.5, ADR 0026
+/// §7.C). `client_id` is accepted but not authenticated against a
+/// `client_secret` -- device flow clients are overwhelmingly public/native
+/// applications, matching `/device_authorization`'s own posture. The
+/// `client_id` mismatch check happens inside `poll_device_code_grant`
+/// (same bug class as the cross-domain Token Exchange forgery this ADR's
+/// implementation previously fixed: a grant must only ever be redeemable by
+/// the client it was issued to).
+async fn handle_device_code_grant(
+    state: &ServiceState,
+    domain_id: &str,
+    headers: &HeaderMap,
+    form: &TokenForm,
+    oauth2_cfg: &openstack_keystone_config::Oauth2Provider,
+    correlation_id: &str,
+) -> Result<Response, Oauth2TokenError> {
+    let Some((client_id, _)) = client_credentials_from_request(headers, form) else {
+        return Err(Oauth2TokenError::invalid_request(
+            "missing required parameter: client_id",
+        ));
+    };
+    let Some(device_code) = form.device_code.clone() else {
+        return Err(Oauth2TokenError::invalid_request(
+            "missing required parameter: device_code",
+        ));
+    };
+
+    let outcome = state
+        .provider
+        .get_oauth2_session_provider()
+        .poll_device_code_grant(state, &device_code, &client_id)
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "oauth2 device code grant poll failed");
+            Oauth2TokenError::internal("token issuance failed")
+        })?;
+
+    let record = match outcome {
+        DevicePollOutcome::InvalidGrant => {
+            return Err(Oauth2TokenError::invalid_grant(
+                "device_code is invalid or does not belong to this client_id",
+            ));
+        }
+        DevicePollOutcome::Expired => return Err(Oauth2TokenError::expired_token()),
+        DevicePollOutcome::SlowDown => return Err(Oauth2TokenError::slow_down()),
+        DevicePollOutcome::Pending => return Err(Oauth2TokenError::authorization_pending()),
+        DevicePollOutcome::Denied => return Err(Oauth2TokenError::access_denied()),
+        DevicePollOutcome::Authorized(record) => record,
+    };
+
+    let (Some(user_id), Some(auth_time)) = (record.user_id.clone(), record.auth_time) else {
+        tracing::warn!("oauth2 device code grant authorized without user_id/auth_time");
+        return Err(Oauth2TokenError::internal("token issuance failed"));
+    };
+
+    let exec = openstack_keystone_core::auth::ExecutionContext::internal(state);
+    let client = state
+        .provider
+        .get_oauth2_client_provider()
+        .get_by_client_id(&exec, &client_id)
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "oauth2 client lookup failed");
+            Oauth2TokenError::internal("token issuance failed")
+        })?;
+    let Some(client) = client else {
+        return Err(Oauth2TokenError::invalid_client("unknown client"));
+    };
+
+    let base = base_url(state, headers).await;
+    let issuer = format!("{base}/v4/oauth2/{domain_id}");
+    let now = chrono::Utc::now().timestamp();
+    let access_lifetime = i64::from(oauth2_cfg.access_token_lifetime_minutes) * 60;
+    let id_lifetime = i64::from(oauth2_cfg.id_token_lifetime_minutes) * 60;
+
+    let access_claims = OidcAccessTokenClaims {
+        iss: issuer.clone(),
+        sub: user_id.clone(),
+        aud: client_id.clone(),
+        exp: now + access_lifetime,
+        iat: now,
+        nbf: now,
+        jti: uuid::Uuid::new_v4().to_string(),
+        scope: record.scope.join(" "),
+        token_use: "access".to_string(),
+    };
+    let access_token = sign_jwt(state, domain_id, &access_claims).await?;
+
+    let id_token = if record.scope.iter().any(|s| s == "openid") {
+        let id_claims = IdTokenClaims {
+            iss: issuer,
+            sub: user_id.clone(),
+            aud: client_id.clone(),
+            exp: now + id_lifetime,
+            iat: now,
+            nbf: now,
+            auth_time,
+            nonce: record.nonce.clone(),
+            amr: record.amr.clone(),
+            at_hash: Some(compute_at_hash(&access_token)),
+            token_use: "id".to_string(),
+            extra_claims: Default::default(),
+        };
+        Some(sign_jwt(state, domain_id, &id_claims).await?)
+    } else {
+        None
+    };
+
+    let refresh_token = if client.grant_types.contains(&GrantType::RefreshToken) {
+        let (_, bearer) = state
+            .provider
+            .get_oauth2_session_provider()
+            .issue_refresh_token(
+                state,
+                IssueRefreshTokenRequest {
+                    domain_id: domain_id.to_string(),
+                    client_id: client.client_id.clone(),
+                    user_id,
+                    scope: record.scope.clone(),
+                },
+            )
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = %e, "oauth2 refresh token issuance failed");
+                Oauth2TokenError::internal("token issuance failed")
+            })?;
+        Some(bearer)
+    } else {
+        None
+    };
+
+    emit_oauth2_session_event(
+        &state.audit_dispatcher,
+        correlation_id,
+        "authenticate",
+        build_initiator_unknown(),
+        &client_id,
+        "success",
+        None,
+    );
+
+    let response = TokenResponse {
+        access_token,
+        token_type: "Bearer",
+        expires_in: access_lifetime,
+        scope: record.scope.join(" "),
+        id_token,
+        refresh_token,
     };
     Ok((StatusCode::OK, Json(response)).into_response())
 }

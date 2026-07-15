@@ -58,6 +58,14 @@ fn family_idx_prefix(family_id: &str) -> String {
     format!("oauth2:refresh_family_idx:v1:{family_id}:")
 }
 
+fn device_code_key(device_code: &str) -> String {
+    format!("oauth2:device_code:v1:{device_code}")
+}
+
+fn device_user_code_key(user_code: &str) -> String {
+    format!("oauth2:device_user_code:v1:{user_code}")
+}
+
 async fn put<T: Serialize>(
     storage: &dyn StorageApi,
     key: String,
@@ -342,6 +350,139 @@ impl RaftOauth2SessionBackend {
         }
         Ok(())
     }
+
+    async fn create_device_code_grant_impl(
+        &self,
+        storage: &dyn StorageApi,
+        data: DeviceCodeGrantCreate,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError> {
+        let record = DeviceCodeGrant {
+            device_code: data.device_code.clone(),
+            user_code: data.user_code.clone(),
+            domain_id: data.domain_id,
+            client_id: data.client_id,
+            scope: data.scope,
+            status: DeviceGrantStatus::Pending,
+            user_id: None,
+            auth_time: None,
+            amr: Vec::new(),
+            nonce: None,
+            server_side_session_secret: data.server_side_session_secret,
+            last_polled_at: None,
+            created_at: data.created_at,
+            expires_at: data.expires_at,
+        };
+        put(storage, device_code_key(&data.device_code), &record)
+            .await
+            .map_err(store_err)?;
+        put(
+            storage,
+            device_user_code_key(&data.user_code),
+            &data.device_code,
+        )
+        .await
+        .map_err(store_err)?;
+        Ok(record)
+    }
+
+    async fn get_device_code_grant_impl(
+        &self,
+        storage: &dyn StorageApi,
+        device_code: &str,
+    ) -> Result<Option<DeviceCodeGrant>, Oauth2SessionProviderError> {
+        get(storage, &device_code_key(device_code))
+            .await
+            .map_err(store_err)
+    }
+
+    async fn get_device_code_grant_by_user_code_impl(
+        &self,
+        storage: &dyn StorageApi,
+        user_code: &str,
+    ) -> Result<Option<DeviceCodeGrant>, Oauth2SessionProviderError> {
+        let Some(device_code) = get::<String>(storage, &device_user_code_key(user_code))
+            .await
+            .map_err(store_err)?
+        else {
+            return Ok(None);
+        };
+        self.get_device_code_grant_impl(storage, &device_code).await
+    }
+
+    async fn mark_device_code_grant_authenticated_impl(
+        &self,
+        storage: &dyn StorageApi,
+        device_code: &str,
+        user_id: &str,
+        auth_time: i64,
+        amr: Vec<String>,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError> {
+        let mut record: DeviceCodeGrant = get(storage, &device_code_key(device_code))
+            .await
+            .map_err(store_err)?
+            .ok_or_else(|| Oauth2SessionProviderError::NotFound(device_code.to_string()))?;
+        record.user_id = Some(user_id.to_string());
+        record.auth_time = Some(auth_time);
+        record.amr = amr;
+        put(storage, device_code_key(device_code), &record)
+            .await
+            .map_err(store_err)?;
+        Ok(record)
+    }
+
+    async fn mark_device_code_grant_decision_impl(
+        &self,
+        storage: &dyn StorageApi,
+        device_code: &str,
+        status: DeviceGrantStatus,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError> {
+        let mut record: DeviceCodeGrant = get(storage, &device_code_key(device_code))
+            .await
+            .map_err(store_err)?
+            .ok_or_else(|| Oauth2SessionProviderError::NotFound(device_code.to_string()))?;
+        record.status = status;
+        put(storage, device_code_key(device_code), &record)
+            .await
+            .map_err(store_err)?;
+        Ok(record)
+    }
+
+    async fn mark_device_code_grant_polled_impl(
+        &self,
+        storage: &dyn StorageApi,
+        device_code: &str,
+        polled_at: i64,
+    ) -> Result<(), Oauth2SessionProviderError> {
+        let mut record: DeviceCodeGrant = get(storage, &device_code_key(device_code))
+            .await
+            .map_err(store_err)?
+            .ok_or_else(|| Oauth2SessionProviderError::NotFound(device_code.to_string()))?;
+        record.last_polled_at = Some(polled_at);
+        put(storage, device_code_key(device_code), &record)
+            .await
+            .map_err(store_err)
+    }
+
+    async fn take_device_code_grant_impl(
+        &self,
+        storage: &dyn StorageApi,
+        device_code: &str,
+    ) -> Result<Option<DeviceCodeGrant>, Oauth2SessionProviderError> {
+        let existing: Option<DeviceCodeGrant> = get(storage, &device_code_key(device_code))
+            .await
+            .map_err(store_err)?;
+        if let Some(record) = &existing {
+            storage
+                .remove(device_code_key(device_code), None)
+                .await
+                .map_err(store_err)?;
+            storage
+                .remove(device_user_code_key(&record.user_code), None)
+                .await
+                .map_err(store_err)?;
+        }
+        Ok(existing)
+    }
 }
 
 #[async_trait]
@@ -460,6 +601,80 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
         family_id: &str,
     ) -> Result<(), Oauth2SessionProviderError> {
         self.revoke_refresh_token_family_impl(self.storage(state)?, family_id)
+            .await
+    }
+
+    async fn create_device_code_grant(
+        &self,
+        state: &ServiceState,
+        data: DeviceCodeGrantCreate,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError> {
+        self.create_device_code_grant_impl(self.storage(state)?, data)
+            .await
+    }
+
+    async fn get_device_code_grant(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+    ) -> Result<Option<DeviceCodeGrant>, Oauth2SessionProviderError> {
+        self.get_device_code_grant_impl(self.storage(state)?, device_code)
+            .await
+    }
+
+    async fn get_device_code_grant_by_user_code(
+        &self,
+        state: &ServiceState,
+        user_code: &str,
+    ) -> Result<Option<DeviceCodeGrant>, Oauth2SessionProviderError> {
+        self.get_device_code_grant_by_user_code_impl(self.storage(state)?, user_code)
+            .await
+    }
+
+    async fn mark_device_code_grant_authenticated(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+        user_id: &str,
+        auth_time: i64,
+        amr: Vec<String>,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError> {
+        self.mark_device_code_grant_authenticated_impl(
+            self.storage(state)?,
+            device_code,
+            user_id,
+            auth_time,
+            amr,
+        )
+        .await
+    }
+
+    async fn mark_device_code_grant_decision(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+        status: DeviceGrantStatus,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError> {
+        self.mark_device_code_grant_decision_impl(self.storage(state)?, device_code, status)
+            .await
+    }
+
+    async fn mark_device_code_grant_polled(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+        polled_at: i64,
+    ) -> Result<(), Oauth2SessionProviderError> {
+        self.mark_device_code_grant_polled_impl(self.storage(state)?, device_code, polled_at)
+            .await
+    }
+
+    async fn take_device_code_grant(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+    ) -> Result<Option<DeviceCodeGrant>, Oauth2SessionProviderError> {
+        self.take_device_code_grant_impl(self.storage(state)?, device_code)
             .await
     }
 }
@@ -686,6 +901,121 @@ mod tests {
                 .await
                 .unwrap()
                 .is_some()
+        );
+    }
+
+    fn sample_device_grant_create() -> DeviceCodeGrantCreate {
+        DeviceCodeGrantCreate {
+            device_code: "device-code-1".to_string(),
+            user_code: "ABCD-EFGH".to_string(),
+            domain_id: "domain-1".to_string(),
+            client_id: "client-1".to_string(),
+            scope: vec!["openid".to_string()],
+            server_side_session_secret: "secret".to_string(),
+            created_at: 1000,
+            expires_at: 1600,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_device_code_grant_create_and_lookup_by_both_codes() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+
+        let created = backend
+            .create_device_code_grant_impl(&storage, sample_device_grant_create())
+            .await
+            .unwrap();
+        assert_eq!(created.status, DeviceGrantStatus::Pending);
+
+        let by_device_code = backend
+            .get_device_code_grant_impl(&storage, "device-code-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(by_device_code, created);
+
+        let by_user_code = backend
+            .get_device_code_grant_by_user_code_impl(&storage, "ABCD-EFGH")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(by_user_code, created);
+    }
+
+    #[tokio::test]
+    async fn test_device_code_grant_authenticate_and_decide() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_device_code_grant_impl(&storage, sample_device_grant_create())
+            .await
+            .unwrap();
+
+        let authenticated = backend
+            .mark_device_code_grant_authenticated_impl(
+                &storage,
+                "device-code-1",
+                "user-1",
+                1500,
+                vec!["pwd".to_string()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(authenticated.user_id.as_deref(), Some("user-1"));
+
+        let decided = backend
+            .mark_device_code_grant_decision_impl(
+                &storage,
+                "device-code-1",
+                DeviceGrantStatus::Authorized,
+            )
+            .await
+            .unwrap();
+        assert_eq!(decided.status, DeviceGrantStatus::Authorized);
+    }
+
+    #[tokio::test]
+    async fn test_device_code_grant_poll_stamp_and_single_use_take() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_device_code_grant_impl(&storage, sample_device_grant_create())
+            .await
+            .unwrap();
+
+        backend
+            .mark_device_code_grant_polled_impl(&storage, "device-code-1", 1100)
+            .await
+            .unwrap();
+        let polled = backend
+            .get_device_code_grant_impl(&storage, "device-code-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(polled.last_polled_at, Some(1100));
+
+        let taken = backend
+            .take_device_code_grant_impl(&storage, "device-code-1")
+            .await
+            .unwrap();
+        assert!(taken.is_some());
+
+        // Single-use: the primary record and the user_code index are both
+        // gone after the first take.
+        assert!(
+            backend
+                .get_device_code_grant_impl(&storage, "device-code-1")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            backend
+                .get_device_code_grant_by_user_code_impl(&storage, "ABCD-EFGH")
+                .await
+                .unwrap()
+                .is_none()
         );
     }
 }

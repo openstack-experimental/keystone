@@ -27,8 +27,9 @@ use crate::keystone::ServiceState;
 use crate::oauth2_session::Oauth2SessionProviderError;
 use crate::oauth2_session::backend::Oauth2SessionBackend;
 use crate::oauth2_session::provider_api::{
-    IssueAuthorizationCodeRequest, IssueRefreshTokenRequest, Oauth2SessionApi,
-    RefreshTokenRedemption, StartPreAuthSessionRequest,
+    DeviceAuthorizationStart, DevicePollOutcome, IssueAuthorizationCodeRequest,
+    IssueRefreshTokenRequest, Oauth2SessionApi, RefreshTokenRedemption,
+    StartDeviceAuthorizationRequest, StartPreAuthSessionRequest,
 };
 use crate::plugin_manager::PluginManagerApi;
 
@@ -48,6 +49,22 @@ const ENTROPY_LEN: usize = 43;
 
 fn generate_entropy() -> String {
     Alphanumeric.sample_string(&mut rand::rng(), ENTROPY_LEN)
+}
+
+/// Unambiguous charset for RFC 8628 `user_code` generation (ADR 0026 §7.C):
+/// excludes vowels (avoids accidentally spelling words) and visually
+/// confusable characters (`0`/`O`, `1`/`I`). 8 symbols formatted as
+/// `XXXX-XXXX`, matching the ADR's stated shape.
+const USER_CODE_ALPHABET: &[u8] = b"BCDFGHJKLMNPQRSTVWXZ23456789";
+const USER_CODE_LEN: usize = 8;
+
+fn generate_user_code() -> String {
+    use rand::RngExt;
+    let mut rng = rand::rng();
+    let code: String = (0..USER_CODE_LEN)
+        .map(|_| USER_CODE_ALPHABET[rng.random_range(0..USER_CODE_ALPHABET.len())] as char)
+        .collect();
+    format!("{}-{}", &code[0..4], &code[4..8])
 }
 
 fn hash_bearer(bearer: &str) -> String {
@@ -328,6 +345,155 @@ impl Oauth2SessionApi for Oauth2SessionService {
             }
         }
     }
+
+    async fn start_device_authorization(
+        &self,
+        state: &ServiceState,
+        req: StartDeviceAuthorizationRequest,
+    ) -> Result<DeviceAuthorizationStart, Oauth2SessionProviderError> {
+        let created_at = now();
+        let expires_at =
+            created_at + i64::from(self.oauth2_config.device_code_lifetime_minutes) * 60;
+        let record = self
+            .backend_driver
+            .create_device_code_grant(
+                state,
+                DeviceCodeGrantCreate {
+                    device_code: generate_entropy(),
+                    user_code: generate_user_code(),
+                    domain_id: req.domain_id,
+                    client_id: req.client_id,
+                    scope: req.scope,
+                    server_side_session_secret: generate_entropy(),
+                    created_at,
+                    expires_at,
+                },
+            )
+            .await?;
+        Ok(DeviceAuthorizationStart {
+            device_code: record.device_code,
+            user_code: record.user_code,
+            expires_at: record.expires_at,
+            interval: self.oauth2_config.device_code_poll_interval_seconds,
+        })
+    }
+
+    async fn get_device_code_grant_by_user_code(
+        &self,
+        state: &ServiceState,
+        user_code: &str,
+    ) -> Result<Option<DeviceCodeGrant>, Oauth2SessionProviderError> {
+        let Some(grant) = self
+            .backend_driver
+            .get_device_code_grant_by_user_code(state, user_code)
+            .await?
+        else {
+            return Ok(None);
+        };
+        if grant.expires_at < now() {
+            return Ok(None);
+        }
+        Ok(Some(grant))
+    }
+
+    async fn get_device_code_grant(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+    ) -> Result<Option<DeviceCodeGrant>, Oauth2SessionProviderError> {
+        let Some(grant) = self
+            .backend_driver
+            .get_device_code_grant(state, device_code)
+            .await?
+        else {
+            return Ok(None);
+        };
+        if grant.expires_at < now() {
+            return Ok(None);
+        }
+        Ok(Some(grant))
+    }
+
+    async fn mark_device_authenticated(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+        user_id: &str,
+        auth_time: i64,
+        amr: Vec<String>,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError> {
+        self.backend_driver
+            .mark_device_code_grant_authenticated(state, device_code, user_id, auth_time, amr)
+            .await
+    }
+
+    async fn mark_device_decision(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+        granted: bool,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError> {
+        let status = if granted {
+            DeviceGrantStatus::Authorized
+        } else {
+            DeviceGrantStatus::Denied
+        };
+        self.backend_driver
+            .mark_device_code_grant_decision(state, device_code, status)
+            .await
+    }
+
+    async fn poll_device_code_grant(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+        client_id: &str,
+    ) -> Result<DevicePollOutcome, Oauth2SessionProviderError> {
+        let Some(record) = self
+            .backend_driver
+            .get_device_code_grant(state, device_code)
+            .await?
+        else {
+            return Ok(DevicePollOutcome::InvalidGrant);
+        };
+        if record.client_id != client_id {
+            return Ok(DevicePollOutcome::InvalidGrant);
+        }
+
+        let now = now();
+        if record.expires_at < now {
+            return Ok(DevicePollOutcome::Expired);
+        }
+
+        let interval_secs = i64::from(self.oauth2_config.device_code_poll_interval_seconds);
+        if let Some(last_polled_at) = record.last_polled_at
+            && now - last_polled_at < interval_secs
+        {
+            return Ok(DevicePollOutcome::SlowDown);
+        }
+
+        match record.status {
+            DeviceGrantStatus::Pending => {
+                self.backend_driver
+                    .mark_device_code_grant_polled(state, device_code, now)
+                    .await?;
+                Ok(DevicePollOutcome::Pending)
+            }
+            DeviceGrantStatus::Denied => Ok(DevicePollOutcome::Denied),
+            DeviceGrantStatus::Authorized => {
+                match self
+                    .backend_driver
+                    .take_device_code_grant(state, device_code)
+                    .await?
+                {
+                    // Concurrent poll already redeemed it between the read
+                    // above and this call; treat the same as unknown.
+                    None => Ok(DevicePollOutcome::InvalidGrant),
+                    Some(taken) => Ok(DevicePollOutcome::Authorized(Box::new(taken))),
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -509,5 +675,200 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(result, RefreshTokenRedemption::Invalid));
+    }
+
+    fn sample_device_grant(
+        status: DeviceGrantStatus,
+        last_polled_at: Option<i64>,
+    ) -> DeviceCodeGrant {
+        DeviceCodeGrant {
+            device_code: "device-code-1".to_string(),
+            user_code: "ABCD-EFGH".to_string(),
+            domain_id: "domain-1".to_string(),
+            client_id: "client-1".to_string(),
+            scope: vec!["openid".to_string()],
+            status,
+            user_id: None,
+            auth_time: None,
+            amr: vec![],
+            nonce: None,
+            server_side_session_secret: "secret".to_string(),
+            last_polled_at,
+            created_at: now() - 100,
+            expires_at: now() + 1_000_000,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_start_device_authorization_generates_codes() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_create_device_code_grant().returning(|_, data| {
+            Ok(DeviceCodeGrant {
+                device_code: data.device_code,
+                user_code: data.user_code,
+                domain_id: data.domain_id,
+                client_id: data.client_id,
+                scope: data.scope,
+                status: DeviceGrantStatus::Pending,
+                user_id: None,
+                auth_time: None,
+                amr: vec![],
+                nonce: None,
+                server_side_session_secret: data.server_side_session_secret,
+                last_polled_at: None,
+                created_at: data.created_at,
+                expires_at: data.expires_at,
+            })
+        });
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let start = service
+            .start_device_authorization(
+                &state,
+                StartDeviceAuthorizationRequest {
+                    domain_id: "domain-1".to_string(),
+                    client_id: "client-1".to_string(),
+                    scope: vec!["openid".to_string()],
+                },
+            )
+            .await
+            .unwrap();
+        assert!(!start.device_code.is_empty());
+        // "XXXX-XXXX" shape (ADR 0026 §7.C).
+        assert_eq!(start.user_code.len(), 9);
+        assert_eq!(start.user_code.chars().nth(4), Some('-'));
+    }
+
+    #[tokio::test]
+    async fn test_get_device_code_grant_by_user_code_expired_returns_none() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_get_device_code_grant_by_user_code()
+            .returning(|_, _| {
+                Ok(Some(DeviceCodeGrant {
+                    expires_at: now() - 1,
+                    ..sample_device_grant(DeviceGrantStatus::Pending, None)
+                }))
+            });
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let result = service
+            .get_device_code_grant_by_user_code(&state, "ABCD-EFGH")
+            .await
+            .unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_poll_device_code_grant_unknown_client_id_is_invalid_grant() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_get_device_code_grant()
+            .returning(|_, _| Ok(Some(sample_device_grant(DeviceGrantStatus::Pending, None))));
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let result = service
+            .poll_device_code_grant(&state, "device-code-1", "wrong-client")
+            .await
+            .unwrap();
+        assert!(matches!(result, DevicePollOutcome::InvalidGrant));
+    }
+
+    #[tokio::test]
+    async fn test_poll_device_code_grant_pending_stamps_last_polled_at() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_get_device_code_grant()
+            .returning(|_, _| Ok(Some(sample_device_grant(DeviceGrantStatus::Pending, None))));
+        mock.expect_mark_device_code_grant_polled()
+            .returning(|_, _, _| Ok(()));
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let result = service
+            .poll_device_code_grant(&state, "device-code-1", "client-1")
+            .await
+            .unwrap();
+        assert!(matches!(result, DevicePollOutcome::Pending));
+    }
+
+    #[tokio::test]
+    async fn test_poll_device_code_grant_too_soon_is_slow_down() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_get_device_code_grant().returning(|_, _| {
+            Ok(Some(sample_device_grant(
+                DeviceGrantStatus::Pending,
+                Some(now()),
+            )))
+        });
+        // No `expect_mark_device_code_grant_polled`: calling it would panic
+        // the mock -- a throttled poll must not reset the interval clock.
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let result = service
+            .poll_device_code_grant(&state, "device-code-1", "client-1")
+            .await
+            .unwrap();
+        assert!(matches!(result, DevicePollOutcome::SlowDown));
+    }
+
+    #[tokio::test]
+    async fn test_poll_device_code_grant_denied() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_get_device_code_grant()
+            .returning(|_, _| Ok(Some(sample_device_grant(DeviceGrantStatus::Denied, None))));
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let result = service
+            .poll_device_code_grant(&state, "device-code-1", "client-1")
+            .await
+            .unwrap();
+        assert!(matches!(result, DevicePollOutcome::Denied));
+    }
+
+    #[tokio::test]
+    async fn test_poll_device_code_grant_authorized_takes_and_returns_record() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_get_device_code_grant().returning(|_, _| {
+            Ok(Some(sample_device_grant(
+                DeviceGrantStatus::Authorized,
+                None,
+            )))
+        });
+        mock.expect_take_device_code_grant().returning(|_, _| {
+            Ok(Some(sample_device_grant(
+                DeviceGrantStatus::Authorized,
+                None,
+            )))
+        });
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let result = service
+            .poll_device_code_grant(&state, "device-code-1", "client-1")
+            .await
+            .unwrap();
+        assert!(matches!(result, DevicePollOutcome::Authorized(_)));
+    }
+
+    #[tokio::test]
+    async fn test_poll_device_code_grant_expired() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_get_device_code_grant().returning(|_, _| {
+            Ok(Some(DeviceCodeGrant {
+                expires_at: now() - 1,
+                ..sample_device_grant(DeviceGrantStatus::Pending, None)
+            }))
+        });
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let result = service
+            .poll_device_code_grant(&state, "device-code-1", "client-1")
+            .await
+            .unwrap();
+        assert!(matches!(result, DevicePollOutcome::Expired));
     }
 }

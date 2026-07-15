@@ -133,6 +133,19 @@ pub struct Oauth2Provider {
     #[serde(default = "default_pre_auth_session_lifetime_minutes")]
     #[validate(range(min = 1))]
     pub pre_auth_session_lifetime_minutes: u32,
+
+    /// Lifetime, in minutes, of a `device_code`/`user_code` pair minted at
+    /// `POST /device_authorization` before the grant expires unclaimed
+    /// (RFC 8628 §3.2 `expires_in`, ADR 0026 §7.C).
+    #[serde(default = "default_device_code_lifetime_minutes")]
+    #[validate(range(min = 1))]
+    pub device_code_lifetime_minutes: u32,
+
+    /// Minimum interval, in seconds, between two `/token` polls for the
+    /// same `device_code` (RFC 8628 §3.2 `interval`, §3.5 `slow_down`).
+    #[serde(default = "default_device_code_poll_interval_seconds")]
+    #[validate(range(min = 1))]
+    pub device_code_poll_interval_seconds: u32,
 }
 
 fn default_signing_key_rotation_days() -> u32 {
@@ -183,6 +196,14 @@ fn default_pre_auth_session_lifetime_minutes() -> u32 {
     10
 }
 
+fn default_device_code_lifetime_minutes() -> u32 {
+    10
+}
+
+fn default_device_code_poll_interval_seconds() -> u32 {
+    5
+}
+
 impl Default for Oauth2Provider {
     fn default() -> Self {
         Self {
@@ -199,6 +220,8 @@ impl Default for Oauth2Provider {
             refresh_token_lifetime_days: default_refresh_token_lifetime_days(),
             refresh_token_reuse_grace_minutes: default_refresh_token_reuse_grace_minutes(),
             pre_auth_session_lifetime_minutes: default_pre_auth_session_lifetime_minutes(),
+            device_code_lifetime_minutes: default_device_code_lifetime_minutes(),
+            device_code_poll_interval_seconds: default_device_code_poll_interval_seconds(),
         }
     }
 }
@@ -220,6 +243,8 @@ mod tests {
         assert_eq!(cfg.refresh_token_lifetime_days, 30);
         assert_eq!(cfg.refresh_token_reuse_grace_minutes, 10);
         assert_eq!(cfg.pre_auth_session_lifetime_minutes, 10);
+        assert_eq!(cfg.device_code_lifetime_minutes, 10);
+        assert_eq!(cfg.device_code_poll_interval_seconds, 5);
         assert!(cfg.validate().is_ok());
     }
 
