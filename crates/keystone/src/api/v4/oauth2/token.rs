@@ -970,7 +970,14 @@ async fn handle_token_exchange_grant(
     )
     .map_err(|e| {
         tracing::warn!(error = %e, "oauth2 token exchange claim construction failed");
-        Oauth2TokenError::internal("token issuance failed")
+        match e {
+            openstack_keystone_core::oauth2_client::TokenExchangeError::CrossDomainSubjectToken => {
+                Oauth2TokenError::invalid_grant(
+                    "subject_token's scope belongs to a different domain than this token endpoint",
+                )
+            }
+            _ => Oauth2TokenError::internal("token issuance failed"),
+        }
     })?;
     let access_token = sign_jwt(state, domain_id, &claims).await?;
 
