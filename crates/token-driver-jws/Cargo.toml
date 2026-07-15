@@ -10,7 +10,7 @@ repository.workspace = true
 
 [dependencies]
 chrono = { workspace = true, features = ["now"] }
-jsonwebtoken = { version = "10.4", features = ["rust_crypto"] }
+jsonwebtoken.workspace = true
 openstack-keystone-config.workspace = true
 openstack-keystone-core.workspace = true
 openstack-keystone-core-types.workspace = true

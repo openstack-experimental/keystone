@@ -32,7 +32,7 @@ openstack-keystone-core-types.workspace = true
 openstack-keystone-config.workspace = true
 openstack-keystone-key-repository.workspace = true
 openstack-keystone-storage-api.workspace = true
-jsonwebtoken = { version = "10.4", features = ["rust_crypto"] }
+jsonwebtoken.workspace = true
 mockall = { workspace = true, optional = true }
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
 rand.workspace = true

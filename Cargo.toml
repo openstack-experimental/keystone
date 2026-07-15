@@ -104,6 +104,7 @@ hmac = { version = "0.13" }
 inventory = { version = "0.3" }
 ipnet = { version = "2" }
 itertools = { version = "0.15" }
+jsonwebtoken = { version = "10.4", features = ["rust_crypto"] }
 mockall = { version = "0.15" }
 mockall_double = { version = "0.3" }
 nix = { version = "0.31", default-features = false }
