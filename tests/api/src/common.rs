@@ -16,7 +16,7 @@
 use eyre::{OptionExt, Result, WrapErr, eyre};
 use openstack_sdk::{AsyncOpenStack, config::CloudConfig};
 use reqwest::{
-    Client, ClientBuilder, StatusCode,
+    Client, ClientBuilder, Response, StatusCode,
     header::{HeaderMap, HeaderName, HeaderValue},
 };
 use secrecy::{ExposeSecret, SecretString};
@@ -28,6 +28,29 @@ use openstack_keystone_api_types::scope::{
     DomainBuilder, Scope, ScopeProjectBuilder, System as ScopeSystem,
 };
 use openstack_keystone_api_types::v3::auth::token::*;
+
+async fn authentication_error(rsp: Response) -> eyre::Report {
+    let status = rsp.status();
+
+    let request_id = rsp
+        .headers()
+        .get("x-openstack-request-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+
+    let body = rsp.text().await.unwrap_or_default();
+
+    match (request_id, body.is_empty()) {
+        (Some(request_id), false) => {
+            eyre!("Authentication failed with {status}, request-id: {request_id}: {body}")
+        }
+        (Some(request_id), true) => {
+            eyre!("Authentication failed with {status}, request-id: {request_id}")
+        }
+        (None, false) => eyre!("Authentication failed with {status}: {body}"),
+        (None, true) => eyre!("Authentication failed with {status}"),
+    }
+}
 
 pub struct TestClient {
     pub client: Client,
@@ -61,7 +84,7 @@ impl TestClient {
             .await?;
 
         if rsp.status() != StatusCode::OK {
-            return Err(eyre!("Authentication failed with {}", rsp.status()));
+            return Err(authentication_error(rsp).await);
         }
 
         let token = rsp
@@ -181,7 +204,7 @@ impl TestClient {
             .await?;
 
         if rsp.status() != StatusCode::OK {
-            return Err(eyre!("Authentication failed with {}", rsp.status()));
+            return Err(authentication_error(rsp).await);
         }
 
         let token = rsp
@@ -261,7 +284,7 @@ pub async fn auth_user_by_password<U: AsRef<str>, D: AsRef<str>, P: AsRef<str>>(
         .await?;
 
     if !rsp.status().is_success() {
-        return Err(eyre!("Authentication failed with {}", rsp.status()));
+        return Err(authentication_error(rsp).await);
     }
     Ok(())
 }
