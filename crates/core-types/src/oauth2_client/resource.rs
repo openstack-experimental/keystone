@@ -28,10 +28,15 @@ pub enum GrantType {
     AuthorizationCode,
     /// RFC 6749 `client_credentials` (machine-to-machine).
     ClientCredentials,
-    /// RFC 6749 `refresh_token`.
-    RefreshToken,
     /// OAuth 2.0 Device Authorization Grant (RFC 8628).
     DeviceCode,
+    /// RFC 6749 `refresh_token`.
+    RefreshToken,
+    /// RFC 8693 Token Exchange (ADR 0026 §12 v2 shape): trades an existing
+    /// Keystone-native delegated credential (trust, application credential)
+    /// for a native `OpenStackAccessTokenClaims` access token.
+    #[serde(rename = "urn:ietf:params:oauth:grant-type:token-exchange")]
+    TokenExchange,
 }
 
 /// A registered OAuth2/OIDC relying party (ADR 0026 §5, "Amendment to ADR

@@ -26,7 +26,10 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod authorize;
 mod clients;
+mod confirm_rotate_signing_key;
 mod jwks;
+mod jwks_revocation;
+mod rotate_signing_key;
 mod token;
 mod well_known;
 
@@ -44,10 +47,15 @@ pub struct ApiDoc;
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
         .routes(routes!(jwks::jwks))
+        .routes(routes!(jwks_revocation::jwks_revocation))
         .routes(routes!(well_known::well_known))
         .routes(routes!(token::token))
         .routes(routes!(authorize::authorize))
         .routes(routes!(authorize::authorize_login))
         .routes(routes!(authorize::authorize_consent))
+        .routes(routes!(rotate_signing_key::rotate_signing_key))
+        .routes(routes!(
+            confirm_rotate_signing_key::confirm_rotate_signing_key
+        ))
         .merge(clients::openapi_router())
 }

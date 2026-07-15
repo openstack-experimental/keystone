@@ -12,12 +12,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # OAuth2 signing key provider: Backends.
+use std::collections::HashSet;
+
 use async_trait::async_trait;
 
 use openstack_keystone_key_repository::asymmetric::{ActiveKeys, KeyMaterial, SigningAlgorithm};
 
 use crate::keystone::ServiceState;
 use crate::oauth2_key::Oauth2KeyProviderError;
+use openstack_keystone_core_types::oauth2_key::PendingRotationInfo;
 
 /// OAuth2 signing key Backend trait.
 ///
@@ -54,4 +57,42 @@ pub trait Oauth2KeyBackend: Send + Sync {
         state: &ServiceState,
         domain_id: &str,
     ) -> Result<ActiveKeys, Oauth2KeyProviderError>;
+
+    /// Normal rotation: generate, stage as `Pending`, promote to `Primary`.
+    /// See [`crate::oauth2_key::Oauth2KeyApi::rotate_signing_key`].
+    async fn rotate_signing_key(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        algorithm: SigningAlgorithm,
+    ) -> Result<KeyMaterial, Oauth2KeyProviderError>;
+
+    /// Stage stage 1 of an emergency rotation.
+    /// See [`crate::oauth2_key::Oauth2KeyApi::stage_emergency_rotation`].
+    async fn stage_emergency_rotation(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        algorithm: SigningAlgorithm,
+        initiator: &str,
+    ) -> Result<PendingRotationInfo, Oauth2KeyProviderError>;
+
+    /// Confirm stage 2 of an emergency rotation.
+    /// See [`crate::oauth2_key::Oauth2KeyApi::confirm_emergency_rotation`].
+    async fn confirm_emergency_rotation(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        rotation_id: &str,
+        confirmer: &str,
+        revoke_jtis: Vec<String>,
+    ) -> Result<KeyMaterial, Oauth2KeyProviderError>;
+
+    /// Fetch the domain's current (non-expired) JTI revocation list.
+    /// See [`crate::oauth2_key::Oauth2KeyApi::revoked_jtis`].
+    async fn revoked_jtis(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<HashSet<String>, Oauth2KeyProviderError>;
 }

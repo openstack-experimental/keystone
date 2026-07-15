@@ -12,11 +12,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # OAuth2 signing key provider
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::oauth2_key::PendingRotationInfo;
 use openstack_keystone_key_repository::asymmetric::{
     KeyMaterial, SigningAlgorithm as KeySigningAlgorithm,
 };
@@ -86,6 +88,48 @@ impl Oauth2KeyApi for Oauth2KeyService {
         let active = self.backend_driver.active_keys(state, domain_id).await?;
         Ok(active.primary)
     }
+
+    async fn rotate_signing_key(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<KeyMaterial, Oauth2KeyProviderError> {
+        self.backend_driver
+            .rotate_signing_key(state, domain_id, self.signing_algorithm)
+            .await
+    }
+
+    async fn stage_emergency_rotation(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        initiator: &str,
+    ) -> Result<PendingRotationInfo, Oauth2KeyProviderError> {
+        self.backend_driver
+            .stage_emergency_rotation(state, domain_id, self.signing_algorithm, initiator)
+            .await
+    }
+
+    async fn confirm_emergency_rotation(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        rotation_id: &str,
+        confirmer: &str,
+        revoke_jtis: Vec<String>,
+    ) -> Result<KeyMaterial, Oauth2KeyProviderError> {
+        self.backend_driver
+            .confirm_emergency_rotation(state, domain_id, rotation_id, confirmer, revoke_jtis)
+            .await
+    }
+
+    async fn revoked_jtis(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<HashSet<String>, Oauth2KeyProviderError> {
+        self.backend_driver.revoked_jtis(state, domain_id).await
+    }
 }
 
 #[cfg(test)]
@@ -152,5 +196,108 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(key.algorithm, KeySigningAlgorithm::Es256);
+    }
+
+    #[tokio::test]
+    async fn test_rotate_signing_key_delegates_configured_algorithm() {
+        let mut backend = MockOauth2KeyBackend::default();
+        backend
+            .expect_rotate_signing_key()
+            .withf(|_, domain_id: &str, algorithm: &KeySigningAlgorithm| {
+                domain_id == "domain-1" && *algorithm == KeySigningAlgorithm::Es256
+            })
+            .returning(|_, _, algorithm| Ok(generate_keypair(algorithm).unwrap()));
+        let service = Oauth2KeyService {
+            backend_driver: Arc::new(backend),
+            signing_algorithm: KeySigningAlgorithm::Es256,
+        };
+        let state = get_mocked_state(None, None).await;
+
+        assert!(service.rotate_signing_key(&state, "domain-1").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_stage_emergency_rotation_delegates_configured_algorithm_and_initiator() {
+        let mut backend = MockOauth2KeyBackend::default();
+        backend
+            .expect_stage_emergency_rotation()
+            .withf(
+                |_, domain_id: &str, algorithm: &KeySigningAlgorithm, initiator: &str| {
+                    domain_id == "domain-1"
+                        && *algorithm == KeySigningAlgorithm::Es256
+                        && initiator == "operator-a"
+                },
+            )
+            .returning(|_, _, _, _| {
+                Ok(PendingRotationInfo {
+                    rotation_id: "rotation-1".to_string(),
+                    expires_at: 900,
+                })
+            });
+        let service = Oauth2KeyService {
+            backend_driver: Arc::new(backend),
+            signing_algorithm: KeySigningAlgorithm::Es256,
+        };
+        let state = get_mocked_state(None, None).await;
+
+        let pending = service
+            .stage_emergency_rotation(&state, "domain-1", "operator-a")
+            .await
+            .unwrap();
+        assert_eq!(pending.rotation_id, "rotation-1");
+    }
+
+    #[tokio::test]
+    async fn test_confirm_emergency_rotation_delegates_revoke_jtis() {
+        let mut backend = MockOauth2KeyBackend::default();
+        backend
+            .expect_confirm_emergency_rotation()
+            .withf(
+                |_,
+                 domain_id: &str,
+                 rotation_id: &str,
+                 confirmer: &str,
+                 revoke_jtis: &Vec<String>| {
+                    domain_id == "domain-1"
+                        && rotation_id == "rotation-1"
+                        && confirmer == "operator-b"
+                        && revoke_jtis == &vec!["jti-1".to_string()]
+                },
+            )
+            .returning(|_, _, _, _, _| Ok(generate_keypair(KeySigningAlgorithm::Es256).unwrap()));
+        let service = Oauth2KeyService {
+            backend_driver: Arc::new(backend),
+            signing_algorithm: KeySigningAlgorithm::Es256,
+        };
+        let state = get_mocked_state(None, None).await;
+
+        assert!(
+            service
+                .confirm_emergency_rotation(
+                    &state,
+                    "domain-1",
+                    "rotation-1",
+                    "operator-b",
+                    vec!["jti-1".to_string()],
+                )
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_revoked_jtis_delegates_to_backend() {
+        let mut backend = MockOauth2KeyBackend::default();
+        backend
+            .expect_revoked_jtis()
+            .returning(|_, _| Ok(HashSet::from(["jti-1".to_string()])));
+        let service = Oauth2KeyService {
+            backend_driver: Arc::new(backend),
+            signing_algorithm: KeySigningAlgorithm::Es256,
+        };
+        let state = get_mocked_state(None, None).await;
+
+        let revoked = service.revoked_jtis(&state, "domain-1").await.unwrap();
+        assert!(revoked.contains("jti-1"));
     }
 }

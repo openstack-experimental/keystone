@@ -24,6 +24,7 @@ impl From<api::GrantType> for core::GrantType {
             api::GrantType::ClientCredentials => Self::ClientCredentials,
             api::GrantType::RefreshToken => Self::RefreshToken,
             api::GrantType::DeviceCode => Self::DeviceCode,
+            api::GrantType::TokenExchange => Self::TokenExchange,
         }
     }
 }
@@ -35,6 +36,7 @@ impl From<core::GrantType> for api::GrantType {
             core::GrantType::ClientCredentials => Self::ClientCredentials,
             core::GrantType::RefreshToken => Self::RefreshToken,
             core::GrantType::DeviceCode => Self::DeviceCode,
+            core::GrantType::TokenExchange => Self::TokenExchange,
         }
     }
 }

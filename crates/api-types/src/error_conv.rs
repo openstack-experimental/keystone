@@ -345,6 +345,19 @@ impl From<Oauth2KeyProviderError> for KeystoneApiError {
                 resource: "oauth2_signing_key".into(),
                 identifier: x,
             },
+            Oauth2KeyProviderError::NoPendingRotation(x) => Self::NotFound {
+                resource: "oauth2_pending_rotation".into(),
+                identifier: x,
+            },
+            Oauth2KeyProviderError::RotationExpired(x) => {
+                Self::Conflict(format!("pending emergency rotation {x} has expired"))
+            }
+            Oauth2KeyProviderError::DualControlViolation => Self::Forbidden {
+                source: Box::new(value),
+            },
+            Oauth2KeyProviderError::EmergencyRotationAlreadyPending(x) => Self::Conflict(format!(
+                "an emergency rotation (id {x}) is already pending for this domain"
+            )),
             other => Self::InternalError(other.to_string()),
         }
     }

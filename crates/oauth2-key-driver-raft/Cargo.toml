@@ -22,6 +22,7 @@ secrecy.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["sync"] }
 tracing.workspace = true
+uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 openstack-keystone-distributed-storage = { workspace = true, features = ["mock"] }

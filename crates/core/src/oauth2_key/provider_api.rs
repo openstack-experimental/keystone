@@ -12,12 +12,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # OAuth2 signing key provider API.
+use std::collections::HashSet;
+
 use async_trait::async_trait;
 
 use openstack_keystone_key_repository::asymmetric::KeyMaterial;
 
 use crate::keystone::ServiceState;
 use crate::oauth2_key::Oauth2KeyProviderError;
+use openstack_keystone_core_types::oauth2_key::PendingRotationInfo;
 
 /// The trait for managing per-domain OAuth2 signing keys (ADR 0026 §3).
 #[async_trait]
@@ -74,4 +77,69 @@ pub trait Oauth2KeyApi: Send + Sync {
         state: &ServiceState,
         domain_id: &str,
     ) -> Result<KeyMaterial, Oauth2KeyProviderError>;
+
+    /// Normal (non-emergency) signing key rotation (ADR 0026 §3, "Normal
+    /// Rotation Flow"): generate a fresh keypair, stage it as `Pending`,
+    /// then atomically promote it to `Primary` (demoting the prior
+    /// `Primary` to `Previous`).
+    ///
+    /// # Returns
+    /// * Success with the newly active `Primary` [`KeyMaterial`].
+    /// * [`Oauth2KeyProviderError::NotFound`] if no keys are provisioned yet
+    ///   for this domain (rotation requires an existing `Primary`).
+    async fn rotate_signing_key(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<KeyMaterial, Oauth2KeyProviderError>;
+
+    /// Stage stage 1 of an emergency rotation (ADR 0026 §3, "Emergency
+    /// Rotation and Signing Key Compromise"): generate a fresh keypair and
+    /// persist it as a pending emergency rotation record, awaiting a second
+    /// operator's confirmation within the 15-minute dual-control window.
+    /// Does not touch the currently active keys.
+    ///
+    /// # Arguments
+    /// * `initiator` - Identity of the operator staging the rotation (recorded
+    ///   for the dual-control check and the audit trail).
+    async fn stage_emergency_rotation(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        initiator: &str,
+    ) -> Result<PendingRotationInfo, Oauth2KeyProviderError>;
+
+    /// Confirm a pending emergency rotation (stage 2): validates
+    /// `rotation_id` exists, has not expired, and that `confirmer` differs
+    /// from the staging `initiator` (dual-control), then atomically
+    /// promotes the staged key to `Primary` (demoting the prior `Primary`
+    /// to `Previous`, same as normal rotation) and adds `revoke_jtis` to
+    /// the domain's JTI revocation list (ADR 0026 §3, §11).
+    ///
+    /// # Errors
+    /// * [`Oauth2KeyProviderError::NoPendingRotation`] if `rotation_id` is
+    ///   unknown.
+    /// * [`Oauth2KeyProviderError::RotationExpired`] if the 15-minute window
+    ///   elapsed.
+    /// * [`Oauth2KeyProviderError::DualControlViolation`] if `confirmer ==
+    ///   initiator`.
+    async fn confirm_emergency_rotation(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        rotation_id: &str,
+        confirmer: &str,
+        revoke_jtis: Vec<String>,
+    ) -> Result<KeyMaterial, Oauth2KeyProviderError>;
+
+    /// Fetch the domain's current JTI revocation list for
+    /// `GET /v4/oauth2/{domain_id}/jwks/revocation` (ADR 0026 §3, §11).
+    /// Entries past their TTL are lazily excluded, mirroring ADR 0020
+    /// §4.A's lazy-sweep posture -- there is no separate background
+    /// janitor for this list.
+    async fn revoked_jtis(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<HashSet<String>, Oauth2KeyProviderError>;
 }

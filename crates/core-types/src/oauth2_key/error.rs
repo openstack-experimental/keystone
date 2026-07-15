@@ -53,6 +53,27 @@ pub enum Oauth2KeyProviderError {
     /// Unsupported driver.
     #[error("unsupported driver `{0}` for the oauth2 key provider")]
     UnsupportedDriver(String),
+
+    /// No pending emergency rotation exists for this `rotation_id`
+    /// (ADR 0026 §3, Emergency Rotation).
+    #[error("no pending emergency rotation with id {0}")]
+    NoPendingRotation(String),
+
+    /// The pending emergency rotation's 15-minute confirmation window has
+    /// elapsed.
+    #[error("pending emergency rotation {0} has expired")]
+    RotationExpired(String),
+
+    /// The confirming operator was the same identity that staged the
+    /// rotation (ADR 0026 §3 dual-control requirement).
+    #[error("the confirming operator must differ from the initiating operator")]
+    DualControlViolation,
+
+    /// A pending emergency rotation already exists for this domain and
+    /// hasn't expired. Staging a second one would silently orphan the
+    /// first's `rotation_id`.
+    #[error("an emergency rotation (id {0}) is already pending for this domain")]
+    EmergencyRotationAlreadyPending(String),
 }
 
 impl Oauth2KeyProviderError {

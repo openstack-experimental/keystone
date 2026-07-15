@@ -180,6 +180,9 @@ pub use oauth2_client::MockOauth2ClientProvider;
 mod oauth2_key {
     use super::*;
 
+    use std::collections::HashSet;
+
+    use openstack_keystone_core_types::oauth2_key::PendingRotationInfo;
     use openstack_keystone_key_repository::asymmetric::KeyMaterial;
 
     use crate::oauth2_key::{Oauth2KeyApi, Oauth2KeyProviderError};
@@ -206,6 +209,34 @@ mod oauth2_key {
                 state: &ServiceState,
                 domain_id: &str,
             ) -> Result<KeyMaterial, Oauth2KeyProviderError>;
+
+            async fn rotate_signing_key(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+            ) -> Result<KeyMaterial, Oauth2KeyProviderError>;
+
+            async fn stage_emergency_rotation(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+                initiator: &str,
+            ) -> Result<PendingRotationInfo, Oauth2KeyProviderError>;
+
+            async fn confirm_emergency_rotation(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+                rotation_id: &str,
+                confirmer: &str,
+                revoke_jtis: Vec<String>,
+            ) -> Result<KeyMaterial, Oauth2KeyProviderError>;
+
+            async fn revoked_jtis(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+            ) -> Result<HashSet<String>, Oauth2KeyProviderError>;
         }
     }
 }
