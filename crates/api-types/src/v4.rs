@@ -17,6 +17,7 @@ pub mod auth;
 pub mod auth_plugin;
 pub mod mapping;
 pub mod oauth2_client;
+pub mod oauth2_key;
 pub mod scim_realm;
 pub mod token_restriction;
 pub mod user;

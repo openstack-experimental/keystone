@@ -26,8 +26,10 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+
+use openstack_keystone_api_types::v4::oauth2_key::{
+    ConfirmRotateSigningKeyRequest, ConfirmRotateSigningKeyResponse,
+};
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
@@ -35,26 +37,6 @@ use crate::audit::{
     CorrelationId, build_initiator_from_vsc, emit_oauth2_emergency_key_rotation_critical_event,
 };
 use crate::keystone::ServiceState;
-
-/// Request body for `confirm-rotate-signing-key`.
-#[derive(Debug, Deserialize, ToSchema)]
-pub(super) struct ConfirmRotateSigningKeyRequest {
-    /// The `pending_rotation_id` returned by `rotate-signing-key`.
-    rotation_id: String,
-    /// JTIs known to have been issued by the compromised key during the
-    /// incident window, to add to the JTI revocation list (ADR 0026 §3).
-    /// Empty by default: this repository has no audit-log query capability
-    /// to derive this list automatically (see ADR 0026 §3 amendment).
-    #[serde(default)]
-    revoke_jtis: Vec<String>,
-}
-
-/// Response body for `confirm-rotate-signing-key`.
-#[derive(Debug, Serialize, ToSchema)]
-pub(super) struct ConfirmRotateSigningKeyResponse {
-    /// The newly active `Primary` key's `kid`.
-    kid: String,
-}
 
 #[utoipa::path(
     post,
