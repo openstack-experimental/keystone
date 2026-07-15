@@ -44,21 +44,21 @@ spec:
               name: keystone-raft
               protocol: TCP
             - containerPort: 8099
-              name: keystone-metrics
+              name: metrics
               protocol: TCP
 
           livenessProbe:
             failureThreshold: 3
             httpGet:
               path: /health
-              port: keystone-metrics
+              port: metrics
               scheme: HTTP
             periodSeconds: 10
           readinessProbe:
             failureThreshold: 3
             httpGet:
               path: /ready
-              port: keystone-metrics
+              port: metrics
               scheme: HTTP
             periodSeconds: 10
             successThreshold: 1
@@ -67,7 +67,7 @@ spec:
             failureThreshold: 600
             httpGet:
               path: /ready
-              port: keystone-metrics
+              port: metrics
               scheme: HTTP
             periodSeconds: 1
             successThreshold: 1
