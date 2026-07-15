@@ -257,7 +257,7 @@ pub struct Config {
     /// Reverse proxies trusted by the global per-IP rate limiter.
     #[serde(rename = "rate_limit_trusted_proxies", default)]
     pub rate_limit_trusted_proxies: RateLimitTrustedProxiesSection,
-    
+
     /// Server listener configuration for the health/metrics interface.
     #[serde(rename = "interface_metrics", default)]
     pub interface_metrics: MetricsInterface,
