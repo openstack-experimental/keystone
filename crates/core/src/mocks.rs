@@ -237,6 +237,23 @@ mod oauth2_key {
                 state: &ServiceState,
                 domain_id: &str,
             ) -> Result<HashSet<String>, Oauth2KeyProviderError>;
+
+            async fn list_all_active_keys(
+                &self,
+                state: &ServiceState,
+            ) -> Result<Vec<(String, openstack_keystone_key_repository::asymmetric::ActiveKeys)>, Oauth2KeyProviderError>;
+
+            async fn retire_previous_key(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+            ) -> Result<bool, Oauth2KeyProviderError>;
+
+            async fn prune_expired_jtis(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+            ) -> Result<(), Oauth2KeyProviderError>;
         }
     }
 }

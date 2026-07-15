@@ -69,6 +69,13 @@ pub struct KeyMaterial {
     pub kid: String,
     /// When this keypair was generated.
     pub created_at: DateTime<Utc>,
+    /// When this keypair was demoted out of [`KeyRole::Primary`], if ever
+    /// (ADR 0026 §3). `None` for a key that has never been `Previous`.
+    /// Distinct from `created_at`: a key can serve as `Primary` for an
+    /// arbitrarily long time before its first rotation, so retention
+    /// windows for a demoted key must be measured from demotion, not
+    /// generation.
+    pub demoted_at: Option<DateTime<Utc>>,
 }
 
 impl Clone for KeyMaterial {
@@ -80,6 +87,7 @@ impl Clone for KeyMaterial {
             public_key_der: self.public_key_der.clone(),
             kid: self.kid.clone(),
             created_at: self.created_at,
+            demoted_at: self.demoted_at,
         }
     }
 }
@@ -90,6 +98,7 @@ impl std::fmt::Debug for KeyMaterial {
             .field("algorithm", &self.algorithm)
             .field("kid", &self.kid)
             .field("created_at", &self.created_at)
+            .field("demoted_at", &self.demoted_at)
             .field("private_key_der", &"<redacted>")
             .finish()
     }
@@ -125,7 +134,11 @@ pub trait AsymmetricKeySource: Send + Sync {
             .remove(&KeyRole::Pending)
             .ok_or(KeyRepositoryError::RoleMissing(KeyRole::Pending))?;
         if let Some(old_primary) = current.remove(&KeyRole::Primary) {
-            self.write(KeyRole::Previous, &old_primary).await?;
+            let demoted = KeyMaterial {
+                demoted_at: Some(Utc::now()),
+                ..old_primary
+            };
+            self.write(KeyRole::Previous, &demoted).await?;
         }
         self.write(KeyRole::Primary, &pending).await?;
         self.remove(KeyRole::Pending).await?;

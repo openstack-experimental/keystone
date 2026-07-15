@@ -92,6 +92,7 @@ use openstack_keystone_core::auth_plugin_startup::load_auth_plugins;
 use openstack_keystone_core::cadf_hook::CadfAuditHook;
 use openstack_keystone_core::db::sync_schema;
 use openstack_keystone_core::error::KeystoneError;
+use openstack_keystone_core::oauth2_key::janitor as oauth2_key_janitor;
 use openstack_keystone_core::scim_resource::janitor as scim_resource_janitor;
 use openstack_keystone_credential_driver_sql::fernet::FernetKeyRepository;
 use openstack_keystone_distributed_storage::{StorageApi, app::Storage};
@@ -276,6 +277,11 @@ async fn main() -> Result<(), Report> {
     // the configured retention window (ADR 0024 §6.C). Same leader-gated
     // pattern as the API Key janitor above.
     scim_resource_janitor::spawn(shared_state.clone());
+
+    // OAuth2 signing key janitor: demoted `Previous` key retirement and
+    // proactive JTI revocation-list pruning (ADR 0026 §3). Same leader-gated
+    // pattern as the API Key janitor above.
+    oauth2_key_janitor::spawn(shared_state.clone());
 
     // Reset the dummy-password-hash cache whenever the configuration is
     // hot-reloaded. The cache is keyed by (algorithm, rounds); if the operator
