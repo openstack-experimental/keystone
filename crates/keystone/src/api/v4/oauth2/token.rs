@@ -203,7 +203,7 @@ impl Oauth2TokenError {
         )
     }
 
-    fn too_many_requests(retry_after: u64) -> Self {
+    pub(super) fn too_many_requests(retry_after: u64) -> Self {
         Self {
             status: StatusCode::TOO_MANY_REQUESTS,
             retry_after: Some(retry_after),
@@ -406,13 +406,6 @@ pub(super) async fn token(
         ));
     }
 
-    if !client.grant_types.contains(&GrantType::ClientCredentials) {
-        let _ = crypto::generate_dummy_hash(&oauth2_cfg).await;
-        return Err(Oauth2TokenError::unauthorized_client(
-            "client is not authorized to use the client_credentials grant",
-        ));
-    }
-
     // RFC 6749 §4.4 requires a confidential client for client_credentials --
     // a public client has no secret to verify at all.
     let Some(secret_hash) = client.client_secret_hash.as_deref() else {
@@ -444,6 +437,16 @@ pub(super) async fn token(
         );
         return Err(Oauth2TokenError::invalid_client(
             "client authentication failed",
+        ));
+    }
+
+    // Enumeration defense (V8a): checked only after a verified secret, so an
+    // existing-but-unauthorized client can't be distinguished from an
+    // unknown/wrong-secret one by response shape alone -- both require
+    // proving possession of a valid secret first.
+    if !client.grant_types.contains(&GrantType::ClientCredentials) {
+        return Err(Oauth2TokenError::unauthorized_client(
+            "client is not authorized to use the client_credentials grant",
         ));
     }
 

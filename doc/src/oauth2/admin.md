@@ -228,5 +228,6 @@ ADR amendments for the design work required to close them:
 | --- | --- |
 | `/jwks` or `/.well-known/openid-configuration` returns 404 | Domain has no signing key — run `keystone-manage oauth2 ensure-signing-key --domain <id>` |
 | `429` on `/token` | Rate limit hit — see `token_rate_limit_*` config |
+| `429` on `/authorize`, `/device`, `/device/login`, or `/device_authorization` | Global per-IP limiter hit — see `[rate_limit_global_ip]` |
 | `confirm-rotate-signing-key` fails with "rotation not found/expired" | The 15-minute confirmation window elapsed and the rotation auto-aborted; re-run `rotate-signing-key --emergency` |
 | Downstream service rejects all OP tokens after Keystone/network blip | Expected fail-closed behavior — check JWKS/revocation endpoint reachability from the service |

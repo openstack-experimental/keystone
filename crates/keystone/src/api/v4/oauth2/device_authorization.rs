@@ -34,6 +34,7 @@ use openstack_keystone_core_types::oauth2_client::GrantType;
 
 use super::token::Oauth2TokenError;
 use super::well_known::base_url;
+use crate::api::common::PeerAddr;
 use crate::keystone::ServiceState;
 
 #[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
@@ -76,8 +77,21 @@ pub(super) async fn device_authorization(
     Path(domain_id): Path<String>,
     State(state): State<ServiceState>,
     headers: HeaderMap,
+    PeerAddr(peer_addr): PeerAddr,
     Form(form): Form<DeviceAuthorizationForm>,
 ) -> Result<Response, Oauth2TokenError> {
+    // Mirrors `/token`'s and `/authorize`'s pre-lookup per-IP throttle: this
+    // endpoint does a client lookup and mints session state on every call,
+    // and -- like `/authorize` -- is reachable with no client_secret.
+    if let Err(retry_after) = state
+        .rate_limiters
+        .check_ip(&headers, peer_addr.map(|a| a.ip()))
+    {
+        return Err(Oauth2TokenError::too_many_requests(
+            retry_after.as_secs().max(1),
+        ));
+    }
+
     let Some(client_id) = form.client_id.clone() else {
         return Err(Oauth2TokenError::invalid_request(
             "missing required parameter: client_id",
@@ -174,15 +188,24 @@ pub(super) async fn device_authorization(
 
 #[cfg(test)]
 mod tests {
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+
     use axum::{
         body::Body,
+        extract::ConnectInfo,
         http::{Request, StatusCode},
     };
     use http_body_util::BodyExt;
+    use sea_orm::DatabaseConnection;
     use tower::ServiceExt;
     use tower_http::trace::TraceLayer;
 
+    use openstack_keystone_audit::AuditDispatcher;
+    use openstack_keystone_config::{Config, ConfigManager};
+    use openstack_keystone_core::keystone::Service;
     use openstack_keystone_core::oauth2_session::DeviceAuthorizationStart;
+    use openstack_keystone_core::policy::MockPolicy;
     use openstack_keystone_core_types::oauth2_client as provider_types;
 
     use super::super::openapi_router;
@@ -324,5 +347,60 @@ mod tests {
                 .contains("ABCD-EFGH")
         );
         assert_eq!(json["interval"], 5);
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_returns_429_before_client_lookup() {
+        let config = Config {
+            rate_limit_global_ip: openstack_keystone_config::RateLimitSection {
+                enabled: true,
+                burst_size: 1,
+                replenish_rate_per_second: 1,
+            },
+            ..Config::default()
+        };
+
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_get_by_client_id()
+            .returning(|_, _| Ok(None));
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock)
+            .build()
+            .unwrap();
+
+        let state = Arc::new(
+            Service::new(
+                ConfigManager::not_watched(config),
+                DatabaseConnection::Disconnected,
+                provider,
+                Arc::new(MockPolicy::default()),
+                AuditDispatcher::noop(),
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+
+        let client_addr: SocketAddr = "203.0.113.9:1234".parse().unwrap();
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let mut req1 = request("client_id=client-1");
+        req1.extensions_mut().insert(ConnectInfo(client_addr));
+        // First request consumes the single burst token and reaches the
+        // (mocked) client lookup, which reports "not found".
+        assert_eq!(
+            api.as_service().oneshot(req1).await.unwrap().status(),
+            StatusCode::UNAUTHORIZED
+        );
+
+        let mut req2 = request("client_id=client-1");
+        req2.extensions_mut().insert(ConnectInfo(client_addr));
+        assert_eq!(
+            api.as_service().oneshot(req2).await.unwrap().status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
     }
 }
