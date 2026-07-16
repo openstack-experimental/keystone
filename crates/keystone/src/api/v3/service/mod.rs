@@ -11,26 +11,22 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-pub mod api_key;
-pub mod assignment;
-pub mod auth;
-pub mod common;
-pub mod credential;
-pub mod endpoint;
-pub mod federation;
-pub mod guard;
-pub mod identity;
-pub mod mapping;
-pub mod oauth2;
-pub mod resource;
-pub mod role;
-pub mod scim;
-pub mod scim_realm;
-pub mod service;
-pub mod token_restriction;
-pub mod webauthn;
+//! # Service API
 
-pub mod k8s_auth {
-    pub mod auth;
-    pub mod instance;
+use utoipa_axum::{router::OpenApiRouter, routes};
+
+use crate::keystone::ServiceState;
+
+mod create;
+mod delete;
+mod list;
+mod show;
+pub mod types;
+mod update;
+
+pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
+    OpenApiRouter::new()
+        .routes(routes!(list::list, create::create))
+        .routes(routes!(show::show, delete::delete))
+        .routes(routes!(update::update))
 }

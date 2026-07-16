@@ -23,6 +23,7 @@ use color_eyre::Report;
 use openstack_keystone_config::Config;
 
 mod bootstrap;
+mod catalog;
 mod common;
 mod credential;
 mod db;
@@ -31,6 +32,7 @@ mod storage;
 mod token;
 
 use crate::bootstrap::*;
+use crate::catalog::*;
 use crate::credential::*;
 use crate::db::*;
 use crate::oauth2::*;
@@ -62,6 +64,9 @@ enum Command {
     /// Bootstrap.
     Bootstrap(BootstrapCommand),
 
+    /// Service catalog (service/endpoint) management.
+    Catalog(CatalogCommand),
+
     /// Credential encryption key management (ADR 0019 §4).
     Credential(CredentialCommand),
 
@@ -90,6 +95,7 @@ async fn main() -> Result<(), Report> {
     let cfg = Config::load_all(args.config)?;
     match args.command {
         Command::Bootstrap(x) => x.take_action(&cfg).await?,
+        Command::Catalog(x) => x.take_action(&cfg).await?,
         Command::Credential(x) => x.take_action(&cfg).await?,
         Command::Db(x) => x.take_action(&cfg).await?,
         Command::Oauth2(x) => x.take_action(&cfg).await?,

@@ -30,11 +30,13 @@ pub mod auth;
 pub mod credential;
 pub mod domain;
 pub mod ec2tokens;
+pub mod endpoint;
 pub mod group;
 pub mod project;
 pub mod role;
 pub mod role_assignment;
 pub mod role_inferences;
+pub mod service;
 pub mod user;
 
 use crate::api::types::*;
@@ -54,10 +56,12 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .nest("/credentials", credential::openapi_router())
         .nest("/domains", domain::openapi_router())
         .nest("/ec2tokens", ec2tokens::openapi_router())
+        .nest("/endpoints", endpoint::openapi_router())
         .nest("/groups", group::openapi_router())
         .nest("/projects", project::openapi_router())
         .nest("/roles", role::openapi_router())
         .nest("/role_inferences", role_inferences::openapi_router())
+        .nest("/services", service::openapi_router())
         .nest("/users", user::openapi_router())
         .merge(role_assignment::openapi_router())
         .routes(routes!(version))

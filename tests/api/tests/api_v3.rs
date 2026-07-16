@@ -20,7 +20,9 @@ mod api_v3 {
     mod assignment;
     mod auth;
     mod credential;
+    mod endpoint;
     mod identity;
     mod resource;
     mod role;
+    mod service;
 }

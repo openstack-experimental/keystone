@@ -15,12 +15,13 @@
 use std::collections::HashMap;
 
 use derive_builder::Builder;
+use serde::Serialize;
 use serde_json::Value;
 use validator::Validate;
 
 use crate::error::BuilderError;
 
-#[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
+#[derive(Builder, Clone, Debug, Default, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Endpoint {

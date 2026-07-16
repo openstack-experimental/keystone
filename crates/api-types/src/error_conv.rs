@@ -233,6 +233,18 @@ impl From<CatalogProviderError> for KeystoneApiError {
     fn from(value: CatalogProviderError) -> Self {
         match value {
             ref err @ CatalogProviderError::Conflict(..) => Self::Conflict(err.to_string()),
+            CatalogProviderError::EndpointNotFound(x) => Self::NotFound {
+                resource: "endpoint".into(),
+                identifier: x,
+            },
+            CatalogProviderError::ServiceNotFound(x) => Self::NotFound {
+                resource: "service".into(),
+                identifier: x,
+            },
+            CatalogProviderError::RegionNotFound(x) => Self::NotFound {
+                resource: "region".into(),
+                identifier: x,
+            },
             other => Self::InternalError(other.to_string()),
         }
     }
