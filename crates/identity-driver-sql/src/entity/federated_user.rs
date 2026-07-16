@@ -23,9 +23,13 @@ pub struct Model {
     pub id: i32,
     #[sea_orm(column_type = "String(StringLen::N(64))")]
     pub user_id: String,
+    #[sea_orm(column_type = "String(StringLen::N(64))")]
     pub idp_id: String,
+    #[sea_orm(column_type = "String(StringLen::N(64))")]
     pub protocol_id: String,
+    #[sea_orm(column_type = "String(StringLen::N(255))")]
     pub unique_id: String,
+    #[sea_orm(column_type = "String(StringLen::N(255))")]
     pub display_name: Option<String>,
 }
 

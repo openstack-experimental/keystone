@@ -264,6 +264,7 @@ pub struct Federation {
 
     /// Unique ID of the user within the IdP.
     #[builder]
+    #[validate(length(max = 255))]
     pub unique_id: String,
 }
 
@@ -278,7 +279,7 @@ pub struct FederationProtocol {
 
     // TODO: unique ID should potentially belong to the IDP and not to the protocol
     /// Unique ID of the associated user.
-    #[validate(length(max = 64))]
+    #[validate(length(max = 255))]
     pub unique_id: String,
 }
 
