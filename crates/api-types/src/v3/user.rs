@@ -89,6 +89,7 @@ pub struct User {
     /// The date and time when the password expires. The time zone is UTC.
     #[cfg_attr(feature = "builder", builder(default))]
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(serialize_with = "crate::common::serialize_optional_datetime_micros")]
     pub password_expires_at: Option<DateTime<Utc>>,
 }
 
@@ -138,6 +139,7 @@ pub struct UserCreate {
     /// If the user is enabled, this value is true. If the user is disabled,
     /// this value is false.
     #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(default = "crate::default_true")]
     pub enabled: bool,
 
     /// Additional user properties.

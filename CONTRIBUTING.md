@@ -136,6 +136,20 @@ skaffold deploy -a build.artifacts -m keystone
 The skaffold config splits into `keystone` and `infra` modules to avoid
 redeploying all tracking labels on every change.
 
+**Tempest identity compatibility tests** (advisory, non-blocking): a third
+`tempest` module runs the OpenStack tempest identity v3 suite against both
+`keystone-rs` and `keystone-py` to track v3 API compatibility gaps. Since
+not every v3 operation is implemented by keystone-rs yet, this is run and
+reported separately from the main verify suite and never blocks CI:
+
+```console
+skaffold verify -m tempest -a build.artifacts -v debug
+```
+
+Failing test IDs are printed in each container's log
+(`===== FAILED TESTS (target=...) =====`); in CI these are also collected
+into a job summary and an uploaded `tempest-identity-results` log artifact.
+
 ### OpenStackClient (OSC)
 
 Verify authentication flows with `osc` against a deployed instance. Add

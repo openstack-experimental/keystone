@@ -145,7 +145,7 @@ async fn create_inner(
         api_token.token.catalog = Some(catalog);
     }
     let response = (
-        StatusCode::OK,
+        StatusCode::CREATED,
         [(
             "X-Subject-Token",
             state
@@ -421,7 +421,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), StatusCode::CREATED);
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let res: TokenResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(vec!["password"], res.token.methods);
@@ -1480,7 +1480,7 @@ mod auth_plugin_http_tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         assert_eq!(
             status,
-            StatusCode::OK,
+            StatusCode::CREATED,
             "body: {}",
             String::from_utf8_lossy(&body)
         );
@@ -1572,7 +1572,7 @@ mod auth_plugin_http_tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         assert_eq!(
             status,
-            StatusCode::OK,
+            StatusCode::CREATED,
             "body: {}",
             String::from_utf8_lossy(&body)
         );

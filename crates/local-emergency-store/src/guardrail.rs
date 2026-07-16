@@ -32,7 +32,8 @@ pub struct GuardrailConfig {
     /// bypass is refused unconditionally.
     pub enabled: bool,
     /// How long the leader must have been unknown before the bypass
-    /// unlocks, in seconds (`[local_emergency].leaderless_grace_period_seconds`).
+    /// unlocks, in seconds
+    /// (`[local_emergency].leaderless_grace_period_seconds`).
     pub leaderless_grace_period_seconds: u64,
 }
 
@@ -44,8 +45,8 @@ pub struct GuardrailConfig {
 ///   quorum is healthy and the bypass must be refused regardless of grace
 ///   period
 /// - `leaderless_since`: when the leader was first observed to be unknown;
-///   `None` means it just became unknown this instant (grace period starts
-///   now, so the request is refused)
+///   `None` means it just became unknown this instant (grace period starts now,
+///   so the request is refused)
 /// - `now`: caller-supplied clock, so tests don't need to sleep in wall time
 ///
 /// # Returns

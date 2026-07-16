@@ -15,6 +15,7 @@
 use axum::{
     Json,
     extract::{Path, State},
+    http::StatusCode,
     response::IntoResponse,
 };
 use uuid::Uuid;
@@ -113,5 +114,5 @@ pub(super) async fn start(
         }
     };
 
-    Ok(res)
+    Ok((StatusCode::CREATED, res))
 }

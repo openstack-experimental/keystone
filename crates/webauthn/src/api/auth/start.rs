@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! # Start passkey authentication process
-use axum::{Json, extract::State, response::IntoResponse};
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use validator::Validate;
 
 use openstack_keystone_api_types::error::KeystoneApiError;
@@ -32,7 +32,7 @@ use crate::api::types::{CombinedExtensionState, auth::*};
     path = "/start",
     operation_id = "/auth/passkey/start:post",
     responses(
-        (status = OK, description = "Challenge that must be signed with any of the user passkeys", body = PasskeyAuthenticationStartResponse),
+        (status = CREATED, description = "Challenge that must be signed with any of the user passkeys", body = PasskeyAuthenticationStartResponse),
         (status = 500, description = "Internal error", example = json!(KeystoneApiError::InternalError(String::from("id = 1"))))
     ),
     tags = ["passkey", "auth"]
@@ -105,5 +105,5 @@ pub async fn start(
         }
     };
 
-    Ok(res)
+    Ok((StatusCode::CREATED, res))
 }

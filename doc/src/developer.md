@@ -68,12 +68,31 @@ skaffold deploy -a build.artifacts
 skaffold verify -a build.artifacts
 ```
 
-The skaffold config is split into 2 modules: `keystone` and `infra` allowing
-quicker redeployment of keystone only without touching the
-keycloak/dex/selenium and co (`skaffold deploy -a build.artifacts -m
+The skaffold config is split into 3 modules: `keystone`, `infra` and
+`tempest`, allowing quicker redeployment of keystone only without touching
+the keycloak/dex/selenium and co (`skaffold deploy -a build.artifacts -m
 keystone`). This is required to workaround a "feature" of skaffold attaching
 tracking labels to all resources created from local manifests (including helm
 files).
+
+### Tempest identity compatibility tests
+
+The `tempest` module runs the OpenStack tempest identity v3 test suite
+against both `keystone-rs` and `keystone-py`, deployed side by side by the
+`keystone` module. Since not every v3 operation is implemented by
+keystone-rs yet, these results are advisory rather than a merge gate: the
+module is run and reported on separately from the main verify suite so it
+never blocks CI.
+
+```console
+skaffold verify -m tempest -a build.artifacts -v debug
+```
+
+Failing test IDs are printed per target in the pod logs
+(`===== FAILED TESTS (target=...) =====`), and are used to track API
+compatibility gaps and catch breaking changes over time. In CI these are
+also collected into a job summary and an uploaded `tempest-identity-results`
+log artifact.
 
 ## OpenStackClient (OSC)
 

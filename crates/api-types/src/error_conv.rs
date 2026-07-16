@@ -304,6 +304,11 @@ impl From<ResourceProviderError> for KeystoneApiError {
                 resource: "domain".into(),
                 identifier: x,
             },
+            ResourceProviderError::ProjectNotFound(x) => Self::NotFound {
+                resource: "project".into(),
+                identifier: x,
+            },
+            ResourceProviderError::InvalidProjectDomain(x) => Self::BadRequest(x),
             other => Self::InternalError(other.to_string()),
         }
     }

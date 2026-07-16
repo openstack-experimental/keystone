@@ -21,9 +21,9 @@ use serde_json::json;
 use validator::Validate;
 
 use super::types::{ProjectCreateRequest, ProjectResponse};
-use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use crate::{api::auth::Auth, common::TracedJson};
 use openstack_keystone_core::auth::ExecutionContext;
 
 /// Create project.
@@ -44,7 +44,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 pub(super) async fn create(
     Auth(user_auth): Auth,
     State(state): State<ServiceState>,
-    Json(payload): Json<ProjectCreateRequest>,
+    TracedJson(payload): TracedJson<ProjectCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     // Validate the request
     payload.validate()?;

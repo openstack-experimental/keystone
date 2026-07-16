@@ -38,7 +38,7 @@ use openstack_keystone_core::auth::*;
     operation_id = "/auth/passkey/finish:post",
     request_body = PasskeyAuthenticationFinishRequest,
     responses(
-        (status = OK, description = "Authentication Token object", body = TokenResponse,
+        (status = CREATED, description = "Authentication Token object", body = TokenResponse,
         headers(
             ("x-subject-token" = String, description = "Keystone token"),
         )
@@ -181,7 +181,7 @@ pub async fn finish(
         token: TokenBuilder::try_from(&vsc)?.build()?,
     };
     Ok((
-        StatusCode::OK,
+        StatusCode::CREATED,
         [(
             "X-Subject-Token",
             state

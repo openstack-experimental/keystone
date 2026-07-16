@@ -83,7 +83,7 @@ impl TestClient {
             .send()
             .await?;
 
-        if rsp.status() != StatusCode::OK {
+        if rsp.status() != StatusCode::CREATED {
             return Err(authentication_error(rsp).await);
         }
 
@@ -203,7 +203,7 @@ impl TestClient {
             .send()
             .await?;
 
-        if rsp.status() != StatusCode::OK {
+        if rsp.status() != StatusCode::CREATED {
             return Err(authentication_error(rsp).await);
         }
 

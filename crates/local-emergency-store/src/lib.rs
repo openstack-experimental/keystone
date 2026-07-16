@@ -23,11 +23,10 @@
 //!
 //! This crate provides only the shared, subsystem-agnostic pieces:
 //!
-//! - [`LocalEmergencyStore`] — the storage trait candidates are written
-//!   through
+//! - [`LocalEmergencyStore`] — the storage trait candidates are written through
 //! - [`key`] — the `_local:<subsystem>:<scope_id>:emergency:<rotation_id>`
-//!   namespace key-builders, so every backend and every subsystem agrees on
-//!   the same layout
+//!   namespace key-builders, so every backend and every subsystem agrees on the
+//!   same layout
 //! - [`EmergencyCandidate`] — the record shape stored per rotation attempt
 //! - [`Subsystem`] — the two ADR 0028 instantiations
 //!

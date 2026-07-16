@@ -349,7 +349,7 @@ async fn test_webauthn_auth_start_unknown_user_returns_decoys() -> Result<()> {
             })?)
             .send()
             .await?;
-        assert_eq!(rsp.status(), 200, "start must succeed for unknown users");
+        assert_eq!(rsp.status(), 201, "start must succeed for unknown users");
         Ok(rsp.json::<PasskeyAuthenticationStartResponse>().await?)
     };
 

@@ -41,7 +41,7 @@ spec:
                 secretKeyRef:
                   key: fqdn-uri
                   name: keystone-db-app
-          command: ["uwsgi", "--http-socket", ":5000", "-b", "65535", "-w", "keystone.server.wsgi:initialize_public_application()"]
+          command: ["uwsgi", "--http-socket", ":5000", "-b", "65535", "-w", "keystone.server.wsgi:initialize_public_application()", "-p", "4"]
           image: py-keystone
           livenessProbe:
             failureThreshold: 3

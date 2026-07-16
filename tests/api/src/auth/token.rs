@@ -93,7 +93,7 @@ pub async fn auth_token(
         .raw_query_async_ll(client, Some(false))
         .await?;
 
-    if rsp.status() != http::StatusCode::OK {
+    if rsp.status() != http::StatusCode::CREATED {
         return Err(eyre!(
             "Authentication failed with {}: {}",
             rsp.status(),

@@ -52,6 +52,8 @@ jobs:
               - 'crates/**'
               - 'policy/**'
               - 'tools/Dockerfile.skaffold'
+              - 'tools/Dockerfile.tempest'
+              - 'tools/tempest/**'
 
   build:
     needs: changes
@@ -414,7 +416,37 @@ jobs:
 
       - name: Run tests
         run: |
-          skaffold verify --profile github-ci --env-file github-oidc.env -a build.artifacts -v debug
+          skaffold verify --profile github-ci -m keystone --env-file github-oidc.env -a build.artifacts -v debug
+
+      - name: Run tempest identity compatibility tests
+        id: tempest_verify
+        continue-on-error: true
+        run: |
+          skaffold verify --profile github-ci -m tempest -a build.artifacts -v debug 2>&1 | tee tempest-results.log
+
+      - name: Summarize tempest identity compatibility results
+        if: always() && steps.tempest_verify.outcome != 'skipped'
+        run: |
+          {
+            echo "### Tempest identity compatibility (advisory, non-blocking)"
+            echo
+            if [ "${{ steps.tempest_verify.outcome }}" = "success" ]; then
+              echo "All selected tempest identity tests passed against both keystone-py and keystone-rs."
+            else
+              echo "Some tempest identity tests failed - see failed test IDs below."
+              echo
+              echo '```'
+              grep -A 200 "FAILED TESTS (target=" tempest-results.log || echo "(unable to parse failures from log)"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload tempest results log
+        if: always() && steps.tempest_verify.outcome != 'skipped'
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: tempest-identity-results
+          path: tempest-results.log
 
       - name: Dump K8 pods
         if: failure()

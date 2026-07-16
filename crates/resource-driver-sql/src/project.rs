@@ -74,7 +74,11 @@ impl TryFrom<ProjectCreate> for db_project::ActiveModel {
     fn try_from(value: ProjectCreate) -> Result<Self, Self::Error> {
         Ok(Self {
             description: value.description.map(Set).unwrap_or(NotSet).into(),
-            domain_id: Set(value.domain_id),
+            domain_id: Set(value.domain_id.ok_or_else(|| {
+                ResourceProviderError::Driver(
+                    "domain_id must be resolved before persisting a project".into(),
+                )
+            })?),
             enabled: Set(Some(value.enabled)),
             extra: Set(Some(serde_json::to_string(&value.extra)?)),
             id: Set(value.id.unwrap_or(Uuid::new_v4().simple().to_string())),
