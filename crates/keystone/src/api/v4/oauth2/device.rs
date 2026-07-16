@@ -39,7 +39,10 @@ use openstack_keystone_core_types::identity::{
 };
 use openstack_keystone_core_types::oauth2_session::DeviceCodeGrant;
 
-use super::html::{ConsentTemplate, LoginTemplate, error_page, security_headers};
+use super::html::{
+    ConsentTemplate, LoginTemplate, error_page, security_headers, too_many_requests,
+};
+use crate::api::common::PeerAddr;
 use crate::audit::{CorrelationId, build_initiator_unknown, emit_oauth2_session_event};
 use crate::keystone::ServiceState;
 
@@ -244,9 +247,20 @@ pub(super) async fn device_login_code(
     Path(domain_id): Path<String>,
     State(state): State<ServiceState>,
     headers: HeaderMap,
+    PeerAddr(peer_addr): PeerAddr,
     jar: CookieJar,
     Form(form): Form<DeviceCodeForm>,
 ) -> Result<Response, std::convert::Infallible> {
+    // §7.B-equivalent pre-lookup throttle (mirrors `authorize.rs`'s
+    // `/authorize` and `/authorize/login`): the `user_code` keyspace alone
+    // is not a substitute for rate limiting a guess-and-submit endpoint.
+    if let Err(retry_after) = state
+        .rate_limiters
+        .check_ip(&headers, peer_addr.map(|a| a.ip()))
+    {
+        return Ok(too_many_requests(retry_after.as_secs()));
+    }
+
     // The lookup itself is a single keyed storage read (not a linear scan
     // over every live code), so it does not carry the classic
     // string-comparison timing side channel a naive brute-force defense
@@ -303,10 +317,24 @@ pub(super) async fn device_login_code(
 pub(super) async fn device_login(
     Path(domain_id): Path<String>,
     State(state): State<ServiceState>,
+    headers: HeaderMap,
+    PeerAddr(peer_addr): PeerAddr,
     correlation_id: CorrelationId,
     jar: CookieJar,
     Form(form): Form<DeviceLoginForm>,
 ) -> Result<Response, std::convert::Infallible> {
+    // §7.B "pre-hash enforcement" (mirrors `authorize_login`): global per-IP
+    // limiter before any password hashing work. The per-user throttle inside
+    // `authenticate_by_password` (ADR 0010) only engages after an account is
+    // known to exist, so it alone does not stop a single IP from spraying
+    // many different usernames here.
+    if let Err(retry_after) = state
+        .rate_limiters
+        .check_ip(&headers, peer_addr.map(|a| a.ip()))
+    {
+        return Ok(too_many_requests(retry_after.as_secs()));
+    }
+
     let Some(device_code) = jar.get(DEVICE_COOKIE_NAME).map(|c| c.value().to_string()) else {
         return Ok(error_page(
             StatusCode::BAD_REQUEST,
@@ -551,5 +579,125 @@ async fn finish_decision(
             tracing::warn!(error = %e, "oauth2 device code grant decision update failed");
             error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+
+    use axum::{
+        body::Body,
+        extract::ConnectInfo,
+        http::{Request, StatusCode},
+    };
+    use sea_orm::DatabaseConnection;
+    use tower::ServiceExt;
+    use tower_http::trace::TraceLayer;
+
+    use openstack_keystone_audit::AuditDispatcher;
+    use openstack_keystone_config::{Config, ConfigManager};
+    use openstack_keystone_core::keystone::Service;
+    use openstack_keystone_core::policy::MockPolicy;
+
+    use super::super::openapi_router;
+    use crate::oauth2_session::MockOauth2SessionProvider;
+    use crate::provider::Provider;
+
+    fn post_form(uri: &str, body: &str) -> Request<Body> {
+        Request::builder()
+            .uri(uri)
+            .method("POST")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    }
+
+    async fn rate_limited_state(provider: crate::provider::ProviderBuilder) -> Arc<Service> {
+        let config = Config {
+            rate_limit_global_ip: openstack_keystone_config::RateLimitSection {
+                enabled: true,
+                burst_size: 1,
+                replenish_rate_per_second: 1,
+            },
+            ..Config::default()
+        };
+        Arc::new(
+            Service::new(
+                ConfigManager::not_watched(config),
+                DatabaseConnection::Disconnected,
+                provider.build().unwrap(),
+                Arc::new(MockPolicy::default()),
+                AuditDispatcher::noop(),
+                None,
+            )
+            .await
+            .unwrap(),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_device_submit_code_rate_limited_by_ip_before_lookup() {
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_get_device_code_grant_by_user_code()
+            .returning(|_, _| Ok(None));
+        let provider = Provider::mocked_builder().mock_oauth2_session(session_mock);
+        let state = rate_limited_state(provider).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let client_addr: SocketAddr = "203.0.113.9:1234".parse().unwrap();
+
+        let mut req1 = post_form("/domain-1/device", "user_code=AAAA-AAAA");
+        req1.extensions_mut().insert(ConnectInfo(client_addr));
+        // First request consumes the single burst token and reaches the
+        // (mocked) lookup, which reports "not found" -- rendered as 200 OK
+        // with an inline error, not a distinct status.
+        assert_eq!(
+            api.as_service().oneshot(req1).await.unwrap().status(),
+            StatusCode::OK
+        );
+
+        let mut req2 = post_form("/domain-1/device", "user_code=BBBB-BBBB");
+        req2.extensions_mut().insert(ConnectInfo(client_addr));
+        // Burst exhausted: rejected by the IP limiter before the lookup runs
+        // for a second guess, regardless of which code is guessed next.
+        assert_eq!(
+            api.as_service().oneshot(req2).await.unwrap().status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+    }
+
+    #[tokio::test]
+    async fn test_device_login_rate_limited_by_ip_before_password_check() {
+        let provider = Provider::mocked_builder();
+        let state = rate_limited_state(provider).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let client_addr: SocketAddr = "203.0.113.9:1234".parse().unwrap();
+        let form = "csrf_token=x&username=alice&password=guess";
+
+        let mut req1 = post_form("/domain-1/device/login", form);
+        req1.extensions_mut().insert(ConnectInfo(client_addr));
+        // First request consumes the single burst token and reaches the
+        // no-device-cookie check (no password hashing was ever attempted).
+        assert_eq!(
+            api.as_service().oneshot(req1).await.unwrap().status(),
+            StatusCode::BAD_REQUEST
+        );
+
+        let mut req2 = post_form("/domain-1/device/login", form);
+        req2.extensions_mut().insert(ConnectInfo(client_addr));
+        // Burst exhausted: rejected by the IP limiter before any password
+        // check, regardless of which username is guessed next.
+        assert_eq!(
+            api.as_service().oneshot(req2).await.unwrap().status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
     }
 }
