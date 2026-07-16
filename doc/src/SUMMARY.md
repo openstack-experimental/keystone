@@ -57,6 +57,8 @@
   - [Dex](federation/dex.md)
 - [Passkeys](passkey.md)
 - [API-Key Authentication (SCIM)](api_key.md)
+- [OAuth2 / OIDC Provider](oauth2/user.md)
+  - [Administrator Guide](oauth2/admin.md)
 - [SCIM v2 Provisioning](scim/admin.md)
   - [RFC 7644 Compatibility](scim/compatibility.md)
 - [Kubernetes TokenReview Auth](k8s_auth.md)
