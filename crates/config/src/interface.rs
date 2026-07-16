@@ -69,7 +69,8 @@ impl Default for PublicInterface {
 /// Keystone health/metrics API interface.
 #[derive(Debug, Deserialize, Clone)]
 pub struct MetricsInterface {
-    /// Default address for the health/metrics endpoint. Defaults to `0.0.0.0:8099`.
+    /// Default address for the health/metrics endpoint. Defaults to
+    /// `0.0.0.0:8099`.
     #[serde(default = "default_metrics_tcp_address")]
     pub tcp_address: SocketAddr,
 }

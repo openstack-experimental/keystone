@@ -164,7 +164,7 @@ for i in {1..30}; do
           sleep 0.5
         done
         echo "✅ Keystone socket appeared!"
-        KEYSTONE_DEV_KEK=4242424242424242424242424242424242424242424242424242424242424242 KEYSTONE_ALLOW_ENV_KEK=1 SPIFFE_ENDPOINT_SOCKET=${SPIFFE_ENDPOINT_SOCKET} ./target/debug/keystone-manage --config "${CONFIG_FILE}" bootstrap --bootstrap-password password
+        KEYSTONE_DEV_KEK=4242424242424242424242424242424242424242424242424242424242424242 KEYSTONE_ALLOW_ENV_KEK=1 SPIFFE_ENDPOINT_SOCKET=${SPIFFE_ENDPOINT_SOCKET} ./target/debug/keystone-manage --config "${CONFIG_FILE}" bootstrap --bootstrap-password password --bootstrap-public-url http://localhost:8080
 
         echo "✅ Keystone bootstrap completed!"
 

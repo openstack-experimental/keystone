@@ -19,16 +19,17 @@ use color_eyre::{eyre::WrapErr, eyre::eyre};
 use eyre::Result;
 use reqwest::{Client, StatusCode, Url};
 use serde_json::json;
-use spiffe_rustls::{authorizer, mtls_client};
 
 use openstack_keystone_api_types::v3::domain::*;
+use openstack_keystone_api_types::v3::endpoint::*;
 use openstack_keystone_api_types::v3::project::*;
 use openstack_keystone_api_types::v3::role::*;
+use openstack_keystone_api_types::v3::service::*;
 use openstack_keystone_api_types::v3::user::*;
 use openstack_keystone_config::Config;
 
 use crate::PerformAction;
-use crate::common::setup_logging;
+use crate::common::{ADMIN_BASE_URL, build_admin_client, setup_logging};
 
 /// Bootstrap Keystone data.
 #[derive(Parser)]
@@ -44,6 +45,22 @@ pub struct BootstrapCommand {
     /// Bootstrap user name.
     #[arg(long, default_value = "admin", env = "OS_BOOTSTRAP_USERNAME")]
     bootstrap_username: String,
+
+    /// Region ID to register the bootstrap `identity` service endpoints in.
+    #[arg(long, env = "OS_BOOTSTRAP_REGION_ID")]
+    bootstrap_region_id: Option<String>,
+
+    /// Public URL for the bootstrap `identity` service endpoint.
+    #[arg(long, env = "OS_BOOTSTRAP_PUBLIC_URL")]
+    bootstrap_public_url: Option<String>,
+
+    /// Internal URL for the bootstrap `identity` service endpoint.
+    #[arg(long, env = "OS_BOOTSTRAP_INTERNAL_URL")]
+    bootstrap_internal_url: Option<String>,
+
+    /// Admin URL for the bootstrap `identity` service endpoint.
+    #[arg(long, env = "OS_BOOTSTRAP_ADMIN_URL")]
+    bootstrap_admin_url: Option<String>,
 
     /// Verbosity level. Repeat to increase level.
     #[arg(short, long, action = clap::ArgAction::Count)]
@@ -61,32 +78,11 @@ impl PerformAction for BootstrapCommand {
             return Err(eyre!("--bootstrap-password must not be empty"));
         }
 
-        if let Some(admin_if) = &config.interface_admin {
-            let ks_admin_socket = admin_if.listener.socket_path.clone();
+        if config.interface_admin.is_some() {
+            let client = build_admin_client(config).await?;
 
-            // Fetch X.509 SVID dynamically from SPIFFE
-            let source = spiffe::X509Source::new().await?;
-
-            // Build mTLS ClientConfig with SPIFFE SVID
-            let client_config = mtls_client(source.clone())
-                .authorize(authorizer::any())
-                .build()
-                .wrap_err("Building SPIFFE mTLS client config failed")?;
-
-            // Create reqwest client with UDS + SPIFFE mTLS
-            let client = Client::builder()
-                .unix_socket(ks_admin_socket.clone())
-                .tls_backend_preconfigured(client_config)
-                .build()
-                .wrap_err("Building reqwest client failed")?;
-
-            self.bootstrap_with_client(
-                &client,
-                config,
-                "https://localhost",
-                &self.bootstrap_password,
-            )
-            .await?;
+            self.bootstrap_with_client(&client, config, ADMIN_BASE_URL, &self.bootstrap_password)
+                .await?;
 
             println!("Bootstrap complete:");
             println!("  admin user:    {}", self.bootstrap_username);
@@ -141,6 +137,23 @@ impl BootstrapCommand {
             .await?;
         self.upsert_user_role_system(client, &user, &admin_role, base_url)
             .await?;
+
+        if self.bootstrap_public_url.is_some()
+            || self.bootstrap_internal_url.is_some()
+            || self.bootstrap_admin_url.is_some()
+        {
+            let service = self.upsert_service(client, "identity", base_url).await?;
+            for (interface, url) in [
+                ("public", &self.bootstrap_public_url),
+                ("internal", &self.bootstrap_internal_url),
+                ("admin", &self.bootstrap_admin_url),
+            ] {
+                if let Some(url) = url {
+                    self.upsert_endpoint(client, &service, interface, url, base_url)
+                        .await?;
+                }
+            }
+        }
 
         Ok(())
     }
@@ -434,6 +447,144 @@ impl BootstrapCommand {
         }
     }
 
+    /// Ensure the catalog service exists.
+    ///
+    /// Create the service when it is not existing.
+    ///
+    /// # Parameters
+    /// * `service_type` - The type of the service (e.g. `identity`).
+    async fn upsert_service<S: AsRef<str>>(
+        &self,
+        client: &Client,
+        service_type: S,
+        base_url: &str,
+    ) -> Result<Service> {
+        let url = format!("{base_url}/v3/services");
+        let existing_services = client
+            .get(Url::parse_with_params(
+                &url,
+                &[("type", service_type.as_ref())],
+            )?)
+            .send()
+            .await?
+            .json::<ServiceList>()
+            .await?
+            .services;
+        if let Some(service) = existing_services.first() {
+            Ok(service.to_owned())
+        } else {
+            let res = client
+                .post(format!("{base_url}/v3/services"))
+                .json(&ServiceCreateRequest {
+                    service: ServiceCreateBuilder::default()
+                        .r#type(service_type.as_ref())
+                        .name("keystone")
+                        .enabled(true)
+                        .build()?,
+                })
+                .send()
+                .await?;
+            if res.status() == StatusCode::CONFLICT {
+                // Another bootstrap created the service concurrently; fetch it
+                let services = client
+                    .get(Url::parse_with_params(
+                        &format!("{base_url}/v3/services"),
+                        &[("type", service_type.as_ref())],
+                    )?)
+                    .send()
+                    .await?
+                    .json::<ServiceList>()
+                    .await?
+                    .services;
+                services.first().cloned().ok_or_else(|| {
+                    eyre!(
+                        "service of type '{}' not found after concurrent creation",
+                        service_type.as_ref()
+                    )
+                })
+            } else {
+                Ok(res.json::<ServiceResponse>().await?.service)
+            }
+        }
+    }
+
+    /// Ensure the catalog endpoint exists.
+    ///
+    /// Create the endpoint when it is not existing.
+    ///
+    /// # Parameters
+    /// * `service` - The service the endpoint belongs to.
+    /// * `interface` - The endpoint interface (`public`, `internal`, `admin`).
+    /// * `endpoint_url` - The endpoint URL.
+    async fn upsert_endpoint<S: AsRef<str>, U: AsRef<str>>(
+        &self,
+        client: &Client,
+        service: &Service,
+        interface: S,
+        endpoint_url: U,
+        base_url: &str,
+    ) -> Result<Endpoint> {
+        let url = format!("{base_url}/v3/endpoints");
+        let existing_endpoints = client
+            .get(Url::parse_with_params(
+                &url,
+                &[
+                    ("service_id", service.id.as_str()),
+                    ("interface", interface.as_ref()),
+                ],
+            )?)
+            .send()
+            .await?
+            .json::<EndpointList>()
+            .await?
+            .endpoints;
+        if let Some(endpoint) = existing_endpoints.first() {
+            Ok(endpoint.to_owned())
+        } else {
+            let mut builder = EndpointCreateBuilder::default();
+            builder
+                .service_id(service.id.clone())
+                .interface(interface.as_ref())
+                .url(endpoint_url.as_ref())
+                .enabled(true);
+            if let Some(region_id) = &self.bootstrap_region_id {
+                builder.region_id(region_id.clone());
+            }
+            let res = client
+                .post(format!("{base_url}/v3/endpoints"))
+                .json(&EndpointCreateRequest {
+                    endpoint: builder.build()?,
+                })
+                .send()
+                .await?;
+            if res.status() == StatusCode::CONFLICT {
+                // Another bootstrap created the endpoint concurrently; fetch it
+                let endpoints = client
+                    .get(Url::parse_with_params(
+                        &format!("{base_url}/v3/endpoints"),
+                        &[
+                            ("service_id", service.id.as_str()),
+                            ("interface", interface.as_ref()),
+                        ],
+                    )?)
+                    .send()
+                    .await?
+                    .json::<EndpointList>()
+                    .await?
+                    .endpoints;
+                endpoints.first().cloned().ok_or_else(|| {
+                    eyre!(
+                        "'{}' endpoint for service '{}' not found after concurrent creation",
+                        interface.as_ref(),
+                        service.id
+                    )
+                })
+            } else {
+                Ok(res.json::<EndpointResponse>().await?.endpoint)
+            }
+        }
+    }
+
     /// Ensure the role imply rule exist.
     ///
     /// # Parameters
@@ -544,6 +695,10 @@ mod tests {
             bootstrap_project_name: "admin".to_string(),
             bootstrap_password: "secret".to_string(),
             bootstrap_username: "admin".to_string(),
+            bootstrap_region_id: None,
+            bootstrap_public_url: None,
+            bootstrap_internal_url: None,
+            bootstrap_admin_url: None,
             verbose: 0,
         }
     }
@@ -923,6 +1078,10 @@ mod tests {
             bootstrap_project_name: "admin".to_string(),
             bootstrap_password: "secret".to_string(),
             bootstrap_username: "admin".to_string(),
+            bootstrap_region_id: None,
+            bootstrap_public_url: None,
+            bootstrap_internal_url: None,
+            bootstrap_admin_url: None,
             verbose: 0,
         };
 
@@ -1067,6 +1226,334 @@ mod tests {
         assert_eq!(role.unwrap().id, "new-role-id");
     }
 
+    // ─── upsert_service ──────────────────────────────────────────────────
+
+    fn make_service(id: &str) -> Service {
+        Service {
+            id: id.to_string(),
+            r#type: Some("identity".to_string()),
+            enabled: true,
+            name: Some("keystone".to_string()),
+            extra: HashMap::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_upsert_service_existing_is_returned() {
+        let server = MockServer::start();
+        let base = server.base_url();
+
+        server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/v3/services")
+                .query_param("type", "identity");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({
+                    "services": [{ "id": "existing-svc", "type": "identity", "enabled": true, "name": "keystone" }]
+                }));
+        });
+
+        let client = Client::new();
+        let cmd = test_command();
+
+        let service = cmd.upsert_service(&client, "identity", &base).await;
+        assert!(service.is_ok());
+        assert_eq!(service.unwrap().id, "existing-svc");
+    }
+
+    #[tokio::test]
+    async fn test_upsert_service_creation() {
+        let server = MockServer::start();
+        let base = server.base_url();
+
+        server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/v3/services")
+                .query_param("type", "identity");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({ "services": [] }));
+        });
+        server.mock(|when, then| {
+            when.method(Method::POST).path("/v3/services");
+            then.status(201)
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({
+                    "service": { "id": "new-svc-id", "type": "identity", "enabled": true, "name": "keystone" }
+                }));
+        });
+
+        let client = Client::new();
+        let cmd = test_command();
+
+        let service = cmd.upsert_service(&client, "identity", &base).await;
+        assert!(service.is_ok());
+        assert_eq!(service.unwrap().id, "new-svc-id");
+    }
+
+    #[tokio::test]
+    async fn test_upsert_service_conflict_errors_when_not_found_on_refetch() {
+        let server = MockServer::start();
+        let base = server.base_url();
+
+        // Every GET (both the initial lookup and the post-conflict refetch)
+        // returns empty — simulates the concurrent-creation-then-deleted edge
+        // case, which must surface as an error rather than panic.
+        server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/v3/services")
+                .query_param("type", "identity");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({ "services": [] }));
+        });
+        server.mock(|when, then| {
+            when.method(Method::POST).path("/v3/services");
+            then.status(409);
+        });
+
+        let client = Client::new();
+        let cmd = test_command();
+
+        let service = cmd.upsert_service(&client, "identity", &base).await;
+        assert!(service.is_err());
+    }
+
+    // ─── upsert_endpoint ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_upsert_endpoint_existing_is_returned() {
+        let server = MockServer::start();
+        let base = server.base_url();
+
+        server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/v3/endpoints")
+                .query_param("service_id", "svc-1")
+                .query_param("interface", "public");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({
+                    "endpoints": [{
+                        "id": "existing-ep", "interface": "public", "service_id": "svc-1",
+                        "url": "https://example.com", "enabled": true
+                    }]
+                }));
+        });
+
+        let service = make_service("svc-1");
+        let client = Client::new();
+        let cmd = test_command();
+
+        let endpoint = cmd
+            .upsert_endpoint(&client, &service, "public", "https://example.com", &base)
+            .await;
+        assert!(endpoint.is_ok());
+        assert_eq!(endpoint.unwrap().id, "existing-ep");
+    }
+
+    #[tokio::test]
+    async fn test_upsert_endpoint_creation() {
+        let server = MockServer::start();
+        let base = server.base_url();
+
+        server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/v3/endpoints")
+                .query_param("service_id", "svc-1")
+                .query_param("interface", "public");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({ "endpoints": [] }));
+        });
+        server.mock(|when, then| {
+            when.method(Method::POST).path("/v3/endpoints");
+            then.status(201)
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({
+                    "endpoint": {
+                        "id": "new-ep-id", "interface": "public", "service_id": "svc-1",
+                        "url": "https://example.com", "enabled": true
+                    }
+                }));
+        });
+
+        let service = make_service("svc-1");
+        let client = Client::new();
+        let cmd = test_command();
+
+        let endpoint = cmd
+            .upsert_endpoint(&client, &service, "public", "https://example.com", &base)
+            .await;
+        assert!(endpoint.is_ok());
+        assert_eq!(endpoint.unwrap().id, "new-ep-id");
+    }
+
+    #[tokio::test]
+    async fn test_upsert_endpoint_conflict_errors_when_not_found_on_refetch() {
+        let server = MockServer::start();
+        let base = server.base_url();
+
+        // Every GET (both the initial lookup and the post-conflict refetch)
+        // returns empty — simulates the concurrent-creation-then-deleted edge
+        // case, which must surface as an error rather than panic.
+        server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/v3/endpoints")
+                .query_param("service_id", "svc-1")
+                .query_param("interface", "public");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({ "endpoints": [] }));
+        });
+        server.mock(|when, then| {
+            when.method(Method::POST).path("/v3/endpoints");
+            then.status(409);
+        });
+
+        let service = make_service("svc-1");
+        let client = Client::new();
+        let cmd = test_command();
+
+        let endpoint = cmd
+            .upsert_endpoint(&client, &service, "public", "https://example.com", &base)
+            .await;
+        assert!(endpoint.is_err());
+    }
+
+    // ─── bootstrap_with_client catalog registration ─────────────────────
+
+    #[tokio::test]
+    async fn test_bootstrap_registers_catalog_when_urls_given() {
+        let server = MockServer::start();
+        let base = server.base_url();
+
+        // User list empty + user creation
+        server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/v3/users")
+                .query_param("domain_id", "default")
+                .query_param("name", "admin");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({ "users": [] }));
+        });
+        server.mock(|when, then| {
+            when.method(Method::POST).path("/v3/users");
+            then.status(201)
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({
+                    "user": {
+                        "id": "user-1",
+                        "name": "admin",
+                        "enabled": true,
+                        "domain_id": "default"
+                    }
+                }));
+        });
+
+        mock_full_bootstrap(&server);
+
+        // Catalog: service list empty + create
+        server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/v3/services")
+                .query_param("type", "identity");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({ "services": [] }));
+        });
+        server.mock(|when, then| {
+            when.method(Method::POST).path("/v3/services");
+            then.status(201)
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({
+                    "service": { "id": "svc-1", "type": "identity", "enabled": true, "name": "keystone" }
+                }));
+        });
+        // Catalog: endpoint list empty + create (matches any interface)
+        server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/v3/endpoints")
+                .query_param("service_id", "svc-1");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({ "endpoints": [] }));
+        });
+        server.mock(|when, then| {
+            when.method(Method::POST).path("/v3/endpoints");
+            then.status(201)
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({
+                    "endpoint": {
+                        "id": "ep-1", "interface": "public", "service_id": "svc-1",
+                        "url": "https://example.com/public", "enabled": true
+                    }
+                }));
+        });
+
+        let client = Client::new();
+        let config = test_config();
+        let mut cmd = test_command();
+        cmd.bootstrap_public_url = Some("https://example.com/public".to_string());
+        cmd.bootstrap_region_id = Some("region1".to_string());
+
+        let result = cmd
+            .bootstrap_with_client(&client, &config, &base, "secret")
+            .await;
+        assert!(
+            result.is_ok(),
+            "bootstrap with catalog urls should succeed: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_bootstrap_skips_catalog_when_no_urls_given() {
+        let server = MockServer::start();
+        let base = server.base_url();
+
+        // User list empty + user creation
+        server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/v3/users")
+                .query_param("domain_id", "default")
+                .query_param("name", "admin");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({ "users": [] }));
+        });
+        server.mock(|when, then| {
+            when.method(Method::POST).path("/v3/users");
+            then.status(201)
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({
+                    "user": {
+                        "id": "user-1",
+                        "name": "admin",
+                        "enabled": true,
+                        "domain_id": "default"
+                    }
+                }));
+        });
+
+        mock_full_bootstrap(&server);
+        // Deliberately no /v3/services or /v3/endpoints mocks — the request
+        // would fail if bootstrap tried to call them.
+
+        let client = Client::new();
+        let config = test_config();
+        let result = test_command()
+            .bootstrap_with_client(&client, &config, &base, "secret")
+            .await;
+        assert!(
+            result.is_ok(),
+            "bootstrap without catalog urls should succeed: {:?}",
+            result
+        );
+    }
+
     // ─── take_action ─────────────────────────────────────────────────────
 
     #[tokio::test]
@@ -1087,6 +1574,10 @@ mod tests {
             bootstrap_project_name: "admin".to_string(),
             bootstrap_password: "".to_string(),
             bootstrap_username: "admin".to_string(),
+            bootstrap_region_id: None,
+            bootstrap_public_url: None,
+            bootstrap_internal_url: None,
+            bootstrap_admin_url: None,
             verbose: 0,
         };
 
@@ -1434,6 +1925,78 @@ mod tests {
                 let cmd = BootstrapCommand::parse_from(["keystone-manage"]);
                 assert_eq!(cmd.bootstrap_project_name, "env-project");
             })
+        });
+    }
+
+    #[tokio::test]
+    async fn test_bootstrap_region_id_from_env() {
+        temp_env::with_var("OS_BOOTSTRAP_REGION_ID", Some("region1"), || {
+            temp_env::with_var("OS_BOOTSTRAP_PASSWORD", Some("secret"), || {
+                let cmd = BootstrapCommand::parse_from(["keystone-manage"]);
+                assert_eq!(cmd.bootstrap_region_id.as_deref(), Some("region1"));
+            })
+        });
+    }
+
+    #[tokio::test]
+    async fn test_bootstrap_public_url_from_env() {
+        temp_env::with_var(
+            "OS_BOOTSTRAP_PUBLIC_URL",
+            Some("https://example.com/public"),
+            || {
+                temp_env::with_var("OS_BOOTSTRAP_PASSWORD", Some("secret"), || {
+                    let cmd = BootstrapCommand::parse_from(["keystone-manage"]);
+                    assert_eq!(
+                        cmd.bootstrap_public_url.as_deref(),
+                        Some("https://example.com/public")
+                    );
+                })
+            },
+        );
+    }
+
+    #[tokio::test]
+    async fn test_bootstrap_internal_url_from_env() {
+        temp_env::with_var(
+            "OS_BOOTSTRAP_INTERNAL_URL",
+            Some("https://example.com/internal"),
+            || {
+                temp_env::with_var("OS_BOOTSTRAP_PASSWORD", Some("secret"), || {
+                    let cmd = BootstrapCommand::parse_from(["keystone-manage"]);
+                    assert_eq!(
+                        cmd.bootstrap_internal_url.as_deref(),
+                        Some("https://example.com/internal")
+                    );
+                })
+            },
+        );
+    }
+
+    #[tokio::test]
+    async fn test_bootstrap_admin_url_from_env() {
+        temp_env::with_var(
+            "OS_BOOTSTRAP_ADMIN_URL",
+            Some("https://example.com/admin"),
+            || {
+                temp_env::with_var("OS_BOOTSTRAP_PASSWORD", Some("secret"), || {
+                    let cmd = BootstrapCommand::parse_from(["keystone-manage"]);
+                    assert_eq!(
+                        cmd.bootstrap_admin_url.as_deref(),
+                        Some("https://example.com/admin")
+                    );
+                })
+            },
+        );
+    }
+
+    #[tokio::test]
+    async fn test_bootstrap_catalog_urls_default_to_none() {
+        temp_env::with_var("OS_BOOTSTRAP_PASSWORD", Some("secret"), || {
+            let cmd = BootstrapCommand::parse_from(["keystone-manage"]);
+            assert!(cmd.bootstrap_region_id.is_none());
+            assert!(cmd.bootstrap_public_url.is_none());
+            assert!(cmd.bootstrap_internal_url.is_none());
+            assert!(cmd.bootstrap_admin_url.is_none());
         });
     }
 }

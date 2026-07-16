@@ -11,26 +11,5 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-pub mod api_key;
-pub mod assignment;
-pub mod auth;
-pub mod common;
-pub mod credential;
-pub mod endpoint;
-pub mod federation;
-pub mod guard;
-pub mod identity;
-pub mod mapping;
-pub mod oauth2;
-pub mod resource;
-pub mod role;
-pub mod scim;
-pub mod scim_realm;
-pub mod service;
-pub mod token_restriction;
-pub mod webauthn;
 
-pub mod k8s_auth {
-    pub mod auth;
-    pub mod instance;
-}
+pub use openstack_keystone_api_types::v3::endpoint::*;
