@@ -314,6 +314,7 @@ impl ClusterAdminServiceImpl {
     ///
     /// # Returns
     /// A new `ClusterAdminServiceImpl` instance.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         raft_node: Raft,
         node_id: u64,

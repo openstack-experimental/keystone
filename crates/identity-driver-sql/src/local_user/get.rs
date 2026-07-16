@@ -31,6 +31,7 @@ use crate::entity::{local_user, prelude::LocalUser};
 /// # Returns
 /// A `Result` containing an `Option` with the `local_user::Model` if found, or
 /// an `Error`.
+#[allow(unused)]
 pub async fn get_by_name_and_domain<N: AsRef<str>, D: AsRef<str>>(
     db: &DatabaseConnection,
     name: N,
@@ -53,6 +54,7 @@ pub async fn get_by_name_and_domain<N: AsRef<str>, D: AsRef<str>>(
 /// # Returns
 /// A `Result` containing an `Option` with the `local_user::Model` if found, or
 /// an `Error`.
+#[allow(unused)]
 pub async fn get_by_user_id<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
