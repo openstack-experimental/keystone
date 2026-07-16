@@ -364,17 +364,21 @@ landed ahead of the full mechanism.
   unauthenticated endpoint — SSRF, request smuggling into `route` targets, and
   rate-limit bypass are the priority scenarios.
 
-### V8 — OAuth2/OIDC provider role (P2 when implemented, ADR 0026 is proposed)
+### V8 — OAuth2/OIDC provider role (P2, ADR 0026 implemented; status field still says Proposed)
 
 **Attack.** Acting as an OAuth2/OIDC _provider_ adds the classic web-authz
 surface Keystone did not previously have: open-redirect via `redirect_uri`,
 authorization-code interception without PKCE, CSRF on the consent flow,
 clickjacking, refresh-token replay.
 
-**Current state.** ADR 0026 already commits to the right defaults — exact-match
-`redirect_uris` (wildcards rejected), mandatory `S256` PKCE for public clients
-enforced at CRUD time, HTTPS-only for confidential clients, refresh-token
-rotation. The controls are specified; the risk is drift during implementation.
+**Current state.** ADR 0026's controls are implemented, not just specified:
+exact-match `redirect_uris` (wildcards rejected) with unregistered-`redirect_uri`
+errors rendered directly rather than redirected (`authorize.rs:294-302`,
+correct open-redirect defense), mandatory `S256` PKCE (`pkce.rs`), HTTPS-only
+confidential clients, refresh-token rotation with reuse-triggers-family-revoke
+(§13). Verified 2026-07-16 with a dedicated read of `token.rs`, `authorize.rs`,
+`device.rs`, `crypto.rs`, `pkce.rs` — see V8a below for the enumeration/timing
+sub-review this triggered.
 
 **Control.**
 
@@ -383,6 +387,59 @@ rotation. The controls are specified; the risk is drift during implementation.
   authorization code rejected, rotated refresh token's predecessor invalidated.
 - _Pentest:_ standard OAuth2 provider test suite (redirect handling, PKCE
   downgrade, mix-up, token substitution).
+
+### V8a — OAuth2 client enumeration, timing side-channels, and credential-probing (P1 live gap on device flow; otherwise mitigated)
+
+**Attack.** Prompted by public research on "OAuth client ID spoofing"
+(Proofpoint, July 2026: attackers validate stolen Entra ID credentials at
+scale by presenting spoofed/arbitrary `client_id`s to a token endpoint that
+distinguishes valid from invalid client IDs, checking passwords without a
+successful sign-in ever being logged against a real, registered application —
+and without needing that application to actually exist). The generalizable
+attack classes are: (a) distinguish "unknown client_id" from "wrong secret"
+by response content, status, or timing; (b) probe usernames/passwords through
+an endpoint that doesn't require a real, pre-registered relying party; (c)
+brute-force short human-facing codes (device `user_code`) with no throttle.
+
+**Current state — verified by direct code read, 2026-07-16.**
+
+| Sub-vector | Verdict | Evidence |
+| --- | --- | --- |
+| `client_credentials`/`authorization_code`/`refresh_token`/token-exchange: unknown client_id vs. wrong secret vs. disabled client, by response | Mitigated | `token.rs:376-448` (`client_credentials`), `:580-638` (`authenticate_client`, shared by the other three grants) — `get_by_client_id` runs unconditionally; every rejection branch (unknown `:396`, disabled/deleted `:403,605`, no secret `:419,425`) calls `crypto::generate_dummy_hash()` before returning the same `401 invalid_client` / `"client authentication failed"` body as a real wrong-secret rejection (`:437-448`, `:617-621`) |
+| Argon2id timing (unknown client vs. known client, wrong secret) | Mitigated (defense-in-depth, residual accepted) | `crypto.rs:81-107` — `generate_dummy_hash()` performs a real Argon2id **hash** (not a cheap early-return) with the same configured cost params as `verify_secret()`'s **verify**; hash and verify are comparable-cost Argon2id operations but not byte-identical code paths, and the DB lookup itself is faster for an unknown client_id than a known one. This residual gap is explicitly called out in-code (`token.rs:387-395`) and bounded by the pre-hash, raw-client_id-keyed rate limiter (`token.rs:367-373`, checked *before* the DB lookup) |
+| `client_credentials` grant: existence+grant-type oracle | **Minor live gap** | `token.rs:409-414` checks `grant_types.contains(ClientCredentials)` **before** checking whether the client has a secret / verifying it, so an existing, enabled client_id not authorized for this grant returns `400 unauthorized_client` — distinguishable from the uniform `401 invalid_client` every other rejection returns. `client_id` is not a secret per RFC 6749 §2.2, so impact is low, but it is inconsistent with the "always look the same" posture the rest of the file works hard to hold; the shared `authenticate_client()` used by the other three grants checks secret first, grant type after (no such gap there) |
+| `/authorize`: unknown client_id vs. unregistered `redirect_uri` | Not vulnerable (by design) | `authorize.rs:257-302` — messages differ ("unknown or disabled client" vs. "redirect_uri is not registered"), but `client_id` is intentionally public (RFC 6749 §2.2) and client registration is admin/Tier-1/Tier-2-gated per domain (ADR 0020), not a global self-service namespace an outsider can probe cross-tenant the way Entra's is — the precondition that makes Entra's spoofing technique work (any `client_id`, from any tenant, reaches a password check without being registered) does not exist here: every `client_id` presented anywhere must already be a real `OAuth2Client` row in that domain |
+| Human login (`/authorize/login`, `/device/login`): username enumeration | Mitigated | `authorize.rs:470-521` — uniform `"invalid username or password"` on both bad-request-shape and `authenticate_by_password` failure; ADR 0010's per-user throttle applies inside `authenticate_by_password` itself regardless of entry point |
+| **`/device`, `/device/login`, `/device/consent`, `/device_authorization`: per-IP rate limiting** | **Vulnerable — live gap** | Zero occurrences of `check_ip`/`rate_limiter`/`check_key` anywhere in `device.rs` or `device_authorization.rs` (confirmed by grep). Contrast `authorize.rs:231-236,435-440` and `token.rs:367-373` and its three other grant handlers, which all rate-limit before doing any expensive/sensitive work. Concretely: `device_login` (`device.rs:303-`) runs `authenticate_by_password` — the *same password-checking call as `/authorize/login`* — with **no per-IP throttle at all**, only the per-user throttle inside `authenticate_by_password`, which does not stop a single IP spraying many different usernames. `device_login_code` (`device.rs:243-281`, the `user_code` guess-and-submit step) is also unthrottled; it relies solely on `user_code` keyspace (`USER_CODE_ALPHABET`/`USER_CODE_LEN`, `oauth2_session/service.rs:58-59`) and TTL (`device_code_lifetime_minutes`) for brute-force resistance, with no throttle backstop |
+| Refresh token lookup | Not vulnerable | `oauth2_session/service.rs:70-73,275-287` — lookup key is `SHA-256(bearer)`, an indexed equality read, not a raw-value or prefix comparison; no partial-match timing leak |
+
+**Control.**
+
+- _Must-fix (P1):_ add the same per-IP `check_ip` rate limiting used by
+  `/authorize` and `/authorize/login` to `/device_authorization`, `/device`,
+  `/device/login`, and `/device/consent`, applied before any DB lookup or
+  password hashing — matching the documented §7.B "pre-hash enforcement"
+  posture already required elsewhere in this same provider. This is the one
+  concrete gap this review found; everything else in the OAuth2 provider is
+  either spec-correct-by-design or already carries a matching defense.
+- _Should-fix (P3, low severity):_ in `handle_client_credentials_grant`
+  (`token.rs`), reorder the `grant_types` check to run after secret
+  verification (or burn a dummy-hash cost before the grant-type check, as
+  every other rejection branch already does), so `client_credentials` matches
+  the uniform-response posture of the other three grant handlers.
+- _Testing:_ a negative test asserting `/device`, `/device/login`,
+  `/device_authorization` all return `429` under the same abuse pattern the
+  existing `/authorize`/`/token` rate-limit tests already cover — today those
+  tests exist only for the endpoints that have a limiter, so the gap is
+  invisible to the test suite by construction.
+- _Design:_ extend V6's "endpoints not yet covered by rate limiting" list
+  (ADR 0022 follow-up) to explicitly name the device-flow browser endpoints —
+  V6 currently only names federation/app-cred/EC2/token-validate.
+- _Pentest:_ password-spray `/device/login` across many usernames from a
+  single IP; brute-force `/device` `user_code` guessing at volume; attempt to
+  reach a password check via any `client_id` value without it being a
+  pre-registered `OAuth2Client` row (expected: impossible, confirm it stays
+  that way).
 
 ### V9 — Secret leakage into policy input, logs, and audit (P2, mitigated)
 
@@ -521,6 +578,10 @@ A pentest engagement should be handed this prioritized scenario list rather than
 6. **WASM plugins (V7)** and **OAuth2 provider (V8)** — full dedicated suites
    when those features ship; treat both as internet-facing pre-auth surfaces.
 7. **Token lifecycle (V10).** Revocation-window and version-binding probing.
+8. **OAuth2 device-flow rate limiting (V8a).** Password-spray `/device/login`
+   from a single IP across many usernames; brute-force `/device` `user_code`
+   guessing at volume — both currently unthrottled, this should reproduce
+   trivially until the P1 fix lands.
 
 ## 7. Prioritized recommendation
 
@@ -534,9 +595,15 @@ If the project adopts nothing else from this review:
    — which `opa test` and the current mocks do not.
 2. **Ship `access_rules` enforcement or fail loud** (V5) — the highest-impact
    _known_ live gap; today a control operators trust is a no-op.
-3. **Gate D matrix + Gate G mutation testing** (V1/V2) — convert the "remembered
+3. **Rate-limit the OAuth2 device-flow browser endpoints** (V8a) — `/device`,
+   `/device/login`, `/device/consent`, `/device_authorization` currently do a
+   real password check with zero per-IP throttle, the one concrete gap the
+   2026-07-16 enumeration/timing review found; every sibling endpoint
+   (`/authorize`, `/token`) already has this control, so it is a small,
+   scoped fix, not new design.
+4. **Gate D matrix + Gate G mutation testing** (V1/V2) — convert the "remembered
    checklist" defense of the delegation boundary into a structural one.
-4. **Sign the policy bundle** (V4) — the running policy deserves the same
+5. **Sign the policy bundle** (V4) — the running policy deserves the same
    provenance bar as the binary.
 
 The rest (rate-limit coverage, plugin/OAuth2 test suites, secret-leak structural
