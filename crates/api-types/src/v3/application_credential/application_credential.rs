@@ -111,13 +111,6 @@ pub struct ApplicationCredentialCreate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<DateTime<Utc>>,
 
-    /// Optional client-supplied identifier for the application credential. If
-    /// not provided, the server generates one.
-    #[cfg_attr(feature = "builder", builder(default))]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
-    pub id: Option<String>,
-
     /// Name of the application credential. Must be unique among the owning
     /// user's application credentials.
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]

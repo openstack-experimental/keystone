@@ -92,9 +92,6 @@ impl From<api_types_application_credential::ApplicationCredentialCreate>
         if let Some(v) = value.expires_at {
             builder.expires_at(v);
         }
-        if let Some(v) = value.id {
-            builder.id(v);
-        }
         if let Some(v) = value.unrestricted {
             builder.unrestricted(v);
         }
