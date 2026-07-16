@@ -136,6 +136,15 @@ deploy:
                   sleep "$backoff"
                 done
                 echo "OAuth2 signing key ensured for domain default"
+        - host:
+            # Extend catalog with identity-rs catalog entry
+            command:
+              - sh
+              - -c
+              - |
+                kubectl exec keystone-rs-0 -c keystone -- keystone-manage catalog service create --name keystone-rs --type identity-rs --enabled || true
+                kubectl exec keystone-rs-0 -c keystone -- keystone-manage catalog endpoint create --service-name keystone-rs --interface public --url "http://keystone-rs.local" --enabled || true
+                kubectl exec keystone-rs-0 -c keystone -- keystone-manage catalog endpoint create --service-name keystone-rs --interface internal --url "http://keystone-rs.default.svc.cluster.local:8080" --enabled || true
 
 verify:
   - &api_test_v3
@@ -306,6 +315,103 @@ profiles:
       - *keycloak
       - *dex
       - *spiffe
+
+  - name: local
+    build:
+      insecureRegistries:
+        - localhost:5000
+      local:
+        useDockerCLI: true
+        concurrency: 0
+        push: true
+---
+apiVersion: skaffold/v4beta13
+kind: Config
+metadata:
+  name: tempest
+# Tempest identity compatibility tests. Run independently of the `keystone`
+# module's verify tests (`skaffold verify -m tempest -a build.artifacts`) so
+# CI can treat their results as advisory rather than blocking - not every
+# v3 operation is implemented by keystone-rs yet, so failures here track
+# compatibility gaps rather than regressions to fix before merging.
+build:
+  insecureRegistries:
+    - localhost:5000
+  artifacts:
+    - image: tempest-identity
+      context: tools/
+      docker:
+        dockerfile: Dockerfile.tempest
+  local:
+    concurrency: 0
+
+verify:
+  - &tempest_identity_rust
+    name: "tempest-identity-rust"
+    container:
+      image: "tempest-identity"
+      name: "tempest-identity-rust"
+      env:
+        - name: "TEMPEST_TARGET"
+          value: "rust"
+        - name: "OS_AUTH_URL"
+          value: "http://keystone-rs.default.svc.cluster.local:8080"
+        - name: "OS_USERNAME"
+          value: "admin"
+        - name: "OS_PASSWORD"
+          value: "password"
+        - name: "OS_USER_DOMAIN_ID"
+          value: "default"
+        - name: "OS_PROJECT_NAME"
+          value: "admin"
+        - name: "OS_PROJECT_DOMAIN_ID"
+          value: "default"
+        - name: "OS_IDENTITY_SERVICE_TYPE"
+          value: "identity-rs"
+    executionMode:
+      kubernetesCluster: {}
+
+  - &tempest_identity_python
+    name: "tempest-identity-python"
+    container:
+      image: "tempest-identity"
+      name: "tempest-identity-python"
+      env:
+        - name: "TEMPEST_TARGET"
+          value: "python"
+        - name: "OS_AUTH_URL"
+          value: "http://keystone-py.default.svc.cluster.local:5000"
+        - name: "OS_USERNAME"
+          value: "admin"
+        - name: "OS_PASSWORD"
+          value: "password"
+        - name: "OS_USER_DOMAIN_ID"
+          value: "default"
+        - name: "OS_PROJECT_NAME"
+          value: "admin"
+        - name: "OS_PROJECT_DOMAIN_ID"
+          value: "default"
+        - name: "OS_IDENTITY_SERVICE_TYPE"
+          value: "identity"
+    executionMode:
+      kubernetesCluster: {}
+
+profiles:
+  - name: github-ci
+    build:
+      local:
+        useBuildkit: true
+        concurrency: 0
+        tryImportMissing: true
+      artifacts:
+        - image: tempest-identity
+          context: tools/
+          docker:
+            dockerfile: Dockerfile.tempest
+            buildArgs: {}
+    verify:
+      - *tempest_identity_rust
+      - *tempest_identity_python
 
   - name: local
     build:

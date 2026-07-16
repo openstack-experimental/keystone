@@ -18,6 +18,7 @@ use uuid::Uuid;
 use validator::Validate;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::auth::ScopeInfo;
 use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::resource::*;
 
@@ -49,6 +50,85 @@ impl ResourceService {
             .get_resource_backend(config.resource.driver.clone())?
             .clone();
         Ok(Self { backend_driver })
+    }
+
+    /// Resolve the `domain_id` a new project should be created in.
+    ///
+    /// Mirrors python-keystone's project-create semantics:
+    /// - `is_domain=true`: the project is its own domain, `domain_id` must not
+    ///   be given.
+    /// - `domain_id` and `parent_id` both given: they must agree (parent's
+    ///   domain).
+    /// - only `parent_id` given: inherit the parent's domain.
+    /// - only `domain_id` given: use it as-is.
+    /// - neither given: fall back to the domain the caller's token is scoped
+    ///   to.
+    async fn resolve_project_domain_id<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        new_project: &ProjectCreate,
+        project_id: &str,
+    ) -> Result<String, ResourceProviderError> {
+        if new_project.is_domain {
+            return if new_project.domain_id.is_some() {
+                Err(ResourceProviderError::InvalidProjectDomain(
+                    "domain_id must not be specified when is_domain is true".into(),
+                ))
+            } else {
+                Ok(project_id.to_string())
+            };
+        }
+
+        match (&new_project.domain_id, &new_project.parent_id) {
+            (Some(domain_id), Some(parent_id)) => {
+                let parent_domain_id = self.parent_domain_id(ctx, parent_id).await?;
+                if &parent_domain_id != domain_id {
+                    return Err(ResourceProviderError::InvalidProjectDomain(format!(
+                        "domain_id {domain_id} does not match parent project's domain {parent_domain_id}"
+                    )));
+                }
+                Ok(domain_id.clone())
+            }
+            (Some(domain_id), None) => Ok(domain_id.clone()),
+            (None, Some(parent_id)) => self.parent_domain_id(ctx, parent_id).await,
+            (None, None) => scope_domain_id(ctx).ok_or_else(|| {
+                ResourceProviderError::InvalidProjectDomain(
+                    "domain_id could not be determined: not specified, no parent_id, and no scoped token domain".into(),
+                )
+            }),
+        }
+    }
+
+    /// Resolve the `domain_id` that `parent_id` belongs to.
+    ///
+    /// `parent_id` may be a regular project or a domain's root (`is_domain`)
+    /// project -- the latter is how a project is created directly under a
+    /// domain, matching python-keystone where domains are themselves
+    /// projects.
+    async fn parent_domain_id<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        parent_id: &str,
+    ) -> Result<String, ResourceProviderError> {
+        if let Some(parent) = self.get_project(ctx, parent_id).await? {
+            return Ok(parent.domain_id);
+        }
+        if self.get_domain(ctx, parent_id).await?.is_some() {
+            return Ok(parent_id.to_string());
+        }
+        Err(ResourceProviderError::ProjectNotFound(
+            parent_id.to_string(),
+        ))
+    }
+}
+
+/// Extracts the domain ID the caller's token is scoped to, if any.
+fn scope_domain_id(ctx: &ExecutionContext<'_>) -> Option<String> {
+    let scope = &ctx.ctx()?.authorization()?.scope;
+    match scope {
+        ScopeInfo::Domain(domain) => Some(domain.id.clone()),
+        ScopeInfo::Project { project_domain, .. } => Some(project_domain.id.clone()),
+        _ => None,
     }
 }
 
@@ -174,6 +254,10 @@ impl ResourceApi for ResourceService {
             new_project.id = Some(pid.clone());
             pid
         };
+        new_project.domain_id = Some(
+            self.resolve_project_domain_id(ctx, &new_project, &project_id)
+                .await?,
+        );
         new_project.validate()?;
         let project = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
@@ -454,8 +538,8 @@ mod tests {
     use crate::resource::backend::MockResourceBackend;
     use crate::tests::get_mocked_state;
     use openstack_keystone_core_types::auth::{
-        AuthenticationContext, IdentityInfo, PrincipalInfo, SecurityContext,
-        UserIdentityInfoBuilder,
+        AuthenticationContext, AuthzInfoBuilder, IdentityInfo, PrincipalInfo, ScopeInfo,
+        SecurityContext, UserIdentityInfoBuilder,
     };
     use openstack_keystone_core_types::resource::DomainBuilder;
 
@@ -469,6 +553,22 @@ mod tests {
             .principal(PrincipalInfo {
                 identity: IdentityInfo::User(user),
             })
+            .build();
+        ValidatedSecurityContext::test_new(sc)
+    }
+
+    fn make_vsc_scoped(scope: ScopeInfo) -> ValidatedSecurityContext {
+        let user = UserIdentityInfoBuilder::default()
+            .user_id("test-user-id".to_string())
+            .build()
+            .unwrap();
+        let authz = AuthzInfoBuilder::default().scope(scope).build().unwrap();
+        let sc = SecurityContext::test_build()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(user),
+            })
+            .authorization(authz)
             .build();
         ValidatedSecurityContext::test_new(sc)
     }
@@ -597,5 +697,212 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    fn base_project_create() -> ProjectCreate {
+        ProjectCreate {
+            description: None,
+            domain_id: None,
+            enabled: true,
+            extra: Default::default(),
+            id: None,
+            is_domain: false,
+            name: "pname".into(),
+            parent_id: None,
+        }
+    }
+
+    fn make_domain(id: &str) -> openstack_keystone_core_types::resource::Domain {
+        DomainBuilder::default()
+            .id(id)
+            .name(format!("{id}-name"))
+            .enabled(true)
+            .build()
+            .unwrap()
+    }
+
+    fn make_project(id: &str, domain_id: &str) -> Project {
+        ProjectBuilder::default()
+            .id(id)
+            .domain_id(domain_id)
+            .name(format!("{id}-name"))
+            .enabled(true)
+            .build()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_resolve_project_domain_id_is_domain_self() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let provider = ResourceService {
+            backend_driver: Arc::new(MockResourceBackend::default()),
+        };
+        let mut project = base_project_create();
+        project.is_domain = true;
+
+        let resolved = provider
+            .resolve_project_domain_id(&ExecutionContext::internal(&state), &project, "genid")
+            .await
+            .unwrap();
+        assert_eq!(resolved, "genid");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_project_domain_id_is_domain_rejects_domain_id() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let provider = ResourceService {
+            backend_driver: Arc::new(MockResourceBackend::default()),
+        };
+        let mut project = base_project_create();
+        project.is_domain = true;
+        project.domain_id = Some("did".into());
+
+        let err = provider
+            .resolve_project_domain_id(&ExecutionContext::internal(&state), &project, "genid")
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ResourceProviderError::InvalidProjectDomain(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_project_domain_id_explicit() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let provider = ResourceService {
+            backend_driver: Arc::new(MockResourceBackend::default()),
+        };
+        let mut project = base_project_create();
+        project.domain_id = Some("did".into());
+
+        let resolved = provider
+            .resolve_project_domain_id(&ExecutionContext::internal(&state), &project, "genid")
+            .await
+            .unwrap();
+        assert_eq!(resolved, "did");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_project_domain_id_inherits_from_parent() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockResourceBackend::default();
+        backend
+            .expect_get_project()
+            .withf(|_, id: &'_ str| id == "pid")
+            .returning(|_, _| Ok(Some(make_project("pid", "parent-did"))));
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+        let mut project = base_project_create();
+        project.parent_id = Some("pid".into());
+
+        let resolved = provider
+            .resolve_project_domain_id(&ExecutionContext::internal(&state), &project, "genid")
+            .await
+            .unwrap();
+        assert_eq!(resolved, "parent-did");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_project_domain_id_matches_parent() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockResourceBackend::default();
+        backend
+            .expect_get_project()
+            .withf(|_, id: &'_ str| id == "pid")
+            .returning(|_, _| Ok(Some(make_project("pid", "did"))));
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+        let mut project = base_project_create();
+        project.parent_id = Some("pid".into());
+        project.domain_id = Some("did".into());
+
+        let resolved = provider
+            .resolve_project_domain_id(&ExecutionContext::internal(&state), &project, "genid")
+            .await
+            .unwrap();
+        assert_eq!(resolved, "did");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_project_domain_id_mismatch_with_parent_errors() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockResourceBackend::default();
+        backend
+            .expect_get_project()
+            .withf(|_, id: &'_ str| id == "pid")
+            .returning(|_, _| Ok(Some(make_project("pid", "parent-did"))));
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+        let mut project = base_project_create();
+        project.parent_id = Some("pid".into());
+        project.domain_id = Some("other-did".into());
+
+        let err = provider
+            .resolve_project_domain_id(&ExecutionContext::internal(&state), &project, "genid")
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ResourceProviderError::InvalidProjectDomain(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_project_domain_id_falls_back_to_domain_scope() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let provider = ResourceService {
+            backend_driver: Arc::new(MockResourceBackend::default()),
+        };
+        let vsc = make_vsc_scoped(ScopeInfo::Domain(make_domain("scoped-did")));
+        let ctx = ExecutionContext::from_auth(&state, &vsc);
+        let project = base_project_create();
+
+        let resolved = provider
+            .resolve_project_domain_id(&ctx, &project, "genid")
+            .await
+            .unwrap();
+        assert_eq!(resolved, "scoped-did");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_project_domain_id_falls_back_to_project_scope_domain() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let provider = ResourceService {
+            backend_driver: Arc::new(MockResourceBackend::default()),
+        };
+        let vsc = make_vsc_scoped(ScopeInfo::Project {
+            project: make_project("scope-pid", "scoped-did"),
+            project_domain: make_domain("scoped-did"),
+        });
+        let ctx = ExecutionContext::from_auth(&state, &vsc);
+        let project = base_project_create();
+
+        let resolved = provider
+            .resolve_project_domain_id(&ctx, &project, "genid")
+            .await
+            .unwrap();
+        assert_eq!(resolved, "scoped-did");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_project_domain_id_no_domain_no_scope_errors() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let provider = ResourceService {
+            backend_driver: Arc::new(MockResourceBackend::default()),
+        };
+        let project = base_project_create();
+
+        let err = provider
+            .resolve_project_domain_id(&ExecutionContext::internal(&state), &project, "genid")
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ResourceProviderError::InvalidProjectDomain(_)
+        ));
     }
 }

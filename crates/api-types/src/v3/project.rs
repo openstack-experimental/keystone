@@ -62,7 +62,7 @@ pub struct ProjectShort {
 pub struct Project {
     /// The description of the project.
     #[cfg_attr(feature = "builder", builder(default))]
-    #[serde(skip_serializing_if = "Option::is_none")]
+    //#[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
     pub description: Option<String>,
 
@@ -122,12 +122,18 @@ pub struct ProjectCreate {
     pub description: Option<String>,
 
     /// The ID of the domain for the project.
+    ///
+    /// If not specified, the domain is resolved from `parent_id`'s domain,
+    /// or falls back to the domain the caller's token is scoped to.
+    #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
-    pub domain_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain_id: Option<String>,
 
     /// If set to true, project is enabled. If set to false, project is
     /// disabled. The defaults is `true`.
     #[cfg_attr(feature = "builder", builder(default = "crate::default_true()"))]
+    #[serde(default = "crate::default_true")]
     pub enabled: bool,
 
     /// Additional project properties.
@@ -144,6 +150,7 @@ pub struct ProjectCreate {
     /// that contains only resources. Default is false. You cannot update this
     /// parameter after you create the project.
     #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(default)]
     pub is_domain: bool,
 
     /// The name of the project, which must be unique within the owning domain.
@@ -175,6 +182,10 @@ impl ProjectCreateBuilder {
     fn validate(&self) -> Result<(), String> {
         if self.parent_id.is_some() && self.is_domain.is_some_and(|x| x) {
             return Err("project cannot specify `parent_id` when `is_domain` is true".to_string());
+        }
+        if self.domain_id.as_ref().is_some_and(|x| x.is_some()) && self.is_domain.is_some_and(|x| x)
+        {
+            return Err("project cannot specify `domain_id` when `is_domain` is true".to_string());
         }
         Ok(())
     }
@@ -246,6 +257,13 @@ mod tests {
         assert!(sot.enabled, "enabled defaults to true");
         assert!(!sot.is_domain, "is_domain defaults to false");
         assert!(sot.parent_id.is_none());
+
+        let sot_no_domain = ProjectCreateBuilder::default()
+            .name("name")
+            .build()
+            .unwrap();
+        assert!(sot_no_domain.domain_id.is_none(), "domain_id is optional");
+
         if let Err(BuilderError::Validation(..)) = ProjectCreateBuilder::default()
             .name("name")
             .domain_id("did")
@@ -257,6 +275,18 @@ mod tests {
         } else {
             panic!(
                 "an error should be raised not allowing to set parent_id with the is_domain=true"
+            );
+        }
+
+        if let Err(BuilderError::Validation(..)) = ProjectCreateBuilder::default()
+            .name("name")
+            .domain_id("did")
+            .is_domain(true)
+            .build()
+        {
+        } else {
+            panic!(
+                "an error should be raised not allowing to set domain_id with the is_domain=true"
             );
         }
     }

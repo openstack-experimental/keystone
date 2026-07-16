@@ -281,7 +281,7 @@ pub async fn auth_passkey<B: AuthenticatorBackend, U: AsRef<str>>(
     )
     .await?;
 
-    if rsp.status() != StatusCode::OK {
+    if rsp.status() != StatusCode::CREATED {
         return Err(eyre!("Authentication failed with {}", rsp.status()));
     }
 

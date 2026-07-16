@@ -16,10 +16,11 @@
 //! 2).
 //!
 //! Wraps a dedicated `local_emergency` Fjall keyspace, opened directly off
-//! the same [`Database`] handle [`crate::store::state_machine::FjallStateMachine`]
-//! uses — but never touched by Raft's `apply()`, and never written through
-//! [`crate::StorageApi`]. That is the whole point of the quorum-bypass path:
-//! writes here succeed even when the node cannot reach Raft quorum.
+//! the same [`Database`] handle
+//! [`crate::store::state_machine::FjallStateMachine`] uses — but never touched
+//! by Raft's `apply()`, and never written through [`crate::StorageApi`]. That
+//! is the whole point of the quorum-bypass path: writes here succeed even when
+//! the node cannot reach Raft quorum.
 //!
 //! The quorum-bypass guardrail itself ([`LeaderlessTracker`],
 //! `GuardrailConfig`, `is_quorum_bypass_allowed`) lives in the lightweight

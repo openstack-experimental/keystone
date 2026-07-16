@@ -61,9 +61,11 @@ pub struct Token {
     pub methods: Vec<String>,
 
     /// The date and time when the token expires.
+    #[serde(serialize_with = "crate::common::serialize_datetime_micros")]
     pub expires_at: DateTime<Utc>,
 
     /// The date and time when the token was issued.
+    #[serde(serialize_with = "crate::common::serialize_datetime_micros")]
     pub issued_at: DateTime<Utc>,
 
     // # Subject
@@ -357,6 +359,7 @@ pub struct User {
     pub domain: Domain,
     /// User password expiry date.
     #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(serialize_with = "crate::common::serialize_optional_datetime_micros")]
     pub password_expires_at: Option<DateTime<Utc>>,
 }
 

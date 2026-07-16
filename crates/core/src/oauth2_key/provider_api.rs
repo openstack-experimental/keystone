@@ -143,9 +143,8 @@ pub trait Oauth2KeyApi: Send + Sync {
     ///
     /// # Errors
     /// * [`Oauth2KeyProviderError::LocalEmergencyBypassNotAllowed`] if the
-    ///   node's quorum-bypass guardrail refuses the request (bypass
-    ///   disabled, quorum currently reachable, or grace period not yet
-    ///   elapsed).
+    ///   node's quorum-bypass guardrail refuses the request (bypass disabled,
+    ///   quorum currently reachable, or grace period not yet elapsed).
     /// * [`Oauth2KeyProviderError::LocalEmergencyAlreadyStaged`] if a
     ///   non-revoked local candidate already exists for this domain on this
     ///   node.

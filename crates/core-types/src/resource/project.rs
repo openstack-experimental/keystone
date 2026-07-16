@@ -77,8 +77,9 @@ pub struct ProjectCreate {
     pub description: Option<String>,
 
     /// The ID of the domain for the project.
+    #[builder(default)]
     #[validate(length(min = 1, max = 64))]
-    pub domain_id: String,
+    pub domain_id: Option<String>,
 
     /// If set to true, project is enabled. If set to false, project is
     /// disabled.

@@ -56,7 +56,7 @@ mod tests {
 
         let req = ProjectCreate {
             description: Some("description".into()),
-            domain_id: "foo_domain".into(),
+            domain_id: Some("foo_domain".into()),
             enabled: true,
             extra: std::collections::HashMap::new(),
             id: Some("1".into()),

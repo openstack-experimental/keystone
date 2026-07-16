@@ -38,6 +38,7 @@ pub struct TokenTrustRepr {
     /// redelegated trust.
     #[cfg_attr(feature = "builder", builder(default))]
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(serialize_with = "crate::common::serialize_optional_datetime_micros")]
     pub expires_at: Option<DateTime<Utc>>,
 
     /// The ID of the trust.

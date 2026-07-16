@@ -1,0 +1,48 @@
+# Minimal tempest config for the identity-only compatibility verify test.
+# Rendered via `envsubst` in run-tempest.sh; only identity-related sections
+# are populated since no other OpenStack services are deployed alongside
+# Keystone in this environment.
+
+[DEFAULT]
+log_file = /tempest/workspace/tempest.log
+debug = True
+
+[identity]
+auth_version = v3
+uri = ${OS_AUTH_URL}
+uri_v3 = ${OS_AUTH_URL}/v3
+disable_ssl_certificate_validation = true
+region = RegionOne
+default_domain_id = ${OS_PROJECT_DOMAIN_ID}
+v3_endpoint_type = internal
+catalog_type = ${OS_IDENTITY_SERVICE_TYPE}
+
+[identity-feature-enabled]
+api_v2 = false
+api_v2_admin = false
+api_v3 = true
+trust = true
+forbid_global_implied_dsr = true
+application_credentials = true
+access_rules = false
+security_compliance = false
+project_tags = true
+domain_specific_drivers = false
+
+[auth]
+use_dynamic_credentials = true
+admin_username = ${OS_USERNAME}
+admin_password = ${OS_PASSWORD}
+admin_project_name = ${OS_PROJECT_NAME}
+admin_domain_name = Default
+
+[service_available]
+cinder = false
+neutron = false
+glance = false
+nova = false
+swift = false
+heat = false
+
+[oslo_concurrency]
+lock_path = /tmp/tempest-lock

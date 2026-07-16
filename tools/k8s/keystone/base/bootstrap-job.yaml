@@ -30,9 +30,8 @@ spec:
             - mountPath: /var/log/keystone
               name: keystone-logs
             - mountPath: /etc/keystone/keystone.conf
-              name: config
+              name: keystone-config
               subPath: keystone.conf
-
         - env:
             - name: OS_DATABASE__CONNECTION
               valueFrom:
@@ -46,11 +45,10 @@ spec:
             - mountPath: /var/log/keystone
               name: keystone-logs
             - mountPath: /etc/keystone/keystone.conf
-              name: config
+              name: keystone-config
               subPath: keystone.conf
 
       containers:
-
         - env:
             - name: OS_DATABASE__CONNECTION
               valueFrom:
@@ -59,12 +57,12 @@ spec:
                   name: keystone-db-app
           image: py-keystone
           name: keystone-bootstrap
-          command: [keystone-manage, "bootstrap", "--bootstrap-username", "admin", "--bootstrap-password", "password", "--bootstrap-public-url", "http://keystone.local:80", "--bootstrap-internal-url", "http://keystone-rs.local:80"]
+          command: [keystone-manage, "bootstrap", "--bootstrap-username", "admin", "--bootstrap-password", "password", "--bootstrap-public-url", "http://keystone-py.local", "--bootstrap-internal-url", "http://keystone-py.default.svc.cluster.local:5000", "--bootstrap-region-id", "RegionOne"]
           volumeMounts:
             - mountPath: /var/log/keystone
               name: keystone-logs
             - mountPath: /etc/keystone/keystone.conf
-              name: config
+              name: keystone-config
               subPath: keystone.conf
             - mountPath: /etc/keystone/fernet-keys
               name: fernet
@@ -72,10 +70,9 @@ spec:
       volumes:
         - name: keystone-logs
           emptyDir: {}
-        - name: "config"
+        - name: keystone-config
           configMap:
             name: "keystone"
-
         - name: "fernet"
           secret:
             defaultMode: 420

@@ -35,6 +35,12 @@ pub enum ResourceProviderError {
     #[error("domain {0} not found")]
     DomainNotFound(String),
 
+    /// Invalid `domain_id`/`is_domain`/`parent_id` combination on project
+    /// create (e.g. `domain_id` set while `is_domain` is true, or `domain_id`
+    /// not matching the parent project's domain).
+    #[error("invalid project domain: {0}")]
+    InvalidProjectDomain(String),
+
     /// OAuth2 signing key provider error, surfaced when provisioning a
     /// domain's initial signing keypair synchronously on domain creation
     /// (ADR 0026 §3, "Domain creation").
