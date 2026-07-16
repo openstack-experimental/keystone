@@ -384,7 +384,13 @@ pub struct FederationProtocol {
 
     // TODO: unique ID should potentially belong to the IDP and not to the protocol
     /// Unique ID of the associated user.
-    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
+    ///
+    /// Unlike other `*_id` fields this is not a Keystone-generated ID, but an
+    /// arbitrary subject string supplied by the external IdP (e.g. a GitHub
+    /// Actions OIDC `sub` claim), which for merge-queue-triggered runs can
+    /// exceed 100 characters. The limit is kept below the backing column
+    /// width (`VARCHAR(255)`) rather than the usual 64-char ID convention.
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub unique_id: String,
 }
 
@@ -412,7 +418,7 @@ pub struct UserListParameters {
     pub name: Option<String>,
 
     /// Filter users by the federated unique ID.
-    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub unique_id: Option<String>,
 }
 
@@ -643,5 +649,27 @@ mod tests {
         //    Some(json!({"foo": "bar"})),
         //    "user extras are set"
         //);
+    }
+
+    #[test]
+    fn federation_protocol_accepts_long_external_unique_id() {
+        let long_unique_id =
+            "repo:openstack-experimental/keystone:ref:refs/heads/gh-readonly-queue/main/pr-1030-d9517d719ea07d21b45f078970fc0efcf083670e".to_string();
+        assert!(long_unique_id.len() > 64 && long_unique_id.len() <= 255);
+
+        let protocol = FederationProtocol {
+            protocol_id: "github".to_string(),
+            unique_id: long_unique_id,
+        };
+        assert!(protocol.validate().is_ok());
+    }
+
+    #[test]
+    fn federation_protocol_rejects_overlong_unique_id() {
+        let protocol = FederationProtocol {
+            protocol_id: "github".to_string(),
+            unique_id: "x".repeat(256),
+        };
+        assert!(protocol.validate().is_err());
     }
 }
