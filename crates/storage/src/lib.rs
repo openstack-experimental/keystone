@@ -86,6 +86,7 @@ impl From<StoreError> for ApiStoreError {
 }
 
 pub mod protobuf {
+    #![allow(clippy::doc_paragraphs_missing_punctuation)]
     pub mod api {
         use serde::{Deserialize, Serialize};
         tonic::include_proto!("keystone.api");

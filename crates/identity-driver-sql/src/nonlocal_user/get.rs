@@ -31,6 +31,7 @@ use crate::entity::{nonlocal_user, prelude::NonlocalUser};
 /// # Returns
 /// A `Result` containing an `Option` with the `nonlocal_user::Model` if found,
 /// or an `Error`.
+#[allow(unused)]
 pub async fn get_by_name_and_domain<N: AsRef<str>, D: AsRef<str>>(
     db: &DatabaseConnection,
     name: N,
