@@ -157,8 +157,11 @@ timer resets.
 normal Raft-backed HTTP path (admin UDS + SPIFFE mTLS to
 `/v4/oauth2/{domain_id}/rotate-signing-key`), which requires Raft quorum
 to commit. If the cluster has lost quorum at the same moment a key is
-compromised, there is currently no quorum-bypass fallback — see the
-companion ADR amendment for this gap.
+compromised, there is currently no quorum-bypass fallback — see
+[ADR 0028](../adr/0028-oauth2-quorum-bypass-emergency-rotation.md) for the
+design (not yet implemented), which now also covers the identical gap in
+DEK emergency rotation ([ADR 0016-v2](../adr/0016-v2-raft-storage.md)
+§6.2) as a shared mechanism over this same admin UDS.
 
 ## Downstream control-plane enforcement (Nova/Neutron/etc.)
 
@@ -215,9 +218,11 @@ runbook.
 Two items from ADR 0026 §3 remain intentionally unbuilt; see the follow-up
 ADR amendments for the design work required to close them:
 
-- **UDS/loopback quorum-bypass emergency rotation** — today's emergency
-  rotation still requires Raft quorum. There is no local-only fallback for
-  the case where quorum is lost at the same time a key is compromised.
+- **Quorum-bypass emergency rotation** — today's emergency rotation still
+  requires Raft quorum. There is no local-only fallback for the case where
+  quorum is lost at the same time a key is compromised. [ADR 0028](../adr/0028-oauth2-quorum-bypass-emergency-rotation.md)
+  designs this as a shared mechanism (reusing the existing admin UDS) for
+  both OAuth2 signing keys and DEK emergency rotation.
 - **Audit-log-derived JTI backfill** — `--revoke-jti` is manual only.
   Auto-populating the revocation list from a time window against the
   audit trail needs a queryable audit-log store that does not exist yet.
