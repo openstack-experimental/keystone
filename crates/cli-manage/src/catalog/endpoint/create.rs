@@ -26,38 +26,41 @@ use crate::PerformAction;
 use crate::common::{ADMIN_BASE_URL, build_admin_client, print_attribute_table};
 
 /// Create a new catalog endpoint.
+///
+/// Idempotent: if an endpoint with the same `service_id` and `interface`
+/// already exists, it is returned as-is instead of erroring.
 #[derive(Parser)]
 #[command(group(
     ArgGroup::new("service_ref")
         .required(true)
         .args(["service_id", "service_name"]),
 ))]
-pub(super) struct CreateCommand {
+pub struct CreateCommand {
     /// The ID of the service the endpoint belongs to.
     #[arg(long)]
-    service_id: Option<String>,
+    pub(crate) service_id: Option<String>,
 
     /// The name of the service the endpoint belongs to. Resolved to an ID via
     /// `GET /v3/services?name=...`; fails if zero or more than one service
     /// matches.
     #[arg(long)]
-    service_name: Option<String>,
+    pub(crate) service_name: Option<String>,
 
     /// The interface (`public`, `internal`, or `admin`).
     #[arg(long)]
-    interface: String,
+    pub(crate) interface: String,
 
     /// The endpoint URL.
     #[arg(long)]
-    url: String,
+    pub(crate) url: String,
 
     /// The ID of the region that contains the endpoint.
     #[arg(long)]
-    region_id: Option<String>,
+    pub(crate) region_id: Option<String>,
 
     /// Whether the endpoint appears in the service catalog.
     #[arg(long, default_value_t = true)]
-    enabled: bool,
+    pub(crate) enabled: bool,
 }
 
 impl CreateCommand {
@@ -95,16 +98,51 @@ impl CreateCommand {
         }
     }
 
+    /// Look up existing endpoints by `service_id` + `interface` via
+    /// `GET /v3/endpoints?service_id=...&interface=...`.
+    async fn find_by_service_and_interface(
+        &self,
+        client: &Client,
+        base_url: &str,
+        service_id: &str,
+    ) -> Result<Vec<Endpoint>> {
+        Ok(client
+            .get(Url::parse_with_params(
+                &format!("{base_url}/v3/endpoints"),
+                &[
+                    ("service_id", service_id),
+                    ("interface", self.interface.as_str()),
+                ],
+            )?)
+            .send()
+            .await?
+            .json::<EndpointList>()
+            .await?
+            .endpoints)
+    }
+
     /// Create the endpoint against a pre-built HTTP client.
+    ///
+    /// Idempotent: if an endpoint with the same `service_id` + `interface`
+    /// already exists, it is returned as-is instead of erroring.
     ///
     /// This is the public entry point for tests that inject a mock client.
     #[cfg_attr(not(test), doc(hidden))]
     pub async fn create_with_client(&self, client: &Client, base_url: &str) -> Result<Endpoint> {
         let service_id = self.resolve_service_id(client, base_url).await?;
 
+        if let Some(existing) = self
+            .find_by_service_and_interface(client, base_url, &service_id)
+            .await?
+            .into_iter()
+            .next()
+        {
+            return Ok(existing);
+        }
+
         let mut builder = EndpointCreateBuilder::default();
         builder
-            .service_id(service_id)
+            .service_id(service_id.clone())
             .interface(self.interface.clone())
             .url(self.url.clone())
             .enabled(self.enabled);
@@ -119,6 +157,22 @@ impl CreateCommand {
             })
             .send()
             .await?;
+
+        if res.status() == StatusCode::CONFLICT {
+            // Another process created the endpoint concurrently.
+            return self
+                .find_by_service_and_interface(client, base_url, &service_id)
+                .await?
+                .into_iter()
+                .next()
+                .ok_or_else(|| {
+                    eyre!(
+                        "'{}' endpoint for service '{}' not found after concurrent creation",
+                        self.interface,
+                        service_id
+                    )
+                });
+        }
 
         if res.status() != StatusCode::CREATED {
             return Err(eyre!(
@@ -179,11 +233,24 @@ mod tests {
         }
     }
 
+    fn mock_empty_endpoint_lookup(server: &MockServer, service_id: &str, interface: &str) {
+        server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/v3/endpoints")
+                .query_param("service_id", service_id)
+                .query_param("interface", interface);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({ "endpoints": [] }));
+        });
+    }
+
     #[tokio::test]
     async fn test_create_endpoint_by_service_id() {
         let server = MockServer::start();
         let base = server.base_url();
 
+        mock_empty_endpoint_lookup(&server, "svc-1", "public");
         server.mock(|when, then| {
             when.method(Method::POST).path("/v3/endpoints");
             then.status(201)
@@ -218,6 +285,7 @@ mod tests {
                     "services": [{ "id": "svc-1", "type": "identity-rs", "enabled": true, "name": "identity-rs" }]
                 }));
         });
+        mock_empty_endpoint_lookup(&server, "svc-1", "public");
         server.mock(|when, then| {
             when.method(Method::POST).path("/v3/endpoints");
             then.status(201)
@@ -235,6 +303,71 @@ mod tests {
         let created = cmd.create_with_client(&client, &base).await;
         assert!(created.is_ok());
         assert_eq!(created.unwrap().service_id, "svc-1");
+    }
+
+    #[tokio::test]
+    async fn test_create_endpoint_already_exists() {
+        let server = MockServer::start();
+        let base = server.base_url();
+
+        server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/v3/endpoints")
+                .query_param("service_id", "svc-1")
+                .query_param("interface", "public");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({
+                    "endpoints": [{
+                        "id": "ep-existing", "interface": "public", "service_id": "svc-1",
+                        "url": "https://example.com", "enabled": true
+                    }]
+                }));
+        });
+        // No POST mock registered: httpmock fails the test if an
+        // unmatched request (e.g. an unexpected POST) is made.
+
+        let client = Client::new();
+        let cmd = command_by_id("svc-1");
+        let created = cmd.create_with_client(&client, &base).await;
+        assert!(created.is_ok());
+        assert_eq!(created.unwrap().id, "ep-existing");
+    }
+
+    #[tokio::test]
+    async fn test_create_endpoint_conflict_refetches() {
+        let server = MockServer::start();
+        let base = server.base_url();
+
+        // Lookup stays empty both times (no concurrent creator actually won
+        // the race in this test double), so the post-conflict refetch is
+        // expected to come up empty and surface as an error - this proves
+        // the refetch happens rather than the 409 being swallowed silently.
+        let lookup = server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/v3/endpoints")
+                .query_param("service_id", "svc-1")
+                .query_param("interface", "public");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({ "endpoints": [] }));
+        });
+        server.mock(|when, then| {
+            when.method(Method::POST).path("/v3/endpoints");
+            then.status(409).body("conflict");
+        });
+
+        let client = Client::new();
+        let cmd = command_by_id("svc-1");
+        let result = cmd.create_with_client(&client, &base).await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not found after concurrent creation")
+        );
+        assert_eq!(lookup.hits(), 2);
     }
 
     #[tokio::test]

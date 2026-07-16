@@ -29,6 +29,8 @@ use openstack_keystone_api_types::v3::user::*;
 use openstack_keystone_config::Config;
 
 use crate::PerformAction;
+use crate::catalog::endpoint::create::CreateCommand as EndpointCreateCommand;
+use crate::catalog::service::create::CreateCommand as ServiceCreateCommand;
 use crate::common::{ADMIN_BASE_URL, build_admin_client, setup_logging};
 
 /// Bootstrap Keystone data.
@@ -459,53 +461,13 @@ impl BootstrapCommand {
         service_type: S,
         base_url: &str,
     ) -> Result<Service> {
-        let url = format!("{base_url}/v3/services");
-        let existing_services = client
-            .get(Url::parse_with_params(
-                &url,
-                &[("type", service_type.as_ref())],
-            )?)
-            .send()
-            .await?
-            .json::<ServiceList>()
-            .await?
-            .services;
-        if let Some(service) = existing_services.first() {
-            Ok(service.to_owned())
-        } else {
-            let res = client
-                .post(format!("{base_url}/v3/services"))
-                .json(&ServiceCreateRequest {
-                    service: ServiceCreateBuilder::default()
-                        .r#type(service_type.as_ref())
-                        .name("keystone")
-                        .enabled(true)
-                        .build()?,
-                })
-                .send()
-                .await?;
-            if res.status() == StatusCode::CONFLICT {
-                // Another bootstrap created the service concurrently; fetch it
-                let services = client
-                    .get(Url::parse_with_params(
-                        &format!("{base_url}/v3/services"),
-                        &[("type", service_type.as_ref())],
-                    )?)
-                    .send()
-                    .await?
-                    .json::<ServiceList>()
-                    .await?
-                    .services;
-                services.first().cloned().ok_or_else(|| {
-                    eyre!(
-                        "service of type '{}' not found after concurrent creation",
-                        service_type.as_ref()
-                    )
-                })
-            } else {
-                Ok(res.json::<ServiceResponse>().await?.service)
-            }
+        ServiceCreateCommand {
+            r#type: service_type.as_ref().to_string(),
+            name: Some("keystone".to_string()),
+            enabled: true,
         }
+        .create_with_client(client, base_url)
+        .await
     }
 
     /// Ensure the catalog endpoint exists.
@@ -524,65 +486,16 @@ impl BootstrapCommand {
         endpoint_url: U,
         base_url: &str,
     ) -> Result<Endpoint> {
-        let url = format!("{base_url}/v3/endpoints");
-        let existing_endpoints = client
-            .get(Url::parse_with_params(
-                &url,
-                &[
-                    ("service_id", service.id.as_str()),
-                    ("interface", interface.as_ref()),
-                ],
-            )?)
-            .send()
-            .await?
-            .json::<EndpointList>()
-            .await?
-            .endpoints;
-        if let Some(endpoint) = existing_endpoints.first() {
-            Ok(endpoint.to_owned())
-        } else {
-            let mut builder = EndpointCreateBuilder::default();
-            builder
-                .service_id(service.id.clone())
-                .interface(interface.as_ref())
-                .url(endpoint_url.as_ref())
-                .enabled(true);
-            if let Some(region_id) = &self.bootstrap_region_id {
-                builder.region_id(region_id.clone());
-            }
-            let res = client
-                .post(format!("{base_url}/v3/endpoints"))
-                .json(&EndpointCreateRequest {
-                    endpoint: builder.build()?,
-                })
-                .send()
-                .await?;
-            if res.status() == StatusCode::CONFLICT {
-                // Another bootstrap created the endpoint concurrently; fetch it
-                let endpoints = client
-                    .get(Url::parse_with_params(
-                        &format!("{base_url}/v3/endpoints"),
-                        &[
-                            ("service_id", service.id.as_str()),
-                            ("interface", interface.as_ref()),
-                        ],
-                    )?)
-                    .send()
-                    .await?
-                    .json::<EndpointList>()
-                    .await?
-                    .endpoints;
-                endpoints.first().cloned().ok_or_else(|| {
-                    eyre!(
-                        "'{}' endpoint for service '{}' not found after concurrent creation",
-                        interface.as_ref(),
-                        service.id
-                    )
-                })
-            } else {
-                Ok(res.json::<EndpointResponse>().await?.endpoint)
-            }
+        EndpointCreateCommand {
+            service_id: Some(service.id.clone()),
+            service_name: None,
+            interface: interface.as_ref().to_string(),
+            url: endpoint_url.as_ref().to_string(),
+            region_id: self.bootstrap_region_id.clone(),
+            enabled: true,
         }
+        .create_with_client(client, base_url)
+        .await
     }
 
     /// Ensure the role imply rule exist.

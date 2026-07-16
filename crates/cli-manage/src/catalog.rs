@@ -19,8 +19,8 @@ use color_eyre::Report;
 
 use openstack_keystone_config::Config;
 
-mod endpoint;
-mod service;
+pub(crate) mod endpoint;
+pub(crate) mod service;
 
 use crate::PerformAction;
 use crate::catalog::endpoint::EndpointCommand;

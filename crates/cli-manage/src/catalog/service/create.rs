@@ -16,7 +16,7 @@ use async_trait::async_trait;
 use clap::Parser;
 use color_eyre::{Report, eyre::eyre};
 use eyre::Result;
-use reqwest::{Client, StatusCode};
+use reqwest::{Client, StatusCode, Url};
 
 use openstack_keystone_api_types::v3::service::*;
 use openstack_keystone_config::Config;
@@ -25,27 +25,56 @@ use crate::PerformAction;
 use crate::common::{ADMIN_BASE_URL, build_admin_client, print_attribute_table};
 
 /// Create a new catalog service.
+///
+/// Idempotent: if a service of the given `type` already exists, it is
+/// returned as-is instead of erroring.
 #[derive(Parser)]
-pub(super) struct CreateCommand {
+pub struct CreateCommand {
     /// Service type (e.g. `identity`).
     #[arg(long = "type")]
-    r#type: String,
+    pub(crate) r#type: String,
 
     /// Service name.
     #[arg(long)]
-    name: Option<String>,
+    pub(crate) name: Option<String>,
 
     /// Whether the service and its endpoints appear in the catalog.
     #[arg(long, default_value_t = true)]
-    enabled: bool,
+    pub(crate) enabled: bool,
 }
 
 impl CreateCommand {
+    /// Look up existing services by `type` via `GET /v3/services?type=...`.
+    async fn find_by_type(&self, client: &Client, base_url: &str) -> Result<Vec<Service>> {
+        Ok(client
+            .get(Url::parse_with_params(
+                &format!("{base_url}/v3/services"),
+                &[("type", self.r#type.as_str())],
+            )?)
+            .send()
+            .await?
+            .json::<ServiceList>()
+            .await?
+            .services)
+    }
+
     /// Create the service against a pre-built HTTP client.
+    ///
+    /// Idempotent: if a service of `type` already exists, it is returned
+    /// as-is instead of erroring.
     ///
     /// This is the public entry point for tests that inject a mock client.
     #[cfg_attr(not(test), doc(hidden))]
     pub async fn create_with_client(&self, client: &Client, base_url: &str) -> Result<Service> {
+        if let Some(existing) = self
+            .find_by_type(client, base_url)
+            .await?
+            .into_iter()
+            .next()
+        {
+            return Ok(existing);
+        }
+
         let mut builder = ServiceCreateBuilder::default();
         builder.r#type(self.r#type.clone()).enabled(self.enabled);
         if let Some(name) = &self.name {
@@ -59,6 +88,21 @@ impl CreateCommand {
             })
             .send()
             .await?;
+
+        if res.status() == StatusCode::CONFLICT {
+            // Another process created the service concurrently.
+            return self
+                .find_by_type(client, base_url)
+                .await?
+                .into_iter()
+                .next()
+                .ok_or_else(|| {
+                    eyre!(
+                        "service of type '{}' not found after concurrent creation",
+                        self.r#type
+                    )
+                });
+        }
 
         if res.status() != StatusCode::CREATED {
             return Err(eyre!(
@@ -104,11 +148,23 @@ mod tests {
         }
     }
 
+    fn mock_empty_lookup(server: &MockServer, service_type: &str) {
+        server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/v3/services")
+                .query_param("type", service_type);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({ "services": [] }));
+        });
+    }
+
     #[tokio::test]
     async fn test_create_service() {
         let server = MockServer::start();
         let base = server.base_url();
 
+        mock_empty_lookup(&server, "identity-rs");
         server.mock(|when, then| {
             when.method(Method::POST).path("/v3/services");
             then.status(201)
@@ -132,6 +188,7 @@ mod tests {
         let server = MockServer::start();
         let base = server.base_url();
 
+        mock_empty_lookup(&server, "identity-rs");
         server.mock(|when, then| {
             when.method(Method::POST).path("/v3/services");
             then.status(201)
@@ -153,6 +210,7 @@ mod tests {
         let server = MockServer::start();
         let base = server.base_url();
 
+        mock_empty_lookup(&server, "identity-rs");
         server.mock(|when, then| {
             when.method(Method::POST).path("/v3/services");
             then.status(500).body("internal error");
@@ -162,5 +220,65 @@ mod tests {
         let cmd = command("identity-rs", None);
         let result = cmd.create_with_client(&client, &base).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_service_already_exists() {
+        let server = MockServer::start();
+        let base = server.base_url();
+
+        server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/v3/services")
+                .query_param("type", "identity-rs");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({
+                    "services": [{ "id": "svc-existing", "type": "identity-rs", "enabled": true, "name": "keystone-rs" }]
+                }));
+        });
+        // No POST mock registered: httpmock fails the test if an
+        // unmatched request (e.g. an unexpected POST) is made.
+
+        let client = Client::new();
+        let cmd = command("identity-rs", Some("keystone-rs"));
+        let created = cmd.create_with_client(&client, &base).await;
+        assert!(created.is_ok());
+        assert_eq!(created.unwrap().id, "svc-existing");
+    }
+
+    #[tokio::test]
+    async fn test_create_service_conflict_refetches() {
+        let server = MockServer::start();
+        let base = server.base_url();
+
+        // Lookup stays empty both times (no concurrent creator actually won
+        // the race in this test double), so the post-conflict refetch is
+        // expected to come up empty and surface as an error - this proves
+        // the refetch happens rather than the 409 being swallowed silently.
+        let lookup = server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/v3/services")
+                .query_param("type", "identity-rs");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body_obj(&serde_json::json!({ "services": [] }));
+        });
+        server.mock(|when, then| {
+            when.method(Method::POST).path("/v3/services");
+            then.status(409).body("conflict");
+        });
+
+        let client = Client::new();
+        let cmd = command("identity-rs", Some("keystone-rs"));
+        let result = cmd.create_with_client(&client, &base).await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not found after concurrent creation")
+        );
+        assert_eq!(lookup.hits(), 2);
     }
 }

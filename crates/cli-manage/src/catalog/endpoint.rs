@@ -19,7 +19,7 @@ use color_eyre::Report;
 
 use openstack_keystone_config::Config;
 
-mod create;
+pub(crate) mod create;
 mod delete;
 mod list;
 mod show;

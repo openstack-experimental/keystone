@@ -48,6 +48,7 @@ impl PerformAction for Oauth2Command {
     }
 }
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Subcommand)]
 enum Oauth2Commands {
     RotateSigningKey(RotateSigningKeyCommand),
