@@ -263,6 +263,18 @@ async fn main() -> Result<(), Report> {
         .await?,
     );
 
+    // Wire the node-local, quorum-bypass emergency store (ADR 0028) into the
+    // shared service state so `--local-quorum-bypass` OAuth2 signing-key
+    // rotation can reach it. Same underlying Fjall-backed store DEK's
+    // RotateDekLocalEmergency RPC writes to, so gossip's periodic sweep
+    // (which reads directly off `Storage`) sees candidates staged either
+    // way.
+    if let Some(storage) = &concrete_storage {
+        shared_state
+            .set_local_emergency_store(storage.local_emergency_store.clone())
+            .await;
+    }
+
     // Also evicts stale rate-limit keyed-store entries (ADR-0022) and
     // shrinks idle auth-plugin invocation limiters (ADR-0025 §7) on the
     // same 60 s tick.

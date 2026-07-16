@@ -244,6 +244,36 @@ service ClusterAdminService {
   // RotateDekRequest{emergency: true} by a second storage-operator.
   rpc ConfirmRotateDek(ConfirmRotateDekRequest) returns (AdminResponse) {}
 
+  // RotateDekLocalEmergency stages a node-local, quorum-bypass DEK rotation
+  // candidate (ADR 0028 §3, amending ADR 0016-v2 §6.2): written only to this
+  // node's local Fjall `local_emergency` keyspace, entirely bypassing Raft.
+  // Refused unless this node's `[local_emergency]` guardrail currently
+  // permits it (bypass enabled, quorum unreachable, leaderless grace period
+  // elapsed). Reconciliation once quorum returns is a separate operation
+  // (ADR 0028 §4, not yet implemented).
+  rpc RotateDekLocalEmergency(RotateDekLocalEmergencyRequest) returns (RotateDekLocalEmergencyResponse) {}
+
+  // ListDekLocalEmergencyCandidates lists node-local DEK emergency rotation
+  // candidates on the responding node (ADR 0028 §6), so an operator can see
+  // any LOCAL_EMERGENCY_CONFLICT before choosing which rotation_id to
+  // reconcile.
+  rpc ListDekLocalEmergencyCandidates(google.protobuf.Empty) returns (ListDekLocalEmergencyCandidatesResponse) {}
+
+  // ReconcileDekLocalEmergency promotes a node-local DEK emergency rotation
+  // candidate into Raft-replicated state once quorum has returned (ADR 0028
+  // §6). Must be called against the specific node holding rotation_id --
+  // reconciliation does not fan out across the cluster.
+  rpc ReconcileDekLocalEmergency(ReconcileDekLocalEmergencyRequest) returns (AdminResponse) {}
+
+  // GossipLocalEmergencyCandidate is a best-effort, peer-to-peer push of a
+  // node-local emergency candidate (ADR 0028 §5). Called by the node that
+  // originated the candidate against each reachable peer from the Raft
+  // membership list, independent of Raft/quorum. The receiving node adopts
+  // the candidate if it has none active for the same subsystem/scope, marks
+  // both as conflicted if it already holds a different active candidate for
+  // that scope, or no-ops if it already has this exact candidate.
+  rpc GossipLocalEmergencyCandidate(GossipLocalEmergencyCandidateRequest) returns (GossipLocalEmergencyCandidateResponse) {}
+
   // Backup builds a fresh Fjall snapshot, encrypts it with the Backup DEK, and
   // streams the encrypted bytes to the operator. The final chunk carries the
   // snapshot_utc_epoch and dek_version from the backup envelope header for
@@ -273,6 +303,67 @@ message RotateDekRequest {
 message ConfirmRotateDekRequest {
   // The rotation_id of the pending emergency rotation that requires confirmation.
   string rotation_id = 1;
+}
+
+message RotateDekLocalEmergencyRequest {
+  // The operator's reason for invoking the bypass, recorded with the
+  // candidate for audit. Required.
+  string justification = 1;
+}
+
+message RotateDekLocalEmergencyResponse {
+  // The candidate's rotation_id, for later reconciliation once quorum
+  // returns.
+  string rotation_id = 1;
+}
+
+message DekLocalEmergencyCandidateSummary {
+  string rotation_id = 1;
+  string initiator = 2;
+  string justification = 3;
+  // Unix epoch seconds the candidate was created.
+  int64 created_at_unix = 4;
+  // 0 means staged locally on the node answering this request; nonzero
+  // means it arrived via gossip from that node id (ADR 0028 §5).
+  uint64 origin_node_id = 5;
+  bool conflicted = 6;
+  bool revoked = 7;
+}
+
+message ListDekLocalEmergencyCandidatesResponse {
+  repeated DekLocalEmergencyCandidateSummary candidates = 1;
+}
+
+message ReconcileDekLocalEmergencyRequest {
+  // The rotation_id of the node-local candidate to promote, from
+  // ListDekLocalEmergencyCandidates. The operator's explicit choice when
+  // multiple (possibly conflicting) candidates exist (ADR 0028 §6).
+  string rotation_id = 1;
+}
+
+// Subsystem mirrors openstack_keystone_local_emergency_store::Subsystem.
+enum EmergencySubsystem {
+  EMERGENCY_SUBSYSTEM_OAUTH2_SIGNING_KEY = 0;
+  EMERGENCY_SUBSYSTEM_DEK = 1;
+}
+
+message GossipLocalEmergencyCandidateRequest {
+  // The originating node's own Raft node_id.
+  uint64 origin_node_id = 1;
+  EmergencySubsystem subsystem = 2;
+  string scope_id = 3;
+  string rotation_id = 4;
+  bytes payload = 5;
+  string initiator = 6;
+  string justification = 7;
+  // Unix epoch seconds the candidate was created on the originating node.
+  int64 created_at_unix = 8;
+}
+
+message GossipLocalEmergencyCandidateResponse {
+  // True if this candidate conflicted with a different active candidate
+  // already held by the receiving node for the same subsystem/scope.
+  bool conflict = 1;
 }
 
 // BackupRequest initiates a server-side operator snapshot export.

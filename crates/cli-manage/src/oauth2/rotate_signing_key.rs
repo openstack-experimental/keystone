@@ -34,6 +34,14 @@ use crate::PerformAction;
 /// compromised. Emergency rotation only stages the new key: a second
 /// operator must run `confirm-rotate-signing-key` with the returned
 /// rotation-id within 15 minutes, or the rotation is automatically aborted.
+///
+/// Use `--local-quorum-bypass` (with `--justification`) instead of
+/// `--emergency` when the cluster has lost Raft quorum and the ordinary
+/// emergency path -- itself a Raft proposal -- would block forever
+/// (ADR 0028 §2). The candidate is written only to the responding node's
+/// local emergency store; it must be explicitly reconciled once quorum
+/// returns (not yet implemented). Refused unless that node's
+/// `[local_emergency]` guardrail currently permits it.
 #[derive(Parser)]
 pub(super) struct RotateSigningKeyCommand {
     /// Domain whose signing key should be rotated.
@@ -43,11 +51,28 @@ pub(super) struct RotateSigningKeyCommand {
     /// Initiate an emergency rotation (dual-control required).
     #[arg(long, default_value_t = false)]
     pub emergency: bool,
+
+    /// Stage a node-local, quorum-bypass emergency rotation instead
+    /// (ADR 0028 §2). Mutually exclusive in effect with `--emergency`: when
+    /// set, `--emergency` is ignored. Requires `--justification`.
+    #[arg(long, default_value_t = false)]
+    pub local_quorum_bypass: bool,
+
+    /// Required with `--local-quorum-bypass`: the operator's reason for
+    /// invoking the bypass, recorded with the candidate for audit.
+    #[arg(long)]
+    pub justification: Option<String>,
 }
 
 #[async_trait]
 impl PerformAction for RotateSigningKeyCommand {
     async fn take_action(self, config: &Config) -> Result<(), Report> {
+        if self.local_quorum_bypass && self.justification.is_none() {
+            return Err(eyre!(
+                "--justification is required when --local-quorum-bypass is set"
+            ));
+        }
+
         let client = get_admin_client(config).await?;
 
         let res = client
@@ -57,6 +82,8 @@ impl PerformAction for RotateSigningKeyCommand {
             ))
             .json(&RotateSigningKeyRequest {
                 emergency: self.emergency,
+                local_quorum_bypass: self.local_quorum_bypass,
+                justification: self.justification.clone(),
             })
             .send()
             .await
@@ -72,7 +99,22 @@ impl PerformAction for RotateSigningKeyCommand {
 
         let body: RotateSigningKeyResponse = res.json().await?;
 
-        if self.emergency {
+        if self.local_quorum_bypass {
+            match body.local_rotation_id {
+                Some(rotation_id) => {
+                    println!(
+                        "Local quorum-bypass signing-key rotation staged for domain {} on the \
+                         responding node.\nrotation_id={rotation_id}\n\n\
+                         This candidate is NOT yet replicated. Once quorum returns, an operator \
+                         must explicitly reconcile it.",
+                        self.domain,
+                    );
+                }
+                None => {
+                    println!("Local quorum-bypass rotation staged but no rotation_id returned.");
+                }
+            }
+        } else if self.emergency {
             match (body.pending_rotation_id, body.expires_at) {
                 (Some(rotation_id), Some(expires_at)) => {
                     println!(
@@ -137,11 +179,55 @@ mod tests {
         let command = RotateSigningKeyCommand {
             domain: "domain-1".to_string(),
             emergency: false,
+            local_quorum_bypass: false,
+            justification: None,
         };
 
         let err = command.take_action(&cfg).await.unwrap_err();
         assert!(
             err.to_string().contains("admin interface not configured"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_parses_local_quorum_bypass_and_justification() {
+        let wrapper = Wrapper::parse_from([
+            "oauth2",
+            "--domain",
+            "domain-1",
+            "--local-quorum-bypass",
+            "--justification",
+            "suspected key compromise",
+        ]);
+        assert_eq!(wrapper.inner.domain, "domain-1");
+        assert!(wrapper.inner.local_quorum_bypass);
+        assert_eq!(
+            wrapper.inner.justification.as_deref(),
+            Some("suspected key compromise")
+        );
+    }
+
+    #[test]
+    fn test_local_quorum_bypass_defaults_to_false() {
+        let wrapper = Wrapper::parse_from(["oauth2", "--domain", "domain-1"]);
+        assert!(!wrapper.inner.local_quorum_bypass);
+        assert!(wrapper.inner.justification.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_take_action_rejects_local_quorum_bypass_without_justification() {
+        let cfg = Config::default();
+        let command = RotateSigningKeyCommand {
+            domain: "domain-1".to_string(),
+            emergency: false,
+            local_quorum_bypass: true,
+            justification: None,
+        };
+
+        let err = command.take_action(&cfg).await.unwrap_err();
+        assert!(
+            err.to_string().contains("--justification is required"),
             "unexpected error: {err}"
         );
     }

@@ -18,6 +18,10 @@ use std::sync::{Arc, Mutex, RwLock};
 use governor::{DefaultKeyedRateLimiter, Quota, RateLimiter};
 use openraft::RaftSnapshotBuilder;
 use openraft::async_runtime::WatchReceiver;
+use openstack_keystone_config::LocalEmergencyProvider;
+use openstack_keystone_local_emergency_store::{
+    EmergencyCandidate, LeaderlessTracker, LocalEmergencyStore, Subsystem,
+};
 use openstack_keystone_storage_crypto::{DekEpoch, KekProvider, generate_dek};
 use tonic::Request;
 use tonic::Response;
@@ -28,6 +32,7 @@ use tracing::trace;
 use crate::StoreError;
 use crate::app::normalize_rpc_addr;
 use crate::audit::{AuditForwarder, AuditRecord};
+use crate::local_emergency::{DEK_SCOPE_ID, DekEmergencyPayload, GuardrailConfig};
 use crate::network::{check_svid_ttl_der, now_unix_secs};
 use crate::pb;
 use crate::protobuf::raft::cluster_admin_service_server::ClusterAdminService;
@@ -261,6 +266,164 @@ fn check_svid_ttl<T>(request: &tonic::Request<T>) -> Result<(), Status> {
     check_svid_ttl_der(&der, now_unix_secs())
 }
 
+/// Stages a node-local, quorum-bypass DEK rotation candidate in
+/// `local_store` (ADR 0028 §3, amending ADR 0016-v2 §6.2). Pure business
+/// logic, deliberately independent of the Raft handle and gRPC types so it
+/// can be unit-tested without standing up a cluster; the guardrail check
+/// (whether the bypass is currently permitted at all) is the caller's
+/// responsibility.
+///
+/// Returns the fresh candidate's `(rotation_id, dek_version)` on success.
+async fn stage_dek_local_emergency_candidate(
+    local_store: &dyn LocalEmergencyStore,
+    kek: &dyn KekProvider,
+    current_version: u32,
+    initiator: &str,
+    justification: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<(String, u32), Status> {
+    let existing = local_store
+        .list_candidates(Subsystem::Dek, DEK_SCOPE_ID)
+        .await
+        .map_err(|e| Status::internal(format!("local emergency store error: {e}")))?;
+    if let Some(active) = existing.iter().find(|c| !c.revoked) {
+        return Err(Status::already_exists(format!(
+            "a local emergency DEK rotation candidate (id {}) already exists on this node",
+            active.rotation_id
+        )));
+    }
+
+    let new_version = current_version.checked_add(1).ok_or_else(|| {
+        Status::internal("DEK version space exhausted — cannot rotate beyond u32::MAX")
+    })?;
+    let new_raw = generate_dek();
+    let wrapped_dek = kek
+        .wrap_dek(new_raw.as_bytes())
+        .map_err(|e| Status::internal(format!("failed to wrap new DEK: {e}")))?;
+
+    let rotation_id = uuid::Uuid::new_v4().to_string();
+    let payload = rmp_serde::to_vec(&DekEmergencyPayload {
+        wrapped_dek,
+        dek_version: new_version,
+    })
+    .map_err(|e| Status::internal(format!("failed to encode candidate payload: {e}")))?;
+
+    let candidate = EmergencyCandidate {
+        subsystem: Subsystem::Dek,
+        scope_id: DEK_SCOPE_ID.to_string(),
+        rotation_id: rotation_id.clone(),
+        payload,
+        initiator: initiator.to_string(),
+        justification: justification.to_string(),
+        created_at: now,
+        revoked: false,
+        origin_node_id: None,
+        conflicted: false,
+    };
+    local_store
+        .put_candidate(candidate)
+        .await
+        .map_err(|e| Status::internal(format!("local emergency store error: {e}")))?;
+
+    Ok((rotation_id, new_version))
+}
+
+/// Validates a DEK local-emergency candidate is reconcilable and decodes its
+/// payload (ADR 0028 §6): must exist, must not be revoked, the confirming
+/// operator must differ from the initiator (dual-control), and its target
+/// `dek_version` must be exactly one past `current_version` (otherwise a
+/// different rotation already committed while this candidate was staged and
+/// installing it would silently regress or duplicate a version). Pure
+/// validation, independent of Raft/gRPC, so it can be unit-tested without a
+/// live cluster.
+async fn validate_dek_reconcile_candidate(
+    local_store: &dyn LocalEmergencyStore,
+    rotation_id: &str,
+    confirmer: &str,
+    current_version: u32,
+) -> Result<DekEmergencyPayload, Status> {
+    let candidate = local_store
+        .get_candidate(Subsystem::Dek, DEK_SCOPE_ID, rotation_id)
+        .await
+        .map_err(|e| Status::internal(format!("local emergency store error: {e}")))?
+        .ok_or_else(|| {
+            Status::not_found(format!(
+                "no local emergency DEK rotation candidate with id {rotation_id} on this node"
+            ))
+        })?;
+    if candidate.revoked {
+        return Err(Status::failed_precondition(format!(
+            "local emergency rotation candidate {rotation_id} has been revoked and cannot be reconciled"
+        )));
+    }
+    if candidate.initiator == confirmer {
+        return Err(Status::permission_denied(
+            "the confirming operator must differ from the initiating operator \
+             (dual-control requirement)",
+        ));
+    }
+
+    let payload: DekEmergencyPayload = rmp_serde::from_slice(&candidate.payload)
+        .map_err(|e| Status::internal(format!("failed to decode candidate payload: {e}")))?;
+    if Some(payload.dek_version) != current_version.checked_add(1) {
+        return Err(Status::failed_precondition(format!(
+            "candidate {rotation_id} targets DEK version {} but the current version is \
+             {current_version} (another rotation committed while this candidate was staged); \
+             re-stage a fresh local-quorum-bypass rotation instead",
+            payload.dek_version
+        )));
+    }
+
+    Ok(payload)
+}
+
+/// Applies a gossiped candidate (ADR 0028 §5) to `local_store`: adopts it if
+/// nothing active exists locally for the same `(subsystem, scope_id)`,
+/// marks both the existing and incoming candidate conflicted if a
+/// *different* active one exists, or no-ops on an exact re-gossip. Returns
+/// `true` if a conflict was recorded.
+///
+/// Independent of gRPC/tonic types (beyond the return being a plain `bool`)
+/// so it can be unit-tested without standing up a cluster or a gRPC
+/// transport.
+async fn receive_gossiped_candidate(
+    local_store: &dyn LocalEmergencyStore,
+    incoming: EmergencyCandidate,
+) -> Result<bool, openstack_keystone_local_emergency_store::LocalEmergencyStoreError> {
+    let existing_active: Vec<EmergencyCandidate> = local_store
+        .list_candidates(incoming.subsystem, &incoming.scope_id)
+        .await?
+        .into_iter()
+        .filter(|c| !c.revoked)
+        .collect();
+
+    match openstack_keystone_local_emergency_store::decide_gossip_outcome(
+        &existing_active,
+        &incoming,
+    ) {
+        openstack_keystone_local_emergency_store::GossipOutcome::Adopt => {
+            local_store.put_candidate(incoming).await?;
+            Ok(false)
+        }
+        openstack_keystone_local_emergency_store::GossipOutcome::AlreadyPresent => Ok(false),
+        openstack_keystone_local_emergency_store::GossipOutcome::Conflict {
+            existing_rotation_id,
+        } => {
+            local_store
+                .mark_conflicted(
+                    incoming.subsystem,
+                    &incoming.scope_id,
+                    &existing_rotation_id,
+                )
+                .await?;
+            let mut incoming = incoming;
+            incoming.conflicted = true;
+            local_store.put_candidate(incoming).await?;
+            Ok(true)
+        }
+    }
+}
+
 /// Raft cluster administrative operations.
 ///
 /// # Responsibilities
@@ -300,6 +463,13 @@ pub struct ClusterAdminServiceImpl {
     /// Allow-list of SVIDs permitted for peer-to-peer Raft operations.
     /// When empty falls back to trust-domain-only check.
     allowed_peer_svids: Vec<String>,
+    /// ADR 0028 node-local, quorum-bypass emergency write store.
+    local_emergency_store: Arc<dyn LocalEmergencyStore>,
+    /// `[local_emergency]` config, snapshotted at storage init.
+    local_emergency_config: LocalEmergencyProvider,
+    /// Tracks how long the Raft leader has been unknown, feeding the
+    /// quorum-bypass guardrail (ADR 0028 §2).
+    local_emergency_leaderless_tracker: LeaderlessTracker,
 }
 
 impl ClusterAdminServiceImpl {
@@ -327,6 +497,8 @@ impl ClusterAdminServiceImpl {
         spiffe_path_prefix: String,
         operator_role: String,
         allowed_peer_svids: Vec<String>,
+        local_emergency_store: Arc<dyn LocalEmergencyStore>,
+        local_emergency_config: LocalEmergencyProvider,
     ) -> Self {
         Self {
             raft_node,
@@ -344,6 +516,9 @@ impl ClusterAdminServiceImpl {
             clear_quarantine_limiter: Arc::new(RateLimiter::keyed(Quota::per_hour(
                 CLEAR_QUARANTINE_PER_HOUR,
             ))),
+            local_emergency_store,
+            local_emergency_config,
+            local_emergency_leaderless_tracker: LeaderlessTracker::new(),
         }
     }
 
@@ -835,6 +1010,292 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         Ok(Response::new(pb::raft::AdminResponse::default()))
     }
 
+    /// Stages a node-local, quorum-bypass DEK rotation candidate (ADR 0028
+    /// §3, amending ADR 0016-v2 §6.2). Written only to this node's local
+    /// Fjall `local_emergency` keyspace — never proposed to Raft. Refused
+    /// unless this node's `[local_emergency]` guardrail currently permits it.
+    ///
+    /// # Security
+    /// Same operator/mTLS boundary as `RotateDek`. Unlike `RotateDek`, this
+    /// path bypasses Raft entirely by design — it exists only for use when
+    /// the cluster has lost quorum and `RotateDek{emergency: true}` (a Raft
+    /// proposal) would block forever.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn rotate_dek_local_emergency(
+        &self,
+        request: Request<pb::raft::RotateDekLocalEmergencyRequest>,
+    ) -> Result<Response<pb::raft::RotateDekLocalEmergencyResponse>, Status> {
+        let actor = require_operator(
+            &request,
+            self.spiffe_trust_domains.as_deref(),
+            &self.spiffe_path_prefix,
+            &self.operator_role,
+        )?;
+        let req = request.into_inner();
+        if req.justification.trim().is_empty() {
+            return Err(Status::invalid_argument(
+                "justification is required for a local-quorum-bypass DEK rotation",
+            ));
+        }
+
+        let guardrail_cfg = GuardrailConfig {
+            enabled: self.local_emergency_config.enabled,
+            leaderless_grace_period_seconds: self
+                .local_emergency_config
+                .leaderless_grace_period_seconds,
+        };
+        let current_leader = self.raft_node.metrics().borrow_watched().current_leader;
+        let now = chrono::Utc::now();
+        self.local_emergency_leaderless_tracker
+            .observe(current_leader, now);
+        if !self.local_emergency_leaderless_tracker.is_bypass_allowed(
+            &guardrail_cfg,
+            current_leader,
+            now,
+        ) {
+            return Err(Status::failed_precondition(
+                "local quorum-bypass rotation is not currently permitted on this node \
+                 (disabled, or quorum has not been unreachable long enough)",
+            ));
+        }
+
+        let current_version = {
+            self.current_dek
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .version
+        };
+        let (rotation_id, new_version) = stage_dek_local_emergency_candidate(
+            self.local_emergency_store.as_ref(),
+            self.kek.as_ref(),
+            current_version,
+            &actor,
+            &req.justification,
+            now,
+        )
+        .await?;
+
+        self.audit.emit(AuditRecord::now(
+            "DEK_ROTATION_LOCAL_EMERGENCY_STAGED",
+            &actor,
+            self.node_id,
+            new_version,
+            serde_json::json!({
+                "rotation_id": rotation_id,
+                "justification": req.justification,
+            }),
+        ));
+        tracing::warn!(
+            rotation_id,
+            new_version,
+            initiator = actor,
+            "SECURITY: node-local quorum-bypass DEK rotation staged; NOT replicated, \
+             requires explicit reconciliation once quorum returns"
+        );
+
+        Ok(Response::new(pb::raft::RotateDekLocalEmergencyResponse {
+            rotation_id,
+        }))
+    }
+
+    /// Lists node-local DEK emergency rotation candidates on this node
+    /// (ADR 0028 §6), so an operator can see any `LOCAL_EMERGENCY_CONFLICT`
+    /// before choosing which `rotation_id` to reconcile.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn list_dek_local_emergency_candidates(
+        &self,
+        request: Request<()>,
+    ) -> Result<Response<pb::raft::ListDekLocalEmergencyCandidatesResponse>, Status> {
+        require_operator(
+            &request,
+            self.spiffe_trust_domains.as_deref(),
+            &self.spiffe_path_prefix,
+            &self.operator_role,
+        )?;
+
+        let candidates = self
+            .local_emergency_store
+            .list_candidates(Subsystem::Dek, DEK_SCOPE_ID)
+            .await
+            .map_err(|e| Status::internal(format!("local emergency store error: {e}")))?
+            .into_iter()
+            .map(|c| pb::raft::DekLocalEmergencyCandidateSummary {
+                rotation_id: c.rotation_id,
+                initiator: c.initiator,
+                justification: c.justification,
+                created_at_unix: c.created_at.timestamp(),
+                origin_node_id: c.origin_node_id.unwrap_or(0),
+                conflicted: c.conflicted,
+                revoked: c.revoked,
+            })
+            .collect();
+
+        Ok(Response::new(
+            pb::raft::ListDekLocalEmergencyCandidatesResponse { candidates },
+        ))
+    }
+
+    /// Reconciles a node-local DEK emergency rotation candidate into
+    /// Raft-replicated state (ADR 0028 §6): installs the chosen candidate's
+    /// DEK via the normal `InstallDek` transaction (same mutation `RotateDek`
+    /// commits for a non-emergency rotation), then clears it from this
+    /// node's local store and revokes any other active candidate (they
+    /// lost).
+    ///
+    /// # Security
+    /// Same operator/mTLS boundary as `RotateDek`. Not guardrail-gated
+    /// (unlike staging): reconciliation is the operation an operator runs
+    /// *after* quorum has returned.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn reconcile_dek_local_emergency(
+        &self,
+        request: Request<pb::raft::ReconcileDekLocalEmergencyRequest>,
+    ) -> Result<Response<pb::raft::AdminResponse>, Status> {
+        let actor = require_operator(
+            &request,
+            self.spiffe_trust_domains.as_deref(),
+            &self.spiffe_path_prefix,
+            &self.operator_role,
+        )?;
+        let req = request.into_inner();
+        let current_version = {
+            self.current_dek
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .version
+        };
+        let payload = validate_dek_reconcile_candidate(
+            self.local_emergency_store.as_ref(),
+            &req.rotation_id,
+            &actor,
+            current_version,
+        )
+        .await?;
+
+        let cmd = StoreCommand::Transaction(vec![MutationInner::InstallDek {
+            wrapped_dek: payload.wrapped_dek,
+            dek_version: payload.dek_version,
+            is_emergency: true,
+        }]);
+        let install_payload =
+            pb::api::CommandRequest::try_from(cmd).map_err(|e| Status::internal(e.to_string()))?;
+
+        self.audit.emit(AuditRecord::now(
+            "DEK_ROTATION_LOCAL_EMERGENCY_RECONCILED",
+            &actor,
+            self.node_id,
+            payload.dek_version,
+            serde_json::json!({ "rotation_id": req.rotation_id }),
+        ));
+
+        self.raft_node
+            .client_write(install_payload)
+            .await
+            .map_err(|e| Status::internal(format!("Raft write failed: {e}")))?;
+
+        tracing::warn!(
+            rotation_id = req.rotation_id,
+            new_version = payload.dek_version,
+            confirmer = actor,
+            "SECURITY: node-local quorum-bypass DEK rotation reconciled into Raft"
+        );
+
+        // Durably committed; clear this candidate and revoke any other
+        // active sibling for this scope on this node (ADR 0028 §6).
+        if let Err(e) = self
+            .local_emergency_store
+            .clear_candidate(Subsystem::Dek, DEK_SCOPE_ID, &req.rotation_id)
+            .await
+        {
+            tracing::warn!(
+                rotation_id = req.rotation_id,
+                error = %e,
+                "failed to clear reconciled local emergency DEK candidate"
+            );
+        }
+        match self
+            .local_emergency_store
+            .list_candidates(Subsystem::Dek, DEK_SCOPE_ID)
+            .await
+        {
+            Ok(siblings) => {
+                for sibling in siblings.iter().filter(|c| !c.revoked) {
+                    if let Err(e) = self
+                        .local_emergency_store
+                        .revoke_candidate(Subsystem::Dek, DEK_SCOPE_ID, &sibling.rotation_id)
+                        .await
+                    {
+                        tracing::warn!(
+                            rotation_id = sibling.rotation_id,
+                            error = %e,
+                            "failed to revoke superseded local emergency DEK candidate"
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "failed to list local emergency DEK candidates for post-reconcile cleanup"
+                );
+            }
+        }
+
+        Ok(Response::new(pb::raft::AdminResponse::default()))
+    }
+
+    /// Receives a best-effort, peer-to-peer gossip push of another node's
+    /// local emergency candidate (ADR 0028 §5). Adopts it if this node holds
+    /// no active candidate for the same subsystem/scope, marks both as
+    /// conflicted if it holds a *different* active one, or no-ops if it
+    /// already has this exact candidate (idempotent re-gossip).
+    ///
+    /// # Security
+    /// Called peer-to-peer between storage nodes, not by a human operator —
+    /// authenticated the same way as Raft's own inter-node RPCs
+    /// (`check_peer_trust_domain`), not `require_operator`.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn gossip_local_emergency_candidate(
+        &self,
+        request: Request<pb::raft::GossipLocalEmergencyCandidateRequest>,
+    ) -> Result<Response<pb::raft::GossipLocalEmergencyCandidateResponse>, Status> {
+        check_peer_trust_domain(
+            &request,
+            self.spiffe_trust_domains.as_deref(),
+            &self.allowed_peer_svids,
+        )?;
+        let req = request.into_inner();
+        let subsystem = match pb::raft::EmergencySubsystem::try_from(req.subsystem) {
+            Ok(pb::raft::EmergencySubsystem::Oauth2SigningKey) => Subsystem::Oauth2SigningKey,
+            Ok(pb::raft::EmergencySubsystem::Dek) => Subsystem::Dek,
+            Err(_) => {
+                return Err(Status::invalid_argument("unknown emergency subsystem tag"));
+            }
+        };
+        let created_at = chrono::DateTime::from_timestamp(req.created_at_unix, 0)
+            .unwrap_or_else(chrono::Utc::now);
+        let incoming = EmergencyCandidate {
+            subsystem,
+            scope_id: req.scope_id.clone(),
+            rotation_id: req.rotation_id.clone(),
+            payload: req.payload,
+            initiator: req.initiator,
+            justification: req.justification,
+            created_at,
+            revoked: false,
+            origin_node_id: Some(req.origin_node_id),
+            conflicted: false,
+        };
+
+        let conflict = receive_gossiped_candidate(self.local_emergency_store.as_ref(), incoming)
+            .await
+            .map_err(|e| Status::internal(format!("local emergency store error: {e}")))?;
+
+        Ok(Response::new(
+            pb::raft::GossipLocalEmergencyCandidateResponse { conflict },
+        ))
+    }
+
     type BackupStream = std::pin::Pin<
         Box<dyn futures::Stream<Item = Result<pb::raft::BackupChunk, Status>> + Send>,
     >;
@@ -1299,5 +1760,332 @@ mod tests {
         let err = check_svid_ttl_der(&der, NOT_AFTER_2100_UNIX + 1)
             .expect_err("should fail when expired");
         assert_eq!(err.code(), tonic::Code::PermissionDenied);
+    }
+
+    // stage_dek_local_emergency_candidate (ADR 0028 §3) — pure business
+    // logic, independent of Raft/gRPC.
+
+    mod stage_dek_local_emergency {
+        use chrono::Utc;
+        use openstack_keystone_local_emergency_store::InMemoryLocalEmergencyStore;
+        use openstack_keystone_storage_crypto::EnvKek;
+
+        use super::*;
+
+        fn kek() -> EnvKek {
+            EnvKek::from_bytes([7u8; 32])
+        }
+
+        #[tokio::test]
+        async fn stages_a_fresh_candidate_and_bumps_version() {
+            let store = InMemoryLocalEmergencyStore::new();
+            let (rotation_id, new_version) = stage_dek_local_emergency_candidate(
+                &store,
+                &kek(),
+                3,
+                "spiffe://example.org/keystone/storage/storage-operator",
+                "suspected key compromise",
+                Utc::now(),
+            )
+            .await
+            .expect("should stage");
+
+            assert_eq!(new_version, 4);
+            let candidates = store
+                .list_candidates(Subsystem::Dek, DEK_SCOPE_ID)
+                .await
+                .unwrap();
+            assert_eq!(candidates.len(), 1);
+            assert_eq!(candidates[0].rotation_id, rotation_id);
+            assert_eq!(candidates[0].justification, "suspected key compromise");
+            assert!(!candidates[0].revoked);
+
+            let decoded: DekEmergencyPayload =
+                rmp_serde::from_slice(&candidates[0].payload).unwrap();
+            assert_eq!(decoded.dek_version, 4);
+        }
+
+        #[tokio::test]
+        async fn refuses_a_second_candidate_while_one_is_active() {
+            let store = InMemoryLocalEmergencyStore::new();
+            stage_dek_local_emergency_candidate(&store, &kek(), 3, "op-a", "reason-1", Utc::now())
+                .await
+                .expect("first stage should succeed");
+
+            let err = stage_dek_local_emergency_candidate(
+                &store,
+                &kek(),
+                3,
+                "op-b",
+                "reason-2",
+                Utc::now(),
+            )
+            .await
+            .expect_err("second stage should be refused while one is active");
+            assert_eq!(err.code(), tonic::Code::AlreadyExists);
+        }
+
+        #[tokio::test]
+        async fn allows_a_new_candidate_after_the_prior_one_is_revoked() {
+            let store = InMemoryLocalEmergencyStore::new();
+            let (first_id, _) = stage_dek_local_emergency_candidate(
+                &store,
+                &kek(),
+                3,
+                "op-a",
+                "reason-1",
+                Utc::now(),
+            )
+            .await
+            .expect("first stage should succeed");
+            store
+                .revoke_candidate(Subsystem::Dek, DEK_SCOPE_ID, &first_id)
+                .await
+                .unwrap();
+
+            let (second_id, new_version) = stage_dek_local_emergency_candidate(
+                &store,
+                &kek(),
+                3,
+                "op-b",
+                "reason-2",
+                Utc::now(),
+            )
+            .await
+            .expect("should stage after revocation");
+            assert_ne!(first_id, second_id);
+            assert_eq!(new_version, 4);
+        }
+
+        #[tokio::test]
+        async fn refuses_when_dek_version_space_is_exhausted() {
+            let store = InMemoryLocalEmergencyStore::new();
+            let err = stage_dek_local_emergency_candidate(
+                &store,
+                &kek(),
+                u32::MAX,
+                "op-a",
+                "reason",
+                Utc::now(),
+            )
+            .await
+            .expect_err("version overflow should be refused");
+            assert_eq!(err.code(), tonic::Code::Internal);
+        }
+    }
+
+    // validate_dek_reconcile_candidate (ADR 0028 §6) — pure validation
+    // logic, independent of Raft/gRPC.
+
+    mod validate_dek_reconcile_candidate_tests {
+        use chrono::Utc;
+        use openstack_keystone_local_emergency_store::InMemoryLocalEmergencyStore;
+        use openstack_keystone_storage_crypto::EnvKek;
+
+        use super::*;
+
+        async fn stage(store: &InMemoryLocalEmergencyStore, initiator: &str) -> String {
+            stage_dek_local_emergency_candidate(
+                store,
+                &EnvKek::from_bytes([7u8; 32]),
+                3,
+                initiator,
+                "suspected key compromise",
+                Utc::now(),
+            )
+            .await
+            .unwrap()
+            .0
+        }
+
+        #[tokio::test]
+        async fn accepts_a_fresh_candidate_from_a_different_operator() {
+            let store = InMemoryLocalEmergencyStore::new();
+            let rotation_id = stage(&store, "op-a").await;
+
+            let payload = validate_dek_reconcile_candidate(&store, &rotation_id, "op-b", 3)
+                .await
+                .unwrap();
+            assert_eq!(payload.dek_version, 4);
+        }
+
+        #[tokio::test]
+        async fn rejects_unknown_rotation_id() {
+            let store = InMemoryLocalEmergencyStore::new();
+            let err = validate_dek_reconcile_candidate(&store, "rot-unknown", "op-b", 3)
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::NotFound);
+        }
+
+        #[tokio::test]
+        async fn rejects_revoked_candidate() {
+            let store = InMemoryLocalEmergencyStore::new();
+            let rotation_id = stage(&store, "op-a").await;
+            store
+                .revoke_candidate(Subsystem::Dek, DEK_SCOPE_ID, &rotation_id)
+                .await
+                .unwrap();
+
+            let err = validate_dek_reconcile_candidate(&store, &rotation_id, "op-b", 3)
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        }
+
+        #[tokio::test]
+        async fn rejects_same_operator_as_initiator() {
+            let store = InMemoryLocalEmergencyStore::new();
+            let rotation_id = stage(&store, "op-a").await;
+
+            let err = validate_dek_reconcile_candidate(&store, &rotation_id, "op-a", 3)
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::PermissionDenied);
+        }
+
+        #[tokio::test]
+        async fn rejects_stale_candidate_when_version_has_moved_on() {
+            let store = InMemoryLocalEmergencyStore::new();
+            // Staged when current_version was 3 (so it targets version 4),
+            // but by the time reconciliation runs the live version has
+            // already advanced to 5 (e.g. a normal RotateDek committed while
+            // this candidate was staged).
+            let rotation_id = stage(&store, "op-a").await;
+
+            let err = validate_dek_reconcile_candidate(&store, &rotation_id, "op-b", 5)
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        }
+    }
+
+    // receive_gossiped_candidate (ADR 0028 §5) — pure business logic,
+    // independent of Raft/gRPC.
+
+    mod receive_gossiped_candidate_tests {
+        use chrono::Utc;
+        use openstack_keystone_local_emergency_store::InMemoryLocalEmergencyStore;
+
+        use super::*;
+
+        fn incoming(rotation_id: &str, origin_node_id: u64) -> EmergencyCandidate {
+            EmergencyCandidate {
+                subsystem: Subsystem::Dek,
+                scope_id: DEK_SCOPE_ID.to_string(),
+                rotation_id: rotation_id.to_string(),
+                payload: vec![4, 5, 6],
+                initiator: "spiffe://example.org/keystone/storage/storage-operator".to_string(),
+                justification: "suspected key compromise".to_string(),
+                created_at: Utc::now(),
+                revoked: false,
+                origin_node_id: Some(origin_node_id),
+                conflicted: false,
+            }
+        }
+
+        #[tokio::test]
+        async fn adopts_first_gossiped_candidate() {
+            let store = InMemoryLocalEmergencyStore::new();
+            let conflict = receive_gossiped_candidate(&store, incoming("rot-remote", 2))
+                .await
+                .unwrap();
+            assert!(!conflict);
+
+            let stored = store
+                .get_candidate(Subsystem::Dek, DEK_SCOPE_ID, "rot-remote")
+                .await
+                .unwrap()
+                .expect("candidate should be adopted");
+            assert_eq!(stored.origin_node_id, Some(2));
+            assert!(!stored.conflicted);
+        }
+
+        #[tokio::test]
+        async fn re_gossip_of_the_same_candidate_is_a_noop() {
+            let store = InMemoryLocalEmergencyStore::new();
+            receive_gossiped_candidate(&store, incoming("rot-remote", 2))
+                .await
+                .unwrap();
+
+            let conflict = receive_gossiped_candidate(&store, incoming("rot-remote", 2))
+                .await
+                .unwrap();
+            assert!(!conflict);
+        }
+
+        #[tokio::test]
+        async fn conflicting_candidate_marks_both_sides() {
+            let store = InMemoryLocalEmergencyStore::new();
+            // This node already has its own locally-staged active candidate.
+            stage_dek_local_emergency_candidate(
+                &store,
+                &openstack_keystone_storage_crypto::EnvKek::from_bytes([7u8; 32]),
+                3,
+                "spiffe://example.org/keystone/storage/storage-operator",
+                "suspected key compromise",
+                Utc::now(),
+            )
+            .await
+            .unwrap();
+            let local_candidates = store
+                .list_candidates(Subsystem::Dek, DEK_SCOPE_ID)
+                .await
+                .unwrap();
+            assert_eq!(local_candidates.len(), 1);
+            let local_rotation_id = local_candidates[0].rotation_id.clone();
+
+            let conflict = receive_gossiped_candidate(&store, incoming("rot-remote", 2))
+                .await
+                .unwrap();
+            assert!(conflict);
+
+            let local_after = store
+                .get_candidate(Subsystem::Dek, DEK_SCOPE_ID, &local_rotation_id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(local_after.conflicted);
+            assert!(!local_after.revoked, "conflict must not itself revoke");
+
+            let remote_after = store
+                .get_candidate(Subsystem::Dek, DEK_SCOPE_ID, "rot-remote")
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(remote_after.conflicted);
+        }
+
+        #[tokio::test]
+        async fn adopts_after_local_candidate_is_revoked() {
+            let store = InMemoryLocalEmergencyStore::new();
+            stage_dek_local_emergency_candidate(
+                &store,
+                &openstack_keystone_storage_crypto::EnvKek::from_bytes([7u8; 32]),
+                3,
+                "op-a",
+                "reason",
+                Utc::now(),
+            )
+            .await
+            .unwrap();
+            let local_candidates = store
+                .list_candidates(Subsystem::Dek, DEK_SCOPE_ID)
+                .await
+                .unwrap();
+            store
+                .revoke_candidate(
+                    Subsystem::Dek,
+                    DEK_SCOPE_ID,
+                    &local_candidates[0].rotation_id,
+                )
+                .await
+                .unwrap();
+
+            let conflict = receive_gossiped_candidate(&store, incoming("rot-remote", 2))
+                .await
+                .unwrap();
+            assert!(!conflict, "a revoked local candidate must not conflict");
+        }
     }
 }

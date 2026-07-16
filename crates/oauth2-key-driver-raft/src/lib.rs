@@ -21,13 +21,19 @@ use serde::{Deserialize, Serialize};
 
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::oauth2_key::backend::Oauth2KeyBackend;
-use openstack_keystone_core_types::oauth2_key::{Oauth2KeyProviderError, PendingRotationInfo};
+use openstack_keystone_core_types::oauth2_key::{
+    LocalEmergencyCandidateSummary, LocalEmergencyRotationInfo, Oauth2KeyProviderError,
+    PendingRotationInfo,
+};
 use openstack_keystone_distributed_storage::{
     ApiStoreError as StoreError, Metadata, StorageApi, StoreDataEnvelope, store_command::Mutation,
 };
 use openstack_keystone_key_repository::asymmetric::{
     ActiveKeys, AsymmetricKeyRepository, AsymmetricKeySource, KeyMaterial, KeyRole,
-    SigningAlgorithm,
+    SigningAlgorithm, generate_keypair,
+};
+use openstack_keystone_local_emergency_store::{
+    EmergencyCandidate, GuardrailConfig, LocalEmergencyStore, Subsystem,
 };
 
 /// Dual-control confirmation window for an emergency rotation (ADR 0026 §3):
@@ -435,6 +441,168 @@ impl RaftOauth2KeyBackend {
         })
     }
 
+    /// `--local-quorum-bypass` emergency rotation stage 1 (ADR 0028 §2):
+    /// generate the replacement keypair and persist it as a node-local
+    /// candidate, entirely bypassing `storage`/Raft. The guardrail decision
+    /// (is a bypass permitted right now) is the caller's responsibility —
+    /// this method only stages, the same separation
+    /// `stage_emergency_rotation_impl` draws between staging and the
+    /// dual-control confirmation check.
+    ///
+    /// Rejects if a non-revoked local candidate already exists for this
+    /// domain on this node, for the same reason as the Raft-backed
+    /// counterpart: a second concurrent stage must not silently orphan the
+    /// first's `rotation_id` mid-incident.
+    async fn stage_local_emergency_rotation_impl(
+        &self,
+        local_store: &dyn LocalEmergencyStore,
+        domain_id: &str,
+        algorithm: SigningAlgorithm,
+        initiator: &str,
+        justification: &str,
+    ) -> Result<LocalEmergencyRotationInfo, Oauth2KeyProviderError> {
+        let existing = local_store
+            .list_candidates(Subsystem::Oauth2SigningKey, domain_id)
+            .await
+            .map_err(Oauth2KeyProviderError::local_emergency)?;
+        if let Some(active) = existing.iter().find(|c| !c.revoked) {
+            return Err(Oauth2KeyProviderError::LocalEmergencyAlreadyStaged(
+                active.rotation_id.clone(),
+            ));
+        }
+
+        let fresh = generate_keypair(algorithm).map_err(Oauth2KeyProviderError::crypto)?;
+        let rotation_id = uuid::Uuid::new_v4().to_string();
+        let payload = rmp_serde::to_vec(&StoredKeyMaterial::from(&fresh))
+            .map_err(|e| Oauth2KeyProviderError::Crypto(e.to_string()))?;
+
+        let candidate = EmergencyCandidate {
+            subsystem: Subsystem::Oauth2SigningKey,
+            scope_id: domain_id.to_string(),
+            rotation_id: rotation_id.clone(),
+            payload,
+            initiator: initiator.to_string(),
+            justification: justification.to_string(),
+            created_at: chrono::Utc::now(),
+            revoked: false,
+            origin_node_id: None,
+            conflicted: false,
+        };
+        local_store
+            .put_candidate(candidate)
+            .await
+            .map_err(Oauth2KeyProviderError::local_emergency)?;
+
+        Ok(LocalEmergencyRotationInfo {
+            rotation_id,
+            justification: justification.to_string(),
+        })
+    }
+
+    /// List every node-local emergency candidate for `domain_id` on this
+    /// node (ADR 0028 §6).
+    async fn list_local_emergency_candidates_impl(
+        &self,
+        local_store: &dyn LocalEmergencyStore,
+        domain_id: &str,
+    ) -> Result<Vec<LocalEmergencyCandidateSummary>, Oauth2KeyProviderError> {
+        let candidates = local_store
+            .list_candidates(Subsystem::Oauth2SigningKey, domain_id)
+            .await
+            .map_err(Oauth2KeyProviderError::local_emergency)?;
+        Ok(candidates
+            .into_iter()
+            .map(|c| LocalEmergencyCandidateSummary {
+                rotation_id: c.rotation_id,
+                initiator: c.initiator,
+                justification: c.justification,
+                created_at_unix: c.created_at.timestamp(),
+                origin_node_id: c.origin_node_id,
+                conflicted: c.conflicted,
+                revoked: c.revoked,
+            })
+            .collect())
+    }
+
+    /// Reconcile a node-local emergency candidate into Raft-replicated state
+    /// (ADR 0028 §6): promotes the chosen candidate's key to `Primary` via
+    /// the normal transaction path `rotate_signing_key_impl` and
+    /// `confirm_emergency_rotation_impl` already use, then clears it from
+    /// this node's local store and revokes any other active sibling
+    /// candidate for the same domain (they lost).
+    async fn reconcile_local_emergency_rotation_impl(
+        &self,
+        storage: &dyn StorageApi,
+        local_store: &dyn LocalEmergencyStore,
+        domain_id: &str,
+        rotation_id: &str,
+        confirmer: &str,
+    ) -> Result<KeyMaterial, Oauth2KeyProviderError> {
+        let candidate = local_store
+            .get_candidate(Subsystem::Oauth2SigningKey, domain_id, rotation_id)
+            .await
+            .map_err(Oauth2KeyProviderError::local_emergency)?
+            .ok_or_else(|| {
+                Oauth2KeyProviderError::LocalEmergencyCandidateNotFound(rotation_id.to_string())
+            })?;
+        if candidate.revoked {
+            return Err(Oauth2KeyProviderError::LocalEmergencyCandidateRevoked(
+                rotation_id.to_string(),
+            ));
+        }
+        if candidate.initiator == confirmer {
+            return Err(Oauth2KeyProviderError::DualControlViolation);
+        }
+
+        let staged: StoredKeyMaterial = rmp_serde::from_slice(&candidate.payload)
+            .map_err(|e| Oauth2KeyProviderError::Crypto(e.to_string()))?;
+        let new_primary = KeyMaterial::from(staged);
+        let active = self.active_keys_impl(storage, domain_id).await?;
+        let demoted_primary = KeyMaterial {
+            demoted_at: Some(chrono::Utc::now()),
+            ..active.primary
+        };
+
+        let mutations = vec![
+            key_set_mutation(domain_id, KeyRole::Primary, &new_primary)
+                .map_err(store_err_to_key_repo_err)
+                .map_err(Oauth2KeyProviderError::crypto)?,
+            key_set_mutation(domain_id, KeyRole::Previous, &demoted_primary)
+                .map_err(store_err_to_key_repo_err)
+                .map_err(Oauth2KeyProviderError::crypto)?,
+        ];
+        storage
+            .transaction(mutations)
+            .await
+            .map_err(|e| Oauth2KeyProviderError::raft(store_err_to_key_repo_err(e)))?;
+
+        // The candidate is now durably committed to Raft; clear it and any
+        // other active sibling for this domain on this node (they lost --
+        // ADR 0028 §6's explicit-choice reconciliation).
+        local_store
+            .clear_candidate(Subsystem::Oauth2SigningKey, domain_id, rotation_id)
+            .await
+            .map_err(Oauth2KeyProviderError::local_emergency)?;
+        let siblings = local_store
+            .list_candidates(Subsystem::Oauth2SigningKey, domain_id)
+            .await
+            .map_err(Oauth2KeyProviderError::local_emergency)?;
+        for sibling in siblings.iter().filter(|c| !c.revoked) {
+            if let Err(e) = local_store
+                .revoke_candidate(Subsystem::Oauth2SigningKey, domain_id, &sibling.rotation_id)
+                .await
+            {
+                tracing::warn!(
+                    rotation_id = sibling.rotation_id,
+                    error = %e,
+                    "failed to revoke superseded local emergency candidate after reconciliation"
+                );
+            }
+        }
+
+        Ok(new_primary)
+    }
+
     /// Load the pending emergency rotation record for `domain_id`, if any
     /// (regardless of expiry -- callers decide how to treat an expired
     /// record). Shared by [`Self::stage_emergency_rotation_impl`]'s
@@ -752,6 +920,97 @@ impl Oauth2KeyBackend for RaftOauth2KeyBackend {
         .await
     }
 
+    async fn stage_local_emergency_rotation(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        algorithm: SigningAlgorithm,
+        initiator: &str,
+        justification: &str,
+    ) -> Result<LocalEmergencyRotationInfo, Oauth2KeyProviderError> {
+        let local_emergency_cfg = state
+            .config_manager
+            .config
+            .read()
+            .await
+            .local_emergency
+            .clone();
+        let guardrail_cfg = GuardrailConfig {
+            enabled: local_emergency_cfg.enabled,
+            leaderless_grace_period_seconds: local_emergency_cfg.leaderless_grace_period_seconds,
+        };
+        let current_leader = match state.storage.as_deref() {
+            Some(storage) => storage.current_leader().await,
+            None => None,
+        };
+        let now = chrono::Utc::now();
+        state
+            .local_emergency_leaderless_tracker
+            .observe(current_leader, now);
+        if !state.local_emergency_leaderless_tracker.is_bypass_allowed(
+            &guardrail_cfg,
+            current_leader,
+            now,
+        ) {
+            return Err(Oauth2KeyProviderError::LocalEmergencyBypassNotAllowed);
+        }
+
+        let local_store_guard = state.local_emergency_store.read().await;
+        let local_store = local_store_guard
+            .as_deref()
+            .ok_or(Oauth2KeyProviderError::LocalEmergencyBypassNotAllowed)?;
+
+        self.stage_local_emergency_rotation_impl(
+            local_store,
+            domain_id,
+            algorithm,
+            initiator,
+            justification,
+        )
+        .await
+    }
+
+    async fn list_local_emergency_candidates(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<Vec<LocalEmergencyCandidateSummary>, Oauth2KeyProviderError> {
+        let local_store_guard = state.local_emergency_store.read().await;
+        let local_store = local_store_guard
+            .as_deref()
+            .ok_or(Oauth2KeyProviderError::LocalEmergencyBypassNotAllowed)?;
+        self.list_local_emergency_candidates_impl(local_store, domain_id)
+            .await
+    }
+
+    async fn reconcile_local_emergency_rotation(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        rotation_id: &str,
+        confirmer: &str,
+    ) -> Result<KeyMaterial, Oauth2KeyProviderError> {
+        // Reconciliation is not guardrail-gated (unlike staging): it is the
+        // operation an operator runs *after* quorum has returned, to commit
+        // a candidate that was staged while it was unavailable.
+        let storage = state
+            .storage
+            .as_deref()
+            .ok_or(Oauth2KeyProviderError::RaftNotAvailable)?;
+        let local_store_guard = state.local_emergency_store.read().await;
+        let local_store = local_store_guard
+            .as_deref()
+            .ok_or(Oauth2KeyProviderError::LocalEmergencyBypassNotAllowed)?;
+        self.reconcile_local_emergency_rotation_impl(
+            storage,
+            local_store,
+            domain_id,
+            rotation_id,
+            confirmer,
+        )
+        .await
+    }
+
     async fn revoked_jtis(
         &self,
         state: &ServiceState,
@@ -819,6 +1078,28 @@ mod tests {
     use super::*;
     use openstack_keystone_distributed_storage::mock::MockStorage;
     use openstack_keystone_key_repository::asymmetric::generate_keypair;
+
+    /// Minimal `ServiceState` for exercising the trait-level
+    /// `Oauth2KeyBackend` methods (as opposed to the `_impl` methods tested
+    /// directly against `MockStorage` elsewhere in this module), with no
+    /// distributed storage configured -- the local-emergency guardrail path
+    /// must work even then.
+    async fn test_service_state(config: openstack_keystone_config::Config) -> ServiceState {
+        std::sync::Arc::new(
+            openstack_keystone_core::keystone::Service::new(
+                openstack_keystone_config::ConfigManager::not_watched(config),
+                sea_orm::DatabaseConnection::Disconnected,
+                openstack_keystone_core::provider::Provider::mocked_builder()
+                    .build()
+                    .unwrap(),
+                std::sync::Arc::new(openstack_keystone_core::policy::MockPolicy::default()),
+                openstack_keystone_audit::AuditDispatcher::noop(),
+                None,
+            )
+            .await
+            .unwrap(),
+        )
+    }
 
     #[tokio::test]
     async fn test_setup_generates_and_load_active_round_trips() {
@@ -1070,6 +1351,484 @@ mod tests {
             .await
             .unwrap();
         assert_ne!(second.rotation_id, first.rotation_id);
+    }
+
+    #[tokio::test]
+    async fn test_stage_local_emergency_rotation_writes_a_candidate() {
+        let backend = RaftOauth2KeyBackend::default();
+        let local_store =
+            openstack_keystone_local_emergency_store::InMemoryLocalEmergencyStore::new();
+
+        let info = backend
+            .stage_local_emergency_rotation_impl(
+                &local_store,
+                "domain-1",
+                SigningAlgorithm::Es256,
+                "operator-a",
+                "suspected key compromise",
+            )
+            .await
+            .unwrap();
+
+        let candidate = local_store
+            .get_candidate(Subsystem::Oauth2SigningKey, "domain-1", &info.rotation_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(candidate.initiator, "operator-a");
+        assert_eq!(candidate.justification, "suspected key compromise");
+        assert!(!candidate.revoked);
+        // The payload must be a usable staged keypair, not just opaque
+        // bytes: round-trip it back through `StoredKeyMaterial`.
+        let staged: StoredKeyMaterial = rmp_serde::from_slice(&candidate.payload).unwrap();
+        assert!(!staged.kid.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_stage_local_emergency_rotation_never_touches_raft_storage() {
+        // Never construct or reach for a `dyn StorageApi` in this test at
+        // all: the local-write path's whole point is that it works with no
+        // storage/Raft handle available.
+        let backend = RaftOauth2KeyBackend::default();
+        let local_store =
+            openstack_keystone_local_emergency_store::InMemoryLocalEmergencyStore::new();
+
+        let result = backend
+            .stage_local_emergency_rotation_impl(
+                &local_store,
+                "domain-1",
+                SigningAlgorithm::Es256,
+                "operator-a",
+                "suspected key compromise",
+            )
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_stage_local_emergency_rotation_rejects_second_concurrent_candidate() {
+        let backend = RaftOauth2KeyBackend::default();
+        let local_store =
+            openstack_keystone_local_emergency_store::InMemoryLocalEmergencyStore::new();
+
+        backend
+            .stage_local_emergency_rotation_impl(
+                &local_store,
+                "domain-1",
+                SigningAlgorithm::Es256,
+                "operator-a",
+                "suspected key compromise",
+            )
+            .await
+            .unwrap();
+
+        let err = backend
+            .stage_local_emergency_rotation_impl(
+                &local_store,
+                "domain-1",
+                SigningAlgorithm::Es256,
+                "operator-b",
+                "second, independent suspicion",
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            Oauth2KeyProviderError::LocalEmergencyAlreadyStaged(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_stage_local_emergency_rotation_allowed_after_revocation() {
+        let backend = RaftOauth2KeyBackend::default();
+        let local_store =
+            openstack_keystone_local_emergency_store::InMemoryLocalEmergencyStore::new();
+
+        let first = backend
+            .stage_local_emergency_rotation_impl(
+                &local_store,
+                "domain-1",
+                SigningAlgorithm::Es256,
+                "operator-a",
+                "suspected key compromise",
+            )
+            .await
+            .unwrap();
+
+        // Reconciliation revoked the first candidate (lost to a conflicting
+        // one on another node) -- a fresh stage on this node must not be
+        // blocked by it forever.
+        local_store
+            .revoke_candidate(Subsystem::Oauth2SigningKey, "domain-1", &first.rotation_id)
+            .await
+            .unwrap();
+
+        let second = backend
+            .stage_local_emergency_rotation_impl(
+                &local_store,
+                "domain-1",
+                SigningAlgorithm::Es256,
+                "operator-b",
+                "new incident",
+            )
+            .await
+            .unwrap();
+        assert_ne!(second.rotation_id, first.rotation_id);
+    }
+
+    #[tokio::test]
+    async fn test_stage_local_emergency_rotation_isolates_domains() {
+        let backend = RaftOauth2KeyBackend::default();
+        let local_store =
+            openstack_keystone_local_emergency_store::InMemoryLocalEmergencyStore::new();
+
+        backend
+            .stage_local_emergency_rotation_impl(
+                &local_store,
+                "domain-a",
+                SigningAlgorithm::Es256,
+                "operator-a",
+                "justification-a",
+            )
+            .await
+            .unwrap();
+
+        // A candidate already staged for `domain-a` must not block staging
+        // an unrelated domain on the same node.
+        let result = backend
+            .stage_local_emergency_rotation_impl(
+                &local_store,
+                "domain-b",
+                SigningAlgorithm::Es256,
+                "operator-b",
+                "justification-b",
+            )
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_reconcile_local_emergency_rotation_promotes_candidate_and_clears_it() {
+        let backend = RaftOauth2KeyBackend::default();
+        let storage = MockStorage::default();
+        let local_store =
+            openstack_keystone_local_emergency_store::InMemoryLocalEmergencyStore::new();
+        backend
+            .ensure_domain_keys_impl(&storage, "domain-1", SigningAlgorithm::Es256)
+            .await
+            .unwrap();
+        let staged = backend
+            .stage_local_emergency_rotation_impl(
+                &local_store,
+                "domain-1",
+                SigningAlgorithm::Es256,
+                "operator-a",
+                "suspected key compromise",
+            )
+            .await
+            .unwrap();
+        let staged_candidate = local_store
+            .get_candidate(Subsystem::Oauth2SigningKey, "domain-1", &staged.rotation_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let staged_key: StoredKeyMaterial =
+            rmp_serde::from_slice(&staged_candidate.payload).unwrap();
+
+        let promoted = backend
+            .reconcile_local_emergency_rotation_impl(
+                &storage,
+                &local_store,
+                "domain-1",
+                &staged.rotation_id,
+                "operator-b",
+            )
+            .await
+            .unwrap();
+        assert_eq!(promoted.kid, staged_key.kid);
+
+        let active = backend
+            .active_keys_impl(&storage, "domain-1")
+            .await
+            .unwrap();
+        assert_eq!(active.primary.kid, staged_key.kid);
+
+        let cleared = local_store
+            .get_candidate(Subsystem::Oauth2SigningKey, "domain-1", &staged.rotation_id)
+            .await
+            .unwrap();
+        assert!(cleared.is_none(), "reconciled candidate must be cleared");
+    }
+
+    #[tokio::test]
+    async fn test_reconcile_local_emergency_rotation_revokes_conflicting_sibling() {
+        let backend = RaftOauth2KeyBackend::default();
+        let storage = MockStorage::default();
+        let local_store =
+            openstack_keystone_local_emergency_store::InMemoryLocalEmergencyStore::new();
+        backend
+            .ensure_domain_keys_impl(&storage, "domain-1", SigningAlgorithm::Es256)
+            .await
+            .unwrap();
+
+        // Two candidates for the same domain -- as if gossip adopted a
+        // conflicting one from another node (Phase 5). The operator picks
+        // `winner` explicitly; `loser` must end up revoked, never promoted.
+        let winner = backend
+            .stage_local_emergency_rotation_impl(
+                &local_store,
+                "domain-1",
+                SigningAlgorithm::Es256,
+                "operator-a",
+                "reason-a",
+            )
+            .await
+            .unwrap();
+        // Bypass the "one active candidate" guard directly via the store,
+        // simulating a conflicting candidate gossiped in from another node.
+        local_store
+            .put_candidate(
+                openstack_keystone_local_emergency_store::EmergencyCandidate {
+                    subsystem: Subsystem::Oauth2SigningKey,
+                    scope_id: "domain-1".to_string(),
+                    rotation_id: "rot-loser".to_string(),
+                    payload: rmp_serde::to_vec(&StoredKeyMaterial::from(
+                        &generate_keypair(SigningAlgorithm::Es256).unwrap(),
+                    ))
+                    .unwrap(),
+                    initiator: "operator-c".to_string(),
+                    justification: "reason-c".to_string(),
+                    created_at: chrono::Utc::now(),
+                    revoked: false,
+                    origin_node_id: Some(2),
+                    conflicted: true,
+                },
+            )
+            .await
+            .unwrap();
+
+        backend
+            .reconcile_local_emergency_rotation_impl(
+                &storage,
+                &local_store,
+                "domain-1",
+                &winner.rotation_id,
+                "operator-b",
+            )
+            .await
+            .unwrap();
+
+        let loser = local_store
+            .get_candidate(Subsystem::Oauth2SigningKey, "domain-1", "rot-loser")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(loser.revoked, "the unpicked sibling must be revoked");
+    }
+
+    #[tokio::test]
+    async fn test_reconcile_local_emergency_rotation_rejects_same_operator() {
+        let backend = RaftOauth2KeyBackend::default();
+        let storage = MockStorage::default();
+        let local_store =
+            openstack_keystone_local_emergency_store::InMemoryLocalEmergencyStore::new();
+        backend
+            .ensure_domain_keys_impl(&storage, "domain-1", SigningAlgorithm::Es256)
+            .await
+            .unwrap();
+        let staged = backend
+            .stage_local_emergency_rotation_impl(
+                &local_store,
+                "domain-1",
+                SigningAlgorithm::Es256,
+                "operator-a",
+                "suspected key compromise",
+            )
+            .await
+            .unwrap();
+
+        let err = backend
+            .reconcile_local_emergency_rotation_impl(
+                &storage,
+                &local_store,
+                "domain-1",
+                &staged.rotation_id,
+                "operator-a",
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Oauth2KeyProviderError::DualControlViolation));
+    }
+
+    #[tokio::test]
+    async fn test_reconcile_local_emergency_rotation_rejects_unknown_rotation_id() {
+        let backend = RaftOauth2KeyBackend::default();
+        let storage = MockStorage::default();
+        let local_store =
+            openstack_keystone_local_emergency_store::InMemoryLocalEmergencyStore::new();
+        backend
+            .ensure_domain_keys_impl(&storage, "domain-1", SigningAlgorithm::Es256)
+            .await
+            .unwrap();
+
+        let err = backend
+            .reconcile_local_emergency_rotation_impl(
+                &storage,
+                &local_store,
+                "domain-1",
+                "rot-unknown",
+                "operator-b",
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            Oauth2KeyProviderError::LocalEmergencyCandidateNotFound(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_reconcile_local_emergency_rotation_rejects_revoked_candidate() {
+        let backend = RaftOauth2KeyBackend::default();
+        let storage = MockStorage::default();
+        let local_store =
+            openstack_keystone_local_emergency_store::InMemoryLocalEmergencyStore::new();
+        backend
+            .ensure_domain_keys_impl(&storage, "domain-1", SigningAlgorithm::Es256)
+            .await
+            .unwrap();
+        let staged = backend
+            .stage_local_emergency_rotation_impl(
+                &local_store,
+                "domain-1",
+                SigningAlgorithm::Es256,
+                "operator-a",
+                "suspected key compromise",
+            )
+            .await
+            .unwrap();
+        local_store
+            .revoke_candidate(Subsystem::Oauth2SigningKey, "domain-1", &staged.rotation_id)
+            .await
+            .unwrap();
+
+        let err = backend
+            .reconcile_local_emergency_rotation_impl(
+                &storage,
+                &local_store,
+                "domain-1",
+                &staged.rotation_id,
+                "operator-b",
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            Oauth2KeyProviderError::LocalEmergencyCandidateRevoked(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_list_local_emergency_candidates_surfaces_conflict_flag() {
+        let backend = RaftOauth2KeyBackend::default();
+        let local_store =
+            openstack_keystone_local_emergency_store::InMemoryLocalEmergencyStore::new();
+        backend
+            .stage_local_emergency_rotation_impl(
+                &local_store,
+                "domain-1",
+                SigningAlgorithm::Es256,
+                "operator-a",
+                "reason-a",
+            )
+            .await
+            .unwrap();
+        local_store
+            .put_candidate(
+                openstack_keystone_local_emergency_store::EmergencyCandidate {
+                    subsystem: Subsystem::Oauth2SigningKey,
+                    scope_id: "domain-1".to_string(),
+                    rotation_id: "rot-gossiped".to_string(),
+                    payload: vec![1, 2, 3],
+                    initiator: "operator-c".to_string(),
+                    justification: "reason-c".to_string(),
+                    created_at: chrono::Utc::now(),
+                    revoked: false,
+                    origin_node_id: Some(2),
+                    conflicted: true,
+                },
+            )
+            .await
+            .unwrap();
+
+        let summaries = backend
+            .list_local_emergency_candidates_impl(&local_store, "domain-1")
+            .await
+            .unwrap();
+        assert_eq!(summaries.len(), 2);
+        let gossiped = summaries
+            .iter()
+            .find(|s| s.rotation_id == "rot-gossiped")
+            .unwrap();
+        assert_eq!(gossiped.origin_node_id, Some(2));
+        assert!(gossiped.conflicted);
+    }
+
+    #[tokio::test]
+    async fn test_stage_local_emergency_rotation_refused_when_guardrail_disabled() {
+        // `[local_emergency]` is disabled by default -- the trait-level
+        // method must refuse before ever touching the local store, even
+        // though `stage_local_emergency_rotation_impl` alone (tested above)
+        // would happily stage it.
+        let backend = RaftOauth2KeyBackend::default();
+        let state = test_service_state(openstack_keystone_config::Config::default()).await;
+
+        let err = backend
+            .stage_local_emergency_rotation(
+                &state,
+                "domain-1",
+                SigningAlgorithm::Es256,
+                "operator-a",
+                "suspected key compromise",
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            Oauth2KeyProviderError::LocalEmergencyBypassNotAllowed
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_stage_local_emergency_rotation_allowed_when_guardrail_satisfied() {
+        let backend = RaftOauth2KeyBackend::default();
+        let mut config = openstack_keystone_config::Config::default();
+        config.local_emergency.enabled = true;
+        config.local_emergency.leaderless_grace_period_seconds = 0;
+        let state = test_service_state(config).await;
+        let local_store = std::sync::Arc::new(
+            openstack_keystone_local_emergency_store::InMemoryLocalEmergencyStore::new(),
+        );
+        state.set_local_emergency_store(local_store.clone()).await;
+
+        let info = backend
+            .stage_local_emergency_rotation(
+                &state,
+                "domain-1",
+                SigningAlgorithm::Es256,
+                "operator-a",
+                "suspected key compromise",
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            local_store
+                .get_candidate(Subsystem::Oauth2SigningKey, "domain-1", &info.rotation_id)
+                .await
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[tokio::test]

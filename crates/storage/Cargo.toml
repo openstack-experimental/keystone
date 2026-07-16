@@ -51,6 +51,7 @@ mockall.workspace = true
 nix = { workspace = true, features = ["process", "resource"] }
 openraft = { workspace = true, features = ["serde", "type-alias"] }
 openstack-keystone-config.workspace = true
+openstack-keystone-local-emergency-store.workspace = true
 openstack-keystone-storage-api.workspace = true
 openstack-keystone-storage-crypto.workspace = true
 openstack-keystone-storage-crypto-pkcs11 = { workspace = true, optional = true }

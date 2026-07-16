@@ -106,6 +106,26 @@ cluster_salt = "fbb27433d07ab307cc1fc899d0e174cf197fd398fbcff7285a63fe2f94eec2fe
 spool_dir = /var/spool/keystone/audit
 ```
 
+**`[local_emergency]`** - Node-local quorum-bypass emergency rotation (ADR 0028)
+
+```ini
+[local_emergency]
+# Disabled by default. Must be explicitly opted in per-node.
+enabled = false
+
+# How long the Raft leader must be unknown before the guardrail unlocks
+# local-only writes (avoids tripping on a transient election blip).
+leaderless_grace_period_seconds = 30
+
+# Interval between best-effort gossip fan-out attempts to reachable peers
+# while partitioned.
+gossip_interval_seconds = 10
+```
+
+See "Quorum-Bypass Emergency Rotation" below and
+[OAuth2 admin guide](oauth2/admin.md#emergency-signing-key-rotation-during-quorum-loss)
+for the operational procedure.
+
 ### Dynamic Auth Plugins
 
 Register custom authentication plugins via `[auth_plugins]` and per-plugin
@@ -181,8 +201,7 @@ Key metrics to alert on:
 
 - Verify the method is listed in `[auth] methods`
 - For OIDC/K8s: check provider configuration and connectivity
-- For auth plugins: check logs for `keystone_auth_plugin_load_failure`
-  alerts
+- For auth plugins: check logs for `keystone_auth_plugin_load_failure` alerts
 
 **OPA policy failures**
 
@@ -267,6 +286,64 @@ keystone-manage cluster status
 keystone-manage cluster list
 ```
 
+### Quorum-Bypass Emergency Rotation (ADR 0028)
+
+When Raft has lost quorum, the ordinary emergency rotation paths (OAuth2
+signing-key emergency rotation, DEK emergency rotation) cannot commit -- they're
+themselves Raft proposals. `[local_emergency]` provides a node-local fallback:
+an operator writes a rotation candidate straight to that node's local Fjall
+keyspace (never touched by Raft's `apply()`), bypassing quorum entirely.
+Guardrail: refused unless `[local_emergency] enabled = true` on that node
+**and** the Raft leader has been unknown for at least
+`leaderless_grace_period_seconds` -- this is not a general-purpose quorum-skip,
+only a last resort while genuinely partitioned.
+
+**Two subsystems use this path**: OAuth2 domain signing keys (see
+[OAuth2 admin guide](oauth2/admin.md#emergency-signing-key-rotation-during-quorum-loss))
+and the cluster DEK (below).
+
+**Gossip.** A background sweep (every `gossip_interval_seconds`) best-effort
+pushes each locally-originated candidate to every other reachable Raft peer over
+the same inter-node mTLS channel Raft itself uses. This only makes candidates
+_visible_ cluster-wide (`conflicted: true` if a peer reports a different active
+candidate for the same subsystem/scope) -- it does not reconcile or auto-resolve
+anything.
+
+**Reconciliation.** Once quorum returns, an operator lists candidates on each
+node that may have been reached during the outage and explicitly picks one
+`rotation_id` to promote into Raft-replicated state. Reconciliation is strictly
+per-node (run against the specific node holding the candidate, not cluster-wide)
+and dual-control (confirming operator must differ from the one who staged it).
+
+**DEK local-quorum-bypass rotation and reconciliation** (via
+`ClusterAdminService` gRPC, same mTLS/operator-role boundary as `rotate-dek`):
+
+```bash
+# During quorum loss, on a guardrail-enabled node:
+keystone-manage storage rotate-dek \
+  --local-quorum-bypass --justification "suspected KEK compromise, quorum lost"
+
+# After quorum returns, on every node possibly reached during the outage:
+keystone-manage storage list-dek-local-emergency-candidates
+
+# A different operator promotes the chosen candidate on the node that holds it:
+keystone-manage storage reconcile-dek-local-emergency --rotation-id <id>
+```
+
+Reconciliation installs the DEK via the normal Raft transaction path and refuses
+(`FailedPrecondition`) if the DEK version has advanced past what the candidate
+expected -- i.e. another rotation already committed while this candidate sat
+staged.
+
+**Known scope limits** (deliberate, see ADR 0028 "Implementation Status"):
+
+- No cross-node broadcast to clear a candidate once superseded elsewhere --
+  gossip gives visibility, not cleanup.
+- No automatic/unattended reconciliation sweep; an operator must pick a
+  `rotation_id` explicitly, per node.
+- Up to one `gossip_interval_seconds` of propagation delay after staging (no
+  immediate post-stage push).
+
 ---
 
 ## Dynamic Auth Plugins
@@ -281,13 +358,13 @@ developer guide.
 `[distributed_storage]`, decoupled from whichever `IdentityBackend` is
 configured. There is currently no SQL driver alternative - `full_auth`-mode
 plugins using `provision_user`/`find_user` are not available in a deployment
-without distributed storage configured. `mapping`- and `route`-mode plugins
-have no such requirement, since they never call those host functions.
+without distributed storage configured. `mapping`- and `route`-mode plugins have
+no such requirement, since they never call those host functions.
 
 ### Plugin Configuration
 
-Plugins are configured in `keystone.conf` under `[auth_plugins]` and
-per-plugin sections.
+Plugins are configured in `keystone.conf` under `[auth_plugins]` and per-plugin
+sections.
 
 **Minimal example** (full_auth mode - plugin authenticates users):
 
@@ -357,28 +434,28 @@ Audit logging is always enabled; it cannot be disabled.
 
 ### Configuration Reference
 
-| Key                                           | Mode        | Default                        | Description                                                                                                                                        |
-| --------------------------------------------- | ----------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `path`                                        | All         | Required                       | Filesystem path to `.wasm` plugin binary                                                                                                           |
-| `sha256`                                      | All         | Required                       | SHA-256 checksum of plugin file (verified at startup)                                                                                              |
-| `mode`                                        | All         | `full_auth`                    | Operating mode: `full_auth`, `mapping`, or `route`                                                                                                 |
-| `capabilities`                                | All         | Empty                          | Comma-separated host functions: `http_fetch`, `provision_user`, `find_user`, `assign_role`                                                         |
-| `exposed_headers`                             | All         | Empty                          | HTTP headers plugin may access (comma-separated); hard-denied: `Authorization`, `Cookie`, `X-Auth-Token`, `X-Subject-Token`, `Proxy-Authorization` |
-| `allowed_hosts`                               | All         | Required if `http_fetch` used  | Hostname allowlist for `http_fetch` calls (comma-separated)                                                                                        |
-| `http_fetch_auth_header`                      | All         | Optional                       | Header name to attach auth secret (e.g., `Authorization`)                                                                                          |
-| `http_fetch_auth_secret_env`                  | All         | Optional                       | Environment variable containing auth secret (never enters guest memory)                                                                            |
-| `http_fetch_follow_redirects`                 | All         | `false`                        | Allow HTTP redirects (each hop re-validated against allowlist)                                                                                     |
-| `provision_domain_id`                         | `full_auth` | Required if provisioning       | Single domain where plugin may create users; `find_user` revalidates on every call                                                                 |
-| `allowed_provision_domains`                   | `full_auth` | Alternative                    | Comma-separated list of domains; use if plugin must span multiple domains                                                                          |
-| `assign_role_allowed`                         | `full_auth` | Required if `assign_role` used | Comma-separated role names plugin may grant (e.g., `member,reader`)                                                                                |
-| `inspect_methods`                             | `route`     | Required                       | Comma-separated identity methods that trigger this plugin (e.g., `application_credential`)                                                         |
-| `route_targets`                               | `route`     | Required                       | Comma-separated allowlist of methods this plugin may route to; `admin` and `trust` forbidden                                                       |
-| `timeout_ms`                                  | All         | 1000                           | Wall-clock timeout for plugin invocation, including any `http_fetch` calls (the whole redirect chain shares this one budget, not one per hop)      |
-| `fuel_limit`                                  | All         | 10000000                       | Instruction budget (protects against infinite loops)                                                                                               |
-| `memory_limit_mb`                             | All         | 16                             | Linear-memory limit for plugin heap                                                                                                                |
-| `invocation_rate_limit_per_source_per_minute` | All         | 20                             | Per-source-IP rate limit (sliding window)                                                                                                          |
-| `invocation_rate_limit_per_minute`            | All         | 300                            | Per-plugin global rate limit                                                                                                                       |
-| `max_concurrent_invocations`                  | All         | 16                             | Maximum simultaneous invocations                                                                                                                   |
+| Key                                           | Mode        | Default                        | Description                                                                                                                                                                                                                        |
+| --------------------------------------------- | ----------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `path`                                        | All         | Required                       | Filesystem path to `.wasm` plugin binary                                                                                                                                                                                           |
+| `sha256`                                      | All         | Required                       | SHA-256 checksum of plugin file (verified at startup)                                                                                                                                                                              |
+| `mode`                                        | All         | `full_auth`                    | Operating mode: `full_auth`, `mapping`, or `route`                                                                                                                                                                                 |
+| `capabilities`                                | All         | Empty                          | Comma-separated host functions: `http_fetch`, `provision_user`, `find_user`, `assign_role`                                                                                                                                         |
+| `exposed_headers`                             | All         | Empty                          | HTTP headers plugin may access (comma-separated); hard-denied: `Authorization`, `Cookie`, `X-Auth-Token`, `X-Subject-Token`, `Proxy-Authorization`                                                                                 |
+| `allowed_hosts`                               | All         | Required if `http_fetch` used  | Hostname allowlist for `http_fetch` calls (comma-separated)                                                                                                                                                                        |
+| `http_fetch_auth_header`                      | All         | Optional                       | Header name to attach auth secret (e.g., `Authorization`)                                                                                                                                                                          |
+| `http_fetch_auth_secret_env`                  | All         | Optional                       | Environment variable containing auth secret (never enters guest memory)                                                                                                                                                            |
+| `http_fetch_follow_redirects`                 | All         | `false`                        | Allow HTTP redirects (each hop re-validated against allowlist)                                                                                                                                                                     |
+| `provision_domain_id`                         | `full_auth` | Required if provisioning       | Single domain where plugin may create users; `find_user` revalidates on every call                                                                                                                                                 |
+| `allowed_provision_domains`                   | `full_auth` | Alternative                    | Comma-separated list of domains; use if plugin must span multiple domains                                                                                                                                                          |
+| `assign_role_allowed`                         | `full_auth` | Required if `assign_role` used | Comma-separated role names plugin may grant (e.g., `member,reader`)                                                                                                                                                                |
+| `inspect_methods`                             | `route`     | Required                       | Comma-separated identity methods that trigger this plugin (e.g., `application_credential`)                                                                                                                                         |
+| `route_targets`                               | `route`     | Required                       | Comma-separated allowlist of methods this plugin may route to; `admin` and `trust` forbidden                                                                                                                                       |
+| `timeout_ms`                                  | All         | 1000                           | Wall-clock timeout for plugin invocation, including any `http_fetch` calls (the whole redirect chain shares this one budget, not one per hop)                                                                                      |
+| `fuel_limit`                                  | All         | 10000000                       | Instruction budget (protects against infinite loops)                                                                                                                                                                               |
+| `memory_limit_mb`                             | All         | 16                             | Linear-memory limit for plugin heap                                                                                                                                                                                                |
+| `invocation_rate_limit_per_source_per_minute` | All         | 20                             | Per-source-IP rate limit (sliding window)                                                                                                                                                                                          |
+| `invocation_rate_limit_per_minute`            | All         | 300                            | Per-plugin global rate limit                                                                                                                                                                                                       |
+| `max_concurrent_invocations`                  | All         | 16                             | Maximum simultaneous invocations                                                                                                                                                                                                   |
 | `valid_since`                                 | `full_auth` | None (never rejects)           | RFC 3339 timestamp; a token whose `issued_at` predates this is rejected (`PluginVersionMismatch`) on re-verification. Bump alongside `sha256` for a security fix. Not enforceable for `mapping`-mode tokens today (ADR 0025 §4/§8) |
 
 ### Plugin Loading & Errors
@@ -425,8 +502,8 @@ curl -X POST http://keystone:5000/v4/auth_plugins/{plugin_name}/identity_links \
 
 RBAC-tiered: system-scope `admin` may link any user; a domain-scoped
 `admin`/`manager` may link only a non-system user in their own domain.
-Re-linking an already-linked `external_id` returns `409 Conflict` - `DELETE`
-the existing link first.
+Re-linking an already-linked `external_id` returns `409 Conflict` - `DELETE` the
+existing link first.
 
 > **Note:** SCIM convenience fields (`scim_provider_id`, `scim_external_id`) are
 > documented in ADR 0025 §4 but not yet implemented. Track as follow-up work.
@@ -444,13 +521,13 @@ curl -X POST http://keystone:5000/v4/auth_plugins/{plugin_name}/revoke_all \
 # Response: { "revoke_all": { "users_disabled": N, "links_deleted": N } }
 ```
 
-**This does NOT revoke role assignments** the plugin granted via
-`assign_role` - attributing a stored grant to the plugin that created it
-would require per-record origin bookkeeping this ADR deliberately avoids.
-Disabling the account already denies all access; review a re-enabled user's
-remaining assignments against the CADF audit trail (`plugin_name` recorded on
-every `assign_role` event) and revoke any you deem compromised via the
-ordinary per-grant revocation API before re-enabling.
+**This does NOT revoke role assignments** the plugin granted via `assign_role` -
+attributing a stored grant to the plugin that created it would require
+per-record origin bookkeeping this ADR deliberately avoids. Disabling the
+account already denies all access; review a re-enabled user's remaining
+assignments against the CADF audit trail (`plugin_name` recorded on every
+`assign_role` event) and revoke any you deem compromised via the ordinary
+per-grant revocation API before re-enabling.
 
 ### Plugin Errors & Troubleshooting
 
@@ -478,8 +555,8 @@ ordinary per-grant revocation API before re-enabling.
 
 **Plugin behavior unexpectedly changes**
 
-- Plugin was patched and Keystone restarted with the new `sha256` - there is
-  no hot reload (ADR 0025 §5); a running process never picks up a changed
+- Plugin was patched and Keystone restarted with the new `sha256` - there is no
+  hot reload (ADR 0025 §5); a running process never picks up a changed
   `.wasm`/`sha256` without a restart
 - Mapping rules changed (for `mapping` mode) - verify `MappingRuleSet` config
 - Identity links modified - check audit trail for admin changes
@@ -514,16 +591,16 @@ When updating a plugin:
 2. **Update config** with new hash and new `path` if needed
 3. **If this update fixes a security issue, also bump `valid_since`** to the
    deployment instant. Updating `sha256` alone does **not** invalidate
-   outstanding tokens - version binding is a separate, explicit
-   `valid_since` cutoff compared against each token's `issued_at`
-   (`full_auth` mode only; see the Configuration Reference table below).
-   Forgetting this step leaves tokens minted by the previous (vulnerable)
-   plugin version valid until they expire naturally.
+   outstanding tokens - version binding is a separate, explicit `valid_since`
+   cutoff compared against each token's `issued_at` (`full_auth` mode only; see
+   the Configuration Reference table below). Forgetting this step leaves tokens
+   minted by the previous (vulnerable) plugin version valid until they expire
+   naturally.
 4. **Restart Keystone** (all nodes, one at a time)
-5. **Optional:** Run `POST .../revoke_all` if the plugin had a security fix,
-   to also disable/unlink/revoke everything the compromised version
-   provisioned or granted - `valid_since` alone only stops *new* uses of
-   already-issued tokens, not cleanup of persistent state
+5. **Optional:** Run `POST .../revoke_all` if the plugin had a security fix, to
+   also disable/unlink/revoke everything the compromised version provisioned or
+   granted - `valid_since` alone only stops _new_ uses of already-issued tokens,
+   not cleanup of persistent state
 
 ### Disaster Recovery
 

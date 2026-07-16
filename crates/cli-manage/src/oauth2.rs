@@ -23,11 +23,15 @@ use openstack_keystone_config::Config;
 
 mod confirm_rotate_signing_key;
 mod ensure_signing_key;
+mod list_local_emergency_candidates;
+mod reconcile_local_emergency_key;
 mod rotate_signing_key;
 
 use crate::PerformAction;
 use crate::oauth2::confirm_rotate_signing_key::ConfirmRotateSigningKeyCommand;
 use crate::oauth2::ensure_signing_key::EnsureSigningKeyCommand;
+use crate::oauth2::list_local_emergency_candidates::ListLocalEmergencyCandidatesCommand;
+use crate::oauth2::reconcile_local_emergency_key::ReconcileLocalEmergencyKeyCommand;
 use crate::oauth2::rotate_signing_key::RotateSigningKeyCommand;
 
 /// OAuth2/OIDC provider administration (ADR 0026).
@@ -44,6 +48,8 @@ impl PerformAction for Oauth2Command {
             Oauth2Commands::RotateSigningKey(e) => e.take_action(config).await,
             Oauth2Commands::ConfirmRotateSigningKey(e) => e.take_action(config).await,
             Oauth2Commands::EnsureSigningKey(e) => e.take_action(config).await,
+            Oauth2Commands::ListLocalEmergencyCandidates(e) => e.take_action(config).await,
+            Oauth2Commands::ReconcileLocalEmergencyKey(e) => e.take_action(config).await,
         }
     }
 }
@@ -54,6 +60,8 @@ enum Oauth2Commands {
     RotateSigningKey(RotateSigningKeyCommand),
     ConfirmRotateSigningKey(ConfirmRotateSigningKeyCommand),
     EnsureSigningKey(EnsureSigningKeyCommand),
+    ListLocalEmergencyCandidates(ListLocalEmergencyCandidatesCommand),
+    ReconcileLocalEmergencyKey(ReconcileLocalEmergencyKeyCommand),
 }
 
 /// Build a `reqwest::Client` bound to the admin interface's Unix domain

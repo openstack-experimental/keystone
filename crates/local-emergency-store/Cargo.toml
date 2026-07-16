@@ -1,0 +1,19 @@
+[package]
+name = "openstack-keystone-local-emergency-store"
+description = "Node-local, quorum-bypass emergency write path shared by OAuth2 signing-key and DEK emergency rotation"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true, features = ["clock", "serde"] }
+serde = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

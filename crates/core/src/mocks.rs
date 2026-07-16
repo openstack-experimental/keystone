@@ -182,7 +182,9 @@ mod oauth2_key {
 
     use std::collections::HashSet;
 
-    use openstack_keystone_core_types::oauth2_key::PendingRotationInfo;
+    use openstack_keystone_core_types::oauth2_key::{
+        LocalEmergencyCandidateSummary, LocalEmergencyRotationInfo, PendingRotationInfo,
+    };
     use openstack_keystone_key_repository::asymmetric::KeyMaterial;
 
     use crate::oauth2_key::{Oauth2KeyApi, Oauth2KeyProviderError};
@@ -230,6 +232,28 @@ mod oauth2_key {
                 rotation_id: &str,
                 confirmer: &str,
                 revoke_jtis: Vec<String>,
+            ) -> Result<KeyMaterial, Oauth2KeyProviderError>;
+
+            async fn stage_local_emergency_rotation(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+                initiator: &str,
+                justification: &str,
+            ) -> Result<LocalEmergencyRotationInfo, Oauth2KeyProviderError>;
+
+            async fn list_local_emergency_candidates(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+            ) -> Result<Vec<LocalEmergencyCandidateSummary>, Oauth2KeyProviderError>;
+
+            async fn reconcile_local_emergency_rotation(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+                rotation_id: &str,
+                confirmer: &str,
             ) -> Result<KeyMaterial, Oauth2KeyProviderError>;
 
             async fn revoked_jtis(

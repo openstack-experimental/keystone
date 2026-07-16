@@ -370,6 +370,19 @@ impl From<Oauth2KeyProviderError> for KeystoneApiError {
             Oauth2KeyProviderError::EmergencyRotationAlreadyPending(x) => Self::Conflict(format!(
                 "an emergency rotation (id {x}) is already pending for this domain"
             )),
+            Oauth2KeyProviderError::LocalEmergencyBypassNotAllowed => Self::Forbidden {
+                source: Box::new(value),
+            },
+            Oauth2KeyProviderError::LocalEmergencyAlreadyStaged(x) => Self::Conflict(format!(
+                "a local emergency rotation candidate (id {x}) already exists for this domain on this node"
+            )),
+            Oauth2KeyProviderError::LocalEmergencyCandidateNotFound(x) => Self::NotFound {
+                resource: "oauth2_local_emergency_candidate".into(),
+                identifier: x,
+            },
+            Oauth2KeyProviderError::LocalEmergencyCandidateRevoked(x) => Self::Conflict(format!(
+                "local emergency rotation candidate {x} has been revoked and cannot be reconciled"
+            )),
             other => Self::InternalError(other.to_string()),
         }
     }

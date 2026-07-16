@@ -20,7 +20,9 @@ use openstack_keystone_key_repository::asymmetric::{ActiveKeys, KeyMaterial, Sig
 
 use crate::keystone::ServiceState;
 use crate::oauth2_key::Oauth2KeyProviderError;
-use openstack_keystone_core_types::oauth2_key::PendingRotationInfo;
+use openstack_keystone_core_types::oauth2_key::{
+    LocalEmergencyCandidateSummary, LocalEmergencyRotationInfo, PendingRotationInfo,
+};
 
 /// OAuth2 signing key Backend trait.
 ///
@@ -86,6 +88,35 @@ pub trait Oauth2KeyBackend: Send + Sync {
         rotation_id: &str,
         confirmer: &str,
         revoke_jtis: Vec<String>,
+    ) -> Result<KeyMaterial, Oauth2KeyProviderError>;
+
+    /// Stage stage 1 of a `--local-quorum-bypass` emergency rotation.
+    /// See [`crate::oauth2_key::Oauth2KeyApi::stage_local_emergency_rotation`].
+    async fn stage_local_emergency_rotation(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        algorithm: SigningAlgorithm,
+        initiator: &str,
+        justification: &str,
+    ) -> Result<LocalEmergencyRotationInfo, Oauth2KeyProviderError>;
+
+    /// List local emergency candidates on this node.
+    /// See [`crate::oauth2_key::Oauth2KeyApi::list_local_emergency_candidates`].
+    async fn list_local_emergency_candidates(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<Vec<LocalEmergencyCandidateSummary>, Oauth2KeyProviderError>;
+
+    /// Reconcile a node-local emergency candidate into Raft-replicated state.
+    /// See [`crate::oauth2_key::Oauth2KeyApi::reconcile_local_emergency_rotation`].
+    async fn reconcile_local_emergency_rotation(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        rotation_id: &str,
+        confirmer: &str,
     ) -> Result<KeyMaterial, Oauth2KeyProviderError>;
 
     /// Fetch the domain's current (non-expired) JTI revocation list.

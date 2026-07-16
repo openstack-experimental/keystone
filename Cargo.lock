@@ -4861,6 +4861,7 @@ dependencies = [
  "openstack-keystone-config",
  "openstack-keystone-core-types",
  "openstack-keystone-key-repository",
+ "openstack-keystone-local-emergency-store",
  "openstack-keystone-storage-api",
  "p256",
  "rand 0.10.1",
@@ -4950,6 +4951,7 @@ dependencies = [
  "nix 0.31.3",
  "openraft",
  "openstack-keystone-config",
+ "openstack-keystone-local-emergency-store",
  "openstack-keystone-storage-api",
  "openstack-keystone-storage-crypto",
  "openstack-keystone-storage-crypto-pkcs11",
@@ -5098,6 +5100,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "openstack-keystone-local-emergency-store"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "serde",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "openstack-keystone-mapping-driver-raft"
 version = "0.1.0"
 dependencies = [
@@ -5134,11 +5147,15 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "openstack-keystone-audit",
+ "openstack-keystone-config",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "openstack-keystone-distributed-storage",
  "openstack-keystone-key-repository",
+ "openstack-keystone-local-emergency-store",
  "rmp-serde",
+ "sea-orm",
  "secrecy",
  "serde",
  "tokio",

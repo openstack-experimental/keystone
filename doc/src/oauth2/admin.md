@@ -150,12 +150,67 @@ What happens:
 Normal rotation cadence resumes afterward; the `signing_key_rotation_days` timer
 resets.
 
-**Current limitation:** both the stage and confirm steps go through the normal
-Raft-backed HTTP path (admin UDS + SPIFFE mTLS to
+**Note:** the stage and confirm steps above go through the normal Raft-backed
+HTTP path (admin UDS + SPIFFE mTLS to
 `/v4/oauth2/{domain_id}/rotate-signing-key`), which requires Raft quorum to
 commit. If the cluster has lost quorum at the same moment a key is compromised,
-there is currently no quorum-bypass fallback — see the companion ADR amendment
-for this gap.
+use the quorum-bypass path below instead.
+
+### Emergency signing key rotation during quorum loss
+
+See [ADR 0028](../adr/0028-oauth2-quorum-bypass-emergency-rotation.md) and the
+[admin guide's Quorum-Bypass Emergency Rotation section](../admin.md#quorum-bypass-emergency-rotation-adr-0028)
+for the full node-local mechanism (guardrail, gossip, scope limits) shared with
+DEK rotation. This section covers the OAuth2-specific commands.
+
+Requires `[local_emergency] enabled = true` on the responding node, and the Raft
+leader must have been unknown for at least `leaderless_grace_period_seconds`
+(guardrail refuses otherwise).
+
+**1. Stage** — during quorum loss, on a guardrail-enabled node:
+
+```bash
+keystone-manage oauth2 rotate-signing-key \
+  --domain <domain_id> --local-quorum-bypass \
+  --justification "suspected key compromise, quorum lost"
+```
+
+Writes a rotation candidate to that node's local Fjall keyspace only — never
+touches Raft. A background sweep gossips it (best-effort) to reachable peers
+every `gossip_interval_seconds`, marking it `conflicted: true` on any node where
+a different active candidate already exists for the same domain.
+
+**2. List candidates** — once quorum returns, on every node that may have been
+reached during the outage:
+
+```bash
+curl -X GET https://keystone:5000/v4/oauth2/<domain_id>/local-emergency-candidates \
+  -H "X-Auth-Token: $ADMIN_TOKEN"
+```
+
+CLI equivalent:
+`keystone-manage oauth2 list-local-emergency-candidates --domain <domain_id>`.
+Check `conflicted` before choosing a `rotation_id` — `true` means gossip saw a
+different candidate elsewhere and you must decide deliberately which one wins.
+
+**3. Reconcile** — a _different_ operator than the one who staged it, against
+the specific node holding the chosen candidate (reconciliation does not fan out
+cluster-wide):
+
+```bash
+keystone-manage oauth2 reconcile-local-emergency-key \
+  --domain <domain_id> --rotation-id <rotation_id>
+```
+
+Promotes the candidate's key to `Primary` via the same Raft transaction path
+normal rotation uses (requires quorum), demotes the prior `Primary` to
+`Previous`, clears the candidate on this node, and revokes any other active
+candidate for the domain on this node. Rejects if the confirming operator
+matches the initiator (dual-control) or if the candidate was already revoked.
+Emits `OAUTH2_LOCAL_EMERGENCY_KEY_RECONCILED` (CADF) with a
+`_local:emergency:audit:<rotation_id>` pointer recorded in the local emergency
+store back to the event — staging itself is **not** audited (consistent with the
+ordinary emergency path's stage/confirm asymmetry); only reconciliation is.
 
 ## Downstream control-plane enforcement (Nova/Neutron/etc.)
 
@@ -205,22 +260,24 @@ migration runbook.
 
 ## Known gaps
 
-Two items from ADR 0026 §3 remain intentionally unbuilt; see the follow-up ADR
-amendments for the design work required to close them:
-
-- **UDS/loopback quorum-bypass emergency rotation** — today's emergency rotation
-  still requires Raft quorum. There is no local-only fallback for the case where
-  quorum is lost at the same time a key is compromised.
 - **Audit-log-derived JTI backfill** — `--revoke-jti` is manual only.
   Auto-populating the revocation list from a time window against the audit trail
   needs a queryable audit-log store that does not exist yet.
+- Quorum-bypass local-emergency rotation
+  ([ADR 0028](../adr/0028-oauth2-quorum-bypass-emergency-rotation.md), gap noted
+  in ADR 0026 §3) is implemented — see "Emergency signing key rotation during
+  quorum loss" above. Deliberate scope limits: no cross-node broadcast to clear
+  a superseded candidate, no unattended reconciliation sweep, per-node (not
+  cluster-wide) reconciliation.
 
 ## Troubleshooting
 
-| Symptom                                                                       | Likely cause                                                                                                     |
-| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `/jwks` or `/.well-known/openid-configuration` returns 404                    | Domain has no signing key — run `keystone-manage oauth2 ensure-signing-key --domain <id>`                        |
-| `429` on `/token`                                                             | Rate limit hit — see `token_rate_limit_*` config                                                                 |
-| `429` on `/authorize`, `/device`, `/device/login`, or `/device_authorization` | Global per-IP limiter hit — see `[rate_limit_global_ip]`                                                         |
-| `confirm-rotate-signing-key` fails with "rotation not found/expired"          | The 15-minute confirmation window elapsed and the rotation auto-aborted; re-run `rotate-signing-key --emergency` |
-| Downstream service rejects all OP tokens after Keystone/network blip          | Expected fail-closed behavior — check JWKS/revocation endpoint reachability from the service                     |
+| Symptom                                                                       | Likely cause                                                                                                                     |
+| ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `/jwks` or `/.well-known/openid-configuration` returns 404                    | Domain has no signing key — run `keystone-manage oauth2 ensure-signing-key --domain <id>`                                        |
+| `429` on `/token`                                                             | Rate limit hit — see `token_rate_limit_*` config                                                                                 |
+| `429` on `/authorize`, `/device`, `/device/login`, or `/device_authorization` | Global per-IP limiter hit — see `[rate_limit_global_ip]`                                                                         |
+| `confirm-rotate-signing-key` fails with "rotation not found/expired"          | The 15-minute confirmation window elapsed and the rotation auto-aborted; re-run `rotate-signing-key --emergency`                 |
+| Downstream service rejects all OP tokens after Keystone/network blip          | Expected fail-closed behavior — check JWKS/revocation endpoint reachability from the service                                     |
+| `rotate-signing-key --local-quorum-bypass` refused                            | `[local_emergency] enabled = false` on that node, or leader has not been unknown long enough (`leaderless_grace_period_seconds`) |
+| `reconcile-local-emergency-key` fails with dual-control error                 | Confirming operator matches the one who staged the candidate — use a different operator                                          |

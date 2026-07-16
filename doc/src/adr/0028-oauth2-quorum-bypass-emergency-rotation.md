@@ -4,7 +4,9 @@
 
 ## Status
 
-Proposed
+Implemented (2026-07-16) — see [Implementation Status](#implementation-status)
+below for the two resolved design gaps and the scope decisions made along the
+way.
 
 ## Reference
 
@@ -293,6 +295,79 @@ already established for their ordinary paths:
 - **Compound failure (admin UDS also unusable) is out of scope**, as noted in §0
   — this ADR closes the "Raft partitioned, admin UDS fine" gap, not "everything
   is down at once."
+
+## Implementation Status
+
+Implemented across both subsystems: the shared `local-emergency-store` crate
+(namespace, guardrail, gossip decision logic), a Fjall-backed store wired into
+`crates/storage`, OAuth2 signing-key and DEK local-write/gossip/reconciliation
+paths, and audit wiring. Two design gaps identified during implementation
+(not anticipated by the ADR as originally written) were resolved as follows;
+both diverge from a literal reading of this ADR and are recorded here rather
+than silently.
+
+**Design gap 1: DEK transport.** This ADR (and its originating planning
+document) assumed `keystone-manage storage rotate-dek` already shared the
+admin-UDS HTTP transport with the OAuth2 CLI commands. It doesn't --
+`crates/cli-manage/src/storage/rotate_dek.rs` talks gRPC directly to
+`ClusterAdminService` over the internal management network (mTLS/SPIFFE), not
+through `interface_admin`. Rather than moving DEK management onto a new HTTP
+surface with no precedent, the DEK local-write, gossip, and reconciliation
+operations were added as new `ClusterAdminService` RPCs
+(`RotateDekLocalEmergency`, `GossipLocalEmergencyCandidate`,
+`ListDekLocalEmergencyCandidates`, `ReconcileDekLocalEmergency`),
+authenticated the same way `RotateDek`/`ConfirmRotateDek` already are. This is
+a smaller, more consistent extension of an existing boundary than introducing
+a parallel HTTP admin surface for one operation.
+
+**Design gap 2: audit mechanism.** This ADR describes the local audit entry as
+"persisted in the node's local FjallDB partition... HMAC-chained the same way
+as ADR 0023's audit spool," but ADR 0023's actual mechanism
+(`crates/audit/src/spool.rs`, `dispatcher.rs`) is a filesystem JSONL spool with
+independent per-event HMAC (a `seq` field, not a hash chain), not a Fjall
+partition. Implemented instead as an ordinary `CadfEvent` through the existing
+`AuditDispatcher`/spool pipeline (`OAUTH2_LOCAL_EMERGENCY_KEY_RECONCILED` for
+OAuth2; `DEK_ROTATION_LOCAL_EMERGENCY_STAGED`/`_RECONCILED` for DEK, via the
+distributed-storage crate's own `AuditForwarder`/`AuditRecord` mechanism,
+which predates and is independent of `AuditDispatcher`). A compact
+`_local:emergency:audit:<rotation_id>` pointer record (the
+`_local:...` namespace convention this ADR specifies) is written in the local
+Fjall keyspace on OAuth2 reconciliation, mapping a rotation id to its CADF
+event id so reconciliation/audit tooling can find the spool entry without a
+full scan; DEK does not need this indirection because its simpler audit
+records already embed `rotation_id` directly.
+
+**Other scope decisions:**
+
+- **Staging is audited on the OAuth2 side only if and when reconciled**,
+  mirroring the pre-existing, unrelated-to-this-ADR convention that
+  `stage_emergency_rotation` (the ordinary Raft-backed emergency path) is
+  likewise unaudited until `confirm-rotate-signing-key` succeeds. DEK's own
+  audit convention differs (it already audits `RotateDek`'s emergency stage 1)
+  and the local-write path follows suit for consistency within that
+  subsystem.
+- **No admin-UDS-only SPIFFE extractor was built.** No existing HTTP handler
+  anywhere in the codebase reads the `Interface::Admin` connection extension;
+  every admin-UDS operation today is secured by the ordinary `Auth` extractor
+  plus an OPA policy requiring `SystemAdmin`. The OAuth2 local-write,
+  list-candidates, and reconcile endpoints reuse that same boundary rather
+  than introducing a new one with no precedent.
+- **Reconciliation is a per-node operation an operator drives explicitly**,
+  not an automatic sweep. An operator must run `list-local-emergency-candidates`
+  / `list-dek-local-emergency-candidates` against every node that may hold a
+  candidate, then `reconcile-local-emergency-key` /
+  `reconcile-dek-local-emergency` against the specific node holding the
+  chosen `rotation_id`. There is no cross-node broadcast to clear a candidate
+  once a sibling wins reconciliation elsewhere in the cluster -- only the
+  node reconciliation was run against clears its own candidates. Gossip (§3)
+  guarantees *visibility* of a conflict across nodes, not automatic cleanup
+  everywhere once it is resolved.
+- **DEK reconciliation additionally guards against a stale target version**:
+  if a different rotation already committed to Raft while a candidate sat
+  staged (e.g. an operator ran an ordinary `rotate-dek` in the meantime),
+  reconciliation refuses rather than installing a DEK at a version that
+  collides with or regresses past the live one, and the operator must re-stage
+  a fresh local-quorum-bypass candidate instead.
 
 ## Consequences
 

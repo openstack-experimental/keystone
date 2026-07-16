@@ -426,6 +426,65 @@ pub async fn emit_oauth2_emergency_key_rotation_critical_event(
     }
 }
 
+/// Emit the critical `OAUTH2_LOCAL_EMERGENCY_KEY_RECONCILED` CADF event
+/// (ADR 0028 §6) once a node-local, quorum-bypass emergency rotation
+/// candidate is reconciled into Raft-replicated state. Fail-closed dispatch
+/// via [`AuditDispatcher::dispatch_critical`], same posture as
+/// [`emit_oauth2_emergency_key_rotation_critical_event`] -- mirrors that
+/// event's "confirm" step rather than `stage_local_emergency_rotation`'s
+/// staging step, since staging an ordinary emergency rotation
+/// (`stage_emergency_rotation`) is likewise unaudited until confirmed.
+///
+/// Returns the CADF event id so the caller can persist the
+/// `_local:emergency:audit:<rotation_id>` pointer record (ADR 0028
+/// implementation plan, design gap 2), letting reconciliation/audit tooling
+/// find this spool entry without scanning the whole spool.
+pub async fn emit_oauth2_local_emergency_key_reconciled_event(
+    dispatcher: &Arc<AuditDispatcher>,
+    correlation_id: &str,
+    initiator: Initiator,
+    domain_id: &str,
+    rotation_id: &str,
+    new_kid: &str,
+) -> String {
+    let node_id = dispatcher.node_id().to_string();
+    let event_id = format!("{}:{}", node_id, Uuid::new_v4());
+    let payload = CadfEventPayload::new(
+        event_id.clone(),
+        "1.0".to_string(),
+        "default".to_string(),
+        correlation_id.to_string(),
+        chrono::Utc::now().to_rfc3339(),
+        "OAUTH2_LOCAL_EMERGENCY_KEY_RECONCILED".to_string(),
+        "success".to_string(),
+        Some(format!(
+            "domain {domain_id} reconciled local emergency rotation {rotation_id} to new \
+             signing key {new_kid}"
+        )),
+        initiator,
+        Target {
+            id: domain_id.to_string(),
+            type_uri: "data/security/keystone/oauth2_signing_key".to_string(),
+        },
+        Observer {
+            node_id: node_id.clone(),
+            id: format!("service/security/keystone/{node_id}"),
+        },
+    );
+    let event = payload.sign(dispatcher);
+    if dispatcher.dispatch_critical(event).await.is_err() {
+        dispatcher.record_postaudit_drop();
+        tracing::error!(
+            domain_id,
+            rotation_id,
+            new_kid,
+            "failed to dispatch OAUTH2_LOCAL_EMERGENCY_KEY_RECONCILED critical audit event: \
+             audit channel dead"
+        );
+    }
+    event_id
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -551,6 +610,23 @@ mod tests {
             &["jti-1".to_string()],
         )
         .await;
+        assert_eq!(dispatcher.postaudit_dropped_count(), before + 1);
+    }
+
+    #[tokio::test]
+    async fn emit_oauth2_local_emergency_key_reconciled_event_records_drop_on_dead_channel() {
+        let dispatcher = AuditDispatcher::noop();
+        let before = dispatcher.postaudit_dropped_count();
+        let event_id = emit_oauth2_local_emergency_key_reconciled_event(
+            &dispatcher,
+            "req-1",
+            build_initiator_unknown(),
+            "domain-1",
+            "rot-1",
+            "kid-new",
+        )
+        .await;
+        assert!(!event_id.is_empty());
         assert_eq!(dispatcher.postaudit_dropped_count(), before + 1);
     }
 }

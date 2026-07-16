@@ -31,6 +31,7 @@ openstack-keystone-api-types = { workspace = true, optional = true }
 openstack-keystone-core-types.workspace = true
 openstack-keystone-config.workspace = true
 openstack-keystone-key-repository.workspace = true
+openstack-keystone-local-emergency-store.workspace = true
 openstack-keystone-storage-api.workspace = true
 jsonwebtoken.workspace = true
 mockall = { workspace = true, optional = true }

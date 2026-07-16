@@ -20,7 +20,9 @@ use openstack_keystone_key_repository::asymmetric::{ActiveKeys, KeyMaterial};
 
 use crate::keystone::ServiceState;
 use crate::oauth2_key::Oauth2KeyProviderError;
-use openstack_keystone_core_types::oauth2_key::PendingRotationInfo;
+use openstack_keystone_core_types::oauth2_key::{
+    LocalEmergencyCandidateSummary, LocalEmergencyRotationInfo, PendingRotationInfo,
+};
 
 /// The trait for managing per-domain OAuth2 signing keys (ADR 0026 §3).
 #[async_trait]
@@ -130,6 +132,64 @@ pub trait Oauth2KeyApi: Send + Sync {
         rotation_id: &str,
         confirmer: &str,
         revoke_jtis: Vec<String>,
+    ) -> Result<KeyMaterial, Oauth2KeyProviderError>;
+
+    /// Stage a `--local-quorum-bypass` emergency rotation (ADR 0028 §2):
+    /// generate a fresh keypair and persist it as a node-local candidate,
+    /// bypassing Raft/`StorageApi` entirely. Unlike
+    /// [`Self::stage_emergency_rotation`], this never touches distributed
+    /// storage — the whole point is that it works even when the node
+    /// cannot reach Raft quorum.
+    ///
+    /// # Errors
+    /// * [`Oauth2KeyProviderError::LocalEmergencyBypassNotAllowed`] if the
+    ///   node's quorum-bypass guardrail refuses the request (bypass
+    ///   disabled, quorum currently reachable, or grace period not yet
+    ///   elapsed).
+    /// * [`Oauth2KeyProviderError::LocalEmergencyAlreadyStaged`] if a
+    ///   non-revoked local candidate already exists for this domain on this
+    ///   node.
+    async fn stage_local_emergency_rotation(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        initiator: &str,
+        justification: &str,
+    ) -> Result<LocalEmergencyRotationInfo, Oauth2KeyProviderError>;
+
+    /// List every node-local emergency rotation candidate staged or adopted
+    /// (via gossip) on this node for `domain_id` (ADR 0028 §6), so an
+    /// operator can see any `LOCAL_EMERGENCY_CONFLICT` before choosing which
+    /// `rotation_id` to reconcile.
+    async fn list_local_emergency_candidates(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<Vec<LocalEmergencyCandidateSummary>, Oauth2KeyProviderError>;
+
+    /// Reconcile a node-local emergency candidate into the Raft-replicated
+    /// state once quorum has returned (ADR 0028 §6): promotes the chosen
+    /// candidate's key to `Primary` (demoting the current `Primary` to
+    /// `Previous`) via the normal Raft transaction path, then clears it from
+    /// this node's local store and revokes any other active candidate for
+    /// the same domain on this node (they lost).
+    ///
+    /// Must be called against the specific node holding `rotation_id` --
+    /// reconciliation does not fan out across the cluster.
+    ///
+    /// # Errors
+    /// * [`Oauth2KeyProviderError::LocalEmergencyCandidateNotFound`] if no
+    ///   candidate with `rotation_id` exists on this node.
+    /// * [`Oauth2KeyProviderError::LocalEmergencyCandidateRevoked`] if the
+    ///   candidate already lost a prior reconciliation.
+    /// * [`Oauth2KeyProviderError::DualControlViolation`] if `confirmer ==
+    ///   initiator` (the operator who staged the candidate).
+    async fn reconcile_local_emergency_rotation(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        rotation_id: &str,
+        confirmer: &str,
     ) -> Result<KeyMaterial, Oauth2KeyProviderError>;
 
     /// Fetch the domain's current JTI revocation list for

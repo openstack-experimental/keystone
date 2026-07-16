@@ -30,9 +30,11 @@ mod confirm_rotate_dek;
 mod demote;
 mod init;
 mod join;
+mod list_dek_local_emergency_candidates;
 mod list_peers;
 mod metrics;
 mod promote;
+mod reconcile_dek_local_emergency;
 mod remove_peer;
 mod restore;
 mod rotate_dek;
@@ -44,9 +46,11 @@ use crate::storage::confirm_rotate_dek::ConfirmRotateDekCommand;
 use crate::storage::demote::DemoteCommand;
 use crate::storage::init::InitCommand;
 use crate::storage::join::JoinCommand;
+use crate::storage::list_dek_local_emergency_candidates::ListDekLocalEmergencyCandidatesCommand;
 use crate::storage::list_peers::ListPeersCommand;
 use crate::storage::metrics::MetricsCommand;
 use crate::storage::promote::PromoteCommand;
+use crate::storage::reconcile_dek_local_emergency::ReconcileDekLocalEmergencyCommand;
 use crate::storage::remove_peer::RemovePeerCommand;
 use crate::storage::restore::RestoreCommand;
 use crate::storage::rotate_dek::RotateDekCommand;
@@ -77,6 +81,8 @@ impl PerformAction for StorageCommand {
             StorageCommands::RemovePeer(e) => e.take_action(config).await,
             StorageCommands::Restore(e) => e.take_action(config).await,
             StorageCommands::RotateDek(e) => e.take_action(config).await,
+            StorageCommands::ListDekLocalEmergencyCandidates(e) => e.take_action(config).await,
+            StorageCommands::ReconcileDekLocalEmergency(e) => e.take_action(config).await,
         }
     }
 }
@@ -95,6 +101,8 @@ enum StorageCommands {
     RemovePeer(RemovePeerCommand),
     Restore(RestoreCommand),
     RotateDek(RotateDekCommand),
+    ListDekLocalEmergencyCandidates(ListDekLocalEmergencyCandidatesCommand),
+    ReconcileDekLocalEmergency(ReconcileDekLocalEmergencyCommand),
 }
 
 async fn get_grpc_client(

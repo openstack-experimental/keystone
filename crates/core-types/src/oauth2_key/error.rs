@@ -74,6 +74,41 @@ pub enum Oauth2KeyProviderError {
     /// first's `rotation_id`.
     #[error("an emergency rotation (id {0}) is already pending for this domain")]
     EmergencyRotationAlreadyPending(String),
+
+    /// `--local-quorum-bypass` was requested but the node's quorum-bypass
+    /// guardrail refused it (ADR 0028 §1): either `[local_emergency]` is
+    /// disabled on this node, or Raft quorum is currently reachable, or the
+    /// leaderless grace period has not yet elapsed.
+    #[error("local quorum-bypass emergency rotation is not permitted on this node right now")]
+    LocalEmergencyBypassNotAllowed,
+
+    /// A local (non-revoked) emergency rotation candidate already exists for
+    /// this domain on this node (ADR 0028 §2). Staging a second one would
+    /// make reconciliation ambiguous about which candidate the operator
+    /// meant.
+    #[error(
+        "a local emergency rotation candidate (id {0}) already exists for this domain on this node"
+    )]
+    LocalEmergencyAlreadyStaged(String),
+
+    /// The local emergency store rejected the write (Fjall I/O, etc).
+    #[error("local emergency store error in the oauth2 key provider: {source}")]
+    LocalEmergencyStoreError {
+        /// The source of the error.
+        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+    },
+
+    /// No local emergency rotation candidate exists with this `rotation_id`
+    /// on this node (ADR 0028 §6). Reconciliation must be run against the
+    /// specific node that holds the chosen candidate.
+    #[error("no local emergency rotation candidate with id {0} on this node")]
+    LocalEmergencyCandidateNotFound(String),
+
+    /// The chosen candidate was already revoked (e.g. it lost a prior
+    /// reconciliation or gossip conflict) and must never be promoted
+    /// (ADR 0028 §6).
+    #[error("local emergency rotation candidate {0} has been revoked and cannot be reconciled")]
+    LocalEmergencyCandidateRevoked(String),
 }
 
 impl Oauth2KeyProviderError {
@@ -91,6 +126,16 @@ impl Oauth2KeyProviderError {
         E: std::error::Error + Send + Sync + 'static,
     {
         Self::RaftStoreError {
+            source: Box::new(source),
+        }
+    }
+
+    /// Wrap a local emergency store error (ADR 0028).
+    pub fn local_emergency<E>(source: E) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        Self::LocalEmergencyStoreError {
             source: Box::new(source),
         }
     }

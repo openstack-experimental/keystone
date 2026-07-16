@@ -31,6 +31,7 @@ pub mod api;
 pub mod app;
 pub mod audit;
 pub mod grpc;
+pub mod local_emergency;
 #[cfg(feature = "mock")]
 pub mod mock;
 pub mod network;

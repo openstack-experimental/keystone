@@ -18,7 +18,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use openstack_keystone_config::Config;
-use openstack_keystone_core_types::oauth2_key::PendingRotationInfo;
+use openstack_keystone_core_types::oauth2_key::{
+    LocalEmergencyCandidateSummary, LocalEmergencyRotationInfo, PendingRotationInfo,
+};
 use openstack_keystone_key_repository::asymmetric::{
     ActiveKeys, KeyMaterial, SigningAlgorithm as KeySigningAlgorithm,
 };
@@ -120,6 +122,46 @@ impl Oauth2KeyApi for Oauth2KeyService {
     ) -> Result<KeyMaterial, Oauth2KeyProviderError> {
         self.backend_driver
             .confirm_emergency_rotation(state, domain_id, rotation_id, confirmer, revoke_jtis)
+            .await
+    }
+
+    async fn stage_local_emergency_rotation(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        initiator: &str,
+        justification: &str,
+    ) -> Result<LocalEmergencyRotationInfo, Oauth2KeyProviderError> {
+        self.backend_driver
+            .stage_local_emergency_rotation(
+                state,
+                domain_id,
+                self.signing_algorithm,
+                initiator,
+                justification,
+            )
+            .await
+    }
+
+    async fn list_local_emergency_candidates(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<Vec<LocalEmergencyCandidateSummary>, Oauth2KeyProviderError> {
+        self.backend_driver
+            .list_local_emergency_candidates(state, domain_id)
+            .await
+    }
+
+    async fn reconcile_local_emergency_rotation(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        rotation_id: &str,
+        confirmer: &str,
+    ) -> Result<KeyMaterial, Oauth2KeyProviderError> {
+        self.backend_driver
+            .reconcile_local_emergency_rotation(state, domain_id, rotation_id, confirmer)
             .await
     }
 
@@ -326,5 +368,48 @@ mod tests {
 
         let revoked = service.revoked_jtis(&state, "domain-1").await.unwrap();
         assert!(revoked.contains("jti-1"));
+    }
+
+    #[tokio::test]
+    async fn test_stage_local_emergency_rotation_delegates_configured_algorithm() {
+        let mut backend = MockOauth2KeyBackend::default();
+        backend
+            .expect_stage_local_emergency_rotation()
+            .withf(
+                |_,
+                 domain_id: &str,
+                 algorithm: &KeySigningAlgorithm,
+                 initiator: &str,
+                 justification: &str| {
+                    domain_id == "domain-1"
+                        && *algorithm == KeySigningAlgorithm::Es256
+                        && initiator == "operator-a"
+                        && justification == "suspected key compromise"
+                },
+            )
+            .returning(|_, _, _, _, justification| {
+                Ok(
+                    openstack_keystone_core_types::oauth2_key::LocalEmergencyRotationInfo {
+                        rotation_id: "rotation-1".to_string(),
+                        justification: justification.to_string(),
+                    },
+                )
+            });
+        let service = Oauth2KeyService {
+            backend_driver: Arc::new(backend),
+            signing_algorithm: KeySigningAlgorithm::Es256,
+        };
+        let state = get_mocked_state(None, None).await;
+
+        let info = service
+            .stage_local_emergency_rotation(
+                &state,
+                "domain-1",
+                "operator-a",
+                "suspected key compromise",
+            )
+            .await
+            .unwrap();
+        assert_eq!(info.rotation_id, "rotation-1");
     }
 }

@@ -17,6 +17,7 @@ openstack-keystone-core.workspace = true
 openstack-keystone-core-types.workspace = true
 openstack-keystone-distributed-storage.workspace = true
 openstack-keystone-key-repository.workspace = true
+openstack-keystone-local-emergency-store.workspace = true
 rmp-serde.workspace = true
 secrecy.workspace = true
 serde = { workspace = true, features = ["derive"] }
@@ -25,7 +26,11 @@ tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
+openstack-keystone-audit = { workspace = true, features = ["testing"] }
+openstack-keystone-config.workspace = true
+openstack-keystone-core = { workspace = true, features = ["mock"] }
 openstack-keystone-distributed-storage = { workspace = true, features = ["mock"] }
+sea-orm.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]

@@ -23,6 +23,7 @@ use tracing::info;
 use openstack_keystone_audit::AuditDispatcher;
 use openstack_keystone_auth_plugin_runtime::WasmPluginRegistry;
 use openstack_keystone_config::ConfigManager;
+use openstack_keystone_local_emergency_store::{LeaderlessTracker, LocalEmergencyStore};
 use openstack_keystone_storage_api::StorageApi;
 
 use crate::auth_plugin::{CoreHostFunctions, PluginInvocationLimiter};
@@ -56,6 +57,23 @@ pub struct Service {
 
     /// Distributed storage instance (when configured).
     pub storage: Option<Arc<dyn StorageApi>>,
+
+    /// Node-local, quorum-bypass emergency write path (ADR 0028).
+    ///
+    /// `None` unless a distributed storage backend was configured and
+    /// `[local_emergency]` is available on this node. Populated
+    /// post-construction (like `core_host_functions` below) since the real
+    /// Fjall-backed store needs the same database handle
+    /// `StateMachineStore` uses, which isn't available until distributed
+    /// storage itself finishes initializing in
+    /// `crates/keystone/src/bin/keystone.rs`.
+    pub local_emergency_store: RwLock<Option<Arc<dyn LocalEmergencyStore>>>,
+
+    /// Tracks how long this node's Raft leader has been unknown, feeding
+    /// the `[local_emergency]` quorum-bypass guardrail (ADR 0028 §1).
+    /// Always present (harmless/unused if `local_emergency_store` is
+    /// `None`) since it carries no state until observations are recorded.
+    pub local_emergency_leaderless_tracker: LeaderlessTracker,
 
     /// Sliding-window rate limiter for the API Key (SCIM ingress)
     /// authentication path, keyed on `lookup_hash` (or source IP when the
@@ -181,6 +199,8 @@ impl Service {
             db,
             policy_enforcer,
             storage,
+            local_emergency_store: RwLock::new(None),
+            local_emergency_leaderless_tracker: LeaderlessTracker::new(),
             api_key_rate_limiter,
             oauth2_token_rate_limiter,
             auth_plugin_registry: RwLock::new(Arc::new(WasmPluginRegistry::default())),
@@ -190,6 +210,14 @@ impl Service {
             auth_plugin_load_failures: RwLock::new(HashMap::new()),
             shutdown: false,
         })
+    }
+
+    /// Install the node-local emergency store, once distributed storage has
+    /// finished initializing (ADR 0028). A no-op path (`local_emergency_store`
+    /// stays `None`) if this is never called, e.g. on a node with no
+    /// distributed storage configured.
+    pub async fn set_local_emergency_store(&self, store: Arc<dyn LocalEmergencyStore>) {
+        *self.local_emergency_store.write().await = Some(store);
     }
 
     /// Terminates the Keystone service.

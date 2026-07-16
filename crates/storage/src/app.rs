@@ -40,6 +40,7 @@ use crate::audit::{AuditForwarder, AuditRecord};
 use crate::grpc::cluster_admin_service::ClusterAdminServiceImpl;
 use crate::grpc::raft_service::RaftServiceImpl;
 use crate::grpc::storage_service::StorageServiceImpl;
+use crate::local_emergency::FjallLocalEmergencyStore;
 use crate::network::{CertExpiryWatchdog, NetworkManager, RaftTlsClient, init_tls_watcher};
 use crate::pb::raft::cluster_admin_service_server::ClusterAdminServiceServer;
 use crate::pb::raft::raft_service_server::RaftServiceServer;
@@ -501,6 +502,16 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
             (None, String::new(), String::new(), Vec::new())
         };
 
+    // ADR 0028: dedicated Fjall keyspace for node-local, quorum-bypass
+    // emergency writes, opened off the same database handle the state
+    // machine uses but never touched by Raft's `apply()`.
+    let local_emergency_store = Arc::new(
+        FjallLocalEmergencyStore::new(state_machine_store.db()).map_err(|e| {
+            StoreError::Other(eyre!("failed to open local_emergency keyspace: {e}"))
+        })?,
+    );
+    let local_emergency_config = config_manager.config.read().await.local_emergency.clone();
+
     let storage = Arc::new(Storage {
         connection_pool: DashMap::new(),
         raft,
@@ -515,6 +526,8 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
         spiffe_path_prefix,
         operator_role,
         allowed_peer_svids,
+        local_emergency_store,
+        local_emergency_config,
     });
 
     // Best-effort background forwarding of Raft-committed quarantine events
@@ -625,6 +638,58 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
         });
     }
 
+    // Best-effort periodic gossip sweep (ADR 0028 §5): push every candidate
+    // this node originated (not one it adopted via gossip) to every current
+    // Raft membership peer, so a candidate staged during a partition still
+    // reaches other nodes as reachability changes. Runs regardless of
+    // `[local_emergency].enabled`, since gossip itself is not the
+    // quorum-bypass write -- only staging a fresh candidate is gated by the
+    // guardrail.
+    {
+        let storage_weak = Arc::downgrade(&storage);
+        let gossip_interval = std::time::Duration::from_secs(
+            storage
+                .local_emergency_config
+                .gossip_interval_seconds
+                .max(1),
+        );
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(gossip_interval);
+            ticker.tick().await; // first tick fires immediately; skip it
+            loop {
+                ticker.tick().await;
+                let Some(storage) = storage_weak.upgrade() else {
+                    break;
+                };
+                for subsystem in [
+                    openstack_keystone_local_emergency_store::Subsystem::Oauth2SigningKey,
+                    openstack_keystone_local_emergency_store::Subsystem::Dek,
+                ] {
+                    let candidates = match storage
+                        .local_emergency_store
+                        .list_candidates_for_subsystem(subsystem)
+                        .await
+                    {
+                        Ok(c) => c,
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                "local emergency gossip: failed to list candidates"
+                            );
+                            continue;
+                        }
+                    };
+                    for candidate in candidates
+                        .into_iter()
+                        .filter(|c| !c.revoked && c.origin_node_id.is_none())
+                    {
+                        storage.gossip_candidate_to_peers(&candidate).await;
+                    }
+                }
+            }
+        });
+    }
+
     Ok(storage)
 }
 
@@ -649,6 +714,8 @@ pub async fn get_app_server(storage: &Storage) -> Result<Routes, StoreError> {
         storage.spiffe_path_prefix.clone(),
         storage.operator_role.clone(),
         storage.allowed_peer_svids.clone(),
+        storage.local_emergency_store.clone(),
+        storage.local_emergency_config.clone(),
     );
     let storage_svc_impl =
         StorageServiceImpl::new(storage.raft.clone(), storage.state_machine_store.clone());
@@ -697,6 +764,18 @@ pub struct Storage {
     /// Allow-list of SPIFFE SVIDs accepted for peer-to-peer Raft operations.
     /// Empty list means trust-domain-only validation is used.
     pub allowed_peer_svids: Vec<String>,
+    /// ADR 0028 node-local, quorum-bypass emergency write store (Fjall,
+    /// never touched by Raft's `apply()`). `pub` (not `pub(crate)`) so the
+    /// `keystone` binary can wire it into `core::keystone::Service` at
+    /// startup for the OAuth2 `--local-quorum-bypass` path, which shares
+    /// this same store with `RotateDekLocalEmergency`.
+    pub local_emergency_store:
+        Arc<dyn openstack_keystone_local_emergency_store::LocalEmergencyStore>,
+    /// `[local_emergency]` config, snapshotted at storage init. Config
+    /// hot-reload is out of scope for the bypass path (ADR 0028): a node
+    /// must be restarted to flip `enabled`, same as other security-critical
+    /// distributed-storage settings.
+    pub(crate) local_emergency_config: openstack_keystone_config::LocalEmergencyProvider,
 }
 
 #[async_trait]
@@ -1145,6 +1224,90 @@ impl Storage {
     /// Return the current Raft leader node id, if elected.
     pub fn current_leader(&self) -> Option<u64> {
         self.raft.metrics().borrow_watched().current_leader
+    }
+
+    /// Enumerate current Raft membership peers (excluding self) from the
+    /// live metrics snapshot, for the ADR 0028 §5 gossip sweep. Reuses the
+    /// same membership source `Metrics`/`list_peers` already expose --
+    /// gossip does not maintain its own peer list.
+    fn local_emergency_peers(&self) -> Vec<(u64, String)> {
+        self.raft
+            .metrics()
+            .borrow_watched()
+            .membership_config
+            .membership()
+            .nodes()
+            .filter(|(nid, _)| **nid != self.node_id)
+            .map(|(nid, node)| (*nid, node.rpc_addr.clone()))
+            .collect()
+    }
+
+    /// Best-effort push of one local-origin emergency candidate to every
+    /// current Raft membership peer (ADR 0028 §5). Independent of Raft/quorum
+    /// -- reachability failures are logged and otherwise ignored; the next
+    /// gossip sweep tick retries.
+    async fn gossip_candidate_to_peers(
+        &self,
+        candidate: &openstack_keystone_local_emergency_store::EmergencyCandidate,
+    ) {
+        let subsystem = match candidate.subsystem {
+            openstack_keystone_local_emergency_store::Subsystem::Oauth2SigningKey => {
+                pb::raft::EmergencySubsystem::Oauth2SigningKey
+            }
+            openstack_keystone_local_emergency_store::Subsystem::Dek => {
+                pb::raft::EmergencySubsystem::Dek
+            }
+        };
+        let req = pb::raft::GossipLocalEmergencyCandidateRequest {
+            origin_node_id: self.node_id,
+            subsystem: subsystem as i32,
+            scope_id: candidate.scope_id.clone(),
+            rotation_id: candidate.rotation_id.clone(),
+            payload: candidate.payload.clone(),
+            initiator: candidate.initiator.clone(),
+            justification: candidate.justification.clone(),
+            created_at_unix: candidate.created_at.timestamp(),
+        };
+
+        for (peer_id, peer_addr) in self.local_emergency_peers() {
+            let channel = match self.tls_client.connect(&peer_addr).await {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::debug!(
+                        peer_id,
+                        peer_addr,
+                        error = %e,
+                        "local emergency gossip: peer unreachable"
+                    );
+                    continue;
+                }
+            };
+            let mut client = ClusterAdminServiceClient::new(channel);
+            match client
+                .gossip_local_emergency_candidate(tonic::Request::new(req.clone()))
+                .await
+            {
+                Ok(resp) => {
+                    if resp.into_inner().conflict {
+                        tracing::warn!(
+                            peer_id,
+                            rotation_id = candidate.rotation_id,
+                            "SECURITY: LOCAL_EMERGENCY_CONFLICT -- peer holds a different \
+                             active emergency candidate for this subsystem/scope; \
+                             reconciliation must make an explicit choice (ADR 0028 §6)"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        peer_id,
+                        peer_addr,
+                        error = %e,
+                        "local emergency gossip push failed"
+                    );
+                }
+            }
+        }
     }
 
     /// Join this node to the Raft cluster by calling [`add_learner`] on the

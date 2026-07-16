@@ -17,4 +17,6 @@ mod error;
 mod rotation;
 
 pub use error::*;
-pub use rotation::PendingRotationInfo;
+pub use rotation::{
+    LocalEmergencyCandidateSummary, LocalEmergencyRotationInfo, PendingRotationInfo,
+};

@@ -78,6 +78,7 @@ mod interface;
 mod jws_token;
 mod k8s_auth;
 mod listener;
+mod local_emergency;
 mod mapping;
 mod oauth2;
 mod oslo_middleware;
@@ -116,6 +117,7 @@ pub use interface::*;
 pub use jws_token::*;
 pub use k8s_auth::*;
 pub use listener::*;
+pub use local_emergency::*;
 pub use mapping::*;
 pub use oauth2::*;
 pub use oslo_middleware::*;
@@ -219,6 +221,11 @@ pub struct Config {
     /// K8s Auth provider configuration.
     #[serde(default)]
     pub k8s_auth: K8sAuthProvider,
+
+    /// Node-local, quorum-bypass emergency write path configuration
+    /// (ADR 0028).
+    #[serde(default)]
+    pub local_emergency: LocalEmergencyProvider,
 
     /// Mapping provider configuration.
     #[serde(default)]

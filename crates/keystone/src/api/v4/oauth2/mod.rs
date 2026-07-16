@@ -33,6 +33,7 @@ mod ensure_signing_key;
 mod html;
 mod jwks;
 mod jwks_revocation;
+mod local_emergency_key;
 mod rotate_signing_key;
 mod token;
 mod well_known;
@@ -66,5 +67,9 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
             confirm_rotate_signing_key::confirm_rotate_signing_key
         ))
         .routes(routes!(ensure_signing_key::ensure_signing_key))
+        .routes(routes!(
+            local_emergency_key::list_local_emergency_candidates
+        ))
+        .routes(routes!(local_emergency_key::reconcile_local_emergency_key))
         .merge(clients::openapi_router())
 }

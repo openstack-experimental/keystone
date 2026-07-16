@@ -23,6 +23,17 @@ pub struct RotateSigningKeyRequest {
     /// immediately.
     #[serde(default)]
     pub emergency: bool,
+    /// Stage a `--local-quorum-bypass` rotation (ADR 0028 §2): written only
+    /// to this node's local emergency store, bypassing Raft/quorum
+    /// entirely. Mutually exclusive with `emergency` (Raft-backed staging);
+    /// when set, `emergency` is ignored. Requires `justification` and a
+    /// node whose `[local_emergency]` guardrail currently permits it.
+    #[serde(default)]
+    pub local_quorum_bypass: bool,
+    /// Required when `local_quorum_bypass` is set: the operator's reason
+    /// for invoking the bypass, recorded with the candidate for audit.
+    #[serde(default)]
+    pub justification: Option<String>,
 }
 
 /// Response body for `POST /v4/oauth2/{domain_id}/rotate-signing-key`.
@@ -41,6 +52,10 @@ pub struct RotateSigningKeyResponse {
     /// pending rotation auto-aborts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<i64>,
+    /// Set when `local_quorum_bypass` was `true`: the candidate's
+    /// `rotation_id`, for later reconciliation once quorum returns.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_rotation_id: Option<String>,
 }
 
 /// Request body for `POST /v4/oauth2/{domain_id}/confirm-rotate-signing-key`.
@@ -69,5 +84,58 @@ pub struct ConfirmRotateSigningKeyResponse {
 pub struct EnsureSigningKeyResponse {
     /// The domain's `Primary` key's `kid` -- pre-existing if one was
     /// already provisioned, freshly generated otherwise.
+    pub kid: String,
+}
+
+/// One node-local emergency rotation candidate (ADR 0028 §6).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct LocalEmergencyCandidateSummary {
+    /// Opaque identifier to pass to `reconcile-local-emergency-key`.
+    pub rotation_id: String,
+    /// Identity of the operator who staged this candidate.
+    pub initiator: String,
+    /// The operator-supplied justification recorded with the candidate.
+    pub justification: String,
+    /// Unix epoch seconds the candidate was created.
+    pub created_at_unix: i64,
+    /// `None` if staged on the node answering this request; `Some(node_id)`
+    /// if it arrived via gossip from another node (ADR 0028 §5).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin_node_id: Option<u64>,
+    /// Set if gossip detected a different active candidate for this domain
+    /// on another node -- the operator must explicitly pick one side.
+    pub conflicted: bool,
+    /// Set once this candidate has lost reconciliation. Never reconcilable.
+    pub revoked: bool,
+}
+
+/// Response body for
+/// `GET /v4/oauth2/{domain_id}/local-emergency-candidates`.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct ListLocalEmergencyCandidatesResponse {
+    /// Every candidate on this node for the requested domain (including
+    /// revoked ones, for audit visibility).
+    pub candidates: Vec<LocalEmergencyCandidateSummary>,
+}
+
+/// Request body for
+/// `POST /v4/oauth2/{domain_id}/reconcile-local-emergency-key`.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct ReconcileLocalEmergencyKeyRequest {
+    /// The `rotation_id` of the node-local candidate to promote, from
+    /// `GET .../local-emergency-candidates`. The operator's explicit choice
+    /// when multiple (possibly conflicting) candidates exist (ADR 0028 §6).
+    pub rotation_id: String,
+}
+
+/// Response body for
+/// `POST /v4/oauth2/{domain_id}/reconcile-local-emergency-key`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct ReconcileLocalEmergencyKeyResponse {
+    /// The newly active `Primary` key's `kid`.
     pub kid: String,
 }

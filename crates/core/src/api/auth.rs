@@ -232,6 +232,9 @@ mod tests {
             audit_dispatcher: openstack_keystone_audit::AuditDispatcher::noop(),
 
             storage: None,
+            local_emergency_store: tokio::sync::RwLock::new(None),
+            local_emergency_leaderless_tracker:
+                openstack_keystone_local_emergency_store::LeaderlessTracker::new(),
             api_key_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
                 governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
             )),
@@ -351,6 +354,9 @@ mod tests {
             audit_dispatcher: openstack_keystone_audit::AuditDispatcher::noop(),
 
             storage: None,
+            local_emergency_store: tokio::sync::RwLock::new(None),
+            local_emergency_leaderless_tracker:
+                openstack_keystone_local_emergency_store::LeaderlessTracker::new(),
             api_key_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
                 governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
             )),
@@ -464,6 +470,9 @@ mod tests {
             audit_dispatcher: openstack_keystone_audit::AuditDispatcher::noop(),
 
             storage: None,
+            local_emergency_store: tokio::sync::RwLock::new(None),
+            local_emergency_leaderless_tracker:
+                openstack_keystone_local_emergency_store::LeaderlessTracker::new(),
             api_key_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
                 governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
             )),
@@ -541,6 +550,9 @@ mod tests {
             audit_dispatcher: openstack_keystone_audit::AuditDispatcher::noop(),
 
             storage: None,
+            local_emergency_store: tokio::sync::RwLock::new(None),
+            local_emergency_leaderless_tracker:
+                openstack_keystone_local_emergency_store::LeaderlessTracker::new(),
             api_key_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
                 governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
             )),
@@ -617,6 +629,9 @@ mod tests {
             audit_dispatcher: openstack_keystone_audit::AuditDispatcher::noop(),
 
             storage: None,
+            local_emergency_store: tokio::sync::RwLock::new(None),
+            local_emergency_leaderless_tracker:
+                openstack_keystone_local_emergency_store::LeaderlessTracker::new(),
             api_key_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
                 governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
             )),

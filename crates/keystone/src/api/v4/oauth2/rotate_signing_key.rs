@@ -23,6 +23,16 @@
 //! second operator must call
 //! `POST /v4/oauth2/{domain_id}/confirm-rotate-signing-key` within 15
 //! minutes.
+//!
+//! `local_quorum_bypass: true` (ADR 0028 §2) stages a candidate written only
+//! to this node's local emergency store, entirely bypassing Raft/quorum --
+//! for use when the cluster has lost quorum and the ordinary `emergency`
+//! path (a Raft proposal) would block forever. Requires `justification` and
+//! is refused unless the node's `[local_emergency]` guardrail currently
+//! permits it (bypass enabled, quorum unreachable, leaderless grace period
+//! elapsed). The response carries `local_rotation_id`; reconciliation once
+//! quorum returns is a separate operation (ADR 0028 §4, not yet
+//! implemented).
 
 use axum::{
     Json,
@@ -79,7 +89,24 @@ pub(super) async fn rotate_signing_key(
 
     let initiator = user_auth.inner().principal().get_user_id();
 
-    let response = if req.emergency {
+    let response = if req.local_quorum_bypass {
+        let justification = req.justification.clone().ok_or_else(|| {
+            KeystoneApiError::BadRequest(
+                "justification is required when local_quorum_bypass is set".to_string(),
+            )
+        })?;
+        let staged = state
+            .provider
+            .get_oauth2_key_provider()
+            .stage_local_emergency_rotation(&state, &domain_id, &initiator, &justification)
+            .await?;
+        RotateSigningKeyResponse {
+            kid: None,
+            pending_rotation_id: None,
+            expires_at: None,
+            local_rotation_id: Some(staged.rotation_id),
+        }
+    } else if req.emergency {
         let pending = state
             .provider
             .get_oauth2_key_provider()
@@ -89,6 +116,7 @@ pub(super) async fn rotate_signing_key(
             kid: None,
             pending_rotation_id: Some(pending.rotation_id),
             expires_at: Some(pending.expires_at),
+            local_rotation_id: None,
         }
     } else {
         let key = state
@@ -107,6 +135,7 @@ pub(super) async fn rotate_signing_key(
             kid: Some(key.kid),
             pending_rotation_id: None,
             expires_at: None,
+            local_rotation_id: None,
         }
     };
 
@@ -123,7 +152,7 @@ mod tests {
     use tower::ServiceExt;
     use tower_http::trace::TraceLayer;
 
-    use openstack_keystone_core_types::oauth2_key::PendingRotationInfo;
+    use openstack_keystone_core_types::oauth2_key::{Oauth2KeyProviderError, PendingRotationInfo};
     use openstack_keystone_key_repository::asymmetric::{SigningAlgorithm, generate_keypair};
 
     use super::super::openapi_router;
@@ -208,6 +237,87 @@ mod tests {
         assert_eq!(json["pending_rotation_id"], "rotation-1");
         assert_eq!(json["expires_at"], 1_000_900);
         assert!(json.get("kid").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_local_quorum_bypass_returns_local_rotation_id() {
+        use openstack_keystone_core_types::oauth2_key::LocalEmergencyRotationInfo;
+
+        let mut mock = MockOauth2KeyProvider::default();
+        mock.expect_stage_local_emergency_rotation()
+            .withf(
+                |_, domain_id: &str, _initiator: &str, justification: &str| {
+                    domain_id == "domain-1" && justification == "suspected key compromise"
+                },
+            )
+            .returning(|_, _, _, justification| {
+                Ok(LocalEmergencyRotationInfo {
+                    rotation_id: "local-rotation-1".to_string(),
+                    justification: justification.to_string(),
+                })
+            });
+        let provider = Provider::mocked_builder().mock_oauth2_key(mock);
+        let state = get_mocked_state(provider, true, None).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        let response = api
+            .as_service()
+            .oneshot(request(
+                r#"{"local_quorum_bypass": true, "justification": "suspected key compromise"}"#,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["local_rotation_id"], "local-rotation-1");
+        assert!(json.get("kid").is_none());
+        assert!(json.get("pending_rotation_id").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_local_quorum_bypass_without_justification_is_rejected() {
+        // No `expect_stage_local_emergency_rotation()` set: the handler
+        // must reject before ever calling the provider.
+        let mock = MockOauth2KeyProvider::default();
+        let provider = Provider::mocked_builder().mock_oauth2_key(mock);
+        let state = get_mocked_state(provider, true, None).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        let response = api
+            .as_service()
+            .oneshot(request(r#"{"local_quorum_bypass": true}"#))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_local_quorum_bypass_refused_by_guardrail_surfaces_forbidden() {
+        let mut mock = MockOauth2KeyProvider::default();
+        mock.expect_stage_local_emergency_rotation()
+            .returning(|_, _, _, _| Err(Oauth2KeyProviderError::LocalEmergencyBypassNotAllowed));
+        let provider = Provider::mocked_builder().mock_oauth2_key(mock);
+        let state = get_mocked_state(provider, true, None).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        let response = api
+            .as_service()
+            .oneshot(request(
+                r#"{"local_quorum_bypass": true, "justification": "suspected key compromise"}"#,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
