@@ -126,6 +126,14 @@ jobs:
         with:
           version: latest
 
+      # Runs here unconditionally (not only in policy-container.yml, which is
+      # gated on `paths: policy/**`) so a Rust-only PR that changes which
+      # policy_name a handler enforces, or reshapes the Credentials
+      # projection, is also gated by the Rego test suite. See security review
+      # V3 / Gate A (doc/src/security-architecture-review.md).
+      - name: Test OPA policies
+        run: opa test policy
+
       - name: Rust Cache
         uses: swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
 
