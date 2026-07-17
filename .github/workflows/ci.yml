@@ -254,6 +254,12 @@ jobs:
       - name: Check EventPayload has no secret fields (Gate I)
         run: python3 tools/check_event_payload_no_secret_fields.py
 
+      # Gate C (security review V1/V2 / issue #982): every
+      # delegation-sensitive policy's test suite must carry a scope-drift
+      # negative case (security.md I3), not just a wrong-project case.
+      - name: Check delegated-policy scope-drift test presence (Gate C)
+        run: python3 tools/check_delegated_policy_scope_drift_tests.py
+
   openapi:
     needs: changes
     if: needs.changes.outputs.code == 'true'
