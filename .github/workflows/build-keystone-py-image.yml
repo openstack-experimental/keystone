@@ -13,7 +13,6 @@ on:
       - 'tools/Dockerfile.py-keystone' # Trigger build only when Dockerfile changes
       - '.github/workflows/build-keystone-py-image.yml'
   workflow_dispatch: # Allows manual trigger
-  merge_group:
 
 env:
   REGISTRY_IMAGE: ghcr.io/openstack-experimental/keystone/py-keystone
