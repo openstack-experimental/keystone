@@ -217,6 +217,24 @@ jobs:
           path: target/nextest/*/junit.xml
           reporter: java-junit
 
+  # Gate B1 (security review V3 / issue #977): runs unconditionally, not
+  # gated on path filters, so it catches a Rust change that renames/drops an
+  # enforce() call, or a policy change that leaves a handler's enforce()
+  # target dangling, no matter which side of the split it touches.
+  policy-handler-coverage:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Check policy<->handler existence (Gate B1)
+        run: python3 tools/check_policy_handler_coverage.py
+
   openapi:
     needs: changes
     if: needs.changes.outputs.code == 'true'
