@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+# devstack lib functions for the rust Keystone ("key-rs") service.
+#
+# python Keystone ("key") remains fully responsible for the base DB schema,
+# fernet key repository and initial admin bootstrap - this file only adds
+# the rust binary on top of that (additive DB migrations, its own config
+# file) and, once it is up, repoints the Apache "/identity" ProxyPass at it
+# so it ends up serving the traffic python used to serve. See
+# doc/src/install.md ("Parallel installation with the python Keystone") for
+# the rationale; this automates exactly that manual Apache reroute.
+#
+# Standard devstack function naming: install_/configure_/init_/start_/
+# stop_/cleanup_<service>.
+
+# Source directory of this checkout (devstack/lib/keystone-rs -> repo root)
+KEYSTONE_RS_LIB_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+KEYSTONE_RS_SRC_DIR=${KEYSTONE_RS_SRC_DIR:-$(cd "$KEYSTONE_RS_LIB_DIR/../.." && pwd)}
+
+KEYSTONE_RS_BIN_DIR=${KEYSTONE_RS_BIN_DIR:-}
+KEYSTONE_RS_CONF=${KEYSTONE_RS_CONF:-$KEYSTONE_CONF_DIR/keystone-rs.conf}
+KEYSTONE_RS_BIND_HOST=${KEYSTONE_RS_BIND_HOST:-127.0.0.1}
+KEYSTONE_RS_SERVICE_PORT=${KEYSTONE_RS_SERVICE_PORT:-8080}
+KEYSTONE_RS_OPA_PORT=${KEYSTONE_RS_OPA_PORT:-8181}
+KEYSTONE_RS_OPA_VERSION=${KEYSTONE_RS_OPA_VERSION:-1.13.2}
+KEYSTONE_RS_DEV_KEK=${KEYSTONE_RS_DEV_KEK:-4242424242424242424242424242424242424242424242424242424242424242}
+
+function install_keystone_rs {
+    if [[ -n "$KEYSTONE_RS_BIN_DIR" ]]; then
+        # CI passes a directory with already-built binaries so we don't pay
+        # for a second `cargo build --release` inside stack.sh.
+        sudo install -m 0755 "$KEYSTONE_RS_BIN_DIR/keystone" /usr/local/bin/keystone
+        sudo install -m 0755 "$KEYSTONE_RS_BIN_DIR/keystone-manage" /usr/local/bin/keystone-manage
+    else
+        pushd "$KEYSTONE_RS_SRC_DIR" >/dev/null
+        cargo build --release
+        sudo install -m 0755 target/release/keystone /usr/local/bin/keystone
+        sudo install -m 0755 target/release/keystone-manage /usr/local/bin/keystone-manage
+        popd >/dev/null
+    fi
+
+    if [[ ! -x /usr/local/bin/opa ]]; then
+        # Same GitHub-releases URL tools/Dockerfile.skaffold already uses
+        # (the openpolicyagent.org/downloads mirror doesn't reliably serve a
+        # valid binary for every pinned version).
+        curl --proto '=https' --tlsv1.2 -sSfL \
+            "https://github.com/open-policy-agent/opa/releases/download/v${KEYSTONE_RS_OPA_VERSION}/opa_linux_amd64_static" \
+            -o /tmp/opa
+        sudo install -m 0755 /tmp/opa /usr/local/bin/opa
+        rm -f /tmp/opa
+    fi
+}
+
+function configure_keystone_rs {
+    local db_connection
+
+    # Reuse the DB connection python Keystone was already configured with
+    # instead of re-deriving devstack's DB credentials; rust ignores/rejects
+    # the "+pymysql" driver segment (doc/src/install.md), so strip it.
+    db_connection=$(iniget "$KEYSTONE_CONF" database connection)
+    db_connection=${db_connection/+pymysql/}
+
+    # `iniset` writes directly as the current (unprivileged, non-root) stack
+    # user, so the file must be owned by it, not root - a plain `sudo touch`
+    # would leave it root-owned and every iniset call below would fail with
+    # "Permission denied".
+    sudo install -d -m 0755 "$(dirname "$KEYSTONE_RS_CONF")"
+    sudo install -o "$STACK_USER" -m 0644 /dev/null "$KEYSTONE_RS_CONF"
+
+    iniset "$KEYSTONE_RS_CONF" DEFAULT debug True
+    # Don't copy python's [auth] methods verbatim: devstack's keystone.conf
+    # usually never sets that key at all (python falls back to oslo.config's
+    # own built-in default instead), so `iniget` returns an empty string and
+    # rust's fernet driver ends up with an empty methods list - every token,
+    # including a plain password-auth one, then 500s with "unsupported
+    # authentication methods password in token payload", since the fernet
+    # driver's auth_methods bitmask is positional over this exact list
+    # (crates/token-driver-fernet/src/lib.rs). Use the same fixed list
+    # tools/start-api.sh already relies on for live-server tests.
+    iniset "$KEYSTONE_RS_CONF" auth methods "password,token,openid,application_credential,x509,mapped,hacked_appcred_handler"
+    iniset "$KEYSTONE_RS_CONF" database connection "$db_connection"
+    # Same fernet key repository python already populated, so tokens issued
+    # by either implementation validate on both.
+    iniset "$KEYSTONE_RS_CONF" fernet_tokens key_repository "$KEYSTONE_CONF_DIR/fernet-keys"
+    iniset "$KEYSTONE_RS_CONF" fernet_receipts key_repository "$KEYSTONE_CONF_DIR/fernet-keys"
+    iniset "$KEYSTONE_RS_CONF" api_policy opa_base_url "http://${KEYSTONE_RS_BIND_HOST}:${KEYSTONE_RS_OPA_PORT}"
+
+    # Defaults to /var/lib/keystone/audit, which the unprivileged stack user
+    # (running as the ExecStart target of devstack@key-rs) can't create -
+    # keystone-manage/keystone then die with "failed to create audit spool
+    # directory: Permission denied". Point it at devstack's own per-service
+    # data dir instead, which is already owned by $STACK_USER.
+    local audit_spool_dir="$DATA_DIR/keystone-rs/audit"
+    sudo install -d -o "$STACK_USER" -m 0755 "$audit_spool_dir"
+    iniset "$KEYSTONE_RS_CONF" audit spool_dir "$audit_spool_dir"
+
+    _keystone_rs_reroute_apache
+}
+
+function _keystone_rs_reroute_apache {
+    # lib/keystone's own configure_keystone (core devstack, runs before any
+    # plugin post-config hook) already wrote an Apache site proxying
+    # "/identity" to python's uwsgi socket, via write_uwsgi_config's own
+    # `apache_site_config_for $name` (name = "keystone-api" as of the
+    # current devstack master, but this has moved across releases - e.g.
+    # cleanup_keystone still references "keystone-wsgi-public"). Rather
+    # than guess at that site/socket name, find it by grepping
+    # $APACHE_CONF_DIR for whichever generated site actually proxies
+    # "/identity", then surgically rewrite its ProxyPass/ProxyPassReverse
+    # targets for that path to point at the rust binary instead - the same
+    # single-vhost edit doc/src/install.md's Apache sample shows doing by
+    # hand.
+    local site_conf
+    site_conf=$(grep -lE 'ProxyPass[[:space:]]+"/identity"[[:space:]]' "$APACHE_CONF_DIR"/*.conf 2>/dev/null | head -n1)
+
+    if [[ -z "$site_conf" || ! -f "$site_conf" ]]; then
+        die $LINENO "Could not find the Apache site config devstack generated for keystone"
+    fi
+
+    # The site was generated for a "uwsgi://" ProxyPass target, so only
+    # mod_proxy/mod_proxy_uwsgi were enabled for it. Rewriting the target to
+    # a plain "http://" backend below needs mod_proxy_http too, or Apache
+    # can't service the directive at all (502/503 on every /identity
+    # request).
+    enable_apache_mod proxy_http
+
+    sudo cp "$site_conf" "${site_conf}.pre-keystone-rs"
+    sudo sed -i -E \
+        -e "s#(ProxyPass[[:space:]]+\"/identity\"[[:space:]]+).*#\1\"http://${KEYSTONE_RS_BIND_HOST}:${KEYSTONE_RS_SERVICE_PORT}\"#" \
+        -e "s#(ProxyPassReverse[[:space:]]+\"/identity\"[[:space:]]+).*#\1\"http://${KEYSTONE_RS_BIND_HOST}:${KEYSTONE_RS_SERVICE_PORT}\"#" \
+        "$site_conf"
+
+    if ! grep -q "$KEYSTONE_RS_SERVICE_PORT" "$site_conf"; then
+        die $LINENO "Failed to reroute the keystone Apache site to rust Keystone"
+    fi
+}
+
+function init_keystone_rs {
+    run_process key-rs-opa "/usr/local/bin/opa run -s $KEYSTONE_RS_SRC_DIR/policy --addr ${KEYSTONE_RS_BIND_HOST}:${KEYSTONE_RS_OPA_PORT}"
+
+    if ! wait_for_connection "http://${KEYSTONE_RS_BIND_HOST}:${KEYSTONE_RS_OPA_PORT}/health"; then
+        die $LINENO "OPA did not become ready for rust Keystone"
+    fi
+
+    KEYSTONE_DEV_KEK="$KEYSTONE_RS_DEV_KEK" KEYSTONE_ALLOW_ENV_KEK=1 \
+        /usr/local/bin/keystone-manage -c "$KEYSTONE_RS_CONF" db up
+}
+
+function start_keystone_rs {
+    # systemd's ExecStart (what devstack's run_process ultimately drives)
+    # doesn't expand "VAR=val command" prefixes the way a shell does, so
+    # export the dev-mode KEK through a small wrapper script instead of
+    # trying to pass environment through run_process directly.
+    local wrapper=/usr/local/bin/keystone-rs-run
+    sudo bash -c "cat > $wrapper" <<EOF
+#!/bin/bash
+export KEYSTONE_DEV_KEK=$KEYSTONE_RS_DEV_KEK
+export KEYSTONE_ALLOW_ENV_KEK=1
+exec /usr/local/bin/keystone -c $KEYSTONE_RS_CONF
+EOF
+    sudo chmod 0755 "$wrapper"
+
+    run_process key-rs "$wrapper"
+
+    if ! wait_for_connection "http://${KEYSTONE_RS_BIND_HOST}:${KEYSTONE_RS_SERVICE_PORT}/v3"; then
+        die $LINENO "rust Keystone did not become ready"
+    fi
+
+    restart_apache_server
+}
+
+function stop_keystone_rs {
+    stop_process key-rs
+    stop_process key-rs-opa
+}
+
+function cleanup_keystone_rs {
+    sudo rm -f "$KEYSTONE_RS_CONF" /usr/local/bin/keystone-rs-run
+}
+
+# Small retry helper - devstack ships several similarly-named helpers across
+# releases (wait_for_service, etc.) that aren't reliably present, so keep
+# this self-contained.
+function wait_for_connection {
+    local url=$1
+    local i
+    for i in {1..60}; do
+        if curl -sf -o /dev/null "$url"; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}

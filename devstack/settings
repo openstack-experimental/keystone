@@ -1,0 +1,5 @@
+# Service group declaration for the rust Keystone devstack plugin.
+# Enabled independently of core "key" (python Keystone) so operators can
+# opt in via `enable_service key-rs` in local.conf.
+
+enable_service key-rs

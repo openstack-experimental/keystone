@@ -1,0 +1,197 @@
+---
+name: Devstack with rust Keystone
+
+on:
+  workflow_dispatch:
+  pull_request:
+  merge_group:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'merge_group' && github.run_id || github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    # Required checks must always report a status, so the workflow triggers
+    # unconditionally; this job decides whether the real work is needed.
+    permissions:
+      contents: read
+    outputs:
+      code: ${{ github.event_name != 'pull_request' || steps.filter.outputs.code == 'true' }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
+        id: filter
+        with:
+          filters: |
+            code:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.github/workflows/devstack.yml'
+              - 'crates/**'
+              - 'policy/**'
+              - 'devstack/**'
+
+  build:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Enable cache
+        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb # v5.0.1
+        with:
+          path: |
+            ~/.cargo
+          key: ${{ runner.os }}-devstack
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921 # stable
+        with:
+          toolchain: stable
+
+      - name: Install protobuf-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler libtss2-dev pkg-config
+
+      - name: Build Keystone
+        run: cargo build --release
+
+      - name: Move artifacts to the root
+        run: mv target/release/keystone target/release/keystone-manage ./
+
+      - name: Upload built binaries
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: keystone-devstack-bin
+          path: |
+            keystone
+            keystone-manage
+
+  devstack:
+    runs-on: ubuntu-24.04
+    needs:
+      - build
+    permissions:
+      contents: read
+    env:
+      OS_CLOUD: devstack-admin
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Materialize local branch ref for devstack's file:// plugin clone
+        # actions/checkout leaves the workspace in detached HEAD, so there is
+        # no refs/heads/<branch> for devstack's `git fetch origin <branch>`
+        # (fetch_plugins, invoked against this checkout via `enable_plugin
+        # key-rs file://...`) to find.
+        run: |
+          ref="$(git symbolic-ref --short -q HEAD || true)"
+          if [[ -z "$ref" ]]; then
+            ref="${{ github.head_ref || github.ref_name }}"
+            git branch -f "$ref" HEAD
+          fi
+          echo "KEYSTONE_RS_GIT_REF=$ref" >> "$GITHUB_ENV"
+
+      - name: Download built binaries
+        uses: actions/download-artifact@abefc31eafcfbdf6c5336127c1346fdae79ff41c # v5.0.0
+        with:
+          name: keystone-devstack-bin
+          path: ${{ github.workspace }}/bin
+
+      - name: Fix binary permissions
+        run: chmod u+x ${{ github.workspace }}/bin/keystone ${{ github.workspace }}/bin/keystone-manage
+
+      - name: Remove pre-installed MySQL
+        # ubuntu-24.04 runners ship with a MySQL system service already
+        # running (root auth via auth_socket, no password set). devstack's
+        # `enable_service mysql` then tries to configure/start its own
+        # instance on top of it and fails authenticating as
+        # root/DATABASE_PASSWORD against the pre-existing one. Purge it so
+        # devstack's own install_database step sets it up from scratch.
+        run: |
+          sudo systemctl stop mysql.service || true
+          sudo apt-get purge -y --auto-remove 'mysql-*' 'mariadb-*' || true
+          sudo rm -rf /etc/mysql /var/lib/mysql
+
+      - name: Clone devstack
+        run: git clone https://opendev.org/openstack/devstack /opt/stack/devstack
+
+      - name: Write local.conf
+        run: |
+          cat <<EOF > /opt/stack/devstack/local.conf
+          [[local|localrc]]
+          ADMIN_PASSWORD=password
+          DATABASE_PASSWORD=password
+          RABBIT_PASSWORD=password
+          SERVICE_PASSWORD=password
+          SERVICE_TOKEN=service-token
+
+          disable_all_services
+          enable_service mysql
+          enable_service rabbit
+          enable_service key
+          enable_service key-rs
+
+          enable_plugin key-rs file://${{ github.workspace }} ${{ env.KEYSTONE_RS_GIT_REF }}
+
+          KEYSTONE_RS_BIN_DIR=${{ github.workspace }}/bin
+
+          LOGFILE=\$HOME/devstack.log
+          LOG_COLOR=False
+          EOF
+          cat /opt/stack/devstack/local.conf
+
+      - name: Run stack.sh
+        working-directory: /opt/stack/devstack
+        run: FORCE=yes ./stack.sh
+
+      - name: Verify rust Keystone is serving directly
+        run: curl -sf http://127.0.0.1:8080/v3
+
+      - name: Verify Apache routes /identity to rust Keystone
+        run: |
+          sudo systemctl is-active devstack@key-rs
+          curl -sf http://127.0.0.1/identity/v3
+
+      - name: Issue a token via the openstack CLI
+        run: |
+          source /opt/stack/devstack/openrc admin admin
+          openstack token issue
+
+      - name: Dump devstack log
+        if: failure()
+        run: cat "$HOME/devstack.log" || true
+
+      - name: Dump rust Keystone service log
+        if: failure()
+        run: sudo journalctl -u devstack@key-rs --no-pager || true
+
+      - name: Dump OPA service log
+        if: failure()
+        run: sudo journalctl -u devstack@key-rs-opa --no-pager || true
+
+      - name: Dump Apache error log
+        if: failure()
+        run: sudo cat /var/log/apache2/error.log || true

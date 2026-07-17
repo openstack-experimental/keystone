@@ -149,3 +149,24 @@ server {
     ProxyPass "/identity" http://localhost:8080 retry=0
 </VirtualHost>
 ```
+
+## Devstack integration
+
+The `devstack/` directory in the project source tree is a standard
+out-of-tree [devstack](https://docs.openstack.org/devstack/latest/) plugin
+that automates the Apache reroute described above. Python Keystone still
+owns the base DB schema and initial admin bootstrap; the plugin builds/runs
+the rust binary alongside it, applies the additive DB migrations, and
+rewrites the Apache site devstack generated for Keystone so that
+`/identity` is proxied to the rust binary instead of python's uwsgi socket.
+
+To use it, add to `local.conf`:
+
+```ini
+[[local|localrc]]
+enable_plugin key-rs https://github.com/openstack-experimental/keystone
+enable_service key-rs
+```
+
+See `.github/workflows/devstack.yml` for a working example that runs a
+minimal devstack (mysql, rabbitmq, keystone) in CI with the plugin enabled.
