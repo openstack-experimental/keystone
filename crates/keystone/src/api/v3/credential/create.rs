@@ -86,10 +86,69 @@ mod tests {
     use openstack_keystone_core_types::credential::{CredentialBuilder, CredentialCreate};
 
     use super::super::openapi_router;
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{
+        get_capturing_state, get_mocked_state, policy_contract, test_fixture_scoped,
+    };
     use crate::api::v3::credential::types::{CredentialCreateBuilder, CredentialResponse};
     use crate::credential::MockCredentialProvider;
     use crate::provider::Provider;
+
+    /// Gate B2 (security review V3a, issue #978): asserts the handler feeds
+    /// `enforce()` the contract `identity/credential/create.rego` expects --
+    /// single `credential` key, no `existing`, and no leaked `blob`.
+    #[tokio::test]
+    async fn test_create_policy_input_contract() {
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock
+            .expect_create_credential()
+            .returning(|_, _| {
+                Ok(CredentialBuilder::default()
+                    .id("new_id")
+                    .blob(r#"{"seed":"AAAA"}"#)
+                    .r#type("totp")
+                    .user_id("uid")
+                    .build()
+                    .unwrap())
+            });
+
+        let vsc = test_fixture_scoped();
+        let (state, policy) =
+            get_capturing_state(Provider::mocked_builder().mock_credential(credential_mock)).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let req = crate::api::v3::credential::types::CredentialCreateRequest {
+            credential: CredentialCreateBuilder::default()
+                .blob(r#"{"seed":"AAAA"}"#)
+                .r#type("totp")
+                .build()
+                .unwrap(),
+        };
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .extension(vsc)
+                    .header("Content-Type", "application/json")
+                    .method("POST")
+                    .body(Body::from(serde_json::to_string(&req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let calls = policy.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].policy_name, "identity/credential/create");
+        policy_contract::assert_object_keys(&calls[0].target, &["credential"]);
+        policy_contract::assert_existing_presence(&calls[0].existing, false);
+        policy_contract::assert_no_secrets(&calls[0].target);
+    }
 
     #[tokio::test]
     async fn test_create() {

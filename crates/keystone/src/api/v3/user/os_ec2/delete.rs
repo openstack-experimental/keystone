@@ -51,7 +51,10 @@ pub(super) async fn delete(
             "identity/os_ec2/delete_credential",
             &user_auth,
             serde_json::Value::Null,
-            Some(json!({"user_id": &user_id, "credential": &current})),
+            Some(json!({
+                "user_id": &user_id,
+                "credential": current.as_ref().map(super::ec2_credential_policy_input),
+            })),
         )
         .await?;
 
@@ -86,9 +89,66 @@ mod tests {
     use openstack_keystone_core_types::credential::CredentialBuilder;
 
     use super::super::openapi_router;
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{
+        get_capturing_state, get_mocked_state, policy_contract, test_fixture_scoped,
+    };
     use crate::credential::MockCredentialProvider;
     use crate::provider::Provider;
+
+    /// Gate B2 (issue #978): mirrors `show`'s contract test for delete --
+    /// same documented multi-key shape, same blob-leak risk.
+    #[tokio::test]
+    async fn test_delete_policy_input_contract() {
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock
+            .expect_get_credential_by_ec2_access()
+            .returning(|_, _| {
+                Ok(Some(
+                    CredentialBuilder::default()
+                        .id("cred_id")
+                        .blob(r#"{"access":"AKIA123","secret":"s3cr3t"}"#)
+                        .r#type("ec2")
+                        .user_id("foo")
+                        .project_id("pid")
+                        .build()
+                        .unwrap(),
+                ))
+            });
+        credential_mock
+            .expect_delete_credential()
+            .returning(|_, _| Ok(()));
+
+        let vsc = test_fixture_scoped();
+        let (state, policy) =
+            get_capturing_state(Provider::mocked_builder().mock_credential(credential_mock)).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/foo/credentials/OS-EC2/AKIA123")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        let calls = policy.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].policy_name, "identity/os_ec2/delete_credential");
+        assert_eq!(calls[0].target, serde_json::Value::Null);
+        policy_contract::assert_existing_presence(&calls[0].existing, true);
+        let existing = calls[0].existing.as_ref().unwrap();
+        policy_contract::assert_object_keys(existing, &["user_id", "credential"]);
+        policy_contract::assert_no_secrets(existing);
+    }
 
     #[tokio::test]
     async fn test_delete_found() {

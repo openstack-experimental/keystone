@@ -84,10 +84,51 @@ mod tests {
     use openstack_keystone_core_types::credential::CredentialBuilder;
 
     use super::super::openapi_router;
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{
+        get_capturing_state, get_mocked_state, policy_contract, test_fixture_scoped,
+    };
     use crate::api::v3::user::os_ec2::types::Ec2CredentialList;
     use crate::credential::MockCredentialProvider;
     use crate::provider::Provider;
+
+    /// Gate B2 (issue #978): `identity/os_ec2/read_credential.rego`
+    /// documents `input.target = {"user_id": <path user_id>}`,
+    /// `input.existing = null` for a list request.
+    #[tokio::test]
+    async fn test_list_policy_input_contract() {
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock
+            .expect_list_credentials_for_user()
+            .returning(|_, _, _| Ok(vec![]));
+
+        let vsc = test_fixture_scoped();
+        let (state, policy) =
+            get_capturing_state(Provider::mocked_builder().mock_credential(credential_mock)).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/foo/credentials/OS-EC2")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let calls = policy.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].policy_name, "identity/os_ec2/read_credential");
+        policy_contract::assert_object_keys(&calls[0].target, &["user_id"]);
+        policy_contract::assert_existing_presence(&calls[0].existing, false);
+        policy_contract::assert_no_secrets(&calls[0].target);
+    }
 
     #[tokio::test]
     async fn test_list() {

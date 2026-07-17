@@ -131,7 +131,10 @@ async fn version(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    pub use openstack_keystone_core::api::tests::{get_mocked_state, test_fixture_scoped};
+    pub use openstack_keystone_core::api::policy_contract;
+    pub use openstack_keystone_core::api::tests::{
+        get_capturing_state, get_mocked_state, test_fixture_scoped,
+    };
 
     use std::net::SocketAddr;
 

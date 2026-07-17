@@ -104,10 +104,68 @@ mod tests {
     use openstack_keystone_core_types::credential::{CredentialBuilder, CredentialListParameters};
 
     use super::super::openapi_router;
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{
+        get_capturing_state, get_mocked_state, policy_contract, test_fixture_scoped,
+    };
     use crate::api::v3::credential::types::CredentialList;
     use crate::credential::MockCredentialProvider;
     use crate::provider::Provider;
+
+    /// Gate B2 (issue #978): list performs a two-phase check (ADR 0019 §2,
+    /// CVE-2019-19687) -- assert *both* calls: the list-level filter-hint
+    /// check and the per-item `identity/credential/show` re-check, with the
+    /// per-item call keying the stripped stored record under `existing`.
+    #[tokio::test]
+    async fn test_list_policy_input_contract() {
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock.expect_list_credentials().returning(|_, _| {
+            Ok(vec![
+                CredentialBuilder::default()
+                    .id("1")
+                    .blob(r#"{"seed":"AAAA"}"#)
+                    .r#type("totp")
+                    .user_id("uid")
+                    .build()
+                    .unwrap(),
+            ])
+        });
+
+        let vsc = test_fixture_scoped();
+        let (state, policy) =
+            get_capturing_state(Provider::mocked_builder().mock_credential(credential_mock)).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let calls = policy.calls();
+        assert_eq!(calls.len(), 2);
+
+        assert_eq!(calls[0].policy_name, "identity/credential/list");
+        policy_contract::assert_object_keys(&calls[0].target, &["credential"]);
+        policy_contract::assert_existing_presence(&calls[0].existing, false);
+        policy_contract::assert_no_secrets(&calls[0].target);
+
+        assert_eq!(calls[1].policy_name, "identity/credential/show");
+        assert_eq!(calls[1].target, serde_json::Value::Null);
+        policy_contract::assert_existing_presence(&calls[1].existing, true);
+        let existing = calls[1].existing.as_ref().unwrap();
+        policy_contract::assert_object_keys(existing, &["credential"]);
+        policy_contract::assert_no_secrets(existing);
+    }
 
     #[tokio::test]
     async fn test_list() {

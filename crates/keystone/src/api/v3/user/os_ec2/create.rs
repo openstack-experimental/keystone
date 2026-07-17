@@ -105,10 +105,62 @@ mod tests {
     use openstack_keystone_core_types::credential::{CredentialBuilder, CredentialCreate};
 
     use super::super::openapi_router;
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{
+        get_capturing_state, get_mocked_state, policy_contract, test_fixture_scoped,
+    };
     use crate::api::v3::user::os_ec2::types::Ec2CredentialResponse;
     use crate::credential::MockCredentialProvider;
     use crate::provider::Provider;
+
+    /// Gate B2 (issue #978): `identity/os_ec2/create_credential.rego`
+    /// documents `input.target = {"user_id": ..., "tenant_id": ...}`,
+    /// `input.existing = null`.
+    #[tokio::test]
+    async fn test_create_policy_input_contract() {
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock
+            .expect_create_credential()
+            .returning(|_, rec| {
+                Ok(CredentialBuilder::default()
+                    .id("cred_id")
+                    .blob(rec.blob.clone())
+                    .r#type("ec2")
+                    .user_id("foo")
+                    .project_id("pid")
+                    .build()
+                    .unwrap())
+            });
+
+        let vsc = test_fixture_scoped();
+        let (state, policy) =
+            get_capturing_state(Provider::mocked_builder().mock_credential(credential_mock)).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/foo/credentials/OS-EC2")
+                    .extension(vsc)
+                    .header("Content-Type", "application/json")
+                    .method("POST")
+                    .body(Body::from(r#"{"tenant_id":"pid"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let calls = policy.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].policy_name, "identity/os_ec2/create_credential");
+        policy_contract::assert_object_keys(&calls[0].target, &["user_id", "tenant_id"]);
+        policy_contract::assert_existing_presence(&calls[0].existing, false);
+        policy_contract::assert_no_secrets(&calls[0].target);
+    }
 
     #[tokio::test]
     async fn test_create_auto_generates_access_and_secret() {

@@ -19,7 +19,6 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use serde_json::json;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
@@ -59,7 +58,7 @@ pub(super) async fn delete(
             "identity/credential/delete",
             &user_auth,
             serde_json::Value::Null,
-            Some(json!({"credential": current})),
+            Some(super::credential_policy_input(&current)),
         )
         .await?;
 
@@ -95,9 +94,65 @@ mod tests {
     use openstack_keystone_core_types::credential::CredentialBuilder;
 
     use super::super::openapi_router;
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{
+        get_capturing_state, get_mocked_state, policy_contract, test_fixture_scoped,
+    };
     use crate::credential::MockCredentialProvider;
     use crate::provider::Provider;
+
+    /// Gate B2 (issue #978): mirrors `test_show_policy_input_contract` for
+    /// delete -- same documented shape in `identity/credential/delete.rego`.
+    #[tokio::test]
+    async fn test_delete_policy_input_contract() {
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock
+            .expect_get_credential()
+            .withf(|_, id: &'_ str| id == "foo")
+            .returning(|_, _| {
+                Ok(Some(
+                    CredentialBuilder::default()
+                        .id("foo")
+                        .blob(r#"{"seed":"AAAA"}"#)
+                        .r#type("totp")
+                        .user_id("uid")
+                        .build()
+                        .unwrap(),
+                ))
+            });
+        credential_mock
+            .expect_delete_credential()
+            .returning(|_, _| Ok(()));
+
+        let vsc = test_fixture_scoped();
+        let (state, policy) =
+            get_capturing_state(Provider::mocked_builder().mock_credential(credential_mock)).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/foo")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        let calls = policy.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].policy_name, "identity/credential/delete");
+        assert_eq!(calls[0].target, serde_json::Value::Null);
+        policy_contract::assert_existing_presence(&calls[0].existing, true);
+        policy_contract::assert_object_keys(calls[0].existing.as_ref().unwrap(), &["credential"]);
+        policy_contract::assert_no_secrets(calls[0].existing.as_ref().unwrap());
+    }
 
     #[tokio::test]
     async fn test_delete_success() {

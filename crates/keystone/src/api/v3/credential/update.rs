@@ -111,13 +111,96 @@ mod tests {
     use openstack_keystone_core_types::credential::CredentialBuilder;
 
     use super::super::openapi_router;
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{
+        get_capturing_state, get_mocked_state, policy_contract, test_fixture_scoped,
+    };
     use crate::api::v3::credential::types::{
         CredentialResponse as ApiCredentialResponse, CredentialUpdateBuilder,
         CredentialUpdateRequest,
     };
     use crate::credential::MockCredentialProvider;
     use crate::provider::Provider;
+
+    /// Gate B2 (issue #978): update is the operation the review calls out
+    /// by name (V3a) for a `target`/`existing` swap -- assert `target` is
+    /// the patch and `existing` is the stored row, never the other way
+    /// round, and that neither carries the stripped `blob`.
+    #[tokio::test]
+    async fn test_update_policy_input_contract() {
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock
+            .expect_get_credential()
+            .withf(|_, id: &'_ str| id == "bar")
+            .returning(|_, _| {
+                Ok(Some(
+                    CredentialBuilder::default()
+                        .id("bar")
+                        .blob(r#"{"seed":"OLD"}"#)
+                        .r#type("totp")
+                        .user_id("uid")
+                        .build()
+                        .unwrap(),
+                ))
+            });
+        credential_mock
+            .expect_update_credential()
+            .returning(|_, _, _| {
+                Ok(CredentialBuilder::default()
+                    .id("bar")
+                    .blob(r#"{"seed":"NEW"}"#)
+                    .r#type("totp")
+                    .user_id("uid")
+                    .build()
+                    .unwrap())
+            });
+
+        let vsc = test_fixture_scoped();
+        let (state, policy) =
+            get_capturing_state(Provider::mocked_builder().mock_credential(credential_mock)).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let update_req = CredentialUpdateRequest {
+            credential: CredentialUpdateBuilder::default()
+                .blob(r#"{"seed":"NEW"}"#)
+                .build()
+                .unwrap(),
+        };
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .uri("/bar")
+                    .extension(vsc)
+                    .body(Body::from(serde_json::to_string(&update_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let calls = policy.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].policy_name, "identity/credential/update");
+        policy_contract::assert_object_keys(&calls[0].target, &["credential"]);
+        policy_contract::assert_existing_presence(&calls[0].existing, true);
+        policy_contract::assert_object_keys(calls[0].existing.as_ref().unwrap(), &["credential"]);
+        // The swap-detection itself: target (the patch) carries the new
+        // blob-derived data the client sent, existing carries the OLD
+        // stored seed -- confirms they were not passed in swapped order.
+        assert_eq!(
+            calls[0].target["credential"]["blob"],
+            serde_json::Value::Null,
+            "target must not carry the stripped blob field at all"
+        );
+        policy_contract::assert_no_secrets(&calls[0].target);
+        policy_contract::assert_no_secrets(calls[0].existing.as_ref().unwrap());
+    }
 
     #[tokio::test]
     async fn test_update() {

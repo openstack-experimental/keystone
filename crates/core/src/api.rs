@@ -15,6 +15,8 @@
 pub mod api_key_auth;
 pub mod auth;
 pub mod common;
+#[cfg(any(test, feature = "mock"))]
+pub mod policy_contract;
 pub mod v3;
 pub mod v4;
 
@@ -150,5 +152,83 @@ pub mod tests {
             .await
             .unwrap(),
         )
+    }
+
+    /// One recorded `enforce()` call, as observed by [`CapturingPolicy`].
+    ///
+    /// This is Gate B2 (security review V3a, issue #978): the shared,
+    /// non-opt-in capture point every handler-under-test's `(policy_name,
+    /// target, existing)` triple flows through, so the input-contract
+    /// assertions in [`super::policy_contract`] apply uniformly instead of
+    /// being re-derived (or skipped) per test.
+    #[derive(Clone, Debug)]
+    pub struct PolicyCall {
+        pub policy_name: &'static str,
+        pub target: serde_json::Value,
+        pub existing: Option<serde_json::Value>,
+    }
+
+    /// A [`crate::policy::PolicyEnforcer`] test double that records every
+    /// call instead of judging it, and always allows -- decision-making is
+    /// `opa test policy`'s job (Gate A) and, once built, Gate B3's; this
+    /// harness exists solely to assert what the handler *fed* the policy.
+    #[derive(Clone, Default)]
+    pub struct CapturingPolicy {
+        calls: std::sync::Arc<std::sync::Mutex<Vec<PolicyCall>>>,
+    }
+
+    impl CapturingPolicy {
+        /// Every call recorded so far, in order.
+        #[allow(clippy::unwrap_used)]
+        pub fn calls(&self) -> Vec<PolicyCall> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::policy::PolicyEnforcer for CapturingPolicy {
+        async fn enforce(
+            &self,
+            policy_name: &'static str,
+            _credentials: &ValidatedSecurityContext,
+            target: serde_json::Value,
+            existing: Option<serde_json::Value>,
+        ) -> Result<PolicyEvaluationResult, PolicyError> {
+            #[allow(clippy::unwrap_used)]
+            self.calls.lock().unwrap().push(PolicyCall {
+                policy_name,
+                target: target.clone(),
+                existing: existing.clone(),
+            });
+            Ok(PolicyEvaluationResult::allowed_admin())
+        }
+
+        async fn health_check(&self) -> Result<(), PolicyError> {
+            Ok(())
+        }
+    }
+
+    /// Like [`get_mocked_state`], but wired to a [`CapturingPolicy`] instead
+    /// of an allow/deny-only mock, so the test can inspect exactly what
+    /// `(policy_name, target, existing)` the handler under test sent.
+    pub async fn get_capturing_state(
+        provider_builder: ProviderBuilder,
+    ) -> (ServiceState, CapturingPolicy) {
+        let provider = provider_builder.build().unwrap();
+        let policy = CapturingPolicy::default();
+
+        let state = Arc::new(
+            Service::new(
+                ConfigManager::not_watched(Config::default()),
+                DatabaseConnection::Disconnected,
+                provider,
+                Arc::new(policy.clone()),
+                AuditDispatcher::noop(),
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+        (state, policy)
     }
 }
