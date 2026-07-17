@@ -3464,6 +3464,228 @@ mod tests {
         assert_eq!(roles[0].id, allowed_rid);
     }
 
+    /// Gate D compile-time exhaustiveness anchor (security review V1/V2,
+    /// issue #981): unlike [`AuthenticationContext::is_delegated`] (a
+    /// `matches!` over an explicit allow-list, which silently keeps
+    /// compiling if a variant is added), this match has **no wildcard
+    /// arm** -- every current variant is named, so adding a new
+    /// `AuthenticationContext` variant anywhere in the codebase without
+    /// also classifying it here is a compile error, not a silently-passing
+    /// test. `test_delegation_scope_kind_matrix_roles_never_exceed_delegation`
+    /// below is driven from this classification, not from `is_delegated()`.
+    fn is_delegating_auth_context(ctx: &AuthenticationContext) -> bool {
+        match ctx {
+            AuthenticationContext::ApplicationCredential { .. } => true,
+            AuthenticationContext::Trust { .. } => true,
+            AuthenticationContext::Oidc { .. }
+            | AuthenticationContext::K8s(_)
+            | AuthenticationContext::Password
+            | AuthenticationContext::Admin
+            | AuthenticationContext::Token(_)
+            | AuthenticationContext::WebauthN
+            | AuthenticationContext::Mapping(_)
+            | AuthenticationContext::Ec2Credential
+            | AuthenticationContext::Totp
+            | AuthenticationContext::WasmPlugin { .. } => false,
+        }
+    }
+
+    /// Gate D's companion anchor for `ScopeInfo`: same no-wildcard
+    /// requirement. The classification itself is unused by the matrix
+    /// below (which sweeps every variant unconditionally and only asserts
+    /// on whichever cells `new_for_scope` happens to accept) -- this
+    /// function exists purely so a new `ScopeInfo` variant fails to
+    /// compile here until a human decides how it fits the matrix.
+    fn classify_scope_kind(scope: &ScopeInfo) -> &'static str {
+        match scope {
+            ScopeInfo::Domain(_) => "domain",
+            ScopeInfo::Project { .. } => "project",
+            ScopeInfo::System(_) => "system",
+            ScopeInfo::TrustProject(_) => "trust_project",
+            ScopeInfo::Unscoped => "unscoped",
+        }
+    }
+
+    /// Gate D (security review V1/V2, issue #981): generated matrix over
+    /// every (delegating `AuthenticationContext` kind) x (`ScopeInfo`
+    /// variant) cell, driven end-to-end through `new_for_scope()`.
+    ///
+    /// Unlike the hand-written seed test above, this does not predict
+    /// allow/deny per cell -- that table already exists and is exhaustively
+    /// matched in `SecurityContext::validate_scope_boundaries`
+    /// (`crates/core-types/src/auth.rs`). Instead it asserts the
+    /// *invariant* mechanically, for every cell: whenever `new_for_scope`
+    /// accepts a delegated context on some scope, the resulting effective
+    /// roles never exceed the delegation's own role set, regardless of
+    /// which scope was requested or whether the delegation is restricted
+    /// or unrestricted. A cell that returns `Err` is not a failure here --
+    /// reachability is `validate_scope_boundaries`'s concern, not this
+    /// test's; this loop only ever asserts on cells that succeed, which is
+    /// exactly the shape the I4 near-miss (`from_security_context` falling
+    /// through to `ProjectScopePayload`) would have broken.
+    #[tokio::test]
+    async fn test_delegation_scope_kind_matrix_roles_never_exceed_delegation() {
+        let pid = "pid";
+        let allowed_rid = "reader";
+        let escalated_rid = "admin";
+
+        // The delegating principal holds BOTH roles on the project; every
+        // delegation kind below restricts to just `allowed_rid`. A
+        // regression that lets the wider personal assignment leak through
+        // on any cell is exactly what this matrix exists to catch.
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .returning(move |_e, q: &RoleAssignmentListParameters| {
+                let actor = q.user_id.clone().unwrap_or_default();
+                Ok(vec![
+                    assignment_with_role_actor(allowed_rid, &actor),
+                    assignment_with_role_actor(escalated_rid, &actor),
+                ])
+            });
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_expand_implied_roles()
+            .returning(|_e, _roles| Ok(()));
+        let mut trust_mock = MockTrustProvider::default();
+        trust_mock
+            .expect_validate_trust_delegation_chain()
+            .returning(|_e, _trust| Ok(true));
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock.expect_get_user().returning(|_e, id| {
+            Ok(Some(
+                UserResponseBuilder::default()
+                    .id(id)
+                    .domain_id("d1")
+                    .enabled(true)
+                    .name(id)
+                    .build()
+                    .unwrap(),
+            ))
+        });
+        let state = get_mocked_state(
+            None,
+            Some(
+                Provider::mocked_builder()
+                    .mock_assignment(assignment_mock)
+                    .mock_role(role_mock)
+                    .mock_trust(trust_mock)
+                    .mock_identity(identity_mock),
+            ),
+        )
+        .await;
+
+        let trust = Trust {
+            id: "t1".to_string(),
+            trustor_user_id: "trustor".to_string(),
+            trustee_user_id: "trustee".to_string(),
+            impersonation: false,
+            project_id: Some(pid.to_string()),
+            expires_at: None,
+            deleted_at: None,
+            extra: None,
+            remaining_uses: None,
+            redelegated_trust_id: None,
+            redelegation_count: None,
+            roles: Some(vec![role_ref(allowed_rid, "reader")]),
+        };
+        let ac_restricted = openstack_keystone_core_types::application_credential::ApplicationCredential {
+            id: "ac1".to_string(),
+            user_id: "appcred_owner".to_string(),
+            project_id: pid.to_string(),
+            name: "cred".to_string(),
+            description: None,
+            roles: vec![role_ref(allowed_rid, "reader")],
+            unrestricted: false,
+            expires_at: None,
+            access_rules: None,
+        };
+        let ac_unrestricted = openstack_keystone_core_types::application_credential::ApplicationCredential {
+            unrestricted: true,
+            ..ac_restricted.clone()
+        };
+
+        // (label, principal user_id, delegation's own role ids, context builder)
+        let delegating_cases: Vec<(&str, &str, Vec<&str>, Box<dyn Fn() -> AuthenticationContext>)> = vec![
+            (
+                "trust",
+                "trustee",
+                vec![allowed_rid],
+                Box::new({
+                    let t = trust.clone();
+                    move || AuthenticationContext::Trust {
+                        trust: t.clone(),
+                        token: None,
+                    }
+                }),
+            ),
+            (
+                "app_cred_restricted",
+                "appcred_owner",
+                vec![allowed_rid],
+                Box::new({
+                    let ac = ac_restricted.clone();
+                    move || AuthenticationContext::ApplicationCredential {
+                        application_credential: ac.clone(),
+                        token: None,
+                    }
+                }),
+            ),
+            (
+                "app_cred_unrestricted",
+                "appcred_owner",
+                vec![allowed_rid],
+                Box::new({
+                    let ac = ac_unrestricted.clone();
+                    move || AuthenticationContext::ApplicationCredential {
+                        application_credential: ac.clone(),
+                        token: None,
+                    }
+                }),
+            ),
+        ];
+
+        let scope_kinds: Vec<ScopeInfo> = vec![
+            make_domain_scope("d1"),
+            make_project_scope(pid),
+            ScopeInfo::System("all".to_string()),
+            make_trust_scope("trustor", "trustee", pid, Some(vec![role_ref(allowed_rid, "reader")])),
+            ScopeInfo::Unscoped,
+        ];
+        // Exercise every ScopeInfo variant at least once, so a variant
+        // added without a row here is visibly under-covered rather than
+        // silently skipped (the classifier above still gates it at
+        // compile time regardless).
+        assert_eq!(scope_kinds.len(), 5);
+
+        for (label, principal_user_id, delegation_roles, ctx_fn) in &delegating_cases {
+            assert!(
+                is_delegating_auth_context(&ctx_fn()),
+                "case {label} must be classified as delegating for this matrix to mean anything"
+            );
+            for scope in &scope_kinds {
+                let scope_label = classify_scope_kind(scope);
+                let ctx = SecurityContextTestingBuilder::default()
+                    .authentication_context(ctx_fn())
+                    .principal(make_user_identity(*principal_user_id))
+                    .build();
+                let result =
+                    ValidatedSecurityContext::new_for_scope(ctx, scope.clone(), &state).await;
+                if let Ok(validated) = result
+                    && let Some(roles) = validated.0.authorization().unwrap().effective_roles()
+                {
+                    for role in roles {
+                        assert!(
+                            delegation_roles.contains(&role.id.as_str()),
+                            "cell ({label}, {scope_label}): effective role {role:?} exceeds \
+                             delegation role set {delegation_roles:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     // Companion negative case: a trust may reach a plain Project scope only
     // for its OWN bound project -- it must not be usable to reach a
     // different project by presenting the EC2-redemption shape.
