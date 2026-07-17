@@ -35,6 +35,7 @@ jobs:
         uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921 # stable
         with:
           toolchain: stable
+          targets: "${{ matrix.target }},wasm32-unknown-unknown"
 
       - name: Rust Cache
         uses: swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0

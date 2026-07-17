@@ -11,3 +11,15 @@ examine_globs = [
     "crates/core/src/policy.rs",
 ]
 test_package = ["openstack-keystone-core", "openstack-keystone-core-types"]
+
+# auth_plugin_auth::acceptance_tests spawns a nested `cargo build --release
+# --target wasm32-unknown-unknown` to produce its reference-plugin wasm
+# fixture. That nested cargo invocation isn't sandbox-safe under
+# cargo-mutants' isolated per-mutant tree copies (missing target/network
+# there) and fails independently of any mutation, so it's excluded from
+# this test run rather than treated as a caught/missed mutant signal.
+additional_cargo_test_args = [
+    "--",
+    "--skip",
+    "auth_plugin_auth::acceptance_tests",
+]
