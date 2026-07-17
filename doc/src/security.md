@@ -65,6 +65,43 @@ Every invariant in §4 is a specialization of this rule.
 - **Secrets never reach OPA.** Decrypted credential `blob`s (EC2 secret keys,
   TOTP seeds) are stripped before policy input is built.
 
+### Additional trust boundaries (security review, issue #989)
+
+The diagram above draws the request → `Credentials` → OPA path. Three more
+boundaries carry the same weight and are named here explicitly:
+
+- **The OPA policy bundle itself.** Whatever a running `opa` instance loads
+  from `ghcr.io/<repo>/opa-bundle` *is* the authorization logic — a
+  tampered or rolled-back bundle is exactly as dangerous as a tampered
+  Keystone binary, without touching Keystone's own code or the `policy/`
+  tree at all. `policy-container.yml`'s publish job signs the bundle by
+  digest with cosign keyless signing and verifies that signature before
+  reporting success (Gate H, security review V4); a deployment that wants
+  load-time verification (OPA's own bundle downloader has no native
+  cosign/Sigstore hook) must run the equivalent `cosign verify` itself
+  before serving traffic, or pin `resource` to a verified digest instead of
+  `latest` — see `tools/opa_config.yaml`.
+- **The WASM plugin invocation path (ADR 0025).** A `mode = full_auth` or
+  `route` plugin is invoked *pre-authentication*, by definition — a remote,
+  unauthenticated party triggers plugin execution and its `http_fetch`
+  calls at will (security review V7). `AuthenticationContext::WasmPlugin`
+  and the `plugin_claims` projection already exist in the tree ahead of the
+  full mechanism; ADR 0025 is still Proposed, so the SSRF/claims-injection/
+  identity-binding/resource-exhaustion controls it specifies are deferred
+  until implementation starts, at which point each control needs a test
+  that exercises the failure, not just the intended path — tracked as part
+  of that feature's definition of done, not as a standalone gate now.
+- **The OAuth2/OIDC provider surface (ADR 0026).** Acting as an OAuth2/OIDC
+  *provider* is the classic web-authz surface Keystone did not previously
+  have — open-redirect via `redirect_uri`, authorization-code interception
+  without PKCE, refresh-token replay (security review V8). ADR 0026
+  commits to exact-match `redirect_uris`, mandatory PKCE for public
+  clients, and refresh-token rotation; V8a additionally verified (and
+  where needed, fixed — the device-flow endpoints now share the
+  `/authorize`/`/token` per-IP rate-limit posture) that the client-id/
+  grant-type oracle and username-enumeration classes don't apply here the
+  way they did in the public research that prompted the review.
+
 ## 4. Invariants
 
 Each invariant lists **what**, **why**, and **where enforced**. When you touch
@@ -304,7 +341,10 @@ since there is no delegation boundary to enforce.
 ## 7. Reviewer checklist
 
 Apply to any diff touching auth, scope, delegation, tokens, credentials, EC2, or
-policy input:
+policy input. This checklist is also the required "Security review checklist"
+section of [`.github/pull_request_template.md`](../../.github/pull_request_template.md)
+(security review design gate, issue #988) -- every PR touching these areas
+carries it, ticked by the reviewer, not just this prose reference.
 
 - [ ] Does any delegation/authorization decision read the **scope**
       (`project_id`, `ScopeInfo`) where it should read the **chain**
