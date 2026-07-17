@@ -2526,6 +2526,43 @@ mod tests {
         ));
     }
 
+    // Companion positive case: an admin principal with no roles on the
+    // target scope must NOT trip `ActorHasNoRolesOnTarget` — `is_admin`
+    // bypasses the check. Catches `delete !` on `!ctx.is_admin()`.
+    #[tokio::test]
+    async fn test_new_for_scope_admin_with_no_roles_on_target_is_allowed() {
+        let uid = "uid";
+        let pid = "pid";
+
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .returning(|_, _| Ok(Vec::<Assignment>::new()));
+
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
+        )
+        .await;
+
+        let authz = AuthzInfoBuilder::default()
+            .scope(make_project_scope(pid))
+            .roles(Vec::new())
+            .build()
+            .unwrap();
+        let mut ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity(uid))
+            .authorization(authz)
+            .build();
+        ctx.set_is_admin();
+
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, make_project_scope(pid), &state).await;
+
+        assert!(result.is_ok());
+    }
+
     // --- Mapping: domain scope match returns pre-populated roles ---
     #[tokio::test]
     async fn test_new_for_scope_mapping_domain_scope_match() {
@@ -3166,6 +3203,56 @@ mod tests {
         assert_eq!(eff[0].id, rid);
     }
 
+    // Discriminates `is_system && matches!(scope_clone, ScopeInfo::Unscoped)`
+    // (the fast-path upgrade guard): `is_system` alone must never upgrade a
+    // non-Unscoped target scope to System. Catches `&&` -> `||`.
+    #[tokio::test]
+    async fn test_new_for_scope_mapping_fast_path_is_system_true_project_not_upgraded() {
+        let pid = "project-2";
+        let vir_id = "vu-fast-path-system-project-0000000000000000";
+        let rid = "member";
+        let roles = vec![role_ref(rid, "member")];
+
+        let authz = AuthzInfoBuilder::default()
+            .scope(make_project_scope(pid))
+            .roles(roles.clone())
+            .build()
+            .unwrap();
+
+        let mc = MappingContext {
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "rule-1".to_string(),
+            virtual_user_id: vir_id.to_string(),
+            is_system: true,
+        };
+
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Mapping(mc))
+            .principal(make_user_identity(vir_id))
+            .authorization(authz)
+            .build();
+
+        // No mock mapping provider — get_virtual_user must NOT be called
+        let state = get_mocked_state(None, None).await;
+
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, make_project_scope(pid), &state).await;
+
+        let validated = result.unwrap();
+        assert!(matches!(
+            validated.0.authorization().unwrap().scope,
+            ScopeInfo::Project { .. }
+        ));
+        let eff = validated
+            .0
+            .authorization()
+            .unwrap()
+            .effective_roles()
+            .unwrap();
+        assert_eq!(eff.len(), 1);
+        assert_eq!(eff[0].id, rid);
+    }
+
     // --- Mapping fast path: pre-set domain roles skip storage read ---
     #[tokio::test]
     async fn test_new_for_scope_mapping_fast_path_domain() {
@@ -3274,6 +3361,86 @@ mod tests {
         assert!(matches!(
             validated.0.authorization().unwrap().scope,
             ScopeInfo::System(ref s) if s == "all"
+        ));
+        let eff = validated
+            .0
+            .authorization()
+            .unwrap()
+            .effective_roles()
+            .unwrap();
+        assert_eq!(eff.len(), 1);
+        assert_eq!(eff[0].id, rid);
+    }
+
+    // Discriminates `is_system && matches!(scope_clone, ScopeInfo::Unscoped)`
+    // in the no-prepopulated-roles branch: `is_system` alone must not divert
+    // a Project-scoped request onto the system-upgrade/slow-read path.
+    // Catches `&&` -> `||`.
+    #[tokio::test]
+    async fn test_new_for_scope_mapping_slow_path_is_system_true_project_not_upgraded() {
+        let pid = "project-3";
+        let vir_id = "vu-slow-path-system-project-0000000000000000";
+        let rid = "member";
+        let roles = vec![role_ref(rid, "member")];
+
+        let vu = VirtualUser {
+            user_id: vir_id.to_string(),
+            unique_workload_id: "workload-sys-project-slow".to_string(),
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "rule-1".to_string(),
+            domain_id: None,
+            resolved_user_name: "system-user".to_string(),
+            is_system: true,
+            resolved_group_bindings: vec![],
+            authorizations: vec![Authorization::Project {
+                project_id: pid.to_string(),
+                project_domain_id: "d1".to_string(),
+                roles: roles.clone(),
+            }],
+            ruleset_version: 1,
+            enabled: true,
+            created_at: 0,
+            last_authenticated_at: 0,
+        };
+
+        let mut mapping_mock = MockMappingProvider::new();
+        mapping_mock
+            .expect_get_virtual_user()
+            .returning(move |_e, id: &str| {
+                if id == vir_id {
+                    Ok(Some(vu.clone()))
+                } else {
+                    Ok(None)
+                }
+            });
+
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_mapping(mapping_mock)),
+        )
+        .await;
+
+        let mc = MappingContext {
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "rule-1".to_string(),
+            virtual_user_id: vir_id.to_string(),
+            is_system: true,
+        };
+
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Mapping(mc))
+            .principal(make_user_identity(vir_id))
+            .build();
+
+        // No pre-set authorization, target scope is Project (not Unscoped):
+        // `is_system` alone must not upgrade this to System scope.
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, make_project_scope(pid), &state).await;
+
+        let validated = result.unwrap();
+        assert!(matches!(
+            validated.0.authorization().unwrap().scope,
+            ScopeInfo::Project { .. }
         ));
         let eff = validated
             .0
@@ -3698,6 +3865,149 @@ mod tests {
         }
     }
 
+    // When the trustee's own domain differs from the trustor's domain, the
+    // trustor's domain enabled-state must be checked, and a disabled
+    // trustor domain must reject the trust. Catches `delete !` on
+    // `!trustor_domain_enabled`.
+    #[tokio::test]
+    async fn test_new_for_scope_trust_rejected_when_trustor_domain_disabled() {
+        use crate::resource::MockResourceProvider;
+
+        let mut trust_mock = MockTrustProvider::default();
+        trust_mock
+            .expect_validate_trust_delegation_chain()
+            .returning(|_e, _trust| Ok(true));
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock.expect_get_user().returning(|_e, id| {
+            Ok(Some(
+                UserResponseBuilder::default()
+                    .id(id)
+                    .domain_id("trustor_domain")
+                    .enabled(true)
+                    .name(id)
+                    .build()
+                    .unwrap(),
+            ))
+        });
+        let mut resource_mock = MockResourceProvider::default();
+        resource_mock
+            .expect_get_domain_enabled()
+            .withf(|_e, domain_id: &str| domain_id == "trustor_domain")
+            .returning(|_e, _domain_id| Ok(false));
+
+        let state = get_mocked_state(
+            None,
+            Some(
+                Provider::mocked_builder()
+                    .mock_trust(trust_mock)
+                    .mock_identity(identity_mock)
+                    .mock_resource(resource_mock),
+            ),
+        )
+        .await;
+
+        // Trustee's own domain ("d1", per `make_user_identity`) differs
+        // from the trustor's domain ("trustor_domain"), so the
+        // trustor-domain-enabled branch is exercised.
+        let trust = Trust {
+            id: "t1".to_string(),
+            trustor_user_id: "trustor".to_string(),
+            trustee_user_id: "trustee".to_string(),
+            impersonation: false,
+            project_id: Some("pid".to_string()),
+            expires_at: None,
+            deleted_at: None,
+            extra: None,
+            remaining_uses: None,
+            redelegated_trust_id: None,
+            redelegation_count: None,
+            roles: None,
+        };
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Trust { trust, token: None })
+            .principal(make_user_identity("trustee"))
+            .build();
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, make_project_scope("pid"), &state).await;
+        assert!(matches!(
+            result,
+            Err(AuthenticationError::TrustorDomainDisabled)
+        ));
+    }
+
+    // Companion positive case: same cross-domain setup, but the trustor's
+    // domain is enabled, so the trust must succeed.
+    #[tokio::test]
+    async fn test_new_for_scope_trust_accepted_when_trustor_domain_enabled() {
+        use crate::resource::MockResourceProvider;
+
+        let rid = "reader";
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .returning(move |_e, _q| Ok(vec![assignment_with_role(rid)]));
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_expand_implied_roles()
+            .returning(|_e, _roles| Ok(()));
+        let mut trust_mock = MockTrustProvider::default();
+        trust_mock
+            .expect_validate_trust_delegation_chain()
+            .returning(|_e, _trust| Ok(true));
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock.expect_get_user().returning(|_e, id| {
+            Ok(Some(
+                UserResponseBuilder::default()
+                    .id(id)
+                    .domain_id("trustor_domain")
+                    .enabled(true)
+                    .name(id)
+                    .build()
+                    .unwrap(),
+            ))
+        });
+        let mut resource_mock = MockResourceProvider::default();
+        resource_mock
+            .expect_get_domain_enabled()
+            .withf(|_e, domain_id: &str| domain_id == "trustor_domain")
+            .returning(|_e, _domain_id| Ok(true));
+
+        let state = get_mocked_state(
+            None,
+            Some(
+                Provider::mocked_builder()
+                    .mock_assignment(assignment_mock)
+                    .mock_role(role_mock)
+                    .mock_trust(trust_mock)
+                    .mock_identity(identity_mock)
+                    .mock_resource(resource_mock),
+            ),
+        )
+        .await;
+
+        let trust = Trust {
+            id: "t1".to_string(),
+            trustor_user_id: "trustor".to_string(),
+            trustee_user_id: "trustee".to_string(),
+            impersonation: false,
+            project_id: Some("pid".to_string()),
+            expires_at: None,
+            deleted_at: None,
+            extra: None,
+            remaining_uses: None,
+            redelegated_trust_id: None,
+            redelegation_count: None,
+            roles: Some(vec![role_ref(rid, "reader")]),
+        };
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Trust { trust, token: None })
+            .principal(make_user_identity("trustee"))
+            .build();
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, make_project_scope("pid"), &state).await;
+        assert!(result.is_ok());
+    }
+
     // Companion negative case: a trust may reach a plain Project scope only
     // for its OWN bound project -- it must not be usable to reach a
     // different project by presenting the EC2-redemption shape.
@@ -3819,6 +4129,29 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    // Boundary case: `issued_at == valid_since` must be accepted (the check
+    // is `issued_at < valid_since`, not `<=`). Catches `<` -> `<=`.
+    #[tokio::test]
+    async fn test_wasm_plugin_token_issued_exactly_at_cutoff_is_accepted() {
+        let valid_since = Utc::now();
+
+        let state = get_mocked_state(Some(wasm_plugin_config("p", Some(valid_since))), None).await;
+
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::WasmPlugin {
+                plugin_name: "p".to_string(),
+                claims: HashMap::new(),
+                token: None,
+            })
+            .principal(make_user_identity("uid"))
+            .token(wasm_plugin_token("p", valid_since))
+            .build();
+
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, ScopeInfo::Unscoped, &state).await;
+        assert!(result.is_ok());
+    }
+
     #[tokio::test]
     async fn test_wasm_plugin_fresh_mint_ignores_valid_since() {
         // No `.token(..)` set - mirrors a brand-new mint, where
@@ -3901,5 +4234,60 @@ mod tests {
             result,
             Err(AuthenticationError::PluginVersionMismatch(ref name)) if name == "p"
         ));
+    }
+
+    // Boundary case for the mapping-mode plugin-version-binding check:
+    // `issued_at == valid_since` must be accepted (the check is
+    // `issued_at < valid_since`, not `<=`). Catches `<` -> `<=`.
+    #[tokio::test]
+    async fn test_mapping_wasm_plugin_token_issued_exactly_at_cutoff_is_accepted() {
+        use openstack_keystone_core_types::mapping::ruleset::MappingRuleSet;
+        use openstack_keystone_core_types::mapping::{DomainResolutionMode, IdentitySource};
+
+        let valid_since = Utc::now();
+
+        let ruleset = MappingRuleSet {
+            mapping_id: "map-1".to_string(),
+            domain_id: Some("d".to_string()),
+            source: IdentitySource::WasmPlugin {
+                plugin_name: "p".to_string(),
+            },
+            domain_resolution_mode: DomainResolutionMode::Fixed,
+            enabled: true,
+            rules: vec![],
+            ruleset_version: 1,
+        };
+        let mut mapping_mock = MockMappingProvider::new();
+        mapping_mock
+            .expect_get_ruleset()
+            .returning(move |_e, id: &str| {
+                if id == "map-1" {
+                    Ok(Some(ruleset.clone()))
+                } else {
+                    Ok(None)
+                }
+            });
+
+        let state = get_mocked_state(
+            Some(wasm_plugin_config("p", Some(valid_since))),
+            Some(Provider::mocked_builder().mock_mapping(mapping_mock)),
+        )
+        .await;
+
+        let mc = MappingContext {
+            mapping_id: "map-1".to_string(),
+            matched_rule_name: "rule-1".to_string(),
+            virtual_user_id: "vu-1".to_string(),
+            is_system: false,
+        };
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Mapping(mc))
+            .principal(make_user_identity("vu-1"))
+            .token(wasm_plugin_token("p", valid_since))
+            .build();
+
+        let result =
+            ValidatedSecurityContext::new_for_scope(ctx, ScopeInfo::Unscoped, &state).await;
+        assert!(result.is_ok());
     }
 }

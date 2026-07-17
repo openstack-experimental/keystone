@@ -239,4 +239,108 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
+
+    /// Gate B3 (security review V3a, issue #979): drives this handler and
+    /// the real `identity/credential/delete.rego` decision through the
+    /// authorized/unauthorized/delegated-allowed/delegated-escape matrix,
+    /// exercising `credential_common.bound_to_own_delegation_project`
+    /// (OSSA-2026-015) via the real `opa run` subprocess instead of
+    /// `MockPolicy`. Requires `opa` on `PATH`.
+    mod real_policy_decision {
+        use openstack_keystone_core::auth::ValidatedSecurityContext;
+
+        use super::*;
+        use crate::api::tests::get_state_with_real_policy;
+        use crate::api::tests::real_policy_fixtures::{member_vsc, restricted_app_cred_vsc};
+        use crate::provider::ProviderBuilder;
+
+        fn provider_with_credential(existing_project_id: Option<&'static str>) -> ProviderBuilder {
+            let mut credential_mock = MockCredentialProvider::default();
+            credential_mock
+                .expect_get_credential()
+                .withf(|_, id: &'_ str| id == "cred1")
+                .returning(move |_, _| {
+                    let mut builder = CredentialBuilder::default();
+                    builder
+                        .id("cred1")
+                        .blob(r#"{"seed":"AAAA"}"#)
+                        .r#type("totp")
+                        .user_id("u1");
+                    if let Some(project_id) = existing_project_id {
+                        builder.project_id(project_id);
+                    }
+                    Ok(Some(builder.build().unwrap()))
+                });
+            credential_mock
+                .expect_delete_credential()
+                .returning(|_, _| Ok(()));
+            Provider::mocked_builder().mock_credential(credential_mock)
+        }
+
+        async fn delete_request(
+            vsc: ValidatedSecurityContext,
+            provider_builder: ProviderBuilder,
+        ) -> StatusCode {
+            let (state, _opa_guard) = get_state_with_real_policy(provider_builder).await;
+            let mut api = openapi_router()
+                .layer(TraceLayer::new_for_http())
+                .with_state(state);
+
+            api.as_service()
+                .oneshot(
+                    Request::builder()
+                        .method("DELETE")
+                        .uri("/cred1")
+                        .extension(vsc)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+        }
+
+        #[tokio::test]
+        async fn owner_deleting_own_non_delegated_credential_is_allowed() {
+            let status = delete_request(
+                member_vsc("u1", "p1", &["member"]),
+                provider_with_credential(None),
+            )
+            .await;
+            assert_eq!(status, StatusCode::NO_CONTENT);
+        }
+
+        #[tokio::test]
+        async fn caller_with_no_roles_is_denied() {
+            let status =
+                delete_request(member_vsc("u1", "p1", &[]), provider_with_credential(None)).await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+
+        /// OSSA-2026-015: a delegated caller deleting a credential bound to
+        /// its own delegation project is allowed.
+        #[tokio::test]
+        async fn delegated_caller_deleting_credential_bound_to_own_project_is_allowed() {
+            let status = delete_request(
+                restricted_app_cred_vsc("u1", "p1"),
+                provider_with_credential(Some("p1")),
+            )
+            .await;
+            assert_eq!(status, StatusCode::NO_CONTENT);
+        }
+
+        /// OSSA-2026-015: a delegated caller must not be able to delete an
+        /// unscoped credential (e.g. TOTP/MFA) it owns -- out-of-scope for
+        /// any delegated caller, since stealing a delegation token must not
+        /// be enough to destroy a user's MFA binding.
+        #[tokio::test]
+        async fn delegated_caller_deleting_unscoped_credential_is_denied() {
+            let status = delete_request(
+                restricted_app_cred_vsc("u1", "p1"),
+                provider_with_credential(None),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+    }
 }

@@ -259,4 +259,158 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
+
+    /// Gate B3 (security review V3a, issue #979): drives this handler and
+    /// the real `identity/mapping/ruleset/create.rego` decision (via a real
+    /// `opa run` subprocess instead of `MockPolicy`) through the
+    /// own-domain-manager/foreign-domain/global-requires-admin matrix.
+    /// Requires `opa` on `PATH`.
+    mod real_policy_decision {
+        use openstack_keystone_core::auth::ValidatedSecurityContext;
+        use openstack_keystone_core_types::auth::{
+            AuthenticationContext, AuthzInfoBuilder, IdentityInfo, PrincipalInfo, ScopeInfo,
+            SecurityContext, UserIdentityInfoBuilder,
+        };
+        use openstack_keystone_core_types::resource::Domain;
+        use openstack_keystone_core_types::role::RoleRef;
+
+        use super::*;
+        use crate::api::tests::get_state_with_real_policy;
+        use crate::provider::ProviderBuilder;
+
+        fn domain_scoped_vsc(domain_id: &str, roles: &[&str]) -> ValidatedSecurityContext {
+            let domain = Domain {
+                id: domain_id.to_string(),
+                name: domain_id.to_string(),
+                enabled: true,
+                ..Default::default()
+            };
+
+            let authz = AuthzInfoBuilder::default()
+                .scope(ScopeInfo::Domain(domain.clone()))
+                .roles(
+                    roles
+                        .iter()
+                        .enumerate()
+                        .map(|(i, name)| RoleRef {
+                            domain_id: None,
+                            id: format!("role-{i}"),
+                            name: Some((*name).to_string()),
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .build()
+                .unwrap();
+
+            let sc = SecurityContext::test_build()
+                .authentication_context(AuthenticationContext::Password)
+                .principal(PrincipalInfo {
+                    identity: IdentityInfo::User(
+                        UserIdentityInfoBuilder::default()
+                            .user_id("u1")
+                            .user(
+                                openstack_keystone_core_types::identity::UserResponseBuilder::default()
+                                    .id("u1")
+                                    .domain_id(domain_id)
+                                    .enabled(true)
+                                    .name("u1")
+                                    .build()
+                                    .unwrap(),
+                            )
+                            .user_domain(domain)
+                            .build()
+                            .unwrap(),
+                    ),
+                })
+                .authorization(authz)
+                .build();
+            ValidatedSecurityContext::test_new(sc)
+        }
+
+        fn allowing_provider() -> ProviderBuilder {
+            let mut mock = MockMappingProvider::default();
+            mock.expect_create_ruleset()
+                .returning(|_, _| Ok(sample_ruleset_core()));
+            Provider::mocked_builder().mock_mapping(mock)
+        }
+
+        fn ruleset_for_domain(domain_id: Option<&str>) -> MappingRuleSetCreate {
+            let mut ruleset = sample_ruleset();
+            ruleset.domain_id = domain_id.map(String::from);
+            ruleset
+        }
+
+        async fn create_request(
+            vsc: ValidatedSecurityContext,
+            domain_id: Option<&str>,
+            provider_builder: ProviderBuilder,
+        ) -> StatusCode {
+            let (state, _opa_guard) = get_state_with_real_policy(provider_builder).await;
+            let mut api = openapi_router()
+                .layer(TraceLayer::new_for_http())
+                .with_state(state);
+
+            let req = MappingRuleSetCreateRequest {
+                mapping: ruleset_for_domain(domain_id),
+            };
+
+            api.as_service()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .extension(vsc)
+                        .body(Body::from(serde_json::to_string(&req).unwrap()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+        }
+
+        #[tokio::test]
+        async fn domain_manager_creating_ruleset_in_own_domain_is_allowed() {
+            let status = create_request(
+                domain_scoped_vsc("d1", &["manager"]),
+                Some("d1"),
+                allowing_provider(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CREATED);
+        }
+
+        #[tokio::test]
+        async fn domain_manager_creating_ruleset_in_foreign_domain_is_denied() {
+            let status = create_request(
+                domain_scoped_vsc("d1", &["manager"]),
+                Some("d2"),
+                Provider::mocked_builder(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+
+        #[tokio::test]
+        async fn domain_manager_creating_global_ruleset_is_denied() {
+            let status = create_request(
+                domain_scoped_vsc("d1", &["manager"]),
+                None,
+                Provider::mocked_builder(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+
+        #[tokio::test]
+        async fn admin_creating_global_ruleset_is_allowed() {
+            let status = create_request(
+                domain_scoped_vsc("d1", &["admin"]),
+                None,
+                allowing_provider(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CREATED);
+        }
+    }
 }

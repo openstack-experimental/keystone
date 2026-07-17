@@ -208,4 +208,149 @@ mod tests {
         let res: CredentialResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(res.credential.id, "new_id");
     }
+
+    /// Gate B3 (security review V3a, issue #979): drives this handler and
+    /// the real `identity/credential/create.rego` decision (via
+    /// `get_state_with_real_policy`'s real `opa run` subprocess + the
+    /// production `HttpPolicyEnforcer`, instead of a canned allow/deny)
+    /// through the authorized/unauthorized/delegated-allowed/
+    /// delegated-escape matrix. `test_create_policy_input_contract` above
+    /// proves the handler builds a well-shaped policy input; this proves
+    /// the real policy actually decides on it as expected -- closing the
+    /// gap a mock can never catch (a handler feeding OPA a subtly wrong
+    /// document that a mock accepts, but the real policy would not).
+    /// Requires `opa` on `PATH`.
+    mod real_policy_decision {
+        use openstack_keystone_core::auth::ValidatedSecurityContext;
+
+        use super::*;
+        use crate::api::tests::get_state_with_real_policy;
+        use crate::api::tests::real_policy_fixtures::{member_vsc, restricted_app_cred_vsc};
+        use crate::provider::ProviderBuilder;
+
+        /// A `MockCredentialProvider` whose `create_credential` always
+        /// succeeds -- only reached by the scenarios the real policy is
+        /// expected to allow; the denied scenarios never get this far.
+        fn allowing_provider() -> ProviderBuilder {
+            let mut credential_mock = crate::credential::MockCredentialProvider::default();
+            credential_mock
+                .expect_create_credential()
+                .returning(|_, rec| {
+                    let mut builder =
+                        openstack_keystone_core_types::credential::CredentialBuilder::default();
+                    builder
+                        .id("new_id")
+                        .blob(rec.blob.clone())
+                        .r#type(rec.r#type.clone())
+                        .user_id(rec.user_id.clone().unwrap_or_default());
+                    if let Some(project_id) = &rec.project_id {
+                        builder.project_id(project_id.clone());
+                    }
+                    Ok(builder.build().unwrap())
+                });
+            Provider::mocked_builder().mock_credential(credential_mock)
+        }
+
+        async fn create_request(
+            vsc: ValidatedSecurityContext,
+            credential: crate::api::v3::credential::types::CredentialCreate,
+            provider_builder: ProviderBuilder,
+        ) -> StatusCode {
+            let (state, _opa_guard) = get_state_with_real_policy(provider_builder).await;
+            let mut api = openapi_router()
+                .layer(TraceLayer::new_for_http())
+                .with_state(state);
+
+            let req = crate::api::v3::credential::types::CredentialCreateRequest { credential };
+
+            api.as_service()
+                .oneshot(
+                    Request::builder()
+                        .uri("/")
+                        .extension(vsc)
+                        .header("Content-Type", "application/json")
+                        .method("POST")
+                        .body(Body::from(serde_json::to_string(&req).unwrap()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+        }
+
+        #[tokio::test]
+        async fn authorized_member_creating_own_credential_is_allowed() {
+            let status = create_request(
+                member_vsc("u1", "p1", &["member"]),
+                CredentialCreateBuilder::default()
+                    .blob(r#"{"seed":"AAAA"}"#)
+                    .r#type("totp")
+                    .user_id("u1")
+                    .build()
+                    .unwrap(),
+                allowing_provider(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CREATED);
+        }
+
+        #[tokio::test]
+        async fn unauthorized_caller_with_no_roles_is_denied() {
+            let status = create_request(
+                member_vsc("u1", "p1", &[]),
+                CredentialCreateBuilder::default()
+                    .blob(r#"{"seed":"AAAA"}"#)
+                    .r#type("totp")
+                    .user_id("u1")
+                    .build()
+                    .unwrap(),
+                Provider::mocked_builder(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+
+        /// OSSA-2026-015: a restricted application credential creating a
+        /// non-ec2 credential bound to its own delegation project is
+        /// allowed.
+        #[tokio::test]
+        async fn delegated_credential_bound_to_own_project_is_allowed() {
+            let status = create_request(
+                restricted_app_cred_vsc("u1", "p1"),
+                CredentialCreateBuilder::default()
+                    .blob(r#"{"seed":"AAAA"}"#)
+                    .r#type("totp")
+                    .user_id("u1")
+                    .project_id("p1")
+                    .build()
+                    .unwrap(),
+                allowing_provider(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CREATED);
+        }
+
+        /// OSSA-2026-015: a delegated caller whose token scope is pinned to
+        /// its own delegation project (no Rust-side scope-drift) must still
+        /// be denied by the real Rego policy from creating a credential
+        /// that escapes that project (here: no `project_id` on the target
+        /// at all, i.e. an unscoped credential) -- this is the
+        /// `credential_common.not_delegated_or_bound_to_own_project` check
+        /// itself, not the Rust-side tripwire in `Credentials::try_from`.
+        #[tokio::test]
+        async fn delegated_credential_escaping_own_project_is_denied() {
+            let status = create_request(
+                restricted_app_cred_vsc("u1", "p1"),
+                CredentialCreateBuilder::default()
+                    .blob(r#"{"seed":"AAAA"}"#)
+                    .r#type("totp")
+                    .user_id("u1")
+                    .build()
+                    .unwrap(),
+                Provider::mocked_builder(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+    }
 }

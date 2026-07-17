@@ -277,4 +277,79 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
+
+    /// Gate B3 (security review V3a, issue #979): the per-item re-check
+    /// (ADR 0019 §2, CVE-2019-19687) is where `list`'s delegation boundary
+    /// (OSSA-2026-015) actually lives -- `identity/credential/list.rego`
+    /// itself lets any member attempt to list, so this drives a delegated
+    /// caller's list through the real `identity/credential/show.rego`
+    /// decision (via a real `opa run` subprocess) over a mixed batch: one
+    /// record bound to the delegation's own project (must survive), one
+    /// bound to a different project, and one unscoped (both must be
+    /// silently dropped, never surfaced as an error). Requires `opa` on
+    /// `PATH`.
+    #[tokio::test]
+    async fn delegated_caller_list_is_filtered_to_own_project_by_real_policy() {
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock.expect_list_credentials().returning(|_, _| {
+            Ok(vec![
+                CredentialBuilder::default()
+                    .id("own-project")
+                    .blob(r#"{"seed":"AAAA"}"#)
+                    .r#type("totp")
+                    .user_id("u1")
+                    .project_id("p1")
+                    .build()
+                    .unwrap(),
+                CredentialBuilder::default()
+                    .id("other-project")
+                    .blob(r#"{"seed":"BBBB"}"#)
+                    .r#type("totp")
+                    .user_id("u1")
+                    .project_id("p2")
+                    .build()
+                    .unwrap(),
+                CredentialBuilder::default()
+                    .id("unscoped")
+                    .blob(r#"{"seed":"CCCC"}"#)
+                    .r#type("totp")
+                    .user_id("u1")
+                    .build()
+                    .unwrap(),
+            ])
+        });
+
+        let vsc = crate::api::tests::real_policy_fixtures::restricted_app_cred_vsc("u1", "p1");
+        let (state, _opa_guard) = crate::api::tests::get_state_with_real_policy(
+            Provider::mocked_builder().mock_credential(credential_mock),
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let res: CredentialList = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            res.credentials
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["own-project"]
+        );
+    }
 }

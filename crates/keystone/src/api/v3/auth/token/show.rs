@@ -256,6 +256,136 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
+    /// Gate B3 (security review V3a, issue #979): drives this handler and
+    /// the real `identity/auth/token/show.rego` decision (via a real `opa
+    /// run` subprocess instead of `MockPolicy`) through the owner/non-owner
+    /// matrix -- `identity.token_subject` is the rule that actually decides
+    /// who may view a token (besides admin/service/system-reader), and a
+    /// mock can never catch a handler feeding it the wrong `user_id`
+    /// (issue #979 caught exactly this: `token_subject` compared against
+    /// `token.user_id`, but the real `Token` struct nests it as
+    /// `token.user.id`, so this branch was silently dead -- fixed in
+    /// `policy/identity.rego`). Requires `opa` on `PATH`.
+    mod real_policy_decision {
+        use openstack_keystone_core::auth::ValidatedSecurityContext;
+        use openstack_keystone_core_types::auth::{AuthzInfoBuilder, *};
+        use openstack_keystone_core_types::resource::Domain as CoreDomain;
+        use openstack_keystone_core_types::token::UnscopedPayload;
+
+        use super::*;
+        use crate::api::tests::get_state_with_real_policy;
+        use crate::api::tests::real_policy_fixtures::member_vsc;
+        use crate::provider::ProviderBuilder;
+
+        fn subject_token_vsc(owner_user_id: &str) -> ValidatedSecurityContext {
+            let user_domain = CoreDomain {
+                id: "d1".into(),
+                enabled: true,
+                ..Default::default()
+            };
+            let authz = AuthzInfoBuilder::default()
+                .scope(ScopeInfo::Domain(CoreDomain {
+                    id: "d1".into(),
+                    enabled: true,
+                    ..Default::default()
+                }))
+                .build()
+                .unwrap();
+            ValidatedSecurityContext::test_new(
+                SecurityContext::test_build()
+                    .authentication_context(AuthenticationContext::Password)
+                    .principal(PrincipalInfo {
+                        identity: IdentityInfo::User(
+                            UserIdentityInfoBuilder::default()
+                                .user_id(owner_user_id)
+                                .user_domain(user_domain)
+                                .build()
+                                .unwrap(),
+                        ),
+                    })
+                    .token(openstack_keystone_core_types::token::FernetToken::Unscoped(
+                        UnscopedPayload {
+                            user_id: owner_user_id.into(),
+                            ..Default::default()
+                        },
+                    ))
+                    .authorization(authz)
+                    .build(),
+            )
+        }
+
+        fn provider_with_subject_token(owner_user_id: &'static str) -> ProviderBuilder {
+            let subject_vsc = subject_token_vsc(owner_user_id);
+
+            let mut token_mock = MockTokenProvider::default();
+            token_mock
+                .expect_validate_to_context()
+                .returning(move |_, _, _, _| Ok(subject_vsc.clone()));
+
+            let mut catalog_mock = MockCatalogProvider::default();
+            catalog_mock
+                .expect_get_catalog()
+                .returning(|_, _| Ok(Vec::new()));
+
+            let mut resource_mock = MockResourceProvider::default();
+            resource_mock.expect_get_domain().returning(|_, _| {
+                Ok(Some(CoreDomain {
+                    id: "d1".into(),
+                    enabled: true,
+                    ..Default::default()
+                }))
+            });
+
+            Provider::mocked_builder()
+                .mock_token(token_mock)
+                .mock_catalog(catalog_mock)
+                .mock_resource(resource_mock)
+        }
+
+        async fn show_request(
+            vsc: ValidatedSecurityContext,
+            provider_builder: ProviderBuilder,
+        ) -> StatusCode {
+            let (state, _opa_guard) = get_state_with_real_policy(provider_builder).await;
+            let mut api = openapi_router()
+                .layer(TraceLayer::new_for_http())
+                .with_state(state);
+
+            api.as_service()
+                .oneshot(
+                    Request::builder()
+                        .uri("/")
+                        .extension(vsc)
+                        .header("x-subject-token", "subject")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+        }
+
+        #[tokio::test]
+        async fn owner_viewing_own_token_is_allowed() {
+            let status = show_request(
+                member_vsc("u1", "p1", &[]),
+                provider_with_subject_token("u1"),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn non_owner_viewing_someone_elses_token_is_denied() {
+            let status = show_request(
+                member_vsc("u2", "p1", &[]),
+                provider_with_subject_token("u1"),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+    }
+
     #[tokio::test]
     async fn test_show_domain() {
         use openstack_keystone_core_types::auth::{AuthzInfoBuilder, *};

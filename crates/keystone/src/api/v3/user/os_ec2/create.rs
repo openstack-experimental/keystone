@@ -296,4 +296,136 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
+
+    /// Gate B3 (security review V3a, issue #979): drives this handler and
+    /// the real `identity/os_ec2/create_credential.rego` decision through
+    /// the authorized/unauthorized/delegated-allowed/delegated-escape/
+    /// restricted-app-cred matrix via a real `opa run` subprocess, covering
+    /// both the OSSA-2026-015 delegation boundary and the OSSA-2026-005 /
+    /// CVE-2026-33551 restricted-application-credential block. Requires
+    /// `opa` on `PATH`.
+    mod real_policy_decision {
+        use openstack_keystone_core::auth::ValidatedSecurityContext;
+
+        use super::*;
+        use crate::api::tests::get_state_with_real_policy;
+        use crate::api::tests::real_policy_fixtures::{app_cred_vsc, member_vsc};
+        use crate::provider::ProviderBuilder;
+
+        fn allowing_provider() -> ProviderBuilder {
+            let mut credential_mock = MockCredentialProvider::default();
+            credential_mock
+                .expect_create_credential()
+                .returning(|_, rec| {
+                    Ok(CredentialBuilder::default()
+                        .id("cred_id")
+                        .blob(rec.blob.clone())
+                        .r#type("ec2")
+                        .user_id(rec.user_id.clone().unwrap_or_default())
+                        .project_id(rec.project_id.clone().unwrap_or_default())
+                        .build()
+                        .unwrap())
+                });
+            Provider::mocked_builder().mock_credential(credential_mock)
+        }
+
+        async fn create_request(
+            vsc: ValidatedSecurityContext,
+            path_user_id: &str,
+            tenant_id: Option<&str>,
+            provider_builder: ProviderBuilder,
+        ) -> StatusCode {
+            let (state, _opa_guard) = get_state_with_real_policy(provider_builder).await;
+            let mut api = openapi_router()
+                .layer(TraceLayer::new_for_http())
+                .with_state(state);
+
+            let body = match tenant_id {
+                Some(tenant_id) => format!(r#"{{"tenant_id":"{tenant_id}"}}"#),
+                None => "{}".to_string(),
+            };
+
+            api.as_service()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/{path_user_id}/credentials/OS-EC2"))
+                        .extension(vsc)
+                        .header("Content-Type", "application/json")
+                        .method("POST")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+        }
+
+        #[tokio::test]
+        async fn authorized_member_creating_own_ec2_credential_is_allowed() {
+            let status = create_request(
+                member_vsc("u1", "p1", &["member"]),
+                "u1",
+                Some("p1"),
+                allowing_provider(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CREATED);
+        }
+
+        #[tokio::test]
+        async fn creating_ec2_credential_for_another_user_is_denied() {
+            let status = create_request(
+                member_vsc("u1", "p1", &["member"]),
+                "u2",
+                Some("p1"),
+                Provider::mocked_builder(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+
+        /// OSSA-2026-005 / CVE-2026-33551: a restricted application
+        /// credential must never be usable to mint an EC2 credential, even
+        /// for itself bound to its own delegation project.
+        #[tokio::test]
+        async fn restricted_app_cred_creating_ec2_credential_is_denied() {
+            let status = create_request(
+                app_cred_vsc("u1", "p1", false),
+                "u1",
+                Some("p1"),
+                Provider::mocked_builder(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+
+        /// An unrestricted application credential may mint an EC2 credential
+        /// bound to its own delegation project.
+        #[tokio::test]
+        async fn unrestricted_app_cred_creating_ec2_credential_bound_to_own_project_is_allowed() {
+            let status = create_request(
+                app_cred_vsc("u1", "p1", true),
+                "u1",
+                Some("p1"),
+                allowing_provider(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CREATED);
+        }
+
+        /// OSSA-2026-015: an unrestricted application credential must still
+        /// be denied from minting an EC2 credential that escapes its own
+        /// delegation project.
+        #[tokio::test]
+        async fn unrestricted_app_cred_creating_ec2_credential_escaping_own_project_is_denied() {
+            let status = create_request(
+                app_cred_vsc("u1", "p1", true),
+                "u1",
+                Some("p2"),
+                Provider::mocked_builder(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+    }
 }

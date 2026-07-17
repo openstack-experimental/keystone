@@ -182,4 +182,109 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
+
+    /// Gate B3 (security review V3a, issue #979): drives this handler and
+    /// the real `identity/credential/show.rego` decision through the
+    /// authorized/unauthorized/delegated-allowed/delegated-escape matrix
+    /// via a real `opa run` subprocess, exercising
+    /// `credential_common.bound_to_own_delegation_project`
+    /// (OSSA-2026-015). Also underlies `credential::list`'s per-item
+    /// re-check (ADR 0019 §2, CVE-2019-19687). Requires `opa` on `PATH`.
+    mod real_policy_decision {
+        use openstack_keystone_core::auth::ValidatedSecurityContext;
+
+        use super::*;
+        use crate::api::tests::get_state_with_real_policy;
+        use crate::api::tests::real_policy_fixtures::{member_vsc, restricted_app_cred_vsc};
+        use crate::provider::ProviderBuilder;
+
+        fn provider_with_credential(
+            owner_user_id: &'static str,
+            existing_project_id: Option<&'static str>,
+        ) -> ProviderBuilder {
+            let mut credential_mock = MockCredentialProvider::default();
+            credential_mock
+                .expect_get_credential()
+                .withf(|_, id: &'_ str| id == "cred1")
+                .returning(move |_, _| {
+                    let mut builder = CredentialBuilder::default();
+                    builder
+                        .id("cred1")
+                        .blob(r#"{"seed":"AAAA"}"#)
+                        .r#type("totp")
+                        .user_id(owner_user_id);
+                    if let Some(project_id) = existing_project_id {
+                        builder.project_id(project_id);
+                    }
+                    Ok(Some(builder.build().unwrap()))
+                });
+            Provider::mocked_builder().mock_credential(credential_mock)
+        }
+
+        async fn show_request(
+            vsc: ValidatedSecurityContext,
+            provider_builder: ProviderBuilder,
+        ) -> StatusCode {
+            let (state, _opa_guard) = get_state_with_real_policy(provider_builder).await;
+            let mut api = openapi_router()
+                .layer(TraceLayer::new_for_http())
+                .with_state(state);
+
+            api.as_service()
+                .oneshot(
+                    Request::builder()
+                        .uri("/cred1")
+                        .extension(vsc)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+        }
+
+        #[tokio::test]
+        async fn owner_reading_own_non_delegated_credential_is_allowed() {
+            let status = show_request(
+                member_vsc("u1", "p1", &["member"]),
+                provider_with_credential("u1", None),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn non_owner_reading_someone_elses_credential_is_denied() {
+            let status = show_request(
+                member_vsc("u2", "p1", &["member"]),
+                provider_with_credential("u1", None),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+
+        /// OSSA-2026-015: a delegated caller reading a credential bound to
+        /// its own delegation project is allowed.
+        #[tokio::test]
+        async fn delegated_caller_reading_credential_bound_to_own_project_is_allowed() {
+            let status = show_request(
+                restricted_app_cred_vsc("u1", "p1"),
+                provider_with_credential("u1", Some("p1")),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+        }
+
+        /// OSSA-2026-015: a delegated caller must not be able to read an
+        /// unscoped credential (e.g. TOTP/MFA seed) it owns.
+        #[tokio::test]
+        async fn delegated_caller_reading_unscoped_credential_is_denied() {
+            let status = show_request(
+                restricted_app_cred_vsc("u1", "p1"),
+                provider_with_credential("u1", None),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+    }
 }

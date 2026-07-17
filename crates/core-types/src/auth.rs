@@ -3149,4 +3149,245 @@ mod tests {
         let has_auth = ctx.audit_ids().iter().any(|s| s == "parent2");
         assert!(has_auth);
     }
+
+    // --- AuthenticationContext::is_delegated (OSSA-2026-015 / ADR 0019 §2) ---
+
+    fn make_token_with_methods(methods: Vec<&str>) -> AuthenticationContext {
+        let payload = UnscopedPayloadBuilder::default()
+            .user_id("uid")
+            .audit_ids(std::iter::empty::<String>())
+            .methods(methods.into_iter().map(str::to_string))
+            .expires_at(Utc::now())
+            .build()
+            .unwrap();
+        AuthenticationContext::Token(FernetToken::Unscoped(payload))
+    }
+
+    #[test]
+    fn test_is_delegated_direct_application_credential() {
+        let ctx = AuthenticationContext::ApplicationCredential {
+            application_credential: make_app_cred("uid"),
+            token: None,
+        };
+        assert!(ctx.is_delegated());
+    }
+
+    #[test]
+    fn test_is_delegated_direct_trust() {
+        let ctx = AuthenticationContext::Trust {
+            trust: make_trust("uid"),
+            token: None,
+        };
+        assert!(ctx.is_delegated());
+    }
+
+    #[test]
+    fn test_is_delegated_rescoped_token_carries_trust_method() {
+        // matches!(..) is false here (this is a Token variant), so only the
+        // methods()-based OR branch can make this true. Catches `||` -> `&&`
+        // and matches!-branch deletion mutants.
+        let ctx = make_token_with_methods(vec!["trust"]);
+        assert!(ctx.is_delegated());
+    }
+
+    #[test]
+    fn test_is_delegated_rescoped_token_carries_app_cred_method() {
+        let ctx = make_token_with_methods(vec!["application_credential"]);
+        assert!(ctx.is_delegated());
+    }
+
+    #[test]
+    fn test_is_delegated_rescoped_token_non_delegated_methods() {
+        let ctx = make_token_with_methods(vec!["password", "token"]);
+        assert!(!ctx.is_delegated());
+    }
+
+    #[test]
+    fn test_is_delegated_password_is_false() {
+        assert!(!AuthenticationContext::Password.is_delegated());
+    }
+
+    #[test]
+    fn test_is_delegated_webauthn_is_false() {
+        assert!(!AuthenticationContext::WebauthN.is_delegated());
+    }
+
+    // --- ScopeInfo / TrustProjectInfo PartialEq (scope-drift comparisons) ---
+
+    fn make_trust_project_info(trust_id: &str, project_id: &str) -> TrustProjectInfo {
+        TrustProjectInfo {
+            trust: TrustBuilder::default()
+                .id(trust_id)
+                .trustor_user_id("trustor")
+                .trustee_user_id("trustee")
+                .impersonation(false)
+                .build()
+                .unwrap(),
+            project: Project {
+                id: project_id.into(),
+                ..make_project()
+            },
+            project_domain: make_domain(),
+        }
+    }
+
+    #[test]
+    fn test_scope_info_domain_eq_same_id_and_enabled() {
+        assert_eq!(
+            ScopeInfo::Domain(make_domain()),
+            ScopeInfo::Domain(make_domain())
+        );
+    }
+
+    #[test]
+    fn test_scope_info_domain_eq_different_id_is_false() {
+        let other = Domain {
+            id: "other_did".into(),
+            ..make_domain()
+        };
+        assert_ne!(ScopeInfo::Domain(make_domain()), ScopeInfo::Domain(other));
+    }
+
+    #[test]
+    fn test_scope_info_domain_eq_different_enabled_is_false() {
+        assert_ne!(
+            ScopeInfo::Domain(make_domain()),
+            ScopeInfo::Domain(make_disabled_domain())
+        );
+    }
+
+    #[test]
+    fn test_scope_info_project_eq_same_fields() {
+        let a = ScopeInfo::Project {
+            project: make_project(),
+            project_domain: make_domain(),
+        };
+        let b = ScopeInfo::Project {
+            project: make_project(),
+            project_domain: make_domain(),
+        };
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_scope_info_project_eq_different_project_id_is_false() {
+        let a = ScopeInfo::Project {
+            project: make_project(),
+            project_domain: make_domain(),
+        };
+        let b = ScopeInfo::Project {
+            project: make_project2(),
+            project_domain: make_domain(),
+        };
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_scope_info_project_eq_different_domain_id_is_false() {
+        let a = ScopeInfo::Project {
+            project: make_project(),
+            project_domain: make_domain(),
+        };
+        let b = ScopeInfo::Project {
+            project: Project {
+                domain_id: "other_did".into(),
+                ..make_project()
+            },
+            project_domain: make_domain(),
+        };
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_scope_info_project_eq_different_project_enabled_is_false() {
+        let a = ScopeInfo::Project {
+            project: make_project(),
+            project_domain: make_domain(),
+        };
+        let b = ScopeInfo::Project {
+            project: make_disabled_project(),
+            project_domain: make_domain(),
+        };
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_scope_info_project_eq_different_project_domain_enabled_is_false() {
+        let a = ScopeInfo::Project {
+            project: make_project(),
+            project_domain: make_domain(),
+        };
+        let b = ScopeInfo::Project {
+            project: make_project(),
+            project_domain: make_disabled_domain(),
+        };
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_scope_info_system_eq() {
+        assert_eq!(
+            ScopeInfo::System("system".into()),
+            ScopeInfo::System("system".into())
+        );
+        assert_ne!(
+            ScopeInfo::System("system".into()),
+            ScopeInfo::System("other".into())
+        );
+    }
+
+    #[test]
+    fn test_scope_info_trust_project_eq_delegates_to_trust_project_info() {
+        let a = ScopeInfo::TrustProject(Box::new(make_trust_project_info("t1", "p1")));
+        let b = ScopeInfo::TrustProject(Box::new(make_trust_project_info("t1", "p1")));
+        assert_eq!(a, b);
+
+        let c = ScopeInfo::TrustProject(Box::new(make_trust_project_info("t2", "p1")));
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn test_scope_info_unscoped_eq() {
+        assert_eq!(ScopeInfo::Unscoped, ScopeInfo::Unscoped);
+    }
+
+    #[test]
+    fn test_scope_info_cross_variant_never_equal() {
+        assert_ne!(ScopeInfo::Domain(make_domain()), ScopeInfo::Unscoped);
+        assert_ne!(
+            ScopeInfo::System("system".into()),
+            ScopeInfo::Domain(make_domain())
+        );
+        assert_ne!(
+            ScopeInfo::Project {
+                project: make_project(),
+                project_domain: make_domain(),
+            },
+            ScopeInfo::Unscoped
+        );
+    }
+
+    #[test]
+    fn test_trust_project_info_eq_same_ids() {
+        assert_eq!(
+            make_trust_project_info("t1", "p1"),
+            make_trust_project_info("t1", "p1")
+        );
+    }
+
+    #[test]
+    fn test_trust_project_info_eq_different_trust_id_is_false() {
+        assert_ne!(
+            make_trust_project_info("t1", "p1"),
+            make_trust_project_info("t2", "p1")
+        );
+    }
+
+    #[test]
+    fn test_trust_project_info_eq_different_project_id_is_false() {
+        assert_ne!(
+            make_trust_project_info("t1", "p1"),
+            make_trust_project_info("t1", "p2")
+        );
+    }
 }

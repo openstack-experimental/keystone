@@ -324,4 +324,137 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
+
+    /// Gate B3 (security review V3a, issue #979): drives this handler and
+    /// the real `identity/credential/update.rego` decision through the
+    /// authorized/unauthorized/delegated-allowed/delegated-escape matrix
+    /// via a real `opa run` subprocess, exercising both
+    /// `credential_common.bound_to_own_delegation_project` and
+    /// `moves_project_out_of_scope` (OSSA-2026-015). Requires `opa` on
+    /// `PATH`.
+    mod real_policy_decision {
+        use openstack_keystone_core::auth::ValidatedSecurityContext;
+
+        use super::*;
+        use crate::api::tests::get_state_with_real_policy;
+        use crate::api::tests::real_policy_fixtures::{member_vsc, restricted_app_cred_vsc};
+        use crate::provider::ProviderBuilder;
+
+        fn provider_with_credential(
+            owner_user_id: &'static str,
+            existing_project_id: Option<&'static str>,
+        ) -> ProviderBuilder {
+            let mut credential_mock = MockCredentialProvider::default();
+            credential_mock
+                .expect_get_credential()
+                .withf(|_, id: &'_ str| id == "bar")
+                .returning(move |_, _| {
+                    let mut builder = CredentialBuilder::default();
+                    builder
+                        .id("bar")
+                        .blob(r#"{"seed":"OLD"}"#)
+                        .r#type("totp")
+                        .user_id(owner_user_id);
+                    if let Some(project_id) = existing_project_id {
+                        builder.project_id(project_id);
+                    }
+                    Ok(Some(builder.build().unwrap()))
+                });
+            credential_mock
+                .expect_update_credential()
+                .returning(move |_, _, _| {
+                    let mut builder = CredentialBuilder::default();
+                    builder
+                        .id("bar")
+                        .blob(r#"{"seed":"NEW"}"#)
+                        .r#type("totp")
+                        .user_id(owner_user_id);
+                    if let Some(project_id) = existing_project_id {
+                        builder.project_id(project_id);
+                    }
+                    Ok(builder.build().unwrap())
+                });
+            Provider::mocked_builder().mock_credential(credential_mock)
+        }
+
+        async fn update_request(
+            vsc: ValidatedSecurityContext,
+            provider_builder: ProviderBuilder,
+        ) -> StatusCode {
+            let (state, _opa_guard) = get_state_with_real_policy(provider_builder).await;
+            let mut api = openapi_router()
+                .layer(TraceLayer::new_for_http())
+                .with_state(state);
+
+            let update_req = CredentialUpdateRequest {
+                credential: CredentialUpdateBuilder::default()
+                    .blob(r#"{"seed":"NEW"}"#)
+                    .build()
+                    .unwrap(),
+            };
+
+            api.as_service()
+                .oneshot(
+                    Request::builder()
+                        .method("PATCH")
+                        .header(http::header::CONTENT_TYPE, "application/json")
+                        .uri("/bar")
+                        .extension(vsc)
+                        .body(Body::from(serde_json::to_string(&update_req).unwrap()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+        }
+
+        #[tokio::test]
+        async fn owner_updating_own_non_delegated_credential_is_allowed() {
+            let status = update_request(
+                member_vsc("u1", "p1", &["member"]),
+                provider_with_credential("u1", None),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn caller_with_no_roles_is_denied() {
+            let status = update_request(
+                member_vsc("u1", "p1", &[]),
+                provider_with_credential("u1", None),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+
+        /// OSSA-2026-015: a delegated caller updating a credential already
+        /// bound to its own delegation project is allowed. Note:
+        /// `moves_project_out_of_scope` in the policy is currently
+        /// unreachable via this handler -- `CredentialUpdate`
+        /// (`crates/api-types/src/v3/credential.rs`) has no `project_id`
+        /// field, so the update patch this handler builds can never carry
+        /// one for the policy to inspect.
+        #[tokio::test]
+        async fn delegated_caller_updating_credential_bound_to_own_project_is_allowed() {
+            let status = update_request(
+                restricted_app_cred_vsc("u1", "p1"),
+                provider_with_credential("u1", Some("p1")),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+        }
+
+        /// OSSA-2026-015: a delegated caller must not be able to update an
+        /// unscoped credential (e.g. TOTP/MFA seed) it owns.
+        #[tokio::test]
+        async fn delegated_caller_updating_unscoped_credential_is_denied() {
+            let status = update_request(
+                restricted_app_cred_vsc("u1", "p1"),
+                provider_with_credential("u1", None),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+    }
 }

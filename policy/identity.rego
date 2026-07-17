@@ -3,15 +3,11 @@
 package identity
 
 token_subject if {
-	input.credentials.user_id == input.target.token.user_id
+	input.credentials.user_id == input.target.token.user.id
 }
 
 token_subject if {
-	input.credentials.user_id == input.existing.token.user_id
-}
-
-token_subject if {
-	input.credentials.user_id == input.existing.token.user_id
+	input.credentials.user_id == input.existing.token.user.id
 }
 
 # A role without a domain_id (orphaned).

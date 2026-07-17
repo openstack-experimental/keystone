@@ -318,4 +318,119 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
+
+    /// Gate B3 (security review V3a, issue #979): drives this handler and
+    /// the real `identity/auth/token/revoke.rego` decision (via a real `opa
+    /// run` subprocess instead of `MockPolicy`) through the
+    /// owner/non-owner matrix -- `identity.token_subject` is the rule that
+    /// actually decides who may revoke a token (besides admin), and a mock
+    /// can never catch a handler feeding it the wrong `user_id`. Requires
+    /// `opa` on `PATH`.
+    mod real_policy_decision {
+        use openstack_keystone_core::auth::ValidatedSecurityContext;
+        use openstack_keystone_core_types::auth::{AuthzInfoBuilder, *};
+        use openstack_keystone_core_types::resource::Domain as CoreDomain;
+        use openstack_keystone_core_types::token::UnscopedPayload;
+
+        use super::*;
+        use crate::api::tests::get_state_with_real_policy;
+        use crate::api::tests::real_policy_fixtures::member_vsc;
+        use crate::provider::ProviderBuilder;
+
+        fn subject_token_vsc(owner_user_id: &str) -> ValidatedSecurityContext {
+            let user_domain = CoreDomain {
+                id: "d1".into(),
+                enabled: true,
+                ..Default::default()
+            };
+            let authz = AuthzInfoBuilder::default()
+                .scope(ScopeInfo::Unscoped)
+                .build()
+                .unwrap();
+            ValidatedSecurityContext::test_new(
+                SecurityContext::test_build()
+                    .authentication_context(AuthenticationContext::Password)
+                    .principal(PrincipalInfo {
+                        identity: IdentityInfo::User(
+                            UserIdentityInfoBuilder::default()
+                                .user_id(owner_user_id)
+                                .user_domain(user_domain)
+                                .build()
+                                .unwrap(),
+                        ),
+                    })
+                    .token(ProviderToken::Unscoped(UnscopedPayload {
+                        user_id: owner_user_id.into(),
+                        ..Default::default()
+                    }))
+                    .authorization(authz)
+                    .build(),
+            )
+        }
+
+        fn provider_with_subject_token(owner_user_id: &'static str) -> ProviderBuilder {
+            let subject_vsc = subject_token_vsc(owner_user_id);
+            let fernet_for_revoke = subject_vsc.inner().token().unwrap().clone();
+
+            let mut token_mock = MockTokenProvider::default();
+            token_mock
+                .expect_validate_to_context()
+                .withf(|_, token: &'_ str, _, _| token == "subject")
+                .returning(move |_, _, _, _| Ok(subject_vsc.clone()));
+
+            let mut revoke_mock = MockRevokeProvider::default();
+            revoke_mock
+                .expect_revoke_token()
+                .withf(move |_, token: &ProviderToken| *token == fernet_for_revoke)
+                .returning(|_, _| Ok(()));
+
+            Provider::mocked_builder()
+                .mock_token(token_mock)
+                .mock_revoke(revoke_mock)
+        }
+
+        async fn revoke_request(
+            vsc: ValidatedSecurityContext,
+            provider_builder: ProviderBuilder,
+        ) -> StatusCode {
+            let (state, _opa_guard) = get_state_with_real_policy(provider_builder).await;
+            let mut api = openapi_router()
+                .layer(TraceLayer::new_for_http())
+                .with_state(state);
+
+            api.as_service()
+                .oneshot(
+                    Request::builder()
+                        .uri("/")
+                        .method("DELETE")
+                        .extension(vsc)
+                        .header("x-subject-token", "subject")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+        }
+
+        #[tokio::test]
+        async fn owner_revoking_own_token_is_allowed() {
+            let status = revoke_request(
+                member_vsc("u1", "p1", &[]),
+                provider_with_subject_token("u1"),
+            )
+            .await;
+            assert_eq!(status, StatusCode::NO_CONTENT);
+        }
+
+        #[tokio::test]
+        async fn non_owner_revoking_someone_elses_token_is_denied() {
+            let status = revoke_request(
+                member_vsc("u2", "p1", &[]),
+                provider_with_subject_token("u1"),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+    }
 }

@@ -228,4 +228,141 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
+
+    /// Gate B3 (security review V3a, issue #979): drives this handler and
+    /// the real `identity/user/show.rego` decision (via
+    /// `get_state_with_real_policy`'s real `opa run` subprocess + the
+    /// production `HttpPolicyEnforcer`) through the
+    /// authorized(admin)/authorized(reader, same domain)/
+    /// unauthorized(no roles)/cross-domain(reader, different domain)
+    /// matrix -- the domain-scoped counterpart to
+    /// `credential::create`'s delegation-scoped Gate B3 matrix. Requires
+    /// `opa` on `PATH`.
+    mod real_policy_decision {
+        use openstack_keystone_core::auth::ValidatedSecurityContext;
+        use openstack_keystone_core_types::auth::{
+            AuthenticationContext, AuthzInfoBuilder, IdentityInfo, PrincipalInfo, ScopeInfo,
+            SecurityContext, UserIdentityInfoBuilder,
+        };
+        use openstack_keystone_core_types::resource::Domain;
+        use openstack_keystone_core_types::role::RoleRef;
+
+        use super::*;
+        use crate::api::tests::get_state_with_real_policy;
+
+        fn domain_scoped_vsc(caller_domain_id: &str, roles: &[&str]) -> ValidatedSecurityContext {
+            let authz = AuthzInfoBuilder::default()
+                .scope(ScopeInfo::Domain(Domain {
+                    id: caller_domain_id.to_string(),
+                    name: caller_domain_id.to_string(),
+                    enabled: true,
+                    ..Default::default()
+                }))
+                .roles(
+                    roles
+                        .iter()
+                        .enumerate()
+                        .map(|(i, name)| RoleRef {
+                            domain_id: None,
+                            id: format!("role-{i}"),
+                            name: Some((*name).to_string()),
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .build()
+                .unwrap();
+
+            let sc = SecurityContext::test_build()
+                .authentication_context(AuthenticationContext::Password)
+                .principal(PrincipalInfo {
+                    identity: IdentityInfo::User(
+                        UserIdentityInfoBuilder::default()
+                            .user_id("caller")
+                            .user(
+                                UserResponseBuilder::default()
+                                    .id("caller")
+                                    .domain_id(caller_domain_id)
+                                    .enabled(true)
+                                    .name("caller")
+                                    .build()
+                                    .unwrap(),
+                            )
+                            .user_domain(Domain {
+                                id: caller_domain_id.to_string(),
+                                name: caller_domain_id.to_string(),
+                                enabled: true,
+                                ..Default::default()
+                            })
+                            .build()
+                            .unwrap(),
+                    ),
+                })
+                .authorization(authz)
+                .build();
+            ValidatedSecurityContext::test_new(sc)
+        }
+
+        async fn show_request(vsc: ValidatedSecurityContext, target_domain_id: &str) -> StatusCode {
+            let mut identity_mock = MockIdentityProvider::default();
+            let target_domain_id = target_domain_id.to_string();
+            identity_mock.expect_get_user().returning(move |_, _| {
+                Ok(Some(
+                    UserResponseBuilder::default()
+                        .id("target")
+                        .domain_id(target_domain_id.clone())
+                        .enabled(true)
+                        .name("target")
+                        .build()
+                        .unwrap(),
+                ))
+            });
+
+            let (state, _opa_guard) =
+                get_state_with_real_policy(Provider::mocked_builder().mock_identity(identity_mock))
+                    .await;
+            let mut api = openapi_router()
+                .layer(TraceLayer::new_for_http())
+                .with_state(state);
+
+            api.as_service()
+                .oneshot(
+                    Request::builder()
+                        .uri("/target")
+                        .extension(vsc)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+        }
+
+        #[tokio::test]
+        async fn admin_can_show_user_in_any_domain() {
+            let status = show_request(domain_scoped_vsc("domain-a", &["admin"]), "domain-b").await;
+            assert_eq!(status, StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn reader_can_show_user_in_own_domain() {
+            let status = show_request(domain_scoped_vsc("domain-a", &["reader"]), "domain-a").await;
+            assert_eq!(status, StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn caller_with_no_roles_is_denied() {
+            let status = show_request(domain_scoped_vsc("domain-a", &[]), "domain-a").await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+
+        /// Cross-domain: a reader scoped to `domain-a` must not be able to
+        /// view a user whose home domain is `domain-b` -- this is
+        /// `identity.domain_matches_domain_scope` itself, exercised through
+        /// the real handler and the real policy.
+        #[tokio::test]
+        async fn reader_cannot_show_user_in_different_domain() {
+            let status = show_request(domain_scoped_vsc("domain-a", &["reader"]), "domain-b").await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+    }
 }

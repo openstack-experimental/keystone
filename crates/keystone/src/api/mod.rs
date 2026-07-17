@@ -147,7 +147,260 @@ pub(crate) mod tests {
     use tower_http::normalize_path::NormalizePathLayer;
 
     use super::openapi_router;
-    use crate::provider::Provider;
+    use crate::policy::PolicyEnforcer;
+    use crate::provider::{Provider, ProviderBuilder};
+
+    /// A running `opa run -s` subprocess serving the repository's real
+    /// `policy/` tree over a private Unix socket. Must be kept alive for
+    /// the duration of the test that owns it -- dropping it kills the `opa`
+    /// process (`kill_on_drop`) and removes its socket's temp directory.
+    pub struct RealOpaGuard {
+        _child: tokio::process::Child,
+        _tmp_dir: tempfile::TempDir,
+    }
+
+    /// Like [`get_mocked_state`], but wired to the real, production
+    /// [`crate::policy::HttpPolicyEnforcer`] talking to a real `opa run -s`
+    /// subprocess evaluating the repository's actual `policy/` tree,
+    /// instead of `MockPolicy`'s canned allow/deny.
+    ///
+    /// Gate B3 (security review V3a, issue #979):
+    /// `get_mocked_state`/`get_capturing_state` prove a handler builds a
+    /// well-shaped policy input, but never run it against the real Rego
+    /// logic -- a handler could feed OPA a subtly wrong document that a
+    /// mock happily accepts but the real policy would decide differently
+    /// on. This closes that gap using the same production enforcer and
+    /// `opa` binary `tools/start-api.sh` orchestrates for `test_api`
+    /// (requires `opa` on `PATH`; already true in CI via
+    /// `open-policy-agent/setup-opa`).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `opa` isn't on `PATH` or the server never becomes healthy
+    /// -- a broken real evaluator should fail the test loudly, not
+    /// silently degrade into a false result.
+    pub async fn get_state_with_real_policy(
+        provider_builder: ProviderBuilder,
+    ) -> (crate::keystone::ServiceState, RealOpaGuard) {
+        let tmp_dir = tempfile::tempdir().expect("failed to create a temp dir for the opa socket");
+        let socket_path = tmp_dir.path().join("opa.sock");
+        let policy_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../policy");
+        let addr = format!("unix://{}", socket_path.display());
+
+        let child = tokio::process::Command::new("opa")
+            .arg("run")
+            .arg("-s")
+            .arg(&policy_dir)
+            .arg("--addr")
+            .arg(&addr)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("failed to spawn `opa run` -- is `opa` installed and on PATH?");
+
+        let url: url::Url = addr.parse().expect("valid unix socket url");
+        let mut enforcer = None;
+        for _ in 0..200 {
+            if let Ok(candidate) = crate::policy::HttpPolicyEnforcer::new(url.clone()).await
+                && candidate.health_check().await.is_ok()
+            {
+                enforcer = Some(candidate);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        let enforcer = enforcer.expect("`opa run` never became healthy");
+
+        let provider = provider_builder.build().expect("provider builder failed");
+        let state = std::sync::Arc::new(
+            crate::keystone::Service::new(
+                openstack_keystone_config::ConfigManager::not_watched(
+                    openstack_keystone_config::Config::default(),
+                ),
+                sea_orm::DatabaseConnection::Disconnected,
+                provider,
+                std::sync::Arc::new(enforcer),
+                openstack_keystone_audit::AuditDispatcher::noop(),
+                None,
+            )
+            .await
+            .expect("service construction failed"),
+        );
+
+        (
+            state,
+            RealOpaGuard {
+                _child: child,
+                _tmp_dir: tmp_dir,
+            },
+        )
+    }
+
+    /// Shared real-policy VSC fixtures for handlers exercising the
+    /// delegation boundary (OSSA-2026-015) against a real `opa run`
+    /// subprocess via [`get_state_with_real_policy`] -- factored out of
+    /// `credential::create`'s original `real_policy_decision` module so
+    /// every delegation-sensitive handler test builds its
+    /// `ValidatedSecurityContext` fixtures the same way instead of
+    /// hand-copying them.
+    #[allow(clippy::unwrap_used)]
+    pub mod real_policy_fixtures {
+        use openstack_keystone_core::auth::ValidatedSecurityContext;
+        use openstack_keystone_core_types::application_credential::ApplicationCredentialBuilder;
+        use openstack_keystone_core_types::auth::{
+            AuthenticationContext, AuthzInfoBuilder, IdentityInfo, PrincipalInfo, ScopeInfo,
+            SecurityContext, UserIdentityInfoBuilder,
+        };
+        use openstack_keystone_core_types::resource::{Domain, Project};
+        use openstack_keystone_core_types::role::RoleRef;
+
+        /// A resolved, enabled user identity in an enabled domain --
+        /// `UserIdentityInfo::validate()` (and thus `Auth`'s
+        /// `fully_resolved()` short-circuit for a test-injected VSC) fails
+        /// closed without both.
+        pub fn user_identity(user_id: &str) -> IdentityInfo {
+            IdentityInfo::User(
+                UserIdentityInfoBuilder::default()
+                    .user_id(user_id)
+                    .user(
+                        openstack_keystone_core_types::identity::UserResponseBuilder::default()
+                            .id(user_id)
+                            .domain_id("d1")
+                            .enabled(true)
+                            .name(user_id)
+                            .build()
+                            .unwrap(),
+                    )
+                    .user_domain(Domain {
+                        id: "d1".to_string(),
+                        name: "d1".to_string(),
+                        enabled: true,
+                        ..Default::default()
+                    })
+                    .build()
+                    .unwrap(),
+            )
+        }
+
+        /// A non-delegated, plain password-authenticated caller scoped to
+        /// `project_id` with `roles`.
+        pub fn member_vsc(
+            user_id: &str,
+            project_id: &str,
+            roles: &[&str],
+        ) -> ValidatedSecurityContext {
+            let authz = AuthzInfoBuilder::default()
+                .scope(ScopeInfo::Project {
+                    project: Project {
+                        id: project_id.to_string(),
+                        domain_id: "d1".to_string(),
+                        enabled: true,
+                        name: "project".to_string(),
+                        ..Default::default()
+                    },
+                    project_domain: Domain {
+                        id: "d1".to_string(),
+                        name: "d1".to_string(),
+                        enabled: true,
+                        ..Default::default()
+                    },
+                })
+                .roles(
+                    roles
+                        .iter()
+                        .enumerate()
+                        .map(|(i, name)| RoleRef {
+                            domain_id: None,
+                            id: format!("role-{i}"),
+                            name: Some((*name).to_string()),
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .build()
+                .unwrap();
+
+            let sc = SecurityContext::test_build()
+                .authentication_context(AuthenticationContext::Password)
+                .principal(PrincipalInfo {
+                    identity: user_identity(user_id),
+                })
+                .authorization(authz)
+                .build();
+            ValidatedSecurityContext::test_new(sc)
+        }
+
+        /// A restricted application credential authenticated context, scoped
+        /// to its own delegation project (no scope-drift), for the
+        /// delegated-allowed/delegated-escape cases.
+        pub fn restricted_app_cred_vsc(
+            user_id: &str,
+            delegation_project_id: &str,
+        ) -> ValidatedSecurityContext {
+            app_cred_vsc(user_id, delegation_project_id, false)
+        }
+
+        /// Like [`restricted_app_cred_vsc`], but `unrestricted`: `identity/
+        /// os_ec2/create_credential.rego`'s `is_restricted_app_cred` check
+        /// (OSSA-2026-005 / CVE-2026-33551) only fires on a *restricted*
+        /// application credential, so this is needed to exercise the
+        /// allowed path for that policy.
+        pub fn app_cred_vsc(
+            user_id: &str,
+            delegation_project_id: &str,
+            unrestricted: bool,
+        ) -> ValidatedSecurityContext {
+            let authz = AuthzInfoBuilder::default()
+                .scope(ScopeInfo::Project {
+                    project: Project {
+                        id: delegation_project_id.to_string(),
+                        domain_id: "d1".to_string(),
+                        enabled: true,
+                        name: "project".to_string(),
+                        ..Default::default()
+                    },
+                    project_domain: Domain {
+                        id: "d1".to_string(),
+                        name: "d1".to_string(),
+                        enabled: true,
+                        ..Default::default()
+                    },
+                })
+                .roles(vec![RoleRef {
+                    domain_id: None,
+                    id: "role-0".to_string(),
+                    name: Some("member".to_string()),
+                }])
+                .build()
+                .unwrap();
+
+            let app_cred = ApplicationCredentialBuilder::default()
+                .id("appcred1")
+                .name("appcred1")
+                .project_id(delegation_project_id)
+                .roles(vec![RoleRef {
+                    domain_id: None,
+                    id: "role-0".to_string(),
+                    name: Some("member".to_string()),
+                }])
+                .unrestricted(unrestricted)
+                .user_id(user_id)
+                .build()
+                .unwrap();
+
+            let sc = SecurityContext::test_build()
+                .authentication_context(AuthenticationContext::ApplicationCredential {
+                    application_credential: app_cred,
+                    token: None,
+                })
+                .principal(PrincipalInfo {
+                    identity: user_identity(user_id),
+                })
+                .authorization(authz)
+                .build();
+            ValidatedSecurityContext::test_new(sc)
+        }
+    }
 
     /// A request to a route with a trailing slash must be served by the same
     /// handler as the canonical (no-slash) path — no 404 and no redirect
