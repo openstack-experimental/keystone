@@ -18,18 +18,19 @@ with the following rules:
 1. `List` operation MUST receive the all query parameters of the operation in
    the target.
 
-2. For `Show` operation the policy MUST receive the current record as the target
-   (fetch the record and pass it into the policy engine).
+2. For `Show` operation the policy MUST receive the current record as the
+   `existing` (fetch the record and pass it into the policy engine); `target` is
+   `null`.
 
 3. `Update` operation MUST receive current and new state of the resource (first
-   the current resource is fetched and passed together with the new state
-   [current, target] to the policy engine).
+   the current resource is fetched and passed as `existing` together with the
+   new state as `target` to the policy engine).
 
 4. `Create` operation works similarly as current oslo.policy with the desired
-   state passed to the policy engine.
+   state passed to the policy engine as `target`.
 
 5. `Delete` operation MUST pass the current resource state of the resource into
-   the policy engine.
+   the policy engine as `existing`; `target` is `null`.
 
 ## Decision
 
@@ -72,23 +73,28 @@ The OPA input document structure is:
 ```
 
 The `<resource>` key matches the REST resource type: `user`, `group`, `role`,
-`project`, `instance`, `idp`, `mapping`, `restriction`, `assignment`, etc.
-This prevents field name collisions between policies and ensures each resource's
-data is properly isolated.
+`project`, `instance`, `idp`, `mapping`, `restriction`, `assignment`, etc. This
+prevents field name collisions between policies and ensures each resource's data
+is properly isolated.
 
 ### Field Semantics Per Operation
 
 The `<resource>` key matches the REST resource type:
-- `user`, `group`, `role`, `project`, `instance`, `idp`, `mapping`, `restriction`, `assignment`, etc.
-- This isolates data and prevents field name collisions between different resource schemas.
+
+- `user`, `group`, `role`, `project`, `instance`, `idp`, `mapping`,
+  `restriction`, `assignment`, etc.
+- This isolates data and prevents field name collisions between different
+  resource schemas.
 
 Policies read fields as `input.target.user.domain_id`,
 `input.existing.restriction.user_id`, `input.target.instance.name`, etc.
 
 Examples:
+
 - Create user: `{"target": {"user": request_payload}}`
-- Update restriction: `{"target": {"restriction": patch}, "existing": {"restriction": stored}}`
-- Show group: `{"target": {"group": stored_object}}`
+- Update restriction:
+  `{"target": {"restriction": patch}, "existing": {"restriction": stored}}`
+- Show group: `{"target": null, "existing": {"group": stored_object}}`
 - List instances: `{"target": {"instance": query_params}}`
 
 ### Implementation Details
@@ -99,10 +105,10 @@ The handler-side contract for `enforce()`:
   existing
 - **Update**: Pass `serde_json::to_value(patch)?` as target,
   `Option::from(stored_object).map(serde_json::to_value)` as existing
-- **Show**: Pass `serde_json::to_value(stored_object)?` as target, `None` as
-  existing
-- **Delete**: Pass `serde_json::to_value(stored_object)?` as target, `None` as
-  existing
+- **Show**: Pass `Value::Null` as target,
+  `Option::from(stored_object).map(serde_json::to_value)` as existing
+- **Delete**: Pass `Value::Null` as target,
+  `Option::from(stored_object).map(serde_json::to_value)` as existing
 - **List**: Pass `serde_json::to_value(query_params)?` as target, `None` as
   existing
 
@@ -136,12 +142,12 @@ cases.
 - The `input.existing` field is `Value::Null` when passed as `None` from the
   handler, not an absent key. Policies can check `input.existing == null`.
 
-- The `input.target` field is never `null` except deliberately (e.g., when no
-  target object is relevant). For operations where the object is the existing
-  stored resource, `target` carries that object.
+- The `input.target` field is `Value::Null` for `Show` and `Delete`, since there
+  is no new/desired state in those operations — the current record is passed as
+  `existing` instead, never as `target`.
 
 - Policy tests (`*_test.rego`) should use the same input structure as handlers:
   - Create tests: `"target": { "binding": { ... } }`
   - Update tests:
     `"target": { "binding": { ... } }, "existing": { "binding": { ... } }`
-  - Show/Delete tests: `"target": { "binding": { ... } }`
+  - Show/Delete tests: `"target": null, "existing": { "binding": { ... } }`
