@@ -78,11 +78,10 @@ files).
 ### Tempest identity compatibility tests
 
 The `tempest` module runs the OpenStack tempest identity v3 test suite
-against both `keystone-rs` and `keystone-py`, deployed side by side by the
-`keystone` module. Since not every v3 operation is implemented by
-keystone-rs yet, these results are advisory rather than a merge gate: the
-module is run and reported on separately from the main verify suite so it
-never blocks CI.
+against `keystone-rs`, deployed by the `keystone` module. Since not every
+v3 operation is implemented by keystone-rs yet, these results are advisory
+rather than a merge gate: the module is run and reported on separately
+from the main verify suite so it never blocks CI.
 
 ```console
 skaffold verify -m tempest -a build.artifacts -v debug
@@ -91,8 +90,17 @@ skaffold verify -m tempest -a build.artifacts -v debug
 Failing test IDs are printed per target in the pod logs
 (`===== FAILED TESTS (target=...) =====`), and are used to track API
 compatibility gaps and catch breaking changes over time. In CI these are
-also collected into a job summary and an uploaded `tempest-identity-results`
-log artifact.
+also collected into a job summary, posted as a PR comment, and an uploaded
+`tempest-identity-results` log artifact.
+
+`keystone-py` isn't run by default since it's the reference implementation
+the suite is written against. Add the `python-identity` profile to also
+run against it, e.g. to confirm the tempest config itself after an
+upgrade:
+
+```console
+skaffold verify -m tempest -a build.artifacts -p python-identity -v debug
+```
 
 ## OpenStackClient (OSC)
 

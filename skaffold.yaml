@@ -345,6 +345,13 @@ build:
   local:
     concurrency: 0
 
+# Only the rust target runs by default (see the `python-identity` profile
+# below to opt in to also running against keystone-py): keystone-py is
+# already the reference implementation the suite is written against, so its
+# results add little signal day-to-day and doubling the run time isn't
+# worth it for routine CI/local runs. It stays available on demand to
+# confirm the test suite/config themselves are sound whenever tempest is
+# upgraded or the config template changes.
 verify:
   - &tempest_identity_rust
     name: "tempest-identity-rust"
@@ -411,7 +418,6 @@ profiles:
             buildArgs: {}
     verify:
       - *tempest_identity_rust
-      - *tempest_identity_python
 
   - name: local
     build:
@@ -421,3 +427,14 @@ profiles:
         useDockerCLI: true
         concurrency: 0
         push: true
+
+  # Opt-in: also run against keystone-py, e.g. `skaffold verify -m tempest
+  # -a build.artifacts -p python-identity` (or `-p github-ci,python-identity`
+  # in CI). Uses a JSON patch instead of its own `verify:` list so it adds
+  # to whichever other profile's verify list is already active rather than
+  # replacing it.
+  - name: python-identity
+    patches:
+      - op: add
+        path: /verify/-
+        value: *tempest_identity_python

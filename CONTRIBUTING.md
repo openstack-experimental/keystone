@@ -137,10 +137,10 @@ The skaffold config splits into `keystone` and `infra` modules to avoid
 redeploying all tracking labels on every change.
 
 **Tempest identity compatibility tests** (advisory, non-blocking): a third
-`tempest` module runs the OpenStack tempest identity v3 suite against both
-`keystone-rs` and `keystone-py` to track v3 API compatibility gaps. Since
-not every v3 operation is implemented by keystone-rs yet, this is run and
-reported separately from the main verify suite and never blocks CI:
+`tempest` module runs the OpenStack tempest identity v3 suite against
+`keystone-rs` to track v3 API compatibility gaps. Since not every v3
+operation is implemented by keystone-rs yet, this is run and reported
+separately from the main verify suite and never blocks CI:
 
 ```console
 skaffold verify -m tempest -a build.artifacts -v debug
@@ -148,7 +148,17 @@ skaffold verify -m tempest -a build.artifacts -v debug
 
 Failing test IDs are printed in each container's log
 (`===== FAILED TESTS (target=...) =====`); in CI these are also collected
-into a job summary and an uploaded `tempest-identity-results` log artifact.
+into a job summary, posted as a PR comment, and an uploaded
+`tempest-identity-results` log artifact.
+
+`keystone-py` is not run by default (it's the reference implementation the
+suite is written against, so its results add little day-to-day signal).
+Opt in with the `python-identity` profile, e.g. to sanity-check the
+tempest config itself after an upgrade:
+
+```console
+skaffold verify -m tempest -a build.artifacts -p python-identity -v debug
+```
 
 ### OpenStackClient (OSC)
 

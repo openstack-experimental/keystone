@@ -431,12 +431,13 @@ jobs:
             echo "### Tempest identity compatibility (advisory, non-blocking)"
             echo
             if [ "${{ steps.tempest_verify.outcome }}" = "success" ]; then
-              echo "All selected tempest identity tests passed against both keystone-py and keystone-rs."
+              echo "All selected tempest identity tests passed."
             else
               echo "Some tempest identity tests failed - see failed test IDs below."
               echo
               echo '```'
-              grep -A 200 "FAILED TESTS (target=" tempest-results.log || echo "(unable to parse failures from log)"
+              awk '/FAILED TESTS \(target=/{show=1} show{print} /END FAILED TESTS \(target=/{show=0}' tempest-results.log \
+                | sed -E 's/^\[tempest-identity-[a-z]+\] ?//' || echo "(unable to parse failures from log)"
               echo '```'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
@@ -471,3 +472,54 @@ jobs:
       - name: Dump events
         if: failure()
         run: kubectl get events
+
+  tempest-track:
+    if: "success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'openstack-experimental-release-plz'"
+    runs-on: ubuntu-latest
+    needs:
+      - k3s-test
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Fetch tempest results
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v5.0.0
+        with:
+          name: tempest-identity-results
+
+      - name: Extract tempest summary
+        id: summary
+        run: |
+          {
+            echo "body<<TEMPEST_COMMENT_EOF"
+            for target in rust python; do
+              if grep -q "^\[tempest-identity-${target}\]" tempest-results.log; then
+                echo "**${target}**"
+                echo
+                echo '```'
+                grep "^\[tempest-identity-${target}\]" tempest-results.log \
+                  | sed -E "s/^\[tempest-identity-${target}\] ?//" \
+                  | awk '/^Totals$/{f=1} f{print} /^Sum of execute time/{f=0}'
+                echo '```'
+                echo
+              fi
+            done
+            echo "<details><summary>Failed test IDs</summary>"
+            echo
+            echo '```'
+            awk '/FAILED TESTS \(target=/{show=1} show{print} /END FAILED TESTS \(target=/{show=0}' tempest-results.log \
+              | sed -E 's/^\[tempest-identity-[a-z]+\] ?//'
+            echo '```'
+            echo "</details>"
+            echo "TEMPEST_COMMENT_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Post tempest results to PR
+        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
+        with:
+          header: tempest
+          message: |
+            🧪 **Tempest Identity Compatibility Results** (advisory, non-blocking)
+
+            ${{ steps.summary.outputs.body }}
+
+            [View full run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
