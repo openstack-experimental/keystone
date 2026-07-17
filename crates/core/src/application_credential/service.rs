@@ -164,7 +164,11 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
         // them. Warn unconditionally so the gap is visible in logs, and
         // fail loud instead when the operator has opted in, rather than
         // silently accepting a restriction the server cannot honor.
-        if rec.access_rules.as_ref().is_some_and(|rules| !rules.is_empty()) {
+        if rec
+            .access_rules
+            .as_ref()
+            .is_some_and(|rules| !rules.is_empty())
+        {
             let cfg = ctx.state().config_manager.config.read().await;
             if cfg.application_credential.reject_unenforced_access_rules {
                 return Err(ApplicationCredentialProviderError::AccessRulesUnenforced);
@@ -442,7 +446,9 @@ mod tests {
     use crate::role::MockRoleProvider;
     use crate::tests::get_mocked_state;
 
-    fn make_service(mock_backend: MockApplicationCredentialBackend) -> ApplicationCredentialService {
+    fn make_service(
+        mock_backend: MockApplicationCredentialBackend,
+    ) -> ApplicationCredentialService {
         ApplicationCredentialService {
             backend_driver: Arc::new(mock_backend),
         }

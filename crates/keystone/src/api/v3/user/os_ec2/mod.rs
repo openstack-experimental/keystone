@@ -101,4 +101,31 @@ pub(super) fn ec2_credential_policy_input(cred: &CoreCredential) -> Value {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use openstack_keystone_core_types::credential::CredentialBuilder;
+
+    use super::ec2_credential_policy_input;
+    use crate::api::tests::policy_contract;
+
+    /// Gate I (security review V9, issue #987): direct, structural test on
+    /// the OS-EC2 stripping helper itself -- see the analogous test for
+    /// `credential_policy_input` in the sibling `/v3/credentials` module.
+    #[test]
+    fn test_ec2_credential_policy_input_never_leaks_blob() {
+        let cred = CredentialBuilder::default()
+            .id("cred_id")
+            .blob(r#"{"access":"AKIA123","secret":"s3cr3t"}"#)
+            .r#type("ec2")
+            .user_id("uid")
+            .project_id("pid")
+            .build()
+            .unwrap();
+
+        let input = ec2_credential_policy_input(&cred);
+        policy_contract::assert_no_secrets(&input);
+        assert!(
+            !input.to_string().contains("s3cr3t"),
+            "serialized policy input must not contain the decrypted secret bytes"
+        );
+    }
+}

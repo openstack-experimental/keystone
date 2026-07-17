@@ -542,6 +542,7 @@ impl PolicyEvaluationResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::policy_contract;
     use crate::api::tests::test_fixture_scoped;
     use openstack_keystone_core_types::role::RoleRef;
 
@@ -612,5 +613,53 @@ mod tests {
         assert_eq!(creds.domain_id.as_deref(), Some("domain_id"));
         assert_eq!(creds.project_domain_id, None);
         assert_eq!(creds.project_id, None);
+    }
+
+    /// Gate I (security review V9, issue #987): a structural test that
+    /// `Credentials` -- the auth-chain projection sent to OPA on every
+    /// request -- never serializes a secret-bearing field, regardless of
+    /// which fields are populated. Currently vacuous (no field on
+    /// `Credentials` carries decrypted secret material today), but that is
+    /// exactly the point: it exists to catch a *future* field addition
+    /// that reintroduces one, the way `credential_policy_input`'s `blob`
+    /// stripping guards the sibling `target`/`existing` half of the
+    /// policy-input document (Gate B2).
+    #[test]
+    fn test_credentials_serialization_never_leaks_secrets() {
+        let creds = CredentialsBuilder::default()
+            .is_admin(false)
+            .user_id("uid")
+            .roles(vec!["member".to_string()])
+            .project_id("pid".to_string())
+            .auth_type("trust")
+            .is_delegated(true)
+            .unrestricted(false)
+            .delegated_project_id("pid".to_string())
+            .trust(Trust {
+                id: "t1".to_string(),
+                trustor_user_id: "trustor".to_string(),
+                trustee_user_id: "trustee".to_string(),
+                impersonation: false,
+                project_id: Some("pid".to_string()),
+                expires_at: None,
+                deleted_at: None,
+                extra: None,
+                remaining_uses: None,
+                redelegated_trust_id: None,
+                redelegation_count: None,
+                roles: Some(vec![]),
+            })
+            .plugin_claims(std::collections::HashMap::from([(
+                "acme_sso".to_string(),
+                std::collections::HashMap::from([(
+                    "department".to_string(),
+                    serde_json::json!("engineering"),
+                )]),
+            )]))
+            .build()
+            .unwrap();
+
+        let value = serde_json::to_value(&creds).unwrap();
+        policy_contract::assert_no_secrets(&value);
     }
 }

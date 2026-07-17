@@ -3534,15 +3534,15 @@ mod tests {
         // regression that lets the wider personal assignment leak through
         // on any cell is exactly what this matrix exists to catch.
         let mut assignment_mock = MockAssignmentProvider::default();
-        assignment_mock
-            .expect_list_role_assignments()
-            .returning(move |_e, q: &RoleAssignmentListParameters| {
+        assignment_mock.expect_list_role_assignments().returning(
+            move |_e, q: &RoleAssignmentListParameters| {
                 let actor = q.user_id.clone().unwrap_or_default();
                 Ok(vec![
                     assignment_with_role_actor(allowed_rid, &actor),
                     assignment_with_role_actor(escalated_rid, &actor),
                 ])
-            });
+            },
+        );
         let mut role_mock = MockRoleProvider::default();
         role_mock
             .expect_expand_implied_roles()
@@ -3589,24 +3589,31 @@ mod tests {
             redelegation_count: None,
             roles: Some(vec![role_ref(allowed_rid, "reader")]),
         };
-        let ac_restricted = openstack_keystone_core_types::application_credential::ApplicationCredential {
-            id: "ac1".to_string(),
-            user_id: "appcred_owner".to_string(),
-            project_id: pid.to_string(),
-            name: "cred".to_string(),
-            description: None,
-            roles: vec![role_ref(allowed_rid, "reader")],
-            unrestricted: false,
-            expires_at: None,
-            access_rules: None,
-        };
-        let ac_unrestricted = openstack_keystone_core_types::application_credential::ApplicationCredential {
-            unrestricted: true,
-            ..ac_restricted.clone()
-        };
+        let ac_restricted =
+            openstack_keystone_core_types::application_credential::ApplicationCredential {
+                id: "ac1".to_string(),
+                user_id: "appcred_owner".to_string(),
+                project_id: pid.to_string(),
+                name: "cred".to_string(),
+                description: None,
+                roles: vec![role_ref(allowed_rid, "reader")],
+                unrestricted: false,
+                expires_at: None,
+                access_rules: None,
+            };
+        let ac_unrestricted =
+            openstack_keystone_core_types::application_credential::ApplicationCredential {
+                unrestricted: true,
+                ..ac_restricted.clone()
+            };
 
         // (label, principal user_id, delegation's own role ids, context builder)
-        let delegating_cases: Vec<(&str, &str, Vec<&str>, Box<dyn Fn() -> AuthenticationContext>)> = vec![
+        let delegating_cases: Vec<(
+            &str,
+            &str,
+            Vec<&str>,
+            Box<dyn Fn() -> AuthenticationContext>,
+        )> = vec![
             (
                 "trust",
                 "trustee",
@@ -3649,7 +3656,12 @@ mod tests {
             make_domain_scope("d1"),
             make_project_scope(pid),
             ScopeInfo::System("all".to_string()),
-            make_trust_scope("trustor", "trustee", pid, Some(vec![role_ref(allowed_rid, "reader")])),
+            make_trust_scope(
+                "trustor",
+                "trustee",
+                pid,
+                Some(vec![role_ref(allowed_rid, "reader")]),
+            ),
             ScopeInfo::Unscoped,
         ];
         // Exercise every ScopeInfo variant at least once, so a variant

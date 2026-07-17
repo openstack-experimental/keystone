@@ -246,6 +246,14 @@ jobs:
       - name: Check security.md §7 checklist SAST (Gate J)
         run: python3 tools/check_security_checklist_sast.py
 
+      # Gate I companion (security review V9 / issue #987): EventPayload
+      # (the ADR 0023 audit-trail projection) must never grow a
+      # secret-shaped field; crates/core/src/policy.rs and the
+      # credential/os_ec2 policy-input helpers carry the equivalent
+      # assertion as Rust unit tests (cargo test already gates those).
+      - name: Check EventPayload has no secret fields (Gate I)
+        run: python3 tools/check_event_payload_no_secret_fields.py
+
   openapi:
     needs: changes
     if: needs.changes.outputs.code == 'true'

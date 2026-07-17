@@ -57,4 +57,43 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use openstack_keystone_core_types::credential::CredentialBuilder;
+
+    use super::credential_policy_input;
+    use crate::api::tests::policy_contract;
+
+    /// Gate I (security review V9, issue #987): a direct, structural test
+    /// on the stripping helper itself, not just through a handler's HTTP
+    /// round-trip (which Gate B2's per-handler tests already cover) -- a
+    /// future field addition to `Credential` that reintroduces a
+    /// secret-bearing field is caught here regardless of which handler
+    /// calls this helper.
+    #[test]
+    fn test_credential_policy_input_never_leaks_blob() {
+        let cred = CredentialBuilder::default()
+            .id("cred_id")
+            .blob(r#"{"access":"AKIA123","secret":"s3cr3t","seed":"TOTPSEED"}"#)
+            .r#type("ec2")
+            .user_id("uid")
+            .project_id("pid")
+            .build()
+            .unwrap();
+
+        let input = credential_policy_input(&cred);
+        policy_contract::assert_object_keys(&input, &["credential"]);
+        policy_contract::assert_no_secrets(&input);
+        assert!(
+            !input.to_string().contains("s3cr3t"),
+            "serialized policy input must not contain the decrypted secret bytes"
+        );
+    }
+
+    #[test]
+    fn test_credential_policy_input_none_is_null_credential() {
+        let input =
+            credential_policy_input(&None::<openstack_keystone_core_types::credential::Credential>);
+        policy_contract::assert_object_keys(&input, &["credential"]);
+        assert_eq!(input["credential"], serde_json::Value::Null);
+    }
+}
