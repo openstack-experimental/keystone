@@ -115,7 +115,7 @@ struct ServiceUpdateRequestInternal<'a> {
 
 impl RestEndpoint for ServiceUpdateRequestInternal<'_> {
     fn method(&self) -> http::Method {
-        http::Method::PUT
+        http::Method::PATCH
     }
 
     fn endpoint(&self) -> Cow<'static, str> {

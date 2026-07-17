@@ -29,7 +29,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 
 /// Update existing service
 #[utoipa::path(
-    put,
+    patch,
     path = "/{service_id}",
     description = "Update service by ID",
     params(),
@@ -167,7 +167,7 @@ mod tests {
             .as_service()
             .oneshot(
                 Request::builder()
-                    .method("PUT")
+                    .method("PATCH")
                     .uri("/foo")
                     .extension(vsc)
                     .header("Content-Type", "application/json")
@@ -224,7 +224,7 @@ mod tests {
             .as_service()
             .oneshot(
                 Request::builder()
-                    .method("PUT")
+                    .method("PATCH")
                     .uri("/foo")
                     .extension(vsc)
                     .header("Content-Type", "application/json")
@@ -277,7 +277,7 @@ mod tests {
             .as_service()
             .oneshot(
                 Request::builder()
-                    .method("PUT")
+                    .method("PATCH")
                     .uri("/foo")
                     .extension(vsc)
                     .header("Content-Type", "application/json")
@@ -309,7 +309,7 @@ mod tests {
             .as_service()
             .oneshot(
                 Request::builder()
-                    .method("PUT")
+                    .method("PATCH")
                     .uri("/foo")
                     .header("Content-Type", "application/json")
                     .body(Body::from(serde_json::to_string(&req).unwrap()))
@@ -319,5 +319,29 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_update_rejects_put() {
+        let state = get_mocked_state(Provider::mocked_builder(), true, None).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/foo")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"service":{"description":"updated"}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
     }
 }
