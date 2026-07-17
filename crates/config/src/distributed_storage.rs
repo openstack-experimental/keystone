@@ -444,6 +444,9 @@ allowed_peer_svids = ["spiffe://example.org/ns/default/sa/keystone"]
 
     #[test]
     fn test_env() {
+        // `Config::new` is async, but this test drives it from the synchronous
+        // `temp_env::with_vars` closure API, so run it to completion on a local
+        // current-thread runtime.
         temp_env::with_vars(
             [(
                 "OS_DISTRIBUTED_STORAGE__NODE_CLUSTER_ADDR",
@@ -465,7 +468,11 @@ path = /foo
                 )
                 .unwrap();
 
-                let cfg = crate::Config::new(cfg_file.path().to_path_buf()).unwrap();
+                let cfg = tokio::runtime::Builder::new_current_thread()
+                    .build()
+                    .unwrap()
+                    .block_on(crate::Config::new(cfg_file.path().to_path_buf()))
+                    .unwrap();
                 assert_eq!(
                     "http://test/",
                     cfg.distributed_storage
