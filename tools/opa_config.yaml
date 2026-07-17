@@ -7,6 +7,20 @@ services:
     #    scheme: "Bearer"
     #    token: "<personal token>"
 
+# Gate H (security review V4): `policy-container.yml`'s publish job signs
+# the pushed bundle by digest with cosign keyless signing, reusing its
+# `id-token: write` OIDC permission, and verifies the signature itself
+# before the workflow reports success. OPA's own bundle downloader has no
+# native cosign/Sigstore verification hook, so that check cannot happen
+# inside this config -- a production deployment that wants load-time
+# verification (rather than trusting `latest` + polling, as this reference
+# config does for continuous policy rollout) must run its own
+# `cosign verify --certificate-identity-regexp
+# "^https://github.com/<owner>/<repo>/" --certificate-oidc-issuer
+# "https://token.actions.githubusercontent.com"` against the resolved
+# digest before OPA starts (an init container or admission check), or pin
+# `resource` below to a specific verified digest instead of `latest` and
+# update it through a controlled release process.
 bundles:
   authz:
     service: ghcr
