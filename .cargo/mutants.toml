@@ -1,0 +1,13 @@
+# Gate G (security review, issue #983): mutation testing scoped to the
+# core auth/policy invariant modules, to prove the negative tests in
+# these files actually fail when the invariant they check is broken --
+# a negative test that still passes after the check is deleted is worse
+# than no test at all. Full-workspace mutation testing is far too slow
+# to run per-PR, so this stays scoped and runs on a schedule/manually
+# (see .github/workflows/mutants.yml), not as a required CI gate.
+examine_globs = [
+    "crates/core-types/src/auth.rs",
+    "crates/core/src/auth.rs",
+    "crates/core/src/policy.rs",
+]
+test_package = ["openstack-keystone-core", "openstack-keystone-core-types"]

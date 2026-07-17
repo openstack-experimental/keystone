@@ -1,0 +1,62 @@
+name: Mutation testing
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    - cron: '0 3 * * 0' # weekly, Sunday 03:00 UTC
+  workflow_dispatch: # allow manual triggering
+  pull_request:
+    paths:
+      - '.github/workflows/mutants.yml'
+      - '.cargo/mutants.toml'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  mutants:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install protobuf-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler libtss2-dev pkg-config
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
+
+      - name: Install cargo-mutants
+        uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # v2.82.10
+        with:
+          tool: cargo-mutants
+
+      # Gate G (security review, issue #983): scoped to the core auth/policy
+      # invariant modules via .cargo/mutants.toml -- proves the negative
+      # tests there actually fail when the invariant they check is broken.
+      # Full-workspace mutation testing is far too slow to run per-PR, so
+      # this is a scheduled/manual job, not a required check; a PR that
+      # only touches this workflow or its config still runs it once to
+      # validate the change.
+      - name: Run cargo-mutants
+        run: cargo mutants --in-place --no-shuffle --timeout 120
+
+      - name: Upload mutants report
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        if: always()
+        with:
+          name: mutants-report
+          path: mutants.out
