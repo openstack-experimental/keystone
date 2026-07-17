@@ -353,7 +353,21 @@ impl TryFrom<&ValidatedSecurityContext> for Credentials {
                     claims.clone(),
                 )]));
             }
-            _ => {}
+            // Not delegated (or, for WasmPlugin, delegated but carrying no
+            // claims) -- nothing extra to project. Named explicitly, not a
+            // wildcard, so a new AuthenticationContext variant is a compile
+            // error here until a human decides how it fits (security.md
+            // V2 / Gate J, issue #986).
+            AuthenticationContext::WasmPlugin { .. }
+            | AuthenticationContext::Oidc { .. }
+            | AuthenticationContext::K8s(_)
+            | AuthenticationContext::Password
+            | AuthenticationContext::Admin
+            | AuthenticationContext::Token(_)
+            | AuthenticationContext::WebauthN
+            | AuthenticationContext::Mapping(_)
+            | AuthenticationContext::Ec2Credential
+            | AuthenticationContext::Totp => {}
         }
         if let Some(authz) = sc.authorization() {
             match &authz.scope {

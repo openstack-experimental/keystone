@@ -169,7 +169,22 @@ impl FernetToken {
                         expires_at,
                     )?))
                 }
-                _ => Ok(Self::ProjectScope(
+                // Every other auth method gets the plain project-scope
+                // payload. Named explicitly, not a wildcard, so a new
+                // AuthenticationContext variant is a compile error here
+                // until a human decides whether it needs its own payload
+                // (security.md V2 / Gate J, issue #986) -- exactly the
+                // class of bug this arm's own history (see the doc comment
+                // above, OSSA-2026-015) demonstrates a wildcard can hide.
+                AuthenticationContext::K8s(_)
+                | AuthenticationContext::Password
+                | AuthenticationContext::Admin
+                | AuthenticationContext::Token(_)
+                | AuthenticationContext::WebauthN
+                | AuthenticationContext::Mapping(_)
+                | AuthenticationContext::Ec2Credential
+                | AuthenticationContext::Totp
+                | AuthenticationContext::WasmPlugin { .. } => Ok(Self::ProjectScope(
                     ProjectScopePayload::from_security_context(ctx, project, expires_at)?,
                 )),
             },
@@ -186,9 +201,25 @@ impl FernetToken {
                 AuthenticationContext::Oidc { oidc, .. } => Ok(Self::FederationUnscoped(
                     FederationUnscopedPayload::from_security_context(ctx, oidc, expires_at)?,
                 )),
-                _ => Ok(Self::Unscoped(UnscopedPayload::from_security_context(
-                    ctx, expires_at,
-                )?)),
+                // Every other auth method gets the plain unscoped payload
+                // (ApplicationCredential/Trust cannot actually reach
+                // Unscoped -- validate_scope_boundaries rejects both --
+                // but the match must still be exhaustive). Named
+                // explicitly, not a wildcard (security.md V2 / Gate J,
+                // issue #986).
+                AuthenticationContext::ApplicationCredential { .. }
+                | AuthenticationContext::K8s(_)
+                | AuthenticationContext::Password
+                | AuthenticationContext::Admin
+                | AuthenticationContext::Token(_)
+                | AuthenticationContext::Trust { .. }
+                | AuthenticationContext::WebauthN
+                | AuthenticationContext::Mapping(_)
+                | AuthenticationContext::Ec2Credential
+                | AuthenticationContext::Totp
+                | AuthenticationContext::WasmPlugin { .. } => Ok(Self::Unscoped(
+                    UnscopedPayload::from_security_context(ctx, expires_at)?,
+                )),
             },
         }
     }

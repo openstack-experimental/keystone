@@ -241,6 +241,11 @@ jobs:
       - name: Check Rego undefined-argument footgun (Gate E)
         run: python3 tools/check_rego_undefined_argument_footgun.py
 
+      # Gate J (security review V1/V2 / issue #986): the mechanically
+      # checkable subset of the security.md §7 reviewer checklist.
+      - name: Check security.md §7 checklist SAST (Gate J)
+        run: python3 tools/check_security_checklist_sast.py
+
   openapi:
     needs: changes
     if: needs.changes.outputs.code == 'true'
