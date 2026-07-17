@@ -24,6 +24,7 @@ allow if {
 
 allow if {
 	"reader" in input.credentials.roles
+	input.credentials.system != null
 	input.credentials.system == "all"
 }
 

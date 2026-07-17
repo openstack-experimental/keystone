@@ -30,6 +30,6 @@ allow if {
 # description: "'reader' in the system scope can list any endpoints."
 allow if {
 	"reader" in input.credentials.roles
-	input.credentials.system_scope != null
-	"all" == input.credentials.system_scope
+	input.credentials.system != null
+	"all" == input.credentials.system
 }

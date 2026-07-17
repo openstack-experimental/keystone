@@ -5,12 +5,12 @@ import data.identity.service.show
 test_allowed if {
 	show.allow with input as {"credentials": {"roles": ["admin"]}}
 	show.allow with input as {"credentials": {"is_admin": true}}
-	show.allow with input as {"credentials": {"roles": ["reader"], "system_scope": "all"}}
+	show.allow with input as {"credentials": {"roles": ["reader"], "system": "all"}}
 }
 
 test_forbidden if {
 	not show.allow with input as {"credentials": {"roles": []}}
 	not show.allow with input as {"credentials": {"roles": ["reader"]}}
-	not show.allow with input as {"credentials": {"roles": ["reader"], "system_scope": "domain"}}
+	not show.allow with input as {"credentials": {"roles": ["reader"], "system": "domain"}}
 	not show.allow with input as {"credentials": {"roles": ["manager"]}}
 }
