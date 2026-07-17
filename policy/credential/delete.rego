@@ -43,5 +43,5 @@ allow if {
 	"member" in input.credentials.roles
 	input.credentials.is_delegated
 	input.existing.credential.user_id == input.credentials.user_id
-	credential_common.bound_to_own_delegation_project(input.existing.credential.project_id)
+	credential_common.bound_to_own_delegation_project(object.get(input.existing.credential, "project_id", null))
 }

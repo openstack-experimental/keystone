@@ -235,6 +235,12 @@ jobs:
       - name: Check policy<->handler existence (Gate B1)
         run: python3 tools/check_policy_handler_coverage.py
 
+      # Gate E (security review V3 / issue #985): security.md I2's
+      # undefined-argument footgun -- a delegation-boundary helper called
+      # with a bare dotted path instead of object.get(..., null).
+      - name: Check Rego undefined-argument footgun (Gate E)
+        run: python3 tools/check_rego_undefined_argument_footgun.py
+
   openapi:
     needs: changes
     if: needs.changes.outputs.code == 'true'
