@@ -1317,7 +1317,7 @@ async fn reset_dummy_hash_on_reload(cancel: CancellationToken, state: ServiceSta
                 match recv {
                     Ok(()) => {
                         debug!("Configuration reloaded; clearing dummy-hash cache");
-                        openstack_keystone_core::common::password_hashing::reset_dummy_hash_cache()
+                        openstack_keystone_password_hashing::reset_dummy_hash_cache()
                             .await;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
@@ -1325,7 +1325,7 @@ async fn reset_dummy_hash_on_reload(cancel: CancellationToken, state: ServiceSta
                         // entries for a superseded config. Clearing is the safe
                         // response regardless of how many ticks we missed.
                         warn!(skipped, "Lagged behind config reloads; clearing dummy-hash cache");
-                        openstack_keystone_core::common::password_hashing::reset_dummy_hash_cache()
+                        openstack_keystone_password_hashing::reset_dummy_hash_cache()
                             .await;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {

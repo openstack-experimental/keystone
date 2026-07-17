@@ -15,9 +15,9 @@ use chrono::{DateTime, Utc};
 use secrecy::SecretString;
 
 use openstack_keystone_config::Config;
-use openstack_keystone_core::common::password_hashing;
 use openstack_keystone_core::identity::IdentityProviderError;
 use openstack_keystone_core_types::identity::UserResponseBuilder;
+use openstack_keystone_password_hashing as password_hashing;
 
 use crate::entity::password as db_password;
 

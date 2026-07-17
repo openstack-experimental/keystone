@@ -17,6 +17,7 @@ inventory.workspace = true
 openstack-keystone-config.workspace = true
 openstack-keystone-core.workspace = true
 openstack-keystone-core-types.workspace = true
+openstack-keystone-password-hashing.workspace = true
 secrecy.workspace = true
 sea-orm = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["macros"] }

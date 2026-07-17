@@ -53,7 +53,7 @@ where
                 break;
             }
             if let Some(ref check_hash) = check_password.password_hash
-                && openstack_keystone_core::common::password_hashing::verify_password(
+                && openstack_keystone_password_hashing::verify_password(
                     conf,
                     new_password,
                     check_hash,

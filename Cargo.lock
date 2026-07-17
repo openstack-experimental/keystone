@@ -4625,6 +4625,7 @@ dependencies = [
  "openstack-keystone-oauth2-client-driver-raft",
  "openstack-keystone-oauth2-key-driver-raft",
  "openstack-keystone-oauth2-session-driver-raft",
+ "openstack-keystone-password-hashing",
  "openstack-keystone-resource-driver-sql",
  "openstack-keystone-revoke-driver-sql",
  "openstack-keystone-role-driver-sql",
@@ -4718,6 +4719,7 @@ dependencies = [
  "openstack-keystone-config",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
+ "openstack-keystone-password-hashing",
  "sea-orm",
  "secrecy",
  "tokio",
@@ -4876,7 +4878,6 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
- "bcrypt",
  "chrono",
  "config",
  "crc32fast",
@@ -4905,7 +4906,6 @@ dependencies = [
  "regex-syntax",
  "rsa",
  "rstest",
- "scrypt",
  "sea-orm",
  "sea-orm-migration",
  "secrecy",
@@ -5073,6 +5073,7 @@ dependencies = [
  "openstack-keystone-config",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
+ "openstack-keystone-password-hashing",
  "sea-orm",
  "secrecy",
  "serde",
@@ -5230,6 +5231,25 @@ dependencies = [
  "serde",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "openstack-keystone-password-hashing"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "bcrypt",
+ "hmac 0.13.0",
+ "openstack-keystone-config",
+ "rand 0.10.1",
+ "scrypt",
+ "secrecy",
+ "sha2 0.11.0",
+ "subtle",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-test",
 ]
 
 [[package]]

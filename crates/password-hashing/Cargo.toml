@@ -1,0 +1,32 @@
+[package]
+name = "openstack-keystone-password-hashing"
+description = "OpenStack Keystone password hashing"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+exclude.workspace = true
+
+[dependencies]
+base64.workspace = true
+bcrypt = { workspace = true, features = ["alloc"] }
+hmac.workspace = true
+openstack-keystone-config.workspace = true
+rand.workspace = true
+scrypt = "0.12"
+secrecy.workspace = true
+sha2.workspace = true
+subtle = "2.6.1"
+thiserror.workspace = true
+tokio = { workspace = true, default-features = false, features = ["rt", "sync"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "process", "rt-multi-thread"] }
+tracing-test = { workspace = true, features = ["no-env-filter"] }
+
+[lints]
+workspace = true

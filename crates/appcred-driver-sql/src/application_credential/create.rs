@@ -19,9 +19,9 @@ use uuid::Uuid;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core::application_credential::ApplicationCredentialProviderError;
-use openstack_keystone_core::common::password_hashing;
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core_types::application_credential::*;
+use openstack_keystone_password_hashing as password_hashing;
 
 use crate::entity::{
     access_rule as db_access_rule, application_credential as db_application_credential,

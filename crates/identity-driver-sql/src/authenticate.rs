@@ -18,9 +18,9 @@ use tracing::info;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core::auth::*;
-use openstack_keystone_core::common::password_hashing;
 use openstack_keystone_core::identity::IdentityProviderError;
 use openstack_keystone_core_types::identity::{UserPasswordAuthRequest, UserResponseBuilder};
+use openstack_keystone_password_hashing as password_hashing;
 
 use crate::entity::{local_user as db_local_user, password as db_password};
 use crate::local_user;

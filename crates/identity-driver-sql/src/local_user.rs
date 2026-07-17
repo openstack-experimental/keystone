@@ -16,8 +16,8 @@ use secrecy::SecretString;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core::auth::AuthenticationError;
-use openstack_keystone_core::common::password_hashing;
 use openstack_keystone_core_types::identity::*;
+use openstack_keystone_password_hashing as password_hashing;
 
 use crate::entity::local_user as db_local_user;
 use crate::entity::password as db_password;

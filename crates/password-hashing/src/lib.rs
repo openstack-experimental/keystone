@@ -14,6 +14,10 @@
 
 //! Password hashing with cross-compatibility to Python Keystone.
 //!
+//! Split out of `openstack-keystone-core` so that the crypto dependencies the
+//! hashers pull in (`bcrypt`, `scrypt`, ...) are compiled only by the crates
+//! that actually hash passwords, not by every crate that depends on core.
+//!
 //! Each algorithm lives in its own submodule mirroring the class layout in
 //! `keystone/common/password_hashers/`, so the implementation and its unit
 //! tests stay small and focused:
@@ -550,7 +554,8 @@ mod tests {
             return None;
         }
 
-        // cross_verify.py lives in <repo>/tools; this crate is <repo>/crates/core.
+        // cross_verify.py lives in <repo>/tools; this crate is
+        // <repo>/crates/password-hashing.
         let script =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/cross_verify.py");
 

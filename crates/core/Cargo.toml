@@ -15,7 +15,6 @@ async-trait.workspace = true
 openstack-keystone-audit = { workspace = true }
 axum = { workspace = true, default-features = false, features = ["json", "tokio"], optional = true }
 base64.workspace = true
-bcrypt = { workspace = true, features = ["alloc"] }
 chrono = { workspace = true, default-features = false }
 crc32fast.workspace = true
 data-encoding.workspace = true
@@ -54,10 +53,6 @@ tracing.workspace = true
 url = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4"] }
 validator.workspace = true
-# pbkdf2 crate removed: PBKDF2-HMAC-SHA512 is implemented directly in
-# password_hashing.rs using the workspace hmac/sha2 to avoid a
-# digest v0.10 vs v0.11 version conflict (pbkdf2 v0.12 uses sha2 v0.10).
-scrypt = "0.12"
 subtle = "2.6.1"
 
 [dev-dependencies]
