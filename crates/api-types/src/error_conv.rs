@@ -265,6 +265,9 @@ impl From<ApplicationCredentialProviderError> for KeystoneApiError {
             err @ ApplicationCredentialProviderError::ApplicationCredentialExpired => {
                 Self::unauthorized(err, None::<String>)
             }
+            err @ ApplicationCredentialProviderError::AccessRulesUnenforced => {
+                Self::BadRequest(err.to_string())
+            }
             other => Self::InternalError(other.to_string()),
         }
     }

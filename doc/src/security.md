@@ -266,7 +266,11 @@ the same scope (table above).
 > restrictions) are stored and CRUD'd but **not enforced at request time** — no
 > middleware matches the incoming (service, method, path) against them. A
 > rules-restricted app-cred can currently call any endpoint. Tracked separately;
-> see §7.
+> see §7. Interim mitigation (security review V5): `create_application_credential`
+> logs a `WARN` whenever a non-empty `access_rules` list is accepted, and
+> `application_credential.reject_unenforced_access_rules` (default `false`) lets
+> an operator fail loud — reject the create outright — instead of silently
+> accepting an unenforceable restriction. Neither replaces the middleware.
 
 ### EC2 credentials
 
@@ -342,4 +346,7 @@ policy input:
 
 - **App-cred `access_rules` unenforced at request time** (§5). Feature-sized;
   needs request-matching middleware and likely its own ADR. Until then, treat
-  `access_rules` as advisory, not a security control.
+  `access_rules` as advisory, not a security control. An interim gate exists
+  (security review V5): creation warns unconditionally on a non-empty
+  `access_rules` list, and `application_credential.reject_unenforced_access_rules`
+  (default `false`) can be set to fail loud instead.

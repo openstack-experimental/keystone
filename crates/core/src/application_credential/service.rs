@@ -19,6 +19,7 @@ use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose};
 use rand::{RngExt, rng};
 use secrecy::SecretString;
+use tracing::warn;
 use uuid::Uuid;
 use validator::Validate;
 
@@ -156,6 +157,23 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
                     role.id.clone(),
                 ));
             }
+        }
+        // V5 (security review, `doc/src/security.md` §9): `access_rules`
+        // are stored and CRUD'd but not enforced at request time yet -- no
+        // middleware matches the incoming (service, method, path) against
+        // them. Warn unconditionally so the gap is visible in logs, and
+        // fail loud instead when the operator has opted in, rather than
+        // silently accepting a restriction the server cannot honor.
+        if rec.access_rules.as_ref().is_some_and(|rules| !rules.is_empty()) {
+            let cfg = ctx.state().config_manager.config.read().await;
+            if cfg.application_credential.reject_unenforced_access_rules {
+                return Err(ApplicationCredentialProviderError::AccessRulesUnenforced);
+            }
+            warn!(
+                "creating application credential with a non-empty access_rules list; \
+                 access_rules are NOT enforced at request time yet (see doc/src/security.md §9) \
+                 -- the restriction is currently a no-op"
+            );
         }
         let mut new_rec = rec;
         if new_rec.id.is_none() {
@@ -413,4 +431,160 @@ pub fn generate_secret() -> SecretString {
     let encoded_secret = general_purpose::URL_SAFE_NO_PAD.encode(secret_bytes);
 
     SecretString::new(encoded_secret.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::application_credential::backend::MockApplicationCredentialBackend;
+    use crate::provider::Provider;
+    use crate::role::MockRoleProvider;
+    use crate::tests::get_mocked_state;
+
+    fn make_service(mock_backend: MockApplicationCredentialBackend) -> ApplicationCredentialService {
+        ApplicationCredentialService {
+            backend_driver: Arc::new(mock_backend),
+        }
+    }
+
+    fn no_op_role_mock() -> MockRoleProvider {
+        let mut role_mock = MockRoleProvider::default();
+        role_mock.expect_list_roles().returning(|_, _| Ok(vec![]));
+        role_mock
+    }
+
+    fn rule() -> AccessRuleCreate {
+        AccessRuleCreateBuilder::default()
+            .user_id("uid")
+            .service("compute")
+            .method("GET")
+            .path("/v2.1/servers")
+            .build()
+            .unwrap()
+    }
+
+    /// V5 (security review, issue #980): a non-empty `access_rules` list is
+    /// accepted by default (existing behavior preserved) -- the warning is
+    /// only observable via logs, not the return value.
+    #[tokio::test]
+    async fn test_create_with_access_rules_warns_by_default() {
+        let mut mock_backend = MockApplicationCredentialBackend::new();
+        mock_backend
+            .expect_create_application_credential()
+            .returning(|_, rec| {
+                Ok(ApplicationCredentialCreateResponseBuilder::default()
+                    .id(rec.id.clone().unwrap_or_default())
+                    .name(rec.name.clone())
+                    .project_id(rec.project_id.clone())
+                    .roles(rec.roles.clone())
+                    .secret(SecretString::from("s3cr3t"))
+                    .unrestricted(false)
+                    .user_id(rec.user_id.clone())
+                    .build()
+                    .unwrap())
+            });
+
+        let state = get_mocked_state(
+            Some(Config::default()),
+            Some(Provider::mocked_builder().mock_role(no_op_role_mock())),
+        )
+        .await;
+
+        let rec = ApplicationCredentialCreateBuilder::default()
+            .name("cred")
+            .project_id("pid")
+            .user_id("uid")
+            .roles(vec![])
+            .access_rules(vec![rule()])
+            .build()
+            .unwrap();
+
+        let result = make_service(mock_backend)
+            .create_application_credential(&ExecutionContext::internal(&state), rec)
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    /// V5: with `reject_unenforced_access_rules` enabled, creation with a
+    /// non-empty `access_rules` list fails loud -- and never reaches the
+    /// backend driver at all (no `expect_create_application_credential` is
+    /// configured on the mock, so a call would panic the test).
+    #[tokio::test]
+    async fn test_create_with_access_rules_rejected_when_configured() {
+        let mock_backend = MockApplicationCredentialBackend::new();
+
+        let mut cfg = Config::default();
+        cfg.application_credential.reject_unenforced_access_rules = true;
+
+        let state = get_mocked_state(
+            Some(cfg),
+            Some(Provider::mocked_builder().mock_role(no_op_role_mock())),
+        )
+        .await;
+
+        let rec = ApplicationCredentialCreateBuilder::default()
+            .name("cred")
+            .project_id("pid")
+            .user_id("uid")
+            .roles(vec![])
+            .access_rules(vec![rule()])
+            .build()
+            .unwrap();
+
+        let result = make_service(mock_backend)
+            .create_application_credential(&ExecutionContext::internal(&state), rec)
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(ApplicationCredentialProviderError::AccessRulesUnenforced)
+        ));
+    }
+
+    /// V5: an empty/absent `access_rules` list is never rejected, even with
+    /// `reject_unenforced_access_rules` enabled -- there is nothing
+    /// unenforceable to fail loud about.
+    #[tokio::test]
+    async fn test_create_without_access_rules_never_rejected() {
+        let mut mock_backend = MockApplicationCredentialBackend::new();
+        mock_backend
+            .expect_create_application_credential()
+            .returning(|_, rec| {
+                Ok(ApplicationCredentialCreateResponseBuilder::default()
+                    .id(rec.id.clone().unwrap_or_default())
+                    .name(rec.name.clone())
+                    .project_id(rec.project_id.clone())
+                    .roles(rec.roles.clone())
+                    .secret(SecretString::from("s3cr3t"))
+                    .unrestricted(false)
+                    .user_id(rec.user_id.clone())
+                    .build()
+                    .unwrap())
+            });
+
+        let mut cfg = Config::default();
+        cfg.application_credential.reject_unenforced_access_rules = true;
+
+        let state = get_mocked_state(
+            Some(cfg),
+            Some(Provider::mocked_builder().mock_role(no_op_role_mock())),
+        )
+        .await;
+
+        let rec = ApplicationCredentialCreateBuilder::default()
+            .name("cred")
+            .project_id("pid")
+            .user_id("uid")
+            .roles(vec![])
+            .build()
+            .unwrap();
+
+        let result = make_service(mock_backend)
+            .create_application_credential(&ExecutionContext::internal(&state), rec)
+            .await;
+
+        assert!(result.is_ok());
+    }
 }
