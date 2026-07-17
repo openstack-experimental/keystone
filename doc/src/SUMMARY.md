@@ -64,6 +64,7 @@
   - [RFC 7644 Compatibility](scim/compatibility.md)
 - [Kubernetes TokenReview Auth](k8s_auth.md)
 - [Mapping Engine](mapping.md)
+- [LDAP Identity Backend](ldap.md)
 
 ---
 

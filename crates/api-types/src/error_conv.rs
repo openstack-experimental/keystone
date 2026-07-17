@@ -291,6 +291,10 @@ impl From<IdentityProviderError> for KeystoneApiError {
             IdentityProviderError::TooManyRequests { retry_after_secs } => Self::TooManyRequests {
                 retry_after: retry_after_secs,
             },
+            // A write attempt against a read-only backend (e.g. the LDAP
+            // identity driver, ADR-0027) is a permissions statement, not a
+            // server fault.
+            err @ IdentityProviderError::Readonly(..) => Self::forbidden(err),
             other => Self::InternalError(other.to_string()),
         }
     }
@@ -756,6 +760,31 @@ mod tests {
             <KeystoneApiError as IntoResponse>::into_response(api_err).status(),
             StatusCode::CONFLICT
         );
+    }
+
+    #[test]
+    fn identity_provider_readonly_returns_403() {
+        let err = IdentityProviderError::Readonly("ldap identity driver is read-only".to_string());
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(api_err, KeystoneApiError::Forbidden { .. }));
+        assert_eq!(
+            <KeystoneApiError as IntoResponse>::into_response(api_err).status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    #[test]
+    fn identity_provider_not_implemented_falls_through_to_internal_error() {
+        let err = IdentityProviderError::NotImplemented("expiring group membership".to_string());
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(api_err, KeystoneApiError::InternalError(..)));
+    }
+
+    #[test]
+    fn identity_provider_ldap_connection_falls_through_to_internal_error() {
+        let err = IdentityProviderError::LdapConnection("bind failed".to_string());
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(api_err, KeystoneApiError::InternalError(..)));
     }
 
     #[test]

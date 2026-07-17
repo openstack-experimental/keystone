@@ -77,6 +77,7 @@ mod idmapping;
 mod interface;
 mod jws_token;
 mod k8s_auth;
+mod ldap;
 mod listener;
 mod local_emergency;
 mod mapping;
@@ -116,6 +117,7 @@ pub use idmapping::*;
 pub use interface::*;
 pub use jws_token::*;
 pub use k8s_auth::*;
+pub use ldap::*;
 pub use listener::*;
 pub use local_emergency::*;
 pub use mapping::*;
@@ -221,6 +223,10 @@ pub struct Config {
     /// K8s Auth provider configuration.
     #[serde(default)]
     pub k8s_auth: K8sAuthProvider,
+
+    /// LDAP identity backend configuration (ADR-0027).
+    #[serde(default)]
+    pub ldap: LdapProvider,
 
     /// Node-local, quorum-bypass emergency write path configuration
     /// (ADR 0028).

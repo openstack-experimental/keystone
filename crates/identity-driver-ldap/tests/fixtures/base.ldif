@@ -1,0 +1,59 @@
+dn: dc=example,dc=com
+objectClass: dcObject
+objectClass: organization
+dc: example
+o: Example Org
+
+dn: ou=Users,dc=example,dc=com
+objectClass: organizationalUnit
+ou: Users
+
+dn: ou=Groups,dc=example,dc=com
+objectClass: organizationalUnit
+ou: Groups
+
+dn: cn=jdoe,ou=Users,dc=example,dc=com
+objectClass: inetOrgPerson
+cn: jdoe
+sn: Doe
+givenName: Jane
+mail: jdoe@example.com
+userPassword: jdoepass
+description: Jane Doe functional test account
+
+dn: cn=bsmith,ou=Users,dc=example,dc=com
+objectClass: inetOrgPerson
+cn: bsmith
+sn: Smith
+mail: bsmith@example.com
+userPassword: bsmithpass
+
+dn: cn=disableduser,ou=Users,dc=example,dc=com
+objectClass: inetOrgPerson
+objectClass: extensibleObject
+cn: disableduser
+sn: Disabled
+userPassword: disabledpass
+enabled: FALSE
+
+dn: cn=admins,ou=Groups,dc=example,dc=com
+objectClass: groupOfNames
+objectClass: extensibleObject
+cn: admins
+ou: admins
+member: cn=jdoe,ou=Users,dc=example,dc=com
+
+dn: cn=users,ou=Groups,dc=example,dc=com
+objectClass: groupOfNames
+objectClass: extensibleObject
+cn: users
+ou: users
+member: cn=jdoe,ou=Users,dc=example,dc=com
+member: cn=bsmith,ou=Users,dc=example,dc=com
+
+dn: cn=posixadmins,ou=Groups,dc=example,dc=com
+objectClass: posixGroup
+cn: posixadmins
+gidNumber: 5000
+memberUid: jdoe
+memberUid: bsmith

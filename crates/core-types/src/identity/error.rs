@@ -60,6 +60,16 @@ pub enum IdentityProviderError {
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
 
+    /// LDAP connection, bind, TLS, or pool acquisition failure (ADR-0027
+    /// §12).
+    #[error("LDAP connection error: {0}")]
+    LdapConnection(String),
+
+    /// LDAP filter construction failure; should not occur with correct
+    /// escaping (ADR-0027 §12).
+    #[error("LDAP filter build error: {0}")]
+    LdapFilterBuild(String),
+
     #[error("corrupted database entries for user {0}")]
     MalformedUser(String),
 
@@ -75,12 +85,23 @@ pub enum IdentityProviderError {
     #[error("no entry in the `user` table found for user_id: {0}")]
     NoMainUserEntry(String),
 
+    /// The operation has no equivalent in the configured backend, e.g.
+    /// expiring group membership or service accounts against an LDAP
+    /// identity backend (ADR-0027 §12).
+    #[error("operation not implemented by backend: {0}")]
+    NotImplemented(String),
+
     /// Password hashing error.
     #[error("{}", source)]
     PasswordHash {
         #[source]
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
+
+    /// Operation rejected because the configured backend is read-only, e.g.
+    /// any mutation against the LDAP identity backend (ADR-0027 §12).
+    #[error("operation not permitted: backend is read-only ({0})")]
+    Readonly(String),
 
     /// Resource provider error.
     #[error(transparent)]

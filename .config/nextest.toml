@@ -20,6 +20,9 @@ command = { command-line = [ "tools/raft-env.sh" ] }
 [scripts.setup.start-api]
 command = { command-line = [ "tools/start-api.sh" ] }
 
+[scripts.setup.start-ldap-test]
+command = { command-line = [ "tools/start-ldap-test.sh" ] }
+
 
 [profile.ci]
 inherits = "default"
@@ -98,6 +101,29 @@ inherits = "api"
 filter = "binary(integration_api_v3) + binary(integration_api_v4) + binary(scim_v2)"
 setup = "start-api"
 [profile.ci-api.junit]
+path = "junit.xml"
+store-success-output = false
+store-failure-output = true
+
+# --- LDAP driver functional tests ---
+# Spins up a throwaway local `slapd` (no Docker daemon required; see
+# tools/start-ldap-test.sh), seeds it from
+# crates/identity-driver-ldap/tests/fixtures/base.ldif, and runs the
+# `live_tests` module's functional tests against it. Those tests skip
+# themselves (rather than fail) under any other profile, since
+# KEYSTONE_LDAP_TEST_URL is only set here.
+[profile.ldap]
+
+[[profile.ldap.scripts]]
+filter = "package(openstack-keystone-identity-driver-ldap)"
+setup = "start-ldap-test"
+
+[profile.ci-ldap]
+inherits = "ldap"
+[[profile.ci-ldap.scripts]]
+filter = "package(openstack-keystone-identity-driver-ldap)"
+setup = "start-ldap-test"
+[profile.ci-ldap.junit]
 path = "junit.xml"
 store-success-output = false
 store-failure-output = true

@@ -4,7 +4,79 @@
 
 ## Status
 
-Proposed
+Accepted. Implemented in `crates/identity-driver-ldap`, selectable via
+`[identity] driver = "ldap"` plus a `[ldap]` config section
+(`crates/config/src/ldap.rs`). A few implementation notes refine this ADR's
+original text:
+
+- Backend selection is not `inventory`-based; it is a hand-written
+  `HashMap<String, Arc<dyn IdentityBackend>>` registry in
+  `crates/keystone/src/plugin_manager.rs`, conditionally populated only when
+  `driver = "ldap"` is configured (mirroring the JWS token provider's
+  fail-fast-on-select precedent). The linker-anchor mechanism in §1 is
+  unrelated to this selection; it only keeps the crate linked.
+- There is no generic Hints/comparator abstraction in this codebase. §5's
+  filter translation is a direct function of `UserListParameters`/
+  `GroupListParameters`' concrete fields, not a general comparator engine.
+- `is_domain_aware()`/`generates_uuids()` capability-flag methods were not
+  added to `IdentityBackend`; the backend simply always reports
+  `config.identity.default_domain_id` and uses the directory's
+  `user_id_attribute` value as `id`.
+- Write operations return a dedicated `IdentityProviderError::Readonly`
+  (mapped to HTTP 403); operations with no LDAP equivalent (expiring group
+  membership, service accounts, federated users) return
+  `IdentityProviderError::NotImplemented` instead, since these are a
+  different condition than a read-only rejection.
+
+A subsequent review against upstream Python Keystone
+(`keystone/identity/backends/ldap/{core,common}.py`,
+`keystone/conf/ldap.py`) found and fixed several compatibility bugs:
+
+- `query_scope` defaulted to `sub`; Python defaults to `one`.
+- `user_enabled_mask` used `(value & mask) != 0`; Python's actual semantics
+  are `(value & mask) != mask` (enabled unless *all* masked bits are set —
+  the Active Directory `userAccountControl` `ACCOUNTDISABLE` convention),
+  and `user_enabled_mask` ignores `user_enabled_invert` entirely. The
+  previous formula was exactly inverted for the common `mask = 2` case.
+- `user_enabled_default` was typed as a Rust `bool`, which cannot represent
+  Python's dual usage as a boolean literal (`"True"`) in the plain case and
+  an integer literal (e.g. `"512"`) in the `user_enabled_mask` case; it is
+  now a `String`, parsed contextually, matching Python's `StrOpt`.
+- `get`/`get_by_name`/`get_all` (single lookups and listing) previously
+  resolved a DN via ID construction/search first, then did a second
+  BASE-scoped fetch. Python's read path never constructs a DN this way
+  (`_id_to_dn` is write-only, used only by `create`/`update`/`delete`, which
+  don't exist on this permanently-read-only backend) — every read is a
+  single filtered search under `tree_dn`, scoped by `query_scope`
+  (`one`/`sub`), reading the resulting entry's real DN off the result. The
+  driver was changed to do the same, which also means `query_scope = "one"`
+  now actually restricts listing/lookup to one level below the tree DN, as
+  in Python, rather than always searching the whole subtree.
+- `group_members_are_ids` (members of `group_member_attribute` are user IDs,
+  not DNs — e.g. `posixGroup`'s `memberUid`) was missing entirely; group
+  membership resolution always assumed DNs.
+- Several missing `[ldap]` options were added for config-file parity:
+  `user_description_attribute`, `user_pass_attribute`,
+  `user_default_project_id_attribute`, `group_members_are_ids`,
+  `group_attribute_ignore`, and an `alias_dereferencing = default` choice.
+- `[ldap] url` now supports Python's comma/whitespace-separated multi-URL
+  HA syntax, trying each candidate in turn (optionally shuffled via
+  `randomize_urls`) until one connects and binds.
+
+Two Python options are parsed for config-file compatibility but not
+functionally applied, since the `ldap3` crate (v0.11) has no equivalent
+hook: `alias_dereferencing` (no per-search deref control) and
+`tls_cacertfile`/`tls_cacertdir` (TLS verification uses the platform/
+`rustls` default trust store). Both are documented inline and log a
+startup warning when set. Custom CA loading is a reasonable follow-up if
+needed; operators can install the CA into the system trust store or use
+`tls_req_cert = never` for self-signed test directories in the meantime.
+
+Live-directory functional tests against a real OpenLDAP `slapd` instance
+now exist (`crates/identity-driver-ldap/tests/`), run as a `cargo nextest`
+setup-script pattern (installing/seeding a local `slapd`, no Docker daemon
+required) analogous to `tools/start-api.sh`. A side-by-side Python/Rust
+smoke comparison remains follow-up work, not implemented in this change.
 
 ## Context
 

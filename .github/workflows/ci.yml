@@ -140,6 +140,24 @@ jobs:
       - name: Run tests (unit)
         run: cargo nextest run --all-features --profile ci
 
+      - name: Install slapd for LDAP tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y slapd ldap-utils
+          # Debian/Ubuntu's stock AppArmor profile for /usr/sbin/slapd only
+          # grants rwk on /var/lib/ldap and rw (no lock) on /var/tmp, so the
+          # mdb backend's throwaway test database under /var/tmp fails to
+          # open (mdb_db_open: Permission denied) when the profile is
+          # enforced. Unload it for this disposable local test instance.
+          if command -v apparmor_parser >/dev/null 2>&1 && [ -e /etc/apparmor.d/usr.sbin.slapd ]; then
+            sudo mkdir -p /etc/apparmor.d/disable
+            sudo ln -sf /etc/apparmor.d/usr.sbin.slapd /etc/apparmor.d/disable/
+            sudo apparmor_parser -R /etc/apparmor.d/usr.sbin.slapd
+          fi
+
+      - name: Run LDAP tests
+        run: cargo nextest run -p openstack-keystone-identity-driver-ldap --profile ci-ldap
+
       # Compile-only: catches rot in the TPM sample without requiring a
       # real/virtual TPM in CI (ADR 0016-v2 §2.5.2 test/sample scope decision
       # — real/virtual TPM availability in CI runners isn't reliable enough

@@ -3825,6 +3825,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "lber"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cbcf559624bfd9fe8d488329a8959766335a43a9b8b2cdd6a2c379fca02909a5"
+dependencies = [
+ "bytes",
+ "nom",
+]
+
+[[package]]
+name = "ldap3"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01fe89f5e7cfb7e4701e3a38ff9f00358e026a9aee940355d88ee9d81e5c7503"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "futures",
+ "futures-util",
+ "lber",
+ "log",
+ "nom",
+ "percent-encoding",
+ "rustls",
+ "rustls-native-certs",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-rustls",
+ "tokio-stream",
+ "tokio-util",
+ "url",
+ "x509-parser 0.18.1",
+]
+
+[[package]]
 name = "leb128"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4580,6 +4615,7 @@ dependencies = [
  "openstack-keystone-credential-driver-sql",
  "openstack-keystone-distributed-storage",
  "openstack-keystone-federation-driver-sql",
+ "openstack-keystone-identity-driver-ldap",
  "openstack-keystone-identity-driver-sql",
  "openstack-keystone-idmapping-driver-sql",
  "openstack-keystone-k8s-auth-driver-raft",
@@ -5005,6 +5041,25 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "openstack-keystone-identity-driver-ldap"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "eyre",
+ "ldap3",
+ "openstack-keystone-config",
+ "openstack-keystone-core",
+ "openstack-keystone-core-types",
+ "rand 0.10.1",
+ "secrecy",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-test",
 ]
 
 [[package]]

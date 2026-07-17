@@ -941,6 +941,18 @@ impl PluginManager {
             jws_token_provider.load_keys().await?;
             slf.register_token_backend("jws", Arc::new(jws_token_provider));
         }
+        // Only construct the LDAP identity backend when actually selected:
+        // unlike the SQL backend (always eagerly registered above), this
+        // opens a real connection to an external directory server, which
+        // must not be attempted for a `driver = sql` deployment that never
+        // configured `[ldap]`. When `driver = "ldap"` *is* selected, fail
+        // loudly here (ADR-0027) rather than registering a backend that can
+        // never serve a request.
+        if config.identity.driver == "ldap" {
+            let ldap_backend =
+                openstack_keystone_identity_driver_ldap::LdapBackend::new(&config.ldap).await?;
+            slf.register_identity_backend("ldap", Arc::new(ldap_backend));
+        }
         slf.register_k8s_auth_backend(
             "raft",
             Arc::new(openstack_keystone_k8s_auth_driver_raft::RaftBackend::default()),
