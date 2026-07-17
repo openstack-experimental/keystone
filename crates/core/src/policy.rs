@@ -94,13 +94,25 @@ pub enum PolicyError {
 impl From<PolicyError> for openstack_keystone_api_types::error::KeystoneApiError {
     /// Convert a policy error into a Keystone API error.
     ///
+    /// Only a genuine OPA decision (`Forbidden`, meaning the policy engine
+    /// ran and denied the request) maps to 403. Every other variant
+    /// (transport/serialization failures talking to OPA, an unresolved
+    /// security context, a scope-drift invariant violation, ...) is an
+    /// internal/plumbing failure, not a policy decision, and must surface
+    /// as a 500 -- mapping it to `forbidden` would silently disguise a bug
+    /// as an intentional access denial with no server-side error log.
+    ///
     /// # Parameters
     /// - `error`: The policy error to convert.
     ///
     /// # Returns
     /// - `Self` - The converted `KeystoneApiError`.
     fn from(error: PolicyError) -> Self {
-        Self::forbidden(error)
+        if matches!(error, PolicyError::Forbidden(_)) {
+            Self::forbidden(error)
+        } else {
+            Self::internal(error)
+        }
     }
 }
 
@@ -209,6 +221,17 @@ pub struct Credentials {
     #[builder(default)]
     #[serde(default)]
     pub domain_id: Option<String>,
+
+    /// The domain of the currently-scoped project, when the caller holds a
+    /// project (or trust-project) scoped token. Distinct from `domain_id`
+    /// (which is only set for a genuinely *domain*-scoped token) so that
+    /// policies gating on domain-scope membership (e.g. the `manager` role
+    /// checks in `domain_matches_domain_scope`) cannot be satisfied merely
+    /// by holding a role on a project that happens to live in that domain.
+    /// `None` for domain/system/unscoped tokens.
+    #[builder(default)]
+    #[serde(default)]
+    pub project_domain_id: Option<String>,
 
     /// System scope information.
     #[builder(default)]
@@ -337,8 +360,12 @@ impl TryFrom<&ValidatedSecurityContext> for Credentials {
                 ScopeInfo::Domain(domain) => {
                     builder.domain_id(domain.id.clone());
                 }
-                ScopeInfo::Project { project, .. } => {
+                ScopeInfo::Project {
+                    project,
+                    project_domain,
+                } => {
                     builder.project_id(project.id.clone());
+                    builder.project_domain_id(project_domain.id.clone());
                 }
                 ScopeInfo::System(system) => {
                     if system == "system" {
@@ -349,6 +376,7 @@ impl TryFrom<&ValidatedSecurityContext> for Credentials {
                 }
                 ScopeInfo::TrustProject(tpi) => {
                     builder.project_id(tpi.project.id.clone());
+                    builder.project_domain_id(tpi.project_domain.id.clone());
                     builder.trust(tpi.trust.clone());
                 }
                 ScopeInfo::Unscoped => {}
@@ -494,5 +522,81 @@ impl PolicyEvaluationResult {
             can_see_other_domain_resources: Some(false),
             violations: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::tests::test_fixture_scoped;
+    use openstack_keystone_core_types::role::RoleRef;
+
+    /// A project-scoped token must carry the domain of the scoped project
+    /// as `project_domain_id`, distinct from `domain_id` (which stays
+    /// unset for project scope) so policies like
+    /// `identity/resource/domain/show` can grant a project-scoped caller
+    /// read access to their own domain without conflating it with genuine
+    /// domain-scope membership (`domain_matches_domain_scope`).
+    #[test]
+    fn credentials_from_project_scope_carries_project_domain_id() {
+        let vsc = test_fixture_scoped();
+        let creds = Credentials::try_from(&vsc).unwrap();
+        assert_eq!(creds.project_id.as_deref(), Some("project_id"));
+        assert_eq!(creds.project_domain_id.as_deref(), Some("domain_id"));
+        assert_eq!(creds.domain_id, None);
+    }
+
+    #[test]
+    fn credentials_from_domain_scope_leaves_project_domain_id_unset() {
+        let authz = AuthzInfoBuilder::default()
+            .roles(vec![RoleRef {
+                id: "admin".to_string(),
+                name: Some("admin".to_string()),
+                domain_id: None,
+            }])
+            .scope(ScopeInfo::Domain(
+                openstack_keystone_core_types::resource::Domain {
+                    id: "domain_id".to_string(),
+                    name: "domain_name".to_string(),
+                    enabled: true,
+                    ..Default::default()
+                },
+            ))
+            .build()
+            .unwrap();
+
+        let user = openstack_keystone_core_types::identity::UserResponseBuilder::default()
+            .id("uid")
+            .domain_id("domain_id")
+            .enabled(true)
+            .name("testuser")
+            .build()
+            .unwrap();
+
+        let sc = SecurityContext::test_build()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id("uid")
+                        .user(user)
+                        .user_domain(openstack_keystone_core_types::resource::Domain {
+                            id: "domain_id".to_string(),
+                            name: "domain_name".to_string(),
+                            enabled: true,
+                            ..Default::default()
+                        })
+                        .build()
+                        .unwrap(),
+                ),
+            })
+            .authorization(authz)
+            .build();
+
+        let vsc = ValidatedSecurityContext::test_new(sc);
+        let creds = Credentials::try_from(&vsc).unwrap();
+        assert_eq!(creds.domain_id.as_deref(), Some("domain_id"));
+        assert_eq!(creds.project_domain_id, None);
+        assert_eq!(creds.project_id, None);
     }
 }

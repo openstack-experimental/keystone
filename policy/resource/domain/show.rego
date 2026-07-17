@@ -33,6 +33,12 @@ allow if {
 	identity.domain_matches_domain_scope
 }
 
-violation contains {"field": "id", "msg": "showing a domain requires system admin, `reader` role with system scope, or `manager` role with matching domain scope."} if {
+# METADATA
+# description: A project-scoped caller can view the domain their project belongs to
+allow if {
+	input.credentials.project_domain_id == input.existing.domain.id
+}
+
+violation contains {"field": "id", "msg": "showing a domain requires system admin, `reader` role with system scope, `manager` role with matching domain scope, or a project scoped to the domain."} if {
 	not input.credentials.is_admin
 }
