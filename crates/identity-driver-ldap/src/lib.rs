@@ -15,7 +15,8 @@
 //!
 //! Read-only identity backend backed by an external LDAP directory
 //! (FreeIPA, Active Directory, OpenLDAP, ...), configuration-compatible
-//! with Python Keystone's `[ldap]` section. See `doc/src/adr/0027-ldap-identity-driver.md`.
+//! with Python Keystone's `[ldap]` section. See
+//! `doc/src/adr/0027-ldap-identity-driver.md`.
 use std::collections::HashSet;
 use std::sync::Arc;
 

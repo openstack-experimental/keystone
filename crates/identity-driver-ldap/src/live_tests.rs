@@ -22,7 +22,8 @@
 //! nextest profile (`.config/nextest.toml`) sets it via
 //! `tools/start-ldap-test.sh`, which starts and seeds a throwaway local
 //! `slapd` (no Docker daemon required). Run manually with:
-//! `tools/start-ldap-test.sh && cargo test -p openstack-keystone-identity-driver-ldap --lib live_tests`.
+//! `tools/start-ldap-test.sh && cargo test -p
+//! openstack-keystone-identity-driver-ldap --lib live_tests`.
 use secrecy::SecretString;
 
 use openstack_keystone_config::LdapProvider;

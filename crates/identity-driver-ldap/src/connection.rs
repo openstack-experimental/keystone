@@ -16,14 +16,13 @@
 //! Two independent pools are maintained:
 //!
 //! - [`ServicePool`]: bound as the service account, used for every directory
-//!   read (attribute lookups, subtree searches, DN resolution ahead of a
-//!   bind).
+//!   read (attribute lookups, subtree searches, DN resolution ahead of a bind).
 //! - [`AuthPool`]: never reuses a connection across users. Each end-user
-//!   authentication attempt opens (or reuses a just-vacated) connection,
-//!   binds as the resolved user DN with the caller-supplied password, and
-//!   the connection is dropped immediately after the check. Bounding it
-//!   separately from the service pool keeps an authentication storm from
-//!   starving directory queries needed for unrelated requests.
+//!   authentication attempt opens (or reuses a just-vacated) connection, binds
+//!   as the resolved user DN with the caller-supplied password, and the
+//!   connection is dropped immediately after the check. Bounding it separately
+//!   from the service pool keeps an authentication storm from starving
+//!   directory queries needed for unrelated requests.
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 

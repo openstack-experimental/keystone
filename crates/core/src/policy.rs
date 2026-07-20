@@ -613,6 +613,10 @@ mod tests {
         assert_eq!(creds.domain_id.as_deref(), Some("domain_id"));
         assert_eq!(creds.project_domain_id, None);
         assert_eq!(creds.project_id, None);
+        // A non-Unscoped scope must carry its effective role names.
+        // Catches the `!matches!(.., Unscoped)` guard being inverted,
+        // which would skip role population for every scoped case.
+        assert_eq!(creds.roles, vec!["admin".to_string()]);
     }
 
     /// Gate I (security review V9, issue #987): a structural test that
@@ -960,5 +964,102 @@ mod tests {
             "project_id",
         );
         assert!(Credentials::try_from(&vsc).is_ok());
+    }
+
+    /// `PolicyEvaluationResult::valid()` is true exactly when `violations`
+    /// is `Some(&[])` -- `None` (evaluation never ran / no violation rule
+    /// exists) and a non-empty list both mean "not valid".
+    #[test]
+    fn policy_evaluation_result_valid_reflects_empty_violations() {
+        let no_violations = PolicyEvaluationResult {
+            allow: true,
+            can_see_other_domain_resources: None,
+            violations: Some(vec![]),
+        };
+        assert!(no_violations.valid());
+
+        let has_violations = PolicyEvaluationResult {
+            allow: false,
+            can_see_other_domain_resources: None,
+            violations: Some(vec![Violation {
+                msg: "denied".to_string(),
+                field: None,
+            }]),
+        };
+        assert!(!has_violations.valid());
+
+        let never_evaluated = PolicyEvaluationResult {
+            allow: false,
+            can_see_other_domain_resources: None,
+            violations: None,
+        };
+        assert!(!never_evaluated.valid());
+    }
+
+    /// `PolicyEvaluationResult::allow()` must return the underlying
+    /// `allow` field, not a hardcoded value.
+    #[test]
+    fn policy_evaluation_result_allow_reflects_field() {
+        let allowed = PolicyEvaluationResult {
+            allow: true,
+            can_see_other_domain_resources: None,
+            violations: None,
+        };
+        assert!(allowed.allow());
+
+        let denied = PolicyEvaluationResult {
+            allow: false,
+            can_see_other_domain_resources: None,
+            violations: None,
+        };
+        assert!(!denied.allow());
+    }
+
+    /// `Display` for `PolicyEvaluationResult` must join the violation
+    /// messages, not silently produce an empty string.
+    #[test]
+    fn policy_evaluation_result_display_formats_violation_messages() {
+        let result = PolicyEvaluationResult {
+            allow: false,
+            can_see_other_domain_resources: None,
+            violations: Some(vec![
+                Violation {
+                    msg: "first".to_string(),
+                    field: None,
+                },
+                Violation {
+                    msg: "second".to_string(),
+                    field: None,
+                },
+            ]),
+        };
+        assert_eq!(result.to_string(), "first, second");
+    }
+
+    /// security.md: only a genuine OPA `Forbidden` decision maps to the
+    /// API's `Forbidden` (403) error; every other `PolicyError` variant is
+    /// plumbing/invariant failure and must surface as `InternalError` (500)
+    /// instead, never disguised as an intentional access denial.
+    #[cfg(feature = "api")]
+    #[test]
+    fn policy_error_forbidden_maps_to_api_forbidden() {
+        let api_err = openstack_keystone_api_types::error::KeystoneApiError::from(
+            PolicyError::Forbidden(PolicyEvaluationResult::forbidden()),
+        );
+        assert!(matches!(
+            api_err,
+            openstack_keystone_api_types::error::KeystoneApiError::Forbidden { .. }
+        ));
+    }
+
+    #[cfg(feature = "api")]
+    #[test]
+    fn policy_error_scope_drift_maps_to_api_internal_error_not_forbidden() {
+        let api_err =
+            openstack_keystone_api_types::error::KeystoneApiError::from(PolicyError::ScopeDrift);
+        assert!(matches!(
+            api_err,
+            openstack_keystone_api_types::error::KeystoneApiError::InternalError(_)
+        ));
     }
 }

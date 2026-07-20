@@ -12,14 +12,58 @@ examine_globs = [
 ]
 test_package = ["openstack-keystone-core", "openstack-keystone-core-types"]
 
-# auth_plugin_auth::acceptance_tests spawns a nested `cargo build --release
-# --target wasm32-unknown-unknown` to produce its reference-plugin wasm
-# fixture. That nested cargo invocation isn't sandbox-safe under
-# cargo-mutants' isolated per-mutant tree copies (missing target/network
-# there) and fails independently of any mutation, so it's excluded from
-# this test run rather than treated as a caught/missed mutant signal.
+profile = "mutants"
+
+# auth_plugin_auth::{acceptance_tests,mapping_acceptance_tests,
+# route_acceptance_tests} each spawn a nested `cargo build --release
+# --target wasm32-unknown-unknown` (via build_reference_plugin) to
+# produce their reference-plugin wasm fixture. That nested cargo
+# invocation isn't sandbox-safe under cargo-mutants' isolated per-mutant
+# tree copies (missing target/network there) and fails independently of
+# any mutation, so all three modules are excluded from this test run
+# rather than treated as a caught/missed mutant signal.
 additional_cargo_test_args = [
     "--",
     "--skip",
     "auth_plugin_auth::acceptance_tests",
+    "--skip",
+    "auth_plugin_auth::mapping_acceptance_tests",
+    "--skip",
+    "auth_plugin_auth::route_acceptance_tests",
+]
+
+# Deliberately unaddressed MISSED mutants, each with a reason a passing
+# test can't reasonably kill it:
+exclude_re = [
+    # `expiry < Utc::now()` vs `expiry <= Utc::now()`: killing the `<=`
+    # mutant requires a test where the application-credential's
+    # `expires_at` exactly equals the `Utc::now()` read inside the
+    # function under test, which is not reachable without injecting a
+    # clock -- a real request can never land on that exact instant.
+    "crates/core/src/auth\\.rs:144:50: replace < with .* in ValidatedSecurityContext::new_for_scope",
+    # `expiry < now` vs `expiry <= now` in the top-of-function token-expiry
+    # check: `now` is captured once into a local, but killing the `<=`
+    # mutant still needs a test where `expires_at` exactly equals that
+    # captured instant, which isn't controllable without injecting a clock
+    # -- same unreachable-boundary problem as the app-cred expiry mutant
+    # above. The `==` mutant at this same site IS killed
+    # (test_new_for_scope_expired_token_fails uses a clearly-past expiry).
+    "crates/core/src/auth\\.rs:128:57: replace < with <= in ValidatedSecurityContext::new_for_scope",
+    # SecurityContextTestingBuilder is test-only fixture infrastructure,
+    # not production logic; mutating its `expires_at` setter to a no-op
+    # would just make dependent tests build a context without the
+    # expiry they asked for, which is a fixture bug, not a security
+    # invariant this gate is meant to protect.
+    "crates/core-types/src/auth\\.rs:357:9: replace SecurityContextTestingBuilder::expires_at -> Self with Default::default\\(\\)",
+    # `expires_at < Utc::now()` vs `<=` in `is_expired()`: same clock-
+    # injection problem as the app-cred expiry mutant above -- killing
+    # it needs `expires_at` to equal the live `Utc::now()` read inside
+    # the function under test, which isn't reachable from a test.
+    "crates/core-types/src/auth\\.rs:688:53: replace < with <= in SecurityContext::is_expired",
+    # Equivalent mutant, not a coverage gap: `test_build()`'s entire body
+    # already is `SecurityContextTestingBuilder::default()`, and the
+    # struct derives `Default` -- replacing the body with
+    # `Default::default()` produces byte-for-byte identical behavior, so
+    # no test can ever distinguish the two.
+    "crates/core-types/src/auth\\.rs:631:9: replace SecurityContext::test_build -> SecurityContextTestingBuilder with Default::default\\(\\)",
 ]

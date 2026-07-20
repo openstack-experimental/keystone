@@ -68,6 +68,11 @@ Backend traits in `crates/core/src/backend.rs` follow CRUD naming:
 - CRUD handlers require >=3 tests: valid auth + positive/negative policy,
   invalid auth
 - Policy enforcement via OPA Rego in `policy/` directory
+- If a module's `tests` submodule grows past ~2000 lines, split it into
+  `<module>/tests.rs` and declare it with
+  `#[cfg(test)] #[path = "<module>/tests.rs"] mod tests;` in the parent file.
+  Keeps large test suites from inflating the code file every read/edit
+  touches (e.g. `crates/core/src/auth.rs`).
 
 ## Running `test_api` (live-server API tests)
 

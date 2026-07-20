@@ -228,6 +228,11 @@ debug = false
 debug = 1
 split-debuginfo = "deny"
 
+[profile.mutants]
+inherits = "test"
+debug = "none"
+lto = false
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
