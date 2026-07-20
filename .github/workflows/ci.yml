@@ -60,10 +60,6 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Skip if no code changes
-        if: needs.changes.outputs.code != 'true'
-        run: echo "No code changes, skipping."
-
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
@@ -72,6 +68,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Install protobuf-compiler
+        if: needs.changes.outputs.code == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler
@@ -84,6 +81,7 @@ jobs:
       # no CI-gated tests, only the example built in "Build TPM KEK example"
       # below.
       - name: Install libtss2-dev
+        if: needs.changes.outputs.code == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y libtss2-dev pkg-config
@@ -98,22 +96,26 @@ jobs:
       # requirement for CI to pass, only for the pkcs11 tests to actually run
       # instead of skipping.
       - name: Install SoftHSM2
+        if: needs.changes.outputs.code == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y softhsm2
 
       - name: Install Rust
+        if: needs.changes.outputs.code == 'true'
         uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921 # stable
         with:
           toolchain: stable
           targets: "${{ matrix.target }},wasm32-unknown-unknown"
 
       - name: Install cargo-nextest
+        if: needs.changes.outputs.code == 'true'
         uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # v2.82.10
         with:
           tool: cargo-nextest
 
       - name: Install SPIRE server
+        if: needs.changes.outputs.code == 'true'
         run: |
           wget https://github.com/spiffe/spire/releases/download/v${SPIRE_VERSION}/spire-${SPIRE_VERSION}-linux-amd64-musl.tar.gz
           tar -xvf spire-${SPIRE_VERSION}-linux-amd64-musl.tar.gz
@@ -122,6 +124,7 @@ jobs:
           sudo cp spire-${SPIRE_VERSION}/bin/spire-agent /usr/local/bin/
 
       - name: Setup OPA
+        if: needs.changes.outputs.code == 'true'
         uses: open-policy-agent/setup-opa@34a30e8a924d1b03ce2cf7abe97250bbb1f332b5 # v2.2.0
         with:
           version: latest
@@ -132,23 +135,29 @@ jobs:
       # projection, is also gated by the Rego test suite. See security review
       # V3 / Gate A (doc/src/security-architecture-review.md).
       - name: Test OPA policies
+        if: needs.changes.outputs.code == 'true'
         run: opa test policy
 
       - name: Rust Cache
+        if: needs.changes.outputs.code == 'true'
         uses: swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
 
       - name: Set up Python for cross-verification tests
+        if: needs.changes.outputs.code == 'true'
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.x'
 
       - name: Install Python Keystone for cross-verification tests
+        if: needs.changes.outputs.code == 'true'
         run: pip install keystone
 
       - name: Run tests (unit)
+        if: needs.changes.outputs.code == 'true'
         run: cargo nextest run --all-features --profile ci
 
       - name: Install slapd for LDAP tests
+        if: needs.changes.outputs.code == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y slapd ldap-utils
@@ -164,6 +173,7 @@ jobs:
           fi
 
       - name: Run LDAP tests
+        if: needs.changes.outputs.code == 'true'
         run: cargo nextest run -p openstack-keystone-identity-driver-ldap --profile ci-ldap
 
       # Compile-only: catches rot in the TPM sample without requiring a
@@ -171,30 +181,39 @@ jobs:
       # — real/virtual TPM availability in CI runners isn't reliable enough
       # to gate merges on, so `swtpm` is intentionally not installed here).
       - name: Build TPM KEK example
+        if: needs.changes.outputs.code == 'true'
         run: cargo build -p openstack-keystone-storage-crypto-tpm --example tpm_kek_demo
 
       - name: Run integration tests (sqlite)
+        if: needs.changes.outputs.code == 'true'
         run: cargo nextest run -p test_integration --profile ci
 
       - name: Run integration tests (mysql)
+        if: needs.changes.outputs.code == 'true'
         run: cargo nextest run -p test_integration --profile ci-mysql
 
       - name: Run integration tests for postgres
+        if: needs.changes.outputs.code == 'true'
         run: cargo nextest run -p test_integration --profile ci-postgres
 
       - name: Run integration tests for raft drivers
+        if: needs.changes.outputs.code == 'true'
         run: cargo nextest run -p test_integration --profile ci-raft
 
       - name: Run REST API tests
+        if: needs.changes.outputs.code == 'true'
         run: cargo nextest run -p test_api --profile ci-api --test integration_api_v3 --test integration_api_v4
 
       - name: Invalidate eventual openstack_sdk cache
+        if: needs.changes.outputs.code == 'true'
         run: rm -rf $HOME/.osc
 
       - name: Run REST API SCIMv2 tests
+        if: needs.changes.outputs.code == 'true'
         run: cargo nextest run -p test_api --profile ci-api --test scim_v2
 
       - name: Run Doc tests
+        if: needs.changes.outputs.code == 'true'
         run: cargo test --doc
 
       - name: Dump docker state

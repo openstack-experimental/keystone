@@ -252,7 +252,7 @@ jobs:
 
   loadtest:
     runs-on: ubuntu-latest
-    if: "success() && github.actor != 'openstack-experimental-release-plz'"
+    if: "success() && github.event_name != 'merge_group' && github.actor != 'openstack-experimental-release-plz'"
     needs:
       - build
     permissions:
