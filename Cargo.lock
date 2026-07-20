@@ -8097,9 +8097,9 @@ dependencies = [
 
 [[package]]
 name = "spiffe-rustls"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "381755b6d074750bbd6abea6b176f4bfa178fe9a3a725ae4b91e61f42713e97c"
+checksum = "d9e931964c97be0435081364c68d0e22ad634a60e2c9fd985d062f30708afcb4"
 dependencies = [
  "oid-registry 0.8.1",
  "rustls",
