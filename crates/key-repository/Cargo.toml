@@ -20,7 +20,7 @@ nix = { workspace = true, features = ["fs", "user"] }
 notify = "8.2"
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
 pem = "3"
-pkcs8 = { version = "0.10", features = ["pem"] }
+pkcs8 = { version = "0.11", features = ["pem"] }
 rand_core = { version = "0.6", features = ["std"] }
 rsa = "0.9"
 scopeguard.workspace = true
