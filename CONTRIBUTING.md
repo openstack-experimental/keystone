@@ -296,7 +296,7 @@ Every architectural change requires an ADR in `doc/src/adr/`.
 ## References
 
 - [CONTRIBUTING.md](CONTRIBUTING.md) — this file
-- [developer.md](doc/src/developer.md) — environment setup details (skaffold,
-  OSC)
+- [Contributor development guide](doc/src/contributor/development.md) —
+  environment setup details (skaffold, OSC)
 - [.pre-commit-config.yaml](.pre-commit-config.yaml) — linting hooks
 - [committed.toml](committed.toml) — commit message rules

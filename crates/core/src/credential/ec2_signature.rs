@@ -68,7 +68,7 @@ pub(crate) fn hmac_sha1_raw(key: &[u8], message: &[u8]) -> [u8; 20] {
 /// The four EC2 request-signing algorithms Keystone has ever supported.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ec2SignatureVersion {
-    /// Keystone-legacy, HMAC-SHA1 over `Action` + `Timestamp`.
+    /// Keystone-compatible HMAC-SHA1 over `Action` + `Timestamp`.
     V0,
     /// Keystone-extended, HMAC-SHA1 over sorted `key+value` params.
     V1,

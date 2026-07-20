@@ -75,7 +75,7 @@ jobs:
           shared-key: openapi-build
 
       - name: Generate OpenAPI
-        run: cargo run --bin keystone -- --dump-openapi yaml > doc/src/openapi.yaml
+        run: cargo run -p openstack-keystone --bin keystone -- --dump-openapi yaml > doc/src/openapi.yaml
 
       - name: Setup Pages
         id: pages

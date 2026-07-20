@@ -1,7 +1,23 @@
 # OpenStack Keystone in Rust
 
-The legacy Keystone identity service (written in Python and maintained upstream
-by OpenStack Foundation) has served the OpenStack ecosystem reliably for years.
+## Table of Contents
+
+- [Project documentation](#documentation)
+  - [Installation guide](doc/src/install/index.md)
+  - [User documentation](doc/src/user/index.md)
+  - [Administrator guides](doc/src/admin/index.md)
+    - [CLI documentation](doc/src/admin/cli/index.md)
+  - [Configuration reference](doc/src/configuration/index.md)
+  - [Contributor documentation](doc/src/contributor/index.md)
+- [Configuration](#config)
+- [API and OpenAPI](#api--openapi)
+- [Database](#database)
+- [Load testing](#load-test)
+- [Trying Keystone](#trying)
+- [Talks](#talks)
+
+The Python Keystone identity service, maintained upstream by the OpenStack
+community, has served the OpenStack ecosystem reliably for years.
 It handles authentication, authorization, token issuance, service catalog,
 project/tenant management, and federation services across thousands of
 deployments. However, as we embarked on adding next-generation identity
@@ -63,26 +79,48 @@ high-performance capabilities of Rust where they matter most.
 
 ## Documentation
 
-Project documentation can be found [here](https://openstack-experimental.github.io/keystone).
-It is a work in progress. Target is to provide a comprehensive documentation of
-the new functionality and provide missing insides to the python Keystone
-functionality with Architecture Decision Records, Specs, Thread analysis and
-many more.
+The [published documentation](https://openstack-experimental.github.io/keystone/)
+uses an audience-first structure inspired by Python Keystone:
+
+- [User documentation](doc/src/user/index.md) covers APIs, authentication, and
+  the client side of each user-visible feature.
+- [Administrator guides](doc/src/admin/index.md) cover deployment,
+  configuration, policy, storage, operations, and the operator side of each
+  feature.
+- [Contributor documentation](doc/src/contributor/index.md) covers architecture,
+  extension points, testing, security invariants, and contribution requirements.
+- Separate [installation](doc/src/install/index.md) and
+  [configuration reference](doc/src/configuration/index.md) sections keep
+  shared material out of audience guides. The
+  [CLI documentation](doc/src/admin/cli/index.md) is grouped with operator
+  guidance because both commands are administrative tools.
+
+Architecture Decision Records and detailed feature references remain in the
+documentation book and are linked from the relevant guide instead of being
+duplicated.
 
 ## Config
 
-It is supposed, that the configuration for the python Keystone can be used
-without changes also for the rust implementation.
+The configuration parser accepts the OpenStack INI format and supports file,
+site-variable file, and environment overrides. Keystone-NG also defines
+sections for its Rust-specific services. See the
+[configuration reference](doc/src/configuration/index.md) for precedence and
+the current configuration sections.
 
-## Api + OpenAPI
+## API + OpenAPI
 
-OpenAPI are being built directly from the code to guarantee the documentation
-matches the implementation.
+The OpenAPI document is built directly from the server routers. The generated
+specification is published at
+[openapi.yaml](https://openstack-experimental.github.io/keystone/openapi.yaml)
+and can be explored through the
+[Swagger UI](https://openstack-experimental.github.io/keystone/swagger-ui.html).
 
 ## Database
 
-Sea-ORM is being used to access database. PostgreSQL and MySQL are supported.
-Functional tests [would] test the compatibility.
+Sea-ORM is used to access the database. SQLite, PostgreSQL, and MySQL drivers
+are available. In a parallel Python/Rust deployment, each implementation
+manages its own schema additions; see
+[Database migrations](doc/src/install/index.md#database-migrations).
 
 ## Load test
 

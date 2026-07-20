@@ -26,12 +26,12 @@ pub enum ApplicationCredentialProviderError {
     AccessRuleConflict,
 
     /// `access_rules` were provided but request-time enforcement doesn't
-    /// exist yet (security review V5, `doc/src/security.md` §9): accepting
+    /// exist yet (security review V5, `doc/src/contributor/security-model.md` §9): accepting
     /// them would silently promise a restriction the server cannot honor.
     /// Only returned when
     /// `application_credential.reject_unenforced_access_rules` is enabled.
     #[error(
-        "access_rules are not enforced at request time yet (see doc/src/security.md §9); \
+        "access_rules are not enforced at request time yet (see doc/src/contributor/security-model.md §9); \
          refusing to create an application credential with a non-empty access_rules list"
     )]
     AccessRulesUnenforced,

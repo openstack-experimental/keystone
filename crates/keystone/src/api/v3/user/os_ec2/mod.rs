@@ -88,7 +88,7 @@ pub(super) fn to_ec2_credential(
 /// `blob` holds the *decrypted* EC2 access/secret pair. No `os_ec2` `.rego`
 /// rule references it, so it must never reach the policy engine -- see the
 /// analogous `credential_policy_input` in the sibling `/v3/credentials`
-/// module (`crate::api::v3::credential`) and `doc/src/security.md` I7.
+/// module (`crate::api::v3::credential`) and `doc/src/contributor/security-model.md` I7.
 pub(super) fn ec2_credential_policy_input(cred: &CoreCredential) -> Value {
     serde_json::to_value(cred)
         .map(|mut v| {

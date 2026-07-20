@@ -11,7 +11,7 @@ Proposed
 Extends ADR 0006 (Federation IDP), ADR 0016-v2 (Distributed Secure Storage), ADR
 0017 (SecurityContext Architecture), ADR 0020 (Unified Mapping Engine), ADR 0022
 (Handler Rate Limiting), and ADR 0023 (CADF Auditing Architecture). This
-document completely supersedes and replaces the legacy draft of ADR 0026, which
+document completely supersedes and replaces the previous draft of ADR 0026, which
 isolated JSON Web Tokens (JWTs) exclusively to external third-party consumers.
 This record formalizes the structural, cryptographic, and architectural pipeline
 necessary to elevate the signed JWT access token to a primary citizen natively
@@ -30,7 +30,7 @@ cluster. Restricting the outbound OAuth2 capability to third-party integrations
 (e.g., "Login with OpenStack" for Grafana) introduced a severe **Circular Token
 Exchange Trap**. External cloud-native operators or containerized workloads
 authenticating via OIDC had to immediately execute an RFC 8693 Token Exchange
-round trip to trade their JWT for a legacy Fernet token before they could make a
+round trip to trade their JWT for a Fernet token before they could make a
 single call to Nova or Neutron.
 
 To scale to the performance requirements of modern public cloud hyperscalers
@@ -128,7 +128,7 @@ the same machinery nearly for free.
 | **Scope Model**               | Standard OIDC scopes (`openid`, `profile`, `email`) for identity display. `openstack:api` is a distinct, explicit resource scope gating whether `authorization_code`/`refresh_token` grants ever receive OpenStack authorization data (§4); role resolution itself runs via the mapping engine/claims template, not OAuth2 scope. |
 | **Key Synchronization**       | Distributed via **Raft + FjallDB** log replication.                                                                                                                                                                                                                                                                               |
 | **Target Audience (`aud`)**   | Domain-bound service identifier (`aud: "openstack-apis:{domain_id}"`) for internal control plane verification; not a single cluster-wide value (see §4 threat note).                                                                                                                                                              |
-| **Downstream Acceptance**     | Executed via a lightweight, custom Python WSGI middleware injected into legacy Paste Deploy pipelines.                                                                                                                                                                                                                            |
+| **Downstream Acceptance**     | Executed via a lightweight, custom Python WSGI middleware injected into existing Paste Deploy pipelines.                                                                                                                                                                                                                          |
 | **Machine Workspace Storage** | Typically resolves via `IdentityMode::Ephemeral` shadow registration mappings to bypass SQL table bloating; `identity_mode` is a property of the matched `MappingRule` (ADR 0020 §3), not a fixed property of `OAuth2Client` (§5).                                                                                                |
 | **Rate Limiting Engine**      | Handled natively at the handler layer using the `governor` crate with pre-hash enforcement.                                                                                                                                                                                                                                       |
 | **Audit Verification**        | JCS-canonicalized (RFC 8785) payloads signed using the _same_ per-node KEK-derived HMAC engine.                                                                                                                                                                                                                                   |
@@ -725,9 +725,9 @@ attacker forge tokens accepted by every internal OpenStack service cluster-wide
 
 ## 6. Downstream Control Plane Enforcement Layer (Python WSGI Middleware)
 
-To execute an incremental, zero-downtime parallel rollout alongside legacy
+To execute an incremental, zero-downtime parallel rollout alongside existing
 OpenStack installations, a thin custom Python WSGI middleware is dropped
-directly into the Paste Deploy pipelines of legacy services (e.g., inside
+directly into the Paste Deploy pipelines of existing services (e.g., inside
 `/etc/nova/api-paste.ini` or `/etc/neutron/api-paste.ini`).
 
 This layer acts as an completely offline signature verification gate:
@@ -1462,7 +1462,7 @@ standards-based mechanism to close that gap, deferred to v2 rather than built
 now, so it is recorded here rather than left implicit.
 
 **Not the same RFC 8693 usage §1 calls a trap.** §1's "Circular Token Exchange
-Trap" was an external-IdP-issued JWT being traded for a legacy Fernet token -
+Trap" was an external-IdP-issued JWT being traded for a Fernet token -
 eliminated by native OP issuance. This is the reverse direction: a
 Keystone-native credential (trust, application credential, EC2 signature) traded
 for a Keystone-native delegated JWT. That is a first-class OP capability this
@@ -1560,7 +1560,7 @@ migration phase: both serve the same v3 API behind a shared VIP, and existing
 deployments overwhelmingly run the **Fernet** token provider with a shared,
 filesystem-synchronized key repository. Everything in this ADR is therefore
 additive by construction — the §6 middleware's explicit fall-through to the
-legacy Fernet filter chain is the load-bearing coexistence mechanism, and no
+existing Fernet filter chain is the load-bearing coexistence mechanism, and no
 stage below invalidates a token or breaks a client that worked in the previous
 stage.
 
@@ -1599,7 +1599,7 @@ collectors, monitoring, orchestrators, K8s operators) move from application
 credentials / stored passwords to registered `OAuth2Client`s. This is where
 the validation-load win (§11, "Complete Database Decoupling") is actually
 realized, since machines dominate request volume. Python Keystone is demoted
-to serving legacy human/v3 flows.
+to serving existing human/v3 flows.
 
 ### Stage 4 — Human Flow Migration & Python Keystone Retirement
 

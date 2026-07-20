@@ -468,7 +468,7 @@ mod tests {
     /// A trust presented on a plain `Project` scope (the EC2-redemption shape)
     /// MUST still be encoded as a `Trust` payload, never `ProjectScope` --
     /// otherwise decoding the issued token back drops the delegation binding
-    /// entirely (OSSA-2026-015, see doc/src/security.md I4).
+    /// entirely (OSSA-2026-015, see doc/src/contributor/security-model.md I4).
     #[test]
     fn test_from_security_context_trust_on_project_scope_emits_trust_payload() {
         let ctx = make_trust_ctx("pid");

@@ -75,7 +75,7 @@ impl ValidatedSecurityContext {
     /// the context, [`SecurityContext::validate_scope_boundaries`] is
     /// enforced to guard the override. When it is unset, it is always
     /// enforced via [`SecurityContext::set_authorization_scope`] (every
-    /// fresh scope assignment is validated; see I5 in `doc/src/security.md`
+    /// fresh scope assignment is validated; see I5 in `doc/src/contributor/security-model.md`
     /// -- there is no "first scope is trusted" carve-out).
     ///
     /// Re-presenting an *already-validated* token with its stored scope

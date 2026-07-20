@@ -8,6 +8,8 @@ policy.wasm
 build.artifacts
 
 doc/html
+/openapi.yaml
+/doc/src/openapi.yaml
 
 # cargo-mutants output (Gate G, issue #983)
 /mutants.out/

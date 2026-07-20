@@ -158,7 +158,7 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
                 ));
             }
         }
-        // V5 (security review, `doc/src/security.md` §9): `access_rules`
+        // V5 (security review, `doc/src/contributor/security-model.md` §9): `access_rules`
         // are stored and CRUD'd but not enforced at request time yet -- no
         // middleware matches the incoming (service, method, path) against
         // them. Warn unconditionally so the gap is visible in logs, and
@@ -175,7 +175,7 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
             }
             warn!(
                 "creating application credential with a non-empty access_rules list; \
-                 access_rules are NOT enforced at request time yet (see doc/src/security.md §9) \
+                 access_rules are NOT enforced at request time yet (see doc/src/contributor/security-model.md §9) \
                  -- the restriction is currently a no-op"
             );
         }

@@ -163,7 +163,7 @@ Full mechanism detail, wire formats, and new invariants (13-15) are in
    Verified with `cargo check --workspace --all-features --tests`, which
    exercises the same build surface `nextest` does. ✅ done
    (`.github/workflows/ci.yml`).
-8. **Docs**: `doc/src/raft_storage.md`'s crate-layout tree now lists
+8. **Docs**: `doc/src/admin/storage/distributed.md`'s crate-layout tree now lists
    `storage-crypto-pkcs11` and `storage-crypto-tpm` alongside their key
    files/tests; the intro paragraph and Key Hierarchy diagram's KEK-source
    line were updated to name both production providers instead of a generic
@@ -176,7 +176,7 @@ Full mechanism detail, wire formats, and new invariants (13-15) are in
    (mirroring the example's own doc comment). `CONTRIBUTING.md`'s workspace
    structure table gained rows for `storage-crypto`, `storage-crypto-pkcs11`,
    and `storage-crypto-tpm` (none had an entry before). ✅ done
-   (`doc/src/raft_storage.md`, `CONTRIBUTING.md`).
+   (`doc/src/admin/storage/distributed.md`, `CONTRIBUTING.md`).
 9. **Supply chain**: extended the ADR §1 Supply Chain paragraph's
    `cargo-vet` coverage list with `cryptoki` (pinned `0.12.0`) and
    `tss-esapi` (pinned `7.7.0`), explaining why they meet criteria (a)/(b)

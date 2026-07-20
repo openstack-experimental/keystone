@@ -124,13 +124,13 @@ Backend traits in `crates/core/src/backend.rs` follow CRUD naming:
 
 ## Security Requirements
 
-**MUST READ** doc/src/security.md before any changes to:
+**MUST READ** doc/src/contributor/security-model.md before any changes to:
 
 - Authentication, authorization, scope, delegation, rescope, reauth
 - Tokens, credentials, EC2, application credentials, trusts
 - Policy input or OPA integration
 
-Key security invariants from security.md:
+Key security invariants from the contributor security model:
 
 - **Security decisions MUST be keyed on authentication chain (immutable), NEVER
   on token scope**
@@ -148,9 +148,10 @@ Key security invariants from security.md:
 For detailed setup and environment configuration, see:
 
 - CONTRIBUTING.md: Development commands, workspace structure, design patterns
-- doc/src/developer.md: Kubernetes/skaffold setup, OSC configuration
-- doc/src/security.md: Security model, invariants, and reviewer checklist for
-  auth/authorization
+- doc/src/contributor/development.md: Kubernetes/skaffold setup, OSC
+  configuration
+- doc/src/contributor/security-model.md: Security model, invariants, and reviewer
+  checklist for auth/authorization
 - doc/src/adr/: Architecture Decision Records
 - .pre-commit-config.yaml: Linting hooks
 - committed.toml: Commit message format

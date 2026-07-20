@@ -25,8 +25,8 @@ reveals significant drawbacks:
 - **Static Configuration Limitations:** Middleware often expects statically
   compiled limits, whereas operational environments demand dynamically
   configurable and toggleable rate limits via external configuration files.
-- **Legacy Compatibility:** Configuration must be parsed from the existing
-  `keystone.conf` INI file to ensure seamless co-existence with the legacy
+- **Python Keystone Compatibility:** Configuration must be parsed from the
+  existing `keystone.conf` INI file to ensure seamless co-existence with the
   Python Keystone service (`oslo.config`).
 
 We need a rate-limiting solution that:

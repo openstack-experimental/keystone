@@ -309,7 +309,7 @@ jobs:
           shared-key: openapi-build
 
       - name: Generate OpenAPI
-        run: cargo run --bin keystone -- --dump-openapi yaml > openapi.yaml
+        run: cargo run -p openstack-keystone --bin keystone -- --dump-openapi yaml > openapi.yaml
 
       - name: Upload OpenAPI spec
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0

@@ -557,7 +557,7 @@ check the `Authorization` header or `X-Amz-Algorithm` param explicitly.
 All versions use the decrypted `secret` from the credential blob as the key
 material.
 
-**Version 0 (Keystone-legacy, HMAC-SHA1)**
+**Version 0 (Keystone-compatible, HMAC-SHA1)**
 
 Concatenate `Action` and `Timestamp` params, then HMAC-SHA1:
 
