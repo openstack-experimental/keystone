@@ -344,6 +344,37 @@ async fn main() -> Result<(), Report> {
     spawn_admin_listener(&cfg, app, &token, &mut handles);
 
     // Wait for both (or handle errors)
+    info!("Waiting on {} listener tasks in JoinSet", handles.len());
+    let join_start = std::time::Instant::now();
+    let result = handles.join_next().await;
+    let elapsed = join_start.elapsed();
+    match result {
+        Some(Ok(())) => {
+            info!(
+                "One listener task exited normally after {:.3}s, remaining tasks: {}. Cancelling all.",
+                elapsed.as_secs_f32(),
+                handles.len()
+            );
+        }
+        Some(Err(e)) => {
+            error!(
+                "One listener task failed after {:.3}s with: {}. Remaining tasks: {}. Cancelling all.",
+                elapsed.as_secs_f32(),
+                if e.is_panic() {
+                    format!("Panic: {:?}", e.into_panic())
+                } else {
+                    "JoinError (task aborted)".to_string()
+                },
+                handles.len()
+            );
+        }
+        None => {
+            error!(
+                "JoinSet is empty after {:.3}s — no tasks to wait on.",
+                elapsed.as_secs_f32()
+            );
+        }
+    }
     handles.join_all().await;
     token.cancel();
     Ok(())
@@ -1115,6 +1146,7 @@ async fn spawn_public_listener(
                     error!("Public REST API listener error: {:#}", e);
                     cancel_token.cancel();
                 }
+                debug!("Public REST API task exited");
             });
         }
         _ => {
