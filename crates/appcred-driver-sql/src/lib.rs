@@ -100,6 +100,22 @@ impl ApplicationCredentialBackend for SqlBackend {
         application_credential::access_rule::delete(&state.db, user_id, id).await
     }
 
+    /// Delete an application credential by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The ID of the application credential to delete.
+    ///
+    /// # Returns
+    /// - `Result<(), ApplicationCredentialProviderError>` - Unit on success, or
+    ///   an error.
+    async fn delete_application_credential<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<(), ApplicationCredentialProviderError> {
+        application_credential::delete(&state.db, id).await
+    }
     /// Get a user's access rule by its ID.
     ///
     /// # Parameters

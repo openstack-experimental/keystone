@@ -26,13 +26,13 @@ use crate::entity::{
 
 pub mod access_rule;
 mod create;
+mod delete;
 mod get;
 mod list;
-
 pub use create::create;
+pub use delete::delete;
 pub use get::get;
 pub use list::list;
-
 impl TryFrom<db_application_credential::Model> for ApplicationCredentialBuilder {
     type Error = ApplicationCredentialProviderError;
 
