@@ -69,7 +69,7 @@ pub enum PolicyError {
     /// mismatch here means that invariant did not hold, so the request is
     /// rejected outright rather than handed to the (rego-level) policy
     /// engine, which enforces the same check only per-endpoint. See
-    /// `doc/src/security.md` I3.
+    /// `doc/src/contributor/security-model.md` I3.
     #[error("delegated token scope has drifted from its delegation project")]
     ScopeDrift,
 

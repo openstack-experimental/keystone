@@ -28,7 +28,7 @@ pub struct ApplicationCredentialProvider {
     /// `access_rules` (per-endpoint restrictions) are stored and CRUD'd but
     /// **not enforced at request time** -- no middleware matches the
     /// incoming (service, method, path) against them yet (security review
-    /// V5, `doc/src/security.md` §5/§9). Until that enforcement lands, a
+    /// V5, `doc/src/contributor/security-model.md` §5/§9). Until that enforcement lands, a
     /// non-empty `access_rules` list is a restriction the operator believes
     /// is active but is actually a no-op. Defaults to `false` to preserve
     /// existing behavior (a warning is logged either way); set `true` to

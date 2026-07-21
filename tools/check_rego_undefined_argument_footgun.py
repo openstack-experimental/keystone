@@ -14,7 +14,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Gate E: Rego lint for the undefined-argument footgun (security review V3, #985).
 
-`doc/src/security.md` I2: a delegation-boundary helper function's argument
+`doc/src/contributor/security-model.md` I2: a delegation-boundary helper function's argument
 must never be `undefined` -- Rego evaluates a function's argument before
 dispatching to either of its rule bodies, so an undefined argument makes
 even the "not delegated" fast path (which never reads it) undefined too.

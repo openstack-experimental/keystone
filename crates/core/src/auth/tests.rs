@@ -2654,7 +2654,7 @@ async fn test_new_for_scope_mapping_slow_path_is_system_true_project_not_upgrade
 // present, and asserts the resulting effective roles never exceed the
 // delegation's own restricted role set -- even when the delegating
 // principal personally holds broader roles on the target project. See
-// `doc/src/security.md` I4 and its reviewer-checklist item "New scope
+// `doc/src/contributor/security-model.md` I4 and its reviewer-checklist item "New scope
 // shape or redemption path for a delegated auth?".
 #[tokio::test]
 async fn test_new_for_scope_delegated_roles_never_exceed_delegation_matrix() {
