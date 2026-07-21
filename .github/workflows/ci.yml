@@ -230,7 +230,7 @@ jobs:
       # Convert JUnit XML into an interactive GitHub Step Summary
       - name: Publish Test Report
         uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3.0.0
-        if: success() || failure() # Run even if tests fail
+        if: needs.changes.outputs.code == 'true' && (success() || failure()) # Run even if tests fail
         with:
           name: Cargo Nextest Results
           path: target/nextest/*/junit.xml
@@ -305,6 +305,8 @@ jobs:
 
       - name: Rust Cache
         uses: swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
+        with:
+          shared-key: openapi-build
 
       - name: Generate OpenAPI
         run: cargo run --bin keystone -- --dump-openapi yaml > openapi.yaml
