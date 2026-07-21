@@ -105,6 +105,77 @@ pub mod tests {
         ValidatedSecurityContext::test_new(sc)
     }
 
+    /// Build a project-scoped ValidatedSecurityContext with EC2 authentication
+    /// context, for testing the `reject_if_ec2` guard.
+    #[cfg(any(test, feature = "mock"))]
+    pub fn test_fixture_ec2_scoped() -> ValidatedSecurityContext {
+        let user = openstack_keystone_core_types::identity::UserResponseBuilder::default()
+            .id("uid")
+            .domain_id("domain_id")
+            .enabled(true)
+            .name("testuser")
+            .build()
+            .unwrap();
+
+        let authz = AuthzInfoBuilder::default()
+            .roles(vec![RoleRef {
+                id: "admin".to_string(),
+                name: Some("admin".to_string()),
+                domain_id: None,
+            }])
+            .scope(ScopeInfo::Project {
+                project: Project {
+                    id: "project_id".to_string(),
+                    domain_id: "domain_id".to_string(),
+                    enabled: true,
+                    name: "admin".to_string(),
+                    ..Default::default()
+                },
+                project_domain: Domain {
+                    id: "domain_id".to_string(),
+                    name: "domain_name".to_string(),
+                    enabled: true,
+                    ..Default::default()
+                },
+            })
+            .build()
+            .unwrap();
+
+        let sc = SecurityContext::test_build()
+            .authentication_context(AuthenticationContext::Ec2Credential)
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id("uid")
+                        .user(user)
+                        .user_domain(openstack_keystone_core_types::resource::Domain {
+                            id: "domain_id".to_string(),
+                            name: "domain_name".to_string(),
+                            enabled: true,
+                            ..Default::default()
+                        })
+                        .build()
+                        .unwrap(),
+                ),
+            })
+            .token(
+                openstack_keystone_core_types::token::FernetToken::ProjectScope(
+                    openstack_keystone_core_types::token::ProjectScopePayload {
+                        user_id: "bar".into(),
+                        methods: vec!["ec2credential".into()],
+                        audit_ids: vec![],
+                        expires_at: chrono::Utc::now(),
+                        project_id: "pid".into(),
+                        ..Default::default()
+                    },
+                ),
+            )
+            .authorization(authz)
+            .build();
+
+        ValidatedSecurityContext::test_new(sc)
+    }
+
     /// Initialize the mocked service state.
     ///
     /// # Arguments

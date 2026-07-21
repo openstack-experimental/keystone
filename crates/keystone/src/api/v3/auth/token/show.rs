@@ -140,6 +140,13 @@ mod tests {
     use tower::ServiceExt; // for `call`, `oneshot`, and `ready`
     use tower_http::trace::TraceLayer;
 
+    use openstack_keystone_core::{
+        api::tests::test_fixture_ec2_scoped, auth::ValidatedSecurityContext,
+    };
+    use openstack_keystone_core_types::auth::{AuthzInfoBuilder, *};
+    use openstack_keystone_core_types::resource::Domain as CoreDomain;
+    use openstack_keystone_core_types::token::{FernetToken, UnscopedPayload};
+
     use super::super::openapi_router;
     use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::api::v3::auth::token::types::*;
@@ -150,10 +157,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_get() {
-        use openstack_keystone_core_types::auth::*;
-        use openstack_keystone_core_types::resource::Domain as CoreDomain;
-        use openstack_keystone_core_types::token::UnscopedPayload;
-
         let user_domain = CoreDomain {
             id: "user_domain_id".into(),
             enabled: true,
@@ -169,7 +172,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let vsc_for_mock = openstack_keystone_core::auth::ValidatedSecurityContext::test_new(
+        let vsc_for_mock = ValidatedSecurityContext::test_new(
             SecurityContext::test_build()
                 .authentication_context(AuthenticationContext::Password)
                 .principal(PrincipalInfo {
@@ -181,12 +184,10 @@ mod tests {
                             .unwrap(),
                     ),
                 })
-                .token(openstack_keystone_core_types::token::FernetToken::Unscoped(
-                    UnscopedPayload {
-                        user_id: "bar".into(),
-                        ..Default::default()
-                    },
-                ))
+                .token(FernetToken::Unscoped(UnscopedPayload {
+                    user_id: "bar".into(),
+                    ..Default::default()
+                }))
                 .authorization(authz)
                 .build(),
         );
@@ -388,10 +389,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_show_domain() {
-        use openstack_keystone_core_types::auth::{AuthzInfoBuilder, *};
-        use openstack_keystone_core_types::resource::Domain as CoreDomain;
-        use openstack_keystone_core_types::token::UnscopedPayload;
-
         let user_domain = CoreDomain {
             id: "user_domain_id".into(),
             enabled: true,
@@ -561,5 +558,59 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_get_ec2credential() {
+        let vsc_for_mock = test_fixture_ec2_scoped();
+
+        let mut token_mock = MockTokenProvider::default();
+        token_mock
+            .expect_validate_to_context()
+            .withf(|_, token: &'_ str, _, _| token == "bar")
+            .returning(move |_exec, _, _, _| Ok(vsc_for_mock.clone()));
+
+        let mut catalog_mock = MockCatalogProvider::default();
+        catalog_mock
+            .expect_get_catalog()
+            .returning(|_exec, _| Ok(Vec::new()));
+
+        let mut resource_mock = MockResourceProvider::default();
+        resource_mock
+            .expect_get_domain()
+            .withf(|_exec, id: &'_ str| id == "user_domain_id")
+            .returning(|_exec, _| {
+                Ok(Some(CoreDomain {
+                    id: "user_domain_id".into(),
+                    ..Default::default()
+                }))
+            });
+
+        let provider = Provider::mocked_builder()
+            .mock_resource(resource_mock)
+            .mock_token(token_mock)
+            .mock_catalog(catalog_mock);
+
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(provider, true, None).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .extension(vsc)
+                    .header("x-subject-token", "bar")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }
