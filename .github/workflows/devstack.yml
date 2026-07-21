@@ -153,6 +153,7 @@ jobs:
           enable_service rabbit
           enable_service key
           enable_service key-rs
+          enable_service tempest
 
           enable_plugin key-rs file://${{ github.workspace }} ${{ env.KEYSTONE_RS_GIT_REF }}
 
@@ -179,6 +180,36 @@ jobs:
         run: |
           source /opt/stack/devstack/openrc admin admin
           openstack token issue
+
+      - name: Run tempest identity tests
+        # Best-effort signal only: rust Keystone doesn't yet implement the
+        # full python surface tempest's identity suite exercises, so
+        # failures here must not fail the job (per the request this step
+        # was added for).
+        working-directory: /opt/stack/tempest
+        continue-on-error: true
+        run: |
+          source /opt/stack/devstack/openrc admin admin
+          # devstack's install_tempest pip-installs tempest into its shared
+          # per-stack venv (USE_VENV, default since Bobcat), not onto the
+          # system PATH - that venv's bin/ is only on PATH inside stack.sh's
+          # own process, so a later, separate workflow step has to source it
+          # itself before the `tempest` console script is found.
+          if [[ -f /opt/stack/data/venv/bin/activate ]]; then
+            source /opt/stack/data/venv/bin/activate
+          fi
+          tempest run --regex '^tempest\.api\.identity'
+
+      - name: Upload tempest results
+        # if: always() (not failure()) since the previous step's failures
+        # are intentionally swallowed by continue-on-error above.
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: tempest-results
+          path: |
+            /opt/stack/tempest/tempest.log
+            /opt/stack/tempest/.stestr
 
       - name: Dump devstack log
         if: failure()
