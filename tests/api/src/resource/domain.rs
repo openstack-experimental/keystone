@@ -109,6 +109,58 @@ pub async fn get_domain(tc: &Arc<AsyncOpenStack>, id: impl Into<String>) -> Resu
         .await?)
 }
 
+/// Update request for domain
+#[derive(Builder)]
+#[builder(setter(strip_option, into))]
+#[derive(Clone, Debug)]
+struct DomainUpdateRequestInternal {
+    id: String,
+    domain: DomainUpdate,
+}
+
+impl RestEndpoint for DomainUpdateRequestInternal {
+    fn method(&self) -> http::Method {
+        http::Method::PATCH
+    }
+
+    fn endpoint(&self) -> Cow<'static, str> {
+        format!("domains/{id}", id = self.id).into()
+    }
+
+    fn body(&self) -> Result<Option<(&'static str, Vec<u8>)>, BodyError> {
+        let mut params = JsonBodyParams::default();
+        params.push("domain", serde_json::to_value(&self.domain)?);
+        params.into_body()
+    }
+
+    fn service_type(&self) -> ServiceType {
+        ServiceType::Identity
+    }
+
+    fn response_key(&self) -> Option<Cow<'static, str>> {
+        Some("domain".into())
+    }
+
+    /// Returns required API version
+    fn api_version(&self) -> Option<ApiVersion> {
+        Some(ApiVersion::new(3, 0))
+    }
+}
+
+/// Update a domain
+pub async fn update_domain(
+    tc: &Arc<AsyncOpenStack>,
+    id: impl Into<String>,
+    domain: DomainUpdate,
+) -> Result<Domain> {
+    Ok(DomainUpdateRequestInternalBuilder::default()
+        .id(id)
+        .domain(domain)
+        .build()?
+        .query_async(tc.as_ref())
+        .await?)
+}
+
 /// List request for domains
 #[derive(Default)]
 pub struct DomainListRequest {

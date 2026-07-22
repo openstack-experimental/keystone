@@ -63,6 +63,18 @@ impl From<api_types::DomainCreate> for provider_types::DomainCreate {
     }
 }
 
+impl From<api_types::DomainUpdateRequest> for provider_types::DomainUpdate {
+    fn from(value: api_types::DomainUpdateRequest) -> Self {
+        let domain = value.domain;
+        Self {
+            description: domain.description.map(Some),
+            enabled: domain.enabled,
+            extra: domain.extra,
+            name: domain.name,
+        }
+    }
+}
+
 impl From<api_types::DomainListParameters> for provider_types::DomainListParameters {
     fn from(value: api_types::DomainListParameters) -> Self {
         Self {

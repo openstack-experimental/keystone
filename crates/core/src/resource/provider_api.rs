@@ -59,6 +59,34 @@ pub trait ResourceApi: Send + Sync {
         project: ProjectCreate,
     ) -> Result<Project, ResourceProviderError>;
 
+    /// Update a domain.
+    ///
+    /// * `state` - The current service state.
+    /// * `domain_id` - The ID of the domain to update.
+    /// * `domain` - The fields to change.
+    ///
+    /// A `Result` containing the updated `Domain`, or an `Error`.
+    async fn update_domain<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+        domain: DomainUpdate,
+    ) -> Result<Domain, ResourceProviderError>;
+
+    /// Update a project.
+    ///
+    /// * `state` - The current service state.
+    /// * `project_id` - The ID of the project to update.
+    /// * `project` - The fields to change.
+    ///
+    /// A `Result` containing the updated `Project`, or an `Error`.
+    async fn update_project<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        project_id: &'a str,
+        project: ProjectUpdate,
+    ) -> Result<Project, ResourceProviderError>;
+
     /// Delete a domain by the ID.
     ///
     /// * `state` - The current service state.

@@ -86,6 +86,39 @@ async fn test_domain_list() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_domain_update() -> Result<()> {
+    let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
+    let domain = create_domain(
+        &test_client,
+        DomainCreateBuilder::default()
+            .name(Uuid::new_v4().to_string())
+            .enabled(true)
+            .build()?,
+    )
+    .await?;
+    let updated = update_domain(
+        &test_client,
+        &domain.id,
+        DomainUpdateBuilder::default()
+            .name("updated_name")
+            .enabled(false)
+            .build()?,
+    )
+    .await?;
+    assert_eq!(updated.name, "updated_name");
+    assert!(!updated.enabled);
+
+    let shown = get_domain(&test_client, &domain.id)
+        .await?
+        .expect("domain must be found");
+    assert_eq!(shown.name, "updated_name");
+    assert!(!shown.enabled);
+
+    domain.delete().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_domain_delete() -> Result<()> {
     let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
     let domain = create_domain(

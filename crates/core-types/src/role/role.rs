@@ -138,6 +138,26 @@ pub struct RoleCreate {
     pub name: String,
 }
 
+/// Role update data.
+#[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(strip_option, into))]
+pub struct RoleUpdate {
+    /// New description. `None` = unchanged, `Some(None)` = clear.
+    #[builder(default)]
+    pub description: Option<Option<String>>,
+
+    /// New name. `None` = unchanged.
+    #[builder(default)]
+    #[validate(length(min = 1, max = 255))]
+    pub name: Option<String>,
+
+    /// Additional role properties. The provider merges this into the
+    /// existing `extra` before persisting; an empty map means unchanged.
+    #[builder(default)]
+    pub extra: HashMap<String, Value>,
+}
+
 /// Role inference (imply) data.
 #[derive(Builder, Clone, Debug, PartialEq, Serialize, Validate)]
 #[builder(build_fn(error = "BuilderError"))]

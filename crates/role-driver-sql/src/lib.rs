@@ -146,6 +146,24 @@ impl RoleBackend for SqlBackend {
         Ok(implied_role::check(&state.db, prior_role_id, implied_role_id).await?)
     }
 
+    /// Update a role.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `role_id`: The ID of the role to update.
+    /// - `role`: The fields to change.
+    ///
+    /// # Returns
+    /// A `Result` containing the updated `Role`, or an `Error`.
+    async fn update_role<'a>(
+        &self,
+        state: &ServiceState,
+        role_id: &'a str,
+        role: RoleUpdate,
+    ) -> Result<Role, RoleProviderError> {
+        Ok(role::update(&state.db, role_id, role).await?)
+    }
+
     /// Delete a role by the ID.
     ///
     /// # Parameters

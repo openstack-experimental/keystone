@@ -200,6 +200,46 @@ pub struct RoleCreateRequest {
     pub role: RoleCreate,
 }
 
+/// Update role data.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
+pub struct RoleUpdate {
+    /// The role description.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
+    pub description: Option<String>,
+
+    /// The role name.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
+    pub name: Option<String>,
+
+    /// Extra attributes for the role.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "openapi", schema(inline, additional_properties))]
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
+}
+
+/// Role update request.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
+pub struct RoleUpdateRequest {
+    /// Role object.
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub role: RoleUpdate,
+}
+
 impl From<&Role> for RoleRef {
     fn from(value: &Role) -> Self {
         Self {

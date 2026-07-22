@@ -76,6 +76,30 @@ pub struct DomainCreate {
     pub extra: HashMap<String, Value>,
 }
 
+/// Domain update data.
+#[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(strip_option, into))]
+pub struct DomainUpdate {
+    /// New description. `None` = unchanged, `Some(None)` = clear.
+    #[builder(default)]
+    pub description: Option<Option<String>>,
+
+    /// New enabled state. `None` = unchanged.
+    #[builder(default)]
+    pub enabled: Option<bool>,
+
+    /// New name. `None` = unchanged.
+    #[builder(default)]
+    #[validate(length(min = 1, max = 255))]
+    pub name: Option<String>,
+
+    /// Additional domain properties. The provider merges this into the
+    /// existing `extra` before persisting; an empty map means unchanged.
+    #[builder(default)]
+    pub extra: HashMap<String, Value>,
+}
+
 /// Domain listing parameters.
 #[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
 #[builder(build_fn(error = "BuilderError"))]

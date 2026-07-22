@@ -95,6 +95,44 @@ impl ResourceBackend for SqlBackend {
         Ok(project::create(&state.db, project).await?)
     }
 
+    /// Update domain.
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `domain_id`: ID of the domain to update.
+    /// - `domain`: The fields to change.
+    ///
+    /// # Returns
+    /// The updated `Domain`.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn update_domain<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+        domain: DomainUpdate,
+    ) -> Result<Domain, ResourceProviderError> {
+        Ok(domain::update(&state.db, domain_id, domain).await?)
+    }
+
+    /// Update a project.
+    ///
+    /// # Parameters
+    /// - `state`: Service state containing the database connection.
+    /// - `project_id`: ID of the project to update.
+    /// - `project`: The fields to change.
+    ///
+    /// # Returns
+    /// The updated `Project`.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn update_project<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+        project: ProjectUpdate,
+    ) -> Result<Project, ResourceProviderError> {
+        Ok(project::update(&state.db, project_id, project).await?)
+    }
+
     /// Delete domain by the ID.
     ///
     /// # Parameters

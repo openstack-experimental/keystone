@@ -114,7 +114,8 @@ pub struct UserCreate {
     pub default_project_id: Option<String>,
 
     /// The ID of the domain. When omitted, defaults to the caller's token
-    /// scope domain (see `crate::auth::scope_domain_id` in `openstack-keystone-core`).
+    /// scope domain (see `crate::auth::scope_domain_id` in
+    /// `openstack-keystone-core`).
     #[builder(default)]
     #[validate(length(min = 1, max = 64))]
     pub domain_id: Option<String>,

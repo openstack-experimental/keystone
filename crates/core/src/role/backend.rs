@@ -59,6 +59,19 @@ pub trait RoleBackend: Send + Sync {
         implied_role_id: &'a str,
     ) -> Result<bool, RoleProviderError>;
 
+    /// Update a role.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `role_id` - The ID of the role to update.
+    /// * `role` - The fields to change.
+    async fn update_role<'a>(
+        &self,
+        state: &ServiceState,
+        role_id: &'a str,
+        role: RoleUpdate,
+    ) -> Result<Role, RoleProviderError>;
+
     /// Delete a role by the ID.
     ///
     /// # Arguments

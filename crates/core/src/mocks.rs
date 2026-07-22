@@ -1233,6 +1233,20 @@ mod resource {
                 project: ProjectCreate,
             ) -> Result<Project, ResourceProviderError>;
 
+            async fn update_domain<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+                domain: DomainUpdate,
+            ) -> Result<Domain, ResourceProviderError>;
+
+            async fn update_project<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+                project: ProjectUpdate,
+            ) -> Result<Project, ResourceProviderError>;
+
             async fn delete_domain<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
@@ -1358,6 +1372,13 @@ mod role {
                 prior_role_id: &'a str,
                 implied_role_id: &'a str,
             ) -> Result<bool, RoleProviderError>;
+
+            async fn update_role<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                role_id: &'a str,
+                role: RoleUpdate,
+            ) -> Result<Role, RoleProviderError>;
 
             async fn delete_role<'a>(
                 &self,

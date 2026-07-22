@@ -140,6 +140,50 @@ pub struct DomainCreateRequest {
     pub domain: DomainCreate,
 }
 
+/// Update domain data.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
+pub struct DomainUpdate {
+    /// The description of the domain.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
+    pub description: Option<String>,
+
+    /// If set to true, domain is enabled. If set to false, domain is disabled.
+    #[cfg_attr(feature = "builder", builder(default))]
+    pub enabled: Option<bool>,
+
+    /// Additional domain properties.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "openapi", schema(inline, additional_properties))]
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
+
+    /// The domain name.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
+    pub name: Option<String>,
+}
+
+/// Domain update request.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
+pub struct DomainUpdateRequest {
+    /// Domain object.
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub domain: DomainUpdate,
+}
+
 /// List of domains.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]

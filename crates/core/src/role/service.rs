@@ -178,6 +178,55 @@ impl RoleApi for RoleService {
             .await
     }
 
+    /// Update a role.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `role_id` - The ID of the role to update.
+    /// * `role` - The fields to change.
+    async fn update_role<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        role_id: &'a str,
+        role: RoleUpdate,
+    ) -> Result<Role, RoleProviderError> {
+        role.validate()?;
+        let role = if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let state = ctx.state();
+            let role_id_clone = role_id.to_string();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Update,
+                    EventPayload::Role { id: role_id_clone },
+                ),
+                operation: async {
+                    backend_driver.update_role(state, role_id, role).await
+                },
+                on_audit_error: |_: AuditDispatchError| RoleProviderError::Driver("audit dispatch failed".into()),
+            }?
+        } else {
+            let role = self
+                .backend_driver
+                .update_role(ctx.state(), role_id, role)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Update,
+                    EventPayload::Role {
+                        id: role.id.clone(),
+                    },
+                ))
+                .await;
+            role
+        };
+
+        Ok(role)
+    }
+
     /// Delete a role by the ID.
     ///
     /// # Arguments

@@ -25,11 +25,13 @@ mod create;
 mod delete;
 mod get;
 mod list;
+mod update;
 
 pub use create::create;
 pub use delete::delete;
 pub use get::{get_domain_by_id, get_domain_by_name, get_domain_enabled};
 pub use list::list;
+pub use update::update;
 
 use crate::entity::project as db_project;
 

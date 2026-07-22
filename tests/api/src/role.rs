@@ -98,6 +98,56 @@ pub async fn list_roles(client: &Arc<AsyncOpenStack>) -> Result<Vec<Role>> {
         .await?)
 }
 
+#[derive(Clone, Debug)]
+struct RoleUpdateRequest {
+    id: String,
+    role: RoleUpdate,
+}
+
+impl RestEndpoint for RoleUpdateRequest {
+    fn method(&self) -> http::Method {
+        http::Method::PATCH
+    }
+
+    fn endpoint(&self) -> Cow<'static, str> {
+        format!("roles/{id}", id = self.id).into()
+    }
+
+    fn body(&self) -> Result<Option<(&'static str, Vec<u8>)>, BodyError> {
+        let mut params = JsonBodyParams::default();
+
+        params.push("role", serde_json::to_value(&self.role)?);
+
+        params.into_body()
+    }
+
+    fn service_type(&self) -> ServiceType {
+        ServiceType::Identity
+    }
+
+    fn response_key(&self) -> Option<Cow<'static, str>> {
+        Some("role".into())
+    }
+
+    fn api_version(&self) -> Option<ApiVersion> {
+        Some(ApiVersion::new(3, 0))
+    }
+}
+
+/// Update role.
+pub async fn update_role(
+    tc: &Arc<AsyncOpenStack>,
+    id: impl Into<String>,
+    role: RoleUpdate,
+) -> Result<Role> {
+    Ok(RoleUpdateRequest {
+        id: id.into(),
+        role,
+    }
+    .query_async(tc.as_ref())
+    .await?)
+}
+
 /// Delete role.
 pub async fn delete_role(client: &Arc<AsyncOpenStack>, id: &str) -> Result<()> {
     delete_role_internal(client, id).await

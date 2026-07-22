@@ -67,3 +67,14 @@ impl From<api_types::RoleCreateRequest> for provider_types::RoleCreate {
         }
     }
 }
+
+impl From<api_types::RoleUpdateRequest> for provider_types::RoleUpdate {
+    fn from(value: api_types::RoleUpdateRequest) -> Self {
+        let role = value.role;
+        Self {
+            description: role.description.map(Some),
+            extra: role.extra,
+            name: role.name,
+        }
+    }
+}

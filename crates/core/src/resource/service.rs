@@ -286,6 +286,112 @@ impl ResourceApi for ResourceService {
         Ok(project)
     }
 
+    /// Update a domain.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `domain_id`: The ID of the domain to update.
+    /// - `domain`: The fields to change.
+    ///
+    /// # Returns
+    /// - `Result<Domain, ResourceProviderError>` - The updated `Domain` or an
+    ///   error.
+    async fn update_domain<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+        domain: DomainUpdate,
+    ) -> Result<Domain, ResourceProviderError> {
+        domain.validate()?;
+        let domain = if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let state = ctx.state();
+            let domain_id_clone = domain_id.to_string();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Update,
+                    EventPayload::Domain { id: domain_id_clone },
+                ),
+                operation: async {
+                    backend_driver.update_domain(state, domain_id, domain).await
+                },
+                on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
+            }?
+        } else {
+            let domain = self
+                .backend_driver
+                .update_domain(ctx.state(), domain_id, domain)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Update,
+                    EventPayload::Domain {
+                        id: domain.id.clone(),
+                    },
+                ))
+                .await;
+            domain
+        };
+
+        Ok(domain)
+    }
+
+    /// Update a project.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `project_id`: The ID of the project to update.
+    /// - `project`: The fields to change.
+    ///
+    /// # Returns
+    /// - `Result<Project, ResourceProviderError>` - The updated `Project` or an
+    ///   error.
+    async fn update_project<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        project_id: &'a str,
+        project: ProjectUpdate,
+    ) -> Result<Project, ResourceProviderError> {
+        project.validate()?;
+        let project = if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let state = ctx.state();
+            let project_id_clone = project_id.to_string();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Update,
+                    EventPayload::Project { id: project_id_clone },
+                ),
+                operation: async {
+                    backend_driver.update_project(state, project_id, project).await
+                },
+                on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
+            }?
+        } else {
+            let project = self
+                .backend_driver
+                .update_project(ctx.state(), project_id, project)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Update,
+                    EventPayload::Project {
+                        id: project.id.clone(),
+                    },
+                ))
+                .await;
+            project
+        };
+
+        Ok(project)
+    }
+
     /// Delete a domain by the ID.
     ///
     /// # Parameters
