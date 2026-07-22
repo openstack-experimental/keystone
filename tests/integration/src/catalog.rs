@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+mod associations;
 mod endpoint;
 mod endpoint_group;
 mod region;

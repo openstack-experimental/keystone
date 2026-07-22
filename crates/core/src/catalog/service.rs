@@ -52,6 +52,88 @@ impl CatalogService {
 
 #[async_trait]
 impl CatalogApi for CatalogService {
+    /// Associate an endpoint with a project.
+    ///
+    /// # Parameters
+    /// - `exec`: The execution context.
+    /// - `project_id`: The ID of the project.
+    /// - `endpoint_id`: The ID of the endpoint.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `CatalogProviderError`.
+    async fn add_endpoint_to_project<'a>(
+        &self,
+        exec: &ExecutionContext<'a>,
+        project_id: &'a str,
+        endpoint_id: &'a str,
+    ) -> Result<(), CatalogProviderError> {
+        self.backend_driver
+            .add_endpoint_to_project(exec.state(), project_id, endpoint_id)
+            .await
+    }
+
+    /// Associate an endpoint group with a project.
+    ///
+    /// # Parameters
+    /// - `exec`: The execution context.
+    /// - `project_id`: The ID of the project.
+    /// - `endpoint_group_id`: The ID of the endpoint group.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `CatalogProviderError`.
+    async fn add_endpoint_group_to_project<'a>(
+        &self,
+        exec: &ExecutionContext<'a>,
+        project_id: &'a str,
+        endpoint_group_id: &'a str,
+    ) -> Result<(), CatalogProviderError> {
+        self.backend_driver
+            .add_endpoint_group_to_project(exec.state(), project_id, endpoint_group_id)
+            .await
+    }
+
+    /// Check whether an endpoint is associated with a project.
+    ///
+    /// # Parameters
+    /// - `exec`: The execution context.
+    /// - `project_id`: The ID of the project.
+    /// - `endpoint_id`: The ID of the endpoint.
+    ///
+    /// # Returns
+    /// A `Result` containing `true` when the association exists, or a
+    /// `CatalogProviderError`.
+    async fn check_endpoint_in_project<'a>(
+        &self,
+        exec: &ExecutionContext<'a>,
+        project_id: &'a str,
+        endpoint_id: &'a str,
+    ) -> Result<bool, CatalogProviderError> {
+        self.backend_driver
+            .check_endpoint_in_project(exec.state(), project_id, endpoint_id)
+            .await
+    }
+
+    /// Check whether an endpoint group is associated with a project.
+    ///
+    /// # Parameters
+    /// - `exec`: The execution context.
+    /// - `project_id`: The ID of the project.
+    /// - `endpoint_group_id`: The ID of the endpoint group.
+    ///
+    /// # Returns
+    /// A `Result` containing `true` when the association exists, or a
+    /// `CatalogProviderError`.
+    async fn check_endpoint_group_in_project<'a>(
+        &self,
+        exec: &ExecutionContext<'a>,
+        project_id: &'a str,
+        endpoint_group_id: &'a str,
+    ) -> Result<bool, CatalogProviderError> {
+        self.backend_driver
+            .check_endpoint_group_in_project(exec.state(), project_id, endpoint_group_id)
+            .await
+    }
+
     /// Create a new endpoint.
     ///
     /// # Parameters
@@ -557,6 +639,44 @@ impl CatalogApi for CatalogService {
             .await
     }
 
+    /// List the endpoints associated with a project.
+    ///
+    /// # Parameters
+    /// - `exec`: The execution context.
+    /// - `project_id`: The ID of the project.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of `Endpoint` objects or a
+    /// `CatalogProviderError`.
+    async fn list_project_endpoints<'a>(
+        &self,
+        exec: &ExecutionContext<'a>,
+        project_id: &'a str,
+    ) -> Result<Vec<Endpoint>, CatalogProviderError> {
+        self.backend_driver
+            .list_project_endpoints(exec.state(), project_id)
+            .await
+    }
+
+    /// List the endpoint groups associated with a project.
+    ///
+    /// # Parameters
+    /// - `exec`: The execution context.
+    /// - `project_id`: The ID of the project.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of `EndpointGroup` objects or a
+    /// `CatalogProviderError`.
+    async fn list_project_endpoint_groups<'a>(
+        &self,
+        exec: &ExecutionContext<'a>,
+        project_id: &'a str,
+    ) -> Result<Vec<EndpointGroup>, CatalogProviderError> {
+        self.backend_driver
+            .list_project_endpoint_groups(exec.state(), project_id)
+            .await
+    }
+
     /// List regions.
     ///
     /// # Parameters
@@ -599,6 +719,56 @@ impl CatalogApi for CatalogService {
     ///
     /// # Parameters
     /// - `state`: The current service state.
+    /// - `id`: The unique identifier of the endpoint.
+    /// - `endpoint`: The fields to change.
+    ///
+    /// # Returns
+    /// A `Result` containing the updated `Endpoint`, or a
+    /// `CatalogProviderError`.
+    /// Remove the association between an endpoint and a project.
+    ///
+    /// # Parameters
+    /// - `exec`: The execution context.
+    /// - `project_id`: The ID of the project.
+    /// - `endpoint_id`: The ID of the endpoint.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `CatalogProviderError`.
+    async fn remove_endpoint_from_project<'a>(
+        &self,
+        exec: &ExecutionContext<'a>,
+        project_id: &'a str,
+        endpoint_id: &'a str,
+    ) -> Result<(), CatalogProviderError> {
+        self.backend_driver
+            .remove_endpoint_from_project(exec.state(), project_id, endpoint_id)
+            .await
+    }
+
+    /// Remove the association between an endpoint group and a project.
+    ///
+    /// # Parameters
+    /// - `exec`: The execution context.
+    /// - `project_id`: The ID of the project.
+    /// - `endpoint_group_id`: The ID of the endpoint group.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `CatalogProviderError`.
+    async fn remove_endpoint_group_from_project<'a>(
+        &self,
+        exec: &ExecutionContext<'a>,
+        project_id: &'a str,
+        endpoint_group_id: &'a str,
+    ) -> Result<(), CatalogProviderError> {
+        self.backend_driver
+            .remove_endpoint_group_from_project(exec.state(), project_id, endpoint_group_id)
+            .await
+    }
+
+    /// Update an existing endpoint.
+    ///
+    /// # Parameters
+    /// - `exec`: The execution context.
     /// - `id`: The unique identifier of the endpoint.
     /// - `endpoint`: The fields to change.
     ///

@@ -22,6 +22,72 @@ use crate::keystone::ServiceState;
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait CatalogBackend: Send + Sync {
+    /// Associate an endpoint with a project.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `project_id`: The ID of the project.
+    /// - `endpoint_id`: The ID of the endpoint.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `CatalogProviderError`.
+    async fn add_endpoint_to_project<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+        endpoint_id: &'a str,
+    ) -> Result<(), CatalogProviderError>;
+
+    /// Associate an endpoint group with a project.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `project_id`: The ID of the project.
+    /// - `endpoint_group_id`: The ID of the endpoint group.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `CatalogProviderError`.
+    async fn add_endpoint_group_to_project<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+        endpoint_group_id: &'a str,
+    ) -> Result<(), CatalogProviderError>;
+
+    /// Check whether an endpoint is associated with a project.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `project_id`: The ID of the project.
+    /// - `endpoint_id`: The ID of the endpoint.
+    ///
+    /// # Returns
+    /// A `Result` containing `true` when the association exists, or a
+    /// `CatalogProviderError`.
+    async fn check_endpoint_in_project<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+        endpoint_id: &'a str,
+    ) -> Result<bool, CatalogProviderError>;
+
+    /// Check whether an endpoint group is associated with a project.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `project_id`: The ID of the project.
+    /// - `endpoint_group_id`: The ID of the endpoint group.
+    ///
+    /// # Returns
+    /// A `Result` containing `true` when the association exists, or a
+    /// `CatalogProviderError`.
+    async fn check_endpoint_group_in_project<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+        endpoint_group_id: &'a str,
+    ) -> Result<bool, CatalogProviderError>;
+
     /// Create a new endpoint.
     ///
     /// # Parameters
@@ -242,6 +308,36 @@ pub trait CatalogBackend: Send + Sync {
         params: &EndpointGroupListParameters,
     ) -> Result<Vec<EndpointGroup>, CatalogProviderError>;
 
+    /// List the endpoints associated with a project.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `project_id`: The ID of the project.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of `Endpoint` objects or a
+    /// `CatalogProviderError`.
+    async fn list_project_endpoints<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+    ) -> Result<Vec<Endpoint>, CatalogProviderError>;
+
+    /// List the endpoint groups associated with a project.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `project_id`: The ID of the project.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of `EndpointGroup` objects or a
+    /// `CatalogProviderError`.
+    async fn list_project_endpoint_groups<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+    ) -> Result<Vec<EndpointGroup>, CatalogProviderError>;
+
     /// List regions.
     ///
     /// # Parameters
@@ -271,6 +367,48 @@ pub trait CatalogBackend: Send + Sync {
         state: &ServiceState,
         params: &ServiceListParameters,
     ) -> Result<Vec<Service>, CatalogProviderError>;
+
+    /// Update an existing endpoint.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The unique identifier of the endpoint.
+    /// - `endpoint`: The fields to change.
+    ///
+    /// # Returns
+    /// A `Result` containing the updated `Endpoint`, or a
+    /// `CatalogProviderError`.
+    /// Remove the association between an endpoint and a project.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `project_id`: The ID of the project.
+    /// - `endpoint_id`: The ID of the endpoint.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `CatalogProviderError`.
+    async fn remove_endpoint_from_project<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+        endpoint_id: &'a str,
+    ) -> Result<(), CatalogProviderError>;
+
+    /// Remove the association between an endpoint group and a project.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `project_id`: The ID of the project.
+    /// - `endpoint_group_id`: The ID of the endpoint group.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `CatalogProviderError`.
+    async fn remove_endpoint_group_from_project<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+        endpoint_group_id: &'a str,
+    ) -> Result<(), CatalogProviderError>;
 
     /// Update an existing endpoint.
     ///

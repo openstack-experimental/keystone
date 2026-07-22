@@ -633,6 +633,34 @@ mod catalog {
 
         #[async_trait]
         impl CatalogApi for CatalogProvider {
+            async fn add_endpoint_to_project<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+                endpoint_id: &'a str,
+            ) -> Result<(), CatalogProviderError>;
+
+            async fn add_endpoint_group_to_project<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+                endpoint_group_id: &'a str,
+            ) -> Result<(), CatalogProviderError>;
+
+            async fn check_endpoint_in_project<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+                endpoint_id: &'a str,
+            ) -> Result<bool, CatalogProviderError>;
+
+            async fn check_endpoint_group_in_project<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+                endpoint_group_id: &'a str,
+            ) -> Result<bool, CatalogProviderError>;
+
             async fn create_endpoint<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
@@ -723,6 +751,18 @@ mod catalog {
                 params: &EndpointGroupListParameters,
             ) -> Result<Vec<EndpointGroup>, CatalogProviderError>;
 
+            async fn list_project_endpoints<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+            ) -> Result<Vec<Endpoint>, CatalogProviderError>;
+
+            async fn list_project_endpoint_groups<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+            ) -> Result<Vec<EndpointGroup>, CatalogProviderError>;
+
             async fn list_regions<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
@@ -734,6 +774,20 @@ mod catalog {
                 ctx: &ExecutionContext<'a>,
                 params: &ServiceListParameters,
             ) -> Result<Vec<Service>, CatalogProviderError>;
+
+            async fn remove_endpoint_from_project<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+                endpoint_id: &'a str,
+            ) -> Result<(), CatalogProviderError>;
+
+            async fn remove_endpoint_group_from_project<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+                endpoint_group_id: &'a str,
+            ) -> Result<(), CatalogProviderError>;
 
             async fn update_endpoint<'a>(
                 &self,
