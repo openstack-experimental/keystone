@@ -11,239 +11,60 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-use std::borrow::Cow;
-use std::sync::Arc;
-
-use eyre::Result;
+//! v3 project CRUD helpers, generated with [`crate::macros::crud_endpoint`].
 
 use openstack_keystone_api_types::v3::project::*;
-use openstack_sdk::api::rest_endpoint_prelude::*;
-use openstack_sdk::{AsyncOpenStack, api::QueryAsync};
 
-use crate::guard::*;
+use crate::macros::crud_endpoint;
 
-/// Create request for project
-#[derive(Clone, Debug)]
-struct ProjectCreateRequest {
-    project: ProjectCreate,
-}
-
-impl RestEndpoint for ProjectCreateRequest {
-    fn method(&self) -> http::Method {
-        http::Method::POST
+crud_endpoint! {
+    create {
+        request = ProjectCreateRequest,
+        func = create_project,
+        path = "projects",
+        body_key = "project",
+        create_type = ProjectCreate,
+        model = Project,
+        response_key = "project",
+        service = Identity,
+        api_version = (3, 0),
     }
-
-    fn endpoint(&self) -> Cow<'static, str> {
-        "projects".to_string().into()
+    show {
+        request = ProjectShowRequest,
+        func = get_project,
+        path = "projects",
+        model = Project,
+        response_key = "project",
+        service = Identity,
+        api_version = (3, 0),
     }
-
-    fn body(&self) -> Result<Option<(&'static str, Vec<u8>)>, BodyError> {
-        let mut params = JsonBodyParams::default();
-        params.push("project", serde_json::to_value(&self.project)?);
-        params.into_body()
+    update {
+        request = ProjectUpdateRequest,
+        func = update_project,
+        path = "projects",
+        body_key = "project",
+        update_type = ProjectUpdate,
+        model = Project,
+        response_key = "project",
+        service = Identity,
+        api_version = (3, 0),
     }
-
-    fn service_type(&self) -> ServiceType {
-        ServiceType::Identity
+    list {
+        request = ProjectListRequest,
+        func = list_projects,
+        path = "projects",
+        model = ProjectShort,
+        response_key = "projects",
+        service = Identity,
+        api_version = (3, 0),
+        query = [domain_id, ids, name],
     }
-
-    fn response_key(&self) -> Option<Cow<'static, str>> {
-        Some("project".into())
-    }
-
-    /// Returns required API version
-    fn api_version(&self) -> Option<ApiVersion> {
-        Some(ApiVersion::new(3, 0))
-    }
-}
-
-/// Create project (original API for AsyncOpenStack)
-pub async fn create_project(
-    tc: &Arc<AsyncOpenStack>,
-    project: ProjectCreate,
-) -> Result<AsyncResourceGuard<Project>> {
-    let obj: Project = ProjectCreateRequest { project }
-        .query_async(tc.as_ref())
-        .await?;
-    Ok(AsyncResourceGuard::new(obj, tc.clone()))
-}
-
-/// Create request for a project show
-struct ProjectShowRequest {
-    id: String,
-}
-
-impl RestEndpoint for ProjectShowRequest {
-    fn method(&self) -> http::Method {
-        http::Method::GET
-    }
-
-    fn endpoint(&self) -> Cow<'static, str> {
-        format!("projects/{id}", id = self.id).into()
-    }
-
-    fn service_type(&self) -> ServiceType {
-        ServiceType::Identity
-    }
-
-    fn response_key(&self) -> Option<Cow<'static, str>> {
-        Some("project".into())
-    }
-
-    /// Returns required API version
-    fn api_version(&self) -> Option<ApiVersion> {
-        Some(ApiVersion::new(3, 0))
-    }
-}
-
-/// Get a single project by ID
-pub async fn get_project(tc: &Arc<AsyncOpenStack>, id: impl Into<String>) -> Result<Project> {
-    Ok(ProjectShowRequest { id: id.into() }
-        .query_async(tc.as_ref())
-        .await?)
-}
-
-/// Update request for project
-#[derive(Clone, Debug)]
-struct ProjectUpdateRequest {
-    id: String,
-    project: ProjectUpdate,
-}
-
-impl RestEndpoint for ProjectUpdateRequest {
-    fn method(&self) -> http::Method {
-        http::Method::PATCH
-    }
-
-    fn endpoint(&self) -> Cow<'static, str> {
-        format!("projects/{id}", id = self.id).into()
-    }
-
-    fn body(&self) -> Result<Option<(&'static str, Vec<u8>)>, BodyError> {
-        let mut params = JsonBodyParams::default();
-        params.push("project", serde_json::to_value(&self.project)?);
-        params.into_body()
-    }
-
-    fn service_type(&self) -> ServiceType {
-        ServiceType::Identity
-    }
-
-    fn response_key(&self) -> Option<Cow<'static, str>> {
-        Some("project".into())
-    }
-
-    /// Returns required API version
-    fn api_version(&self) -> Option<ApiVersion> {
-        Some(ApiVersion::new(3, 0))
-    }
-}
-
-/// Update a project
-pub async fn update_project(
-    tc: &Arc<AsyncOpenStack>,
-    id: impl Into<String>,
-    project: ProjectUpdate,
-) -> Result<Project> {
-    Ok(ProjectUpdateRequest {
-        id: id.into(),
-        project,
-    }
-    .query_async(tc.as_ref())
-    .await?)
-}
-
-/// List request for projects
-#[derive(Default)]
-pub struct ProjectListRequest {
-    /// Filter projects by domain ID.
-    pub domain_id: Option<String>,
-
-    /// Filter projects by the `id` attribute.
-    pub ids: Option<String>,
-
-    /// Filter projects by name.
-    pub name: Option<String>,
-}
-
-impl RestEndpoint for ProjectListRequest {
-    fn method(&self) -> http::Method {
-        http::Method::GET
-    }
-
-    fn endpoint(&self) -> Cow<'static, str> {
-        "projects".to_string().into()
-    }
-
-    fn parameters(&self) -> QueryParams<'_> {
-        let mut params = QueryParams::default();
-        params.push_opt("domain_id", self.domain_id.as_ref());
-        params.push_opt("ids", self.ids.as_ref());
-        params.push_opt("name", self.name.as_ref());
-        params
-    }
-
-    fn service_type(&self) -> ServiceType {
-        ServiceType::Identity
-    }
-
-    fn response_key(&self) -> Option<Cow<'static, str>> {
-        Some("projects".into())
-    }
-
-    /// Returns required API version
-    fn api_version(&self) -> Option<ApiVersion> {
-        Some(ApiVersion::new(3, 0))
-    }
-}
-
-/// List projects
-pub async fn list_projects(
-    tc: &Arc<AsyncOpenStack>,
-    params: ProjectListRequest,
-) -> Result<Vec<ProjectShort>> {
-    Ok(params.query_async(tc.as_ref()).await?)
-}
-
-/// Delete request for project
-struct ProjectDeleteRequest {
-    id: String,
-}
-
-impl RestEndpoint for ProjectDeleteRequest {
-    fn method(&self) -> http::Method {
-        http::Method::DELETE
-    }
-
-    fn endpoint(&self) -> Cow<'static, str> {
-        format!("projects/{id}", id = self.id).into()
-    }
-
-    fn service_type(&self) -> ServiceType {
-        ServiceType::Identity
-    }
-
-    /// Returns required API version
-    fn api_version(&self) -> Option<ApiVersion> {
-        Some(ApiVersion::new(3, 0))
-    }
-}
-
-/// Delete a project
-pub async fn delete_project(tc: &Arc<AsyncOpenStack>, id: impl Into<String>) -> Result<()> {
-    Ok(
-        openstack_sdk::api::ignore(ProjectDeleteRequest { id: id.into() })
-            .query_async(tc.as_ref())
-            .await?,
-    )
-}
-#[async_trait::async_trait]
-impl DeletableResource for Project {
-    async fn delete(&self, state: &Arc<AsyncOpenStack>) -> Result<()> {
-        Ok(openstack_sdk::api::ignore(ProjectDeleteRequest {
-            id: self.id.clone(),
-        })
-        .query_async(state.as_ref())
-        .await?)
+    delete {
+        request = ProjectDeleteRequest,
+        func = delete_project,
+        path = "projects",
+        model = Project,
+        service = Identity,
+        api_version = (3, 0),
     }
 }
