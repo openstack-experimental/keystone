@@ -35,6 +35,10 @@ pub enum CatalogProviderError {
     #[error("endpoint {0} not found")]
     EndpointNotFound(String),
 
+    /// The endpoint group has not been found.
+    #[error("endpoint group {0} not found")]
+    EndpointGroupNotFound(String),
+
     /// The service has not been found.
     #[error("service {0} not found")]
     ServiceNotFound(String),

@@ -36,6 +36,21 @@ pub trait CatalogApi: Send + Sync {
         endpoint: EndpointCreate,
     ) -> Result<Endpoint, CatalogProviderError>;
 
+    /// Create a new endpoint group.
+    ///
+    /// # Parameters
+    /// - `exec`: The execution context.
+    /// - `endpoint_group`: The endpoint group creation parameters.
+    ///
+    /// # Returns
+    /// A `Result` containing the created `EndpointGroup`, or a
+    /// `CatalogProviderError`.
+    async fn create_endpoint_group<'a>(
+        &self,
+        exec: &ExecutionContext<'a>,
+        endpoint_group: EndpointGroupCreate,
+    ) -> Result<EndpointGroup, CatalogProviderError>;
+
     /// Create a new region.
     ///
     /// # Parameters
@@ -74,6 +89,20 @@ pub trait CatalogApi: Send + Sync {
     /// # Returns
     /// A `Result` indicating success or a `CatalogProviderError`.
     async fn delete_endpoint<'a>(
+        &self,
+        exec: &ExecutionContext<'a>,
+        id: &'a str,
+    ) -> Result<(), CatalogProviderError>;
+
+    /// Delete an endpoint group by ID.
+    ///
+    /// # Parameters
+    /// - `exec`: The execution context.
+    /// - `id`: The unique identifier of the endpoint group.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `CatalogProviderError`.
+    async fn delete_endpoint_group<'a>(
         &self,
         exec: &ExecutionContext<'a>,
         id: &'a str,
@@ -137,6 +166,21 @@ pub trait CatalogApi: Send + Sync {
         id: &'a str,
     ) -> Result<Option<Endpoint>, CatalogProviderError>;
 
+    /// Get single endpoint group by ID.
+    ///
+    /// # Parameters
+    /// - `exec`: The execution context.
+    /// - `id`: The unique identifier of the endpoint group.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the `EndpointGroup` if found, or a
+    /// `CatalogProviderError`.
+    async fn get_endpoint_group<'a>(
+        &self,
+        exec: &ExecutionContext<'a>,
+        id: &'a str,
+    ) -> Result<Option<EndpointGroup>, CatalogProviderError>;
+
     /// Get single region by ID.
     ///
     /// # Parameters
@@ -181,6 +225,21 @@ pub trait CatalogApi: Send + Sync {
         exec: &ExecutionContext<'a>,
         params: &EndpointListParameters,
     ) -> Result<Vec<Endpoint>, CatalogProviderError>;
+
+    /// List endpoint groups.
+    ///
+    /// # Parameters
+    /// - `exec`: The execution context.
+    /// - `params`: Parameters for filtering the endpoint group list.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of `EndpointGroup` objects or a
+    /// `CatalogProviderError`.
+    async fn list_endpoint_groups<'a>(
+        &self,
+        exec: &ExecutionContext<'a>,
+        params: &EndpointGroupListParameters,
+    ) -> Result<Vec<EndpointGroup>, CatalogProviderError>;
 
     /// List regions.
     ///
@@ -228,6 +287,23 @@ pub trait CatalogApi: Send + Sync {
         id: &'a str,
         endpoint: EndpointUpdate,
     ) -> Result<Endpoint, CatalogProviderError>;
+
+    /// Update an existing endpoint group.
+    ///
+    /// # Parameters
+    /// - `exec`: The execution context.
+    /// - `id`: The unique identifier of the endpoint group.
+    /// - `endpoint_group`: The fields to change.
+    ///
+    /// # Returns
+    /// A `Result` containing the updated `EndpointGroup`, or a
+    /// `CatalogProviderError`.
+    async fn update_endpoint_group<'a>(
+        &self,
+        exec: &ExecutionContext<'a>,
+        id: &'a str,
+        endpoint_group: EndpointGroupUpdate,
+    ) -> Result<EndpointGroup, CatalogProviderError>;
 
     /// Update an existing region.
     ///
