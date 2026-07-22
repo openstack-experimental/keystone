@@ -104,6 +104,56 @@ impl CatalogApi for CatalogService {
         Ok(endpoint)
     }
 
+    /// Create a new endpoint group.
+    ///
+    /// # Parameters
+    /// - `exec`: The execution context.
+    /// - `endpoint_group`: The endpoint group creation parameters.
+    ///
+    /// # Returns
+    /// A `Result` containing the created `EndpointGroup`, or a
+    /// `CatalogProviderError`.
+    async fn create_endpoint_group<'a>(
+        &self,
+        exec: &ExecutionContext<'a>,
+        endpoint_group: EndpointGroupCreate,
+    ) -> Result<EndpointGroup, CatalogProviderError> {
+        endpoint_group.validate()?;
+        let endpoint_group = if let Some(vsc) = exec.ctx() {
+            let backend_driver = &self.backend_driver;
+            let eg_clone = endpoint_group.clone();
+            crate::audited_op! {
+                dispatcher: &exec.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Create,
+                    EventPayload::EndpointGroup { id: eg_clone.id.clone().unwrap_or_default() },
+                ),
+                operation: async {
+                    backend_driver.create_endpoint_group(exec.state(), eg_clone).await
+                },
+                on_audit_error: |_: AuditDispatchError| CatalogProviderError::Driver("audit dispatch failed".into()),
+            }?
+        } else {
+            let eg = self
+                .backend_driver
+                .create_endpoint_group(exec.state(), endpoint_group)
+                .await?;
+
+            exec.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::EndpointGroup { id: eg.id.clone() },
+                ))
+                .await;
+
+            eg
+        };
+
+        Ok(endpoint_group)
+    }
+
     /// Create a new region.
     ///
     /// # Parameters
@@ -252,6 +302,50 @@ impl CatalogApi for CatalogService {
         Ok(())
     }
 
+    /// Delete an endpoint group by ID.
+    ///
+    /// # Parameters
+    /// - `exec`: The execution context.
+    /// - `id`: The unique identifier of the endpoint group.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or a `CatalogProviderError`.
+    async fn delete_endpoint_group<'a>(
+        &self,
+        exec: &ExecutionContext<'a>,
+        id: &'a str,
+    ) -> Result<(), CatalogProviderError> {
+        if let Some(vsc) = exec.ctx() {
+            crate::audited_op! {
+                dispatcher: &exec.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Delete,
+                    EventPayload::EndpointGroup { id: id.to_string() },
+                ),
+                operation: async {
+                    self.backend_driver.delete_endpoint_group(exec.state(), id).await?;
+                    Ok::<(), CatalogProviderError>(())
+                },
+                on_audit_error: |_: AuditDispatchError| CatalogProviderError::Driver("audit dispatch failed".into()),
+            }?;
+        } else {
+            self.backend_driver
+                .delete_endpoint_group(exec.state(), id)
+                .await?;
+
+            exec.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Delete,
+                    EventPayload::EndpointGroup { id: id.to_string() },
+                ))
+                .await;
+        }
+
+        Ok(())
+    }
+
     /// Delete a region by ID.
     ///
     /// # Parameters
@@ -370,6 +464,25 @@ impl CatalogApi for CatalogService {
         self.backend_driver.get_endpoint(exec.state(), id).await
     }
 
+    /// Get single endpoint group by ID.
+    ///
+    /// # Parameters
+    /// - `exec`: The execution context.
+    /// - `id`: The unique identifier of the endpoint group.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the endpoint group if found, or an
+    /// `Error`.
+    async fn get_endpoint_group<'a>(
+        &self,
+        exec: &ExecutionContext<'a>,
+        id: &'a str,
+    ) -> Result<Option<EndpointGroup>, CatalogProviderError> {
+        self.backend_driver
+            .get_endpoint_group(exec.state(), id)
+            .await
+    }
+
     /// Get single region by ID.
     ///
     /// # Parameters
@@ -421,6 +534,26 @@ impl CatalogApi for CatalogService {
         params.validate()?;
         self.backend_driver
             .list_endpoints(exec.state(), params)
+            .await
+    }
+
+    /// List endpoint groups.
+    ///
+    /// # Parameters
+    /// - `exec`: The execution context.
+    /// - `params`: Parameters for filtering the endpoint group list.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of `EndpointGroup` objects or a
+    /// `CatalogProviderError`.
+    async fn list_endpoint_groups<'a>(
+        &self,
+        exec: &ExecutionContext<'a>,
+        params: &EndpointGroupListParameters,
+    ) -> Result<Vec<EndpointGroup>, CatalogProviderError> {
+        params.validate()?;
+        self.backend_driver
+            .list_endpoint_groups(exec.state(), params)
             .await
     }
 
@@ -504,6 +637,55 @@ impl CatalogApi for CatalogService {
                 .emit(Event::new(
                     Operation::Update,
                     EventPayload::Endpoint { id: id.to_string() },
+                ))
+                .await;
+            updated
+        };
+        Ok(updated)
+    }
+
+    /// Update an existing endpoint group.
+    ///
+    /// # Parameters
+    /// - `exec`: The execution context.
+    /// - `id`: The unique identifier of the endpoint group.
+    /// - `endpoint_group`: The fields to change.
+    ///
+    /// # Returns
+    /// A `Result` containing the updated `EndpointGroup`, or a
+    /// `CatalogProviderError`.
+    async fn update_endpoint_group<'a>(
+        &self,
+        exec: &ExecutionContext<'a>,
+        id: &'a str,
+        endpoint_group: EndpointGroupUpdate,
+    ) -> Result<EndpointGroup, CatalogProviderError> {
+        endpoint_group.validate()?;
+        let updated = if let Some(vsc) = exec.ctx() {
+            let backend_driver = &self.backend_driver;
+            let eg_clone = endpoint_group.clone();
+            crate::audited_op! {
+                dispatcher: &exec.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Update,
+                    EventPayload::EndpointGroup { id: id.to_string() },
+                ),
+                operation: async {
+                    backend_driver.update_endpoint_group(exec.state(), id, eg_clone).await
+                },
+                on_audit_error: |_: AuditDispatchError| CatalogProviderError::Driver("audit dispatch failed".into()),
+            }?
+        } else {
+            let updated = self
+                .backend_driver
+                .update_endpoint_group(exec.state(), id, endpoint_group)
+                .await?;
+            exec.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Update,
+                    EventPayload::EndpointGroup { id: id.to_string() },
                 ))
                 .await;
             updated

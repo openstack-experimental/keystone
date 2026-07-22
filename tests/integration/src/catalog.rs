@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod endpoint;
+mod endpoint_group;
 mod region;
 mod service;
 
@@ -33,6 +34,12 @@ use crate::common::*;
 use crate::impl_deleter;
 
 impl_deleter!(Service, Endpoint, get_catalog_provider, delete_endpoint);
+impl_deleter!(
+    Service,
+    EndpointGroup,
+    get_catalog_provider,
+    delete_endpoint_group
+);
 impl_deleter!(Service, Region, get_catalog_provider, delete_region);
 impl_deleter!(
     Service,
@@ -51,6 +58,21 @@ pub async fn create_endpoint(
         .provider
         .get_catalog_provider()
         .create_endpoint(&ExecutionContext::internal(state), data)
+        .await
+        .unwrap();
+    Ok(AsyncResourceGuard::new(res, state.clone()))
+}
+
+/// Create an endpoint group through the catalog provider, returning a guard
+/// that deletes it again when dropped.
+pub async fn create_endpoint_group(
+    state: &ServiceState,
+    data: EndpointGroupCreate,
+) -> Result<AsyncResourceGuard<EndpointGroup, ServiceState>> {
+    let res = state
+        .provider
+        .get_catalog_provider()
+        .create_endpoint_group(&ExecutionContext::internal(state), data)
         .await
         .unwrap();
     Ok(AsyncResourceGuard::new(res, state.clone()))

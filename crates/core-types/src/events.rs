@@ -120,6 +120,9 @@ pub enum EventPayload {
     Endpoint {
         id: String,
     },
+    EndpointGroup {
+        id: String,
+    },
     Region {
         id: String,
     },

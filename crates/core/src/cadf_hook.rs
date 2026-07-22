@@ -86,6 +86,7 @@ fn build_target_from_event(event: &Event) -> Target {
         EventPayload::AccessRule { id, .. } => (id, "data/security/identity/access-rule"),
         EventPayload::Credential { id, .. } => (id, "data/security/identity/credential"),
         EventPayload::Endpoint { id } => (id, "data/compute/catalog/endpoint"),
+        EventPayload::EndpointGroup { id } => (id, "data/compute/catalog/endpoint-group"),
         EventPayload::Region { id } => (id, "data/compute/catalog/region"),
         EventPayload::Service { id } => (id, "data/compute/catalog/service"),
         EventPayload::Trust { id } => (id, "data/security/identity/trust"),
