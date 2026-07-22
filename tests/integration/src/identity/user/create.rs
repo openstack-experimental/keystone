@@ -98,7 +98,7 @@ async fn test_create_with_password_and_expiry_days() -> eyre::Result<()> {
     let (state, _tmp) = get_state().await?;
     let domain = create_domain!(state)?;
     let uid = Uuid::new_v4().simple().to_string();
-    setup_test_config(&state, Some(90), None).await;
+    setup_test_config(&ExecutionContext::internal(&state), Some(90), None).await;
 
     let prov = state.provider.get_identity_provider();
     let user = prov
@@ -169,7 +169,7 @@ async fn test_create_with_password_and_unique_count() -> Result<()> {
     let (state, _tmp) = get_state().await?;
     let domain = create_domain!(state)?;
     let uid = Uuid::new_v4().simple().to_string();
-    setup_test_config(&state, None, Some(5)).await;
+    setup_test_config(&ExecutionContext::internal(&state), None, Some(5)).await;
 
     let prov = state.provider.get_identity_provider();
     prov.create_user(
@@ -285,7 +285,7 @@ async fn test_create_with_password_and_get_user() -> Result<()> {
     let (state, _tmp) = get_state().await?;
     let domain = create_domain!(state)?;
     let uid = Uuid::new_v4().simple().to_string();
-    setup_test_config(&state, Some(30), None).await;
+    setup_test_config(&ExecutionContext::internal(&state), Some(30), None).await;
 
     let prov = state.provider.get_identity_provider();
     prov.create_user(
@@ -320,7 +320,7 @@ async fn test_create_with_expiry_and_authenticate() -> Result<()> {
     let (state, _tmp) = get_state().await?;
     let domain = create_domain!(state)?;
     let uid = Uuid::new_v4().simple().to_string();
-    setup_test_config(&state, Some(90), None).await;
+    setup_test_config(&ExecutionContext::internal(&state), Some(90), None).await;
 
     let prov = state.provider.get_identity_provider();
     prov.create_user(
@@ -366,7 +366,7 @@ async fn test_create_with_expiry_and_unique_count() -> Result<()> {
     let (state, _tmp) = get_state().await?;
     let domain = create_domain!(state)?;
     let uid = Uuid::new_v4().simple().to_string();
-    setup_test_config(&state, Some(90), Some(1)).await;
+    setup_test_config(&ExecutionContext::internal(&state), Some(90), Some(1)).await;
 
     let prov = state.provider.get_identity_provider();
     let user = prov
@@ -402,5 +402,30 @@ async fn test_create_with_expiry_and_unique_count() -> Result<()> {
         "should authenticate with both expiry and unique_count config"
     );
 
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_create_invalid_name_too_long() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+
+    let result = state
+        .provider
+        .get_identity_provider()
+        .create_user(
+            &ExecutionContext::internal(&state),
+            UserCreateBuilder::default()
+                .name("x".repeat(256))
+                .domain_id(domain.id.clone())
+                .enabled(true)
+                .build()?,
+        )
+        .await;
+    assert!(
+        result.is_err(),
+        "creating a user with an over-length name is rejected"
+    );
     Ok(())
 }
