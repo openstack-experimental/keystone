@@ -132,9 +132,12 @@ pub struct UserCreate {
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub default_project_id: Option<String>,
 
-    /// User domain ID.
+    /// User domain ID. When omitted, defaults to the domain of the caller's
+    /// token scope.
+    #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
-    pub domain_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain_id: Option<String>,
 
     /// If the user is enabled, this value is true. If the user is disabled,
     /// this value is false.
@@ -571,6 +574,17 @@ mod tests {
             .build()
             .unwrap();
         assert!(!sot.enabled, "user enabled flag defaults to `false`");
+    }
+
+    #[test]
+    fn test_user_create_deserialize_omitted_domain_id_and_enabled() {
+        // Real clients (tempest, python-openstackclient) omit `domain_id` on
+        // create, relying on the server defaulting it from the caller's
+        // token scope (see `openstack_keystone_core::auth::scope_domain_id`);
+        // deserializing must not 422 on a missing field.
+        let sot: UserCreate = serde_json::from_str(r#"{"name": "name"}"#).unwrap();
+        assert!(sot.domain_id.is_none());
+        assert!(sot.enabled);
     }
 
     #[cfg(feature = "validate")]

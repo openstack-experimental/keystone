@@ -217,7 +217,7 @@ mod tests {
         identity_mock.expect_create_user().returning(|_, req| {
             Ok(UserResponseBuilder::default()
                 .id("user-1")
-                .domain_id(req.domain_id.clone())
+                .domain_id(req.domain_id.clone().unwrap_or_default())
                 .enabled(true)
                 .name(req.name.clone())
                 .build()
@@ -307,7 +307,7 @@ mod tests {
         identity_mock.expect_create_user().returning(|_, req| {
             Ok(UserResponseBuilder::default()
                 .id("user-1")
-                .domain_id(req.domain_id.clone())
+                .domain_id(req.domain_id.clone().unwrap_or_default())
                 .enabled(true)
                 .name(req.name.clone())
                 .build()

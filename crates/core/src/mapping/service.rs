@@ -2748,7 +2748,7 @@ mod tests {
             Ok(
                 openstack_keystone_core_types::identity::UserResponseBuilder::default()
                     .id(req.id.clone().unwrap())
-                    .domain_id(req.domain_id.clone())
+                    .domain_id(req.domain_id.clone().unwrap_or_default())
                     .name(req.name.clone())
                     .enabled(true)
                     .build()

@@ -217,7 +217,7 @@ impl ScimUserWrite {
     pub fn to_user_create(&self, domain_id: &str, external_id: &str) -> UserCreate {
         UserCreate {
             default_project_id: None,
-            domain_id: domain_id.to_string(),
+            domain_id: Some(domain_id.to_string()),
             enabled: Some(self.active),
             extra: self.extra(),
             federated: None,
