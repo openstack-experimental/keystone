@@ -103,6 +103,56 @@ pub async fn get_project(tc: &Arc<AsyncOpenStack>, id: impl Into<String>) -> Res
         .await?)
 }
 
+/// Update request for project
+#[derive(Clone, Debug)]
+struct ProjectUpdateRequest {
+    id: String,
+    project: ProjectUpdate,
+}
+
+impl RestEndpoint for ProjectUpdateRequest {
+    fn method(&self) -> http::Method {
+        http::Method::PATCH
+    }
+
+    fn endpoint(&self) -> Cow<'static, str> {
+        format!("projects/{id}", id = self.id).into()
+    }
+
+    fn body(&self) -> Result<Option<(&'static str, Vec<u8>)>, BodyError> {
+        let mut params = JsonBodyParams::default();
+        params.push("project", serde_json::to_value(&self.project)?);
+        params.into_body()
+    }
+
+    fn service_type(&self) -> ServiceType {
+        ServiceType::Identity
+    }
+
+    fn response_key(&self) -> Option<Cow<'static, str>> {
+        Some("project".into())
+    }
+
+    /// Returns required API version
+    fn api_version(&self) -> Option<ApiVersion> {
+        Some(ApiVersion::new(3, 0))
+    }
+}
+
+/// Update a project
+pub async fn update_project(
+    tc: &Arc<AsyncOpenStack>,
+    id: impl Into<String>,
+    project: ProjectUpdate,
+) -> Result<Project> {
+    Ok(ProjectUpdateRequest {
+        id: id.into(),
+        project,
+    }
+    .query_async(tc.as_ref())
+    .await?)
+}
+
 /// List request for projects
 #[derive(Default)]
 pub struct ProjectListRequest {

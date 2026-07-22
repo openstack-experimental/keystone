@@ -211,6 +211,51 @@ pub struct ProjectCreateRequest {
     pub project: ProjectCreate,
 }
 
+/// Update project data.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
+pub struct ProjectUpdate {
+    /// The description of the project.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
+    pub description: Option<String>,
+
+    /// If set to true, project is enabled. If set to false, project is
+    /// disabled.
+    #[cfg_attr(feature = "builder", builder(default))]
+    pub enabled: Option<bool>,
+
+    /// Additional project properties.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "openapi", schema(inline, additional_properties))]
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
+
+    /// The project name.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
+    pub name: Option<String>,
+}
+
+/// Project update request.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
+pub struct ProjectUpdateRequest {
+    /// Project object.
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub project: ProjectUpdate,
+}
+
 /// List of projects.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]

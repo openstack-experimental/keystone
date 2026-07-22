@@ -97,6 +97,40 @@ async fn test_project_list() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_project_update() -> Result<()> {
+    let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
+    let domain = create_test_domain(&test_client).await?;
+    let project = create_project(
+        &test_client,
+        ProjectCreateBuilder::default()
+            .name(Uuid::new_v4().to_string())
+            .enabled(true)
+            .domain_id(domain.id.clone())
+            .build()?,
+    )
+    .await?;
+    let updated = update_project(
+        &test_client,
+        &project.id,
+        ProjectUpdateBuilder::default()
+            .name("updated_name")
+            .enabled(false)
+            .build()?,
+    )
+    .await?;
+    assert_eq!(updated.name, "updated_name");
+    assert!(!updated.enabled);
+
+    let shown = get_project(&test_client, &project.id).await?;
+    assert_eq!(shown.name, "updated_name");
+    assert!(!shown.enabled);
+
+    project.delete().await?;
+    domain.delete().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_project_delete() -> Result<()> {
     let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
     let domain = create_test_domain(&test_client).await?;

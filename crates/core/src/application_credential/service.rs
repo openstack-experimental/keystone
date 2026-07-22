@@ -158,10 +158,10 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
                 ));
             }
         }
-        // V5 (security review, `doc/src/contributor/security-model.md` §9): `access_rules`
-        // are stored and CRUD'd but not enforced at request time yet -- no
-        // middleware matches the incoming (service, method, path) against
-        // them. Warn unconditionally so the gap is visible in logs, and
+        // V5 (security review, `doc/src/contributor/security-model.md` §9):
+        // `access_rules` are stored and CRUD'd but not enforced at request time
+        // yet -- no middleware matches the incoming (service, method, path)
+        // against them. Warn unconditionally so the gap is visible in logs, and
         // fail loud instead when the operator has opted in, rather than
         // silently accepting a restriction the server cannot honor.
         if rec

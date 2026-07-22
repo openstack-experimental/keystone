@@ -28,6 +28,7 @@ use crate::impl_deleter;
 mod create;
 mod imply_rules;
 mod list;
+mod update;
 
 impl_deleter!(Service, Role, get_role_provider, delete_role);
 

@@ -71,6 +71,18 @@ impl From<api_types::ProjectCreate> for provider_types::ProjectCreate {
     }
 }
 
+impl From<api_types::ProjectUpdateRequest> for provider_types::ProjectUpdate {
+    fn from(value: api_types::ProjectUpdateRequest) -> Self {
+        let project = value.project;
+        Self {
+            description: project.description.map(Some),
+            enabled: project.enabled,
+            extra: project.extra,
+            name: project.name,
+        }
+    }
+}
+
 impl From<api_types::ProjectListParameters> for provider_types::ProjectListParameters {
     fn from(value: api_types::ProjectListParameters) -> Self {
         Self {

@@ -68,6 +68,40 @@ pub trait ResourceBackend: Send + Sync {
         project: ProjectCreate,
     ) -> Result<Project, ResourceProviderError>;
 
+    /// Update a domain.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `domain_id`: The ID of the domain to update.
+    /// - `domain`: The fields to change.
+    ///
+    /// # Returns
+    /// - `Result<Domain, ResourceProviderError>` - The updated `Domain` or an
+    ///   error.
+    async fn update_domain<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+        domain: DomainUpdate,
+    ) -> Result<Domain, ResourceProviderError>;
+
+    /// Update a project.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `project_id`: The ID of the project to update.
+    /// - `project`: The fields to change.
+    ///
+    /// # Returns
+    /// - `Result<Project, ResourceProviderError>` - The updated `Project` or an
+    ///   error.
+    async fn update_project<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+        project: ProjectUpdate,
+    ) -> Result<Project, ResourceProviderError>;
+
     /// Delete a domain by the ID.
     ///
     /// # Parameters

@@ -101,6 +101,44 @@ pub struct GroupCreateRequest {
     pub group: GroupCreate,
 }
 
+/// Update group data.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
+pub struct GroupUpdate {
+    /// Group description.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
+    pub description: Option<String>,
+
+    /// Group name.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
+    pub name: Option<String>,
+
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "openapi", schema(inline, additional_properties))]
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
+pub struct GroupUpdateRequest {
+    /// Group object.
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub group: GroupUpdate,
+}
+
 /// Groups.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]

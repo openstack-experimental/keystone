@@ -26,6 +26,7 @@ mod delete;
 mod get;
 mod list;
 mod tree;
+mod update;
 
 pub use create::create;
 pub use delete::delete;
@@ -33,6 +34,7 @@ pub use get::get_project;
 pub use get::get_project_by_name;
 pub use list::list;
 pub use tree::get_project_parents;
+pub use update::update;
 
 use crate::entity::project as db_project;
 

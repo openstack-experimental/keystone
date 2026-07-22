@@ -22,6 +22,7 @@ mod imply;
 mod list;
 mod show;
 pub mod types;
+mod update;
 
 /// OpenApi specification for the roles.
 #[derive(OpenApi)]
@@ -105,6 +106,6 @@ pub struct ApiDoc;
 pub(crate) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
         .routes(routes!(list::list, create::create))
-        .routes(routes!(show::show, delete::delete))
+        .routes(routes!(show::show, delete::delete, update::update))
         .merge(imply::openapi_router())
 }

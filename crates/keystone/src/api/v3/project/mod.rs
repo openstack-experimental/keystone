@@ -22,6 +22,7 @@ mod delete;
 mod list;
 mod show;
 pub mod types;
+mod update;
 
 /// OpenApi specification for the project API.
 #[derive(OpenApi)]
@@ -50,5 +51,5 @@ pub(crate) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .routes(routes!(create::create))
         .routes(routes!(delete::remove))
         .routes(routes!(list::list))
-        .routes(routes!(show::show))
+        .routes(routes!(show::show, update::update))
 }

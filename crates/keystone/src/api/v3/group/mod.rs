@@ -21,11 +21,12 @@ pub mod delete;
 pub mod list;
 pub mod show;
 pub mod types;
+pub mod update;
 
 pub(crate) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
         .routes(routes!(list::list, create::create))
-        .routes(routes!(show::show, delete::delete))
+        .routes(routes!(show::show, delete::delete, update::update))
 }
 
 #[cfg(test)]

@@ -49,3 +49,14 @@ impl From<api_types::GroupListParameters> for provider_types::GroupListParameter
         }
     }
 }
+
+impl From<api_types::GroupUpdateRequest> for provider_types::GroupUpdate {
+    fn from(value: api_types::GroupUpdateRequest) -> Self {
+        let group = value.group;
+        Self {
+            description: group.description.map(Some),
+            extra: group.extra,
+            name: group.name,
+        }
+    }
+}
