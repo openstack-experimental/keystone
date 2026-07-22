@@ -96,7 +96,8 @@ pub struct ServiceCreate {
 
     /// Defines whether the service and its endpoints appear in the service
     /// catalog.
-    #[cfg_attr(feature = "builder", builder(default))]
+    #[cfg_attr(feature = "builder", builder(default = "crate::default_true()"))]
+    #[serde(default = "crate::default_true")]
     pub enabled: bool,
 
     /// The service name.
@@ -167,4 +168,15 @@ pub struct ServiceUpdateRequest {
     /// Service object.
     #[cfg_attr(feature = "validate", validate(nested))]
     pub service: ServiceUpdate,
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_service_create_deserialize_omitted_enabled_defaults_true() {
+        // Mirrors DomainCreate: real clients omit `enabled` on create and
+        // expect it to default to true rather than 422.
+        let sot: super::ServiceCreate = serde_json::from_str(r#"{"type": "identity"}"#).unwrap();
+        assert!(sot.enabled);
+    }
 }

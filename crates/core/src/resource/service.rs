@@ -18,11 +18,10 @@ use uuid::Uuid;
 use validator::Validate;
 
 use openstack_keystone_config::Config;
-use openstack_keystone_core_types::auth::ScopeInfo;
 use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::resource::*;
 
-use crate::auth::ExecutionContext;
+use crate::auth::{ExecutionContext, scope_domain_id};
 use crate::events::AuditDispatchError;
 use crate::plugin_manager::PluginManagerApi;
 use crate::resource::{ResourceApi, ResourceProviderError, backend::ResourceBackend};
@@ -119,16 +118,6 @@ impl ResourceService {
         Err(ResourceProviderError::ProjectNotFound(
             parent_id.to_string(),
         ))
-    }
-}
-
-/// Extracts the domain ID the caller's token is scoped to, if any.
-fn scope_domain_id(ctx: &ExecutionContext<'_>) -> Option<String> {
-    let scope = &ctx.ctx()?.authorization()?.scope;
-    match scope {
-        ScopeInfo::Domain(domain) => Some(domain.id.clone()),
-        ScopeInfo::Project { project_domain, .. } => Some(project_domain.id.clone()),
-        _ => None,
     }
 }
 

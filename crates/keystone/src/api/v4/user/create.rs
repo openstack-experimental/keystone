@@ -101,11 +101,13 @@ mod tests {
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock
             .expect_create_user()
-            .withf(|_, req: &UserCreate| req.domain_id == "domain" && req.name == "name")
+            .withf(|_, req: &UserCreate| {
+                req.domain_id.as_deref() == Some("domain") && req.name == "name"
+            })
             .returning(|_, req| {
                 Ok(UserResponseBuilder::default()
                     .id("bar")
-                    .domain_id(req.domain_id.clone())
+                    .domain_id(req.domain_id.clone().unwrap_or_default())
                     .enabled(true)
                     .name(req.name.clone())
                     .build()

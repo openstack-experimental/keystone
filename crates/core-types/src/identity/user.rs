@@ -113,9 +113,11 @@ pub struct UserCreate {
     #[validate(length(min = 1, max = 64))]
     pub default_project_id: Option<String>,
 
-    /// The ID of the domain.
+    /// The ID of the domain. When omitted, defaults to the caller's token
+    /// scope domain (see `crate::auth::scope_domain_id` in `openstack-keystone-core`).
+    #[builder(default)]
     #[validate(length(min = 1, max = 64))]
-    pub domain_id: String,
+    pub domain_id: Option<String>,
 
     /// If the user is enabled, this value is true. If the user is disabled,
     /// this value is false.

@@ -29,7 +29,7 @@ use openstack_keystone_core_types::identity::*;
 
 use crate::auth::{
     AuthenticationContext, AuthenticationError, AuthenticationResult, AuthenticationResultBuilder,
-    ExecutionContext, IdentityInfo, PrincipalInfo, UserIdentityInfoBuilder,
+    ExecutionContext, IdentityInfo, PrincipalInfo, UserIdentityInfoBuilder, scope_domain_id,
 };
 use crate::events::AuditDispatchError;
 use crate::identity::{IdentityApi, IdentityProviderError, backend::IdentityBackend};
@@ -635,6 +635,9 @@ impl IdentityApi for IdentityService {
         };
         if mod_user.enabled.is_none() {
             mod_user.enabled = Some(true);
+        }
+        if mod_user.domain_id.is_none() {
+            mod_user.domain_id = scope_domain_id(ctx);
         }
         mod_user.validate()?;
         // Validate password against configured regex pattern.
@@ -1463,11 +1466,42 @@ mod tests {
     };
 
     use super::*;
+    use crate::auth::ValidatedSecurityContext;
     use crate::credential::MockCredentialProvider;
     use crate::identity::backend::MockIdentityBackend;
     use crate::provider::Provider;
     use crate::resource::MockResourceProvider;
     use crate::tests::get_mocked_state;
+    use openstack_keystone_core_types::auth::{
+        AuthenticationContext, AuthzInfoBuilder, IdentityInfo, PrincipalInfo, ScopeInfo,
+        SecurityContext, UserIdentityInfoBuilder,
+    };
+    use openstack_keystone_core_types::resource::DomainBuilder as ResourceDomainBuilder;
+
+    fn make_vsc_scoped(scope: ScopeInfo) -> ValidatedSecurityContext {
+        let user = UserIdentityInfoBuilder::default()
+            .user_id("test-user-id".to_string())
+            .build()
+            .unwrap();
+        let authz = AuthzInfoBuilder::default().scope(scope).build().unwrap();
+        let sc = SecurityContext::test_build()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(user),
+            })
+            .authorization(authz)
+            .build();
+        ValidatedSecurityContext::test_new(sc)
+    }
+
+    fn make_domain(id: &str) -> openstack_keystone_core_types::resource::Domain {
+        ResourceDomainBuilder::default()
+            .id(id)
+            .name(format!("{id}-name"))
+            .enabled(true)
+            .build()
+            .unwrap()
+    }
 
     fn get_config_with_password_regex(regex_str: &str) -> Config {
         let mut config = Config::default();
@@ -1512,6 +1546,40 @@ mod tests {
                 .build()
                 .unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn test_create_user_defaults_domain_id_from_scope() {
+        // Real clients (tempest, python-openstackclient) omit `domain_id` on
+        // user create and expect the server to infer it from the caller's
+        // token scope, matching python-keystone. Regression test for the
+        // 422 "missing field `domain_id`" compatibility gap.
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockIdentityBackend::default();
+        backend
+            .expect_create_user()
+            .withf(|_, user| user.domain_id.as_deref() == Some("scoped-did"))
+            .returning(|_, _| {
+                Ok(UserResponseBuilder::default()
+                    .id("id")
+                    .domain_id("scoped-did")
+                    .enabled(true)
+                    .name("uname")
+                    .build()
+                    .unwrap())
+            });
+        let provider = IdentityService::from_driver(backend);
+        let vsc = make_vsc_scoped(ScopeInfo::Domain(make_domain("scoped-did")));
+        let ctx = ExecutionContext::from_auth(&state, &vsc);
+
+        let created = provider
+            .create_user(
+                &ctx,
+                UserCreateBuilder::default().name("uname").build().unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(created.domain_id, "scoped-did");
     }
 
     #[tokio::test]

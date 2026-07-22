@@ -72,7 +72,11 @@ impl db_user::ActiveModel {
                 .unwrap_or(NotSet)
                 .into(),
             created_at: Set(Some(created_at)),
-            domain_id: Set(user.domain_id.clone()),
+            domain_id: Set(user.domain_id.clone().ok_or_else(|| {
+                IdentityProviderError::Driver(
+                    "domain_id must be resolved before persisting a user".into(),
+                )
+            })?),
         })
     }
 }

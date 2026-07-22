@@ -600,6 +600,21 @@ impl<'a> Deref for ExecutionContext<'a> {
     }
 }
 
+/// Extracts the domain ID the caller's token is scoped to, if any.
+///
+/// Used to default a resource's `domain_id` when the create request omits
+/// it, matching python-keystone's behavior of inferring the domain from the
+/// token scope rather than requiring it explicitly on every create call.
+#[must_use]
+pub fn scope_domain_id(ctx: &ExecutionContext<'_>) -> Option<String> {
+    let scope = &ctx.ctx()?.authorization()?.scope;
+    match scope {
+        ScopeInfo::Domain(domain) => Some(domain.id.clone()),
+        ScopeInfo::Project { project_domain, .. } => Some(project_domain.id.clone()),
+        _ => None,
+    }
+}
+
 // Expand scope role information.
 // Fetch the virtual user shadow record from storage.
 async fn get_virtual_user_or_error(

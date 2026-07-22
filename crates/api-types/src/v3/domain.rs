@@ -100,6 +100,7 @@ pub struct DomainCreate {
 
     /// If set to true, domain is enabled. If set to false, domain is disabled.
     #[cfg_attr(feature = "builder", builder(default = "crate::default_true()"))]
+    #[serde(default = "crate::default_true")]
     pub enabled: bool,
 
     /// Additional domain properties.
@@ -174,6 +175,15 @@ mod tests {
         let sot = DomainCreateBuilder::default().name("name").build().unwrap();
         assert!(sot.enabled, "enabled defaults to true");
         assert!(sot.id.is_none());
+    }
+
+    #[test]
+    fn test_domain_create_deserialize_omitted_enabled_defaults_true() {
+        // Real clients (tempest, python-openstackclient) omit `enabled` on
+        // create and rely on the server defaulting it to true, matching
+        // python-keystone; deserializing must not 422 on a missing field.
+        let sot: super::DomainCreate = serde_json::from_str(r#"{"name": "name"}"#).unwrap();
+        assert!(sot.enabled);
     }
 
     #[cfg(feature = "builder")]
