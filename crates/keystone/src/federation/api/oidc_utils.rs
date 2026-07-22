@@ -1132,6 +1132,85 @@ nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
         );
     }
 
+    #[test]
+    fn verify_jwt_rejects_tampered_signature() {
+        // A validly-signed token whose signature is then altered must be rejected:
+        // signature validation must be enforced (token tampering).
+        let jwks = JwkSet {
+            keys: vec![rsa_jwk(TEST_KID)],
+        };
+        let claims = valid_claims("https://iss.example.com", "my-client", None);
+        let token = make_jwt(&claims, Some(TEST_KID));
+
+        // Sanity: the untampered token verifies.
+        assert!(
+            verify_jwt(
+                &token,
+                &jwks,
+                Some("https://iss.example.com"),
+                None,
+                &["my-client"],
+            )
+            .is_ok(),
+            "the freshly signed token must verify before tampering"
+        );
+
+        // Flip the final character of the signature segment.
+        let (rest, sig) = token.rsplit_once('.').expect("token has a signature");
+        let last = sig.chars().next_back().expect("signature is non-empty");
+        let replacement = if last == 'A' { 'B' } else { 'A' };
+        let tampered = format!("{rest}.{}{replacement}", &sig[..sig.len() - 1]);
+
+        let result = verify_jwt(
+            &tampered,
+            &jwks,
+            Some("https://iss.example.com"),
+            None,
+            &["my-client"],
+        );
+        assert!(
+            matches!(result, Err(OidcError::JwtDecode { .. })),
+            "a tampered signature must be rejected, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn verify_jwt_rejects_tampered_payload() {
+        // Altering the claims after signing (keeping the original signature) must be
+        // rejected — the signature no longer matches the payload.
+        let jwks = JwkSet {
+            keys: vec![rsa_jwk(TEST_KID)],
+        };
+        let claims = valid_claims("https://iss.example.com", "my-client", None);
+        let token = make_jwt(&claims, Some(TEST_KID));
+
+        let mut parts = token.split('.');
+        let header = parts.next().expect("header segment");
+        let _original_payload = parts.next().expect("payload segment");
+        let signature = parts.next().expect("signature segment");
+
+        // Re-encode a different set of claims (e.g. impersonating another subject)
+        // while keeping the original header and signature.
+        let evil_claims = valid_claims("https://iss.example.com", "my-client", None);
+        let mut evil_claims = evil_claims;
+        evil_claims["sub"] = json!("attacker");
+        let evil_payload =
+            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&evil_claims).expect("claims serialize"));
+        let tampered = format!("{header}.{evil_payload}.{signature}");
+
+        let result = verify_jwt(
+            &tampered,
+            &jwks,
+            Some("https://iss.example.com"),
+            None,
+            &["my-client"],
+        );
+        assert!(
+            matches!(result, Err(OidcError::JwtDecode { .. })),
+            "a tampered payload must be rejected, got {result:?}"
+        );
+    }
+
     #[tokio::test]
     async fn token_exchange_response_id_token_only() {
         // TokenExchangeResponse with only id_token verifies access_token optionality.
