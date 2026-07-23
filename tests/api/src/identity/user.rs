@@ -11,170 +11,40 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-
-use std::borrow::Cow;
-use std::sync::Arc;
-
-use eyre::Result;
+//! v3 user CRUD helpers, generated with [`crate::macros::crud_endpoint`].
 
 use openstack_keystone_api_types::v3::user::*;
-use openstack_sdk::api::rest_endpoint_prelude::*;
-use openstack_sdk::{AsyncOpenStack, api::QueryAsync};
 
-use crate::guard::*;
+use crate::macros::crud_endpoint;
 
-#[derive(Clone, Debug)]
-struct UserCreateRequest {
-    user: UserCreate,
-}
-
-impl RestEndpoint for UserCreateRequest {
-    fn method(&self) -> http::Method {
-        http::Method::POST
+crud_endpoint! {
+    create {
+        request = UserCreateRequest,
+        func = create_user,
+        path = "users",
+        body_key = "user",
+        create_type = UserCreate,
+        model = User,
+        response_key = "user",
+        service = Identity,
+        api_version = (3, 0),
     }
-
-    fn endpoint(&self) -> Cow<'static, str> {
-        "users".to_string().into()
+    update {
+        request = UserUpdateRequest,
+        func = update_user,
+        path = "users",
+        body_key = "user",
+        update_type = UserUpdate,
+        model = User,
+        response_key = "user",
+        service = Identity,
+        api_version = (3, 0),
     }
-
-    fn body(&self) -> Result<Option<(&'static str, Vec<u8>)>, BodyError> {
-        let mut params = JsonBodyParams::default();
-        params.push("user", serde_json::to_value(&self.user)?);
-        params.into_body()
+    delete_impl {
+        request = UserDeleteRequest,
+        path = "users",
+        model = User,
+        service = Identity,
+        api_version = (3, 0),
     }
-
-    fn service_type(&self) -> ServiceType {
-        ServiceType::Identity
-    }
-
-    fn response_key(&self) -> Option<Cow<'static, str>> {
-        Some("user".into())
-    }
-
-    fn api_version(&self) -> Option<ApiVersion> {
-        Some(ApiVersion::new(3, 0))
-    }
-}
-
-/// Create user
-pub async fn create_user(
-    tc: &Arc<AsyncOpenStack>,
-    user: UserCreate,
-) -> Result<AsyncResourceGuard<User>> {
-    let obj: User = UserCreateRequest { user }.query_async(tc.as_ref()).await?;
-    Ok(AsyncResourceGuard::new(obj, tc.clone()))
-}
-
-//impl RestEndpoint for UserListParameters {
-//    fn method(&self) -> http::Method {
-//        http::Method::GET
-//    }
-//
-//    fn endpoint(&self) -> Cow<'static, str> {
-//        "users".to_string().into()
-//    }
-//
-//    fn parameters(&self) -> QueryParams<'_> {
-//        let mut params = QueryParams::default();
-//        params.push_opt("domain_id", self.domain_id.as_ref());
-//        params.push_opt("name", self.name.as_ref());
-//        params.push_opt("unique_id", self.unique_id.as_ref());
-//
-//        params
-//    }
-//
-//    fn service_type(&self) -> ServiceType {
-//        ServiceType::Identity
-//    }
-//
-//    fn response_key(&self) -> Option<Cow<'static, str>> {
-//        Some("users".into())
-//    }
-//
-//    /// Returns required API version
-//    fn api_version(&self) -> Option<ApiVersion> {
-//        Some(ApiVersion::new(3, 0))
-//    }
-//}
-
-struct UserDeleteRequest {
-    id: String,
-}
-
-impl RestEndpoint for UserDeleteRequest {
-    fn method(&self) -> http::Method {
-        http::Method::DELETE
-    }
-
-    fn endpoint(&self) -> Cow<'static, str> {
-        format!("users/{id}", id = self.id).into()
-    }
-
-    fn service_type(&self) -> ServiceType {
-        ServiceType::Identity
-    }
-
-    fn api_version(&self) -> Option<ApiVersion> {
-        Some(ApiVersion::new(3, 0))
-    }
-}
-
-#[async_trait::async_trait]
-impl DeletableResource for User {
-    async fn delete(&self, state: &Arc<AsyncOpenStack>) -> Result<()> {
-        Ok(openstack_sdk::api::ignore(UserDeleteRequest {
-            id: self.id.clone(),
-        })
-        .query_async(state.as_ref())
-        .await?)
-    }
-}
-
-#[derive(Clone, Debug)]
-struct UserUpdateRequest {
-    id: String,
-    user: UserUpdate,
-}
-
-impl RestEndpoint for UserUpdateRequest {
-    fn method(&self) -> http::Method {
-        http::Method::PATCH
-    }
-
-    fn endpoint(&self) -> Cow<'static, str> {
-        format!("users/{id}", id = self.id).into()
-    }
-
-    fn body(&self) -> Result<Option<(&'static str, Vec<u8>)>, BodyError> {
-        let mut params = JsonBodyParams::default();
-        params.push("user", serde_json::to_value(&self.user)?);
-        params.into_body()
-    }
-
-    fn service_type(&self) -> ServiceType {
-        ServiceType::Identity
-    }
-
-    fn response_key(&self) -> Option<Cow<'static, str>> {
-        Some("user".into())
-    }
-
-    fn api_version(&self) -> Option<ApiVersion> {
-        Some(ApiVersion::new(3, 0))
-    }
-}
-
-/// Update user
-pub async fn update_user(
-    tc: &Arc<AsyncOpenStack>,
-    user_id: &str,
-    user: UserUpdate,
-) -> Result<User> {
-    let obj: User = UserUpdateRequest {
-        id: user_id.to_string(),
-        user,
-    }
-    .query_async(tc.as_ref())
-    .await?;
-    Ok(obj)
 }
