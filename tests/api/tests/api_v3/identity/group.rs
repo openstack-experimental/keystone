@@ -41,31 +41,22 @@
 //! domain-scoped token with those roles. Tracked as a coverage gap for
 //! Phase 2 (#993).
 
-use std::env;
 use std::sync::Arc;
 
-use eyre::{OptionExt, Result, WrapErr};
+use eyre::Result;
 use uuid::Uuid;
 
-use openstack_keystone_api_types::scope::{DomainBuilder, Scope, ScopeProjectBuilder};
 use openstack_keystone_api_types::v3::domain::DomainCreateBuilder;
 use openstack_keystone_api_types::v3::group::*;
-use openstack_keystone_api_types::v3::project::{Project, ProjectCreateBuilder};
-use openstack_keystone_api_types::v3::user::{User, UserCreateBuilder};
 use openstack_sdk::AsyncOpenStack;
 
-use test_api::asserts::{assert_forbidden, assert_status};
-use test_api::assignment::grant::add_project_grant;
-use test_api::common::get_user_session;
+use test_api::asserts::{assert_forbidden, assert_status, assert_unauthorized};
+use test_api::common::raw_request;
+use test_api::fixtures::ProjectScopedUser;
 use test_api::guard::{AsyncResourceGuard, ResourceGuard};
 use test_api::identity::group::*;
-use test_api::identity::user::create_user;
 use test_api::resource::domain::create_domain;
 use test_api::resource::get_system_scope_config;
-use test_api::resource::project::create_project;
-use test_api::role::list_roles;
-
-const FIXTURE_PASSWORD: &str = "group-fixture-password";
 
 /// System-scoped admin session for fixture management — the same
 /// convention as the v3 domain tests, which also create domains.
@@ -94,85 +85,6 @@ fn group_create(domain_id: &str) -> Result<GroupCreate> {
         .name(format!("grp-{}", Uuid::new_v4().simple()))
         .domain_id(domain_id)
         .build()?)
-}
-
-/// A real user in `domain_id` holding the `manager` role (implies
-/// `member`/`reader`) on a project in the same domain, authenticated with
-/// a **project-scoped** token through the live password-auth path. All
-/// fixture resources are created by — and cleaned up with — the admin
-/// session, so cleanup never depends on the underprivileged session.
-struct ProjectScopedManager {
-    session: Arc<AsyncOpenStack>,
-    user: AsyncResourceGuard<User>,
-    project: AsyncResourceGuard<Project>,
-}
-
-impl ProjectScopedManager {
-    async fn provision(admin: &Arc<AsyncOpenStack>, domain_id: &str) -> Result<Self> {
-        let unique = Uuid::new_v4().simple().to_string();
-        let project = create_project(
-            admin,
-            ProjectCreateBuilder::default()
-                .name(format!("grp-proj-{unique}"))
-                .domain_id(domain_id)
-                .build()?,
-        )
-        .await?;
-        let user = create_user(
-            admin,
-            UserCreateBuilder::default()
-                .name(format!("grp-mgr-{unique}"))
-                .domain_id(domain_id)
-                .password(FIXTURE_PASSWORD)
-                .enabled(true)
-                .build()?,
-        )
-        .await?;
-        let manager_role = list_roles(admin)
-            .await?
-            .into_iter()
-            .find(|role| role.name == "manager")
-            .ok_or_eyre("bootstrap `manager` role must exist")?;
-        add_project_grant(admin, &project.id, &user.id, &manager_role.id).await?;
-
-        let scope = Scope::Project(
-            ScopeProjectBuilder::default()
-                .id(project.id.clone())
-                .domain(DomainBuilder::default().id(domain_id).build()?)
-                .build()?,
-        );
-        let session =
-            get_user_session(&user.name, FIXTURE_PASSWORD, domain_id, Some(&scope)).await?;
-        Ok(Self {
-            session,
-            user,
-            project,
-        })
-    }
-
-    async fn cleanup(self) -> Result<()> {
-        self.user.delete().await?;
-        self.project.delete().await?;
-        Ok(())
-    }
-}
-
-/// Raw request with an invalid token; returns the response status.
-async fn status_with_invalid_token(
-    method: http::Method,
-    path: &str,
-    body: Option<serde_json::Value>,
-) -> Result<reqwest::StatusCode> {
-    let base_url: url::Url = env::var("KEYSTONE_URL")
-        .wrap_err("KEYSTONE_URL must be set")?
-        .parse()?;
-    let mut request = reqwest::Client::new()
-        .request(method, base_url.join(path)?)
-        .header("x-auth-token", "invalid-token");
-    if let Some(body) = body {
-        request = request.json(&body);
-    }
-    Ok(request.send().await?.status())
 }
 
 // --- 2xx: valid auth + allowed policy (admin) --------------------------
@@ -292,7 +204,7 @@ async fn test_group_delete_success_admin() -> Result<()> {
 async fn test_group_create_forbidden_for_project_scoped_manager() -> Result<()> {
     let admin = admin_session().await?;
     let domain = fresh_domain(&admin).await?;
-    let manager = ProjectScopedManager::provision(&admin, &domain.id).await?;
+    let manager = ProjectScopedUser::provision(&admin, &domain.id, "manager").await?;
 
     assert_forbidden(
         create_group(&manager.session, group_create(&domain.id)?).await,
@@ -309,7 +221,7 @@ async fn test_group_show_forbidden_for_project_scoped_manager() -> Result<()> {
     let admin = admin_session().await?;
     let domain = fresh_domain(&admin).await?;
     let group = create_group(&admin, group_create(&domain.id)?).await?;
-    let manager = ProjectScopedManager::provision(&admin, &domain.id).await?;
+    let manager = ProjectScopedUser::provision(&admin, &domain.id, "manager").await?;
 
     assert_forbidden(
         get_group(&manager.session, &group.id).await,
@@ -326,7 +238,7 @@ async fn test_group_show_forbidden_for_project_scoped_manager() -> Result<()> {
 async fn test_group_list_forbidden_for_project_scoped_manager() -> Result<()> {
     let admin = admin_session().await?;
     let domain = fresh_domain(&admin).await?;
-    let manager = ProjectScopedManager::provision(&admin, &domain.id).await?;
+    let manager = ProjectScopedUser::provision(&admin, &domain.id, "manager").await?;
 
     assert_forbidden(
         list_groups(&manager.session, GroupListRequest::default()).await,
@@ -343,7 +255,7 @@ async fn test_group_update_forbidden_for_project_scoped_manager() -> Result<()> 
     let admin = admin_session().await?;
     let domain = fresh_domain(&admin).await?;
     let group = create_group(&admin, group_create(&domain.id)?).await?;
-    let manager = ProjectScopedManager::provision(&admin, &domain.id).await?;
+    let manager = ProjectScopedUser::provision(&admin, &domain.id, "manager").await?;
 
     assert_forbidden(
         update_group(
@@ -366,7 +278,7 @@ async fn test_group_delete_forbidden_for_project_scoped_manager() -> Result<()> 
     let admin = admin_session().await?;
     let domain = fresh_domain(&admin).await?;
     let group = create_group(&admin, group_create(&domain.id)?).await?;
-    let manager = ProjectScopedManager::provision(&admin, &domain.id).await?;
+    let manager = ProjectScopedUser::provision(&admin, &domain.id, "manager").await?;
 
     assert_forbidden(
         delete_group(&manager.session, &group.id).await,
@@ -384,47 +296,59 @@ async fn test_group_delete_forbidden_for_project_scoped_manager() -> Result<()> 
 
 #[tokio::test]
 async fn test_group_create_unauthorized() -> Result<()> {
-    let status = status_with_invalid_token(
+    let rsp = raw_request(
         http::Method::POST,
         "v3/groups",
+        Some("invalid-token"),
         Some(serde_json::json!({"group": {"name": "x", "domain_id": "default"}})),
     )
     .await?;
-    assert_eq!(status, reqwest::StatusCode::UNAUTHORIZED);
+    assert_unauthorized(rsp.error_for_status(), "an invalid token must be rejected");
     Ok(())
 }
 
 #[tokio::test]
 async fn test_group_show_unauthorized() -> Result<()> {
-    let status =
-        status_with_invalid_token(http::Method::GET, "v3/groups/some-group-id", None).await?;
-    assert_eq!(status, reqwest::StatusCode::UNAUTHORIZED);
+    let rsp = raw_request(
+        http::Method::GET,
+        "v3/groups/some-group-id",
+        Some("invalid-token"),
+        None,
+    )
+    .await?;
+    assert_unauthorized(rsp.error_for_status(), "an invalid token must be rejected");
     Ok(())
 }
 
 #[tokio::test]
 async fn test_group_list_unauthorized() -> Result<()> {
-    let status = status_with_invalid_token(http::Method::GET, "v3/groups", None).await?;
-    assert_eq!(status, reqwest::StatusCode::UNAUTHORIZED);
+    let rsp = raw_request(http::Method::GET, "v3/groups", Some("invalid-token"), None).await?;
+    assert_unauthorized(rsp.error_for_status(), "an invalid token must be rejected");
     Ok(())
 }
 
 #[tokio::test]
 async fn test_group_update_unauthorized() -> Result<()> {
-    let status = status_with_invalid_token(
+    let rsp = raw_request(
         http::Method::PATCH,
         "v3/groups/some-group-id",
+        Some("invalid-token"),
         Some(serde_json::json!({"group": {"name": "x"}})),
     )
     .await?;
-    assert_eq!(status, reqwest::StatusCode::UNAUTHORIZED);
+    assert_unauthorized(rsp.error_for_status(), "an invalid token must be rejected");
     Ok(())
 }
 
 #[tokio::test]
 async fn test_group_delete_unauthorized() -> Result<()> {
-    let status =
-        status_with_invalid_token(http::Method::DELETE, "v3/groups/some-group-id", None).await?;
-    assert_eq!(status, reqwest::StatusCode::UNAUTHORIZED);
+    let rsp = raw_request(
+        http::Method::DELETE,
+        "v3/groups/some-group-id",
+        Some("invalid-token"),
+        None,
+    )
+    .await?;
+    assert_unauthorized(rsp.error_for_status(), "an invalid token must be rejected");
     Ok(())
 }

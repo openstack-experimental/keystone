@@ -46,11 +46,47 @@ extracted status and the complete error chain. A denied-policy test is a
 one-liner on top of a scoped session:
 
 ```rust,ignore
-let manager = ProjectScopedManager::provision(&admin, &domain.id).await?;
+let manager = ProjectScopedUser::provision(&admin, &domain.id, "manager").await?;
 assert_forbidden(
     create_group(&manager.session, group_create(&domain.id)?).await,
     "manager role without domain scope must not create groups",
 );
+```
+
+On an *unexpected success* the helpers print the `Ok` value with `{:#?}`, so
+never hand them a value whose `Debug` carries a secret (`Ec2Credential`
+carries the plaintext secret, for instance) — map it down to a
+non-sensitive field first.
+
+### Fixtures (`test_api::fixtures`)
+
+```rust,ignore
+// A real password user holding `role_name` on a fresh project in `domain_id`,
+// authenticated with a project-scoped token through the live auth path:
+let member = ProjectScopedUser::provision(&admin, "default", "member").await?;
+member.session; member.user.id; member.project.id;
+member.cleanup().await?;
+
+// Same, but with the role granted on `system: all`:
+let reader = SystemScopedUser::provision(&admin, "default", "reader").await?;
+reader.cleanup().await?;
+```
+
+Both are provisioned *and* torn down with the admin session passed in, so
+cleanup never depends on the underprivileged session, and both undo their
+partial work if a later provisioning step fails. When you compose fixtures
+yourself, mirror that: on error, release what you already hold with
+`warn_on_cleanup_failure("…", fixture.cleanup().await)`, which logs a failed
+best-effort cleanup instead of shadowing the error that triggered it.
+
+### Invalid-auth requests (`test_api::common::raw_request`)
+
+The SDK refuses to send a syntactically invalid token, so the 401 leg of the
+matrix bypasses it:
+
+```rust,ignore
+let rsp = raw_request(http::Method::GET, "v3/groups", Some("invalid-token"), None).await?;
+assert_unauthorized(rsp.error_for_status(), "an invalid token must be rejected");
 ```
 
 ### CRUD endpoint boilerplate (`test_api::macros::crud_endpoint`)
@@ -59,9 +95,9 @@ Crate-private macro generating request structs, `RestEndpoint` impls and
 public wrapper functions for the common create/show/update/list/delete
 shapes — see the module docs in `src/macros.rs` for the invocation syntax
 and `src/identity/group.rs` for a complete example. Operations are
-selectable and all names are explicit (no identifier generation). Endpoints
-that do not fit (sub-resources, grants, borrowed fields) keep hand-written
-impls.
+selectable, sub-resources are supported via `parent`, and all names are
+explicit (no identifier generation). Endpoints that still do not fit (grants,
+borrowed fields) keep hand-written impls.
 
 ### Resource cleanup (`test_api::guard`)
 

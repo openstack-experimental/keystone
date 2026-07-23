@@ -32,12 +32,18 @@ use openstack_sdk::{OpenStackError, RestError, api::ApiError};
 ///   [`ApiError::OpenStackUnrecognized`] (direct API errors),
 /// - [`OpenStackError::Api`] (session-level wrapper around an [`ApiError`]),
 /// - [`OpenStackError::Http`] (auth/session HTTP errors).
+/// - [`reqwest::Error`] (raw HTTP helpers after `error_for_status`).
 ///
 /// Both enums are `#[non_exhaustive]`; any variant that does not carry an
 /// HTTP status — including variants added by future SDK versions — yields
 /// `None`.
 pub fn status_from_error(report: &Report) -> Option<StatusCode> {
     for cause in report.chain() {
+        if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>()
+            && let Some(status) = reqwest_err.status()
+        {
+            return Some(status);
+        }
         if let Some(api_err) = cause.downcast_ref::<ApiError<RestError>>()
             && let Some(status) = status_from_api_error(api_err)
         {
@@ -196,6 +202,17 @@ mod tests {
     fn assert_forbidden_accepts_403() {
         let result: Result<(), Report> = Err(Report::new(forbidden_api_error()));
         assert_forbidden(result, "must accept 403");
+    }
+
+    #[test]
+    fn assert_forbidden_accepts_reqwest_error() -> eyre::Result<()> {
+        let response = reqwest::Response::from(
+            http::Response::builder()
+                .status(StatusCode::FORBIDDEN)
+                .body("")?,
+        );
+        assert_forbidden(response.error_for_status(), "must accept raw HTTP 403");
+        Ok(())
     }
 
     #[test]
