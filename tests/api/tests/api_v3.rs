@@ -22,6 +22,7 @@ mod api_v3 {
     mod credential;
     mod endpoint;
     mod identity;
+    mod region;
     mod resource;
     mod role;
     mod service;
