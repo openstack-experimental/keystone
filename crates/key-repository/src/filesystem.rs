@@ -223,11 +223,13 @@ impl FilesystemKeySource {
         });
     }
 
-    fn path_for(&self, index: i8) -> PathBuf {
+    fn path_for(&self, index: u32) -> PathBuf {
         self.inner.key_repository.join(index.to_string())
     }
 
-    fn read_key_files_blocking(dir: &PathBuf) -> Result<BTreeMap<i8, Vec<u8>>, KeyRepositoryError> {
+    fn read_key_files_blocking(
+        dir: &PathBuf,
+    ) -> Result<BTreeMap<u32, Vec<u8>>, KeyRepositoryError> {
         let mut keys = BTreeMap::new();
         if !dir.exists() {
             return Ok(keys);
@@ -243,7 +245,7 @@ impl FilesystemKeySource {
             let Ok(fname) = entry.file_name().into_string() else {
                 continue;
             };
-            let Ok(idx) = fname.parse::<i8>() else {
+            let Ok(idx) = fname.parse::<u32>() else {
                 continue;
             };
             let raw = std::fs::read(entry.path()).map_err(|e| KeyRepositoryError::Io {
@@ -310,7 +312,7 @@ impl FilesystemKeySource {
 
 #[async_trait]
 impl KeySource for FilesystemKeySource {
-    async fn load(&self) -> Result<BTreeMap<i8, Vec<u8>>, KeyRepositoryError> {
+    async fn load(&self) -> Result<BTreeMap<u32, Vec<u8>>, KeyRepositoryError> {
         let dir = self.inner.key_repository.clone();
         let error_dir = dir.clone();
         spawn_blocking(move || Self::read_key_files_blocking(&dir))
@@ -321,7 +323,7 @@ impl KeySource for FilesystemKeySource {
             })?
     }
 
-    async fn write(&self, index: i8, contents: &[u8]) -> Result<(), KeyRepositoryError> {
+    async fn write(&self, index: u32, contents: &[u8]) -> Result<(), KeyRepositoryError> {
         let dir = self.inner.key_repository.clone();
         let error_dir = dir.clone();
         let name = index.to_string();
@@ -335,7 +337,7 @@ impl KeySource for FilesystemKeySource {
             })?
     }
 
-    async fn remove(&self, index: i8) -> Result<(), KeyRepositoryError> {
+    async fn remove(&self, index: u32) -> Result<(), KeyRepositoryError> {
         let path = self.path_for(index);
         let error_dir = self.inner.key_repository.clone();
         spawn_blocking(move || match std::fs::remove_file(&path) {
@@ -350,7 +352,12 @@ impl KeySource for FilesystemKeySource {
         })?
     }
 
-    async fn promote(&self, from: i8, to: i8, _contents: &[u8]) -> Result<(), KeyRepositoryError> {
+    async fn promote(
+        &self,
+        from: u32,
+        to: u32,
+        _contents: &[u8],
+    ) -> Result<(), KeyRepositoryError> {
         let from_path = self.path_for(from);
         let to_path = self.path_for(to);
         let error_dir = self.inner.key_repository.clone();
@@ -474,5 +481,28 @@ mod tests {
     fn test_is_null_key_raw_bytes_helper_sanity() {
         let null_key_raw = URL_SAFE.encode([0u8; 32]);
         assert_eq!(null_key_raw.len(), 44);
+    }
+
+    /// A long-lived repository accumulates one entry per rotation, so after
+    /// enough rotations (or when migrating a repository from Python
+    /// Keystone, whose index is an unbounded `int`) filenames well past
+    /// `i8`'s old 127 cap show up on disk, e.g. `0 285 286 287 288 289`.
+    /// `load` must return every one of them, not silently drop the
+    /// out-of-`i8`-range names.
+    #[tokio::test]
+    async fn test_load_handles_indices_beyond_former_i8_range() {
+        let dir = tempfile::tempdir().unwrap();
+        let indices: [u32; 6] = [0, 285, 286, 287, 288, 289];
+        let mut written = BTreeMap::new();
+        for idx in indices {
+            let key = Fernet::generate_key();
+            std::fs::write(dir.path().join(idx.to_string()), key.as_bytes()).unwrap();
+            written.insert(idx, key.as_bytes().to_vec());
+        }
+
+        let source = FilesystemKeySource::new(dir.path().to_path_buf());
+        let loaded = source.load().await.unwrap();
+
+        assert_eq!(loaded, written);
     }
 }

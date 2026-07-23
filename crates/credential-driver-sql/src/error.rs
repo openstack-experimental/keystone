@@ -31,7 +31,7 @@ pub enum CredentialFernetError {
 
     /// A key file's contents could not be parsed as a Fernet key.
     #[error("key file `{0}` is not a valid Fernet key")]
-    InvalidKey(i8),
+    InvalidKey(u32),
 
     /// No usable key files were found in the repository.
     #[error("no Fernet keys found in the credential key repository")]
@@ -45,7 +45,7 @@ pub enum CredentialFernetError {
     )]
     NullKeyDetected,
 
-    /// Fernet index arithmetic would overflow the `i8` file-naming scheme.
+    /// Fernet index arithmetic would overflow the `u32` file-naming scheme.
     #[error("key rotation index overflow")]
     IndexOverflow,
 

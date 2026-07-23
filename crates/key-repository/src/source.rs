@@ -40,14 +40,14 @@ pub trait KeySource: Send + Sync {
     /// a valid, non-error state; callers decide whether that's acceptable
     /// (e.g. [`crate::KeyRepository::check_startup_null_key`] tolerates it,
     /// [`crate::KeyRepository::load_keys`] does not).
-    async fn load(&self) -> Result<BTreeMap<i8, Vec<u8>>, KeyRepositoryError>;
+    async fn load(&self) -> Result<BTreeMap<u32, Vec<u8>>, KeyRepositoryError>;
 
     /// Atomically create or overwrite the entry at `index` with `contents`.
-    async fn write(&self, index: i8, contents: &[u8]) -> Result<(), KeyRepositoryError>;
+    async fn write(&self, index: u32, contents: &[u8]) -> Result<(), KeyRepositoryError>;
 
     /// Remove the entry at `index`. Must not error if the entry is already
     /// absent (rotation pruning may race with manual cleanup).
-    async fn remove(&self, index: i8) -> Result<(), KeyRepositoryError>;
+    async fn remove(&self, index: u32) -> Result<(), KeyRepositoryError>;
 
     /// Move key material from `from` to `to` as atomically as the backend
     /// allows, used by [`crate::KeyRepository::rotate`] to promote the
@@ -61,7 +61,7 @@ pub trait KeySource: Send + Sync {
     /// [`crate::KeyRepository::rotate`] never removes `from` before `to` is
     /// durably written. Backends capable of a true move (the filesystem,
     /// via `rename(2)`) should override this for a stronger guarantee.
-    async fn promote(&self, from: i8, to: i8, contents: &[u8]) -> Result<(), KeyRepositoryError> {
+    async fn promote(&self, from: u32, to: u32, contents: &[u8]) -> Result<(), KeyRepositoryError> {
         self.write(to, contents).await?;
         self.remove(from).await?;
         Ok(())

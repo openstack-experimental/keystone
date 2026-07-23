@@ -42,9 +42,9 @@ pub enum FernetDriverError {
 
     /// A key's contents could not be parsed as a Fernet key.
     #[error("fernet key at index {0} is not usable")]
-    InvalidKey(i8),
+    InvalidKey(u32),
 
-    /// Fernet index arithmetic would overflow the `i8` file-naming scheme.
+    /// Fernet index arithmetic would overflow the `u32` file-naming scheme.
     #[error("fernet key rotation index overflow")]
     IndexOverflow,
 

@@ -177,7 +177,7 @@ impl<S: KeySource> KeyRepository<S> {
 
     fn check_null_keys(
         &self,
-        key_files: &BTreeMap<i8, Vec<u8>>,
+        key_files: &BTreeMap<u32, Vec<u8>>,
         insecure_allow_null_key: bool,
     ) -> Result<(), KeyRepositoryError> {
         for (idx, raw) in key_files {
@@ -470,6 +470,42 @@ mod tests {
             remaining.contains_key(&0),
             "staged key must always survive pruning"
         );
+    }
+
+    /// Simulates a long-lived repository (or one migrated from Python
+    /// Keystone, whose key index is an unbounded `int`) that has already
+    /// accumulated indices past the Rust driver's former `i8` cap of 127,
+    /// e.g. `ls /etc/keystone/fernet-keys/` showing `0 285 286 287 288 289`.
+    /// `load_keys` must pick `289` as primary and `rotate` must continue
+    /// counting up from it instead of wrapping, truncating, or colliding
+    /// with an existing file.
+    #[tokio::test]
+    async fn test_repository_handles_indices_beyond_former_i8_range() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = repo(dir.path(), 10);
+        let indices: [u32; 6] = [0, 285, 286, 287, 288, 289];
+        let mut primary_raw = Vec::new();
+        for idx in indices {
+            let key = Fernet::generate_key().into_bytes();
+            std::fs::write(dir.path().join(idx.to_string()), &key).unwrap();
+            if idx == 289 {
+                primary_raw = key;
+            }
+        }
+
+        let loaded = repo.load_keys(false).await.unwrap();
+        assert_eq!(loaded.key_count, indices.len());
+        assert_eq!(
+            loaded.primary_key_hash,
+            KeyRepository::<FilesystemKeySource>::key_hash(&primary_raw)
+        );
+
+        repo.rotate().await.unwrap();
+        assert!(
+            dir.path().join("290").exists(),
+            "rotate must continue counting up past the former i8 cap"
+        );
+        assert!(dir.path().join("289").exists());
     }
 
     #[tokio::test]

@@ -32,7 +32,7 @@ pub enum KeyRepositoryError {
 
     /// A key entry's contents do not decode as a valid Fernet key.
     #[error("key at index {0} is not a usable Fernet key")]
-    InvalidKey(i8),
+    InvalidKey(u32),
 
     /// A key entry decodes to the well-known Null Key
     /// (`base64.urlsafe_b64encode(b'\x00' * 32)`) and
