@@ -34,6 +34,7 @@ pub mod auth;
 pub(crate) mod common;
 pub mod error;
 pub mod health;
+mod json_rejection;
 pub mod types;
 pub mod v3;
 pub mod v4;
@@ -71,6 +72,9 @@ pub fn openapi_router() -> OpenApiRouter<ServiceState> {
         .nest("/v3", v3::openapi_router())
         .nest("/v4", v4::openapi_router())
         .routes(routes!(version))
+        .layer(axum::middleware::map_response(
+            json_rejection::normalize_json_rejection,
+        ))
 }
 
 /// Dedicated health/metrics router for the internal health/metrics interface.
