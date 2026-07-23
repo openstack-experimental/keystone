@@ -19,6 +19,7 @@ pub mod common;
 pub mod credential;
 pub mod endpoint;
 pub mod federation;
+pub mod fixtures;
 pub mod guard;
 pub mod identity;
 pub mod macros;
