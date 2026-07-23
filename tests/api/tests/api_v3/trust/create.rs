@@ -131,7 +131,12 @@ async fn test_create_with_granted_roles() -> Result<()> {
     .await?;
 
     assert_eq!(trust.project_id.as_deref(), Some(project.id.as_str()));
-    assert!(trust.roles.iter().any(|r| &r.id == member_role_id));
+    assert!(
+        trust
+            .roles
+            .iter()
+            .any(|r| r.id.as_deref() == Some(member_role_id.as_str()))
+    );
 
     trust.delete().await?;
     project.delete().await?;
