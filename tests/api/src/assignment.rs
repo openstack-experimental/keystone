@@ -20,7 +20,7 @@ use eyre::Result;
 use openstack_sdk::api::rest_endpoint_prelude::*;
 use openstack_sdk::{AsyncOpenStack, api::QueryAsync};
 
-/// Grant a role to a user on a project.
+/// Grant roles to users on project and system scopes.
 pub mod grant {
     use super::*;
 
@@ -54,6 +54,31 @@ pub mod grant {
         }
     }
 
+    #[derive(Builder, Clone, Debug)]
+    #[builder(setter(strip_option, into))]
+    struct SystemUserRoleGrant<'a> {
+        user_id: Cow<'a, str>,
+        role_id: Cow<'a, str>,
+    }
+
+    impl RestEndpoint for SystemUserRoleGrant<'_> {
+        fn method(&self) -> http::Method {
+            http::Method::PUT
+        }
+
+        fn endpoint(&self) -> Cow<'static, str> {
+            format!("system/users/{}/roles/{}", self.user_id, self.role_id).into()
+        }
+
+        fn service_type(&self) -> ServiceType {
+            ServiceType::Identity
+        }
+
+        fn api_version(&self) -> Option<ApiVersion> {
+            Some(ApiVersion::new(3, 0))
+        }
+    }
+
     /// Grant `role_id` to `user_id` on `project_id`. The grant is a PUT and is
     /// cleaned up implicitly when the project or user is deleted.
     pub async fn add_project_grant<P, U, R>(
@@ -70,6 +95,28 @@ pub mod grant {
         openstack_sdk::api::ignore(
             ProjectUserRoleGrantBuilder::default()
                 .project_id(project_id.as_ref())
+                .user_id(user_id.as_ref())
+                .role_id(role_id.as_ref())
+                .build()?,
+        )
+        .query_async(client.as_ref())
+        .await?;
+        Ok(())
+    }
+
+    /// Grant `role_id` to `user_id` on the system scope. The grant is cleaned
+    /// up implicitly when the user is deleted.
+    pub async fn add_system_grant<U, R>(
+        client: &Arc<AsyncOpenStack>,
+        user_id: U,
+        role_id: R,
+    ) -> Result<()>
+    where
+        U: AsRef<str>,
+        R: AsRef<str>,
+    {
+        openstack_sdk::api::ignore(
+            SystemUserRoleGrantBuilder::default()
                 .user_id(user_id.as_ref())
                 .role_id(role_id.as_ref())
                 .build()?,
