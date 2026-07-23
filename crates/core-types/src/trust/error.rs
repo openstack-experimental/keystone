@@ -14,13 +14,23 @@
 //! # Trust Error
 use thiserror::Error;
 
+use crate::assignment::AssignmentProviderError;
 use crate::auth::AuthenticationError;
 use crate::error::BuilderError;
+use crate::revoke::RevokeProviderError;
 use crate::role::RoleProviderError;
 
 /// Trust extension error.
 #[derive(Error, Debug)]
 pub enum TrustProviderError {
+    /// Assignment provider error.
+    #[error(transparent)]
+    AssignmentProvider {
+        /// The source of the error.
+        #[from]
+        source: AssignmentProviderError,
+    },
+
     /// Supported authentication error.
     #[error(transparent)]
     AuthenticationInfo {
@@ -55,6 +65,10 @@ pub enum TrustProviderError {
     #[error("some of the requested roles are not in the redelegated trust")]
     RedelegatedRolesNotAvailable,
 
+    /// `project_id` and `roles` must both be set or both be unset.
+    #[error("project_id and roles must both be set, or both be unset")]
+    ProjectRolesPairingInvalid,
+
     /// Redelegation chain is longer than allowed.
     #[error("redelegation depth of {length} is out of allowed range [0..{max_depth}]")]
     RedelegationDeepnessExceed { length: usize, max_depth: usize },
@@ -66,6 +80,22 @@ pub enum TrustProviderError {
     /// Remaining uses must be unset to redelegate a trust.
     #[error("remaining uses is set while it must not be set in order to redelegate a trust")]
     RemainingUsesMustBeUnset,
+
+    /// The trustor does not currently hold one of the requested roles on the
+    /// target project.
+    #[error("trustor does not hold role `{role_id}` on the target project")]
+    RoleNotGranted {
+        /// The ID of the role that is not currently granted to the trustor.
+        role_id: String,
+    },
+
+    /// Revoke provider error.
+    #[error(transparent)]
+    RevokeProvider {
+        /// The source of the error.
+        #[from]
+        source: RevokeProviderError,
+    },
 
     /// Role provider error.
     #[error(transparent)]

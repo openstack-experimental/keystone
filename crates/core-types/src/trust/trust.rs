@@ -120,6 +120,67 @@ pub struct Trust {
     pub trustee_user_id: String,
 }
 
+/// A trust object to be created.
+#[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(strip_option, into))]
+pub struct TrustCreate {
+    #[builder(default)]
+    pub extra: Option<Value>,
+
+    /// The ID of the trust.
+    #[builder(default)]
+    #[validate(length(min = 1, max = 64))]
+    pub id: Option<String>,
+
+    /// Specifies the expiration time of the trust.
+    #[builder(default)]
+    pub expires_at: Option<DateTime<Utc>>,
+
+    /// If set to `true`, then the user attribute of tokens generated based on
+    /// the trust will represent that of the `trustor` rather than the
+    /// `trustee`, thus allowing the `trustee` to impersonate the `trustor`.
+    #[builder(default)]
+    pub impersonation: bool,
+
+    /// Identifies the project upon which the trustor is delegating
+    /// authorization. Must be set together with `roles`, or omitted together
+    /// with `roles` (a trust may not implicitly delegate all roles).
+    #[builder(default)]
+    #[validate(length(min = 1, max = 64))]
+    pub project_id: Option<String>,
+
+    /// Specifies how many times the trust can be used to obtain a token.
+    #[builder(default)]
+    pub remaining_uses: Option<u32>,
+
+    /// The ID of the trust this trust redelegates from, when the trust is
+    /// being created by the trustee of a redelegatable trust-scoped token.
+    #[builder(default)]
+    #[validate(length(min = 1, max = 64))]
+    pub redelegated_trust_id: Option<String>,
+
+    /// Specifies the maximum remaining depth of the redelegated trust chain.
+    #[builder(default)]
+    pub redelegation_count: Option<u32>,
+
+    /// Specifies the subset of the trustor's roles on the `project_id` to be
+    /// granted to the `trustee` when the token is consumed. Must be set
+    /// together with `project_id`, or omitted together with `project_id`.
+    #[builder(default)]
+    #[validate(nested)]
+    pub roles: Vec<RoleRef>,
+
+    /// Represents the user who created the trust, and who's authorization is
+    /// being delegated.
+    #[validate(length(min = 1, max = 64))]
+    pub trustor_user_id: String,
+
+    /// Represents the user who is capable of consuming the trust.
+    #[validate(length(min = 1, max = 64))]
+    pub trustee_user_id: String,
+}
+
 /// A trust list parameters.
 #[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
 #[builder(setter(strip_option, into))]

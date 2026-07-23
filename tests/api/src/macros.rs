@@ -74,23 +74,22 @@
 //!
 //! Generated per operation:
 //!
-//! - `create`: private request struct, `RestEndpoint` impl (POST `path`,
-//!   JSON body under `body_key`), and
-//!   `pub async fn <func>(tc, <create_type>) -> Result<AsyncResourceGuard<model>>`.
-//! - `show`: private request struct, `RestEndpoint` impl (GET
-//!   `path/{id}`), and `pub async fn <func>(tc, id) -> Result<model>`.
-//! - `update`: private request struct, `RestEndpoint` impl (PATCH
-//!   `path/{id}`, JSON body under `body_key`), and
-//!   `pub async fn <func>(tc, id, <update_type>) -> Result<model>`.
+//! - `create`: private request struct, `RestEndpoint` impl (POST `path`, JSON
+//!   body under `body_key`), and `pub async fn <func>(tc, <create_type>) ->
+//!   Result<AsyncResourceGuard<model>>`.
+//! - `show`: private request struct, `RestEndpoint` impl (GET `path/{id}`), and
+//!   `pub async fn <func>(tc, id) -> Result<model>`.
+//! - `update`: private request struct, `RestEndpoint` impl (PATCH `path/{id}`,
+//!   JSON body under `body_key`), and `pub async fn <func>(tc, id,
+//!   <update_type>) -> Result<model>`.
 //! - `list`: **public** request struct with `Option<String>` query fields,
-//!   `RestEndpoint` impl (GET `path`), and
-//!   `pub async fn <func>(tc, params) -> Result<Vec<model>>`.
+//!   `RestEndpoint` impl (GET `path`), and `pub async fn <func>(tc, params) ->
+//!   Result<Vec<model>>`.
 //! - `delete`: private request struct, `RestEndpoint` impl (DELETE
-//!   `path/{id}`), `impl DeletableResource for <model>` (requires `model`
-//!   to have an `id: String` field), and
-//!   `pub async fn <func>(tc, id) -> Result<()>`. Use `delete_impl` instead
-//!   of `delete` when only the `DeletableResource` impl is wanted without a
-//!   public delete function.
+//!   `path/{id}`), `impl DeletableResource for <model>` (requires `model` to
+//!   have an `id: String` field), and `pub async fn <func>(tc, id) ->
+//!   Result<()>`. Use `delete_impl` instead of `delete` when only the
+//!   `DeletableResource` impl is wanted without a public delete function.
 macro_rules! crud_endpoint {
     // Entry: one or more operation blocks.
     ($($op:ident { $($body:tt)* })+) => {

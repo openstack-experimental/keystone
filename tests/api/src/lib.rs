@@ -31,6 +31,7 @@ pub mod scim;
 pub mod scim_realm;
 pub mod service;
 pub mod token_restriction;
+pub mod trust;
 pub mod webauthn;
 
 pub mod k8s_auth {

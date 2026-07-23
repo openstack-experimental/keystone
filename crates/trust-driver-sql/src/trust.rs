@@ -22,9 +22,13 @@ use openstack_keystone_core_types::trust::*;
 
 use crate::entity::{trust as db_trust, trust_role as db_trust_role};
 
+mod create;
+mod delete;
 mod get;
 mod list;
 
+pub use create::create;
+pub use delete::delete;
 pub use get::{get, get_delegation_chain};
 pub use list::list;
 

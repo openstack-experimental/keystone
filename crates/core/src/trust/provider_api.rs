@@ -23,6 +23,30 @@ use crate::trust::TrustProviderError;
 /// Trust extension provider interface.
 #[async_trait]
 pub trait TrustApi: Send + Sync {
+    /// Create a new trust.
+    ///
+    /// * `ctx` - The execution context.
+    /// * `trust` - The trust creation data.
+    ///
+    /// A `Result` containing the created `Trust`, or an `Error`.
+    async fn create_trust<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        trust: TrustCreate,
+    ) -> Result<Trust, TrustProviderError>;
+
+    /// Delete a trust by ID.
+    ///
+    /// * `ctx` - The execution context.
+    /// * `id` - The ID of the trust to delete.
+    ///
+    /// A `Result` containing `()`, or an `Error`.
+    async fn delete_trust<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        id: &'a str,
+    ) -> Result<(), TrustProviderError>;
+
     /// Get trust by ID.
     ///
     /// * `state` - The current service state.

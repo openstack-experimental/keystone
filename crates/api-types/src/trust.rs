@@ -28,9 +28,15 @@ impl From<TrustProviderError> for crate::error::KeystoneApiError {
         match source {
             TrustProviderError::Conflict(x) => Self::Conflict(x),
             TrustProviderError::ExpirationImpossible => Self::forbidden(source),
+            TrustProviderError::ProjectRolesPairingInvalid => Self::BadRequest(source.to_string()),
             TrustProviderError::RedelegatedRolesNotAvailable => Self::forbidden(source),
             TrustProviderError::RedelegationDeepnessExceed { .. } => Self::forbidden(source),
             TrustProviderError::RemainingUsesExceed => Self::forbidden(source),
+            TrustProviderError::RoleNotGranted { .. } => Self::forbidden(source),
+            TrustProviderError::TrustNotFound(id) => Self::NotFound {
+                resource: "trust".into(),
+                identifier: id,
+            },
             other => Self::InternalError(other.to_string()),
         }
     }
