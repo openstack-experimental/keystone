@@ -35,6 +35,10 @@ pub struct Endpoint {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub region_id: Option<String>,
+    /// Deprecated alias for `region_id`, mirrored for clients still reading
+    /// the pre-v3.2 attribute name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
     /// The UUID of the service to which the endpoint belongs.
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub service_id: String,

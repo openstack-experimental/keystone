@@ -149,6 +149,7 @@ mod tests {
                 id: "foo".into(),
                 interface: "public".into(),
                 region_id: None,
+                region: None,
                 service_id: "svc1".into(),
                 url: "https://example.com".into(),
                 enabled: true,

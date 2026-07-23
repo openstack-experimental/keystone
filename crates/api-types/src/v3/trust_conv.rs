@@ -21,17 +21,20 @@ impl From<ProviderRoleRef> for api_types::TrustRoleRef {
     fn from(value: ProviderRoleRef) -> Self {
         Self {
             domain_id: value.domain_id,
-            id: value.id,
+            id: Some(value.id),
             name: value.name,
         }
     }
 }
 
+/// Converts a resolved `TrustRoleRef` (i.e. `id` filled in, either
+/// originally or by the create handler's name lookup) into the provider
+/// `RoleRef`.
 impl From<api_types::TrustRoleRef> for ProviderRoleRef {
     fn from(value: api_types::TrustRoleRef) -> Self {
         Self {
             domain_id: value.domain_id,
-            id: value.id,
+            id: value.id.unwrap_or_default(),
             name: value.name,
         }
     }

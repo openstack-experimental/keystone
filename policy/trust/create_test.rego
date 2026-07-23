@@ -4,6 +4,11 @@ import data.identity.trust.create
 
 test_allowed if {
 	create.allow with input as {"credentials": {"roles": ["member"], "user_id": "u1"}, "target": {"trust": {"trustor_user_id": "u1"}}}
+
+	# No role requirement: matches python keystone's identity:create_trust,
+	# which only checks trustor identity. Whether the trustor actually
+	# holds the delegated roles is checked provider-side.
+	create.allow with input as {"credentials": {"roles": [], "user_id": "u1"}, "target": {"trust": {"trustor_user_id": "u1"}}}
 }
 
 test_forbidden if {

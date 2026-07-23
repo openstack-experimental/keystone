@@ -44,7 +44,7 @@ pub(super) async fn update(
     Auth(user_auth): Auth,
     Path(endpoint_id): Path<String>,
     State(state): State<ServiceState>,
-    Json(req): Json<EndpointUpdateRequest>,
+    Json(mut req): Json<EndpointUpdateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     // Validate the request
     req.validate()?;
@@ -86,6 +86,14 @@ pub(super) async fn update(
                     identifier: service_id.clone(),
                 });
             }
+
+            req.endpoint.region_id = super::resolve_legacy_region(
+                &state,
+                &exec,
+                req.endpoint.region_id.take(),
+                &mut req.endpoint.extra,
+            )
+            .await?;
 
             let endpoint = state
                 .provider
@@ -199,6 +207,7 @@ mod tests {
                 id: "foo".into(),
                 interface: "public".into(),
                 region_id: None,
+                region: None,
                 service_id: "svc1".into(),
                 url: "https://example.com".into(),
                 enabled: false,

@@ -33,9 +33,10 @@ pub struct TrustRoleRef {
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub domain_id: Option<String>,
 
-    /// Role ID.
+    /// Role ID. May be omitted if `name` is given instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
-    pub id: String,
+    pub id: Option<String>,
 
     /// Role name.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -63,7 +64,6 @@ pub struct Trust {
 
     /// The ID of the project upon which the trustor is delegating
     /// authorization.
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub project_id: Option<String>,
 
@@ -71,7 +71,9 @@ pub struct Trust {
     pub impersonation: bool,
 
     /// Trust expiration time.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    ///
+    /// Always present (as `null` when unset) to match python keystone --
+    /// tempest indexes `trust['expires_at']` unconditionally.
     pub expires_at: Option<DateTime<Utc>>,
 
     /// Remaining number of times the trust can be used to obtain a token.

@@ -30,11 +30,13 @@ default allow := false
 # METADATA
 # description: >
 #   A trust is always self-issued: the caller must be its own trustor.
-#   Matches python keystone's `identity:create_trust` policy, which has no
-#   admin bypass -- even an admin cannot create a trust on behalf of another
-#   user.
+#   Matches python keystone's `identity:create_trust` policy
+#   ("user_id:%(target.trust.trustor_user_id)s"), which has no admin bypass
+#   -- even an admin cannot create a trust on behalf of another user -- and
+#   no role requirement either: whether the trustor actually holds the
+#   roles being delegated is checked provider-side
+#   (`TrustService::create_trust`), not here.
 allow if {
-	"member" in input.credentials.roles
 	trust_common.is_trustor(input.target.trust)
 	trust_common.not_delegated_or_bound_to_own_project(object.get(input.target.trust, "project_id", null))
 }
