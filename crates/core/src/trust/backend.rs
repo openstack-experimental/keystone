@@ -25,6 +25,34 @@ use crate::trust::TrustProviderError;
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait TrustBackend: Send + Sync {
+    /// Create a new trust.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `trust`: The trust creation data.
+    ///
+    /// # Returns
+    /// - `Result<Trust, TrustProviderError>` - The created trust or an error.
+    async fn create_trust(
+        &self,
+        state: &ServiceState,
+        trust: TrustCreate,
+    ) -> Result<Trust, TrustProviderError>;
+
+    /// Delete a trust by ID.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `id`: The ID of the trust to delete.
+    ///
+    /// # Returns
+    /// - `Result<(), TrustProviderError>` - `Ok(())` on success, or an error.
+    async fn delete_trust<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<(), TrustProviderError>;
+
     /// Get trust by ID.
     ///
     /// # Parameters

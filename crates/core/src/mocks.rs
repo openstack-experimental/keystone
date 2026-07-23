@@ -1636,6 +1636,18 @@ mod trust {
 
         #[async_trait]
         impl TrustApi for TrustProvider {
+            async fn create_trust<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                trust: TrustCreate,
+            ) -> Result<Trust, TrustProviderError>;
+
+            async fn delete_trust<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                id: &'a str,
+            ) -> Result<(), TrustProviderError>;
+
             async fn get_trust<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,

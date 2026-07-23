@@ -23,15 +23,20 @@ use openstack_keystone_core_types::trust::Trust;
 
 use crate::entity::{
     prelude::{Trust as DbTrust, TrustRole as DbTrustRole},
-    trust_role as db_trust_role,
+    trust as db_trust, trust_role as db_trust_role,
 };
 
 /// Get trust credential by the ID.
+///
+/// Excludes soft-deleted trusts, mirroring `list()`'s default
+/// `include_deleted = false` behaviour -- once deleted a trust must read as
+/// gone (404) via `get`/`show`/`delete`'s existence check, not merely marked.
 pub async fn get<I: AsRef<str>>(
     db: &DatabaseConnection,
     id: I,
 ) -> Result<Option<Trust>, TrustProviderError> {
     if let Some(ref entry) = DbTrust::find_by_id(id.as_ref())
+        .filter(db_trust::Column::DeletedAt.is_null())
         .one(db)
         .await
         .context("fetching trust by id")?
@@ -133,7 +138,7 @@ mod tests {
             [
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "trust"."id", "trust"."trustor_user_id", "trust"."trustee_user_id", "trust"."project_id", "trust"."impersonation", "trust"."deleted_at", "trust"."expires_at", "trust"."remaining_uses", "trust"."extra", "trust"."expires_at_int", "trust"."redelegated_trust_id", "trust"."redelegation_count" FROM "trust" WHERE "trust"."id" = $1 LIMIT $2"#,
+                    r#"SELECT "trust"."id", "trust"."trustor_user_id", "trust"."trustee_user_id", "trust"."project_id", "trust"."impersonation", "trust"."deleted_at", "trust"."expires_at", "trust"."remaining_uses", "trust"."extra", "trust"."expires_at_int", "trust"."redelegated_trust_id", "trust"."redelegation_count" FROM "trust" WHERE "trust"."id" = $1 AND "trust"."deleted_at" IS NULL LIMIT $2"#,
                     ["trust_id".into(), 1u64.into()]
                 ),
                 Transaction::from_sql_and_values(

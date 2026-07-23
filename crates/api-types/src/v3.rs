@@ -24,6 +24,7 @@ pub mod region;
 pub mod role;
 pub mod role_assignment;
 pub mod service;
+pub mod trust;
 pub mod user;
 
 #[cfg(feature = "conv")]
@@ -46,5 +47,7 @@ mod role_assignment_conv;
 mod role_conv;
 #[cfg(feature = "conv")]
 mod service_conv;
+#[cfg(feature = "conv")]
+mod trust_conv;
 #[cfg(feature = "conv")]
 mod user_conv;

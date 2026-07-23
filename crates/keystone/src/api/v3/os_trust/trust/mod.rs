@@ -11,32 +11,23 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # Integration tests
+//! # Trust API
 //!
-//! Test the functionality on the provider level (not through the API).
+//! Trusts are immutable (no `update`) -- see
+//! `openstack_keystone_core::trust` module docs.
 
-mod api_key;
-mod application_credential;
-mod assignment;
-mod audit;
-mod catalog;
-mod common;
-mod credential;
-mod identity;
-mod k8s_auth;
-mod mapping;
-mod oauth2_device_grant;
-mod oauth2_emergency_rotation;
-mod oauth2_key_janitor;
-mod oauth2_session;
-mod oauth2_token_exchange;
-mod oauth2_token_verify;
-mod resource;
-mod revoke;
-mod role;
-mod scim_realm;
-mod token;
-mod trust;
+use utoipa_axum::{router::OpenApiRouter, routes};
 
-#[macro_use]
-mod macros;
+use crate::keystone::ServiceState;
+
+mod create;
+mod delete;
+mod list;
+mod show;
+pub mod types;
+
+pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
+    OpenApiRouter::new()
+        .routes(routes!(list::list, create::create))
+        .routes(routes!(show::show, delete::delete))
+}

@@ -11,32 +11,14 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # Integration tests
-//!
-//! Test the functionality on the provider level (not through the API).
+//! # OS-TRUST extension API
 
-mod api_key;
-mod application_credential;
-mod assignment;
-mod audit;
-mod catalog;
-mod common;
-mod credential;
-mod identity;
-mod k8s_auth;
-mod mapping;
-mod oauth2_device_grant;
-mod oauth2_emergency_rotation;
-mod oauth2_key_janitor;
-mod oauth2_session;
-mod oauth2_token_exchange;
-mod oauth2_token_verify;
-mod resource;
-mod revoke;
-mod role;
-mod scim_realm;
-mod token;
-mod trust;
+use utoipa_axum::router::OpenApiRouter;
 
-#[macro_use]
-mod macros;
+use crate::keystone::ServiceState;
+
+pub mod trust;
+
+pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
+    OpenApiRouter::new().nest("/trusts", trust::openapi_router())
+}

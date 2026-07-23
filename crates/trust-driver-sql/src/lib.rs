@@ -45,6 +45,26 @@ inventory::submit! {
 
 #[async_trait]
 impl TrustBackend for SqlBackend {
+    /// Create a new trust.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn create_trust(
+        &self,
+        state: &ServiceState,
+        trust: TrustCreate,
+    ) -> Result<Trust, TrustProviderError> {
+        trust::create(&state.db, trust).await
+    }
+
+    /// Delete a trust by ID.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn delete_trust<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<(), TrustProviderError> {
+        trust::delete(&state.db, id).await
+    }
+
     /// Get trust by ID.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn get_trust<'a>(

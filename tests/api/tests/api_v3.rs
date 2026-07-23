@@ -26,4 +26,5 @@ mod api_v3 {
     mod resource;
     mod role;
     mod service;
+    mod trust;
 }
