@@ -11,19 +11,22 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Keystone API v3 functional tests.
-//!
-//! This suite can be executed against python Keystone to verify API
-//! compatibility.
+//! # Region API
 
-mod api_v3 {
-    mod assignment;
-    mod auth;
-    mod credential;
-    mod endpoint;
-    mod identity;
-    mod region;
-    mod resource;
-    mod role;
-    mod service;
+use utoipa_axum::{router::OpenApiRouter, routes};
+
+use crate::keystone::ServiceState;
+
+mod create;
+mod delete;
+mod list;
+mod show;
+pub mod types;
+mod update;
+
+pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
+    OpenApiRouter::new()
+        .routes(routes!(list::list, create::create))
+        .routes(routes!(show::show, delete::delete))
+        .routes(routes!(update::update))
 }

@@ -22,6 +22,7 @@ pub mod guard;
 pub mod identity;
 pub mod mapping;
 pub mod oauth2;
+pub mod region;
 pub mod resource;
 pub mod role;
 pub mod scim;

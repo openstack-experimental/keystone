@@ -11,19 +11,8 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Keystone API v3 functional tests.
-//!
-//! This suite can be executed against python Keystone to verify API
-//! compatibility.
-
-mod api_v3 {
-    mod assignment;
-    mod auth;
-    mod credential;
-    mod endpoint;
-    mod identity;
-    mod region;
-    mod resource;
-    mod role;
-    mod service;
-}
+mod create;
+mod delete;
+mod list;
+mod show;
+mod update;

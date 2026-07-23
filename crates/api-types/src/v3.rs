@@ -20,6 +20,7 @@ pub mod endpoint;
 pub mod group;
 pub mod os_ec2_credential;
 pub mod project;
+pub mod region;
 pub mod role;
 pub mod role_assignment;
 pub mod service;
@@ -37,6 +38,8 @@ mod endpoint_conv;
 mod group_conv;
 #[cfg(feature = "conv")]
 mod project_conv;
+#[cfg(feature = "conv")]
+mod region_conv;
 #[cfg(feature = "conv")]
 mod role_assignment_conv;
 #[cfg(feature = "conv")]
