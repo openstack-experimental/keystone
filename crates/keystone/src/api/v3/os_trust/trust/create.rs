@@ -25,6 +25,7 @@ use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
+use openstack_keystone_core_types::role::RoleListParametersBuilder;
 
 /// Create a new trust.
 ///
@@ -48,9 +49,35 @@ use openstack_keystone_core::auth::ExecutionContext;
 pub(super) async fn create(
     Auth(user_auth): Auth,
     State(state): State<ServiceState>,
-    Json(payload): Json<TrustCreateRequest>,
+    Json(mut payload): Json<TrustCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     payload.validate()?;
+
+    // Roles may be referenced by `id` or by `name` (matching python
+    // keystone); resolve name-only references to an id here since the
+    // provider layer only deals in role ids.
+    for role in payload.trust.roles.iter_mut() {
+        if role.id.is_none() {
+            let name = role
+                .name
+                .clone()
+                .ok_or_else(|| KeystoneApiError::BadRequest("role id or name required".into()))?;
+            let resolved = state
+                .provider
+                .get_role_provider()
+                .list_roles(
+                    &ExecutionContext::internal(&state),
+                    &RoleListParametersBuilder::default()
+                        .name(name.clone())
+                        .build()?,
+                )
+                .await?
+                .into_iter()
+                .next()
+                .ok_or_else(|| KeystoneApiError::BadRequest(format!("role `{name}` not found")))?;
+            role.id = Some(resolved.id);
+        }
+    }
 
     state
         .policy_enforcer

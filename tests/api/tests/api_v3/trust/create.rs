@@ -122,7 +122,7 @@ async fn test_create_with_granted_roles() -> Result<()> {
             redelegation_count: None,
             roles: vec![TrustRoleRef {
                 domain_id: None,
-                id: member_role_id.clone(),
+                id: Some(member_role_id.clone()),
                 name: None,
             }],
             extra: None,
@@ -181,7 +181,7 @@ async fn test_create_role_not_granted_fails() -> Result<()> {
             redelegation_count: None,
             roles: vec![TrustRoleRef {
                 domain_id: None,
-                id: member_role_id.clone(),
+                id: Some(member_role_id.clone()),
                 name: None,
             }],
             extra: None,
