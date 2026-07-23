@@ -23,8 +23,19 @@
 //! out at the call site (no identifier concatenation), so compile errors
 //! point at readable names. Operations are selectable — a resource without
 //! an update handler simply omits the `update` block. Endpoints that do not
-//! fit these shapes (sub-resources, grants, borrowed fields, non-JSON
-//! bodies) should keep hand-written `RestEndpoint` impls.
+//! fit these shapes (grants, borrowed fields, non-JSON bodies) should keep
+//! hand-written `RestEndpoint` impls.
+//!
+//! Two optional fields cover the legacy OS-EC2 shape:
+//!
+//! - `parent = ("users", user_id)` prefixes the endpoint with a parent
+//!   collection and its ID, for sub-resources such as
+//!   `users/{user_id}/credentials/OS-EC2`. The request struct gains a
+//!   `user_id` field and every generated wrapper takes it as the first
+//!   argument after `tc`.
+//! - Omitting `body_key` from a `create` block serializes `create_type`
+//!   unwrapped at the request root, for legacy bodies that are not nested
+//!   under a resource key.
 //!
 //! Canonical field order per operation (all fields required, see arms
 //! below):
@@ -90,25 +101,63 @@
 //!   have an `id: String` field), and `pub async fn <func>(tc, id) ->
 //!   Result<()>`. Use `delete_impl` instead of `delete` when only the
 //!   `DeletableResource` impl is wanted without a public delete function.
+//! - `create_unguarded`: as `create`, but the wrapper returns the created
+//!   `model` directly instead of a guard. Use when the test deletes the
+//!   resource with a different session than the one that created it, so an
+//!   [`AsyncResourceGuard`](crate::guard::AsyncResourceGuard) — which always
+//!   deletes with the creating session — does not fit.
+//! - `delete_fn`: as `delete`, but without the `DeletableResource` impl, for
+//!   models that are never guarded (e.g. sub-resource models with no `id`
+//!   field).
 macro_rules! crud_endpoint {
     // Entry: one or more operation blocks.
     ($($op:ident { $($body:tt)* })+) => {
         $(crud_endpoint!(@ $op { $($body)* });)+
     };
 
-    (@ create {
+    // Internal: the collection path of an operation, optionally nested
+    // under `parent_path/{parent_id}`.
+    (@ collection_path $me:ident, $path:literal $(, $parent_path:literal, $parent:ident)?) => {{
+        let mut path = ::std::string::String::new();
+        $(
+            path.push_str($parent_path);
+            path.push('/');
+            path.push_str(&$me.$parent);
+            path.push('/');
+        )?
+        path.push_str($path);
+        path
+    }};
+
+    // Internal: wrapped (`{"group": {..}}`) vs. unwrapped request body.
+    (@ push_body $params:ident, $body:ident, $body_key:literal) => {
+        $params.push($body_key, $body);
+    };
+    (@ push_body $params:ident, $body:ident) => {
+        // Legacy bodies that are not nested under a resource key: splice the
+        // serialized object's own fields into the request root.
+        if let ::serde_json::Value::Object(fields) = $body {
+            for (key, value) in fields {
+                $params.push(key, value);
+            }
+        }
+    };
+
+    // Internal: request struct and `RestEndpoint` impl shared by `create`
+    // and `create_unguarded`.
+    (@ create_request {
         request = $request:ident,
-        func = $func:ident,
+        $(parent = ($parent_path:literal, $parent:ident),)?
         path = $path:literal,
-        body_key = $body_key:literal,
+        $(body_key = $body_key:literal,)?
         create_type = $create_type:ty,
-        model = $model:ty,
         response_key = $response_key:literal,
         service = $service:ident,
         api_version = ($major:literal, $minor:literal) $(,)?
     }) => {
         #[derive(Clone, Debug)]
         struct $request {
+            $($parent: String,)?
             body: $create_type,
         }
 
@@ -118,7 +167,7 @@ macro_rules! crud_endpoint {
             }
 
             fn endpoint(&self) -> ::std::borrow::Cow<'static, str> {
-                $path.into()
+                crud_endpoint!(@ collection_path self, $path $(, $parent_path, $parent)?).into()
             }
 
             fn body(
@@ -129,7 +178,8 @@ macro_rules! crud_endpoint {
             > {
                 let mut params =
                     ::openstack_sdk::api::rest_endpoint_prelude::JsonBodyParams::default();
-                params.push($body_key, ::serde_json::to_value(&self.body)?);
+                let body = ::serde_json::to_value(&self.body)?;
+                crud_endpoint!(@ push_body params, body $(, $body_key)?);
                 params.into_body()
             }
 
@@ -151,22 +201,95 @@ macro_rules! crud_endpoint {
                 ))
             }
         }
+    };
+
+    (@ create {
+        request = $request:ident,
+        func = $func:ident,
+        $(parent = ($parent_path:literal, $parent:ident),)?
+        path = $path:literal,
+        $(body_key = $body_key:literal,)?
+        create_type = $create_type:ty,
+        model = $model:ty,
+        response_key = $response_key:literal,
+        service = $service:ident,
+        api_version = ($major:literal, $minor:literal) $(,)?
+    }) => {
+        crud_endpoint!(@ create_request {
+            request = $request,
+            $(parent = ($parent_path, $parent),)?
+            path = $path,
+            $(body_key = $body_key,)?
+            create_type = $create_type,
+            response_key = $response_key,
+            service = $service,
+            api_version = ($major, $minor),
+        });
 
         /// Create the resource, returning a guard that must be explicitly
         /// deleted with `.delete().await?` (see [`crate::guard`]).
         pub async fn $func(
             tc: &::std::sync::Arc<::openstack_sdk::AsyncOpenStack>,
+            $($parent: &str,)?
             body: $create_type,
         ) -> ::eyre::Result<$crate::guard::AsyncResourceGuard<$model>> {
             use ::openstack_sdk::api::QueryAsync;
-            let obj: $model = $request { body }.query_async(tc.as_ref()).await?;
+            let obj: $model = $request {
+                $($parent: $parent.to_string(),)?
+                body,
+            }
+            .query_async(tc.as_ref())
+            .await?;
             Ok($crate::guard::AsyncResourceGuard::new(obj, tc.clone()))
+        }
+    };
+
+    // Create without a guard: the caller owns teardown explicitly.
+    (@ create_unguarded {
+        request = $request:ident,
+        func = $func:ident,
+        $(parent = ($parent_path:literal, $parent:ident),)?
+        path = $path:literal,
+        $(body_key = $body_key:literal,)?
+        create_type = $create_type:ty,
+        model = $model:ty,
+        response_key = $response_key:literal,
+        service = $service:ident,
+        api_version = ($major:literal, $minor:literal) $(,)?
+    }) => {
+        crud_endpoint!(@ create_request {
+            request = $request,
+            $(parent = ($parent_path, $parent),)?
+            path = $path,
+            $(body_key = $body_key,)?
+            create_type = $create_type,
+            response_key = $response_key,
+            service = $service,
+            api_version = ($major, $minor),
+        });
+
+        /// Create the resource and return it directly. The caller is
+        /// responsible for deleting it (see [`crate::guard`] for the
+        /// guarded alternative).
+        pub async fn $func(
+            tc: &::std::sync::Arc<::openstack_sdk::AsyncOpenStack>,
+            $($parent: &str,)?
+            body: $create_type,
+        ) -> ::eyre::Result<$model> {
+            use ::openstack_sdk::api::QueryAsync;
+            Ok($request {
+                $($parent: $parent.to_string(),)?
+                body,
+            }
+            .query_async(tc.as_ref())
+            .await?)
         }
     };
 
     (@ show {
         request = $request:ident,
         func = $func:ident,
+        $(parent = ($parent_path:literal, $parent:ident),)?
         path = $path:literal,
         model = $model:ty,
         response_key = $response_key:literal,
@@ -175,6 +298,7 @@ macro_rules! crud_endpoint {
     }) => {
         #[derive(Clone, Debug)]
         struct $request {
+            $($parent: String,)?
             id: String,
         }
 
@@ -184,7 +308,12 @@ macro_rules! crud_endpoint {
             }
 
             fn endpoint(&self) -> ::std::borrow::Cow<'static, str> {
-                format!("{}/{}", $path, self.id).into()
+                format!(
+                    "{}/{}",
+                    crud_endpoint!(@ collection_path self, $path $(, $parent_path, $parent)?),
+                    self.id,
+                )
+                .into()
             }
 
             fn service_type(
@@ -209,10 +338,16 @@ macro_rules! crud_endpoint {
         /// Show a single resource by ID.
         pub async fn $func(
             tc: &::std::sync::Arc<::openstack_sdk::AsyncOpenStack>,
+            $($parent: &str,)?
             id: impl Into<String>,
         ) -> ::eyre::Result<$model> {
             use ::openstack_sdk::api::QueryAsync;
-            Ok($request { id: id.into() }.query_async(tc.as_ref()).await?)
+            Ok($request {
+                $($parent: $parent.to_string(),)?
+                id: id.into(),
+            }
+            .query_async(tc.as_ref())
+            .await?)
         }
     };
 
@@ -292,6 +427,7 @@ macro_rules! crud_endpoint {
     (@ list {
         request = $request:ident,
         func = $func:ident,
+        $(parent = ($parent_path:literal, $parent:ident),)?
         path = $path:literal,
         model = $model:ty,
         response_key = $response_key:literal,
@@ -299,9 +435,11 @@ macro_rules! crud_endpoint {
         api_version = ($major:literal, $minor:literal),
         query = [$($query_field:ident),* $(,)?] $(,)?
     }) => {
-        /// List request query parameters.
+        /// List request query parameters. A `parent` ID, when the resource
+        /// has one, is set by the wrapper function rather than the caller.
         #[derive(Clone, Debug, Default)]
         pub struct $request {
+            $($parent: String,)?
             $(pub $query_field: Option<String>,)*
         }
 
@@ -311,12 +449,15 @@ macro_rules! crud_endpoint {
             }
 
             fn endpoint(&self) -> ::std::borrow::Cow<'static, str> {
-                $path.into()
+                crud_endpoint!(@ collection_path self, $path $(, $parent_path, $parent)?).into()
             }
 
             fn parameters(
                 &self,
             ) -> ::openstack_sdk::api::rest_endpoint_prelude::QueryParams<'_> {
+                // `query = []` (sub-resource collections) leaves `params`
+                // untouched.
+                #[allow(unused_mut)]
                 let mut params =
                     ::openstack_sdk::api::rest_endpoint_prelude::QueryParams::default();
                 $(params.push_opt(stringify!($query_field), self.$query_field.as_ref());)*
@@ -345,9 +486,13 @@ macro_rules! crud_endpoint {
         /// List resources matching the query parameters.
         pub async fn $func(
             tc: &::std::sync::Arc<::openstack_sdk::AsyncOpenStack>,
+            $($parent: &str,)?
             params: $request,
         ) -> ::eyre::Result<Vec<$model>> {
             use ::openstack_sdk::api::QueryAsync;
+            #[allow(unused_mut)]
+            let mut params = params;
+            $(params.$parent = $parent.to_string();)?
             Ok(params.query_async(tc.as_ref()).await?)
         }
     };
@@ -383,17 +528,52 @@ macro_rules! crud_endpoint {
         }
     };
 
-    // Delete without a public wrapper: only the request struct and the
-    // `DeletableResource` impl used by `AsyncResourceGuard`.
-    (@ delete_impl {
+    // Delete with a public wrapper function but without the
+    // `DeletableResource` impl, for models that are never guarded.
+    (@ delete_fn {
         request = $request:ident,
+        func = $func:ident,
+        $(parent = ($parent_path:literal, $parent:ident),)?
         path = $path:literal,
-        model = $model:ty,
+        service = $service:ident,
+        api_version = ($major:literal, $minor:literal) $(,)?
+    }) => {
+        crud_endpoint!(@ delete_request {
+            request = $request,
+            $(parent = ($parent_path, $parent),)?
+            path = $path,
+            service = $service,
+            api_version = ($major, $minor),
+        });
+
+        /// Delete the resource identified by `id`.
+        pub async fn $func(
+            tc: &::std::sync::Arc<::openstack_sdk::AsyncOpenStack>,
+            $($parent: &str,)?
+            id: impl Into<String>,
+        ) -> ::eyre::Result<()> {
+            use ::openstack_sdk::api::QueryAsync;
+            Ok(::openstack_sdk::api::ignore($request {
+                $($parent: $parent.to_string(),)?
+                id: id.into(),
+            })
+            .query_async(tc.as_ref())
+            .await?)
+        }
+    };
+
+    // Internal: request struct and `RestEndpoint` impl shared by every
+    // delete flavor.
+    (@ delete_request {
+        request = $request:ident,
+        $(parent = ($parent_path:literal, $parent:ident),)?
+        path = $path:literal,
         service = $service:ident,
         api_version = ($major:literal, $minor:literal) $(,)?
     }) => {
         #[derive(Clone, Debug)]
         struct $request {
+            $($parent: String,)?
             id: String,
         }
 
@@ -403,7 +583,12 @@ macro_rules! crud_endpoint {
             }
 
             fn endpoint(&self) -> ::std::borrow::Cow<'static, str> {
-                format!("{}/{}", $path, self.id).into()
+                format!(
+                    "{}/{}",
+                    crud_endpoint!(@ collection_path self, $path $(, $parent_path, $parent)?),
+                    self.id,
+                )
+                .into()
             }
 
             fn service_type(
@@ -420,6 +605,23 @@ macro_rules! crud_endpoint {
                 ))
             }
         }
+    };
+
+    // Delete without a public wrapper: only the request struct and the
+    // `DeletableResource` impl used by `AsyncResourceGuard`.
+    (@ delete_impl {
+        request = $request:ident,
+        path = $path:literal,
+        model = $model:ty,
+        service = $service:ident,
+        api_version = ($major:literal, $minor:literal) $(,)?
+    }) => {
+        crud_endpoint!(@ delete_request {
+            request = $request,
+            path = $path,
+            service = $service,
+            api_version = ($major, $minor),
+        });
 
         #[async_trait::async_trait]
         impl $crate::guard::DeletableResource for $model {
@@ -617,6 +819,110 @@ mod tests {
                 service = Identity,
                 api_version = (4, 0),
             }
+        }
+    }
+
+    /// Sub-resource combination with an unwrapped create body and no
+    /// `DeletableResource` impl (the legacy OS-EC2 shape).
+    mod sub_resource {
+        use super::*;
+
+        #[derive(Clone, Debug, Deserialize, Serialize)]
+        pub struct Bolt {
+            pub access: String,
+        }
+
+        #[derive(Clone, Debug, Deserialize, Serialize)]
+        pub struct BoltCreate {
+            #[serde(rename = "tenant_id")]
+            pub project_id: String,
+        }
+
+        crate::macros::crud_endpoint! {
+            create_unguarded {
+                request = BoltCreateApiRequest,
+                func = create_bolt,
+                parent = ("users", user_id),
+                path = "credentials/OS-EC2",
+                create_type = BoltCreate,
+                model = Bolt,
+                response_key = "credential",
+                service = Identity,
+                api_version = (3, 0),
+            }
+            show {
+                request = BoltShowApiRequest,
+                func = get_bolt,
+                parent = ("users", user_id),
+                path = "credentials/OS-EC2",
+                model = Bolt,
+                response_key = "credential",
+                service = Identity,
+                api_version = (3, 0),
+            }
+            list {
+                request = BoltListRequest,
+                func = list_bolts,
+                parent = ("users", user_id),
+                path = "credentials/OS-EC2",
+                model = Bolt,
+                response_key = "credentials",
+                service = Identity,
+                api_version = (3, 0),
+                query = [],
+            }
+            delete_fn {
+                request = BoltDeleteApiRequest,
+                func = delete_bolt,
+                parent = ("users", user_id),
+                path = "credentials/OS-EC2",
+                service = Identity,
+                api_version = (3, 0),
+            }
+        }
+
+        #[test]
+        fn create_request_nests_under_parent_and_unwraps_body() {
+            let req = BoltCreateApiRequest {
+                user_id: "uid".into(),
+                body: BoltCreate {
+                    project_id: "pid".into(),
+                },
+            };
+            assert_eq!(req.method(), http::Method::POST);
+            assert_eq!(req.endpoint(), "users/uid/credentials/OS-EC2");
+            let (content_type, body) = req.body().ok().flatten().unwrap_or(("missing", Vec::new()));
+            assert_eq!(content_type, "application/json");
+            // No resource key wrapper: the body's own fields sit at the root.
+            assert_eq!(String::from_utf8_lossy(&body), r#"{"tenant_id":"pid"}"#);
+        }
+
+        #[test]
+        fn item_requests_nest_under_parent() {
+            let show = BoltShowApiRequest {
+                user_id: "uid".into(),
+                id: "acc".into(),
+            };
+            assert_eq!(show.endpoint(), "users/uid/credentials/OS-EC2/acc");
+
+            let delete = BoltDeleteApiRequest {
+                user_id: "uid".into(),
+                id: "acc".into(),
+            };
+            assert_eq!(delete.method(), http::Method::DELETE);
+            assert_eq!(delete.endpoint(), "users/uid/credentials/OS-EC2/acc");
+            assert_eq!(delete.response_key(), None);
+        }
+
+        #[test]
+        fn list_request_nests_under_parent() {
+            // The wrapper function sets the parent ID for the caller.
+            let req = BoltListRequest {
+                user_id: "uid".into(),
+            };
+            assert_eq!(req.method(), http::Method::GET);
+            assert_eq!(req.endpoint(), "users/uid/credentials/OS-EC2");
+            assert_eq!(req.response_key().as_deref(), Some("credentials"));
         }
     }
 

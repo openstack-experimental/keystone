@@ -68,7 +68,7 @@ opa_policies_path = policy
 # into a token as a bitmask over exactly this list
 # (crates/token-driver-fernet/src/lib.rs), so both must be present here or
 # token issuance 500s with "unsupported authentication methods".
-methods = password,token,openid,application_credential,x509,mapped,hacked_appcred_handler
+methods = password,token,openid,application_credential,x509,mapped,hacked_appcred_handler,ec2credential
 
 [DEFAULT]
 use_stderr = false
