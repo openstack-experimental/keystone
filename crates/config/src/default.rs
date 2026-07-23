@@ -29,6 +29,16 @@ pub struct DefaultSection {
     /// Public endpoint.
     pub public_endpoint: Option<Url>,
 
+    /// Log output directly to the systemd journal (native journald
+    /// protocol), instead of relying on a container/service manager to
+    /// capture and forward stderr. Mutually exclusive with `use_stderr`:
+    /// enabling both under a container log driver that also forwards
+    /// stderr to journald (e.g. podman `--log-driver=journald`) produces
+    /// duplicate entries in `journalctl` — one from the native write, one
+    /// from the driver capturing the stderr text.
+    #[serde(default)]
+    pub use_journal: bool,
+
     /// Log output to standard error.
     #[serde(default)]
     pub use_stderr: bool,

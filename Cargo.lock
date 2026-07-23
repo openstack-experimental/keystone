@@ -4673,6 +4673,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-error",
+ "tracing-journald",
  "tracing-subscriber",
  "tracing-test",
  "url",
@@ -9217,6 +9218,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b1581020d7a273442f5b45074a6a57d5757ad0a47dac0e9f0bd57b81936f3db"
 dependencies = [
  "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "tracing-journald"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d3a81ed245bfb62592b1e2bc153e77656d94ee6a0497683a65a12ccaf2438d0"
+dependencies = [
+ "libc",
+ "tracing-core",
  "tracing-subscriber",
 ]
 
