@@ -9,7 +9,7 @@ the feature guide for constraints and safe production values.
 
 | Section | Options |
 | --- | --- |
-| `[DEFAULT]` | `debug`, `log_dir`, `public_endpoint`, `use_stderr` |
+| `[DEFAULT]` | `debug`, `log_dir`, `public_endpoint`, `use_stderr`, `use_journal` |
 | `[database]` | `connection` |
 | `[interface_public]` | `tcp_address`, listener `type`, and listener-specific TLS/SPIFFE fields |
 | `[interface_internal]` | `tcp_address`, listener `type`, `trust_domains`, and TLS content/file fields |

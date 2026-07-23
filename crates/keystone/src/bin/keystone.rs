@@ -380,8 +380,9 @@ async fn main() -> Result<(), Report> {
     Ok(())
 }
 
-/// Initialize the tracing subscriber registry (stderr, and optionally a
-/// rotating file appender) based on CLI verbosity and the loaded config.
+/// Initialize the tracing subscriber registry (stderr, optionally a native
+/// systemd journal writer, and optionally a rotating file appender) based on
+/// CLI verbosity and the loaded config.
 ///
 /// Returns the file-appender's `WorkerGuard`, if file logging is enabled.
 /// The caller must keep this alive for the process lifetime — dropping it
@@ -419,6 +420,37 @@ fn init_tracing(verbose: u8, cfg: &Config) -> Option<tracing_appender::non_block
 
     if cfg.default.use_stderr {
         log_layers.push(stderr_layer);
+    }
+
+    if cfg.default.use_journal {
+        let journald_log_filter = Targets::new()
+            .with_default(if cfg.default.debug {
+                LevelFilter::DEBUG
+            } else {
+                LevelFilter::INFO
+            })
+            .with_target("cranelift_codegen", LevelFilter::ERROR)
+            .with_target("wasmtime_internal_cranelift", LevelFilter::ERROR)
+            .with_target("wasmtime", LevelFilter::ERROR)
+            .with_target("h2", external_deps_log_level)
+            .with_target("rustls", external_deps_log_level)
+            .with_target("tower", external_deps_log_level)
+            .with_target("openraft", external_deps_log_level)
+            .with_target("lsm_tree", external_deps_log_level);
+
+        match tracing_journald::layer() {
+            Ok(journald_layer) => {
+                log_layers.push(journald_layer.with_filter(journald_log_filter).boxed());
+            }
+            Err(err) => {
+                // Can't use `error!`/`warn!` yet — the subscriber isn't
+                // installed until `.init()` below, so fall back to stderr
+                // directly for this one diagnostic.
+                eprintln!(
+                    "Failed to connect to the systemd journal socket, use_journal logging disabled: {err}"
+                );
+            }
+        }
     }
 
     let mut guard = None;
@@ -770,7 +802,13 @@ async fn build_router(
                         x_request_id = ?request.headers().get("x-openstack-request-id")
                     )
                 })
-                .on_request(DefaultOnRequest::new().level(Level::INFO))
+                // `on_response` alone (method/uri/status/latency, plus the
+                // request-id/client-addr already in the span) is enough at
+                // INFO for one line per request; the separate start-of-
+                // request event only matters when debugging, so keep it at
+                // DEBUG (tower-http's own upstream default) instead of
+                // doubling every request's log volume at INFO.
+                .on_request(DefaultOnRequest::new().level(Level::DEBUG))
                 .on_response(
                     DefaultOnResponse::new()
                         .level(Level::INFO)

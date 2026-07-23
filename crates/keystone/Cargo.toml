@@ -93,6 +93,7 @@ tower-http = { workspace = true, features = ["compression-full", "normalize-path
 tracing.workspace = true
 tracing-appender.workspace = true
 tracing-error = "0.2"
+tracing-journald.workspace = true
 tracing-subscriber.workspace = true
 url = { workspace = true, features = ["serde"] }
 utoipa = { workspace = true, features = ["axum_extras", "yaml"] }
