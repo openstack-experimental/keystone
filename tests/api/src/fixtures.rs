@@ -18,12 +18,14 @@ use std::sync::Arc;
 use eyre::{OptionExt, Result};
 use uuid::Uuid;
 
-use openstack_keystone_api_types::scope::{DomainBuilder, Scope, ScopeProjectBuilder};
+use openstack_keystone_api_types::scope::{
+    DomainBuilder, Scope, ScopeProjectBuilder, System as ScopeSystem,
+};
 use openstack_keystone_api_types::v3::project::{Project, ProjectCreateBuilder};
 use openstack_keystone_api_types::v3::user::{User, UserCreateBuilder};
 use openstack_sdk::AsyncOpenStack;
 
-use crate::assignment::grant::add_project_grant;
+use crate::assignment::grant::{add_project_grant, add_system_grant};
 use crate::common::get_user_session;
 use crate::guard::{AsyncResourceGuard, ResourceGuard};
 use crate::identity::user::create_user;
@@ -104,6 +106,62 @@ impl ProjectScopedUser {
     pub async fn cleanup(self) -> Result<()> {
         self.user.delete().await?;
         self.project.delete().await?;
+        Ok(())
+    }
+}
+
+/// A real password user holding one role on the system scope and authenticated
+/// with a system-scoped token through the live password-auth path.
+pub struct SystemScopedUser {
+    /// System-scoped session authenticated as the fixture user.
+    pub session: Arc<AsyncOpenStack>,
+    /// The fixture user, deleted by [`Self::cleanup`].
+    pub user: AsyncResourceGuard<User>,
+}
+
+impl SystemScopedUser {
+    /// Provision a user with `role_name` granted on `system: all`.
+    pub async fn provision(
+        admin: &Arc<AsyncOpenStack>,
+        domain_id: &str,
+        role_name: &str,
+    ) -> Result<Self> {
+        let unique = Uuid::new_v4().simple().to_string();
+        let user = create_user(
+            admin,
+            UserCreateBuilder::default()
+                .name(format!("fix-system-usr-{unique}"))
+                .domain_id(domain_id)
+                .password(FIXTURE_PASSWORD)
+                .enabled(true)
+                .build()?,
+        )
+        .await?;
+        let session_result = async {
+            let role = list_roles(admin)
+                .await?
+                .into_iter()
+                .find(|role| role.name == role_name)
+                .ok_or_eyre(format!("bootstrap `{role_name}` role must exist"))?;
+            add_system_grant(admin, &user.id, &role.id).await?;
+
+            let scope = Scope::System(ScopeSystem { all: Some(true) });
+            get_user_session(&user.name, FIXTURE_PASSWORD, domain_id, Some(&scope)).await
+        }
+        .await;
+
+        match session_result {
+            Ok(session) => Ok(Self { session, user }),
+            Err(error) => {
+                user.delete().await?;
+                Err(error)
+            }
+        }
+    }
+
+    /// Delete the fixture user; its system role grant is removed implicitly.
+    pub async fn cleanup(self) -> Result<()> {
+        self.user.delete().await?;
         Ok(())
     }
 }
