@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! v3 user CRUD helpers, generated with [`crate::macros::crud_endpoint`].
 
+use openstack_keystone_api_types::v3::group::Group;
 use openstack_keystone_api_types::v3::user::*;
 
 use crate::macros::crud_endpoint;
@@ -46,5 +47,16 @@ crud_endpoint! {
         model = User,
         service = Identity,
         api_version = (3, 0),
+    }
+    list {
+        request = UserGroupsRequest,
+        func = list_user_groups,
+        parent = ("users", user_id),
+        path = "groups",
+        model = Group,
+        response_key = "groups",
+        service = Identity,
+        api_version = (3, 0),
+        query = [],
     }
 }
