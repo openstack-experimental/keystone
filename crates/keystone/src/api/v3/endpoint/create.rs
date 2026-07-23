@@ -42,7 +42,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 pub(super) async fn create(
     Auth(user_auth): Auth,
     State(state): State<ServiceState>,
-    Json(payload): Json<EndpointCreateRequest>,
+    Json(mut payload): Json<EndpointCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     // Validate the request
     payload.validate()?;
@@ -73,6 +73,14 @@ pub(super) async fn create(
             identifier: payload.endpoint.service_id.clone(),
         });
     }
+
+    payload.endpoint.region_id = super::resolve_legacy_region(
+        &state,
+        &exec,
+        payload.endpoint.region_id.take(),
+        &mut payload.endpoint.extra,
+    )
+    .await?;
 
     // Create the endpoint
     let created_endpoint = state
@@ -189,6 +197,7 @@ mod tests {
                 id: "new_endpoint_id".into(),
                 interface: "public".into(),
                 region_id: None,
+                region: None,
                 service_id: "svc1".into(),
                 url: "https://example.com".into(),
                 enabled: true,

@@ -21,6 +21,7 @@ impl From<provider_types::Endpoint> for api_types::Endpoint {
         Self {
             id: value.id,
             interface: value.interface,
+            region: value.region_id.clone(),
             region_id: value.region_id,
             service_id: value.service_id,
             url: value.url,
