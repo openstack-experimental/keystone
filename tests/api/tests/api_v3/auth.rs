@@ -11,5 +11,6 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+mod ec2tokens;
 mod project;
 mod token;

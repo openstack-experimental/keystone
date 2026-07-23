@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 mod create;
 mod delete;
+mod ec2;
 mod list;
 mod show;
 mod update;
