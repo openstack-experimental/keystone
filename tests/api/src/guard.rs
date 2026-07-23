@@ -11,13 +11,30 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! RAII-style guards for API-created test resources.
+//!
+//! # Cleanup contract
+//!
+//! Rust has no async `Drop`, so the **only reliable cleanup is an explicit
+//! `guard.delete().await?` at the end of the test**. The [`Drop`]
+//! implementation is *leak detection*, not cleanup: when a guard is dropped
+//! without `.delete()` having run — including drops during a panic/failed
+//! assertion or an early `?` return — it prints a diagnostic naming the
+//! leaked resource type so the leak can be traced and removed from the
+//! shared server state (relevant for the long-lived K8s deployments).
+//!
+//! For negative tests, create fixtures with an *admin* session and delete
+//! them with that same admin session, so cleanup does not depend on an
+//! underprivileged session succeeding.
+
+use std::io::Write;
 use std::ops::Deref;
-/// Trait to allow State to delete various resource types T
 use std::sync::Arc;
 
 use eyre::Result;
 use openstack_sdk::AsyncOpenStack;
 
+/// Trait to allow State to delete various resource types T
 #[async_trait::async_trait]
 pub trait DeletableResource: Send + Sync {
     async fn delete(&self, state: &Arc<AsyncOpenStack>) -> Result<()>;
@@ -50,8 +67,22 @@ where
         }
     }
 
-    pub fn resource(&self) -> &T {
-        self.resource.as_ref().expect("Resource already deleted")
+    /// The guarded resource, or `None` when it has already been taken by
+    /// the consuming [`ResourceGuard::delete`].
+    pub fn resource(&self) -> Option<&T> {
+        self.resource.as_ref()
+    }
+}
+
+impl<T> std::fmt::Debug for AsyncResourceGuard<T>
+where
+    T: DeletableResource + std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AsyncResourceGuard")
+            .field("resource", &self.resource)
+            .field("was_deleted", &self.was_deleted)
+            .finish_non_exhaustive()
     }
 }
 
@@ -75,9 +106,24 @@ where
     T: DeletableResource,
 {
     fn drop(&mut self) {
-        if !self.was_deleted && !std::thread::panicking() {
-            eprintln!(
-                "\n[ERROR] AsyncResourceGuard leaked! .delete() was not called for resource."
+        if !self.was_deleted && self.resource.is_some() {
+            // Leak *detection* only — async cleanup cannot run reliably in
+            // `Drop` (current-thread `#[tokio::test]` runtimes, runtime
+            // shutdown, panic unwinding). Emit on the panic path too: a
+            // failed assertion is exactly when explicit cleanup is most
+            // likely to have been skipped. Never panics (a second panic
+            // while unwinding would abort the test process).
+            let during_panic = if std::thread::panicking() {
+                " while unwinding a panic"
+            } else {
+                ""
+            };
+            let _ = writeln!(
+                std::io::stderr(),
+                "\n[ERROR] AsyncResourceGuard<{}> leaked{}: .delete() was not \
+                 called; the resource is left behind on the server.",
+                std::any::type_name::<T>(),
+                during_panic,
             );
         }
     }
@@ -89,6 +135,14 @@ where
 {
     type Target = R;
     fn deref(&self) -> &Self::Target {
-        self.resource()
+        match self.resource.as_ref() {
+            Some(resource) => resource,
+            // `ResourceGuard::delete` consumes the guard, so no borrow can
+            // observe the taken state.
+            None => unreachable!(
+                "AsyncResourceGuard<{}> dereferenced after delete()",
+                std::any::type_name::<R>()
+            ),
+        }
     }
 }
