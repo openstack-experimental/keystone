@@ -387,6 +387,22 @@ impl SecurityContextTestingBuilder {
 }
 
 impl SecurityContext {
+    /// Construct a security context with an exact authentication-method set.
+    ///
+    /// This is intended for authentication mechanisms whose authorization
+    /// bounds are represented by a delegation-carrying
+    /// [`AuthenticationContext`], while the immutable mechanism that verified
+    /// the request is different. Callers must provide the non-empty set of
+    /// methods they have already verified.
+    pub fn try_from_authentication_result_with_auth_methods(
+        value: AuthenticationResult,
+        auth_methods: HashSet<String>,
+    ) -> Result<Self, AuthenticationError> {
+        let mut context = Self::try_from(value)?;
+        context.auth_methods = auth_methods;
+        Ok(context)
+    }
+
     /// Returns the audit IDs associated with this security context.
     ///
     /// The returned slice always contains at least one element — the fresh
@@ -1354,9 +1370,10 @@ impl AuthenticationContext {
     ///
     /// Each method name corresponds to a Keystone authentication mechanism
     /// (e.g., `"password"`, `"token"`, `"application_credential"`, `"openid"`,
-    /// `"trust"`, `"webauthn"`, `"mapped"`).  When a token is used as the
-    /// parent, the methods from the parent token are carried forward and
-    /// `"token"` is added.
+    /// `"trust"`, `"webauthn"`, `"mapped"`). When a token is used as the
+    /// parent, including one whose delegated context is restored as a trust
+    /// or application credential, the methods from the parent token are
+    /// carried forward and `"token"` is added.
     ///
     /// # Returns
     ///
@@ -1364,9 +1381,17 @@ impl AuthenticationContext {
     #[must_use]
     pub fn methods(&self) -> HashSet<String> {
         match self {
-            Self::ApplicationCredential { .. } => {
-                once("application_credential".to_string()).collect()
-            }
+            Self::ApplicationCredential { token, .. } => token.as_ref().map_or_else(
+                || once("application_credential".to_string()).collect(),
+                |token| {
+                    token
+                        .methods()
+                        .iter()
+                        .cloned()
+                        .chain(once("token".to_string()))
+                        .collect()
+                },
+            ),
             Self::Oidc { .. } => once("openid".to_string()).collect(),
             Self::K8s(_) => once("mapped".to_string()).collect(),
             Self::Password => once("password".to_string()).collect(),
@@ -1377,7 +1402,17 @@ impl AuthenticationContext {
                 .cloned()
                 .chain(once("token".to_string()))
                 .collect(),
-            Self::Trust { .. } => once("trust".to_string()).collect(),
+            Self::Trust { token, .. } => token.as_ref().map_or_else(
+                || once("trust".to_string()).collect(),
+                |token| {
+                    token
+                        .methods()
+                        .iter()
+                        .cloned()
+                        .chain(once("token".to_string()))
+                        .collect()
+                },
+            ),
             Self::WebauthN => once("x509".to_string()).collect(),
             Self::Mapping(_) => once("mapped".to_string()).collect(),
             Self::Ec2Credential => once("ec2credential".to_string()).collect(),

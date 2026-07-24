@@ -13,6 +13,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Credential REST endpoint helpers and test infrastructure (ADR 0019).
 
+pub mod ec2;
+
 use std::borrow::Cow;
 use std::sync::Arc;
 

@@ -15,9 +15,9 @@
 //!
 //! A sibling of `/v3`/`/v4`, not nested under `api_v4/`: the SCIM ingress
 //! surface is a bespoke bearer-token protocol (ADR 0021 §4, Sub-Router
-//! Isolation), not part of the OpenStack-catalog API. Each submodule here is
-//! the live-HTTP-and-live-OPA counterpart of an existing mocked-state
-//! handler test file under `crates/keystone/src/scim/`.
+//! Isolation), not part of the OpenStack-catalog API. The submodules include
+//! live-HTTP-and-live-OPA counterparts of mocked-state handler tests under
+//! `crates/keystone/src/scim/`, plus cross-protocol integration cases.
 
 mod scim_v2 {
     mod bulk_and_me;
@@ -37,4 +37,5 @@ mod scim_v2 {
     mod patch;
     mod schemas_validation;
     mod user;
+    mod v3_user_groups;
 }

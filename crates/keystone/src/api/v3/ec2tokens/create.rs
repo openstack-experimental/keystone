@@ -20,6 +20,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::{Value, json};
+use std::collections::HashSet;
 
 use openstack_keystone_api_types::v3::auth::token::{TokenBuilder, TokenResponse};
 use openstack_keystone_core::api::common::{get_authz_info, get_domain};
@@ -39,6 +40,32 @@ use crate::audit::{
 use crate::auth::*;
 use crate::common::TracedJson;
 use crate::keystone::ServiceState;
+
+/// Build the immutable authentication chain for an EC2 redemption.
+///
+/// Delegated EC2 credentials must retain their Trust/ApplicationCredential
+/// context for scope and role bounding, while every token minted by this
+/// endpoint must also carry the `ec2credential` method marker used to prevent
+/// bearer-token use on ordinary Keystone endpoints.
+fn security_context_for_ec2_redemption(
+    context: AuthenticationContext,
+    principal: PrincipalInfo,
+) -> Result<SecurityContext, KeystoneApiError> {
+    let result = AuthenticationResultBuilder::default()
+        .context(context)
+        .principal(principal)
+        .build()?;
+    // Trust and application-credential contexts are delegation carriers here,
+    // not additional authentication mechanisms. Keep the method set exact so
+    // Fernet cannot encode a delegated token without preserving the EC2
+    // bearer restriction marker.
+    Ok(
+        SecurityContext::try_from_authentication_result_with_auth_methods(
+            result,
+            HashSet::from(["ec2credential".to_string()]),
+        )?,
+    )
+}
 
 /// Validate the signed `credentials` object and issue a Keystone token
 /// scoped to the referenced EC2 credential's project/user.
@@ -216,12 +243,7 @@ async fn create_inner(
         AuthenticationContext::Ec2Credential
     };
 
-    let auth_result = AuthenticationResultBuilder::default()
-        .context(context)
-        .principal(principal)
-        .build()?;
-
-    let ctx = SecurityContext::try_from(auth_result)?;
+    let ctx = security_context_for_ec2_redemption(context, principal)?;
     let provider_scope = ProviderScope::Project(ScopeProject {
         id: Some(project_id),
         name: None,
@@ -286,11 +308,18 @@ mod tests {
     use openstack_keystone_core::credential::ec2_signature::{
         Ec2SignatureVersion, generate_signature,
     };
+    use openstack_keystone_core_types::application_credential::ApplicationCredentialBuilder;
+    use openstack_keystone_core_types::auth::{
+        AuthenticationContext, IdentityInfo, PrincipalInfo, ScopeInfo, SecurityContext,
+        UserIdentityInfoBuilder,
+    };
     use openstack_keystone_core_types::credential::{Credential, CredentialBuilder};
     use openstack_keystone_core_types::identity::UserResponseBuilder;
-    use openstack_keystone_core_types::resource::{Domain, Project};
+    use openstack_keystone_core_types::resource::{Domain, DomainBuilder, Project, ProjectBuilder};
+    use openstack_keystone_core_types::token::FernetToken;
+    use openstack_keystone_core_types::trust::TrustBuilder;
 
-    use super::super::openapi_router;
+    use super::{super::openapi_router, security_context_for_ec2_redemption};
     use crate::api::tests::{get_mocked_state, test_fixture_scoped};
     use crate::api::v3::ec2tokens::types::TokenResponse;
     use crate::credential::MockCredentialProvider;
@@ -340,6 +369,118 @@ mod tests {
                 "params": params,
             }
         })
+    }
+
+    fn principal() -> PrincipalInfo {
+        PrincipalInfo {
+            identity: IdentityInfo::User(
+                UserIdentityInfoBuilder::default()
+                    .user_id("uid")
+                    .build()
+                    .unwrap(),
+            ),
+        }
+    }
+
+    fn project_scope() -> ScopeInfo {
+        ScopeInfo::Project {
+            project: ProjectBuilder::default()
+                .id("pid")
+                .domain_id("pdid")
+                .enabled(true)
+                .name("project")
+                .build()
+                .unwrap(),
+            project_domain: DomainBuilder::default()
+                .id("pdid")
+                .enabled(true)
+                .name("domain")
+                .build()
+                .unwrap(),
+        }
+    }
+
+    fn assert_ec2_payload_methods(context: &mut SecurityContext) -> FernetToken {
+        context.set_authorization_scope(project_scope()).unwrap();
+        let token = FernetToken::from_security_context(
+            context,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+        )
+        .unwrap();
+        assert_eq!(token.methods().as_slice(), ["ec2credential"]);
+        token
+    }
+
+    #[test]
+    fn test_appcred_ec2_context_preserves_delegation_and_method_roundtrip() {
+        let app_cred = ApplicationCredentialBuilder::default()
+            .id("appcred-id")
+            .name("appcred")
+            .project_id("pid")
+            .roles(vec![])
+            .unrestricted(true)
+            .user_id("uid")
+            .build()
+            .unwrap();
+
+        let mut context = security_context_for_ec2_redemption(
+            AuthenticationContext::ApplicationCredential {
+                application_credential: app_cred.clone(),
+                token: None,
+            },
+            principal(),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            context.authentication_context(),
+            AuthenticationContext::ApplicationCredential { .. }
+        ));
+        assert_eq!(context.auth_methods().len(), 1);
+        assert!(context.auth_methods().contains("ec2credential"));
+        assert_eq!(context.audit_ids().len(), 1);
+
+        let token = assert_ec2_payload_methods(&mut context);
+        let restored = AuthenticationContext::ApplicationCredential {
+            application_credential: app_cred,
+            token: Some(token),
+        };
+        assert!(restored.methods().contains("ec2credential"));
+    }
+
+    #[test]
+    fn test_trust_ec2_context_preserves_delegation_and_method_roundtrip() {
+        let trust = TrustBuilder::default()
+            .id("trust-id")
+            .trustor_user_id("trustor")
+            .trustee_user_id("uid")
+            .project_id("pid")
+            .impersonation(false)
+            .build()
+            .unwrap();
+        let mut context = security_context_for_ec2_redemption(
+            AuthenticationContext::Trust {
+                trust: trust.clone(),
+                token: None,
+            },
+            principal(),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            context.authentication_context(),
+            AuthenticationContext::Trust { .. }
+        ));
+        assert_eq!(context.auth_methods().len(), 1);
+        assert!(context.auth_methods().contains("ec2credential"));
+        assert_eq!(context.audit_ids().len(), 1);
+
+        let token = assert_ec2_payload_methods(&mut context);
+        let restored = AuthenticationContext::Trust {
+            trust,
+            token: Some(token),
+        };
+        assert!(restored.methods().contains("ec2credential"));
     }
 
     fn vsc_for_mock() -> openstack_keystone_core::auth::ValidatedSecurityContext {

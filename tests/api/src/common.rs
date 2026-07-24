@@ -446,6 +446,31 @@ pub async fn session_for_config(config: &CloudConfig) -> Result<Arc<AsyncOpenSta
     Ok(Arc::new(AsyncOpenStack::new(config).await?))
 }
 
+/// Send a raw HTTP request to the server at `KEYSTONE_URL`, bypassing the
+/// SDK. Useful for invalid-authentication (401) tests and for endpoints
+/// whose token handling the SDK cannot express (e.g. presenting an
+/// EC2-issued token).
+///
+/// `token: None` sends no `x-auth-token` header at all.
+pub async fn raw_request(
+    method: http::Method,
+    path: &str,
+    token: Option<&str>,
+    body: Option<serde_json::Value>,
+) -> Result<Response> {
+    let base_url: Url = env::var("KEYSTONE_URL")
+        .wrap_err("KEYSTONE_URL must be set")?
+        .parse()?;
+    let mut request = Client::new().request(method, base_url.join(path)?);
+    if let Some(token) = token {
+        request = request.header("x-auth-token", token);
+    }
+    if let Some(body) = body {
+        request = request.json(&body);
+    }
+    Ok(request.send().await?)
+}
+
 /// Admin session scoped to the given domain (see [`get_domain_scope_config`]).
 pub async fn get_domain_scope_session(domain_id: &str) -> Result<Arc<AsyncOpenStack>> {
     session_for_config(&get_domain_scope_config(domain_id)?).await
@@ -476,6 +501,16 @@ mod tests {
     use super::*;
 
     const AUTH_URL: &str = "http://localhost:8080";
+
+    #[test]
+    fn api_test_config_disables_sdk_auth_cache() -> Result<()> {
+        let config = openstack_sdk::config::ConfigFile::new()?;
+        assert!(
+            !config.is_auth_cache_enabled(),
+            "tests/api/clouds.yaml must disable persistent SDK authentication caching"
+        );
+        Ok(())
+    }
 
     /// A base auth block as a K8s/non-default environment might provide
     /// it: custom admin name, custom user domain, project-scoped.

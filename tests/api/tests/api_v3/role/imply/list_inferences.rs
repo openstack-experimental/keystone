@@ -21,6 +21,9 @@ use uuid::Uuid;
 use openstack_keystone_api_types::v3::role::*;
 use openstack_sdk::{AsyncOpenStack, config::CloudConfig};
 
+use test_api::asserts::assert_forbidden;
+use test_api::common::raw_request;
+use test_api::fixtures::{ProjectScopedUser, SystemScopedUser};
 use test_api::role::imply::*;
 use test_api::role::{create_role, delete_role};
 
@@ -52,5 +55,49 @@ async fn test_list_role_inferences() -> Result<()> {
     delete_implied_role(&tc, &prior_role.id, &implied_role.id).await?;
     delete_role(&tc, &implied_role.id).await?;
     delete_role(&tc, &prior_role.id).await?;
+    Ok(())
+}
+
+/// `policy/role/imply_rule/list.rego` allows only `admin` (or a
+/// system-scoped `reader`); a project-scoped member must be denied.
+#[tokio::test]
+async fn test_list_role_inferences_forbidden_project_scoped_member() -> Result<()> {
+    let admin = Arc::new(AsyncOpenStack::new(&CloudConfig::from_env()?).await?);
+    let member = ProjectScopedUser::provision(&admin, "default", "member").await?;
+
+    assert_forbidden(
+        list_role_inferences(&member.session).await,
+        "a project-scoped member must not list global role inferences",
+    );
+
+    member.cleanup().await?;
+    Ok(())
+}
+
+/// Exercise the policy's non-admin positive branch: a reader is permitted only
+/// when the token is scoped to `system: all`.
+#[tokio::test]
+async fn test_list_role_inferences_allowed_system_scoped_reader() -> Result<()> {
+    let admin = Arc::new(AsyncOpenStack::new(&CloudConfig::from_env()?).await?);
+    let reader = SystemScopedUser::provision(&admin, "default", "reader").await?;
+
+    let list_result = list_role_inferences(&reader.session).await;
+    let cleanup_result = reader.cleanup().await;
+
+    list_result?;
+    cleanup_result?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_list_role_inferences_unauthorized() -> Result<()> {
+    let rsp = raw_request(
+        http::Method::GET,
+        "v3/role_inferences",
+        Some("invalid-token"),
+        None,
+    )
+    .await?;
+    assert_eq!(rsp.status(), reqwest::StatusCode::UNAUTHORIZED);
     Ok(())
 }

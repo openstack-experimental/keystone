@@ -13,3 +13,4 @@
 // SPDX-License-Identifier: Apache-2.0
 mod group;
 mod user;
+mod user_groups;

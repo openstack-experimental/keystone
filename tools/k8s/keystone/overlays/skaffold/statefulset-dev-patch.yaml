@@ -31,7 +31,7 @@ spec:
               PLUGIN_SHA256=$(sha256sum /usr/local/lib/reference_plugin.wasm | awk '{print $1}')
               cat <<EOF > /etc/keystone/site.toml
               [auth]
-              methods = "password,token,openid,application_credential,x509,mapped,hacked_appcred_handler"
+              methods = "password,token,openid,application_credential,x509,mapped,hacked_appcred_handler,ec2credential"
               [distributed_storage]
               node_id = $NODE_ID
               node_cluster_addr = "https://$POD_NAME.keystone-rs-internal.default.svc.cluster.local:8300"

@@ -20,6 +20,7 @@ bytes.workspace = true
 chrono = { workspace = true, features = ["serde", "now"] }
 eyre.workspace = true
 derive_builder.workspace = true
+hmac.workspace = true
 http.workspace = true
 openstack-keystone-api-types = { workspace = true, features = ["builder"] }
 openstack-keystone-distributed-storage = { workspace = true }
@@ -29,6 +30,7 @@ secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true
+sha2.workspace = true
 spiffe = { workspace = true, features = ["x509-source"] }
 spiffe-rustls.workspace = true
 tracing.workspace = true

@@ -209,13 +209,20 @@ fn flat_spiffe_claims(svid: &SpiffeId) -> MappingAuthRequest {
 ///
 /// # Returns
 ///
-/// `Ok(())` when the auth type is not EC2, `Err(403 Forbidden)` otherwise.
+/// `Ok(())` when the token was not minted from an EC2 credential, `Err(401
+/// Unauthorized)` otherwise.
 fn reject_if_ec2(user_auth: &ValidatedSecurityContext) -> Result<(), KeystoneApiError> {
-    if matches!(
-        user_auth.inner().authentication_context(),
-        AuthenticationContext::Ec2Credential
-    ) {
-        return Err(KeystoneApiError::SelectedAuthenticationForbidden);
+    // A project-scoped EC2 token is reconstructed as
+    // `AuthenticationContext::Token`, while delegated EC2 tokens are restored
+    // as Trust/ApplicationCredential contexts. The authenticated Fernet
+    // payload's method list is the immutable marker shared by every shape.
+    if user_auth
+        .token()?
+        .methods()
+        .iter()
+        .any(|method| method == "ec2credential")
+    {
+        return Err(KeystoneApiError::UnauthorizedNoContext);
     }
     Ok(())
 }
@@ -604,6 +611,7 @@ mod tests {
     #[tokio::test]
     async fn test_x_auth_token_without_svid_authorizes_via_token() {
         use crate::token::MockTokenProvider;
+        use openstack_keystone_core_types::token::{FernetToken, UnscopedPayload};
 
         let config = Config::default();
         let config_manager = ConfigManager::not_watched(config);
@@ -613,8 +621,13 @@ mod tests {
         let mut token_mock = MockTokenProvider::new();
         token_mock.expect_authorize_by_token().once().returning(
             move |_exec, _token, _allow_rescope, _restrict_to| {
+                let token = FernetToken::Unscoped(UnscopedPayload {
+                    user_id: "token-user".into(),
+                    methods: vec!["password".into()],
+                    ..Default::default()
+                });
                 let mut security_context = SecurityContextTestingBuilder::default()
-                    .authentication_context(AuthenticationContext::Password)
+                    .authentication_context(AuthenticationContext::Token(token.clone()))
                     .principal(
                         PrincipalInfoBuilder::default()
                             .identity(IdentityInfo::Principal(
@@ -627,6 +640,7 @@ mod tests {
                             .build()
                             .unwrap(),
                     )
+                    .token(token)
                     .build();
                 // Fully resolve the context by setting authorization
                 security_context.set_authorization_scope(ScopeInfo::Unscoped)?;
@@ -680,6 +694,7 @@ mod tests {
     #[tokio::test]
     async fn test_x_auth_token_ec2credential_rejected() {
         use crate::token::MockTokenProvider;
+        use openstack_keystone_core_types::token::{FernetToken, ProjectScopePayload};
 
         let config = Config::default();
         let config_manager = ConfigManager::not_watched(config);
@@ -689,8 +704,17 @@ mod tests {
         let mut token_mock = MockTokenProvider::new();
         token_mock.expect_authorize_by_token().once().returning(
             move |_exec, _token, _allow_rescope, _restrict_to| {
+                // This is the shape produced after a real EC2-issued project
+                // token has been decoded: the top-level context is Token, and
+                // the immutable payload methods retain `ec2credential`.
+                let token = FernetToken::ProjectScope(ProjectScopePayload {
+                    user_id: "token-user".into(),
+                    methods: vec!["ec2credential".into()],
+                    project_id: "project-id".into(),
+                    ..Default::default()
+                });
                 let mut security_context = SecurityContextTestingBuilder::default()
-                    .authentication_context(AuthenticationContext::Ec2Credential)
+                    .authentication_context(AuthenticationContext::Token(token.clone()))
                     .principal(
                         PrincipalInfoBuilder::default()
                             .identity(IdentityInfo::Principal(
@@ -703,6 +727,7 @@ mod tests {
                             .build()
                             .unwrap(),
                     )
+                    .token(token)
                     .build();
                 // Fully resolve the context by setting authorization
                 security_context.set_authorization_scope(ScopeInfo::Unscoped)?;
@@ -753,7 +778,99 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            KeystoneApiError::SelectedAuthenticationForbidden
+            KeystoneApiError::UnauthorizedNoContext
+        ));
+    }
+
+    fn delegated_token_vsc(
+        authentication_context: AuthenticationContext,
+        token: openstack_keystone_core_types::token::FernetToken,
+    ) -> ValidatedSecurityContext {
+        let security_context = SecurityContextTestingBuilder::default()
+            .authentication_context(authentication_context)
+            .principal(
+                PrincipalInfoBuilder::default()
+                    .identity(IdentityInfo::Principal(
+                        PrincipalIdentityInfoBuilder::default()
+                            .id("token-user")
+                            .issuer("test.domain")
+                            .build()
+                            .unwrap(),
+                    ))
+                    .build()
+                    .unwrap(),
+            )
+            .token(token)
+            .build();
+        ValidatedSecurityContext::test_new(security_context)
+    }
+
+    #[test]
+    fn test_reject_if_ec2_rejects_restored_application_credential_token() {
+        use openstack_keystone_core_types::application_credential::ApplicationCredentialBuilder;
+        use openstack_keystone_core_types::token::{ApplicationCredentialPayload, FernetToken};
+
+        let application_credential = ApplicationCredentialBuilder::default()
+            .id("appcred-id")
+            .name("appcred")
+            .project_id("project-id")
+            .roles(vec![])
+            .unrestricted(true)
+            .user_id("token-user")
+            .build()
+            .unwrap();
+        let token = FernetToken::ApplicationCredential(ApplicationCredentialPayload {
+            user_id: "token-user".into(),
+            methods: vec!["ec2credential".into()],
+            project_id: "project-id".into(),
+            application_credential_id: "appcred-id".into(),
+            ..Default::default()
+        });
+        let vsc = delegated_token_vsc(
+            AuthenticationContext::ApplicationCredential {
+                application_credential,
+                token: Some(token.clone()),
+            },
+            token,
+        );
+
+        assert!(matches!(
+            reject_if_ec2(&vsc),
+            Err(KeystoneApiError::UnauthorizedNoContext)
+        ));
+    }
+
+    #[test]
+    fn test_reject_if_ec2_rejects_restored_trust_token() {
+        use openstack_keystone_core_types::token::{FernetToken, TrustPayload};
+        use openstack_keystone_core_types::trust::TrustBuilder;
+
+        let trust = TrustBuilder::default()
+            .id("trust-id")
+            .trustor_user_id("trustor")
+            .trustee_user_id("token-user")
+            .project_id("project-id")
+            .impersonation(false)
+            .build()
+            .unwrap();
+        let token = FernetToken::Trust(TrustPayload {
+            user_id: "token-user".into(),
+            methods: vec!["ec2credential".into()],
+            trust_id: "trust-id".into(),
+            project_id: "project-id".into(),
+            ..Default::default()
+        });
+        let vsc = delegated_token_vsc(
+            AuthenticationContext::Trust {
+                trust,
+                token: Some(token.clone()),
+            },
+            token,
+        );
+
+        assert!(matches!(
+            reject_if_ec2(&vsc),
+            Err(KeystoneApiError::UnauthorizedNoContext)
         ));
     }
 }

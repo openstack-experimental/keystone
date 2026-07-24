@@ -46,6 +46,9 @@ use test_api::scim_realm::*;
 /// other resources are explicitly torn down via `cleanup()`.
 pub struct ProvisionedScim {
     pub client: ScimTestClient,
+    admin: Arc<AsyncOpenStack>,
+    domain_id: String,
+    provider_id: String,
     idp: AsyncResourceGuard<IdentityProvider>,
     api_key: AsyncResourceGuard<ApiKeyCreateResponse>,
     ruleset: AsyncResourceGuard<MappingRuleSet>,
@@ -79,6 +82,19 @@ async fn delete_or_warn(resource: impl ResourceGuard) -> Result<()> {
 }
 
 impl ProvisionedScim {
+    /// Permanently remove one already-deprovisioned SCIM resource so tests do
+    /// not leave tombstones or membership rows on a long-lived API server.
+    pub async fn purge_resource(&self, resource_type: &str, keystone_id: &str) -> Result<()> {
+        test_api::scim_realm::purge_resource(
+            &self.admin,
+            &self.domain_id,
+            &self.provider_id,
+            resource_type,
+            keystone_id,
+        )
+        .await
+    }
+
     pub async fn cleanup(self) -> Result<()> {
         delete_or_warn(self.ruleset).await?;
         delete_or_warn(self.api_key).await?;
@@ -185,6 +201,9 @@ async fn provision(grant_role: bool) -> Result<ProvisionedScim> {
 
     Ok(ProvisionedScim {
         client,
+        admin: admin.clone(),
+        domain_id,
+        provider_id,
         idp,
         api_key,
         ruleset,

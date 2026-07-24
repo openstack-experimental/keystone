@@ -204,10 +204,6 @@ jobs:
         if: needs.changes.outputs.code == 'true'
         run: cargo nextest run -p test_api --profile ci-api --test integration_api_v3 --test integration_api_v4
 
-      - name: Invalidate eventual openstack_sdk cache
-        if: needs.changes.outputs.code == 'true'
-        run: rm -rf $HOME/.osc
-
       - name: Run REST API SCIMv2 tests
         if: needs.changes.outputs.code == 'true'
         run: cargo nextest run -p test_api --profile ci-api --test scim_v2

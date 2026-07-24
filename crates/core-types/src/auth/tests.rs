@@ -1364,6 +1364,21 @@ fn test_methods_application_credential() {
 }
 
 #[test]
+fn test_methods_application_credential_preserves_parent_token_methods() {
+    let token = make_fernet_token_with_methods(vec!["ec2credential"]);
+    let methods = AuthenticationContext::ApplicationCredential {
+        application_credential: make_app_cred("uid"),
+        token: Some(token),
+    }
+    .methods();
+
+    assert_eq!(
+        methods,
+        HashSet::from(["ec2credential".to_string(), "token".to_string()])
+    );
+}
+
+#[test]
 fn test_methods_oidc() {
     let oidc = OidcContextBuilder::default()
         .idp_id("idp")
@@ -1395,6 +1410,43 @@ fn test_methods_trust() {
     let trust = make_trust_no_project();
     let m = AuthenticationContext::Trust { trust, token: None }.methods();
     assert_eq!(m, HashSet::from_iter(vec!["trust".to_string()]));
+}
+
+#[test]
+fn test_methods_trust_preserves_parent_token_methods() {
+    let token = make_fernet_token_with_methods(vec!["ec2credential"]);
+    let methods = AuthenticationContext::Trust {
+        trust: make_trust_no_project(),
+        token: Some(token),
+    }
+    .methods();
+
+    assert_eq!(
+        methods,
+        HashSet::from(["ec2credential".to_string(), "token".to_string()])
+    );
+}
+
+#[test]
+fn test_security_context_auth_method_override_is_exact() {
+    let result = AuthenticationResultBuilder::default()
+        .context(AuthenticationContext::ApplicationCredential {
+            application_credential: make_app_cred("uid"),
+            token: None,
+        })
+        .principal(make_principal("uid"))
+        .build()
+        .unwrap();
+
+    let context = SecurityContext::try_from_authentication_result_with_auth_methods(
+        result,
+        HashSet::from(["ec2credential".to_string()]),
+    )
+    .unwrap();
+    assert_eq!(
+        context.auth_methods(),
+        &HashSet::from(["ec2credential".to_string()])
+    );
 }
 
 #[test]
@@ -1556,7 +1608,7 @@ fn test_try_from_single_auth_result_token_audit_ids() {
 
 // --- AuthenticationContext::is_delegated (OSSA-2026-015 / ADR 0019 §2) ---
 
-fn make_token_with_methods(methods: Vec<&str>) -> AuthenticationContext {
+fn make_fernet_token_with_methods(methods: Vec<&str>) -> FernetToken {
     let payload = UnscopedPayloadBuilder::default()
         .user_id("uid")
         .audit_ids(std::iter::empty::<String>())
@@ -1564,7 +1616,11 @@ fn make_token_with_methods(methods: Vec<&str>) -> AuthenticationContext {
         .expires_at(Utc::now())
         .build()
         .unwrap();
-    AuthenticationContext::Token(FernetToken::Unscoped(payload))
+    FernetToken::Unscoped(payload)
+}
+
+fn make_token_with_methods(methods: Vec<&str>) -> AuthenticationContext {
+    AuthenticationContext::Token(make_fernet_token_with_methods(methods))
 }
 
 #[test]

@@ -234,18 +234,21 @@ impl FernetTokenProvider {
         I: IntoIterator<Item = String>,
     {
         let me: HashSet<String> = HashSet::from_iter(methods.into_iter());
+        let unsupported_methods: Vec<&String> = me
+            .iter()
+            .filter(|method| !self.auth_map.values().any(|known| known == *method))
+            .sorted()
+            .collect();
+        if me.is_empty() || !unsupported_methods.is_empty() {
+            return Err(FernetDriverError::UnsupportedAuthMethods(
+                unsupported_methods.iter().join(","),
+            ));
+        }
+
         let res = self
             .auth_map
             .iter()
             .fold(0, |acc, (k, v)| acc + if me.contains(v) { *k } else { 0 });
-
-        // TODO: Improve unit tests to ensure unsupported auth method immediately raises
-        // error.
-        if res == 0 {
-            return Err(FernetDriverError::UnsupportedAuthMethods(
-                me.iter().join(","),
-            ));
-        }
         Ok(res)
     }
 
@@ -611,6 +614,33 @@ pub mod tests {
     fn discard_issued_at(mut token: FernetToken) -> FernetToken {
         token.set_issued_at(Default::default());
         token
+    }
+
+    #[test]
+    fn test_encode_auth_methods_rejects_unsupported_method() {
+        let provider = FernetTokenProvider::new(setup_config());
+
+        let result = provider.encode_auth_methods(["ec2credential".to_string()]);
+
+        assert!(matches!(
+            result,
+            Err(FernetDriverError::UnsupportedAuthMethods(methods))
+                if methods == "ec2credential"
+        ));
+    }
+
+    #[test]
+    fn test_encode_auth_methods_rejects_mixed_supported_and_unsupported_methods() {
+        let provider = FernetTokenProvider::new(setup_config());
+
+        let result =
+            provider.encode_auth_methods(["token".to_string(), "ec2credential".to_string()]);
+
+        assert!(matches!(
+            result,
+            Err(FernetDriverError::UnsupportedAuthMethods(methods))
+                if methods == "ec2credential"
+        ));
     }
 
     #[tokio::test]

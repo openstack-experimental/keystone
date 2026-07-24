@@ -68,7 +68,10 @@ opa_policies_path = policy
 # into a token as a bitmask over exactly this list
 # (crates/token-driver-fernet/src/lib.rs), so both must be present here or
 # token issuance 500s with "unsupported authentication methods".
-methods = password,token,openid,application_credential,x509,mapped,hacked_appcred_handler
+# ec2credential is the method carried by tokens minted at POST /v3/ec2tokens
+# (exercised by the test_api EC2 suite) and needs a bitmask slot just the
+# same.
+methods = password,token,openid,application_credential,x509,mapped,hacked_appcred_handler,ec2credential
 
 [DEFAULT]
 use_stderr = false
