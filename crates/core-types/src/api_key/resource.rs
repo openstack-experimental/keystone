@@ -232,4 +232,7 @@ pub struct ApiClientResourceListParameters {
     /// Restrict to enabled/disabled keys.
     #[builder(default)]
     pub enabled: Option<bool>,
+
+    #[builder(default)]
+    pub pagination: crate::ListPagination,
 }

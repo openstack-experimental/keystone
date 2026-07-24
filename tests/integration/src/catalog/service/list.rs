@@ -71,6 +71,7 @@ async fn test_list_filter_by_type() -> Result<()> {
             &ServiceListParameters {
                 name: None,
                 r#type: Some("compute".to_string()),
+                pagination: Default::default(),
             },
         )
         .await?;

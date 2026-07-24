@@ -15,12 +15,52 @@
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
+use sea_orm::{Cursor, SelectModel};
 
 use openstack_keystone_core::catalog::CatalogProviderError;
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core_types::catalog::*;
 
 use crate::entity::{prelude::Region as DbRegion, region as db_region};
+
+/// Prepare the paginated query for listing regions.
+///
+/// # Parameters
+/// - `params`: The parameters for listing regions.
+///
+/// # Returns
+/// A `Result` containing a `Cursor` for the select model.
+fn get_list_query(
+    params: &RegionListParameters,
+) -> Result<Cursor<SelectModel<db_region::Model>>, CatalogProviderError> {
+    let mut select = DbRegion::find();
+
+    if let Some(parent_region_id) = &params.parent_region_id {
+        select = select.filter(db_region::Column::ParentRegionId.eq(parent_region_id));
+    }
+
+    let mut cursor = select.cursor_by(db_region::Column::Id);
+    if let Some(marker) = &params.pagination.marker {
+        if params.pagination.page_reverse {
+            cursor.before(marker);
+        } else {
+            cursor.after(marker);
+        }
+    }
+    // Over-fetch by one row so the API layer can tell "there is a
+    // next/previous page" exactly, instead of guessing from
+    // `returned == limit` (false-positives when exactly `limit` rows
+    // remain). `.last()` fetches in descending order but sea-orm returns
+    // rows back in ascending order.
+    if let Some(limit) = params.pagination.limit {
+        if params.pagination.page_reverse {
+            cursor.last(limit + 1);
+        } else {
+            cursor.first(limit + 1);
+        }
+    }
+    Ok(cursor)
+}
 
 /// Lists regions.
 ///
@@ -34,28 +74,46 @@ pub async fn list(
     db: &DatabaseConnection,
     params: &RegionListParameters,
 ) -> Result<Vec<Region>, CatalogProviderError> {
-    let mut select = DbRegion::find();
-
-    if let Some(parent_region_id) = &params.parent_region_id {
-        select = select.filter(db_region::Column::ParentRegionId.eq(parent_region_id));
-    }
-
-    select
+    Ok(get_list_query(params)?
         .all(db)
         .await
         .context("fetching regions")?
         .into_iter()
         .map(TryInto::<Region>::try_into)
-        .collect()
+        .collect::<Result<_, _>>()?)
 }
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
+    use sea_orm::{DatabaseBackend, MockDatabase, QueryOrder, Transaction, sea_query::*};
     use serde_json::json;
 
     use super::super::tests::get_region_mock;
     use super::*;
+
+    #[tokio::test]
+    async fn test_query_all() {
+        assert_eq!(
+            r#"SELECT "region"."id", "region"."description", "region"."parent_region_id", "region"."extra" FROM "region""#,
+            QueryOrder::query(&mut get_list_query(&RegionListParameters::default()).unwrap())
+                .to_string(PostgresQueryBuilder)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_query_parent_region_id() {
+        assert!(
+            QueryOrder::query(
+                &mut get_list_query(&RegionListParameters {
+                    parent_region_id: Some("parent".into()),
+                    ..Default::default()
+                })
+                .unwrap()
+            )
+            .to_string(PostgresQueryBuilder)
+            .contains(r#""region"."parent_region_id" = 'parent'"#)
+        );
+    }
 
     #[tokio::test]
     async fn test_list() {
@@ -70,6 +128,7 @@ mod tests {
                 &db,
                 &RegionListParameters {
                     parent_region_id: Some("parent".into()),
+                    ..Default::default()
                 }
             )
             .await
@@ -88,15 +147,42 @@ mod tests {
             [
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "region"."id", "region"."description", "region"."parent_region_id", "region"."extra" FROM "region""#,
+                    r#"SELECT "region"."id", "region"."description", "region"."parent_region_id", "region"."extra" FROM "region" ORDER BY "region"."id" ASC"#,
                     []
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "region"."id", "region"."description", "region"."parent_region_id", "region"."extra" FROM "region" WHERE "region"."parent_region_id" = $1"#,
+                    r#"SELECT "region"."id", "region"."description", "region"."parent_region_id", "region"."extra" FROM "region" WHERE "region"."parent_region_id" = $1 ORDER BY "region"."id" ASC"#,
                     ["parent".into()]
                 ),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn test_list_pagination_over_fetches_and_uses_marker() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_region_mock("1"), get_region_mock("2")]])
+            .into_connection();
+
+        let regions = list(
+            &db,
+            &RegionListParameters {
+                pagination: openstack_keystone_core_types::ListPagination {
+                    limit: Some(1),
+                    marker: Some("0".into()),
+                    page_reverse: false,
+                },
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(regions.len(), 2, "backend over-fetched limit+1 rows");
+
+        let txns = db.into_transaction_log();
+        let sql = &txns[0].statements()[0].sql;
+        assert!(sql.contains(r#""region"."id" >"#));
+        assert!(sql.contains("LIMIT"));
     }
 }

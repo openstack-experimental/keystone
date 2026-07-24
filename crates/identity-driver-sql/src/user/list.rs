@@ -15,6 +15,7 @@
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
+use sea_orm::{Cursor, SelectModel};
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core::error::DbContextExt;
@@ -35,6 +36,45 @@ use crate::local_user::MergeLocalUserData;
 use crate::nonlocal_user::MergeNonlocalUserData;
 use crate::password::MergePasswordData;
 use crate::user::MergeUserData;
+
+/// Prepare the paginated query for listing the main `user` rows.
+///
+/// # Parameters
+/// - `params`: The list parameters.
+///
+/// # Returns
+/// A `Result` containing a `Cursor` for the select model.
+fn get_user_list_query(
+    params: &UserListParameters,
+) -> Result<Cursor<SelectModel<db_user::Model>>, IdentityProviderError> {
+    let mut user_select = DbUser::find();
+
+    if let Some(domain_id) = &params.domain_id {
+        user_select = user_select.filter(db_user::Column::DomainId.eq(domain_id));
+    }
+
+    let mut cursor = user_select.cursor_by(db_user::Column::Id);
+    if let Some(marker) = &params.pagination.marker {
+        if params.pagination.page_reverse {
+            cursor.before(marker);
+        } else {
+            cursor.after(marker);
+        }
+    }
+    // Over-fetch by one row so the API layer can tell "there is a
+    // next/previous page" exactly, instead of guessing from
+    // `returned == limit` (false-positives when exactly `limit` rows
+    // remain). `.last()` fetches in descending order but sea-orm returns
+    // rows back in ascending order.
+    if let Some(limit) = params.pagination.limit {
+        if params.pagination.page_reverse {
+            cursor.last(limit + 1);
+        } else {
+            cursor.first(limit + 1);
+        }
+    }
+    Ok(cursor)
+}
 
 /// List users.
 ///
@@ -58,14 +98,10 @@ pub async fn list(
     params: &UserListParameters,
 ) -> Result<Vec<UserResponse>, IdentityProviderError> {
     // Prepare basic selects
-    let mut user_select = DbUser::find();
     let mut local_user_select = LocalUser::find();
     let mut nonlocal_user_select = NonlocalUser::find();
     let mut federated_user_select = FederatedUser::find();
 
-    if let Some(domain_id) = &params.domain_id {
-        user_select = user_select.filter(db_user::Column::DomainId.eq(domain_id));
-    }
     if let Some(name) = &params.name {
         local_user_select = local_user_select.filter(db_local_user::Column::Name.eq(name));
         nonlocal_user_select = nonlocal_user_select.filter(db_nonlocal_user::Column::Name.eq(name));
@@ -74,7 +110,10 @@ pub async fn list(
     }
 
     // Fetch main `user` entries
-    let db_users: Vec<db_user::Model> = user_select.all(db).await.context("fetching users data")?;
+    let db_users: Vec<db_user::Model> = get_user_list_query(params)?
+        .all(db)
+        .await
+        .context("fetching users data")?;
     let count_of_users_selected = db_users.len();
 
     let user_type = params.user_type.unwrap_or(UserType::All);
@@ -175,6 +214,7 @@ mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
 
     use openstack_keystone_config::Config;
+    use openstack_keystone_core_types::ListPagination;
 
     use super::*;
     use crate::entity::password as db_password;
@@ -219,7 +259,7 @@ mod tests {
         for (l,r) in db.into_transaction_log().iter().zip([
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "user"."created_at", "user"."default_project_id", "user"."domain_id", "user"."enabled", "user"."extra", "user"."id", "user"."last_active_at" FROM "user""#,
+                    r#"SELECT "user"."created_at", "user"."default_project_id", "user"."domain_id", "user"."enabled", "user"."extra", "user"."id", "user"."last_active_at" FROM "user" ORDER BY "user"."id" ASC"#,
                     []
                 ),
                 Transaction::from_sql_and_values(
@@ -290,7 +330,7 @@ mod tests {
         for (l,r) in db.into_transaction_log().iter().zip([
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "user"."created_at", "user"."default_project_id", "user"."domain_id", "user"."enabled", "user"."extra", "user"."id", "user"."last_active_at" FROM "user""#,
+                    r#"SELECT "user"."created_at", "user"."default_project_id", "user"."domain_id", "user"."enabled", "user"."extra", "user"."id", "user"."last_active_at" FROM "user" ORDER BY "user"."id" ASC"#,
                     []
                 ),
                 Transaction::from_sql_and_values(
@@ -317,7 +357,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_list_pagination_forward_over_fetches() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            // Simulates the backend over-fetching `limit + 1 == 2` rows.
+            .append_query_results([vec![get_user_mock("1"), get_user_mock("2")]])
+            .append_query_results([Vec::<crate::entity::user_option::Model>::new()])
+            .append_query_results([vec![get_local_user_mock("1"), get_local_user_mock("2")]])
+            .append_query_results([Vec::<db_password::Model>::new()])
+            .into_connection();
 
+        let config = Config::default();
+        let res = list(
+            &config,
+            &db,
+            &UserListParameters {
+                user_type: Some(UserType::Local),
+                pagination: ListPagination {
+                    limit: Some(1),
+                    marker: Some("m".into()),
+                    page_reverse: false,
+                },
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.len(), 2, "backend over-fetched limit+1 rows");
+
+        let txns = db.into_transaction_log();
+        let sql = &txns[0].statements()[0].sql;
+        assert!(sql.contains(r#""user"."id" >"#));
+        assert!(sql.contains(r#"ORDER BY "user"."id" ASC"#));
+        assert!(sql.contains("LIMIT"));
+    }
+
+    #[tokio::test]
+    async fn test_list_page_reverse() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_user_mock("2"), get_user_mock("3")]])
+            .append_query_results([Vec::<crate::entity::user_option::Model>::new()])
+            .append_query_results([vec![get_local_user_mock("2"), get_local_user_mock("3")]])
+            .append_query_results([Vec::<db_password::Model>::new()])
+            .into_connection();
+
+        let config = Config::default();
+        let res = list(
+            &config,
+            &db,
+            &UserListParameters {
+                user_type: Some(UserType::Local),
+                pagination: ListPagination {
+                    limit: Some(1),
+                    marker: Some("m".into()),
+                    page_reverse: true,
+                },
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.len(), 2);
+
+        let txns = db.into_transaction_log();
+        let sql = &txns[0].statements()[0].sql;
+        assert!(sql.contains(r#""user"."id" <"#));
+        assert!(
+            sql.contains(r#"ORDER BY "user"."id" DESC"#),
+            "expected DESC fetch direction for page_reverse: {sql}"
+        );
+    }
+
+    #[tokio::test]
     async fn test_list_nonlocal_only() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![
@@ -352,7 +462,7 @@ mod tests {
         for (l,r) in db.into_transaction_log().iter().zip([
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "user"."created_at", "user"."default_project_id", "user"."domain_id", "user"."enabled", "user"."extra", "user"."id", "user"."last_active_at" FROM "user""#,
+                    r#"SELECT "user"."created_at", "user"."default_project_id", "user"."domain_id", "user"."enabled", "user"."extra", "user"."id", "user"."last_active_at" FROM "user" ORDER BY "user"."id" ASC"#,
                     []
                 ),
                 Transaction::from_sql_and_values(
@@ -408,7 +518,7 @@ mod tests {
         for (l,r) in db.into_transaction_log().iter().zip([
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "user"."created_at", "user"."default_project_id", "user"."domain_id", "user"."enabled", "user"."extra", "user"."id", "user"."last_active_at" FROM "user""#,
+                    r#"SELECT "user"."created_at", "user"."default_project_id", "user"."domain_id", "user"."enabled", "user"."extra", "user"."id", "user"."last_active_at" FROM "user" ORDER BY "user"."id" ASC"#,
                     []
                 ),
                 Transaction::from_sql_and_values(

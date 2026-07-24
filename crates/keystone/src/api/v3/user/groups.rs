@@ -78,7 +78,14 @@ pub(super) async fn groups(
                 .into_iter()
                 .map(Into::into)
                 .collect();
-            Ok((StatusCode::OK, Json(GroupList { groups })).into_response())
+            Ok((
+                StatusCode::OK,
+                Json(GroupList {
+                    groups,
+                    links: None,
+                }),
+            )
+                .into_response())
         }
         _ => Err(KeystoneApiError::NotFound {
             resource: "user".to_string(),

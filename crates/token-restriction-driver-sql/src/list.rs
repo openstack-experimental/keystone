@@ -13,6 +13,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! List existing token restriction.
 
+use std::collections::HashMap;
+
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
@@ -31,6 +33,12 @@ use crate::entity::{
 };
 
 /// List existing token restrictions.
+///
+/// `find_with_related` issues a single query with a `LEFT JOIN` against the
+/// role-association table, so a naive `.limit()` on it would cap joined rows,
+/// not distinct restrictions. Instead the marker/limit is applied to a first,
+/// join-free query over just the restriction ids; the joined role
+/// associations are then fetched only for that page.
 ///
 /// # Parameters
 /// - `db`: The database connection.
@@ -53,24 +61,60 @@ pub async fn list(
     if let Some(val) = &params.project_id {
         select = select.filter(token_restriction::Column::ProjectId.eq(val));
     }
+
+    let mut cursor = select.cursor_by(token_restriction::Column::Id);
+    if let Some(marker) = &params.pagination.marker {
+        if params.pagination.page_reverse {
+            cursor.before(marker);
+        } else {
+            cursor.after(marker);
+        }
+    }
+    // Over-fetch by one row so the API layer can tell "there is a
+    // next/previous page" exactly, instead of guessing from
+    // `returned == limit` (false-positives when exactly `limit` rows
+    // remain). `.last()` fetches in descending order but sea-orm returns
+    // rows back in ascending order.
+    if let Some(limit) = params.pagination.limit {
+        if params.pagination.page_reverse {
+            cursor.last(limit + 1);
+        } else {
+            cursor.first(limit + 1);
+        }
+    }
+    let page = cursor.all(db).await.context("listing token restrictions")?;
+    if page.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let order: HashMap<String, usize> = page
+        .iter()
+        .enumerate()
+        .map(|(i, model)| (model.id.clone(), i))
+        .collect();
+    let ids: Vec<String> = page.into_iter().map(|model| model.id).collect();
+
     let db_restrictions: Vec<(
         token_restriction::Model,
         Vec<token_restriction_role_association::Model>,
-    )> = select
+    )> = DbTokenRestriction::find()
+        .filter(token_restriction::Column::Id.is_in(ids))
         .find_with_related(DbTokenRestrictionRoleAssociation)
         .all(db)
         .await
-        .context("listing token restrictions")?;
+        .context("listing token restriction role associations")?;
 
-    Ok(db_restrictions
+    let mut result: Vec<TokenRestriction> = db_restrictions
         .into_iter()
         .map(TokenRestriction::from_model_with_ra)
-        .collect())
+        .collect();
+    result.sort_by_key(|r| order.get(&r.id).copied().unwrap_or(usize::MAX));
+    Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
+    use sea_orm::{DatabaseBackend, MockDatabase};
 
     use crate::entity::token_restriction_role_association;
 
@@ -101,8 +145,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_list() {
-        // Create MockDatabase with mock query results
+        // Create MockDatabase with mock query results: first the join-free
+        // marker/limit query, then the `find_with_related` join for that
+        // page's ids.
         let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![token_restriction::Model {
+                id: "id".to_string(),
+                domain_id: "did".to_string(),
+                user_id: Some("uid".to_string()),
+                project_id: Some("pid".to_string()),
+                allow_rescope: true,
+                allow_renew: true,
+            }]])
             .append_query_results([vec![
                 get_restriction_with_roles_mock("id", "rid1"),
                 get_restriction_with_roles_mock("id", "rid2"),
@@ -116,6 +170,7 @@ mod tests {
                     domain_id: Some("did".into()),
                     user_id: Some("uid".into()),
                     project_id: Some("pid".into()),
+                    ..Default::default()
                 },
             )
             .await
@@ -132,14 +187,66 @@ mod tests {
             }]
         );
 
-        // Checking transaction log
-        assert_eq!(
-            db.into_transaction_log(),
-            [Transaction::from_sql_and_values(
-                DatabaseBackend::Postgres,
-                r#"SELECT "token_restriction"."id" AS "A_id", "token_restriction"."domain_id" AS "A_domain_id", "token_restriction"."user_id" AS "A_user_id", "token_restriction"."allow_renew" AS "A_allow_renew", "token_restriction"."allow_rescope" AS "A_allow_rescope", "token_restriction"."project_id" AS "A_project_id", "token_restriction_role_association"."restriction_id" AS "B_restriction_id", "token_restriction_role_association"."role_id" AS "B_role_id" FROM "token_restriction" LEFT JOIN "token_restriction_role_association" ON "token_restriction"."id" = "token_restriction_role_association"."restriction_id" WHERE "token_restriction"."domain_id" = $1 AND "token_restriction"."user_id" = $2 AND "token_restriction"."project_id" = $3 ORDER BY "token_restriction"."id" ASC"#,
-                ["did".into(), "uid".into(), "pid".into()]
-            ),]
+        // Checking transaction log: a join-free marker/limit query, then the
+        // `find_with_related` join restricted to that page's ids.
+        let txns = db.into_transaction_log();
+        assert_eq!(txns.len(), 2);
+        assert!(
+            !txns[0].statements()[0]
+                .sql
+                .contains("token_restriction_role_association")
         );
+        assert!(
+            txns[1].statements()[0]
+                .sql
+                .contains("token_restriction_role_association")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_pagination_over_fetches_and_uses_marker() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![
+                token_restriction::Model {
+                    id: "id1".to_string(),
+                    domain_id: "did".to_string(),
+                    user_id: None,
+                    project_id: None,
+                    allow_rescope: true,
+                    allow_renew: true,
+                },
+                token_restriction::Model {
+                    id: "id2".to_string(),
+                    domain_id: "did".to_string(),
+                    user_id: None,
+                    project_id: None,
+                    allow_rescope: true,
+                    allow_renew: true,
+                },
+            ]])
+            .append_query_results([vec![
+                get_restriction_with_roles_mock("id1", "rid1"),
+                get_restriction_with_roles_mock("id2", "rid2"),
+            ]])
+            .into_connection();
+
+        let restrictions = list(
+            &db,
+            &TokenRestrictionListParameters {
+                pagination: openstack_keystone_core_types::ListPagination {
+                    limit: Some(1),
+                    marker: Some("id0".into()),
+                    page_reverse: false,
+                },
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(restrictions.len(), 2, "backend over-fetched limit+1 rows");
+
+        let txns = db.into_transaction_log();
+        assert!(txns[0].statements()[0].sql.contains(r#""id" >"#));
+        assert!(txns[0].statements()[0].sql.contains("LIMIT"));
     }
 }

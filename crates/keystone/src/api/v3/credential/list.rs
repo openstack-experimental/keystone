@@ -14,14 +14,18 @@
 
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::{OriginalUri, Query, State},
     http::StatusCode,
     response::IntoResponse,
 };
 use serde_json::json;
 
+use openstack_keystone_api_types::PaginationQuery;
+use openstack_keystone_core_types::ListPagination;
+
 use super::types::{Credential, CredentialList, CredentialListParameters};
 use crate::api::auth::Auth;
+use crate::api::common::paginate_forward;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -34,10 +38,13 @@ use openstack_keystone_core::policy::PolicyError;
 /// hints, then every returned record is individually re-checked against
 /// `identity/credential/show` using *that record's own* `user_id`/
 /// `project_id` as the policy target, dropping any the caller may not read.
+/// Pagination is applied *after* this per-item filtering, over the
+/// already-policy-approved set, matching the over-fetch-by-one convention
+/// used everywhere else.
 #[utoipa::path(
     get,
     path = "/",
-    params(CredentialListParameters),
+    params(CredentialListParameters, PaginationQuery),
     description = "List credentials",
     responses(
         (status = OK, description = "List of credentials", body = CredentialList),
@@ -48,7 +55,9 @@ use openstack_keystone_core::policy::PolicyError;
 #[tracing::instrument(name = "api::credential_list", level = "debug", skip(state))]
 pub(super) async fn list(
     Auth(user_auth): Auth,
+    OriginalUri(original_url): OriginalUri,
     Query(query): Query<CredentialListParameters>,
+    Query(pagination): Query<PaginationQuery>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     state
@@ -61,12 +70,21 @@ pub(super) async fn list(
         )
         .await?;
 
+    let config = state.config_manager.config.read().await;
+    let mut provider_params =
+        openstack_keystone_core_types::credential::CredentialListParameters::from(query);
+    provider_params.pagination = ListPagination {
+        limit: config.resolve_list_limit(&config.credential.list_limit, pagination.limit),
+        marker: pagination.marker.clone(),
+        page_reverse: false,
+    };
+
     let raw = state
         .provider
         .get_credential_provider()
         .list_credentials(
             &ExecutionContext::from_auth(&state, &user_auth),
-            &query.into(),
+            &provider_params,
         )
         .await?;
 
@@ -88,7 +106,10 @@ pub(super) async fn list(
         }
     }
 
-    Ok((StatusCode::OK, Json(CredentialList { credentials })).into_response())
+    let (credentials, links) =
+        paginate_forward(&config, credentials, &pagination, original_url.path())?;
+
+    Ok((StatusCode::OK, Json(CredentialList { credentials, links })).into_response())
 }
 
 #[cfg(test)]
@@ -351,5 +372,115 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["own-project"]
         );
+    }
+
+    /// Backend over-fetched (returned `limit + 1 == 2` rows): a `next` link
+    /// is produced and the extra row trimmed from the response body.
+    #[tokio::test]
+    async fn test_list_pagination_link() {
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock
+            .expect_list_credentials()
+            .withf(|_, qp: &CredentialListParameters| qp.pagination.limit == Some(1))
+            .returning(|_, _| {
+                Ok(vec![
+                    CredentialBuilder::default()
+                        .id("1")
+                        .blob(r#"{"seed":"AAAA"}"#)
+                        .r#type("totp")
+                        .user_id("uid")
+                        .build()
+                        .unwrap(),
+                    CredentialBuilder::default()
+                        .id("2")
+                        .blob(r#"{"seed":"BBBB"}"#)
+                        .r#type("totp")
+                        .user_id("uid")
+                        .build()
+                        .unwrap(),
+                ])
+            });
+
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_credential(credential_mock),
+            true,
+            None,
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/?limit=1")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let res: CredentialList = serde_json::from_slice(&body).unwrap();
+        assert_eq!(res.credentials.len(), 1);
+        assert_eq!(res.credentials[0].id, "1");
+        assert!(res.links.is_some());
+    }
+
+    /// Backend returned exactly `limit` rows (no over-fetched extra row): no
+    /// `next` link should be produced.
+    #[tokio::test]
+    async fn test_list_pagination_no_false_positive_next() {
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock
+            .expect_list_credentials()
+            .withf(|_, qp: &CredentialListParameters| qp.pagination.limit == Some(1))
+            .returning(|_, _| {
+                Ok(vec![
+                    CredentialBuilder::default()
+                        .id("1")
+                        .blob(r#"{"seed":"AAAA"}"#)
+                        .r#type("totp")
+                        .user_id("uid")
+                        .build()
+                        .unwrap(),
+                ])
+            });
+
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_credential(credential_mock),
+            true,
+            None,
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/?limit=1")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let res: CredentialList = serde_json::from_slice(&body).unwrap();
+        assert_eq!(res.credentials.len(), 1);
+        assert_eq!(res.links, None);
     }
 }

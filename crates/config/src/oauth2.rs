@@ -20,6 +20,8 @@
 use serde::Deserialize;
 use validator::Validate;
 
+use crate::pagination::ListLimitConfig;
+
 /// OAuth2 signing algorithm (ADR 0026 §3).
 ///
 /// This same value governs both outbound signing and inbound verification;
@@ -146,6 +148,10 @@ pub struct Oauth2Provider {
     #[serde(default = "default_device_code_poll_interval_seconds")]
     #[validate(range(min = 1))]
     pub device_code_poll_interval_seconds: u32,
+
+    /// `GET /v4/oauth2/{domain_id}/clients` pagination limits.
+    #[serde(default)]
+    pub list_limit: ListLimitConfig,
 }
 
 fn default_signing_key_rotation_days() -> u32 {
@@ -222,6 +228,7 @@ impl Default for Oauth2Provider {
             pre_auth_session_lifetime_minutes: default_pre_auth_session_lifetime_minutes(),
             device_code_lifetime_minutes: default_device_code_lifetime_minutes(),
             device_code_poll_interval_seconds: default_device_code_poll_interval_seconds(),
+            list_limit: ListLimitConfig::default(),
         }
     }
 }

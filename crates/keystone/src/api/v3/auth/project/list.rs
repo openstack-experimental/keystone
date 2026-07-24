@@ -95,6 +95,7 @@ pub(super) async fn list(
             } else {
                 vec![]
             },
+            links: None,
         }),
     )
         .into_response())

@@ -98,6 +98,7 @@ async fn test_list_filter_by_interface() -> Result<()> {
                 interface: Some("public".to_string()),
                 service_id: Some(service.id.clone()),
                 region_id: None,
+                pagination: Default::default(),
             },
         )
         .await?;

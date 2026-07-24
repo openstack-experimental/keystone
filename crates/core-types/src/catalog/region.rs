@@ -70,6 +70,10 @@ pub struct RegionListParameters {
     /// Filters the response by a parent region ID.
     #[validate(length(max = 255))]
     pub parent_region_id: Option<String>,
+
+    /// Pagination controls (limit/marker/page_reverse).
+    #[builder(default)]
+    pub pagination: crate::ListPagination,
 }
 
 /// Fields that can be changed when updating a region.

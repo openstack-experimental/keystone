@@ -58,6 +58,10 @@ pub struct RegionList {
     /// Collection of region objects.
     #[cfg_attr(feature = "validate", validate(nested))]
     pub regions: Vec<Region>,
+
+    /// Pagination links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<crate::Link>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

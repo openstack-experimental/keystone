@@ -16,6 +16,7 @@ use serde::Deserialize;
 use std::path::PathBuf;
 
 use crate::common::default_sql_driver;
+use crate::pagination::ListLimitConfig;
 
 /// Credential provider.
 ///
@@ -41,6 +42,10 @@ pub struct CredentialProvider {
     /// Null Key).
     #[serde(default)]
     pub insecure_allow_null_key: bool,
+
+    /// `GET /v3/credentials` pagination limits.
+    #[serde(default)]
+    pub list_limit: ListLimitConfig,
 }
 
 fn default_credential_key_repository() -> PathBuf {
@@ -53,6 +58,7 @@ impl Default for CredentialProvider {
             driver: default_sql_driver(),
             key_repository: default_credential_key_repository(),
             insecure_allow_null_key: false,
+            list_limit: ListLimitConfig::default(),
         }
     }
 }

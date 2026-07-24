@@ -120,6 +120,8 @@ pub struct K8sAuthInstanceListParameters {
     pub domain_id: Option<String>,
     /// Name.
     pub name: Option<String>,
+    #[builder(default)]
+    pub pagination: crate::ListPagination,
 }
 
 pub enum K8sAuthInstanceFilter {

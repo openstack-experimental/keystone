@@ -193,6 +193,25 @@ impl RaftBackend {
             }
             res.push(candidate);
         }
+
+        res.sort_by(|a, b| a.client_id.cmp(&b.client_id));
+        if let Some(marker) = &params.pagination.marker {
+            if params.pagination.page_reverse {
+                res.retain(|x| x.client_id.as_str() < marker.as_str());
+            } else {
+                res.retain(|x| x.client_id.as_str() > marker.as_str());
+            }
+        }
+        if let Some(limit) = params.pagination.limit {
+            let limit = (limit + 1) as usize;
+            if params.pagination.page_reverse {
+                if res.len() > limit {
+                    res = res.split_off(res.len() - limit);
+                }
+            } else {
+                res.truncate(limit);
+            }
+        }
         Ok(res)
     }
 
@@ -646,6 +665,7 @@ mod tests {
             domain_id: "domain-1".to_string(),
             provider_id: None,
             enabled: None,
+            ..Default::default()
         };
         let listed = backend.list_impl(&storage, &params).await.unwrap();
         assert_eq!(listed.len(), 2);

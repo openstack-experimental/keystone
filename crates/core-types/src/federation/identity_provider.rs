@@ -18,6 +18,7 @@ use secrecy::SecretString;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::ListPagination;
 use crate::error::BuilderError;
 
 /// Identity provider resource.
@@ -207,14 +208,10 @@ pub struct IdentityProviderListParameters {
     /// in a single request.
     pub domain_ids: Option<std::collections::HashSet<Option<String>>>,
 
-    /// Limit number of entries on the single response page.
+    /// Pagination controls (limit/marker/page_reverse).
     #[builder(default)]
-    pub limit: Option<u64>,
+    pub pagination: ListPagination,
 
-    /// Page marker (id of the last entry on the previous page.
-    #[builder(default)]
-    pub marker: Option<String>,
-    ///
     /// Filters the response by IDP name.
     pub name: Option<String>,
 }

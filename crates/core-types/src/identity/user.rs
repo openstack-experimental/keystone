@@ -309,6 +309,10 @@ pub struct UserListParameters {
     #[builder(default)]
     //#[serde(default, rename = "type")]
     pub user_type: Option<UserType>,
+
+    /// Pagination controls (limit/marker/page_reverse).
+    #[builder(default)]
+    pub pagination: crate::ListPagination,
 }
 
 /// User type for filtering.

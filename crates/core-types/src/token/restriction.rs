@@ -111,4 +111,7 @@ pub struct TokenRestrictionListParameters {
     /// Project id.
     #[validate(length(min = 1, max = 64))]
     pub project_id: Option<String>,
+
+    #[builder(default)]
+    pub pagination: crate::ListPagination,
 }

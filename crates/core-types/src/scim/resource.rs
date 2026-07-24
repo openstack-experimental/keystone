@@ -122,4 +122,7 @@ pub struct ScimRealmResourceListParameters {
     /// Restrict to enabled/disabled realms.
     #[builder(default)]
     pub enabled: Option<bool>,
+
+    #[builder(default)]
+    pub pagination: crate::ListPagination,
 }

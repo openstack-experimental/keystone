@@ -14,3 +14,9 @@
 //! Domain API types.
 
 pub use openstack_keystone_api_types::v3::domain::*;
+
+impl crate::api::common::ResourceIdentifier for Domain {
+    fn get_id(&self) -> String {
+        self.id.clone()
+    }
+}

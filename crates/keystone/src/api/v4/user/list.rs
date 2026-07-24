@@ -15,15 +15,19 @@
 
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::{OriginalUri, Query, State},
     http::StatusCode,
     response::IntoResponse,
 };
 use serde_json::json;
 use validator::Validate;
 
+use openstack_keystone_api_types::PaginationQuery;
+use openstack_keystone_core_types::ListPagination;
+
 use super::types::{User, UserList, UserListParameters};
 use crate::api::auth::Auth;
+use crate::api::common::paginate_bidirectional;
 use crate::api::error::KeystoneApiError;
 
 use crate::keystone::ServiceState;
@@ -33,7 +37,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 #[utoipa::path(
     get,
     path = "/",
-    params(UserListParameters),
+    params(UserListParameters, PaginationQuery),
     description = "List users",
     responses(
         (status = OK, description = "List of users", body = UserList),
@@ -44,7 +48,9 @@ use openstack_keystone_core::auth::ExecutionContext;
 #[tracing::instrument(name = "api::user_list", level = "debug", skip(state))]
 pub(super) async fn list(
     Auth(user_auth): Auth,
+    OriginalUri(original_url): OriginalUri,
     Query(query): Query<UserListParameters>,
+    Query(pagination): Query<PaginationQuery>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     query.validate()?;
@@ -59,19 +65,30 @@ pub(super) async fn list(
         )
         .await?;
 
+    let config = state.config_manager.config.read().await;
+    let mut provider_params =
+        openstack_keystone_core_types::identity::UserListParameters::from(query);
+    provider_params.pagination = ListPagination {
+        limit: config.resolve_list_limit(&config.identity.list_limit, pagination.limit),
+        marker: pagination.marker.clone(),
+        page_reverse: pagination.page_reverse,
+    };
+
     let users: Vec<User> = state
         .provider
         .get_identity_provider()
         .list_users(
             &ExecutionContext::from_auth(&state, &user_auth),
-            &query.into(),
+            &provider_params,
         )
         .await?
         .into_iter()
         .map(Into::into)
         .collect();
 
-    Ok((StatusCode::OK, Json(UserList { users })).into_response())
+    let (users, links) = paginate_bidirectional(&config, users, &pagination, original_url.path())?;
+
+    Ok((StatusCode::OK, Json(UserList { users, links })).into_response())
 }
 
 #[cfg(test)]
@@ -159,11 +176,7 @@ mod tests {
         identity_mock
             .expect_list_users()
             .withf(|_, qp: &UserListParameters| {
-                UserListParameters {
-                    domain_id: Some("domain".into()),
-                    name: Some("name".into()),
-                    ..Default::default()
-                } == *qp
+                qp.domain_id == Some("domain".into()) && qp.name == Some("name".into())
             })
             .returning(|_, _| Ok(Vec::new()));
 
@@ -236,5 +249,124 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    /// Backend over-fetched (returned `limit + 1 == 2` rows), not the first
+    /// page (`marker` set): both `next` and `previous` links are produced,
+    /// and the extra row is trimmed from the response body.
+    #[tokio::test]
+    async fn test_list_pagination_bidirectional_links() {
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_list_users()
+            .withf(|_, qp: &UserListParameters| {
+                qp.pagination.limit == Some(1) && qp.pagination.marker == Some("m".into())
+            })
+            .returning(|_, _| {
+                Ok(vec![
+                    UserResponseBuilder::default()
+                        .id("1")
+                        .domain_id("did")
+                        .enabled(true)
+                        .name("a")
+                        .build()
+                        .unwrap(),
+                    UserResponseBuilder::default()
+                        .id("2")
+                        .domain_id("did")
+                        .enabled(true)
+                        .name("b")
+                        .build()
+                        .unwrap(),
+                ])
+            });
+
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_identity(identity_mock),
+            true,
+            None,
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/?limit=1&marker=m")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let res: UserList = serde_json::from_slice(&body).unwrap();
+        assert_eq!(res.users.len(), 1);
+        assert_eq!(res.users[0].id, "1");
+        let links = res.links.expect("expected next+previous links");
+        assert!(links.iter().any(|l| l.rel == "next"));
+        assert!(links.iter().any(|l| l.rel == "previous"));
+    }
+
+    /// Backend returned exactly `limit` rows (no over-fetched extra row): no
+    /// `next` link should be produced. This is the false-positive the
+    /// over-fetch design fixes vs the old `returned_count >= limit`
+    /// heuristic.
+    #[tokio::test]
+    async fn test_list_pagination_no_false_positive_next() {
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_list_users()
+            .withf(|_, qp: &UserListParameters| qp.pagination.limit == Some(1))
+            .returning(|_, _| {
+                Ok(vec![
+                    UserResponseBuilder::default()
+                        .id("1")
+                        .domain_id("did")
+                        .enabled(true)
+                        .name("a")
+                        .build()
+                        .unwrap(),
+                ])
+            });
+
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_identity(identity_mock),
+            true,
+            None,
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/?limit=1")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let res: UserList = serde_json::from_slice(&body).unwrap();
+        assert_eq!(res.users.len(), 1);
+        assert_eq!(res.links, None);
     }
 }

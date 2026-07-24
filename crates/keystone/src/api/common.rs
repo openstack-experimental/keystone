@@ -15,10 +15,9 @@
 use std::net::SocketAddr;
 
 use axum::{extract::FromRequestParts, http::request::Parts};
-use serde::Serialize;
 use url::Url;
 
-use openstack_keystone_api_types::Link;
+use openstack_keystone_api_types::{Link, PaginationQuery};
 use openstack_keystone_config::Config;
 use openstack_keystone_core::net::public_ingress_peer_addr;
 use openstack_keystone_core_types::resource::Domain;
@@ -86,63 +85,172 @@ pub async fn get_domain<I: AsRef<str>, N: AsRef<str>>(
     }
 }
 
-/// Prepare the links for the paginated resource collection.
-pub fn build_pagination_links<T, Q>(
-    config: &Config,
-    data: &[T],
-    query: &Q,
-    collection_url: &str,
-) -> Result<Option<Vec<Link>>, KeystoneApiError>
-where
-    T: ResourceIdentifier,
-    Q: QueryParameterPagination + Clone + Serialize,
-{
-    Ok(match &query.get_limit() {
-        Some(limit) => {
-            if (data.len() as u64) >= *limit
-                && let Some(last_id) = data.last().map(|x| x.get_id())
-            {
-                let mut url = if let Some(pe) = &config.default.public_endpoint {
-                    pe.clone()
-                } else {
-                    Url::parse("http://localhost")?
-                };
-                url.set_path(collection_url);
-                let mut new_query = query.clone();
-
-                new_query.set_marker(last_id);
-                url.set_query(Some(&serde_urlencoded::to_string(&new_query)?));
-
-                let next_page_url = format!(
-                    "{}{}",
-                    url.path(),
-                    url.query().map(|q| format!("?{}", q)).unwrap_or_default()
-                );
-                Some(vec![Link {
-                    rel: String::from("next"),
-                    href: next_page_url,
-                }])
-            } else {
-                None
-            }
-        }
-        None => None,
-    })
-}
-
-/// Resource query parameters pagination extension trait.
-pub trait QueryParameterPagination {
-    /// Get the page limit.
-    fn get_limit(&self) -> Option<u64>;
-    /// Set the pagination marker.
-    fn set_marker(&mut self, marker: String) -> &mut Self;
-}
-
 /// Trait for the resource to expose the unique identifier that can be used for
 /// building the marker pagination.
 pub trait ResourceIdentifier {
     /// Get the unique resource identifier.
     fn get_id(&self) -> String;
+}
+
+/// Build a single pagination `Link`, pointing `collection_url` at a new
+/// `marker`/`page_reverse` combination derived from `query`.
+fn build_pagination_link(
+    config: &Config,
+    query: &PaginationQuery,
+    collection_url: &str,
+    rel: &str,
+    marker: String,
+    page_reverse: bool,
+) -> Result<Link, KeystoneApiError> {
+    let mut url = if let Some(pe) = &config.default.public_endpoint {
+        pe.clone()
+    } else {
+        Url::parse("http://localhost")?
+    };
+    url.set_path(collection_url);
+
+    let new_query = PaginationQuery {
+        limit: query.limit,
+        marker: Some(marker),
+        page_reverse,
+    };
+    url.set_query(Some(&serde_urlencoded::to_string(&new_query)?));
+
+    let href = format!(
+        "{}{}",
+        url.path(),
+        url.query().map(|q| format!("?{}", q)).unwrap_or_default()
+    );
+    Ok(Link {
+        rel: rel.to_string(),
+        href,
+    })
+}
+
+/// Paginate a forward-only (v3, python-keystone compatible) list response.
+///
+/// The backend is expected to have over-fetched by one row (`limit + 1`) so
+/// that "is there a next page" can be answered exactly instead of
+/// heuristically guessing from `returned_count >= limit` (which produces a
+/// false-positive `next` link when the table has exactly `limit` rows left).
+/// This trims the extra row off before returning the page.
+///
+/// Never emits a `previous` link — v3 stays forward-only to match real
+/// python-keystone behavior (its `previous` is always `null`).
+pub fn paginate_forward<T: ResourceIdentifier>(
+    config: &Config,
+    mut items: Vec<T>,
+    query: &PaginationQuery,
+    collection_url: &str,
+) -> Result<(Vec<T>, Option<Vec<Link>>), KeystoneApiError> {
+    let Some(limit) = query.limit else {
+        return Ok((items, None));
+    };
+
+    let has_next = items.len() as u64 > limit;
+    if has_next {
+        items.truncate(limit as usize);
+    }
+
+    let links = if has_next {
+        items
+            .last()
+            .map(|last| {
+                build_pagination_link(config, query, collection_url, "next", last.get_id(), false)
+            })
+            .transpose()?
+            .map(|link| vec![link])
+    } else {
+        None
+    };
+
+    Ok((items, links))
+}
+
+/// Paginate a bidirectional (v4) list response.
+///
+/// Same over-fetch/trim mechanism as [`paginate_forward`], but also builds a
+/// `previous` link. The backend is expected to fetch `limit + 1` rows in the
+/// direction implied by `query.page_reverse`:
+/// - forward (`page_reverse == false`): ascending, after `marker`. The extra
+///   row (if any) is trimmed off the tail and signals `next`.
+/// - backward (`page_reverse == true`): descending, before `marker`, then
+///   re-sorted ascending before being passed in here. The extra row (if any) is
+///   trimmed off the *head* and signals `previous`.
+///
+/// Going forward from a backward page is always possible by re-requesting
+/// the original `marker` with `page_reverse: false` — no extra lookup needed.
+pub fn paginate_bidirectional<T: ResourceIdentifier>(
+    config: &Config,
+    mut items: Vec<T>,
+    query: &PaginationQuery,
+    collection_url: &str,
+) -> Result<(Vec<T>, Option<Vec<Link>>), KeystoneApiError> {
+    let Some(limit) = query.limit else {
+        return Ok((items, None));
+    };
+
+    let mut links = Vec::new();
+
+    if query.page_reverse {
+        // We fetched backward; the truncation edge (if any) is at the head.
+        let has_previous = items.len() as u64 > limit;
+        if has_previous {
+            items = items.split_off(items.len() - limit as usize);
+        }
+        if has_previous && let Some(first) = items.first() {
+            links.push(build_pagination_link(
+                config,
+                query,
+                collection_url,
+                "previous",
+                first.get_id(),
+                true,
+            )?);
+        }
+        // The page you'd get by going forward from here is exactly the page
+        // reached by re-requesting the marker that got us here, forward.
+        if let Some(marker) = &query.marker {
+            links.push(build_pagination_link(
+                config,
+                query,
+                collection_url,
+                "next",
+                marker.clone(),
+                false,
+            )?);
+        }
+    } else {
+        let has_next = items.len() as u64 > limit;
+        if has_next {
+            items.truncate(limit as usize);
+        }
+        if has_next && let Some(last) = items.last() {
+            links.push(build_pagination_link(
+                config,
+                query,
+                collection_url,
+                "next",
+                last.get_id(),
+                false,
+            )?);
+        }
+        // Only offer `previous` once we've actually moved past the first page.
+        if query.marker.is_some()
+            && let Some(first) = items.first()
+        {
+            links.push(build_pagination_link(
+                config,
+                query,
+                collection_url,
+                "previous",
+                first.get_id(),
+                true,
+            )?);
+        }
+    }
+
+    Ok((items, if links.is_empty() { None } else { Some(links) }))
 }
 
 #[cfg(test)]
@@ -222,81 +330,89 @@ mod tests {
         pub id: String,
     }
 
-    /// Fake query params for pagination testing.
-    #[derive(Clone, Default, Serialize)]
-    struct FakeQueryParams {
-        pub marker: Option<String>,
-        pub limit: Option<u64>,
-    }
-
     impl ResourceIdentifier for FakeResource {
         fn get_id(&self) -> String {
             self.id.clone()
         }
     }
 
-    impl QueryParameterPagination for FakeQueryParams {
-        fn get_limit(&self) -> Option<u64> {
-            self.limit
-        }
+    fn fake_items(cnt: usize) -> Vec<FakeResource> {
+        Vec::from_iter((0..cnt).map(|x| FakeResource { id: x.to_string() }))
+    }
 
-        fn set_marker(&mut self, marker: String) -> &mut Self {
-            self.marker = Some(marker);
-            self
+    fn pq(limit: Option<u64>, marker: Option<&str>, page_reverse: bool) -> PaginationQuery {
+        PaginationQuery {
+            limit,
+            marker: marker.map(String::from),
+            page_reverse,
         }
     }
 
-    /// Parameterized pagination test
+    /// `cnt` simulates a backend that over-fetches by one row: passing
+    /// exactly `limit` items means "no more pages" (the false-positive case
+    /// this design fixes); passing `limit + 1` means "there is a next page".
     #[rstest]
-    #[case(5, FakeQueryParams::default(), None)]
-    #[case(5, FakeQueryParams{marker: Some("x".into()), limit: None}, None)]
-    #[case(5, FakeQueryParams{marker: Some("x".into()), limit: Some(6)}, None)]
-    #[case(5, FakeQueryParams{marker: Some("x".into()), limit: Some(5)}, Some(vec![
-        Link {
-            rel: "next".into(),
-            href: "/foo/bar?marker=4&limit=5".into()
-        }])
-    )]
-    #[case(5, FakeQueryParams{marker: Some("x".into()), limit: Some(3)}, Some(vec![
-        Link {
-            rel: "next".into(),
-            href: "/foo/bar?marker=4&limit=3".into()
-        }])
-    )]
-    #[case(5, FakeQueryParams{marker: Some("x".into()), limit: Some(1)}, Some(vec![
-        Link {
-            rel: "next".into(),
-            href: "/foo/bar?marker=4&limit=1".into()
-        }])
-    )]
-    #[case(5, FakeQueryParams{marker: Some("x".into()), limit: Some(0)}, Some(vec![
-        Link {
-            rel: "next".into(),
-            href: "/foo/bar?marker=4&limit=0".into()
-        }])
-    )]
-    #[case(0, FakeQueryParams{marker: Some("x".into()), limit: Some(6)}, None)]
-    #[case(0, FakeQueryParams{marker: None, limit: Some(6)}, None)]
-    #[case(5, FakeQueryParams{marker: None, limit: Some(5)}, Some(vec![
-        Link {
-            rel: "next".into(),
-            href: "/foo/bar?marker=4&limit=5".into()
-        }])
-    )]
-    fn test_pagination(
+    #[case(5, pq(None, Some("x"), false), 5, None)]
+    #[case(5, pq(Some(5), Some("x"), false), 5, None)] // exact count: no false-positive next
+    #[case(6, pq(Some(5), Some("x"), false), 5, Some(vec![
+        Link { rel: "next".into(), href: "/foo/bar?limit=5&marker=4".into() }
+    ]))]
+    #[case(4, pq(Some(3), Some("x"), false), 3, Some(vec![
+        Link { rel: "next".into(), href: "/foo/bar?limit=3&marker=2".into() }
+    ]))]
+    #[case(2, pq(Some(1), Some("x"), false), 1, Some(vec![
+        Link { rel: "next".into(), href: "/foo/bar?limit=1&marker=0".into() }
+    ]))]
+    #[case(1, pq(Some(0), Some("x"), false), 0, None)] // truncated to empty: no sensible marker
+    #[case(0, pq(Some(6), Some("x"), false), 0, None)]
+    #[case(0, pq(Some(6), None, false), 0, None)]
+    #[case(6, pq(Some(5), None, false), 5, Some(vec![
+        Link { rel: "next".into(), href: "/foo/bar?limit=5&marker=4".into() }
+    ]))]
+    fn test_paginate_forward(
         #[case] cnt: usize,
-        #[case] query: FakeQueryParams,
-        #[case] expected: Option<Vec<Link>>,
+        #[case] query: PaginationQuery,
+        #[case] expected_len: usize,
+        #[case] expected_links: Option<Vec<Link>>,
     ) {
-        assert_eq!(
-            build_pagination_links(
-                &Config::default(),
-                Vec::from_iter((0..cnt).map(|x| FakeResource { id: x.to_string() })).as_slice(),
-                &query,
-                "foo/bar",
-            )
-            .unwrap(),
-            expected
-        );
+        let (items, links) =
+            paginate_forward(&Config::default(), fake_items(cnt), &query, "foo/bar").unwrap();
+        assert_eq!(items.len(), expected_len);
+        assert_eq!(links, expected_links);
+    }
+
+    #[rstest]
+    // forward, more remaining, had a marker already (not first page): next + previous
+    #[case(6, pq(Some(5), Some("x"), false), 5, Some(vec![
+        Link { rel: "next".into(), href: "/foo/bar?limit=5&marker=4".into() },
+        Link { rel: "previous".into(), href: "/foo/bar?limit=5&marker=0&page_reverse=true".into() },
+    ]))]
+    // forward, more remaining, first page (no marker yet): next only
+    #[case(6, pq(Some(5), None, false), 5, Some(vec![
+        Link { rel: "next".into(), href: "/foo/bar?limit=5&marker=4".into() },
+    ]))]
+    // forward, exact count (no more), not first page: previous only
+    #[case(5, pq(Some(5), Some("x"), false), 5, Some(vec![
+        Link { rel: "previous".into(), href: "/foo/bar?limit=5&marker=0&page_reverse=true".into() },
+    ]))]
+    // backward, more before, has an anchor marker: previous + next (back to where we came from)
+    #[case(6, pq(Some(5), Some("m"), true), 5, Some(vec![
+        Link { rel: "previous".into(), href: "/foo/bar?limit=5&marker=1&page_reverse=true".into() },
+        Link { rel: "next".into(), href: "/foo/bar?limit=5&marker=m".into() },
+    ]))]
+    // backward, exact count (no more before): next only
+    #[case(5, pq(Some(5), Some("m"), true), 5, Some(vec![
+        Link { rel: "next".into(), href: "/foo/bar?limit=5&marker=m".into() },
+    ]))]
+    fn test_paginate_bidirectional(
+        #[case] cnt: usize,
+        #[case] query: PaginationQuery,
+        #[case] expected_len: usize,
+        #[case] expected_links: Option<Vec<Link>>,
+    ) {
+        let (items, links) =
+            paginate_bidirectional(&Config::default(), fake_items(cnt), &query, "foo/bar").unwrap();
+        assert_eq!(items.len(), expected_len);
+        assert_eq!(links, expected_links);
     }
 }

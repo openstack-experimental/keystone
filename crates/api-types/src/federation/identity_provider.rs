@@ -431,17 +431,6 @@ pub struct IdentityProviderListParameters {
     #[cfg_attr(feature = "openapi", param(nullable = false))]
     #[cfg_attr(feature = "validate", validate(length(max = 64)))]
     pub domain_id: Option<String>,
-
-    /// Limit number of entries on the single response page.
-    #[serde(default = "default_list_limit")]
-    pub limit: Option<u64>,
-
-    /// Page marker (id of the last entry on the previous page.
-    pub marker: Option<String>,
-}
-
-fn default_list_limit() -> Option<u64> {
-    Some(20)
 }
 
 #[cfg(test)]

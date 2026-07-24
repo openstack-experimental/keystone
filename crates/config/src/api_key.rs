@@ -20,6 +20,7 @@ use serde::Deserialize;
 use validator::Validate;
 
 use crate::common::{ProxyHeader, csv_ipnet, default_raft_driver};
+use crate::pagination::ListLimitConfig;
 
 /// API Key (SCIM ingress) provider configuration.
 #[derive(Debug, Deserialize, Clone, Validate)]
@@ -91,6 +92,10 @@ pub struct ApiKeyProvider {
     #[serde(default = "default_rate_limit_replenish_per_minute")]
     #[validate(range(min = 1))]
     pub rate_limit_replenish_per_minute: u32,
+
+    /// `GET /v4/api-keys` pagination limits.
+    #[serde(default)]
+    pub list_limit: ListLimitConfig,
 }
 
 fn default_argon2_memory_kib() -> u32 {
@@ -139,6 +144,7 @@ impl Default for ApiKeyProvider {
             trusted_header: ProxyHeader::default(),
             rate_limit_burst_size: default_rate_limit_burst_size(),
             rate_limit_replenish_per_minute: default_rate_limit_replenish_per_minute(),
+            list_limit: ListLimitConfig::default(),
         }
     }
 }

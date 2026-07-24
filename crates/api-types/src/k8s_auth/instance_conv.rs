@@ -63,6 +63,7 @@ impl From<api_types::K8sAuthInstanceListParameters>
         Self {
             domain_id: value.domain_id,
             name: value.name,
+            pagination: Default::default(),
         }
     }
 }

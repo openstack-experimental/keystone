@@ -300,4 +300,7 @@ pub struct OAuth2ClientResourceListParameters {
     /// Restrict to enabled/disabled clients.
     #[builder(default)]
     pub enabled: Option<bool>,
+
+    #[builder(default)]
+    pub pagination: crate::ListPagination,
 }

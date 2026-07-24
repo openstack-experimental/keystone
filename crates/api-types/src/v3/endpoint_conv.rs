@@ -37,6 +37,7 @@ impl From<api_types::EndpointListParameters> for provider_types::EndpointListPar
             interface: value.interface,
             service_id: value.service_id,
             region_id: value.region_id,
+            pagination: Default::default(),
         }
     }
 }

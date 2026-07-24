@@ -130,4 +130,8 @@ pub struct CredentialListParameters {
     #[builder(default)]
     #[validate(length(max = 64))]
     pub user_id: Option<String>,
+
+    /// Pagination controls (limit/marker/page_reverse).
+    #[builder(default)]
+    pub pagination: crate::ListPagination,
 }

@@ -116,6 +116,7 @@ async fn test_list_filter_by_parent() -> Result<()> {
             &ExecutionContext::internal(&state),
             &RegionListParameters {
                 parent_region_id: Some("parent".to_string()),
+                pagination: Default::default(),
             },
         )
         .await?;

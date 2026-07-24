@@ -15,6 +15,12 @@
 
 pub use openstack_keystone_api_types::v3::project::*;
 
+impl crate::api::common::ResourceIdentifier for ProjectShort {
+    fn get_id(&self) -> String {
+        self.id.clone()
+    }
+}
+
 //use crate::resource::types as provider_types;
 //
 //impl From<provider_types::Project> for ProjectShort {
