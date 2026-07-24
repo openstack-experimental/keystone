@@ -201,6 +201,7 @@ utoipa-axum = { version = "0.2" }
 utoipa-swagger-ui = { version = "9.0", default-features = false }
 uuid = { version = "1.23", features = ["v4"] }
 validator = { version = "0.20" }
+vaultrs = { version = "0.8", default-features = false, features = ["rustls"] }
 x509-parser = { version = "0.18" }
 webauthn-authenticator-rs = { version = "0.5" }
 webauthn-rs = { version = "0.5" }

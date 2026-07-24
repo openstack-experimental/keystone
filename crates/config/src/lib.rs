@@ -29,7 +29,12 @@
 //! ```no_run
 //! use openstack_keystone_config::Config;
 //!
-//! let cfg = Config::new("/etc/keystone/keystone.conf".into()).unwrap();
+//! # #[tokio::main]
+//! # async fn main() {
+//! let cfg = Config::new("/etc/keystone/keystone.conf".into())
+//!     .await
+//!     .unwrap();
+//! # }
 //! ```
 //!
 //! ```no_run
@@ -94,6 +99,7 @@ mod security_compliance;
 mod token;
 mod token_restriction;
 mod trust;
+mod vault;
 mod webauthn;
 
 pub use api_key::*;
@@ -134,6 +140,7 @@ pub use security_compliance::*;
 pub use token::*;
 pub use token_restriction::*;
 pub use trust::*;
+pub use vault::VaultSection;
 pub use webauthn::*;
 
 /// Keystone configuration.
@@ -322,20 +329,17 @@ pub struct Config {
     #[serde(default)]
     pub trust: TrustProvider,
 
+    /// Direct Vault bootstrap configuration.
+    #[serde(default)]
+    pub vault: Option<VaultSection>,
+
     /// Webauthn configuration.
     #[serde(default)]
     pub webauthn: WebauthnSection,
 }
 
 impl Config {
-    /// Load the config file.
-    ///
-    /// # Parameters
-    /// - `path`: Path to the config file
-    ///
-    /// # Returns
-    /// - `Ok(Self)` if the config was parsed successfully
-    pub fn new(path: PathBuf) -> Result<Self, Report> {
+    fn build_raw(path: PathBuf) -> Result<config::Config, Report> {
         let mut builder = config::Config::builder();
 
         if std::path::Path::new(&path).is_file() {
@@ -346,24 +350,81 @@ impl Config {
             builder = builder.add_source(File::with_name(&site_vars_file));
         }
 
-        builder = builder.add_source(
-            config::Environment::with_prefix("OS")
-                .prefix_separator("_")
-                .separator("__"),
-        );
-
-        builder.try_into()
+        builder
+            .add_source(
+                config::Environment::with_prefix("OS")
+                    .prefix_separator("_")
+                    .separator("__"),
+            )
+            .build()
+            .wrap_err("Failed to read configuration file")
     }
 
-    /// Load the config file and all certificates referred.
+    fn from_raw(raw: config::Config) -> Result<Self, Report> {
+        raw.try_deserialize()
+            .wrap_err("Failed to parse configuration file")
+    }
+
+    /// Load and parse the config file, resolving any Vault references.
     ///
     /// # Parameters
     /// - `path`: Path to the config file
     ///
     /// # Returns
     /// - `Ok(Self)` if the config was parsed successfully
-    pub fn load_all(path: PathBuf) -> Result<Self, Report> {
-        let mut cfg = Self::new(path)?;
+    pub async fn new(path: PathBuf) -> Result<Self, Report> {
+        let mut raw = Self::build_raw(path)?;
+        Self::resolve_vault_references(&mut raw).await?;
+        Self::from_raw(raw)
+    }
+
+    /// Load the config file, resolve Vault references and all certificates
+    /// referred, and validate the complete configuration.
+    ///
+    /// # Parameters
+    /// - `path`: Path to the config file
+    ///
+    /// # Returns
+    /// - `Ok(Self)` if the config was parsed successfully
+    pub async fn load_all(path: PathBuf) -> Result<Self, Report> {
+        Ok(Self::load_all_with_vault_state(&path).await?.config)
+    }
+
+    /// Resolve any Vault references in `raw` in place.
+    ///
+    /// Returns `Ok(None)` when the configuration contains no Vault references
+    /// (so a plain configuration pays no Vault cost), or `Ok(Some(runtime))`
+    /// with the live [`vault::VaultRuntime`] used to keep the resolved secrets
+    /// current.
+    async fn resolve_vault_references(
+        raw: &mut config::Config,
+    ) -> Result<Option<vault::VaultRuntime>, Report> {
+        if !vault::contains_vault_references(&raw.cache)? {
+            return Ok(None);
+        }
+        raw.get_table("vault")
+            .map_err(|_| vault::VaultConfigError::MissingConfiguration)?;
+        let vault_config: VaultSection = raw
+            .get("vault")
+            .map_err(|_| vault::VaultConfigError::InvalidConfiguration)?;
+        let resolved = vault::resolve(raw, &vault_config).await?;
+        Ok(Some(resolved.runtime))
+    }
+
+    async fn load_all_with_vault_state(path: &Path) -> Result<LoadedConfig, Report> {
+        let mut raw = Self::build_raw(path.to_path_buf())?;
+        let vault = Self::resolve_vault_references(&mut raw).await?;
+        let parsed = Self::from_raw(raw).and_then(Self::finish_load);
+        let config = match vault {
+            // A configuration that resolved Vault references but then failed to
+            // build is surfaced distinctly from a plain configuration error.
+            Some(_) => parsed.map_err(|_| vault::VaultConfigError::ResolvedConfigurationInvalid)?,
+            None => parsed?,
+        };
+        Ok(LoadedConfig { config, vault })
+    }
+
+    fn finish_load(mut cfg: Self) -> Result<Self, Report> {
         if let Some(ref mut ds) = cfg.distributed_storage {
             if let RaftTlsConfiguration::Tls(ref mut tls) = ds.tls_configuration {
                 tls.read_certs()
@@ -416,15 +477,27 @@ impl Config {
 
 impl TryFrom<config::ConfigBuilder<config::builder::DefaultState>> for Config {
     type Error = Report;
+
+    /// Build a [`Config`] directly from a prepared [`config::ConfigBuilder`].
+    ///
+    /// This is the synchronous construction path used by downstream crates
+    /// (and their tests) that assemble configuration in memory rather than
+    /// loading it from a file. It does not resolve Vault references, load
+    /// referred certificates, or run validation; use [`Config::load_all`] for
+    /// the full loading pipeline.
     fn try_from(
         builder: config::ConfigBuilder<config::builder::DefaultState>,
     ) -> Result<Self, Self::Error> {
-        builder
+        let raw = builder
             .build()
-            .wrap_err("Failed to read configuration file")?
-            .try_deserialize()
-            .wrap_err("Failed to parse configuration file")
+            .wrap_err("Failed to read configuration file")?;
+        Self::from_raw(raw)
     }
+}
+
+struct LoadedConfig {
+    config: Config,
+    vault: Option<vault::VaultRuntime>,
 }
 
 /// Config Manager supporting config file watch and reload.
@@ -452,31 +525,30 @@ impl ConfigManager {
         let (notify_tx, _) = tokio::sync::broadcast::channel(16);
 
         // Initial Load
-        let initial_cfg = Self::load_all(&config_path).await?;
+        let initial = Config::load_all_with_vault_state(&config_path).await?;
 
         let manager = Arc::new(Self {
-            config: Arc::new(RwLock::new(initial_cfg)),
+            config: Arc::new(RwLock::new(initial.config)),
             notify_tx,
         });
 
         // Spawn Background Watcher
         let manager_clone = Arc::clone(&manager);
         tokio::spawn(async move {
-            Self::watch_loop(manager_clone, config_path).await;
+            Self::watch_loop(manager_clone, config_path, initial.vault).await;
         });
 
         Ok(manager)
     }
 
-    /// Load the Config with the corresponding referred files.
-    async fn load_all(path: &Path) -> Result<Config, Report> {
-        Config::load_all(path.to_path_buf())
-    }
-
     /// Watch loop for constant watching for the configuration changes and
     /// corresponding notifications.
     #[allow(clippy::expect_used)]
-    async fn watch_loop(manager: Arc<Self>, config_path: PathBuf) {
+    async fn watch_loop(
+        manager: Arc<Self>,
+        config_path: PathBuf,
+        mut vault_runtime: Option<vault::VaultRuntime>,
+    ) {
         let (sync_tx, mut sync_rx) = tokio::sync::mpsc::channel(1);
 
         let mut watcher: RecommendedWatcher =
@@ -506,35 +578,90 @@ impl ConfigManager {
             let _ = watcher.watch(watch.as_path(), RecursiveMode::NonRecursive);
         }
 
-        while let Some(_event) = sync_rx.recv().await {
-            // 1. Drain the channel to ignore rapid-fire events
-            while sync_rx.try_recv().is_ok() {}
-
-            // Give the OS a moment to finish the file write
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-
-            match Self::load_all(&config_path).await {
-                Ok(new_cfg) => {
-                    // Ensure we are watching current cert files
-                    for watch_candidate in new_cfg.get_watch_files() {
-                        if !watched_paths.contains(&watch_candidate) {
-                            let _ = watcher
-                                .watch(watch_candidate.as_path(), RecursiveMode::NonRecursive);
-                            watched_paths.insert(watch_candidate.clone());
+        loop {
+            // Only arm the Vault maintenance timer when a Vault runtime is
+            // active; otherwise this branch never fires (rather than parking on
+            // a far-future sentinel deadline).
+            let vault_deadline = vault_runtime
+                .as_ref()
+                .map(vault::VaultRuntime::next_deadline);
+            let vault_tick = async {
+                match vault_deadline {
+                    Some(deadline) => tokio::time::sleep_until(deadline).await,
+                    None => std::future::pending::<()>().await,
+                }
+            };
+            tokio::select! {
+                event = sync_rx.recv() => {
+                    if event.is_none() {
+                        break;
+                    }
+                    while sync_rx.try_recv().is_ok() {}
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    match Config::load_all_with_vault_state(&config_path).await {
+                        Ok(loaded) => {
+                            Self::apply_loaded(
+                                &manager,
+                                loaded,
+                                &mut vault_runtime,
+                                &mut watcher,
+                                &mut watched_paths,
+                            ).await;
+                        }
+                        Err(_) => {
+                            error!("configuration reload failed; retaining last-known-good configuration");
                         }
                     }
-
-                    // Update the config itself
-                    let mut w = manager.config.write().await;
-                    *w = new_cfg;
-                    // Broadcast the change
-                    let _ = manager.notify_tx.send(());
                 }
-                Err(e) => {
-                    error!("config file watch error: {:?}", e);
+                () = vault_tick => {
+                    let Some(runtime) = &mut vault_runtime else {
+                        continue;
+                    };
+                    if runtime.renew_if_due().await.is_err() {
+                        error!("Vault token renewal failed; retrying while retaining current configuration");
+                    }
+                    match runtime.has_new_version().await {
+                        Ok(true) => match Config::load_all_with_vault_state(&config_path).await {
+                            Ok(loaded) => {
+                                Self::apply_loaded(
+                                    &manager,
+                                    loaded,
+                                    &mut vault_runtime,
+                                    &mut watcher,
+                                    &mut watched_paths,
+                                ).await;
+                            }
+                            Err(_) => {
+                                error!("Vault configuration refresh failed; retaining last-known-good configuration");
+                            }
+                        },
+                        Ok(false) => {}
+                        Err(_) => {
+                            error!("Vault metadata poll failed; retaining last-known-good configuration");
+                        }
+                    }
                 }
             }
         }
+    }
+
+    async fn apply_loaded(
+        manager: &Arc<Self>,
+        loaded: LoadedConfig,
+        vault_runtime: &mut Option<vault::VaultRuntime>,
+        watcher: &mut RecommendedWatcher,
+        watched_paths: &mut HashSet<PathBuf>,
+    ) {
+        for watch_candidate in loaded.config.get_watch_files() {
+            if !watched_paths.contains(&watch_candidate) {
+                let _ = watcher.watch(watch_candidate.as_path(), RecursiveMode::NonRecursive);
+                watched_paths.insert(watch_candidate);
+            }
+        }
+
+        *manager.config.write().await = loaded.config;
+        *vault_runtime = loaded.vault;
+        let _ = manager.notify_tx.send(());
     }
 }
 
@@ -543,13 +670,34 @@ mod tests {
     use std::fs;
     use std::io::Write;
 
+    use httpmock::MockServer;
     use secrecy::ExposeSecret;
+    use serde_json::json;
+    use serial_test::{parallel, serial};
     use tempfile::{NamedTempFile, tempdir};
-    use tokio::time::{Duration, sleep};
+    use tokio::time::{Duration, sleep, timeout};
 
     use super::*;
+    use crate::vault::tests::{mock_lookup, mock_metadata, mock_renew, mock_secret};
 
+    // `Config::new` is async, but these tests drive it from the synchronous
+    // `temp_env::with_var` closure API, so run it to completion on a local
+    // current-thread runtime.
+    fn block_on_config_new(path: PathBuf) -> Result<Config, Report> {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(Config::new(path))
+    }
+
+    // `build_raw` reads process-global environment (`OS_*` overrides and
+    // `KEYSTONE_SITE_VARS_FILE`). Tests that mutate that environment are marked
+    // `#[serial]` and every test that loads a config through `build_raw` is
+    // marked `#[parallel]`, so a mutated variable (e.g. a `KEYSTONE_SITE_VARS_FILE`
+    // pointing at a temp file that is about to be dropped) can never leak into a
+    // concurrently loading test.
     #[test]
+    #[serial]
     fn test_env() {
         temp_env::with_var("OS_API_POLICY__OPA_BASE_URL", Some("http://test/"), || {
             let mut cfg_file = NamedTempFile::new().unwrap();
@@ -564,12 +712,13 @@ mod tests {
             )
             .unwrap();
 
-            let cfg = Config::new(cfg_file.path().to_path_buf()).unwrap();
+            let cfg = block_on_config_new(cfg_file.path().to_path_buf()).unwrap();
             assert_eq!("http://test/", cfg.api_policy.opa_base_url.to_string());
         });
     }
 
     #[test]
+    #[serial]
     fn test_site_vars() {
         let mut site_vars_file = NamedTempFile::with_suffix(".toml").unwrap();
         write!(
@@ -602,7 +751,7 @@ mod tests {
                 )
                 .unwrap();
 
-                let cfg = Config::new(cfg_file.path().to_path_buf()).unwrap();
+                let cfg = block_on_config_new(cfg_file.path().to_path_buf()).unwrap();
                 let ds = cfg.distributed_storage.unwrap();
                 assert_eq!(1, ds.node_id);
                 assert_eq!("http://foo:8300/", ds.node_cluster_addr.to_string());
@@ -661,7 +810,226 @@ mod tests {
         config_path
     }
 
+    fn write_vault_config(
+        file: &mut NamedTempFile,
+        server: &MockServer,
+        refresh_interval_seconds: u64,
+    ) {
+        write!(
+            file,
+            r#"
+    [vault]
+    address = {}
+    token = test-token
+    refresh_interval_seconds = {}
+
+    [auth]
+    methods = []
+
+    [database]
+    connection = "vault://secret/keystone/database#password"
+            "#,
+            server.base_url(),
+            refresh_interval_seconds
+        )
+        .unwrap();
+        file.flush().unwrap();
+    }
+
     #[tokio::test]
+    #[parallel]
+    async fn test_async_loader_resolves_vault_reference() {
+        let server = MockServer::start();
+        let lookup = mock_lookup(&server, false, 60);
+        let metadata = mock_metadata(&server, 4);
+        let secret = mock_secret(
+            &server,
+            4,
+            json!({
+                "password": "environment-value"
+            }),
+        );
+        let mut config_file = NamedTempFile::with_suffix(".conf").unwrap();
+        write!(
+            config_file,
+            r#"
+    [vault]
+    address = {}
+    token = test-token
+
+    [auth]
+    methods = []
+
+    [database]
+    connection = "vault://secret/keystone/database#password"
+            "#,
+            server.base_url()
+        )
+        .unwrap();
+
+        let config = Config::load_all(config_file.path().to_path_buf())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            config.database.connection.expose_secret(),
+            "environment-value"
+        );
+        let vault = config.vault.unwrap();
+        assert_eq!(vault.token.expose_secret(), "test-token");
+        assert_eq!(vault.refresh_interval_seconds, 60);
+        lookup.assert_calls(1);
+        metadata.assert_calls(1);
+        secret.assert_calls(1);
+    }
+
+    #[tokio::test]
+    #[parallel]
+    async fn test_resolved_configuration_error_is_redacted() {
+        let server = MockServer::start();
+        let _lookup = mock_lookup(&server, false, 60);
+        let _metadata = mock_metadata(&server, 1);
+        let _secret = mock_secret(&server, 1, json!({"password": "SUPERSECRET"}));
+        let mut config_file = NamedTempFile::with_suffix(".conf").unwrap();
+        write!(
+            config_file,
+            r#"
+    [vault]
+    address = {}
+    token = test-token
+
+    [DEFAULT]
+    debug = "vault://secret/keystone/database#password"
+
+    [auth]
+    methods = []
+
+    [database]
+    connection = ordinary
+            "#,
+            server.base_url()
+        )
+        .unwrap();
+
+        let error = Config::load_all(config_file.path().to_path_buf())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            "configuration is invalid after resolving Vault references"
+        );
+        assert!(!error.contains("SUPERSECRET"));
+        assert!(!error.contains("test-token"));
+    }
+
+    #[tokio::test]
+    #[parallel]
+    async fn test_async_loader_fails_closed_without_vault_configuration() {
+        let mut config_file = NamedTempFile::with_suffix(".conf").unwrap();
+        write!(
+            config_file,
+            r#"
+    [auth]
+    methods = []
+    [database]
+    connection = "vault://secret/keystone/database#password"
+            "#
+        )
+        .unwrap();
+
+        let error = Config::load_all(config_file.path().to_path_buf())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            "Vault references require a [vault] configuration section"
+        );
+    }
+
+    #[tokio::test]
+    #[parallel]
+    async fn test_vault_version_reload_and_last_known_good_retention() {
+        let server = MockServer::start();
+        let _lookup = mock_lookup(&server, false, 60);
+        let mut metadata = mock_metadata(&server, 1);
+        let mut secret = mock_secret(&server, 1, json!({"password": "version-one"}));
+        let mut config_file = NamedTempFile::with_suffix(".conf").unwrap();
+        write_vault_config(&mut config_file, &server, 1);
+
+        let manager = ConfigManager::watched(config_file.path()).await.unwrap();
+        let mut reloads = manager.notify_tx.subscribe();
+        metadata.delete();
+        secret.delete();
+        let mut metadata = mock_metadata(&server, 2);
+        let mut secret = mock_secret(&server, 2, json!({"password": "version-two"}));
+
+        timeout(Duration::from_secs(4), reloads.recv())
+            .await
+            .expect("Vault version change should trigger a reload")
+            .unwrap();
+        assert_eq!(
+            manager
+                .config
+                .read()
+                .await
+                .database
+                .connection
+                .expose_secret(),
+            "version-two"
+        );
+
+        metadata.delete();
+        secret.delete();
+        let _metadata = mock_metadata(&server, 3);
+        let invalid_secret = mock_secret(&server, 3, json!({"password": 12345}));
+        timeout(Duration::from_secs(4), async {
+            while invalid_secret.calls() == 0 {
+                sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("invalid Vault version should be attempted");
+        sleep(Duration::from_millis(100)).await;
+
+        assert!(reloads.try_recv().is_err());
+        assert_eq!(
+            manager
+                .config
+                .read()
+                .await
+                .database
+                .connection
+                .expose_secret(),
+            "version-two"
+        );
+    }
+
+    #[tokio::test]
+    #[parallel]
+    async fn test_renewable_vault_token_is_renewed_halfway_through_ttl() {
+        let server = MockServer::start();
+        let _lookup = mock_lookup(&server, true, 2);
+        let _metadata = mock_metadata(&server, 1);
+        let _secret = mock_secret(&server, 1, json!({"password": "value"}));
+        let renewal = mock_renew(&server, 2);
+        let mut config_file = NamedTempFile::with_suffix(".conf").unwrap();
+        write_vault_config(&mut config_file, &server, 60);
+
+        let _manager = ConfigManager::watched(config_file.path()).await.unwrap();
+        timeout(Duration::from_secs(4), async {
+            while renewal.calls() == 0 {
+                sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("renewable token should be renewed");
+        assert!(renewal.calls() >= 1);
+    }
+
+    #[tokio::test]
+    #[parallel]
     async fn test_initial_load() {
         let dir = tempdir().unwrap();
         let config_path = setup_files(dir.path());
@@ -679,6 +1047,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[parallel]
     async fn test_reload_on_config_change() {
         let dir = tempdir().unwrap();
         let config_path = setup_files(dir.path());
@@ -719,6 +1088,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[parallel]
     async fn test_reload_on_cert_change() {
         let config_file = NamedTempFile::with_suffix(".conf").unwrap();
         let mut ca_file = NamedTempFile::new().unwrap();
@@ -788,6 +1158,7 @@ mod tests {
         assert!(success, "Config did not update after file change");
     }
     #[tokio::test]
+    #[parallel]
     async fn test_invalid_security_compliance_validation() {
         use std::io::Write;
         use tempfile::NamedTempFile;
@@ -819,7 +1190,7 @@ mod tests {
         f.sync_all().unwrap();
 
         // 1. Attempt to load the configuration
-        let result = Config::load_all(config_file.path().to_path_buf());
+        let result = Config::load_all(config_file.path().to_path_buf()).await;
 
         // 2. Assert that it completely fails and catches our error
         assert!(
@@ -870,8 +1241,9 @@ mod tests {
         assert!(cfg.trusted_proxies.is_empty());
     }
 
-    #[test]
-    fn test_api_key_trusted_proxies_and_validation() {
+    #[tokio::test]
+    #[parallel]
+    async fn test_api_key_trusted_proxies_and_validation() {
         use std::io::Write;
         use tempfile::NamedTempFile;
 
@@ -899,7 +1271,9 @@ mod tests {
         .unwrap();
         f.sync_all().unwrap();
 
-        let cfg = Config::load_all(config_file.path().to_path_buf()).unwrap();
+        let cfg = Config::load_all(config_file.path().to_path_buf())
+            .await
+            .unwrap();
         assert_eq!(
             cfg.api_key.trusted_proxies,
             vec![
@@ -909,8 +1283,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_invalid_api_key_validation() {
+    #[tokio::test]
+    #[parallel]
+    async fn test_invalid_api_key_validation() {
         use std::io::Write;
         use tempfile::NamedTempFile;
 
@@ -942,7 +1317,7 @@ mod tests {
         .unwrap();
         f.sync_all().unwrap();
 
-        let result = Config::load_all(config_file.path().to_path_buf());
+        let result = Config::load_all(config_file.path().to_path_buf()).await;
         assert!(result.is_err());
 
         let err_msg = format!("{:?}", result.unwrap_err());

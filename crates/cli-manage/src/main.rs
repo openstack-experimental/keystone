@@ -92,7 +92,7 @@ pub trait PerformAction {
 #[tokio::main]
 async fn main() -> Result<(), Report> {
     let args = Args::parse();
-    let cfg = Config::load_all(args.config)?;
+    let cfg = Config::load_all(args.config).await?;
     match args.command {
         Command::Bootstrap(x) => x.take_action(&cfg).await?,
         Command::Catalog(x) => x.take_action(&cfg).await?,
