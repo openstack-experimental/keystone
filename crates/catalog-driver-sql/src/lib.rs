@@ -34,7 +34,10 @@ use crate::entity::{
 };
 
 mod endpoint;
+mod endpoint_group;
 pub mod entity;
+mod project_endpoint;
+mod project_endpoint_group;
 mod region;
 mod service;
 
@@ -55,6 +58,50 @@ inventory::submit! {
 
 #[async_trait]
 impl CatalogBackend for SqlBackend {
+    /// Associate an endpoint with a project.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn add_endpoint_to_project<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+        endpoint_id: &'a str,
+    ) -> Result<(), CatalogProviderError> {
+        Ok(project_endpoint::add(&state.db, project_id, endpoint_id).await?)
+    }
+
+    /// Associate an endpoint group with a project.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn add_endpoint_group_to_project<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+        endpoint_group_id: &'a str,
+    ) -> Result<(), CatalogProviderError> {
+        Ok(project_endpoint_group::add(&state.db, project_id, endpoint_group_id).await?)
+    }
+
+    /// Check whether an endpoint is associated with a project.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn check_endpoint_in_project<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+        endpoint_id: &'a str,
+    ) -> Result<bool, CatalogProviderError> {
+        Ok(project_endpoint::check(&state.db, project_id, endpoint_id).await?)
+    }
+
+    /// Check whether an endpoint group is associated with a project.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn check_endpoint_group_in_project<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+        endpoint_group_id: &'a str,
+    ) -> Result<bool, CatalogProviderError> {
+        Ok(project_endpoint_group::check(&state.db, project_id, endpoint_group_id).await?)
+    }
+
     /// Create a new endpoint.
     ///
     /// # Parameters
@@ -71,6 +118,16 @@ impl CatalogBackend for SqlBackend {
         endpoint_data: EndpointCreate,
     ) -> Result<Endpoint, CatalogProviderError> {
         Ok(endpoint::create(&state.db, endpoint_data).await?)
+    }
+
+    /// Create a new endpoint group.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn create_endpoint_group(
+        &self,
+        state: &ServiceState,
+        endpoint_group: EndpointGroupCreate,
+    ) -> Result<EndpointGroup, CatalogProviderError> {
+        Ok(endpoint_group::create(&state.db, endpoint_group).await?)
     }
 
     /// Create a new region.
@@ -123,6 +180,16 @@ impl CatalogBackend for SqlBackend {
         id: &'a str,
     ) -> Result<(), CatalogProviderError> {
         Ok(endpoint::delete(&state.db, id).await?)
+    }
+
+    /// Delete an endpoint group by ID.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn delete_endpoint_group<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<(), CatalogProviderError> {
+        Ok(endpoint_group::delete(&state.db, id).await?)
     }
 
     /// Delete a region by ID.
@@ -195,6 +262,16 @@ impl CatalogBackend for SqlBackend {
         Ok(endpoint::get(&state.db, id).await?)
     }
 
+    /// Get a single endpoint group by ID.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn get_endpoint_group<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+    ) -> Result<Option<EndpointGroup>, CatalogProviderError> {
+        Ok(endpoint_group::get(&state.db, id).await?)
+    }
+
     /// Get a single region by ID.
     ///
     /// # Parameters
@@ -249,6 +326,36 @@ impl CatalogBackend for SqlBackend {
         Ok(endpoint::list(&state.db, params).await?)
     }
 
+    /// List endpoint groups.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn list_endpoint_groups(
+        &self,
+        state: &ServiceState,
+        params: &EndpointGroupListParameters,
+    ) -> Result<Vec<EndpointGroup>, CatalogProviderError> {
+        Ok(endpoint_group::list(&state.db, params).await?)
+    }
+
+    /// List the endpoints associated with a project.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn list_project_endpoints<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+    ) -> Result<Vec<Endpoint>, CatalogProviderError> {
+        Ok(project_endpoint::list_endpoints(&state.db, project_id).await?)
+    }
+
+    /// List the endpoint groups associated with a project.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn list_project_endpoint_groups<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+    ) -> Result<Vec<EndpointGroup>, CatalogProviderError> {
+        Ok(project_endpoint_group::list_endpoint_groups(&state.db, project_id).await?)
+    }
+
     /// List regions.
     ///
     /// # Parameters
@@ -296,6 +403,30 @@ impl CatalogBackend for SqlBackend {
     /// A `Result` containing the updated `Endpoint`, or a
     /// `CatalogProviderError`.
     #[tracing::instrument(level = "debug", skip(self, state))]
+    /// Remove the association between an endpoint and a project.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn remove_endpoint_from_project<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+        endpoint_id: &'a str,
+    ) -> Result<(), CatalogProviderError> {
+        Ok(project_endpoint::remove(&state.db, project_id, endpoint_id).await?)
+    }
+
+    /// Remove the association between an endpoint group and a project.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn remove_endpoint_group_from_project<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+        endpoint_group_id: &'a str,
+    ) -> Result<(), CatalogProviderError> {
+        Ok(project_endpoint_group::remove(&state.db, project_id, endpoint_group_id).await?)
+    }
+
+    /// Update an existing endpoint.
+    #[tracing::instrument(level = "debug", skip(self, state))]
     async fn update_endpoint<'a>(
         &self,
         state: &ServiceState,
@@ -303,6 +434,17 @@ impl CatalogBackend for SqlBackend {
         endpoint_data: EndpointUpdate,
     ) -> Result<Endpoint, CatalogProviderError> {
         Ok(endpoint::update(&state.db, id, endpoint_data).await?)
+    }
+
+    /// Update an existing endpoint group.
+    #[tracing::instrument(level = "debug", skip(self, state))]
+    async fn update_endpoint_group<'a>(
+        &self,
+        state: &ServiceState,
+        id: &'a str,
+        endpoint_group: EndpointGroupUpdate,
+    ) -> Result<EndpointGroup, CatalogProviderError> {
+        Ok(endpoint_group::update(&state.db, id, endpoint_group).await?)
     }
 
     /// Update an existing region.

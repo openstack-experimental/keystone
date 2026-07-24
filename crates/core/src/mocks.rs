@@ -633,11 +633,45 @@ mod catalog {
 
         #[async_trait]
         impl CatalogApi for CatalogProvider {
+            async fn add_endpoint_to_project<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+                endpoint_id: &'a str,
+            ) -> Result<(), CatalogProviderError>;
+
+            async fn add_endpoint_group_to_project<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+                endpoint_group_id: &'a str,
+            ) -> Result<(), CatalogProviderError>;
+
+            async fn check_endpoint_in_project<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+                endpoint_id: &'a str,
+            ) -> Result<bool, CatalogProviderError>;
+
+            async fn check_endpoint_group_in_project<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+                endpoint_group_id: &'a str,
+            ) -> Result<bool, CatalogProviderError>;
+
             async fn create_endpoint<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
                 endpoint: EndpointCreate,
             ) -> Result<Endpoint, CatalogProviderError>;
+
+            async fn create_endpoint_group<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                endpoint_group: EndpointGroupCreate,
+            ) -> Result<EndpointGroup, CatalogProviderError>;
 
             async fn create_region<'a>(
                 &self,
@@ -652,6 +686,12 @@ mod catalog {
             ) -> Result<Service, CatalogProviderError>;
 
             async fn delete_endpoint<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                id: &'a str,
+            ) -> Result<(), CatalogProviderError>;
+
+            async fn delete_endpoint_group<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
                 id: &'a str,
@@ -681,6 +721,12 @@ mod catalog {
                 id: &'a str,
             ) -> Result<Option<Endpoint>, CatalogProviderError>;
 
+            async fn get_endpoint_group<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                id: &'a str,
+            ) -> Result<Option<EndpointGroup>, CatalogProviderError>;
+
             async fn get_region<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
@@ -699,6 +745,24 @@ mod catalog {
                 params: &EndpointListParameters,
             ) -> Result<Vec<Endpoint>, CatalogProviderError>;
 
+            async fn list_endpoint_groups<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                params: &EndpointGroupListParameters,
+            ) -> Result<Vec<EndpointGroup>, CatalogProviderError>;
+
+            async fn list_project_endpoints<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+            ) -> Result<Vec<Endpoint>, CatalogProviderError>;
+
+            async fn list_project_endpoint_groups<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+            ) -> Result<Vec<EndpointGroup>, CatalogProviderError>;
+
             async fn list_regions<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
@@ -711,12 +775,33 @@ mod catalog {
                 params: &ServiceListParameters,
             ) -> Result<Vec<Service>, CatalogProviderError>;
 
+            async fn remove_endpoint_from_project<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+                endpoint_id: &'a str,
+            ) -> Result<(), CatalogProviderError>;
+
+            async fn remove_endpoint_group_from_project<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+                endpoint_group_id: &'a str,
+            ) -> Result<(), CatalogProviderError>;
+
             async fn update_endpoint<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
                 id: &'a str,
                 endpoint: EndpointUpdate,
             ) -> Result<Endpoint, CatalogProviderError>;
+
+            async fn update_endpoint_group<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                id: &'a str,
+                endpoint_group: EndpointGroupUpdate,
+            ) -> Result<EndpointGroup, CatalogProviderError>;
 
             async fn update_region<'a>(
                 &self,
