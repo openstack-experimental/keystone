@@ -84,6 +84,8 @@ pub(crate) enum VaultConfigError {
     MetadataRead,
     #[error("Vault token renewal failed")]
     TokenRenewal,
+    #[error("Vault token revocation failed")]
+    TokenRevocation,
     #[error("configuration is invalid after resolving Vault references")]
     ResolvedConfigurationInvalid,
 }
@@ -109,6 +111,19 @@ impl VaultRuntime {
             .as_ref()
             .map(|renewal| renewal.next.min(self.next_poll))
             .unwrap_or(self.next_poll)
+    }
+
+    /// Revoke the Vault token via `auth/token/revoke-self`.
+    ///
+    /// Called during graceful shutdown to invalidate the token (and any
+    /// leases created with it) immediately, rather than leaving it valid
+    /// until its TTL expires. Best-effort: the process is stopping, so a
+    /// failure is surfaced to the caller for logging but cannot be retried.
+    pub(crate) async fn revoke(&self) -> Result<(), VaultConfigError> {
+        self.client
+            .revoke()
+            .await
+            .map_err(|_| VaultConfigError::TokenRevocation)
     }
 
     pub(crate) async fn renew_if_due(&mut self) -> Result<(), VaultConfigError> {
@@ -467,6 +482,13 @@ pub(crate) mod tests {
                     "orphan": true
                 }
             }));
+        })
+    }
+
+    pub(crate) fn mock_revoke(server: &MockServer) -> Mock<'_> {
+        server.mock(|when, then| {
+            when.method(POST).path("/v1/auth/token/revoke-self");
+            then.status(204);
         })
     }
 

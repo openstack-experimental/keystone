@@ -227,6 +227,9 @@ impl Service {
     /// - `Err(KeystoneError)` if an error occurred during termination.
     pub async fn terminate(&self) -> Result<(), KeystoneError> {
         info!("Terminating Keystone");
+        // Stop the config watcher and, for a Vault-backed configuration,
+        // revoke the Vault token before the process exits.
+        self.config_manager.shutdown().await;
         Ok(())
     }
 }
