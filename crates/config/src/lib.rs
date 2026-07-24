@@ -57,7 +57,9 @@ use config::{File, FileFormat};
 use eyre::{Report, WrapErr};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Deserialize;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use tracing::error;
 use validator::Validate;
 
@@ -530,6 +532,12 @@ pub struct ConfigManager {
     pub config: Arc<RwLock<Config>>,
     /// Notify listeners that something changed.
     pub notify_tx: tokio::sync::broadcast::Sender<()>,
+    /// Signals the background watcher to stop and run its teardown (e.g.
+    /// revoking the Vault token) on graceful shutdown.
+    shutdown: CancellationToken,
+    /// Handle to the spawned watcher task, awaited by [`Self::shutdown`] so
+    /// teardown completes before the process exits.
+    watcher_handle: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl ConfigManager {
@@ -539,7 +547,22 @@ impl ConfigManager {
         Arc::new(Self {
             config: Arc::new(RwLock::new(config)),
             notify_tx,
+            shutdown: CancellationToken::new(),
+            watcher_handle: Mutex::new(None),
         })
+    }
+
+    /// Gracefully stop the background watcher.
+    ///
+    /// Cancels the watch loop and awaits its completion. When the
+    /// configuration is Vault-backed, the loop revokes the Vault token as
+    /// part of its teardown before this returns. Safe to call on an
+    /// unwatched manager (no-op) and idempotent across repeated calls.
+    pub async fn shutdown(&self) {
+        self.shutdown.cancel();
+        if let Some(handle) = self.watcher_handle.lock().await.take() {
+            let _ = handle.await;
+        }
     }
 
     /// Initializes the config, starts the background watcher,
@@ -551,16 +574,20 @@ impl ConfigManager {
         // Initial Load
         let initial = Config::load_all_with_vault_state(&config_path).await?;
 
+        let shutdown = CancellationToken::new();
         let manager = Arc::new(Self {
             config: Arc::new(RwLock::new(initial.config)),
             notify_tx,
+            shutdown: shutdown.clone(),
+            watcher_handle: Mutex::new(None),
         });
 
         // Spawn Background Watcher
         let manager_clone = Arc::clone(&manager);
-        tokio::spawn(async move {
-            Self::watch_loop(manager_clone, config_path, initial.vault).await;
+        let handle = tokio::spawn(async move {
+            Self::watch_loop(manager_clone, config_path, initial.vault, shutdown).await;
         });
+        *manager.watcher_handle.lock().await = Some(handle);
 
         Ok(manager)
     }
@@ -572,6 +599,7 @@ impl ConfigManager {
         manager: Arc<Self>,
         config_path: PathBuf,
         mut vault_runtime: Option<vault::VaultRuntime>,
+        shutdown: CancellationToken,
     ) {
         let (sync_tx, mut sync_rx) = tokio::sync::mpsc::channel(1);
 
@@ -616,6 +644,9 @@ impl ConfigManager {
                 }
             };
             tokio::select! {
+                () = shutdown.cancelled() => {
+                    break;
+                }
                 event = sync_rx.recv() => {
                     if event.is_none() {
                         break;
@@ -667,6 +698,16 @@ impl ConfigManager {
                 }
             }
         }
+
+        // The loop exited (graceful shutdown or the watcher channel closing).
+        // For a Vault-backed configuration, revoke the token so it is
+        // invalidated immediately instead of lingering valid until its TTL
+        // expires.
+        if let Some(runtime) = &vault_runtime
+            && runtime.revoke().await.is_err()
+        {
+            error!("Vault token revocation on shutdown failed");
+        }
     }
 
     async fn apply_loaded(
@@ -702,7 +743,7 @@ mod tests {
     use tokio::time::{Duration, sleep, timeout};
 
     use super::*;
-    use crate::vault::tests::{mock_lookup, mock_metadata, mock_renew, mock_secret};
+    use crate::vault::tests::{mock_lookup, mock_metadata, mock_renew, mock_revoke, mock_secret};
 
     // `Config::new` is async, but these tests drive it from the synchronous
     // `temp_env::with_var` closure API, so run it to completion on a local
@@ -970,6 +1011,38 @@ mod tests {
             error,
             "Vault references require a [vault] configuration section"
         );
+    }
+
+    #[tokio::test]
+    #[parallel]
+    async fn test_vault_token_revoked_on_shutdown() {
+        let server = MockServer::start();
+        let _lookup = mock_lookup(&server, false, 60);
+        let _metadata = mock_metadata(&server, 1);
+        let _secret = mock_secret(&server, 1, json!({"password": "version-one"}));
+        let revoke = mock_revoke(&server);
+        let mut config_file = NamedTempFile::with_suffix(".conf").unwrap();
+        write_vault_config(&mut config_file, &server, 60);
+
+        let manager = ConfigManager::watched(config_file.path()).await.unwrap();
+        manager.shutdown().await;
+
+        assert_eq!(revoke.calls(), 1);
+    }
+
+    #[tokio::test]
+    #[parallel]
+    async fn test_shutdown_without_vault_is_noop() {
+        let mut config_file = NamedTempFile::with_suffix(".conf").unwrap();
+        writeln!(
+            config_file,
+            "[auth]\nmethods = []\n[database]\nconnection = sqlite://\n"
+        )
+        .unwrap();
+
+        let manager = ConfigManager::watched(config_file.path()).await.unwrap();
+        // Must return promptly and not panic for a non-Vault configuration.
+        manager.shutdown().await;
     }
 
     #[tokio::test]
