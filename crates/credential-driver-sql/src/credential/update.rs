@@ -46,6 +46,9 @@ pub async fn update(
     if let Some(new_type) = rec.r#type {
         active.r#type = Set(new_type);
     }
+    if let Some(new_project_id) = rec.project_id {
+        active.project_id = Set(Some(new_project_id));
+    }
     if let Some(new_blob) = rec.blob {
         let repo = FernetKeyRepository::new(cfg.credential.key_repository.clone());
         let keys = repo.load(cfg.credential.insecure_allow_null_key).await?;
@@ -127,10 +130,32 @@ mod tests {
 
         let rec = CredentialUpdate {
             blob: None,
+            project_id: None,
             r#type: Some("ec2".into()),
         };
         let updated = update(&cfg, &db, "cred-1", rec).await.unwrap();
         assert_eq!(updated.r#type, "ec2");
+        assert_eq!(updated.blob, "original-secret");
+    }
+
+    #[tokio::test]
+    async fn test_update_project_id() {
+        let key_dir = tempfile::tempdir().unwrap();
+        let cfg = test_config(key_dir.path());
+        let db = test_db().await;
+        FernetKeyRepository::new(key_dir.path().to_path_buf())
+            .setup()
+            .await
+            .unwrap();
+        insert_credential(&cfg, &db, "cred-1", b"original-secret").await;
+
+        let rec = CredentialUpdate {
+            blob: None,
+            project_id: Some("new-project".into()),
+            r#type: None,
+        };
+        let updated = update(&cfg, &db, "cred-1", rec).await.unwrap();
+        assert_eq!(updated.project_id.as_deref(), Some("new-project"));
         assert_eq!(updated.blob, "original-secret");
     }
 
@@ -147,6 +172,7 @@ mod tests {
 
         let rec = CredentialUpdate {
             blob: Some("new-secret".into()),
+            project_id: None,
             r#type: None,
         };
         let updated = update(&cfg, &db, "cred-1", rec).await.unwrap();

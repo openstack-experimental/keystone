@@ -28,9 +28,12 @@ use openstack_keystone_core::auth::ExecutionContext;
 
 /// Update an existing credential.
 ///
-/// Immutable fields (`user_id`, and — within `blob` — `access`, `trust_id`,
+/// Immutable fields (`user_id`, and — within `blob` — `trust_id`,
 /// `app_cred_id`, `access_token_id`) are enforced by the provider layer
-/// (CVE-2020-12691); this handler only wires the request through.
+/// (CVE-2020-12691); this handler only wires the request through. The EC2
+/// `access` value itself is *not* immutable (matches keystone-py, see
+/// `crates/core/src/credential/service.rs`), even though it no longer
+/// matches the credential's SHA-256-derived `id` after such a change.
 #[utoipa::path(
     patch,
     path = "/{credential_id}",
@@ -281,6 +284,91 @@ mod tests {
         assert_eq!(updated.credential.id, "bar");
     }
 
+    /// Regression test for the tempest gap (`test_credentials_create_get_
+    /// update_delete`, GitHub issue #1044): `project_id` in the PATCH body
+    /// must actually reach the provider's `CredentialUpdate` and come back
+    /// in the response, not silently get dropped.
+    #[tokio::test]
+    async fn test_update_project_id() {
+        let mut credential_mock = MockCredentialProvider::default();
+
+        credential_mock
+            .expect_get_credential()
+            .withf(|_, id: &'_ str| id == "bar")
+            .returning(|_, _| {
+                Ok(Some(
+                    CredentialBuilder::default()
+                        .id("bar")
+                        .blob(r#"{"access":"AKIA","secret":"OLD"}"#)
+                        .r#type("ec2")
+                        .user_id("uid")
+                        .project_id("p1")
+                        .build()
+                        .unwrap(),
+                ))
+            });
+
+        credential_mock
+            .expect_update_credential()
+            .withf(
+                |_,
+                 id: &'_ str,
+                 rec: &openstack_keystone_core_types::credential::CredentialUpdate| {
+                    id == "bar" && rec.project_id.as_deref() == Some("p2")
+                },
+            )
+            .returning(|_, _, _| {
+                Ok(CredentialBuilder::default()
+                    .id("bar")
+                    .blob(r#"{"access":"AKIA","secret":"NEW"}"#)
+                    .r#type("ec2")
+                    .user_id("uid")
+                    .project_id("p2")
+                    .build()
+                    .unwrap())
+            });
+
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_credential(credential_mock),
+            true,
+            None,
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let update_req = CredentialUpdateRequest {
+            credential: CredentialUpdateBuilder::default()
+                .blob(r#"{"access":"AKIA","secret":"NEW"}"#)
+                .project_id("p2")
+                .build()
+                .unwrap(),
+        };
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .uri("/bar")
+                    .extension(vsc)
+                    .body(Body::from(serde_json::to_string(&update_req).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let updated: ApiCredentialResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(updated.credential.project_id.as_deref(), Some("p2"));
+    }
+
     #[tokio::test]
     async fn test_update_not_found() {
         let mut credential_mock = MockCredentialProvider::default();
@@ -381,16 +469,29 @@ mod tests {
             vsc: ValidatedSecurityContext,
             provider_builder: ProviderBuilder,
         ) -> StatusCode {
+            update_request_with_patch(vsc, provider_builder, None).await
+        }
+
+        /// Like `update_request`, but lets the patch carry a `project_id` --
+        /// the only way to drive `moves_project_out_of_scope`
+        /// (`policy/credential/update.rego`) through this handler.
+        async fn update_request_with_patch(
+            vsc: ValidatedSecurityContext,
+            provider_builder: ProviderBuilder,
+            patch_project_id: Option<&str>,
+        ) -> StatusCode {
             let (state, _opa_guard) = get_state_with_real_policy(provider_builder).await;
             let mut api = openapi_router()
                 .layer(TraceLayer::new_for_http())
                 .with_state(state);
 
+            let mut builder = CredentialUpdateBuilder::default();
+            builder.blob(r#"{"seed":"NEW"}"#);
+            if let Some(project_id) = patch_project_id {
+                builder.project_id(project_id);
+            }
             let update_req = CredentialUpdateRequest {
-                credential: CredentialUpdateBuilder::default()
-                    .blob(r#"{"seed":"NEW"}"#)
-                    .build()
-                    .unwrap(),
+                credential: builder.build().unwrap(),
             };
 
             api.as_service()
@@ -429,12 +530,7 @@ mod tests {
         }
 
         /// OSSA-2026-015: a delegated caller updating a credential already
-        /// bound to its own delegation project is allowed. Note:
-        /// `moves_project_out_of_scope` in the policy is currently
-        /// unreachable via this handler -- `CredentialUpdate`
-        /// (`crates/api-types/src/v3/credential.rs`) has no `project_id`
-        /// field, so the update patch this handler builds can never carry
-        /// one for the policy to inspect.
+        /// bound to its own delegation project is allowed.
         #[tokio::test]
         async fn delegated_caller_updating_credential_bound_to_own_project_is_allowed() {
             let status = update_request(
@@ -455,6 +551,36 @@ mod tests {
             )
             .await;
             assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+
+        /// OSSA-2026-015: a delegated caller must not be able to use
+        /// `project_id` in the patch to move a credential it owns out of the
+        /// delegation's own project (`moves_project_out_of_scope` in
+        /// `policy/credential/update.rego`).
+        #[tokio::test]
+        async fn delegated_caller_moving_credential_out_of_own_project_is_denied() {
+            let status = update_request_with_patch(
+                restricted_app_cred_vsc("u1", "p1"),
+                provider_with_credential("u1", Some("p1")),
+                Some("p2"),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+
+        /// A non-delegated caller updating their own credential may set
+        /// `project_id` in the patch -- this is the regression covered by
+        /// tempest's `test_credentials_create_get_update_delete`, which
+        /// updates a credential's `project_id` and expects it to stick.
+        #[tokio::test]
+        async fn owner_updating_own_credential_project_id_is_allowed() {
+            let status = update_request_with_patch(
+                member_vsc("u1", "p1", &["member"]),
+                provider_with_credential("u1", None),
+                Some("p2"),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
         }
     }
 }
