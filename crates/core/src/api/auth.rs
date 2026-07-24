@@ -237,7 +237,7 @@ mod tests {
         let config = Config::default();
         let config_manager = ConfigManager::not_watched(config);
         let policy_enforcer = Arc::new(MockPolicy::default());
-        let db = sea_orm::DatabaseConnection::Disconnected;
+        let db = sea_orm::DatabaseConnection::default();
         let provider = Provider::mocked_builder()
             .mock_mapping(mapping_provider)
             .build()
@@ -362,7 +362,7 @@ mod tests {
 
         let state = Arc::new(Service {
             config_manager,
-            db: sea_orm::DatabaseConnection::Disconnected,
+            db: sea_orm::DatabaseConnection::default(),
             policy_enforcer: Arc::new(MockPolicy::default()),
             provider: Provider::mocked_builder()
                 .mock_mapping(mapping_mock)
@@ -475,7 +475,7 @@ mod tests {
             ..Default::default()
         };
         let config_manager = ConfigManager::not_watched(config);
-        let db = sea_orm::DatabaseConnection::Disconnected;
+        let db = sea_orm::DatabaseConnection::default();
         let provider = Provider::mocked_builder()
             .mock_mapping(mapping_mock)
             .build()
@@ -558,7 +558,7 @@ mod tests {
 
         let state = Arc::new(Service {
             config_manager,
-            db: sea_orm::DatabaseConnection::Disconnected,
+            db: sea_orm::DatabaseConnection::default(),
             policy_enforcer: Arc::new(MockPolicy::default()),
             provider: Provider::mocked_builder()
                 .mock_mapping(mapping_mock)
@@ -608,7 +608,7 @@ mod tests {
         let config = Config::default();
         let config_manager = ConfigManager::not_watched(config);
         let policy_enforcer = Arc::new(MockPolicy::default());
-        let db = sea_orm::DatabaseConnection::Disconnected;
+        let db = sea_orm::DatabaseConnection::default();
 
         let mut token_mock = MockTokenProvider::new();
         token_mock.expect_authorize_by_token().once().returning(
@@ -684,7 +684,7 @@ mod tests {
         let config = Config::default();
         let config_manager = ConfigManager::not_watched(config);
         let policy_enforcer = Arc::new(MockPolicy::default());
-        let db = sea_orm::DatabaseConnection::Disconnected;
+        let db = sea_orm::DatabaseConnection::default();
 
         let mut token_mock = MockTokenProvider::new();
         token_mock.expect_authorize_by_token().once().returning(

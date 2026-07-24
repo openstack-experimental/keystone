@@ -85,7 +85,6 @@ mod tests {
             .append_exec_results([sea_orm::MockExecResult {
                 rows_affected: 1,
                 last_insert_id: 0,
-                ..Default::default()
             }])
             // 3. Insert new nonlocal user with updated name
             .append_query_results([vec![db_nonlocal_user::Model {

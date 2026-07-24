@@ -220,7 +220,7 @@ where
 #[cfg(test)]
 mod tests {
     use chrono::{Timelike, Utc};
-    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Statement, Transaction};
+    use sea_orm::{DatabaseBackend, MockDatabase, Statement, Transaction};
 
     use openstack_keystone_core_types::role::RoleRef;
 
@@ -283,10 +283,16 @@ mod tests {
                 db_application_credential::ActiveModel::try_from(sot.clone()).unwrap(),
                 1,
             )]])
-            .append_exec_results([MockExecResult {
-                rows_affected: 2,
-                ..Default::default()
-            }])
+            .append_query_results([vec![
+                db_application_credential_role::Model {
+                    application_credential_id: 1,
+                    role_id: "role_a".into(),
+                },
+                db_application_credential_role::Model {
+                    application_credential_id: 1,
+                    role_id: "role_b".into(),
+                },
+            ]])
             .append_query_results([Vec::<db_access_rule::Model>::new()])
             .append_query_results([vec![get_access_rule_mock("app_cred_rule_id1", Some(1))]])
             .append_query_results([vec![db_application_credential_access_rule::Model {

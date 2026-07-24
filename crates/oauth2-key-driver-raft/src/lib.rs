@@ -1088,7 +1088,7 @@ mod tests {
         std::sync::Arc::new(
             openstack_keystone_core::keystone::Service::new(
                 openstack_keystone_config::ConfigManager::not_watched(config),
-                sea_orm::DatabaseConnection::Disconnected,
+                sea_orm::DatabaseConnection::default(),
                 openstack_keystone_core::provider::Provider::mocked_builder()
                     .build()
                     .unwrap(),

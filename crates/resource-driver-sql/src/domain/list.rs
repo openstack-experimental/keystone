@@ -94,7 +94,7 @@ pub async fn list(
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, QueryOrder, Transaction, sea_query::*};
+    use sea_orm::{DatabaseBackend, MockDatabase, QuerySelect, Transaction, sea_query::*};
 
     use super::super::tests::*;
     use super::*;
@@ -103,7 +103,7 @@ mod tests {
     async fn test_query_all() {
         assert_eq!(
             r#"SELECT "project"."id", "project"."name", "project"."extra", "project"."description", "project"."enabled", "project"."domain_id", "project"."parent_id", "project"."is_domain" FROM "project" WHERE "project"."is_domain" = TRUE AND "project"."id" <> '<<keystone.domain.root>>'"#,
-            QueryOrder::query(&mut get_list_query(&DomainListParameters::default()).unwrap())
+            QuerySelect::query(&mut get_list_query(&DomainListParameters::default()).unwrap())
                 .to_string(PostgresQueryBuilder)
         );
     }
@@ -111,7 +111,7 @@ mod tests {
     #[tokio::test]
     async fn test_query_name() {
         assert!(
-            QueryOrder::query(
+            QuerySelect::query(
                 &mut get_list_query(&DomainListParameters {
                     name: Some("name".into()),
                     ..Default::default()
@@ -125,7 +125,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_ids() {
-        let q = QueryOrder::query(
+        let q = QuerySelect::query(
             &mut get_list_query(&DomainListParameters {
                 ids: Some(std::collections::HashSet::from([
                     "1".to_string(),

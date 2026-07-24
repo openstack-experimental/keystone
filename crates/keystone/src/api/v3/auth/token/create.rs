@@ -364,7 +364,7 @@ mod tests {
         let state = Arc::new(
             Service::new(
                 ConfigManager::not_watched(config),
-                DatabaseConnection::Disconnected,
+                DatabaseConnection::default(),
                 provider,
                 Arc::new(MockPolicy::default()),
                 AuditDispatcher::noop(),
@@ -523,7 +523,7 @@ mod tests {
         let state = Arc::new(
             Service::new(
                 ConfigManager::not_watched(config),
-                DatabaseConnection::Disconnected,
+                DatabaseConnection::default(),
                 provider,
                 Arc::new(MockPolicy::default()),
                 AuditDispatcher::noop(),
@@ -638,7 +638,7 @@ mod tests {
         let state = Arc::new(
             Service::new(
                 ConfigManager::not_watched(config),
-                DatabaseConnection::Disconnected,
+                DatabaseConnection::default(),
                 provider,
                 Arc::new(MockPolicy::default()),
                 AuditDispatcher::noop(),
@@ -750,7 +750,7 @@ mod tests {
         let state = Arc::new(
             Service::new(
                 ConfigManager::not_watched(config),
-                DatabaseConnection::Disconnected,
+                DatabaseConnection::default(),
                 provider,
                 Arc::new(MockPolicy::default()),
                 AuditDispatcher::noop(),
@@ -825,7 +825,7 @@ mod tests {
         let state = Arc::new(
             Service::new(
                 ConfigManager::not_watched(config),
-                DatabaseConnection::Disconnected,
+                DatabaseConnection::default(),
                 provider,
                 Arc::new(MockPolicy::default()),
                 AuditDispatcher::noop(),
@@ -891,7 +891,7 @@ mod tests {
         let state = Arc::new(
             Service::new(
                 ConfigManager::not_watched(config),
-                DatabaseConnection::Disconnected,
+                DatabaseConnection::default(),
                 provider,
                 Arc::new(MockPolicy::default()),
                 AuditDispatcher::noop(),
@@ -962,7 +962,7 @@ mod tests {
         let state = Arc::new(
             Service::new(
                 ConfigManager::not_watched(config),
-                DatabaseConnection::Disconnected,
+                DatabaseConnection::default(),
                 provider,
                 Arc::new(MockPolicy::default()),
                 AuditDispatcher::noop(),
@@ -1035,7 +1035,7 @@ mod tests {
         let state = Arc::new(
             Service::new(
                 ConfigManager::not_watched(config),
-                DatabaseConnection::Disconnected,
+                DatabaseConnection::default(),
                 provider,
                 Arc::new(MockPolicy::default()),
                 AuditDispatcher::noop(),
@@ -1106,7 +1106,7 @@ mod tests {
         let state = Arc::new(
             Service::new(
                 ConfigManager::not_watched(config),
-                DatabaseConnection::Disconnected,
+                DatabaseConnection::default(),
                 provider,
                 Arc::new(MockPolicy::default()),
                 AuditDispatcher::noop(),
@@ -1301,7 +1301,7 @@ mod auth_plugin_http_tests {
         let state: ServiceState = Arc::new(
             Service::new(
                 ConfigManager::not_watched(cfg),
-                DatabaseConnection::Disconnected,
+                DatabaseConnection::default(),
                 provider,
                 Arc::new(MockPolicy::default()),
                 audit_dispatcher,

@@ -104,7 +104,6 @@ pub async fn update<S: AsRef<str>>(
                         role_id: Set(r),
                     }
                 }))
-                .on_empty_do_nothing()
                 .exec(db)
                 .await
                 .context("Adding new token restriction roles")?;
@@ -158,10 +157,16 @@ mod tests {
                 BTreeMap::from([("role_id", Into::<Value>::into("rid1"))]).into_mock_row(),
                 BTreeMap::from([("role_id", Into::<Value>::into("rid2"))]).into_mock_row(),
             ]])
-            .append_exec_results([MockExecResult {
-                rows_affected: 1,
-                ..Default::default()
-            }])
+            .append_query_results([vec![
+                token_restriction_role_association::Model {
+                    restriction_id: "tr1".into(),
+                    role_id: "r1".into(),
+                },
+                token_restriction_role_association::Model {
+                    restriction_id: "tr1".into(),
+                    role_id: "r2".into(),
+                },
+            ]])
             .append_exec_results([MockExecResult {
                 rows_affected: 1,
                 ..Default::default()

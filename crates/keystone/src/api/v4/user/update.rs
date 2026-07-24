@@ -204,7 +204,7 @@ mod tests {
             .build()?;
         let service = Service::new(
             ConfigManager::not_watched(Config::default()),
-            DatabaseConnection::Disconnected,
+            DatabaseConnection::default(),
             provider,
             Arc::new(policy_enforcer_mock),
             AuditDispatcher::noop(),

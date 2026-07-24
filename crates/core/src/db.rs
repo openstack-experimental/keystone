@@ -28,20 +28,15 @@ where
 {
     // Create types before the table
     for ttype in schema.create_enum_from_entity(entity) {
-        conn.execute(conn.get_database_backend().build(&ttype))
-            .await
-            .context("creating types")?;
+        conn.execute(&ttype).await.context("creating types")?;
     }
     // Create the table
-    conn.execute(
-        conn.get_database_backend()
-            .build(&schema.create_table_from_entity(entity)),
-    )
-    .await
-    .context("creating table")?;
+    conn.execute(&schema.create_table_from_entity(entity))
+        .await
+        .context("creating table")?;
     // Create related indexes
     for tidx in schema.create_index_from_entity(entity) {
-        conn.execute(conn.get_database_backend().build(&tidx))
+        conn.execute(&tidx)
             .await
             .context("creating table indexes")?;
     }
@@ -53,9 +48,7 @@ pub async fn create_index<C>(conn: &C, index: IndexCreateStatement) -> Result<()
 where
     C: ConnectionTrait,
 {
-    conn.execute(conn.get_database_backend().build(&index))
-        .await
-        .context("creating the index")?;
+    conn.execute(&index).await.context("creating the index")?;
     Ok(())
 }
 

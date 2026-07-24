@@ -122,7 +122,7 @@ pub async fn create(
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Statement, Transaction};
+    use sea_orm::{DatabaseBackend, MockDatabase, Statement, Transaction};
 
     use super::*;
     use crate::entity::{nonlocal_user, user};
@@ -161,10 +161,11 @@ mod tests {
                 name: "sa_foo".into(),
                 user_id: "1".into(),
             }]])
-            .append_exec_results([MockExecResult {
-                rows_affected: 1,
-                ..Default::default()
-            }])
+            .append_query_results([vec![crate::entity::user_option::Model {
+                user_id: "1".into(),
+                option_id: "ISSA".into(),
+                option_value: Some("true".into()),
+            }]])
             .into_connection();
 
         let now = Utc::now();

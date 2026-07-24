@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Test-only table creation
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, Schema};
+use sea_orm::{DatabaseConnection, Schema};
 
 use openstack_keystone_core::SqlDriver;
 use openstack_keystone_core::error::DatabaseError;

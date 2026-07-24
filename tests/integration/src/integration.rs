@@ -22,6 +22,7 @@ mod audit;
 mod catalog;
 mod common;
 mod credential;
+mod federation;
 mod identity;
 mod k8s_auth;
 mod mapping;

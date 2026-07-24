@@ -1108,7 +1108,7 @@ mod tests {
         let state = Arc::new(
             Service::new(
                 ConfigManager::not_watched(cfg),
-                sea_orm::DatabaseConnection::Disconnected,
+                sea_orm::DatabaseConnection::default(),
                 provider.build().unwrap(),
                 Arc::new(MockPolicy::default()),
                 audit_dispatcher,

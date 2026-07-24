@@ -89,7 +89,7 @@ pub async fn list(
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, QueryOrder, Transaction, sea_query::*};
+    use sea_orm::{DatabaseBackend, MockDatabase, QuerySelect, Transaction, sea_query::*};
     use serde_json::json;
 
     use openstack_keystone_core_types::identity::GroupListParametersBuilder;
@@ -103,7 +103,7 @@ mod tests {
     async fn test_query_all() {
         assert_eq!(
             r#"SELECT "group"."id", "group"."domain_id", "group"."name", "group"."description", "group"."extra" FROM "group""#,
-            QueryOrder::query(&mut get_list_query(&GroupListParameters::default()).unwrap())
+            QuerySelect::query(&mut get_list_query(&GroupListParameters::default()).unwrap())
                 .to_string(PostgresQueryBuilder)
         );
     }

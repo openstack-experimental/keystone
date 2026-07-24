@@ -80,18 +80,18 @@ pub async fn list(
     db: &DatabaseConnection,
     params: &EndpointListParameters,
 ) -> Result<Vec<Endpoint>, CatalogProviderError> {
-    Ok(get_list_query(params)?
+    get_list_query(params)?
         .all(db)
         .await
         .context("fetching endpoints")?
         .into_iter()
         .map(TryInto::<Endpoint>::try_into)
-        .collect::<Result<_, _>>()?)
+        .collect::<Result<_, _>>()
 }
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, QueryOrder, Transaction, sea_query::*};
+    use sea_orm::{DatabaseBackend, MockDatabase, QuerySelect, Transaction, sea_query::*};
 
     use super::super::tests::get_endpoint_mock;
     use super::*;
@@ -100,7 +100,7 @@ mod tests {
     async fn test_query_all() {
         assert_eq!(
             r#"SELECT "endpoint"."id", "endpoint"."legacy_endpoint_id", "endpoint"."interface", "endpoint"."service_id", "endpoint"."url", "endpoint"."extra", "endpoint"."enabled", "endpoint"."region_id" FROM "endpoint""#,
-            QueryOrder::query(&mut get_list_query(&EndpointListParameters::default()).unwrap())
+            QuerySelect::query(&mut get_list_query(&EndpointListParameters::default()).unwrap())
                 .to_string(PostgresQueryBuilder)
         );
     }
@@ -108,7 +108,7 @@ mod tests {
     #[tokio::test]
     async fn test_query_filters() {
         assert!(
-            QueryOrder::query(
+            QuerySelect::query(
                 &mut get_list_query(&EndpointListParameters {
                     interface: Some("public".into()),
                     service_id: Some("service_id".into()),

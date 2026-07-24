@@ -102,7 +102,7 @@ pub async fn list(
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, QueryOrder, sea_query::*};
+    use sea_orm::{DatabaseBackend, MockDatabase, QuerySelect, sea_query::*};
     use std::collections::HashSet;
 
     use openstack_keystone_core_types::ListPagination;
@@ -112,7 +112,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_all() {
-        let sql = QueryOrder::query(
+        let sql = QuerySelect::query(
             &mut get_list_query(&IdentityProviderListParameters::default()).unwrap(),
         )
         .to_string(PostgresQueryBuilder);
@@ -123,7 +123,7 @@ mod tests {
 
     // Note: `Cursor`'s `.before()`/`.last()` (backward/page_reverse) state is
     // applied internally at execution time, not exposed via
-    // `QueryOrder::query()` the way `.after()`/`.first()` are, so the
+    // `QuerySelect::query()` the way `.after()`/`.first()` are, so the
     // filter/order/limit shape for `page_reverse` is verified against the
     // executed query's bind parameters instead — see `test_list_page_reverse`
     // below.
@@ -131,7 +131,7 @@ mod tests {
     #[tokio::test]
     async fn test_query_name() {
         assert!(
-            QueryOrder::query(
+            QuerySelect::query(
                 &mut get_list_query(&IdentityProviderListParameters {
                     name: Some("idp_name".into()),
                     ..Default::default()
@@ -145,7 +145,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_domain_ids() {
-        let query = QueryOrder::query(
+        let query = QuerySelect::query(
             &mut get_list_query(&IdentityProviderListParameters {
                 domain_ids: Some(HashSet::from([Some("d1".into()), Some("d2".into()), None])),
                 ..Default::default()

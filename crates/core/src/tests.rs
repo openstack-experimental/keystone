@@ -30,7 +30,7 @@ pub async fn get_mocked_state(
     Arc::new(
         Service::new(
             ConfigManager::not_watched(config.unwrap_or_default()),
-            DatabaseConnection::Disconnected,
+            DatabaseConnection::default(),
             provider_builder
                 .unwrap_or(Provider::mocked_builder())
                 .build()

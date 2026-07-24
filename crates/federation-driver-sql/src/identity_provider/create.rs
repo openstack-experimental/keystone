@@ -15,7 +15,6 @@
 use sea_orm::DatabaseConnection;
 use sea_orm::TransactionTrait;
 use sea_orm::entity::*;
-use sea_orm::sea_query::OnConflict;
 use secrecy::ExposeSecret;
 use uuid::Uuid;
 
@@ -158,19 +157,17 @@ pub async fn create(
     .await
     .context("persisting v3 federation jwt protocol")?;
 
+    // `dummy` is a shared row referenced by every v3 protocol entry; it may
+    // already exist from a prior identity provider creation, so a conflict
+    // here means "nothing to do", not a failure. `on_conflict_do_nothing_on`
+    // (unlike `on_conflict(..).do_nothing_on(..)`) reports that outcome as
+    // `TryInsertResult::Conflicted` instead of `DbErr::RecordNotInserted`.
     db_old_mapping::Entity::insert(db_old_mapping::ActiveModel {
         id: Set("dummy".into()),
         rules: Set(Some("\"[]\"".into())),
         schema_version: Set("1.0".into()),
     })
-    .on_conflict(
-        OnConflict::column(db_old_mapping::Column::Id)
-            // Special handling for
-            // [mysql](https://docs.rs/sea-query/0.32.7/sea_query/query/struct.OnConflict.html#method.do_nothing_on)
-            .do_nothing_on([db_old_mapping::Column::Id])
-            .to_owned(),
-    )
-    .on_empty_do_nothing()
+    .on_conflict_do_nothing_on([db_old_mapping::Column::Id])
     .exec(&txn)
     .await
     .context("persisting v3 federation mapping")?;
@@ -184,7 +181,7 @@ pub async fn create(
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult};
+    use sea_orm::{DatabaseBackend, MockDatabase};
     use serde_json::json;
 
     use super::super::tests::{get_idp_mock, get_old_idp_mock, get_old_proto_mock};
@@ -202,10 +199,11 @@ mod tests {
             // 4. INSERT into federation_protocol (jwt)
             .append_query_results([vec![get_old_proto_mock("2")]])
             // 5. INSERT into mapping (on_conflict do_nothing)
-            .append_exec_results([MockExecResult {
-                rows_affected: 1,
-                ..Default::default()
-            }])
+            .append_query_results([vec![db_old_mapping::Model {
+                id: "dummy".into(),
+                rules: Some("\"[]\"".into()),
+                schema_version: "1.0".into(),
+            }]])
             .into_connection();
 
         let req = IdentityProviderCreate {

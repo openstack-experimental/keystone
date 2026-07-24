@@ -147,7 +147,7 @@ mod tests {
         let state = Arc::new(
             Service::new(
                 ConfigManager::not_watched(cfg),
-                sea_orm::DatabaseConnection::Disconnected,
+                sea_orm::DatabaseConnection::default(),
                 Provider::mocked_builder().build().unwrap(),
                 Arc::new(crate::policy::MockPolicy::default()),
                 audit_dispatcher,
@@ -205,7 +205,7 @@ mod tests {
         let state = Arc::new(
             Service::new(
                 ConfigManager::not_watched(cfg),
-                sea_orm::DatabaseConnection::Disconnected,
+                sea_orm::DatabaseConnection::default(),
                 Provider::mocked_builder().build().unwrap(),
                 Arc::new(crate::policy::MockPolicy::default()),
                 audit_dispatcher,

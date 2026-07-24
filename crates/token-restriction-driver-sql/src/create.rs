@@ -84,7 +84,7 @@ pub async fn create(
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Statement, Transaction};
+    use sea_orm::{DatabaseBackend, MockDatabase, Statement, Transaction};
 
     use super::super::tests::get_restriction_mock;
     use super::*;
@@ -94,10 +94,16 @@ mod tests {
         // Create MockDatabase with mock query results
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![get_restriction_mock("1")]])
-            .append_exec_results([MockExecResult {
-                rows_affected: 1,
-                ..Default::default()
-            }])
+            .append_query_results([vec![
+                token_restriction_role_association::Model {
+                    restriction_id: "1".into(),
+                    role_id: "r1".into(),
+                },
+                token_restriction_role_association::Model {
+                    restriction_id: "1".into(),
+                    role_id: "r2".into(),
+                },
+            ]])
             .into_connection();
 
         let req = TokenRestrictionCreate {

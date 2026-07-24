@@ -80,7 +80,7 @@ pub async fn list(
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, QueryOrder, Transaction, sea_query::*};
+    use sea_orm::{DatabaseBackend, MockDatabase, QuerySelect, Transaction, sea_query::*};
 
     use crate::entity::trust_role as db_trust_role;
     use crate::trust::tests::get_trust_mock;
@@ -91,7 +91,7 @@ mod tests {
     async fn test_query_all() {
         assert_eq!(
             r#"SELECT "trust"."id", "trust"."trustor_user_id", "trust"."trustee_user_id", "trust"."project_id", "trust"."impersonation", "trust"."deleted_at", "trust"."expires_at", "trust"."remaining_uses", "trust"."extra", "trust"."expires_at_int", "trust"."redelegated_trust_id", "trust"."redelegation_count" FROM "trust" WHERE "trust"."deleted_at" IS NULL"#,
-            QueryOrder::query(&mut get_list_query(&TrustListParameters::default()).unwrap())
+            QuerySelect::query(&mut get_list_query(&TrustListParameters::default()).unwrap())
                 .to_string(PostgresQueryBuilder)
         );
     }
@@ -99,7 +99,7 @@ mod tests {
     #[tokio::test]
     async fn test_query_include_deleted() {
         assert!(
-            !QueryOrder::query(
+            !QuerySelect::query(
                 &mut get_list_query(&TrustListParameters {
                     include_deleted: Some(true),
                     ..Default::default()
@@ -148,7 +148,7 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "trust_role"."trust_id", "trust_role"."role_id" FROM "trust_role" WHERE "trust_role"."trust_id" IN ($1)"#,
+                    r#"SELECT "trust_role"."trust_id", "trust_role"."role_id" FROM "trust_role" WHERE ("trust_role"."trust_id") IN (($1)) ORDER BY "trust_role"."trust_id" ASC, "trust_role"."role_id" ASC"#,
                     ["1".into()]
                 ),
             ]

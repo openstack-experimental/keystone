@@ -266,7 +266,6 @@ mod tests {
             .append_exec_results([MockExecResult {
                 rows_affected: 1,
                 last_insert_id: 0,
-                ..Default::default()
             }])
             // 6. nonlocal_user::update_name - insert new
             .append_query_results([vec![db_nonlocal_user::Model {

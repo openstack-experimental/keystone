@@ -58,7 +58,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
+    use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
 
     use super::*;
 
@@ -71,10 +71,11 @@ mod tests {
     #[tokio::test]
     async fn test_create_issa() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_exec_results([MockExecResult {
-                rows_affected: 1,
-                ..Default::default()
-            }])
+            .append_query_results([vec![db_user_option::Model {
+                user_id: "1".into(),
+                option_id: "ISSA".into(),
+                option_value: Some("true".into()),
+            }]])
             .into_connection();
         create(
             &db,
