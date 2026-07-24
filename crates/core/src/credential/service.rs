@@ -30,10 +30,6 @@ use crate::credential::{CredentialApi, CredentialProviderError, backend::Credent
 use crate::events::AuditDispatchError;
 use crate::plugin_manager::PluginManagerApi;
 
-/// The EC2 `blob` field that is immutable on update and must always be
-/// present and unchanged (ADR 0019 §2, Update).
-const IMMUTABLE_ACCESS_FIELD: &str = "access";
-
 /// Delegation-metadata fields inside the EC2 `blob` (ADR 0019 §1). These are
 /// never client-settable: they are derived server-side from the creating
 /// request's own [`AuthenticationContext`] (OSSA-2026-005 / CVE-2026-33551)
@@ -263,12 +259,6 @@ impl CredentialApi for CredentialService {
 
             let old_val: Value = serde_json::from_str(&existing.blob)?;
             let mut new_val: Value = serde_json::from_str(new_blob)?;
-
-            if old_val.get(IMMUTABLE_ACCESS_FIELD) != new_val.get(IMMUTABLE_ACCESS_FIELD) {
-                return Err(CredentialProviderError::ImmutableField(
-                    IMMUTABLE_ACCESS_FIELD.to_string(),
-                ));
-            }
 
             // Delegation metadata is server-managed (see
             // `stamp_ec2_delegation_metadata`): the caller's patch is not
@@ -505,8 +495,17 @@ mod tests {
         assert_eq!(created.id, expected_id);
     }
 
+    /// Regression test (GitHub issue #1044): keystone-py's update handler
+    /// (`keystone/api/credentials.py::_validate_blob_update_keys`) only
+    /// actually enforces immutability on `trust_id`/`app_cred_id`/
+    /// `access_token_id`/`access_id` -- and `access_id` is not a real blob
+    /// key (the EC2 access value is stored under `access`), so that check is
+    /// permanently a no-op and keystone-py allows `access` to change freely
+    /// on update, with the credential's `id` (computed once at create time)
+    /// left as-is. Tempest's `test_credentials_create_get_update_delete`
+    /// relies on exactly this and fails if `access` is rejected here.
     #[tokio::test]
-    async fn test_update_rejects_change_to_immutable_access_field() {
+    async fn test_update_allows_changing_access_field() {
         let state = get_mocked_state(None, None).await;
         let mut backend = MockCredentialBackend::default();
         backend.expect_get_credential().returning(|_, _| {
@@ -519,6 +518,16 @@ mod tests {
                 extra: None,
             }))
         });
+        backend.expect_update_credential().returning(|_, id, _| {
+            Ok(Credential {
+                id: id.to_string(),
+                user_id: "user_id".into(),
+                project_id: Some("project_id".into()),
+                blob: r#"{"access":"AKIA_NEW","secret":"s"}"#.into(),
+                r#type: "ec2".into(),
+                extra: None,
+            })
+        });
         let provider = create_provider(backend);
 
         let rec = CredentialUpdate {
@@ -526,11 +535,11 @@ mod tests {
             ..Default::default()
         };
 
-        let err = provider
+        let updated = provider
             .update_credential(&ExecutionContext::internal(&state), "cred_id", rec)
             .await
-            .unwrap_err();
-        assert!(matches!(err, CredentialProviderError::ImmutableField(f) if f == "access"));
+            .unwrap();
+        assert_eq!(updated.blob, r#"{"access":"AKIA_NEW","secret":"s"}"#);
     }
 
     #[tokio::test]

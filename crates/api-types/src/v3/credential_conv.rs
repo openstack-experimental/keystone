@@ -61,6 +61,7 @@ impl From<api_types::CredentialUpdateRequest> for provider_types::CredentialUpda
         let credential = value.credential;
         Self {
             blob: credential.blob,
+            project_id: credential.project_id,
             r#type: credential.r#type,
         }
     }
