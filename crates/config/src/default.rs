@@ -42,4 +42,14 @@ pub struct DefaultSection {
     /// Log output to standard error.
     #[serde(default)]
     pub use_stderr: bool,
+
+    /// Global default page size, used when a provider has no
+    /// `list_limit` of its own and the client omits `limit`. Mirrors
+    /// python-keystone's `[DEFAULT] list_limit`.
+    pub list_limit: Option<u64>,
+
+    /// Global absolute cap on `limit`, used when a provider has no
+    /// `max_list_limit` of its own. Mirrors python-keystone's
+    /// `[DEFAULT] max_db_limit`.
+    pub max_db_limit: Option<u64>,
 }

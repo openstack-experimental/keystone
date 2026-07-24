@@ -15,12 +15,52 @@
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
+use sea_orm::{Cursor, SelectModel};
 
 use openstack_keystone_core::catalog::CatalogProviderError;
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core_types::catalog::*;
 
 use crate::entity::{prelude::Service as DbService, service as db_service};
+
+/// Prepare the paginated query for listing services.
+///
+/// # Parameters
+/// - `params`: The parameters for listing services.
+///
+/// # Returns
+/// A `Result` containing a `Cursor` for the select model.
+fn get_list_query(
+    params: &ServiceListParameters,
+) -> Result<Cursor<SelectModel<db_service::Model>>, CatalogProviderError> {
+    let mut select = DbService::find();
+
+    if let Some(typ) = &params.r#type {
+        select = select.filter(db_service::Column::Type.eq(typ));
+    }
+
+    let mut cursor = select.cursor_by(db_service::Column::Id);
+    if let Some(marker) = &params.pagination.marker {
+        if params.pagination.page_reverse {
+            cursor.before(marker);
+        } else {
+            cursor.after(marker);
+        }
+    }
+    // Over-fetch by one row so the API layer can tell "there is a
+    // next/previous page" exactly, instead of guessing from
+    // `returned == limit` (false-positives when exactly `limit` rows
+    // remain). `.last()` fetches in descending order but sea-orm returns
+    // rows back in ascending order.
+    if let Some(limit) = params.pagination.limit {
+        if params.pagination.page_reverse {
+            cursor.last(limit + 1);
+        } else {
+            cursor.first(limit + 1);
+        }
+    }
+    Ok(cursor)
+}
 
 /// Lists services.
 ///
@@ -34,13 +74,7 @@ pub async fn list(
     db: &DatabaseConnection,
     params: &ServiceListParameters,
 ) -> Result<Vec<Service>, CatalogProviderError> {
-    let mut select = DbService::find();
-
-    if let Some(typ) = &params.r#type {
-        select = select.filter(db_service::Column::Type.eq(typ));
-    }
-
-    let mut services: Vec<Service> = select
+    let mut services: Vec<Service> = get_list_query(params)?
         .all(db)
         .await
         .context("fetching services")?
@@ -60,11 +94,35 @@ pub async fn list(
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
+    use sea_orm::{DatabaseBackend, MockDatabase, QueryOrder, Transaction, sea_query::*};
     use serde_json::json;
 
     use super::super::tests::get_service_mock;
     use super::*;
+
+    #[tokio::test]
+    async fn test_query_all() {
+        assert_eq!(
+            r#"SELECT "service"."id", "service"."type", "service"."enabled", "service"."extra" FROM "service""#,
+            QueryOrder::query(&mut get_list_query(&ServiceListParameters::default()).unwrap())
+                .to_string(PostgresQueryBuilder)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_query_type() {
+        assert!(
+            QueryOrder::query(
+                &mut get_list_query(&ServiceListParameters {
+                    r#type: Some("type".into()),
+                    ..Default::default()
+                })
+                .unwrap()
+            )
+            .to_string(PostgresQueryBuilder)
+            .contains(r#""service"."type" = 'type'"#)
+        );
+    }
 
     #[tokio::test]
     async fn test_list() {
@@ -90,6 +148,7 @@ mod tests {
                 &ServiceListParameters {
                     r#type: Some("type".into()),
                     name: None,
+                    ..Default::default()
                 }
             )
             .await
@@ -104,12 +163,12 @@ mod tests {
             [
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "service"."id", "service"."type", "service"."enabled", "service"."extra" FROM "service""#,
+                    r#"SELECT "service"."id", "service"."type", "service"."enabled", "service"."extra" FROM "service" ORDER BY "service"."id" ASC"#,
                     []
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "service"."id", "service"."type", "service"."enabled", "service"."extra" FROM "service" WHERE "service"."type" = $1"#,
+                    r#"SELECT "service"."id", "service"."type", "service"."enabled", "service"."extra" FROM "service" WHERE "service"."type" = $1 ORDER BY "service"."id" ASC"#,
                     ["type".into()]
                 ),
             ]
@@ -141,6 +200,7 @@ mod tests {
             &ServiceListParameters {
                 name: Some("alpha".into()),
                 r#type: None,
+                ..Default::default()
             },
         )
         .await
@@ -148,5 +208,32 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, "1");
         assert_eq!(result[0].name().as_deref(), Some("alpha"));
+    }
+
+    #[tokio::test]
+    async fn test_list_pagination_over_fetches_and_uses_marker() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_service_mock("1"), get_service_mock("2")]])
+            .into_connection();
+
+        let services = list(
+            &db,
+            &ServiceListParameters {
+                pagination: openstack_keystone_core_types::ListPagination {
+                    limit: Some(1),
+                    marker: Some("0".into()),
+                    page_reverse: false,
+                },
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(services.len(), 2, "backend over-fetched limit+1 rows");
+
+        let txns = db.into_transaction_log();
+        let sql = &txns[0].statements()[0].sql;
+        assert!(sql.contains(r#""service"."id" >"#));
+        assert!(sql.contains("LIMIT"));
     }
 }

@@ -166,6 +166,10 @@ pub struct ApiKeyResponse {
 pub struct ApiKeyList {
     /// Collection of API Keys.
     pub api_keys: Vec<ApiKey>,
+
+    /// Pagination links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<crate::Link>>,
 }
 
 /// API Key list query parameters.

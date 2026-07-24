@@ -25,6 +25,7 @@ impl From<api_types::TokenRestrictionListParameters>
             domain_id: value.domain_id,
             user_id: value.user_id,
             project_id: value.project_id,
+            pagination: Default::default(),
         }
     }
 }

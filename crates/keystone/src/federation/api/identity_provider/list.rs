@@ -23,10 +23,12 @@ use serde_json::json;
 use std::collections::HashSet;
 use validator::Validate;
 
+use openstack_keystone_api_types::PaginationQuery;
 use openstack_keystone_api_types::federation::*;
+use openstack_keystone_core_types::ListPagination;
 use openstack_keystone_core_types::federation::IdentityProviderListParameters as ProviderIdentityProviderListParameters;
 
-use crate::api::{KeystoneApiError, auth::Auth, common::build_pagination_links};
+use crate::api::{KeystoneApiError, auth::Auth, common::paginate_bidirectional};
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
 
@@ -42,7 +44,7 @@ use openstack_keystone_core::auth::ExecutionContext;
     get,
     path = "/",
     operation_id = "/federation/identity_provider:list",
-    params(IdentityProviderListParameters),
+    params(IdentityProviderListParameters, PaginationQuery),
     responses(
         (status = OK, description = "List of identity providers", body = IdentityProviderList),
         (status = 500, description = "Internal error", example = json!(KeystoneApiError::InternalError(String::from("id = 1"))))
@@ -60,6 +62,7 @@ pub(super) async fn list(
     Auth(user_auth): Auth,
     OriginalUri(original_url): OriginalUri,
     Query(query): Query<IdentityProviderListParameters>,
+    Query(pagination): Query<PaginationQuery>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     query.validate()?;
@@ -95,6 +98,11 @@ pub(super) async fn list(
     };
     let mut provider_list_params = ProviderIdentityProviderListParameters::from(query.clone());
     provider_list_params.domain_ids = domain_ids;
+    provider_list_params.pagination = ListPagination {
+        limit: pagination.limit,
+        marker: pagination.marker.clone(),
+        page_reverse: pagination.page_reverse,
+    };
 
     let identity_providers: Vec<IdentityProvider> = state
         .provider
@@ -109,10 +117,10 @@ pub(super) async fn list(
         .collect();
 
     let config = state.config_manager.config.read().await;
-    let links = build_pagination_links(
+    let (identity_providers, links) = paginate_bidirectional(
         &config,
-        identity_providers.as_slice(),
-        &query,
+        identity_providers,
+        &pagination,
         original_url.path(),
     )?;
     Ok((
@@ -224,8 +232,11 @@ mod tests {
                 provider_types::IdentityProviderListParameters {
                     name: Some("name".into()),
                     domain_ids: Some(HashSet::from([Some("did".into())])),
-                    limit: Some(20),
-                    marker: None,
+                    pagination: ListPagination {
+                        limit: Some(20),
+                        marker: None,
+                        page_reverse: false,
+                    },
                 } == *qp
             })
             .returning(|_, _| {
@@ -275,8 +286,11 @@ mod tests {
                 provider_types::IdentityProviderListParameters {
                     name: Some("name".into()),
                     domain_ids: Some(HashSet::from([None, Some("domain_id".into())])),
-                    limit: Some(20),
-                    marker: None,
+                    pagination: ListPagination {
+                        limit: Some(20),
+                        marker: None,
+                        page_reverse: false,
+                    },
                 } == *qp
             })
             .returning(|_, _| {
@@ -329,8 +343,11 @@ mod tests {
                 provider_types::IdentityProviderListParameters {
                     name: Some("name".into()),
                     domain_ids: Some(HashSet::from([None, Some("domain_id".into())])),
-                    limit: Some(20),
-                    marker: None,
+                    pagination: ListPagination {
+                        limit: Some(20),
+                        marker: None,
+                        page_reverse: false,
+                    },
                 } == *qp
             })
             .returning(|_, _| {
@@ -373,6 +390,8 @@ mod tests {
         let _res: IdentityProviderList = serde_json::from_slice(&body).unwrap();
     }
 
+    /// Backend over-fetched (returned `limit + 1 == 2` rows): a `next` link
+    /// must be produced, and the extra row trimmed from the response body.
     #[tokio::test]
     #[traced_test]
     async fn test_list_pagination_link() {
@@ -381,14 +400,87 @@ mod tests {
             .expect_list_identity_providers()
             .withf(|_, qp: &provider_types::IdentityProviderListParameters| {
                 provider_types::IdentityProviderListParameters {
-                    limit: Some(1),
                     domain_ids: Some(HashSet::from([None, Some("domain_id".into())])),
+                    pagination: ListPagination {
+                        limit: Some(1),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                } == *qp
+            })
+            .returning(|_, _| {
+                Ok(vec![
+                    provider_types::IdentityProvider {
+                        id: "id1".into(),
+                        name: "name".into(),
+                        domain_id: Some("did".into()),
+                        ..Default::default()
+                    },
+                    provider_types::IdentityProvider {
+                        id: "id2".into(),
+                        name: "name".into(),
+                        domain_id: Some("did".into()),
+                        ..Default::default()
+                    },
+                ])
+            });
+
+        let vsc = test_fixture_scoped();
+
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_federation(federation_mock),
+            true,
+            Some(false),
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/?limit=1")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let res: IdentityProviderList = serde_json::from_slice(&body).unwrap();
+        assert!(res.links.is_some());
+        assert_eq!(res.identity_providers.len(), 1);
+        assert_eq!(res.identity_providers[0].id, "id1");
+    }
+
+    /// Backend returned exactly `limit` rows (no over-fetched extra row): no
+    /// `next` link should be produced. This is the false-positive this
+    /// design fixes vs the old `returned_count >= limit` heuristic.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_list_pagination_no_false_positive_next() {
+        let mut federation_mock = MockFederationProvider::default();
+        federation_mock
+            .expect_list_identity_providers()
+            .withf(|_, qp: &provider_types::IdentityProviderListParameters| {
+                provider_types::IdentityProviderListParameters {
+                    domain_ids: Some(HashSet::from([None, Some("domain_id".into())])),
+                    pagination: ListPagination {
+                        limit: Some(1),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 } == *qp
             })
             .returning(|_, _| {
                 Ok(vec![provider_types::IdentityProvider {
-                    id: "id".into(),
+                    id: "id1".into(),
                     name: "name".into(),
                     domain_id: Some("did".into()),
                     ..Default::default()
@@ -424,6 +516,7 @@ mod tests {
 
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let res: IdentityProviderList = serde_json::from_slice(&body).unwrap();
-        assert!(res.links.is_some());
+        assert_eq!(res.links, None);
+        assert_eq!(res.identity_providers.len(), 1);
     }
 }

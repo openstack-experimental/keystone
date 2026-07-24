@@ -179,4 +179,8 @@ pub struct TokenRestrictionListParameters {
 pub struct TokenRestrictionList {
     /// Token restrictions.
     pub restrictions: Vec<TokenRestriction>,
+
+    /// Pagination links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<crate::Link>>,
 }

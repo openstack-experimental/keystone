@@ -31,6 +31,7 @@ impl From<api_types::RegionListParameters> for provider_types::RegionListParamet
     fn from(value: api_types::RegionListParameters) -> Self {
         Self {
             parent_region_id: value.parent_region_id,
+            pagination: Default::default(),
         }
     }
 }

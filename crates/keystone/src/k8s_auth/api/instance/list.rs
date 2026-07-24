@@ -24,9 +24,12 @@ use validator::Validate;
 
 use openstack_keystone_core::auth::ExecutionContext;
 
+use openstack_keystone_api_types::PaginationQuery;
 use openstack_keystone_api_types::k8s_auth::*;
+use openstack_keystone_core_types::ListPagination;
 use openstack_keystone_core_types::k8s_auth as provider_types;
 
+use crate::api::common::paginate_bidirectional;
 use crate::api::{KeystoneApiError, auth::Auth};
 use crate::keystone::ServiceState;
 
@@ -35,7 +38,7 @@ use crate::keystone::ServiceState;
     get,
     path = "/",
     operation_id = "/k8s_auth/instance:list",
-    params(K8sAuthInstanceListParameters),
+    params(K8sAuthInstanceListParameters, PaginationQuery),
     responses(
         (status = OK, description = "List of instances", body = K8sAuthInstanceList),
         (status = 500, description = "Internal error", example = json!(KeystoneApiError::InternalError(String::from("id = 1"))))
@@ -53,6 +56,7 @@ pub(super) async fn list(
     Auth(user_auth): Auth,
     OriginalUri(original_url): OriginalUri,
     Query(query): Query<K8sAuthInstanceListParameters>,
+    Query(pagination): Query<PaginationQuery>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     query.validate()?;
@@ -78,8 +82,14 @@ pub(super) async fn list(
         // other domain
         query.domain_id.clone()
     };
+    let config = state.config_manager.config.read().await;
     let mut list_params = provider_types::K8sAuthInstanceListParameters::from(query.clone());
     list_params.domain_id = domain_id;
+    list_params.pagination = ListPagination {
+        limit: config.resolve_list_limit(&config.k8s_auth.list_limit, pagination.limit),
+        marker: pagination.marker.clone(),
+        page_reverse: pagination.page_reverse,
+    };
 
     let instances: Vec<K8sAuthInstance> = state
         .provider
@@ -93,18 +103,11 @@ pub(super) async fn list(
         .map(Into::into)
         .collect();
 
-    //let links = build_pagination_links(
-    //    &state.config,
-    //    identity_providers.as_slice(),
-    //    &query,
-    //    original_url.path(),
-    //)?;
+    let (instances, links) =
+        paginate_bidirectional(&config, instances, &pagination, original_url.path())?;
     Ok((
         StatusCode::OK,
-        Json(K8sAuthInstanceList {
-            instances,
-            links: None,
-        }),
+        Json(K8sAuthInstanceList { instances, links }),
     )
         .into_response())
 }
@@ -192,10 +195,7 @@ mod tests {
         let mut mock = MockK8sAuthProvider::default();
         mock.expect_list_auth_instances()
             .withf(|_, qp: &provider_types::K8sAuthInstanceListParameters| {
-                provider_types::K8sAuthInstanceListParameters {
-                    name: Some("name".into()),
-                    domain_id: Some("did".into()),
-                } == *qp
+                qp.name == Some("name".into()) && qp.domain_id == Some("did".into())
             })
             .returning(|_, _| {
                 Ok(vec![provider_types::K8sAuthInstance {
@@ -235,6 +235,123 @@ mod tests {
 
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let _res: K8sAuthInstanceList = serde_json::from_slice(&body).unwrap();
+    }
+
+    /// Backend over-fetched (returned `limit + 1 == 2` rows), not the first
+    /// page (`marker` set): both `next` and `previous` links are produced,
+    /// and the extra row is trimmed from the response body.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_list_pagination_bidirectional_links() {
+        let mut provider = Provider::mocked_builder();
+        let mut mock = MockK8sAuthProvider::default();
+        mock.expect_list_auth_instances()
+            .withf(|_, qp: &provider_types::K8sAuthInstanceListParameters| {
+                qp.pagination.limit == Some(1) && qp.pagination.marker == Some("m".into())
+            })
+            .returning(|_, _| {
+                Ok(vec![
+                    provider_types::K8sAuthInstance {
+                        ca_cert: None,
+                        disable_local_ca_jwt: false,
+                        domain_id: "did".into(),
+                        enabled: true,
+                        host: "http://host:post".into(),
+                        id: "1".into(),
+                        name: Some("a".into()),
+                    },
+                    provider_types::K8sAuthInstance {
+                        ca_cert: None,
+                        disable_local_ca_jwt: false,
+                        domain_id: "did".into(),
+                        enabled: true,
+                        host: "http://host:post".into(),
+                        id: "2".into(),
+                        name: Some("b".into()),
+                    },
+                ])
+            });
+        provider = provider.mock_k8s_auth(mock);
+        let vsc = test_fixture_scoped();
+
+        let state = get_mocked_state(provider, true, None).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/?limit=1&marker=m")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let res: K8sAuthInstanceList = serde_json::from_slice(&body).unwrap();
+        assert_eq!(res.instances.len(), 1);
+        assert_eq!(res.instances[0].id, "1");
+        let links = res.links.expect("expected next+previous links");
+        assert!(links.iter().any(|l| l.rel == "next"));
+        assert!(links.iter().any(|l| l.rel == "previous"));
+    }
+
+    /// Backend returned exactly `limit` rows (no over-fetched extra row): no
+    /// `next` link should be produced.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_list_pagination_no_false_positive_next() {
+        let mut provider = Provider::mocked_builder();
+        let mut mock = MockK8sAuthProvider::default();
+        mock.expect_list_auth_instances()
+            .withf(|_, qp: &provider_types::K8sAuthInstanceListParameters| {
+                qp.pagination.limit == Some(1)
+            })
+            .returning(|_, _| {
+                Ok(vec![provider_types::K8sAuthInstance {
+                    ca_cert: None,
+                    disable_local_ca_jwt: false,
+                    domain_id: "did".into(),
+                    enabled: true,
+                    host: "http://host:post".into(),
+                    id: "1".into(),
+                    name: Some("a".into()),
+                }])
+            });
+        provider = provider.mock_k8s_auth(mock);
+        let vsc = test_fixture_scoped();
+
+        let state = get_mocked_state(provider, true, None).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/?limit=1")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let res: K8sAuthInstanceList = serde_json::from_slice(&body).unwrap();
+        assert_eq!(res.instances.len(), 1);
+        assert_eq!(res.links, None);
     }
 
     #[tokio::test]
@@ -291,10 +408,7 @@ mod tests {
         let mut mock = MockK8sAuthProvider::default();
         mock.expect_list_auth_instances()
             .withf(|_, qp: &provider_types::K8sAuthInstanceListParameters| {
-                provider_types::K8sAuthInstanceListParameters {
-                    name: Some("name".into()),
-                    domain_id: Some("domain_id".into()),
-                } == *qp
+                qp.name == Some("name".into()) && qp.domain_id == Some("domain_id".into())
             })
             .returning(|_, _| {
                 Ok(vec![provider_types::K8sAuthInstance {
@@ -345,10 +459,7 @@ mod tests {
         let mut mock = MockK8sAuthProvider::default();
         mock.expect_list_auth_instances()
             .withf(|_, qp: &provider_types::K8sAuthInstanceListParameters| {
-                provider_types::K8sAuthInstanceListParameters {
-                    name: Some("name".into()),
-                    domain_id: None,
-                } == *qp
+                qp.name == Some("name".into()) && qp.domain_id.is_none()
             })
             .returning(|_, _| {
                 Ok(vec![provider_types::K8sAuthInstance {

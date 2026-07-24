@@ -72,6 +72,10 @@ pub struct CredentialList {
     /// Collection of credential objects.
     #[cfg_attr(feature = "validate", validate(nested))]
     pub credentials: Vec<Credential>,
+
+    /// Pagination links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<crate::Link>>,
 }
 
 /// Query parameters for `GET /v3/credentials`.

@@ -46,6 +46,7 @@ impl From<api_types::GroupListParameters> for provider_types::GroupListParameter
         Self {
             domain_id: value.domain_id,
             name: value.name,
+            pagination: Default::default(),
         }
     }
 }

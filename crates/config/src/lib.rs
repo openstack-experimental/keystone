@@ -88,6 +88,7 @@ mod local_emergency;
 mod mapping;
 mod oauth2;
 mod oslo_middleware;
+mod pagination;
 mod policy;
 mod rate_limit;
 mod resource;
@@ -129,6 +130,7 @@ pub use local_emergency::*;
 pub use mapping::*;
 pub use oauth2::*;
 pub use oslo_middleware::*;
+pub use pagination::*;
 pub use policy::*;
 pub use rate_limit::*;
 pub use resource::*;
@@ -472,6 +474,28 @@ impl Config {
             }
         }
         watched_paths
+    }
+
+    /// Resolve the effective page limit for a list request, following
+    /// python-keystone's `Hints.get_limit_with_default` precedence:
+    /// client-supplied `limit` → provider's `list_limit` → global
+    /// `[DEFAULT] list_limit` → provider's `max_list_limit` → global
+    /// `[DEFAULT] max_db_limit`. The client-supplied `limit` (if present) is
+    /// always clamped to whichever max applies.
+    pub fn resolve_list_limit(
+        &self,
+        provider_limit: &ListLimitConfig,
+        requested: Option<u64>,
+    ) -> Option<u64> {
+        let max = provider_limit.max_list_limit.or(self.default.max_db_limit);
+        let effective = requested
+            .or(provider_limit.list_limit)
+            .or(self.default.list_limit);
+        match (effective, max) {
+            (Some(effective), Some(max)) => Some(effective.min(max)),
+            (Some(effective), None) => Some(effective),
+            (None, max) => max,
+        }
     }
 }
 

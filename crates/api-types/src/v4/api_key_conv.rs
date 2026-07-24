@@ -63,6 +63,7 @@ impl From<api::ApiKeyListParameters> for core::ApiClientResourceListParameters {
             domain_id: value.domain_id,
             provider_id: value.provider_id,
             enabled: value.enabled,
+            pagination: Default::default(),
         }
     }
 }

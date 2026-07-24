@@ -18,6 +18,8 @@ use serde_json::Value;
 #[cfg(feature = "validate")]
 use validator::Validate;
 
+use crate::Link;
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(
     feature = "builder",
@@ -147,6 +149,10 @@ pub struct GroupList {
     /// Collection of group objects.
     #[cfg_attr(feature = "validate", validate(nested))]
     pub groups: Vec<Group>,
+
+    /// Pagination links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<Link>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

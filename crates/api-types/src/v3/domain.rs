@@ -17,6 +17,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "validate")]
 use validator::Validate;
 
+use crate::Link;
+
 /// Short domain representation.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(
@@ -192,6 +194,10 @@ pub struct DomainList {
     /// Collection of domain objects.
     #[cfg_attr(feature = "validate", validate(nested))]
     pub domains: Vec<Domain>,
+
+    /// Pagination links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<Link>>,
 }
 
 /// Domain list parameters.

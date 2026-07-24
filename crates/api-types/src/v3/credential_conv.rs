@@ -34,6 +34,7 @@ impl From<api_types::CredentialListParameters> for provider_types::CredentialLis
         Self {
             r#type: value.r#type,
             user_id: value.user_id,
+            pagination: Default::default(),
         }
     }
 }

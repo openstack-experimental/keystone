@@ -107,6 +107,10 @@ pub struct RoleListParameters {
     #[builder(default)]
     #[validate(length(min = 1, max = 255))]
     pub name: Option<String>,
+
+    /// Pagination controls (limit/marker/page_reverse).
+    #[builder(default)]
+    pub pagination: crate::ListPagination,
 }
 
 /// Role creation data.

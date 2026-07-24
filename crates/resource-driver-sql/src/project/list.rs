@@ -49,7 +49,27 @@ fn get_list_query(
         select = select.filter(db_project::Column::Id.is_in(val));
     }
 
-    Ok(select.cursor_by(db_project::Column::Id))
+    let mut cursor = select.cursor_by(db_project::Column::Id);
+    if let Some(marker) = &params.pagination.marker {
+        if params.pagination.page_reverse {
+            cursor.before(marker);
+        } else {
+            cursor.after(marker);
+        }
+    }
+    // Over-fetch by one row so the API layer can tell "there is a
+    // next/previous page" exactly, instead of guessing from
+    // `returned == limit` (false-positives when exactly `limit` rows
+    // remain). `.last()` fetches in descending order but sea-orm returns
+    // rows back in ascending order.
+    if let Some(limit) = params.pagination.limit {
+        if params.pagination.page_reverse {
+            cursor.last(limit + 1);
+        } else {
+            cursor.first(limit + 1);
+        }
+    }
+    Ok(cursor)
 }
 
 /// List projects.
@@ -133,6 +153,38 @@ mod tests {
         )
         .to_string(PostgresQueryBuilder);
         assert!(q.contains("\"project\".\"id\" IN ('"), "{}", q);
+    }
+
+    // Note: `Cursor`'s `.after()`/`.before()`/`.first()`/`.last()` state is
+    // applied internally at execution time, not rendered by
+    // `QueryOrder::query()`, so marker/limit behavior is verified against
+    // the executed query's bind parameters below instead.
+
+    #[tokio::test]
+    async fn test_list_pagination_over_fetches_and_uses_marker() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_project_mock("pid1"), get_project_mock("pid2")]])
+            .into_connection();
+
+        let projects = list(
+            &db,
+            &ProjectListParameters {
+                pagination: openstack_keystone_core_types::ListPagination {
+                    limit: Some(1),
+                    marker: Some("pid0".into()),
+                    page_reverse: false,
+                },
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(projects.len(), 2, "backend over-fetched limit+1 rows");
+
+        let txns = db.into_transaction_log();
+        let sql = &txns[0].statements()[0].sql;
+        assert!(sql.contains(r#""project"."id" >"#));
+        assert!(sql.contains("LIMIT"));
     }
 
     #[tokio::test]

@@ -14,6 +14,12 @@
 
 pub use openstack_keystone_api_types::v3::user::*;
 
+impl crate::api::common::ResourceIdentifier for User {
+    fn get_id(&self) -> String {
+        self.id.clone()
+    }
+}
+
 //impl From<identity_types::UserOptions> for UserOptions {
 //    fn from(value: identity_types::UserOptions) -> Self {
 //        Self {

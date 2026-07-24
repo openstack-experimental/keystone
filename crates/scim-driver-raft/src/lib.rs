@@ -216,6 +216,25 @@ impl RaftBackend {
             }
             res.push(candidate);
         }
+
+        res.sort_by(|a, b| a.provider_id.cmp(&b.provider_id));
+        if let Some(marker) = &params.pagination.marker {
+            if params.pagination.page_reverse {
+                res.retain(|x| x.provider_id.as_str() < marker.as_str());
+            } else {
+                res.retain(|x| x.provider_id.as_str() > marker.as_str());
+            }
+        }
+        if let Some(limit) = params.pagination.limit {
+            let limit = (limit + 1) as usize;
+            if params.pagination.page_reverse {
+                if res.len() > limit {
+                    res = res.split_off(res.len() - limit);
+                }
+            } else {
+                res.truncate(limit);
+            }
+        }
         Ok(res)
     }
 
@@ -856,6 +875,7 @@ mod tests {
         let params = ScimRealmResourceListParameters {
             domain_id: "domain-1".to_string(),
             enabled: None,
+            ..Default::default()
         };
         let listed = backend.list_impl(&storage, &params).await.unwrap();
         assert_eq!(listed.len(), 2);
@@ -877,6 +897,7 @@ mod tests {
         let params_enabled = ScimRealmResourceListParameters {
             domain_id: "domain-1".to_string(),
             enabled: Some(true),
+            ..Default::default()
         };
         let listed_enabled = backend.list_impl(&storage, &params_enabled).await.unwrap();
         assert_eq!(listed_enabled.len(), 1);

@@ -14,21 +14,10 @@
 //! Federated identity provider types.
 use openstack_keystone_api_types::federation::*;
 
-use crate::api::common::{QueryParameterPagination, ResourceIdentifier};
+use crate::api::common::ResourceIdentifier;
 
 impl ResourceIdentifier for IdentityProvider {
     fn get_id(&self) -> String {
         self.id.clone()
-    }
-}
-
-impl QueryParameterPagination for IdentityProviderListParameters {
-    fn get_limit(&self) -> Option<u64> {
-        self.limit
-    }
-
-    fn set_marker(&mut self, marker: String) -> &mut Self {
-        self.marker = Some(marker);
-        self
     }
 }

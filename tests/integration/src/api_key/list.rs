@@ -43,6 +43,7 @@ async fn test_list_scoped_to_domain() -> Result<()> {
                 domain_id: domain_a.id.clone(),
                 provider_id: None,
                 enabled: None,
+                pagination: Default::default(),
             },
         )
         .await?;
@@ -73,6 +74,7 @@ async fn test_list_filters_by_provider_id() -> Result<()> {
                 domain_id: domain.id.clone(),
                 provider_id: Some("provider-a".to_string()),
                 enabled: None,
+                pagination: Default::default(),
             },
         )
         .await?;
@@ -108,6 +110,7 @@ async fn test_list_filters_by_enabled() -> Result<()> {
                 domain_id: domain.id.clone(),
                 provider_id: None,
                 enabled: Some(true),
+                pagination: Default::default(),
             },
         )
         .await?;

@@ -56,11 +56,25 @@ fn get_list_query(
     }
 
     let mut cursor = select.cursor_by(db_federated_identity_provider::Column::Id);
-    if let Some(limit) = params.limit {
-        cursor.first(limit);
+    if let Some(marker) = &params.pagination.marker {
+        if params.pagination.page_reverse {
+            cursor.before(marker);
+        } else {
+            cursor.after(marker);
+        }
     }
-    if let Some(marker) = &params.marker {
-        cursor.after(marker);
+    // Over-fetch by one row so the API layer can tell "there is a next/
+    // previous page" exactly, instead of guessing from `returned == limit`
+    // (which false-positives when the table has exactly `limit` rows left).
+    // `.last()` fetches in descending order but sea-orm returns the rows
+    // back in ascending order, so callers always see ascending IDs
+    // regardless of direction.
+    if let Some(limit) = params.pagination.limit {
+        if params.pagination.page_reverse {
+            cursor.last(limit + 1);
+        } else {
+            cursor.first(limit + 1);
+        }
     }
     Ok(cursor)
 }
@@ -91,6 +105,8 @@ mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, QueryOrder, sea_query::*};
     use std::collections::HashSet;
 
+    use openstack_keystone_core_types::ListPagination;
+
     use super::super::tests::get_idp_mock;
     use super::*;
 
@@ -104,6 +120,13 @@ mod tests {
         assert!(sql.contains("federated_identity_provider"));
         assert!(sql.ends_with(r#"FROM "federated_identity_provider""#));
     }
+
+    // Note: `Cursor`'s `.before()`/`.last()` (backward/page_reverse) state is
+    // applied internally at execution time, not exposed via
+    // `QueryOrder::query()` the way `.after()`/`.first()` are, so the
+    // filter/order/limit shape for `page_reverse` is verified against the
+    // executed query's bind parameters instead — see `test_list_page_reverse`
+    // below.
 
     #[tokio::test]
     async fn test_query_name() {
@@ -175,8 +198,11 @@ mod tests {
             &IdentityProviderListParameters {
                 name: Some("idp_name".into()),
                 domain_ids: Some(HashSet::from([Some("did".into())])),
-                limit: Some(1),
-                marker: Some("marker".into()),
+                pagination: ListPagination {
+                    limit: Some(1),
+                    marker: Some("marker".into()),
+                    page_reverse: false,
+                },
             },
         )
         .await
@@ -196,6 +222,42 @@ mod tests {
         assert!(sql.contains(r#""federated_identity_provider"."domain_id" IN"#));
         assert!(sql.contains(r#""federated_identity_provider"."id" >"#));
         assert!(sql.contains(r#"ORDER BY "federated_identity_provider"."id" ASC"#));
+        // limit=1 requested, but the query over-fetches by one row (2) so the
+        // API layer can detect "is there a next page" exactly (bind
+        // parameter value asserted in `test_query_overfetches_by_one` via
+        // the literal-SQL query builder).
+        assert!(sql.contains("LIMIT"));
+    }
+
+    #[tokio::test]
+    async fn test_list_page_reverse() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_idp_mock("1")]])
+            .into_connection();
+
+        let idps = list(
+            &db,
+            &IdentityProviderListParameters {
+                pagination: ListPagination {
+                    limit: Some(1),
+                    marker: Some("marker".into()),
+                    page_reverse: true,
+                },
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(idps.len(), 1);
+
+        let txns = db.into_transaction_log();
+        assert_eq!(txns.len(), 1);
+        let sql = &txns[0].statements()[0].sql;
+        assert!(sql.contains(r#""federated_identity_provider"."id" <"#));
+        assert!(
+            sql.contains(r#"ORDER BY "federated_identity_provider"."id" DESC"#),
+            "expected DESC fetch direction for page_reverse: {sql}"
+        );
         assert!(sql.contains("LIMIT"));
     }
 }

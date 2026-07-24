@@ -20,6 +20,12 @@
 
 pub use openstack_keystone_api_types::v3::role::*;
 
+impl crate::api::common::ResourceIdentifier for Role {
+    fn get_id(&self) -> String {
+        self.id.clone()
+    }
+}
+
 //use crate::role::types;
 
 //impl From<types::Role> for Role {

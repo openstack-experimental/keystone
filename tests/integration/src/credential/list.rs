@@ -72,6 +72,7 @@ async fn test_list_filters_by_user_and_type() -> Result<()> {
             &CredentialListParameters {
                 user_id: Some(user_a.id.clone()),
                 r#type: None,
+                pagination: Default::default(),
             },
         )
         .await?;
@@ -89,6 +90,7 @@ async fn test_list_filters_by_user_and_type() -> Result<()> {
             &CredentialListParameters {
                 user_id: Some(user_a.id.clone()),
                 r#type: Some("totp".into()),
+                pagination: Default::default(),
             },
         )
         .await?;

@@ -17,6 +17,8 @@ use chrono::{DateTime, Utc};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use crate::Link;
 #[cfg(feature = "validate")]
 use validator::Validate;
 
@@ -407,6 +409,10 @@ pub struct UserList {
     /// Collection of user objects.
     #[cfg_attr(feature = "validate", validate(nested))]
     pub users: Vec<User>,
+
+    /// Pagination links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<Link>>,
 }
 
 /// User list parameters.

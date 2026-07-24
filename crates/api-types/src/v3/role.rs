@@ -19,6 +19,8 @@ use serde_json::Value;
 #[cfg(feature = "validate")]
 use validator::Validate;
 
+use crate::Link;
+
 /// The role data.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -140,6 +142,10 @@ pub struct RoleList {
     /// Collection of role objects.
     #[cfg_attr(feature = "validate", validate(nested))]
     pub roles: Vec<Role>,
+
+    /// Pagination links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<Link>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

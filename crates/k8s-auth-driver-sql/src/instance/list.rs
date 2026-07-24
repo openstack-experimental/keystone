@@ -42,7 +42,27 @@ fn get_list_query(
         select = select.filter(kubernetes_auth_instance::Column::Name.eq(val));
     }
 
-    Ok(select.cursor_by(kubernetes_auth_instance::Column::Id))
+    let mut cursor = select.cursor_by(kubernetes_auth_instance::Column::Id);
+    if let Some(marker) = &params.pagination.marker {
+        if params.pagination.page_reverse {
+            cursor.before(marker);
+        } else {
+            cursor.after(marker);
+        }
+    }
+    // Over-fetch by one row so the API layer can tell "there is a
+    // next/previous page" exactly, instead of guessing from
+    // `returned == limit` (false-positives when exactly `limit` rows
+    // remain). `.last()` fetches in descending order but sea-orm returns
+    // rows back in ascending order.
+    if let Some(limit) = params.pagination.limit {
+        if params.pagination.page_reverse {
+            cursor.last(limit + 1);
+        } else {
+            cursor.first(limit + 1);
+        }
+    }
+    Ok(cursor)
 }
 
 /// List K8s auth instances.
@@ -110,6 +130,36 @@ mod tests {
         )
         .to_string(PostgresQueryBuilder);
         assert!(query.contains("\"kubernetes_auth_instance\".\"domain_id\" = 'd1'"));
+    }
+
+    #[tokio::test]
+    async fn test_list_pagination_over_fetches_and_uses_marker() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![
+                get_k8s_auth_instance_mock("id1"),
+                get_k8s_auth_instance_mock("id2"),
+            ]])
+            .into_connection();
+
+        let instances = list(
+            &db,
+            &K8sAuthInstanceListParameters {
+                pagination: openstack_keystone_core_types::ListPagination {
+                    limit: Some(1),
+                    marker: Some("id0".into()),
+                    page_reverse: false,
+                },
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(instances.len(), 2, "backend over-fetched limit+1 rows");
+
+        let txns = db.into_transaction_log();
+        let sql = &txns[0].statements()[0].sql;
+        assert!(sql.contains(r#""kubernetes_auth_instance"."id" >"#));
+        assert!(sql.contains("LIMIT"));
     }
 
     #[tokio::test]

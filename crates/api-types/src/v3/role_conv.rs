@@ -52,6 +52,7 @@ impl From<api_types::RoleListParameters> for provider_types::RoleListParameters 
         Self {
             domain_id: Some(value.domain_id),
             name: value.name,
+            pagination: Default::default(),
         }
     }
 }

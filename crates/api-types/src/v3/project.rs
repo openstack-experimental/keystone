@@ -14,6 +14,8 @@
 //! Project API types.
 
 use serde::{Deserialize, Serialize};
+
+use crate::Link;
 #[cfg(feature = "validate")]
 use validator::Validate;
 
@@ -264,6 +266,10 @@ pub struct ProjectShortList {
     /// Collection of project objects.
     #[cfg_attr(feature = "validate", validate(nested))]
     pub projects: Vec<ProjectShort>,
+
+    /// Pagination links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<Link>>,
 }
 
 /// Project list parameters.

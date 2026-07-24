@@ -169,4 +169,8 @@ pub struct ProjectListParameters {
     #[builder(default)]
     #[validate(length(max = 255))]
     pub name: Option<String>,
+
+    /// Pagination controls (limit/marker/page_reverse).
+    #[builder(default)]
+    pub pagination: crate::ListPagination,
 }

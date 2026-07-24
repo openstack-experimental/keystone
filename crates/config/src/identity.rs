@@ -15,6 +15,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 use crate::common::default_sql_driver;
+use crate::pagination::ListLimitConfig;
 
 /// Identity provider.
 #[derive(Debug, Deserialize, Clone)]
@@ -46,6 +47,10 @@ pub struct IdentityProvider {
     /// User options id to name mapping.
     #[serde(default = "default_user_options_mapping")]
     pub user_options_id_name_mapping: HashMap<String, String>,
+
+    /// `GET /v3/users` and `/v4/users` pagination limits.
+    #[serde(default)]
+    pub list_limit: ListLimitConfig,
 }
 
 impl Default for IdentityProvider {
@@ -58,6 +63,7 @@ impl Default for IdentityProvider {
             password_hashing_algorithm: PasswordHashingAlgo::Bcrypt,
             password_hash_rounds: None,
             user_options_id_name_mapping: default_user_options_mapping(),
+            list_limit: ListLimitConfig::default(),
         }
     }
 }

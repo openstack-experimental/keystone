@@ -14,6 +14,7 @@
 use serde::Deserialize;
 
 use crate::common::default_raft_driver;
+use crate::pagination::ListLimitConfig;
 
 /// SCIM realm provider (ADR 0024).
 #[derive(Debug, Deserialize, Clone)]
@@ -21,12 +22,17 @@ pub struct ScimRealmProvider {
     /// SCIM realm provider driver.
     #[serde(default = "default_raft_driver")]
     pub driver: String,
+
+    /// `GET /v4/scim-realms` pagination limits.
+    #[serde(default)]
+    pub list_limit: ListLimitConfig,
 }
 
 impl Default for ScimRealmProvider {
     fn default() -> Self {
         Self {
             driver: default_raft_driver(),
+            list_limit: ListLimitConfig::default(),
         }
     }
 }

@@ -66,6 +66,10 @@ pub struct GroupListParameters {
     /// Filter groups by the name attribute.
     #[builder(default)]
     pub name: Option<String>,
+
+    /// Pagination controls (limit/marker/page_reverse).
+    #[builder(default)]
+    pub pagination: crate::ListPagination,
 }
 
 #[derive(Builder, Clone, Debug, Default, PartialEq)]

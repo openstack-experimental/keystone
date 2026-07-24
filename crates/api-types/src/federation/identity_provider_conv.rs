@@ -90,8 +90,7 @@ impl From<api_types::IdentityProviderListParameters>
         Self {
             name: value.name,
             domain_ids: None, //value.domain_id
-            limit: value.limit,
-            marker: value.marker,
+            pagination: Default::default(),
         }
     }
 }

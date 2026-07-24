@@ -63,3 +63,32 @@ impl Link {
 pub fn default_true() -> bool {
     true
 }
+
+/// Default page size applied when the client does not supply `limit`.
+pub fn default_list_limit() -> Option<u64> {
+    Some(20)
+}
+
+/// Shared pagination query parameters, reused by every v3/v4 list endpoint.
+///
+/// Handlers take this as a *second*, independent `Query<PaginationQuery>`
+/// extractor alongside each resource's own filter-only params type — axum
+/// re-parses the full query string per extractor and ignores fields it
+/// doesn't declare, so this composes cleanly without `#[serde(flatten)]`
+/// (which breaks typed-field deserialization over `serde_urlencoded`).
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
+pub struct PaginationQuery {
+    /// Limit number of entries on the single response page.
+    #[serde(default = "default_list_limit")]
+    pub limit: Option<u64>,
+    /// Page marker (id of the last entry of the previous page).
+    pub marker: Option<String>,
+    /// Fetch the page preceding `marker` instead of the page following it.
+    ///
+    /// v3 endpoints accept this field (unknown-to-python-keystone query
+    /// params are harmless) but never read or forward it; only v4 endpoints
+    /// wire it through.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub page_reverse: bool,
+}

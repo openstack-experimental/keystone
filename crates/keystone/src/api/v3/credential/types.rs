@@ -13,3 +13,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub use openstack_keystone_api_types::v3::credential::*;
+
+impl crate::api::common::ResourceIdentifier for Credential {
+    fn get_id(&self) -> String {
+        self.id.clone()
+    }
+}

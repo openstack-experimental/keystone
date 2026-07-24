@@ -192,6 +192,25 @@ impl RaftBackend {
                 }
             }
         }
+
+        res.sort_by(|a, b| a.id.cmp(&b.id));
+        if let Some(marker) = &params.pagination.marker {
+            if params.pagination.page_reverse {
+                res.retain(|x| x.id.as_str() < marker.as_str());
+            } else {
+                res.retain(|x| x.id.as_str() > marker.as_str());
+            }
+        }
+        if let Some(limit) = params.pagination.limit {
+            let limit = (limit + 1) as usize;
+            if params.pagination.page_reverse {
+                if res.len() > limit {
+                    res = res.split_off(res.len() - limit);
+                }
+            } else {
+                res.truncate(limit);
+            }
+        }
         Ok(res)
     }
 
@@ -440,6 +459,7 @@ mod tests {
         let params = K8sAuthInstanceListParameters {
             domain_id: None,
             name: None,
+            ..Default::default()
         };
         let result = backend.list_auth_instances_impl(&storage, &params).await;
         assert!(result.is_ok());
@@ -463,6 +483,7 @@ mod tests {
         let params = K8sAuthInstanceListParameters {
             domain_id: Some("domain-1".to_string()),
             name: None,
+            ..Default::default()
         };
         let result = backend.list_auth_instances_impl(&storage, &params).await;
         assert!(result.is_ok());

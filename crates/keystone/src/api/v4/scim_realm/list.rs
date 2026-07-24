@@ -15,26 +15,35 @@
 
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::{OriginalUri, Query, State},
     http::StatusCode,
     response::IntoResponse,
 };
 
+use openstack_keystone_api_types::PaginationQuery;
 use openstack_keystone_api_types::v4::scim_realm::{
     ScimRealm, ScimRealmList, ScimRealmListParameters,
 };
+use openstack_keystone_core_types::ListPagination;
 
 use crate::api::auth::Auth;
+use crate::api::common::{ResourceIdentifier, paginate_bidirectional};
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
+
+impl ResourceIdentifier for ScimRealm {
+    fn get_id(&self) -> String {
+        self.provider_id.clone()
+    }
+}
 
 /// List SCIM realms for a domain.
 #[utoipa::path(
     get,
     path = "/",
     operation_id = "/scim_realm:list",
-    params(ScimRealmListParameters),
+    params(ScimRealmListParameters, PaginationQuery),
     responses(
         (status = OK, description = "List of SCIM realms", body = ScimRealmList),
     ),
@@ -49,7 +58,9 @@ use openstack_keystone_core::auth::ExecutionContext;
 )]
 pub(super) async fn list(
     Auth(user_auth): Auth,
+    OriginalUri(original_url): OriginalUri,
     Query(query): Query<ScimRealmListParameters>,
+    Query(pagination): Query<PaginationQuery>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     state
@@ -62,7 +73,15 @@ pub(super) async fn list(
         )
         .await?;
 
-    let params = query.into();
+    let config = state.config_manager.config.read().await;
+    let mut params: openstack_keystone_core_types::scim::ScimRealmResourceListParameters =
+        query.into();
+    params.pagination = ListPagination {
+        limit: config.resolve_list_limit(&config.scim_realm.list_limit, pagination.limit),
+        marker: pagination.marker.clone(),
+        page_reverse: pagination.page_reverse,
+    };
+
     let realms: Vec<ScimRealm> = state
         .provider
         .get_scim_realm_provider()
@@ -72,14 +91,10 @@ pub(super) async fn list(
         .map(Into::into)
         .collect();
 
-    Ok((
-        StatusCode::OK,
-        Json(ScimRealmList {
-            scim_realms: realms,
-            links: None,
-        }),
-    )
-        .into_response())
+    let (scim_realms, links) =
+        paginate_bidirectional(&config, realms, &pagination, original_url.path())?;
+
+    Ok((StatusCode::OK, Json(ScimRealmList { scim_realms, links })).into_response())
 }
 
 #[cfg(test)]
@@ -144,6 +159,100 @@ mod tests {
         let res: ScimRealmList = serde_json::from_slice(&body).unwrap();
         assert_eq!(res.scim_realms.len(), 1);
         assert_eq!(res.scim_realms[0].provider_id, "provider-1");
+    }
+
+    fn realm_with_provider_id(provider_id: &str) -> provider_types::ScimRealmResource {
+        provider_types::ScimRealmResource {
+            provider_id: provider_id.into(),
+            ..sample_realm_core()
+        }
+    }
+
+    /// Backend over-fetched (returned `limit + 1 == 2` rows), not the first
+    /// page (`marker` set): both `next` and `previous` links are produced,
+    /// and the extra row is trimmed from the response body.
+    #[tokio::test]
+    async fn test_list_pagination_bidirectional_links() {
+        let vsc = test_fixture_scoped();
+        let mut mock = MockScimRealmProvider::default();
+        mock.expect_list_realms()
+            .withf(|_, qp: &provider_types::ScimRealmResourceListParameters| {
+                qp.pagination.limit == Some(1) && qp.pagination.marker == Some("m".into())
+            })
+            .returning(|_, _| {
+                Ok(vec![
+                    realm_with_provider_id("provider-1"),
+                    realm_with_provider_id("provider-2"),
+                ])
+            });
+        let provider = Provider::mocked_builder().mock_scim_realm(mock);
+
+        let state = get_mocked_state(provider, true, None).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/?domain_id=domain_id&limit=1&marker=m")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let res: ScimRealmList = serde_json::from_slice(&body).unwrap();
+        assert_eq!(res.scim_realms.len(), 1);
+        assert_eq!(res.scim_realms[0].provider_id, "provider-1");
+        let links = res.links.expect("expected next+previous links");
+        assert!(links.iter().any(|l| l.rel == "next"));
+        assert!(links.iter().any(|l| l.rel == "previous"));
+    }
+
+    /// Backend returned exactly `limit` rows (no over-fetched extra row): no
+    /// `next` link should be produced.
+    #[tokio::test]
+    async fn test_list_pagination_no_false_positive_next() {
+        let vsc = test_fixture_scoped();
+        let mut mock = MockScimRealmProvider::default();
+        mock.expect_list_realms()
+            .withf(|_, qp: &provider_types::ScimRealmResourceListParameters| {
+                qp.pagination.limit == Some(1)
+            })
+            .returning(|_, _| Ok(vec![sample_realm_core()]));
+        let provider = Provider::mocked_builder().mock_scim_realm(mock);
+
+        let state = get_mocked_state(provider, true, None).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/?domain_id=domain_id&limit=1")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let res: ScimRealmList = serde_json::from_slice(&body).unwrap();
+        assert_eq!(res.scim_realms.len(), 1);
+        assert_eq!(res.links, None);
     }
 
     #[tokio::test]
