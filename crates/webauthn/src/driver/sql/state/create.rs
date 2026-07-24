@@ -136,7 +136,7 @@ mod tests {
     }
 
     fn sv<S: Into<String>>(s: S) -> sea_orm::Value {
-        sea_orm::Value::String(Some(Box::new(s.into())))
+        sea_orm::Value::String(Some(s.into()))
     }
 
     // upsert is private; tests exercise it directly with arbitrary serializable

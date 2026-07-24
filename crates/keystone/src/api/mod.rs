@@ -222,7 +222,7 @@ pub(crate) mod tests {
                 openstack_keystone_config::ConfigManager::not_watched(
                     openstack_keystone_config::Config::default(),
                 ),
-                sea_orm::DatabaseConnection::Disconnected,
+                sea_orm::DatabaseConnection::default(),
                 provider,
                 std::sync::Arc::new(enforcer),
                 openstack_keystone_audit::AuditDispatcher::noop(),

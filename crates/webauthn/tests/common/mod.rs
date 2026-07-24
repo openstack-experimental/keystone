@@ -169,7 +169,7 @@ pub async fn get_state(
         get_isolated_database().await?
     } else {
         cfg.webauthn.driver = "raft".to_string();
-        DatabaseConnection::Disconnected
+        DatabaseConnection::default()
     };
     let storage = Arc::new(openstack_keystone_distributed_storage::mock::MockStorage::default());
     let main_state = Arc::new(

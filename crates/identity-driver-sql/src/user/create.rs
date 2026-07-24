@@ -215,7 +215,7 @@ pub async fn create(
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
+    use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
 
     use openstack_keystone_config::Config;
     use openstack_keystone_core_types::identity::{
@@ -364,10 +364,11 @@ mod tests {
         };
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![get_user_mock("1")]])
-            .append_exec_results([MockExecResult {
-                rows_affected: 1,
-                ..Default::default()
-            }])
+            .append_query_results([vec![crate::entity::user_option::Model {
+                user_id: "1".into(),
+                option_id: "1001".into(),
+                option_value: Some("true".into()),
+            }]])
             .append_query_results([vec![get_federated_user_mock("1")]])
             .into_connection();
         let mut federation_data = FederationBuilder::default();
@@ -404,10 +405,11 @@ mod tests {
             // 1. Insert main user record
             .append_query_results([vec![get_user_mock("1")]])
             // 2. Insert user option (ignore_password_expiry)
-            .append_exec_results([MockExecResult {
-                rows_affected: 1,
-                ..Default::default()
-            }])
+            .append_query_results([vec![crate::entity::user_option::Model {
+                user_id: "1".into(),
+                option_id: "1001".into(),
+                option_value: Some("true".into()),
+            }]])
             // 3. Insert local_user record
             .append_query_results([vec![get_local_user_mock("1")]])
             // 4. password::set_new_password with Vec::new() -> no expire, no delete just insert new
@@ -415,11 +417,6 @@ mod tests {
             .append_query_results([vec![get_password_mock(1)]])
             // 5. password::list after set_new_password
             .append_query_results([vec![get_password_mock(1)]])
-            // 6. Insert user option (ignore_password_expiry for user_options)
-            .append_exec_results([MockExecResult {
-                rows_affected: 1,
-                ..Default::default()
-            }])
             .into_connection();
         let req = UserCreateBuilder::default()
             .default_project_id("dpid")

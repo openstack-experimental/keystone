@@ -372,7 +372,7 @@ mod tests {
         let state = Arc::new(
             Service::new(
                 ConfigManager::not_watched(config),
-                DatabaseConnection::Disconnected,
+                DatabaseConnection::default(),
                 provider,
                 Arc::new(MockPolicy::default()),
                 AuditDispatcher::noop(),

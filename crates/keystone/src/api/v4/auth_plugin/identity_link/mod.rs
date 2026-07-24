@@ -192,7 +192,7 @@ mod tests {
         Arc::new(
             Service::new(
                 ConfigManager::not_watched(cfg),
-                DatabaseConnection::Disconnected,
+                DatabaseConnection::default(),
                 provider,
                 Arc::new(mock_policy(policy_allow)),
                 AuditDispatcher::noop(),

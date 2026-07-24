@@ -217,10 +217,10 @@ mod tests {
                 rows_affected: 1,
                 ..Default::default()
             }])
-            .append_exec_results([MockExecResult {
-                rows_affected: 1,
-                ..Default::default()
-            }])
+            .append_query_results([vec![
+                get_user_group_membership_mock("u1", "g0"),
+                get_user_group_membership_mock("u1", "g5"),
+            ]])
             .into_connection();
 
         set_user_groups(&db, "u1", vec!["g2", "g4", "g5", "g0"])
@@ -259,10 +259,7 @@ mod tests {
                 get_user_group_membership_mock("u1", "g3"),
                 get_user_group_membership_mock("u1", "g4"),
             ]])
-            .append_exec_results([MockExecResult {
-                rows_affected: 1,
-                ..Default::default()
-            }])
+            .append_query_results([vec![get_user_group_membership_mock("u1", "g5")]])
             .into_connection();
 
         set_user_groups(&db, "u1", vec!["g1", "g2", "g3", "g4", "g5"])
@@ -351,6 +348,7 @@ mod tests {
     #[tokio::test]
     async fn test_expiring_add_and_remove() {
         let expiry = Utc::now();
+        let last_verified = Utc::now();
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![
                 get_expiring_user_group_membership_mock("u1", "g1", expiry),
@@ -362,16 +360,15 @@ mod tests {
                 rows_affected: 1,
                 ..Default::default()
             }])
-            .append_exec_results([MockExecResult {
-                rows_affected: 1,
-                ..Default::default()
-            }])
+            .append_query_results([vec![
+                get_expiring_user_group_membership_mock("u1", "g0", last_verified),
+                get_expiring_user_group_membership_mock("u1", "g5", last_verified),
+            ]])
             .append_exec_results([MockExecResult {
                 rows_affected: 1,
                 ..Default::default()
             }])
             .into_connection();
-        let last_verified = Utc::now();
 
         set_user_groups_expiring(
             &db,
@@ -429,6 +426,7 @@ mod tests {
     #[tokio::test]
     async fn test_expiring_only_add() {
         let expiry = Utc::now();
+        let last_verified = Utc::now();
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![
                 get_expiring_user_group_membership_mock("u1", "g1", expiry),
@@ -436,16 +434,16 @@ mod tests {
                 get_expiring_user_group_membership_mock("u1", "g3", expiry),
                 get_expiring_user_group_membership_mock("u1", "g4", expiry),
             ]])
-            .append_exec_results([MockExecResult {
-                rows_affected: 1,
-                ..Default::default()
-            }])
+            .append_query_results([vec![get_expiring_user_group_membership_mock(
+                "u1",
+                "g5",
+                last_verified,
+            )]])
             .append_exec_results([MockExecResult {
                 rows_affected: 1,
                 ..Default::default()
             }])
             .into_connection();
-        let last_verified = Utc::now();
 
         set_user_groups_expiring(
             &db,

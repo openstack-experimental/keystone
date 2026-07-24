@@ -1497,7 +1497,7 @@ mod tests {
         Arc::new(
             Service::new(
                 ConfigManager::not_watched(cfg),
-                DatabaseConnection::Disconnected,
+                DatabaseConnection::default(),
                 Provider::mocked_builder().build().unwrap(),
                 Arc::new(MockPolicy::default()),
                 AuditDispatcher::noop(),

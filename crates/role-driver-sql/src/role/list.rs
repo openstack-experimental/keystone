@@ -79,18 +79,18 @@ pub async fn list(
     db: &DatabaseConnection,
     params: &RoleListParameters,
 ) -> Result<Vec<Role>, RoleProviderError> {
-    Ok(get_list_query(params)?
+    get_list_query(params)?
         .all(db)
         .await
         .context("listing roles")?
         .into_iter()
         .map(TryInto::<Role>::try_into)
-        .collect::<Result<Vec<Role>, _>>()?)
+        .collect::<Result<Vec<Role>, _>>()
 }
 
 #[cfg(test)]
 pub(super) mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, QueryOrder, Transaction, sea_query::*};
+    use sea_orm::{DatabaseBackend, MockDatabase, QuerySelect, Transaction, sea_query::*};
 
     use openstack_keystone_core_types::role::RoleBuilder;
 
@@ -101,7 +101,7 @@ pub(super) mod tests {
     async fn test_query_all() {
         assert_eq!(
             r#"SELECT "role"."id", "role"."name", "role"."extra", "role"."domain_id", "role"."description" FROM "role""#,
-            QueryOrder::query(&mut get_list_query(&RoleListParameters::default()).unwrap())
+            QuerySelect::query(&mut get_list_query(&RoleListParameters::default()).unwrap())
                 .to_string(PostgresQueryBuilder)
         );
     }

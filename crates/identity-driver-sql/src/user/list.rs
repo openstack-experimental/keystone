@@ -264,7 +264,7 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" WHERE "user_option"."user_id" IN ($1, $2, $3, $4)"#,
+                    r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" WHERE ("user_option"."user_id") IN (($1), ($2), ($3), ($4)) ORDER BY "user_option"."user_id" ASC, "user_option"."option_id" ASC"#,
                     []
                 ),
                 Transaction::from_sql_and_values(
@@ -279,7 +279,7 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "federated_user"."id", "federated_user"."user_id", "federated_user"."idp_id", "federated_user"."protocol_id", "federated_user"."unique_id", "federated_user"."display_name" FROM "federated_user" WHERE "federated_user"."user_id" IN ($1, $2, $3, $4)"#,
+                    r#"SELECT "federated_user"."id", "federated_user"."user_id", "federated_user"."idp_id", "federated_user"."protocol_id", "federated_user"."unique_id", "federated_user"."display_name" FROM "federated_user" WHERE ("federated_user"."user_id") IN (($1), ($2), ($3), ($4))"#,
                     []
                 ),
                 Transaction::from_sql_and_values(
@@ -335,7 +335,7 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" WHERE "user_option"."user_id" IN ($1, $2, $3, $4)"#,
+                    r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" WHERE ("user_option"."user_id") IN (($1), ($2), ($3), ($4)) ORDER BY "user_option"."user_id" ASC, "user_option"."option_id" ASC"#,
                     []
                 ),
                 Transaction::from_sql_and_values(
@@ -467,7 +467,7 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" WHERE "user_option"."user_id" IN ($1, $2, $3, $4)"#,
+                    r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" WHERE ("user_option"."user_id") IN (($1), ($2), ($3), ($4)) ORDER BY "user_option"."user_id" ASC, "user_option"."option_id" ASC"#,
                     []
                 ),
                 Transaction::from_sql_and_values(
@@ -523,12 +523,12 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" WHERE "user_option"."user_id" IN ($1, $2, $3, $4)"#,
+                    r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" WHERE ("user_option"."user_id") IN (($1), ($2), ($3), ($4)) ORDER BY "user_option"."user_id" ASC, "user_option"."option_id" ASC"#,
                     []
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "federated_user"."id", "federated_user"."user_id", "federated_user"."idp_id", "federated_user"."protocol_id", "federated_user"."unique_id", "federated_user"."display_name" FROM "federated_user" WHERE "federated_user"."user_id" IN ($1, $2, $3, $4)"#,
+                    r#"SELECT "federated_user"."id", "federated_user"."user_id", "federated_user"."idp_id", "federated_user"."protocol_id", "federated_user"."unique_id", "federated_user"."display_name" FROM "federated_user" WHERE ("federated_user"."user_id") IN (($1), ($2), ($3), ($4))"#,
                     []
                 ),
             ]) {

@@ -94,7 +94,7 @@ pub async fn list(
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, QueryOrder, Transaction, sea_query::*};
+    use sea_orm::{DatabaseBackend, MockDatabase, QuerySelect, Transaction, sea_query::*};
     use serde_json::json;
 
     use super::super::tests::get_service_mock;
@@ -104,7 +104,7 @@ mod tests {
     async fn test_query_all() {
         assert_eq!(
             r#"SELECT "service"."id", "service"."type", "service"."enabled", "service"."extra" FROM "service""#,
-            QueryOrder::query(&mut get_list_query(&ServiceListParameters::default()).unwrap())
+            QuerySelect::query(&mut get_list_query(&ServiceListParameters::default()).unwrap())
                 .to_string(PostgresQueryBuilder)
         );
     }
@@ -112,7 +112,7 @@ mod tests {
     #[tokio::test]
     async fn test_query_type() {
         assert!(
-            QueryOrder::query(
+            QuerySelect::query(
                 &mut get_list_query(&ServiceListParameters {
                     r#type: Some("type".into()),
                     ..Default::default()

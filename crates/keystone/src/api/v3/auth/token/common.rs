@@ -660,7 +660,7 @@ mod route_dispatch_tests {
         let state = Arc::new(
             Service::new(
                 ConfigManager::not_watched(cfg),
-                sea_orm::DatabaseConnection::Disconnected,
+                sea_orm::DatabaseConnection::default(),
                 provider,
                 Arc::new(MockPolicy::default()),
                 audit_dispatcher,

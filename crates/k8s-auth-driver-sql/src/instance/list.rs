@@ -88,7 +88,7 @@ pub async fn list(
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, QueryOrder, Transaction, sea_query::*};
+    use sea_orm::{DatabaseBackend, MockDatabase, QuerySelect, Transaction, sea_query::*};
 
     use super::super::tests::get_k8s_auth_instance_mock;
     use super::*;
@@ -97,7 +97,7 @@ mod tests {
     async fn test_query_all() {
         assert_eq!(
             r#"SELECT "kubernetes_auth_instance"."ca_cert", "kubernetes_auth_instance"."disable_local_ca_jwt", "kubernetes_auth_instance"."domain_id", "kubernetes_auth_instance"."enabled", "kubernetes_auth_instance"."host", "kubernetes_auth_instance"."id", "kubernetes_auth_instance"."name" FROM "kubernetes_auth_instance""#,
-            QueryOrder::query(
+            QuerySelect::query(
                 &mut get_list_query(&K8sAuthInstanceListParameters::default()).unwrap()
             )
             .to_string(PostgresQueryBuilder)
@@ -107,7 +107,7 @@ mod tests {
     #[tokio::test]
     async fn test_query_name() {
         assert!(
-            QueryOrder::query(
+            QuerySelect::query(
                 &mut get_list_query(&K8sAuthInstanceListParameters {
                     name: Some("name".into()),
                     ..Default::default()
@@ -121,7 +121,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_domain_id() {
-        let query = QueryOrder::query(
+        let query = QuerySelect::query(
             &mut get_list_query(&K8sAuthInstanceListParameters {
                 domain_id: Some("d1".into()),
                 ..Default::default()

@@ -74,18 +74,18 @@ pub async fn list(
     db: &DatabaseConnection,
     params: &RegionListParameters,
 ) -> Result<Vec<Region>, CatalogProviderError> {
-    Ok(get_list_query(params)?
+    get_list_query(params)?
         .all(db)
         .await
         .context("fetching regions")?
         .into_iter()
         .map(TryInto::<Region>::try_into)
-        .collect::<Result<_, _>>()?)
+        .collect::<Result<_, _>>()
 }
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, QueryOrder, Transaction, sea_query::*};
+    use sea_orm::{DatabaseBackend, MockDatabase, QuerySelect, Transaction, sea_query::*};
     use serde_json::json;
 
     use super::super::tests::get_region_mock;
@@ -95,7 +95,7 @@ mod tests {
     async fn test_query_all() {
         assert_eq!(
             r#"SELECT "region"."id", "region"."description", "region"."parent_region_id", "region"."extra" FROM "region""#,
-            QueryOrder::query(&mut get_list_query(&RegionListParameters::default()).unwrap())
+            QuerySelect::query(&mut get_list_query(&RegionListParameters::default()).unwrap())
                 .to_string(PostgresQueryBuilder)
         );
     }
@@ -103,7 +103,7 @@ mod tests {
     #[tokio::test]
     async fn test_query_parent_region_id() {
         assert!(
-            QueryOrder::query(
+            QuerySelect::query(
                 &mut get_list_query(&RegionListParameters {
                     parent_region_id: Some("parent".into()),
                     ..Default::default()

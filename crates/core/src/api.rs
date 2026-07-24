@@ -214,7 +214,7 @@ pub mod tests {
         Arc::new(
             Service::new(
                 ConfigManager::not_watched(Config::default()),
-                DatabaseConnection::Disconnected,
+                DatabaseConnection::default(),
                 provider,
                 Arc::new(policy_enforcer_mock),
                 AuditDispatcher::noop(),
@@ -291,7 +291,7 @@ pub mod tests {
         let state = Arc::new(
             Service::new(
                 ConfigManager::not_watched(Config::default()),
-                DatabaseConnection::Disconnected,
+                DatabaseConnection::default(),
                 provider,
                 Arc::new(policy.clone()),
                 AuditDispatcher::noop(),

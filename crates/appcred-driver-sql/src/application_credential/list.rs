@@ -174,17 +174,17 @@ mod tests {
             ),
             Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"SELECT "application_credential_role"."application_credential_id", "application_credential_role"."role_id" FROM "application_credential_role" WHERE "application_credential_role"."application_credential_id" IN ($1, $2)"#,
+                r#"SELECT "application_credential_role"."application_credential_id", "application_credential_role"."role_id" FROM "application_credential_role" WHERE ("application_credential_role"."application_credential_id") IN (($1), ($2)) ORDER BY "application_credential_role"."application_credential_id" ASC, "application_credential_role"."role_id" ASC"#,
                 []
             ),
             Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"SELECT "application_credential_access_rule"."application_credential_id", "application_credential_access_rule"."access_rule_id" FROM "application_credential_access_rule" WHERE "application_credential_access_rule"."application_credential_id" IN ($1, $2)"#,
+                r#"SELECT "application_credential_access_rule"."application_credential_id", "application_credential_access_rule"."access_rule_id" FROM "application_credential_access_rule" WHERE ("application_credential_access_rule"."application_credential_id") IN (($1), ($2))"#,
                 []
             ),
             Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"SELECT "access_rule"."id", "access_rule"."service", "access_rule"."path", "access_rule"."method", "access_rule"."external_id", "access_rule"."user_id" FROM "access_rule" WHERE "access_rule"."id" IN ($1, $2)"#,
+                r#"SELECT "access_rule"."id", "access_rule"."service", "access_rule"."path", "access_rule"."method", "access_rule"."external_id", "access_rule"."user_id" FROM "access_rule" WHERE ("access_rule"."id") IN (($1), ($2)) ORDER BY "access_rule"."id" ASC"#,
                 []
             ),
         ]) {

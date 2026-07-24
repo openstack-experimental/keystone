@@ -76,7 +76,6 @@ where
             group_id: Set(g.as_ref().into()),
         }
     }))
-    .on_empty_do_nothing()
     .exec(db)
     .await
     .context("adding user to groups")?;
@@ -149,7 +148,6 @@ where
             last_verified: Set(last_verified),
         }
     }))
-    .on_empty_do_nothing()
     .exec(db)
     .await
     .context("adding user to groups with expiration")?;
@@ -160,7 +158,7 @@ where
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
-    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
+    use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
 
     use super::*;
     use crate::user_group::tests::{
@@ -190,10 +188,11 @@ mod tests {
     async fn test_bulk() {
         // Create MockDatabase with mock query results
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_exec_results([MockExecResult {
-                rows_affected: 1,
-                ..Default::default()
-            }])
+            .append_query_results([vec![
+                get_user_group_membership_mock("u1", "g1"),
+                get_user_group_membership_mock("u1", "g2"),
+                get_user_group_membership_mock("u2", "g2"),
+            ]])
             .into_connection();
 
         add_users_to_groups(&db, vec![("u1", "g1"), ("u1", "g2"), ("u2", "g2")])
@@ -253,15 +252,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_bulk_expiring() {
+        let last_verified = Utc::now();
         // Create MockDatabase with mock query results
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_exec_results([MockExecResult {
-                rows_affected: 1,
-                ..Default::default()
-            }])
+            .append_query_results([vec![
+                get_expiring_user_group_membership_mock("u1", "g1", last_verified),
+                get_expiring_user_group_membership_mock("u1", "g2", last_verified),
+                get_expiring_user_group_membership_mock("u2", "g2", last_verified),
+            ]])
             .into_connection();
 
-        let last_verified = Utc::now();
         add_users_to_groups_expiring(
             &db,
             vec![("u1", "g1"), ("u1", "g2"), ("u2", "g2")],
