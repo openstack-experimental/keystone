@@ -12,11 +12,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # OpenStack Keystone SQL driver for the token restriction provider
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use sea_orm::{DatabaseConnection, Schema};
 use sea_orm_migration::MigrationTrait;
 
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_core::token::TokenProviderError;
 use openstack_keystone_core::token::backend::TokenRestrictionBackend;
 use openstack_keystone_core::{
@@ -47,6 +50,15 @@ pub fn anchor() {}
 static PLUGIN: SqlBackend = SqlBackend {};
 inventory::submit! {
     SqlDriverRegistration { driver: &PLUGIN }
+}
+inventory::submit! {
+    BackendRegistration::<dyn TokenRestrictionBackend> {
+        name: "sql",
+        selected: |_| true,
+        build: |_cfg| Box::pin(async {
+            Ok(Arc::new(SqlBackend::default()) as Arc<dyn TokenRestrictionBackend>)
+        }),
+    }
 }
 
 #[async_trait]

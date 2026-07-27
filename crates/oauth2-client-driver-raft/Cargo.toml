@@ -13,6 +13,7 @@ exclude.workspace = true
 [dependencies]
 async-trait.workspace = true
 chrono = { workspace = true, default-features = false, features = ["clock", "serde"] }
+inventory.workspace = true
 openstack-keystone-core.workspace = true
 openstack-keystone-core-types.workspace = true
 openstack-keystone-distributed-storage.workspace = true

@@ -18,9 +18,11 @@
 //! roles, no catalog) — a token *format*, not the OP-issued
 //! `OpenStackAccessTokenClaims` later ADR 0026 phases introduce.
 use std::fmt;
+use std::sync::Arc;
 
 use jsonwebtoken::{Header, Validation, decode, encode};
-use openstack_keystone_config::Config;
+use openstack_keystone_config::{Config, TokenProviderDriver};
+use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_core::token::TokenProviderError;
 use openstack_keystone_core::token::backend::TokenBackend;
 use openstack_keystone_core_types::token::TokenPayload;
@@ -41,6 +43,24 @@ pub use openstack_keystone_key_repository::asymmetric::jwt_algorithm;
 /// members, keeping `inventory::submit!` sections visible at runtime.
 #[allow(dead_code)]
 pub fn anchor() {}
+
+inventory::submit! {
+    // Only registered when actually selected (ADR-0026 §10, Phase 0): unlike
+    // fernet, a `[jws_tokens]` key repository need not exist for a
+    // fernet-only deployment, so this driver must not be eagerly built.
+    BackendRegistration::<dyn TokenBackend> {
+        name: "jws",
+        selected: |cfg: &Config| cfg.token.provider == TokenProviderDriver::Jws,
+        build: |cfg: &Config| Box::pin({
+            let cfg = cfg.clone();
+            async move {
+                let mut provider = JwsTokenProvider::new(cfg);
+                provider.load_keys().await?;
+                Ok(Arc::new(provider) as Arc<dyn TokenBackend>)
+            }
+        }),
+    }
+}
 
 /// JWS token provider.
 pub struct JwsTokenProvider {

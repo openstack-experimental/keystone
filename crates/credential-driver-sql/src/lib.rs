@@ -15,9 +15,13 @@
 //!
 //! Persists to the `credential` table.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use sea_orm::{DatabaseConnection, Schema};
 
+use openstack_keystone_core::credential::backend::CredentialBackend;
+use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_core::{
     SqlDriver, SqlDriverRegistration, db::create_table, error::DatabaseError,
 };
@@ -51,6 +55,15 @@ pub fn anchor() {}
 static PLUGIN: SqlBackend = SqlBackend {};
 inventory::submit! {
     SqlDriverRegistration { driver: &PLUGIN }
+}
+inventory::submit! {
+    BackendRegistration::<dyn CredentialBackend> {
+        name: "sql",
+        selected: |_| true,
+        build: |_cfg| Box::pin(async {
+            Ok(Arc::new(SqlBackend::default()) as Arc<dyn CredentialBackend>)
+        }),
+    }
 }
 
 #[async_trait]

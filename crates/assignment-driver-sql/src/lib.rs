@@ -14,6 +14,7 @@
 //! # Assignment driver to the OpenStack Keystone for the SQL database.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use sea_orm::{DatabaseConnection, Schema};
@@ -22,6 +23,7 @@ use openstack_keystone_core::assignment::{AssignmentProviderError, backend::Assi
 use openstack_keystone_core::db::create_table;
 use openstack_keystone_core::error::DatabaseError;
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_core::{SqlDriver, SqlDriverRegistration};
 use openstack_keystone_core_types::assignment::*;
 
@@ -43,6 +45,15 @@ pub fn anchor() {}
 static PLUGIN: SqlBackend = SqlBackend {};
 inventory::submit! {
     SqlDriverRegistration { driver: &PLUGIN }
+}
+inventory::submit! {
+    BackendRegistration::<dyn AssignmentBackend> {
+        name: "sql",
+        selected: |_| true,
+        build: |_cfg| Box::pin(async {
+            Ok(Arc::new(SqlBackend::default()) as Arc<dyn AssignmentBackend>)
+        }),
+    }
 }
 
 impl SqlBackend {

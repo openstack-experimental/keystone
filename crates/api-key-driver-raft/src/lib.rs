@@ -16,9 +16,12 @@
 use async_trait::async_trait;
 use chrono::Utc;
 
+use std::sync::Arc;
+
 use openstack_keystone_core::api_key::backend::ApiKeyBackend;
 use openstack_keystone_core::api_key::error::ApiKeyProviderError;
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_core_types::api_key::*;
 use openstack_keystone_distributed_storage::{
     Metadata, StorageApi, StoreDataEnvelope, StoreError, store_command::Mutation,
@@ -582,6 +585,16 @@ impl ApiKeyBackend for RaftBackend {
 /// members, keeping `inventory::submit!` sections visible at runtime.
 #[allow(dead_code)]
 pub fn anchor() {}
+
+inventory::submit! {
+    BackendRegistration::<dyn ApiKeyBackend> {
+        name: "raft",
+        selected: |_| true,
+        build: |_cfg| Box::pin(async {
+            Ok(Arc::new(RaftBackend::default()) as Arc<dyn ApiKeyBackend>)
+        }),
+    }
+}
 
 #[cfg(test)]
 mod tests {

@@ -34,6 +34,7 @@ use tracing::{trace, warn};
 use validator::Validate;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_core::token::{TokenProviderError, backend::TokenBackend};
 use openstack_keystone_core_types::token::*;
 //    application_credential::ApplicationCredentialPayload,
@@ -559,6 +560,23 @@ fn get_fernet_timestamp(payload: &str) -> Result<DateTime<Utc>, FernetDriverErro
 /// members, keeping `inventory::submit!` sections visible at runtime.
 #[allow(dead_code)]
 pub fn anchor() {}
+
+inventory::submit! {
+    // Always eagerly registered (ADR-0019): unlike jws, fernet keys are
+    // required for every deployment, so this driver is never conditional.
+    BackendRegistration::<dyn TokenBackend> {
+        name: "fernet",
+        selected: |_| true,
+        build: |cfg: &Config| Box::pin({
+            let cfg = cfg.clone();
+            async move {
+                let mut provider = FernetTokenProvider::new(cfg);
+                provider.load_keys().await?;
+                Ok(Arc::new(provider) as Arc<dyn TokenBackend>)
+            }
+        }),
+    }
+}
 
 #[cfg(feature = "bench_internals")]
 /// Conditionally expose the function when the 'bench_internals' feature is

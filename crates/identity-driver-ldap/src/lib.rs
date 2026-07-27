@@ -24,11 +24,12 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use secrecy::SecretString;
 
-use openstack_keystone_config::LdapProvider;
+use openstack_keystone_config::{Config, LdapProvider};
 use openstack_keystone_core::auth::AuthenticationResult;
 use openstack_keystone_core::identity::IdentityProviderError;
 use openstack_keystone_core::identity::backend::IdentityBackend;
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_core_types::identity::*;
 
 mod authenticate;
@@ -110,6 +111,19 @@ impl LdapBackend {
 /// `PluginManager`.
 #[allow(dead_code)]
 pub fn anchor() {}
+
+inventory::submit! {
+    BackendRegistration::<dyn IdentityBackend> {
+        name: "ldap",
+        selected: |cfg: &Config| cfg.identity.driver == "ldap",
+        build: |cfg: &Config| {
+            let ldap_cfg = cfg.ldap.clone();
+            Box::pin(async move {
+                Ok(Arc::new(LdapBackend::new(&ldap_cfg).await?) as Arc<dyn IdentityBackend>)
+            })
+        },
+    }
+}
 
 #[async_trait]
 impl IdentityBackend for LdapBackend {

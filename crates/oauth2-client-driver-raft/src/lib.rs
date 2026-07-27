@@ -17,9 +17,12 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
+use std::sync::Arc;
+
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::oauth2_client::Oauth2ClientProviderError;
 use openstack_keystone_core::oauth2_client::backend::Oauth2ClientBackend;
+use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_core_types::oauth2_client::*;
 use openstack_keystone_distributed_storage::{
     ApiStoreError, Metadata, StorageApi, StoreDataEnvelope, StoreError, StoreResponse,
@@ -477,6 +480,16 @@ impl Oauth2ClientBackend for RaftOauth2ClientBackend {
 /// Linkage anchor -- see ADR-0018.
 #[allow(dead_code)]
 pub fn anchor() {}
+
+inventory::submit! {
+    BackendRegistration::<dyn Oauth2ClientBackend> {
+        name: "raft",
+        selected: |_| true,
+        build: |_cfg| Box::pin(async {
+            Ok(Arc::new(RaftOauth2ClientBackend::default()) as Arc<dyn Oauth2ClientBackend>)
+        }),
+    }
+}
 
 #[cfg(test)]
 mod tests {

@@ -19,8 +19,11 @@ use async_trait::async_trait;
 use secrecy::{ExposeSecret, SecretBox};
 use serde::{Deserialize, Serialize};
 
+use std::sync::Arc;
+
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::oauth2_key::backend::Oauth2KeyBackend;
+use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_core_types::oauth2_key::{
     LocalEmergencyCandidateSummary, LocalEmergencyRotationInfo, Oauth2KeyProviderError,
     PendingRotationInfo,
@@ -1072,6 +1075,16 @@ impl Oauth2KeyBackend for RaftOauth2KeyBackend {
 /// Linkage anchor — see ADR-0018.
 #[allow(dead_code)]
 pub fn anchor() {}
+
+inventory::submit! {
+    BackendRegistration::<dyn Oauth2KeyBackend> {
+        name: "raft",
+        selected: |_| true,
+        build: |_cfg| Box::pin(async {
+            Ok(Arc::new(RaftOauth2KeyBackend::default()) as Arc<dyn Oauth2KeyBackend>)
+        }),
+    }
+}
 
 #[cfg(test)]
 mod tests {

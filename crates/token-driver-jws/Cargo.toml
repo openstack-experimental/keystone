@@ -10,6 +10,7 @@ repository.workspace = true
 
 [dependencies]
 chrono = { workspace = true, features = ["now"] }
+inventory.workspace = true
 jsonwebtoken.workspace = true
 openstack-keystone-config.workspace = true
 openstack-keystone-core.workspace = true

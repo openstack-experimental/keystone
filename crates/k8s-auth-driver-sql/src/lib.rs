@@ -13,6 +13,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # OpenStack Keystone SQL driver for the K8s auth provider
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use sea_orm::{DatabaseConnection, Schema};
 use sea_orm_migration::MigrationTrait;
@@ -20,6 +22,7 @@ use sea_orm_migration::MigrationTrait;
 use openstack_keystone_core::k8s_auth::backend::K8sAuthBackend;
 use openstack_keystone_core::k8s_auth::error::K8sAuthProviderError;
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_core::{
     SqlDriver, SqlDriverRegistration, db::create_table, error::DatabaseError,
 };
@@ -33,6 +36,15 @@ pub mod migration;
 static PLUGIN: SqlBackend = SqlBackend {};
 inventory::submit! {
     SqlDriverRegistration { driver: &PLUGIN }
+}
+inventory::submit! {
+    BackendRegistration::<dyn K8sAuthBackend> {
+        name: "sql",
+        selected: |_| true,
+        build: |_cfg| Box::pin(async {
+            Ok(Arc::new(SqlBackend::default()) as Arc<dyn K8sAuthBackend>)
+        }),
+    }
 }
 
 /// Sql Database K8s auth backend.

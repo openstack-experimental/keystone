@@ -4912,6 +4912,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "inventory",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "openstack-keystone-distributed-storage",
@@ -5000,6 +5001,7 @@ name = "openstack-keystone-auth-plugin-identity-driver-raft"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "inventory",
  "openstack-keystone-core",
  "openstack-keystone-distributed-storage",
  "tokio",
@@ -5288,6 +5290,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "eyre",
+ "inventory",
  "ldap3",
  "openstack-keystone-config",
  "openstack-keystone-core",
@@ -5427,6 +5430,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "inventory",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "openstack-keystone-distributed-storage",
@@ -5441,6 +5445,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "inventory",
  "openstack-keystone-audit",
  "openstack-keystone-config",
  "openstack-keystone-core",
@@ -5462,6 +5467,7 @@ name = "openstack-keystone-oauth2-session-driver-raft"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "inventory",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "openstack-keystone-distributed-storage",
@@ -5541,6 +5547,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "inventory",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "openstack-keystone-distributed-storage",
@@ -5616,6 +5623,7 @@ dependencies = [
  "config",
  "criterion",
  "fernet",
+ "inventory",
  "itertools 0.15.0",
  "nix 0.31.3",
  "openstack-keystone-config",
@@ -5637,6 +5645,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "config",
+ "inventory",
  "jsonwebtoken",
  "openstack-keystone-config",
  "openstack-keystone-core",

@@ -15,9 +15,12 @@
 //! index provider (ADR 0025 §4).
 use async_trait::async_trait;
 
+use std::sync::Arc;
+
 use openstack_keystone_core::auth_plugin_identity::backend::DynamicPluginIdentityBackend;
 use openstack_keystone_core::auth_plugin_identity::error::AuthPluginIdentityProviderError;
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_distributed_storage::{
     Metadata, StorageApi, StoreError, store_command::Mutation,
 };
@@ -288,6 +291,16 @@ impl DynamicPluginIdentityBackend for RaftBackend {
 /// members, keeping `inventory::submit!` sections visible at runtime.
 #[allow(dead_code)]
 pub fn anchor() {}
+
+inventory::submit! {
+    BackendRegistration::<dyn DynamicPluginIdentityBackend> {
+        name: "raft",
+        selected: |_| true,
+        build: |_cfg| Box::pin(async {
+            Ok(Arc::new(RaftBackend::default()) as Arc<dyn DynamicPluginIdentityBackend>)
+        }),
+    }
+}
 
 #[cfg(test)]
 mod tests {

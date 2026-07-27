@@ -13,6 +13,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # OpenStack Keystone SQL driver for the catalog provider
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use sea_orm::entity::*;
 use sea_orm::query::*;
@@ -22,6 +24,7 @@ use openstack_keystone_core::catalog::CatalogProviderError;
 use openstack_keystone_core::catalog::backend::CatalogBackend;
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_core::{
     SqlDriver, SqlDriverRegistration, db::create_table, error::DatabaseError,
 };
@@ -51,6 +54,15 @@ pub fn anchor() {}
 static PLUGIN: SqlBackend = SqlBackend {};
 inventory::submit! {
     SqlDriverRegistration { driver: &PLUGIN }
+}
+inventory::submit! {
+    BackendRegistration::<dyn CatalogBackend> {
+        name: "sql",
+        selected: |_| true,
+        build: |_cfg| Box::pin(async {
+            Ok(Arc::new(SqlBackend::default()) as Arc<dyn CatalogBackend>)
+        }),
+    }
 }
 
 #[async_trait]

@@ -16,9 +16,12 @@ use std::collections::BTreeSet;
 
 use async_trait::async_trait;
 
+use std::sync::Arc;
+
 use openstack_keystone_core::k8s_auth::backend::K8sAuthBackend;
 use openstack_keystone_core::k8s_auth::error::K8sAuthProviderError;
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_core_types::k8s_auth::*;
 use openstack_keystone_distributed_storage::{
     Metadata, StorageApi, StoreDataEnvelope, StoreError, store_command::Mutation,
@@ -373,6 +376,16 @@ impl K8sAuthBackend for RaftBackend {
 /// members, keeping `inventory::submit!` sections visible at runtime.
 #[allow(dead_code)]
 pub fn anchor() {}
+
+inventory::submit! {
+    BackendRegistration::<dyn K8sAuthBackend> {
+        name: "raft",
+        selected: |_| true,
+        build: |_cfg| Box::pin(async {
+            Ok(Arc::new(RaftBackend::default()) as Arc<dyn K8sAuthBackend>)
+        }),
+    }
+}
 
 #[cfg(test)]
 mod tests {

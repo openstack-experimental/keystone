@@ -60,9 +60,12 @@ use std::collections::BTreeSet;
 
 use async_trait::async_trait;
 
+use std::sync::Arc;
+
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::mapping::backend::MappingBackend;
 use openstack_keystone_core::mapping::error::MappingProviderError;
+use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_core_types::mapping::*;
 use openstack_keystone_distributed_storage::{
     Metadata, StorageApi, StoreDataEnvelope, StoreError, store_command::Mutation,
@@ -1431,6 +1434,16 @@ impl MappingBackend for RaftBackend {
 /// members, keeping `inventory::submit!` sections visible at runtime.
 #[allow(dead_code)]
 pub fn anchor() {}
+
+inventory::submit! {
+    BackendRegistration::<dyn MappingBackend> {
+        name: "raft",
+        selected: |_| true,
+        build: |_cfg| Box::pin(async {
+            Ok(Arc::new(RaftBackend::default()) as Arc<dyn MappingBackend>)
+        }),
+    }
+}
 
 #[cfg(test)]
 mod tests {

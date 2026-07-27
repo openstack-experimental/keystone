@@ -30,9 +30,12 @@ use async_trait::async_trait;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use std::sync::Arc;
+
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::oauth2_session::Oauth2SessionProviderError;
 use openstack_keystone_core::oauth2_session::backend::Oauth2SessionBackend;
+use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_core_types::oauth2_session::*;
 use openstack_keystone_distributed_storage::{
     ApiStoreError as StoreError, Metadata, StorageApi, StoreDataEnvelope,
@@ -682,6 +685,16 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
 /// Linkage anchor — see ADR-0018.
 #[allow(dead_code)]
 pub fn anchor() {}
+
+inventory::submit! {
+    BackendRegistration::<dyn Oauth2SessionBackend> {
+        name: "raft",
+        selected: |_| true,
+        build: |_cfg| Box::pin(async {
+            Ok(Arc::new(RaftOauth2SessionBackend::default()) as Arc<dyn Oauth2SessionBackend>)
+        }),
+    }
+}
 
 #[cfg(test)]
 mod tests {

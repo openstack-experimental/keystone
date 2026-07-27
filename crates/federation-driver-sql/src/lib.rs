@@ -43,12 +43,15 @@
 //! timestamp. The [`SqlBackend::cleanup`] method periodically removes expired
 //! records to prevent unbounded growth.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use sea_orm::{DatabaseConnection, Schema};
 use sea_orm_migration::MigrationTrait;
 
 use openstack_keystone_core::federation::{FederationProviderError, backend::FederationBackend};
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_core::{
     SqlDriver, SqlDriverRegistration, db::create_table, error::DatabaseError,
 };
@@ -78,6 +81,15 @@ pub fn anchor() {}
 static PLUGIN: SqlBackend = SqlBackend {};
 inventory::submit! {
     SqlDriverRegistration { driver: &PLUGIN }
+}
+inventory::submit! {
+    BackendRegistration::<dyn FederationBackend> {
+        name: "sql",
+        selected: |_| true,
+        build: |_cfg| Box::pin(async {
+            Ok(Arc::new(SqlBackend::default()) as Arc<dyn FederationBackend>)
+        }),
+    }
 }
 
 #[async_trait]

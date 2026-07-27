@@ -20,7 +20,12 @@
 //!
 //! The [PluginManagerApi] is responsible for picking the proper backend driver
 //! for the provider.
+use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
+
+use openstack_keystone_config::Config;
 
 use crate::api_key::ApiKeyProviderError;
 use crate::api_key::backend::ApiKeyBackend;
@@ -66,6 +71,91 @@ use crate::token::backend::TokenBackend;
 use crate::token::backend::TokenRestrictionBackend;
 use crate::trust::TrustProviderError;
 use crate::trust::backend::TrustBackend;
+
+/// Future returned by a [`BackendRegistration::build`] constructor.
+pub type BuildFuture<B> = Pin<Box<dyn Future<Output = eyre::Result<Arc<B>>> + Send>>;
+
+/// A single driver's self-registration for backend kind `B` (e.g.
+/// `dyn IdentityBackend`), collected via `inventory` at link time.
+///
+/// Driver crates add themselves with `inventory::submit!` next to their
+/// backend implementation instead of `keystone::plugin_manager` calling
+/// out to them by name. See ADR-0018 for the linkage-anchor mechanism
+/// that keeps `submit!` sections from being stripped by the linker.
+pub struct BackendRegistration<B: ?Sized + 'static> {
+    /// Driver name this backend is registered under (e.g. `"sql"`,
+    /// `"raft"`, `"ldap"`).
+    pub name: &'static str,
+    /// Whether this driver should be built for the given configuration.
+    /// Always-on drivers (most `sql`/`raft` backends) use `|_| true`;
+    /// conditional drivers (e.g. `ldap`, `jws`) inspect `config`.
+    pub selected: fn(&Config) -> bool,
+    /// Constructs the backend. May perform real I/O (e.g. opening an
+    /// LDAP connection, loading signing keys) and fail.
+    pub build: fn(&Config) -> BuildFuture<B>,
+}
+
+/// Declares the `inventory` collection registry for one backend kind.
+///
+/// One invocation per `dyn XBackend` trait object type; must live in this
+/// crate since `inventory::collect!` defines the registry itself (driver
+/// crates only `inventory::submit!` into it).
+macro_rules! declare_backend_registry {
+    ($($ty:ty),+ $(,)?) => {
+        $(inventory::collect!(BackendRegistration<$ty>);)+
+    };
+}
+
+declare_backend_registry!(
+    dyn ApiKeyBackend,
+    dyn ApplicationCredentialBackend,
+    dyn AssignmentBackend,
+    dyn CatalogBackend,
+    dyn CredentialBackend,
+    dyn DynamicPluginIdentityBackend,
+    dyn FederationBackend,
+    dyn IdentityBackend,
+    dyn IdMappingBackend,
+    dyn MappingBackend,
+    dyn Oauth2ClientBackend,
+    dyn Oauth2KeyBackend,
+    dyn Oauth2SessionBackend,
+    dyn K8sAuthBackend,
+    dyn ResourceBackend,
+    dyn RevokeBackend,
+    dyn RoleBackend,
+    dyn ScimRealmBackend,
+    dyn ScimResourceBackend,
+    dyn TokenBackend,
+    dyn TokenRestrictionBackend,
+    dyn TrustBackend,
+);
+
+/// Builds and inserts every backend registered for kind `B` whose
+/// [`BackendRegistration::selected`] predicate accepts `config`.
+///
+/// # Errors
+/// - Propagates any error from a driver's `build` constructor.
+/// - Fails if two drivers of the same kind register under the same `name`
+///   (ambiguous selection at lookup time).
+pub async fn register_backends<B: ?Sized>(
+    config: &Config,
+    target: &mut HashMap<String, Arc<B>>,
+) -> eyre::Result<()>
+where
+    BackendRegistration<B>: inventory::Collect,
+{
+    for reg in inventory::iter::<BackendRegistration<B>> {
+        if (reg.selected)(config) {
+            if target.contains_key(reg.name) {
+                eyre::bail!("duplicate backend registration for driver \"{}\"", reg.name);
+            }
+            let backend = (reg.build)(config).await?;
+            target.insert(reg.name.to_string(), backend);
+        }
+    }
+    Ok(())
+}
 
 /// Plugin manager trait.
 pub trait PluginManagerApi {

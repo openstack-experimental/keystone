@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # OpenStack Keystone SQL driver for the identity provider
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -23,6 +24,7 @@ use openstack_keystone_core::auth::AuthenticationResult;
 use openstack_keystone_core::identity::IdentityProviderError;
 use openstack_keystone_core::identity::backend::IdentityBackend;
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_core::{
     SqlDriver, SqlDriverRegistration,
     db::{create_index, create_table},
@@ -55,6 +57,15 @@ pub fn anchor() {}
 static PLUGIN: SqlBackend = SqlBackend {};
 inventory::submit! {
     SqlDriverRegistration { driver: &PLUGIN }
+}
+inventory::submit! {
+    BackendRegistration::<dyn IdentityBackend> {
+        name: "sql",
+        selected: |_| true,
+        build: |_cfg| Box::pin(async {
+            Ok(Arc::new(SqlBackend::default()) as Arc<dyn IdentityBackend>)
+        }),
+    }
 }
 
 #[async_trait]

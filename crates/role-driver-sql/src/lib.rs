@@ -13,12 +13,14 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # OpenStack Keystone SQL driver for the role provider
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 
 use sea_orm::{DatabaseConnection, Schema};
 
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_core::role::RoleProviderError;
 use openstack_keystone_core::role::backend::RoleBackend;
 use openstack_keystone_core::{
@@ -45,6 +47,15 @@ pub fn anchor() {}
 static PLUGIN: SqlBackend = SqlBackend {};
 inventory::submit! {
     SqlDriverRegistration { driver: &PLUGIN }
+}
+inventory::submit! {
+    BackendRegistration::<dyn RoleBackend> {
+        name: "sql",
+        selected: |_| true,
+        build: |_cfg| Box::pin(async {
+            Ok(Arc::new(SqlBackend::default()) as Arc<dyn RoleBackend>)
+        }),
+    }
 }
 
 /// Expand implied roles by resolving role inheritance and populating

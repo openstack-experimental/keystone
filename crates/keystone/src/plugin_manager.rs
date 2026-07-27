@@ -831,63 +831,15 @@ impl PluginManagerApi for PluginManager {
 }
 
 impl PluginManager {
-    /// Register default SQL drivers in the [PluginManager]
-    fn register_sql_drivers(&mut self) {
-        self.register_application_credential_backend(
-            "sql",
-            Arc::new(openstack_keystone_appcred_driver_sql::SqlBackend::default()),
-        );
-        self.register_assignment_backend(
-            "sql",
-            Arc::new(openstack_keystone_assignment_driver_sql::SqlBackend::default()),
-        );
-        self.register_catalog_backend(
-            "sql",
-            Arc::new(openstack_keystone_catalog_driver_sql::SqlBackend::default()),
-        );
-        self.register_credential_backend(
-            "sql",
-            Arc::new(openstack_keystone_credential_driver_sql::SqlBackend::default()),
-        );
-        self.register_federation_backend(
-            "sql",
-            Arc::new(openstack_keystone_federation_driver_sql::SqlBackend::default()),
-        );
-        self.register_identity_backend(
-            "sql",
-            Arc::new(openstack_keystone_identity_driver_sql::SqlBackend::default()),
-        );
-        self.register_idmapping_backend(
-            "sql",
-            Arc::new(openstack_keystone_idmapping_driver_sql::SqlBackend::default()),
-        );
-        self.register_k8s_auth_backend(
-            "sql",
-            Arc::new(openstack_keystone_k8s_auth_driver_sql::SqlBackend::default()),
-        );
-        self.register_resource_backend(
-            "sql",
-            Arc::new(openstack_keystone_resource_driver_sql::SqlBackend::default()),
-        );
-        self.register_revoke_backend(
-            "sql",
-            Arc::new(openstack_keystone_revoke_driver_sql::SqlBackend::default()),
-        );
-        self.register_role_backend(
-            "sql",
-            Arc::new(openstack_keystone_role_driver_sql::SqlBackend::default()),
-        );
-        self.register_token_restriction_backend(
-            "sql",
-            Arc::new(openstack_keystone_token_restriction_driver_sql::SqlBackend::default()),
-        );
-        self.register_trust_backend(
-            "sql",
-            Arc::new(openstack_keystone_trust_driver_sql::SqlBackend::default()),
-        );
-    }
-
     /// Initialize the [PluginManager] with the initialized [Config].
+    ///
+    /// Every backend kind is populated from the drivers that registered
+    /// themselves via `inventory::submit!` (see
+    /// `crates/core/src/plugin_manager.rs` and ADR-0018) — there is no
+    /// per-driver call site here. To add a new driver crate, add it as a
+    /// dependency of `keystone` (the `build.rs` linkage anchor picks it up
+    /// automatically) and have it `submit!` a `BackendRegistration` next to
+    /// its backend impl; nothing in this file needs to change.
     ///
     /// # Parameters
     /// * `config` - The configuration to use for initialization.
@@ -919,76 +871,28 @@ impl PluginManager {
             token_restriction_backends: HashMap::new(),
             trust_backends: HashMap::new(),
         };
-        slf.register_sql_drivers();
-        let mut fernet_token_provider =
-            openstack_keystone_token_driver_fernet::FernetTokenProvider::new(config.clone());
-        // Eagerly start the auto-refreshing key cache here, before the
-        // provider is erased behind `Arc<dyn TokenBackend>`: `decrypt`/
-        // `encrypt` are synchronous (called on every request) and require
-        // `load_keys` to have already run.
-        fernet_token_provider.load_keys().await?;
-        slf.register_token_backend("fernet", Arc::new(fernet_token_provider));
-        // Only load/register the JWS backend when actually selected: unlike
-        // Fernet (always eagerly loaded, ADR 0019), a `[jws_tokens]` key
-        // repository need not exist for a Fernet-only deployment, and
-        // eagerly requiring one would break every existing installation.
-        // When `[token] provider = jws` *is* selected, fail loudly here
-        // (ADR 0026 §10, Phase 0) rather than silently falling back to
-        // Fernet if the repository is empty or unloadable.
-        if config.token.provider == openstack_keystone_config::TokenProviderDriver::Jws {
-            let mut jws_token_provider =
-                openstack_keystone_token_driver_jws::JwsTokenProvider::new(config.clone());
-            jws_token_provider.load_keys().await?;
-            slf.register_token_backend("jws", Arc::new(jws_token_provider));
-        }
-        // Only construct the LDAP identity backend when actually selected:
-        // unlike the SQL backend (always eagerly registered above), this
-        // opens a real connection to an external directory server, which
-        // must not be attempted for a `driver = sql` deployment that never
-        // configured `[ldap]`. When `driver = "ldap"` *is* selected, fail
-        // loudly here (ADR-0027) rather than registering a backend that can
-        // never serve a request.
-        if config.identity.driver == "ldap" {
-            let ldap_backend =
-                openstack_keystone_identity_driver_ldap::LdapBackend::new(&config.ldap).await?;
-            slf.register_identity_backend("ldap", Arc::new(ldap_backend));
-        }
-        slf.register_k8s_auth_backend(
-            "raft",
-            Arc::new(openstack_keystone_k8s_auth_driver_raft::RaftBackend::default()),
-        );
-        slf.register_mapping_backend(
-            "raft",
-            Arc::new(openstack_keystone_mapping_driver_raft::RaftBackend::default()),
-        );
-        slf.register_oauth2_key_backend(
-            "raft",
-            Arc::new(openstack_keystone_oauth2_key_driver_raft::RaftOauth2KeyBackend::default()),
-        );
-        slf.register_oauth2_client_backend(
-            "raft",
-            Arc::new(
-                openstack_keystone_oauth2_client_driver_raft::RaftOauth2ClientBackend::default(),
-            ),
-        );
-        slf.register_oauth2_session_backend(
-            "raft",
-            Arc::new(
-                openstack_keystone_oauth2_session_driver_raft::RaftOauth2SessionBackend::default(),
-            ),
-        );
-        slf.register_api_key_backend(
-            "raft",
-            Arc::new(openstack_keystone_api_key_driver_raft::RaftBackend::default()),
-        );
-        let scim_raft_backend =
-            Arc::new(openstack_keystone_scim_driver_raft::RaftBackend::default());
-        slf.register_scim_realm_backend("raft", scim_raft_backend.clone());
-        slf.register_scim_resource_backend("raft", scim_raft_backend);
-        slf.register_auth_plugin_identity_backend(
-            "raft",
-            Arc::new(openstack_keystone_auth_plugin_identity_driver_raft::RaftBackend::default()),
-        );
+        register_backends(config, &mut slf.api_key_backends).await?;
+        register_backends(config, &mut slf.application_credential_backends).await?;
+        register_backends(config, &mut slf.assignment_backends).await?;
+        register_backends(config, &mut slf.catalog_backends).await?;
+        register_backends(config, &mut slf.credential_backends).await?;
+        register_backends(config, &mut slf.auth_plugin_identity_backends).await?;
+        register_backends(config, &mut slf.federation_backends).await?;
+        register_backends(config, &mut slf.identity_backends).await?;
+        register_backends(config, &mut slf.idmapping_backends).await?;
+        register_backends(config, &mut slf.mapping_backends).await?;
+        register_backends(config, &mut slf.oauth2_client_backends).await?;
+        register_backends(config, &mut slf.oauth2_key_backends).await?;
+        register_backends(config, &mut slf.oauth2_session_backends).await?;
+        register_backends(config, &mut slf.k8s_auth_backends).await?;
+        register_backends(config, &mut slf.resource_backends).await?;
+        register_backends(config, &mut slf.revoke_backends).await?;
+        register_backends(config, &mut slf.role_backends).await?;
+        register_backends(config, &mut slf.scim_realm_backends).await?;
+        register_backends(config, &mut slf.scim_resource_backends).await?;
+        register_backends(config, &mut slf.token_backends).await?;
+        register_backends(config, &mut slf.token_restriction_backends).await?;
+        register_backends(config, &mut slf.trust_backends).await?;
         Ok(slf)
     }
 }

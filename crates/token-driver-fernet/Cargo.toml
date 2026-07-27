@@ -18,6 +18,7 @@ byteorder.workspace = true
 bytes.workspace = true
 chrono.workspace = true
 fernet = { workspace = true, features = ["rustcrypto"] }
+inventory.workspace = true
 itertools.workspace = true
 openstack-keystone-config.workspace = true
 openstack-keystone-core.workspace = true

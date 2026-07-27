@@ -15,7 +15,10 @@
 use async_trait::async_trait;
 use chrono::Utc;
 
+use std::sync::Arc;
+
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_core::scim_realm::backend::ScimRealmBackend;
 use openstack_keystone_core::scim_realm::error::ScimRealmProviderError;
 use openstack_keystone_core::scim_resource::backend::ScimResourceBackend;
@@ -808,6 +811,26 @@ impl ScimResourceBackend for RaftBackend {
 /// members, keeping `inventory::submit!` sections visible at runtime.
 #[allow(dead_code)]
 pub fn anchor() {}
+
+inventory::submit! {
+    BackendRegistration::<dyn ScimRealmBackend> {
+        name: "raft",
+        selected: |_| true,
+        build: |_cfg| Box::pin(async {
+            Ok(Arc::new(RaftBackend::default()) as Arc<dyn ScimRealmBackend>)
+        }),
+    }
+}
+
+inventory::submit! {
+    BackendRegistration::<dyn ScimResourceBackend> {
+        name: "raft",
+        selected: |_| true,
+        build: |_cfg| Box::pin(async {
+            Ok(Arc::new(RaftBackend::default()) as Arc<dyn ScimResourceBackend>)
+        }),
+    }
+}
 
 #[cfg(test)]
 mod tests {
