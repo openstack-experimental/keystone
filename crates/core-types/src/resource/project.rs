@@ -60,6 +60,11 @@ pub struct Project {
     #[validate(length(min = 1, max = 255))]
     pub name: String,
 
+    /// The resource options for the project.
+    #[builder(default)]
+    #[validate(nested)]
+    pub options: ProjectOptions,
+
     /// The ID of the parent for the project.
     #[builder(default)]
     #[validate(length(min = 1, max = 64))]
@@ -109,7 +114,11 @@ pub struct ProjectCreate {
     #[validate(length(min = 1, max = 255))]
     pub name: String,
 
-    // TODO: add options
+    /// The resource options for the project.
+    #[builder(default)]
+    #[validate(nested)]
+    pub options: Option<ProjectOptions>,
+
     /// The ID of the parent of the project.
     ///
     /// If specified on project creation, this places the project within a
@@ -149,6 +158,27 @@ pub struct ProjectUpdate {
     /// existing `extra` before persisting; an empty map means unchanged.
     #[builder(default)]
     pub extra: HashMap<String, Value>,
+
+    /// The resource options for the project. `None` means unchanged; a field
+    /// left `None` within `Some(ProjectOptions { .. })` also means unchanged.
+    #[builder(default)]
+    #[validate(nested)]
+    pub options: Option<ProjectOptions>,
+}
+
+/// Resource options for a project.
+///
+/// Also used for domains: a domain is a project row with `is_domain = true`
+/// and persists its options through the same `project_option` table,
+/// mirroring Python Keystone's shared resource_options registry for both.
+#[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(strip_option, into))]
+pub struct ProjectOptions {
+    /// When `true`, the resource cannot be updated or deleted until an
+    /// administrator explicitly sets this back to `false` -- which may
+    /// happen in the same request that changes other fields.
+    pub immutable: Option<bool>,
 }
 
 /// Project listing parameters.

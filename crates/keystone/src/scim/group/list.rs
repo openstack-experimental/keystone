@@ -162,6 +162,7 @@ mod tests {
                 description: None,
                 enabled: true,
                 extra: Default::default(),
+                options: Default::default(),
             }))
             .build()
             .unwrap();

@@ -210,6 +210,7 @@ fn derive_scope_from_authorizations(
                     description: None,
                     enabled: true,
                     extra: Default::default(),
+                    options: Default::default(),
                 };
                 let project = Project {
                     id: project_id.clone(),
@@ -220,6 +221,7 @@ fn derive_scope_from_authorizations(
                     is_domain: false,
                     parent_id: None,
                     extra: Default::default(),
+                    options: Default::default(),
                 };
                 Ok(ScopeInfo::Project {
                     project,
@@ -233,6 +235,7 @@ fn derive_scope_from_authorizations(
                     description: None,
                     enabled: true,
                     extra: Default::default(),
+                    options: Default::default(),
                 };
                 Ok(ScopeInfo::Domain(domain))
             }

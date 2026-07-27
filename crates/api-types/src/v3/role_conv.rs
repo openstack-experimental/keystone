@@ -16,14 +16,32 @@ use openstack_keystone_core_types::role as provider_types;
 
 use crate::v3::role as api_types;
 
+impl From<provider_types::RoleOptions> for api_types::RoleOptions {
+    fn from(value: provider_types::RoleOptions) -> Self {
+        Self {
+            immutable: value.immutable,
+        }
+    }
+}
+
+impl From<api_types::RoleOptions> for provider_types::RoleOptions {
+    fn from(value: api_types::RoleOptions) -> Self {
+        Self {
+            immutable: value.immutable,
+        }
+    }
+}
+
 impl From<provider_types::Role> for api_types::Role {
     fn from(value: provider_types::Role) -> Self {
+        let opts: api_types::RoleOptions = value.options.into();
         Self {
             id: value.id,
             domain_id: value.domain_id,
             name: value.name,
             description: value.description,
             extra: value.extra,
+            options: opts.immutable.is_some().then_some(opts),
         }
     }
 }
@@ -65,6 +83,7 @@ impl From<api_types::RoleCreateRequest> for provider_types::RoleCreate {
             extra: value.role.extra,
             id: None,
             name: value.role.name,
+            options: value.role.options.map(Into::into),
         }
     }
 }
@@ -76,6 +95,7 @@ impl From<api_types::RoleUpdateRequest> for provider_types::RoleUpdate {
             description: role.description.map(Some),
             extra: role.extra,
             name: role.name,
+            options: role.options.map(Into::into),
         }
     }
 }

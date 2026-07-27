@@ -357,6 +357,7 @@ mod tests {
                 description: None,
                 domain_id: None,
                 extra: Default::default(),
+                options: Default::default(),
             }])
         });
 
@@ -553,6 +554,7 @@ mod tests {
                 description: None,
                 domain_id: None,
                 extra: Default::default(),
+                options: Default::default(),
             }])
         });
 

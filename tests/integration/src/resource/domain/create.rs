@@ -17,7 +17,9 @@ use eyre::Result;
 use tracing_test::traced_test;
 
 use openstack_keystone_core::auth::ExecutionContext;
-use openstack_keystone_core_types::resource::DomainCreateBuilder;
+use openstack_keystone_core_types::resource::{
+    DomainCreateBuilder, DomainUpdateBuilder, ProjectOptionsBuilder,
+};
 
 use crate::common::get_state;
 
@@ -36,6 +38,49 @@ async fn test_create() -> Result<()> {
 
     assert_eq!(name, domain.name);
     assert!(domain.enabled);
+    Ok(())
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_create_with_immutable_option() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+
+    let domain = state
+        .provider
+        .get_resource_provider()
+        .create_domain(
+            &ExecutionContext::internal(&state),
+            DomainCreateBuilder::default()
+                .name(uuid::Uuid::new_v4().simple().to_string())
+                .options(ProjectOptionsBuilder::default().immutable(true).build()?)
+                .build()?,
+        )
+        .await?;
+
+    assert_eq!(domain.options.immutable, Some(true));
+
+    let fetched = state
+        .provider
+        .get_resource_provider()
+        .get_domain(&ExecutionContext::internal(&state), &domain.id)
+        .await?
+        .expect("domain should be there");
+    assert_eq!(fetched.options.immutable, Some(true));
+
+    // Clear immutable so the guard-driven cleanup does not fail.
+    state
+        .provider
+        .get_resource_provider()
+        .update_domain(
+            &ExecutionContext::internal(&state),
+            &domain.id,
+            DomainUpdateBuilder::default()
+                .options(ProjectOptionsBuilder::default().immutable(false).build()?)
+                .build()?,
+        )
+        .await?;
+
     Ok(())
 }
 

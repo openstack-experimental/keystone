@@ -65,11 +65,18 @@ where
         update_model.extra = Set(Some(serde_json::to_string(&project.extra)?));
     }
 
-    update_model
+    let mut updated: Project = update_model
         .update(db)
         .await
         .context("updating project")?
-        .try_into()
+        .try_into()?;
+
+    if let Some(opts) = project.options {
+        crate::project_option::upsert(db, project_id, &opts).await?;
+    }
+    updated.options = crate::project_option::list_by_project_id(db, project_id).await?;
+
+    Ok(updated)
 }
 
 #[cfg(test)]
@@ -83,6 +90,7 @@ mod tests {
     async fn test_update() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![get_project_mock("1")], vec![get_project_mock("1")]])
+            .append_query_results([Vec::<crate::entity::project_option::Model>::new()])
             .into_connection();
 
         let req = ProjectUpdate {
@@ -90,6 +98,7 @@ mod tests {
             enabled: Some(false),
             description: None,
             extra: Default::default(),
+            options: None,
         };
         let result = update(&db, "1", req).await.unwrap();
         assert_eq!(result, get_project_mock("1").try_into().unwrap());
@@ -106,11 +115,43 @@ mod tests {
             enabled: None,
             description: None,
             extra: Default::default(),
+            options: None,
         };
         let result = update(&db, "missing", req).await;
         assert!(matches!(
             result,
             Err(ResourceProviderError::ProjectNotFound(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn test_update_sets_immutable_option() {
+        use openstack_keystone_core_types::resource::ProjectOptions;
+
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_project_mock("1")], vec![get_project_mock("1")]])
+            .append_query_results([vec![crate::entity::project_option::Model {
+                project_id: "1".into(),
+                option_id: "IMMU".into(),
+                option_value: Some("true".into()),
+            }]])
+            .append_query_results([vec![crate::entity::project_option::Model {
+                project_id: "1".into(),
+                option_id: "IMMU".into(),
+                option_value: Some("true".into()),
+            }]])
+            .into_connection();
+
+        let req = ProjectUpdate {
+            name: None,
+            enabled: None,
+            description: None,
+            extra: Default::default(),
+            options: Some(ProjectOptions {
+                immutable: Some(true),
+            }),
+        };
+        let result = update(&db, "1", req).await.unwrap();
+        assert_eq!(result.options.immutable, Some(true));
     }
 }

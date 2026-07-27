@@ -204,6 +204,7 @@ impl From<RoleProviderError> for KeystoneApiError {
             },
             ref err @ RoleProviderError::Conflict(..) => Self::Conflict(err.to_string()),
             ref err @ RoleProviderError::Validation { .. } => Self::BadRequest(err.to_string()),
+            err @ RoleProviderError::Immutable(..) => Self::forbidden(err),
             other => Self::InternalError(other.to_string()),
         }
     }
@@ -316,6 +317,7 @@ impl From<ResourceProviderError> for KeystoneApiError {
                 identifier: x,
             },
             ResourceProviderError::InvalidProjectDomain(x) => Self::BadRequest(x),
+            err @ ResourceProviderError::Immutable(..) => Self::forbidden(err),
             other => Self::InternalError(other.to_string()),
         }
     }

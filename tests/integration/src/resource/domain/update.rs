@@ -17,7 +17,7 @@ use eyre::Result;
 use tracing_test::traced_test;
 
 use openstack_keystone_core::auth::ExecutionContext;
-use openstack_keystone_core_types::resource::DomainUpdateBuilder;
+use openstack_keystone_core_types::resource::{DomainUpdateBuilder, ProjectOptionsBuilder};
 
 use crate::common::get_state;
 use crate::create_domain;
@@ -52,6 +52,89 @@ async fn test_update() -> Result<()> {
         .expect("domain should still exist");
     assert_eq!(fetched.name, "updated_name");
     assert!(!fetched.enabled);
+
+    Ok(())
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_update_blocked_when_immutable() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+
+    state
+        .provider
+        .get_resource_provider()
+        .update_domain(
+            &ExecutionContext::internal(&state),
+            &domain.id,
+            DomainUpdateBuilder::default()
+                .options(ProjectOptionsBuilder::default().immutable(true).build()?)
+                .build()?,
+        )
+        .await?;
+
+    let result = state
+        .provider
+        .get_resource_provider()
+        .update_domain(
+            &ExecutionContext::internal(&state),
+            &domain.id,
+            DomainUpdateBuilder::default()
+                .name("updated_name")
+                .build()?,
+        )
+        .await;
+    assert!(result.is_err(), "update of an immutable domain is rejected");
+
+    state
+        .provider
+        .get_resource_provider()
+        .update_domain(
+            &ExecutionContext::internal(&state),
+            &domain.id,
+            DomainUpdateBuilder::default()
+                .options(ProjectOptionsBuilder::default().immutable(false).build()?)
+                .build()?,
+        )
+        .await?;
+
+    Ok(())
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_update_allowed_when_clearing_immutable() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+
+    state
+        .provider
+        .get_resource_provider()
+        .update_domain(
+            &ExecutionContext::internal(&state),
+            &domain.id,
+            DomainUpdateBuilder::default()
+                .options(ProjectOptionsBuilder::default().immutable(true).build()?)
+                .build()?,
+        )
+        .await?;
+
+    let updated = state
+        .provider
+        .get_resource_provider()
+        .update_domain(
+            &ExecutionContext::internal(&state),
+            &domain.id,
+            DomainUpdateBuilder::default()
+                .name("updated_name")
+                .options(ProjectOptionsBuilder::default().immutable(false).build()?)
+                .build()?,
+        )
+        .await?;
+
+    assert_eq!(updated.name, "updated_name");
+    assert_eq!(updated.options.immutable, Some(false));
 
     Ok(())
 }

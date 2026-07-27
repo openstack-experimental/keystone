@@ -29,6 +29,7 @@ use openstack_keystone_core_types::role::*;
 pub mod entity;
 mod implied_role;
 mod role;
+mod role_option;
 //mod role_imply;
 
 #[derive(Default)]
@@ -392,6 +393,7 @@ mod tests {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([Vec::<MockRow>::new()])
             .append_query_results([vec![get_role_mock("r1", "admin")]])
+            .append_query_results([Vec::<crate::entity::role_option::Model>::new()])
             .into_connection();
 
         let mut roles = vec![RoleRef {
@@ -413,6 +415,7 @@ mod tests {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![mock_flat_imply("r1", "admin", "r2", "reader")]])
             .append_query_results([vec![get_role_mock("r1", "admin")]])
+            .append_query_results([Vec::<crate::entity::role_option::Model>::new()])
             .into_connection();
 
         let mut roles = vec![RoleRef {
@@ -440,6 +443,7 @@ mod tests {
                 mock_flat_imply("r2", "member", "r3", "reader"),
             ]])
             .append_query_results([vec![get_role_mock("r1", "admin")]])
+            .append_query_results([Vec::<crate::entity::role_option::Model>::new()])
             .into_connection();
 
         let mut roles = vec![RoleRef {
@@ -501,6 +505,7 @@ mod tests {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![mock_flat_imply("r2", "member", "r3", "reader")]])
             .append_query_results([vec![get_role_mock("r1", "admin")]])
+            .append_query_results([Vec::<crate::entity::role_option::Model>::new()])
             .into_connection();
 
         let mut roles = vec![RoleRef {
@@ -521,6 +526,7 @@ mod tests {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([Vec::<MockRow>::new()])
             .append_query_results([vec![mock_role_with_domain("r1", "admin", "<<null>>")]])
+            .append_query_results([Vec::<crate::entity::role_option::Model>::new()])
             .into_connection();
 
         let mut roles = vec![RoleRef {
@@ -541,6 +547,7 @@ mod tests {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![mock_flat_imply("r1", "admin", "r3", "viewer")]])
             .append_query_results([vec![get_role_mock("r1", "admin")]])
+            .append_query_results([Vec::<crate::entity::role_option::Model>::new()])
             .into_connection();
 
         let mut roles = vec![

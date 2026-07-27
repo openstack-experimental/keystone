@@ -17,7 +17,7 @@ use eyre::Result;
 use tracing_test::traced_test;
 
 use openstack_keystone_core::auth::ExecutionContext;
-use openstack_keystone_core_types::role::RoleUpdateBuilder;
+use openstack_keystone_core_types::role::{RoleOptionsBuilder, RoleUpdateBuilder};
 
 use crate::common::get_state;
 use crate::create_role;
@@ -47,6 +47,87 @@ async fn test_update() -> Result<()> {
         .await?
         .expect("role should still exist");
     assert_eq!(fetched.name, "updated_name");
+
+    Ok(())
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_update_blocked_when_immutable() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let role = create_role!(state)?;
+
+    state
+        .provider
+        .get_role_provider()
+        .update_role(
+            &ExecutionContext::internal(&state),
+            &role.id,
+            RoleUpdateBuilder::default()
+                .options(RoleOptionsBuilder::default().immutable(true).build()?)
+                .build()?,
+        )
+        .await?;
+
+    let result = state
+        .provider
+        .get_role_provider()
+        .update_role(
+            &ExecutionContext::internal(&state),
+            &role.id,
+            RoleUpdateBuilder::default().name("updated_name").build()?,
+        )
+        .await;
+    assert!(result.is_err(), "update of an immutable role is rejected");
+
+    state
+        .provider
+        .get_role_provider()
+        .update_role(
+            &ExecutionContext::internal(&state),
+            &role.id,
+            RoleUpdateBuilder::default()
+                .options(RoleOptionsBuilder::default().immutable(false).build()?)
+                .build()?,
+        )
+        .await?;
+
+    Ok(())
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_update_allowed_when_clearing_immutable() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let role = create_role!(state)?;
+
+    state
+        .provider
+        .get_role_provider()
+        .update_role(
+            &ExecutionContext::internal(&state),
+            &role.id,
+            RoleUpdateBuilder::default()
+                .options(RoleOptionsBuilder::default().immutable(true).build()?)
+                .build()?,
+        )
+        .await?;
+
+    let updated = state
+        .provider
+        .get_role_provider()
+        .update_role(
+            &ExecutionContext::internal(&state),
+            &role.id,
+            RoleUpdateBuilder::default()
+                .name("updated_name")
+                .options(RoleOptionsBuilder::default().immutable(false).build()?)
+                .build()?,
+        )
+        .await?;
+
+    assert_eq!(updated.name, "updated_name");
+    assert_eq!(updated.options.immutable, Some(false));
 
     Ok(())
 }

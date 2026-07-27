@@ -109,6 +109,7 @@ mod tests {
                 extra: std::collections::HashMap::new(),
                 id: "did".into(),
                 name: "domain_name".into(),
+                options: Default::default(),
             })
         });
 
@@ -150,6 +151,7 @@ mod tests {
                 extra: std::collections::HashMap::new(),
                 id: "did".into(),
                 name: "domain_name".into(),
+                options: Default::default(),
             },
             res.domain,
         );

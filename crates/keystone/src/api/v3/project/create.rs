@@ -112,6 +112,7 @@ mod tests {
                 is_domain: false,
                 name: "project_name".into(),
                 parent_id: Some("ppid".into()),
+                options: Default::default(),
             })
         });
 
@@ -160,6 +161,7 @@ mod tests {
                 is_domain: false,
                 name: "project_name".into(),
                 parent_id: Some("ppid".into()),
+                options: Default::default(),
             },
             res.project,
         );

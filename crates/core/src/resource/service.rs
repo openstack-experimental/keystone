@@ -119,6 +119,49 @@ impl ResourceService {
             parent_id.to_string(),
         ))
     }
+
+    /// Reject the operation when the project is currently immutable and the
+    /// request does not itself clear the flag.
+    ///
+    /// Mirrors Python Keystone: a resource with `options.immutable == true`
+    /// rejects update/delete unless the update explicitly sets
+    /// `immutable: false` in the same request. Pass `new_options: None` for
+    /// delete, which can never clear the flag. When the project does not
+    /// exist, this is a no-op -- the caller's own lookup surfaces
+    /// `ProjectNotFound`.
+    async fn check_project_mutable<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        project_id: &'a str,
+        new_options: Option<&ProjectOptions>,
+    ) -> Result<(), ResourceProviderError> {
+        if let Some(current) = self.get_project(ctx, project_id).await?
+            && current.options.immutable == Some(true)
+            && new_options.and_then(|o| o.immutable) != Some(false)
+        {
+            return Err(ResourceProviderError::Immutable(project_id.to_string()));
+        }
+        Ok(())
+    }
+
+    /// Reject the operation when the domain is currently immutable and the
+    /// request does not itself clear the flag. See
+    /// [`check_project_mutable`](Self::check_project_mutable) -- a domain is
+    /// a project row with `is_domain = true` sharing the same semantics.
+    async fn check_domain_mutable<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+        new_options: Option<&ProjectOptions>,
+    ) -> Result<(), ResourceProviderError> {
+        if let Some(current) = self.get_domain(ctx, domain_id).await?
+            && current.options.immutable == Some(true)
+            && new_options.and_then(|o| o.immutable) != Some(false)
+        {
+            return Err(ResourceProviderError::Immutable(domain_id.to_string()));
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -303,6 +346,8 @@ impl ResourceApi for ResourceService {
         domain: DomainUpdate,
     ) -> Result<Domain, ResourceProviderError> {
         domain.validate()?;
+        self.check_domain_mutable(ctx, domain_id, domain.options.as_ref())
+            .await?;
         let domain = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
             let state = ctx.state();
@@ -356,6 +401,8 @@ impl ResourceApi for ResourceService {
         project: ProjectUpdate,
     ) -> Result<Project, ResourceProviderError> {
         project.validate()?;
+        self.check_project_mutable(ctx, project_id, project.options.as_ref())
+            .await?;
         let project = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
             let state = ctx.state();
@@ -406,6 +453,7 @@ impl ResourceApi for ResourceService {
         ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), ResourceProviderError> {
+        self.check_domain_mutable(ctx, id, None).await?;
         if let Some(vsc) = ctx.ctx() {
             crate::audited_op! {
                 dispatcher: &ctx.state().event_dispatcher,
@@ -449,6 +497,7 @@ impl ResourceApi for ResourceService {
         ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), ResourceProviderError> {
+        self.check_project_mutable(ctx, id, None).await?;
         if let Some(vsc) = ctx.ctx() {
             crate::audited_op! {
                 dispatcher: &ctx.state().event_dispatcher,
@@ -704,6 +753,7 @@ mod tests {
                     enabled: true,
                     description: None,
                     extra: Default::default(),
+                    options: Default::default(),
                 },
             )
             .await
@@ -751,6 +801,7 @@ mod tests {
                     enabled: true,
                     description: None,
                     extra: Default::default(),
+                    options: Default::default(),
                 },
             )
             .await
@@ -779,6 +830,10 @@ mod tests {
         .await;
         let mut backend = MockResourceBackend::default();
         backend
+            .expect_get_project()
+            .withf(|_, id: &'_ str| id == "pid")
+            .returning(|_, _| Ok(None));
+        backend
             .expect_delete_project()
             .withf(|_, id: &'_ str| id == "pid")
             .returning(|_, _| Ok(()));
@@ -804,6 +859,7 @@ mod tests {
             is_domain: false,
             name: "pname".into(),
             parent_id: None,
+            options: Default::default(),
         }
     }
 
@@ -999,5 +1055,170 @@ mod tests {
             err,
             ResourceProviderError::InvalidProjectDomain(_)
         ));
+    }
+
+    fn make_immutable_project(id: &str, domain_id: &str) -> Project {
+        let mut project = make_project(id, domain_id);
+        project.options.immutable = Some(true);
+        project
+    }
+
+    fn make_immutable_domain(id: &str) -> openstack_keystone_core_types::resource::Domain {
+        let mut domain = make_domain(id);
+        domain.options.immutable = Some(true);
+        domain
+    }
+
+    #[tokio::test]
+    async fn test_update_project_blocked_when_immutable() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockResourceBackend::default();
+        backend
+            .expect_get_project()
+            .withf(|_, id: &'_ str| id == "pid")
+            .returning(|_, _| Ok(Some(make_immutable_project("pid", "did"))));
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        let err = provider
+            .update_project(
+                &ExecutionContext::internal(&state),
+                "pid",
+                ProjectUpdate {
+                    name: Some("new_name".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ResourceProviderError::Immutable(id) if id == "pid"));
+    }
+
+    #[tokio::test]
+    async fn test_update_project_allowed_when_clearing_immutable() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockResourceBackend::default();
+        backend
+            .expect_get_project()
+            .withf(|_, id: &'_ str| id == "pid")
+            .returning(|_, _| Ok(Some(make_immutable_project("pid", "did"))));
+        backend
+            .expect_update_project()
+            .withf(|_, id: &'_ str, _| id == "pid")
+            .returning(|_, _, _| Ok(make_project("pid", "did")));
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        let result = provider
+            .update_project(
+                &ExecutionContext::internal(&state),
+                "pid",
+                ProjectUpdate {
+                    options: Some(openstack_keystone_core_types::resource::ProjectOptions {
+                        immutable: Some(false),
+                    }),
+                    ..Default::default()
+                },
+            )
+            .await;
+        assert!(
+            result.is_ok(),
+            "clearing immutable in the same request must be allowed: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_project_blocked_when_immutable() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockResourceBackend::default();
+        backend
+            .expect_get_project()
+            .withf(|_, id: &'_ str| id == "pid")
+            .returning(|_, _| Ok(Some(make_immutable_project("pid", "did"))));
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        let err = provider
+            .delete_project(&ExecutionContext::internal(&state), "pid")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ResourceProviderError::Immutable(id) if id == "pid"));
+    }
+
+    #[tokio::test]
+    async fn test_update_domain_blocked_when_immutable() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockResourceBackend::default();
+        backend
+            .expect_get_domain()
+            .withf(|_, id: &'_ str| id == "did")
+            .returning(|_, _| Ok(Some(make_immutable_domain("did"))));
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        let err = provider
+            .update_domain(
+                &ExecutionContext::internal(&state),
+                "did",
+                DomainUpdate {
+                    name: Some("new_name".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ResourceProviderError::Immutable(id) if id == "did"));
+    }
+
+    #[tokio::test]
+    async fn test_delete_domain_blocked_when_immutable() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockResourceBackend::default();
+        backend
+            .expect_get_domain()
+            .withf(|_, id: &'_ str| id == "did")
+            .returning(|_, _| Ok(Some(make_immutable_domain("did"))));
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        let err = provider
+            .delete_domain(&ExecutionContext::internal(&state), "did")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ResourceProviderError::Immutable(id) if id == "did"));
+    }
+
+    #[tokio::test]
+    async fn test_update_project_not_immutable_proceeds() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockResourceBackend::default();
+        backend
+            .expect_get_project()
+            .withf(|_, id: &'_ str| id == "pid")
+            .returning(|_, _| Ok(Some(make_project("pid", "did"))));
+        backend
+            .expect_update_project()
+            .withf(|_, id: &'_ str, _| id == "pid")
+            .returning(|_, _, _| Ok(make_project("pid", "did")));
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        let result = provider
+            .update_project(
+                &ExecutionContext::internal(&state),
+                "pid",
+                ProjectUpdate {
+                    name: Some("new_name".into()),
+                    ..Default::default()
+                },
+            )
+            .await;
+        assert!(result.is_ok());
     }
 }

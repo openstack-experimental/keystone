@@ -20,6 +20,7 @@ use openstack_keystone_core::resource::ResourceProviderError;
 use openstack_keystone_core_types::resource::{Project, ProjectCreate};
 
 use crate::entity::project as db_project;
+use crate::project_option;
 
 /// Create a new project.
 ///
@@ -33,11 +34,15 @@ pub async fn create<C>(db: &C, project: ProjectCreate) -> Result<Project, Resour
 where
     C: ConnectionTrait,
 {
-    TryInto::<db_project::ActiveModel>::try_into(project)?
+    let options = project.options.clone().unwrap_or_default();
+    let mut created: Project = TryInto::<db_project::ActiveModel>::try_into(project)?
         .insert(db)
         .await
         .context("persisting new project data")?
-        .try_into()
+        .try_into()?;
+    project_option::upsert(db, created.id.clone(), &options).await?;
+    created.options = options;
+    Ok(created)
 }
 
 #[cfg(test)]
@@ -62,6 +67,7 @@ mod tests {
             id: Some("1".into()),
             is_domain: false,
             name: "project_name".into(),
+            options: None,
             parent_id: Some("parent_id".into()),
         };
 
@@ -87,5 +93,36 @@ mod tests {
                 ]
             ),]
         );
+    }
+
+    #[tokio::test]
+    async fn test_create_with_immutable_option() {
+        use openstack_keystone_core_types::resource::ProjectOptions;
+
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_project_mock("1")]])
+            .append_query_results([vec![crate::entity::project_option::Model {
+                project_id: "1".into(),
+                option_id: "IMMU".into(),
+                option_value: Some("true".into()),
+            }]])
+            .into_connection();
+
+        let req = ProjectCreate {
+            description: None,
+            domain_id: Some("foo_domain".into()),
+            enabled: true,
+            extra: std::collections::HashMap::new(),
+            id: Some("1".into()),
+            is_domain: false,
+            name: "project_name".into(),
+            options: Some(ProjectOptions {
+                immutable: Some(true),
+            }),
+            parent_id: None,
+        };
+
+        let created = create(&db, req).await.unwrap();
+        assert_eq!(created.options.immutable, Some(true));
     }
 }

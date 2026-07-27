@@ -26,6 +26,7 @@ use crate::common::*;
 use crate::impl_deleter;
 
 mod create;
+mod delete;
 mod imply_rules;
 mod list;
 mod update;

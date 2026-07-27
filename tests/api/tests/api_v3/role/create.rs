@@ -35,3 +35,31 @@ async fn test_create() -> Result<()> {
     .await?;
     Ok(())
 }
+
+#[tokio::test]
+#[traced_test]
+async fn test_create_with_immutable_option() -> Result<()> {
+    let test_client = Arc::new(AsyncOpenStack::new(&CloudConfig::from_env()?).await?);
+    let name = uuid::Uuid::new_v4().to_string();
+    let role: Role = create_role(
+        &test_client,
+        RoleCreateBuilder::default()
+            .name(name)
+            .options(RoleOptionsBuilder::default().immutable(true).build()?)
+            .build()?,
+    )
+    .await?;
+    assert_eq!(role.options.as_ref().and_then(|o| o.immutable), Some(true));
+
+    // Clear immutable so the resource can be deleted.
+    update_role(
+        &test_client,
+        &role.id,
+        RoleUpdateBuilder::default()
+            .options(RoleOptionsBuilder::default().immutable(false).build()?)
+            .build()?,
+    )
+    .await?;
+    delete_role(&test_client, &role.id).await?;
+    Ok(())
+}

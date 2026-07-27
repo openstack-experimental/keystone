@@ -102,6 +102,7 @@ mod tests {
                     description: Some("description".into()),
                     extra: std::collections::HashMap::new(),
                     is_domain: false,
+                    options: Default::default(),
                 },
                 Project {
                     id: "1".into(),
@@ -112,6 +113,7 @@ mod tests {
                     description: Some("description".into()),
                     extra: std::collections::HashMap::new(),
                     is_domain: false,
+                    options: Default::default(),
                 },
                 Project {
                     id: "domain_id".into(),
@@ -122,6 +124,7 @@ mod tests {
                     description: Some("description".into()),
                     extra: std::collections::HashMap::new(),
                     is_domain: false,
+                    options: Default::default(),
                 }
             ]
         );

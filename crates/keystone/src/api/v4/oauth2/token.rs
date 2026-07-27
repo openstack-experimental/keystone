@@ -1350,6 +1350,7 @@ mod tests {
                             description: None,
                             enabled: true,
                             extra: Default::default(),
+                            options: Default::default(),
                         },
                     ))
                     .roles(vec![RoleRef {
@@ -1568,6 +1569,7 @@ mod tests {
                 description: None,
                 enabled: true,
                 extra: Default::default(),
+                options: Default::default(),
             }))
         });
 

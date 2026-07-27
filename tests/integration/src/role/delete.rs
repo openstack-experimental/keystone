@@ -11,36 +11,33 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Test project delete.
+//! Test role delete.
 
 use eyre::Result;
 use tracing_test::traced_test;
 
-use crate::common::get_state;
-use crate::create_domain;
-use crate::create_project;
 use openstack_keystone_core::auth::ExecutionContext;
-use openstack_keystone_core_types::resource::{
-    ProjectCreateBuilder, ProjectOptionsBuilder, ProjectUpdateBuilder,
-};
+use openstack_keystone_core_types::role::{RoleOptionsBuilder, RoleUpdateBuilder};
+
+use crate::common::get_state;
+use crate::create_role;
 
 #[traced_test]
 #[tokio::test]
 async fn test_delete() -> Result<()> {
     let (state, _tmp) = get_state().await?;
-    let domain = create_domain!(state)?;
-    let project = create_project!(state, domain.id.clone())?;
+    let role = create_role!(state)?;
 
     state
         .provider
-        .get_resource_provider()
-        .delete_project(&ExecutionContext::internal(&state), &project.id)
+        .get_role_provider()
+        .delete_role(&ExecutionContext::internal(&state), &role.id)
         .await?;
     assert!(
         state
             .provider
-            .get_resource_provider()
-            .get_project(&ExecutionContext::internal(&state), &project.id)
+            .get_role_provider()
+            .get_role(&ExecutionContext::internal(&state), &role.id)
             .await?
             .is_none()
     );
@@ -51,52 +48,49 @@ async fn test_delete() -> Result<()> {
 #[tokio::test]
 async fn test_delete_blocked_when_immutable() -> Result<()> {
     let (state, _tmp) = get_state().await?;
-    let domain = create_domain!(state)?;
-    let project = state
+    let role = create_role!(state)?;
+
+    state
         .provider
-        .get_resource_provider()
-        .create_project(
+        .get_role_provider()
+        .update_role(
             &ExecutionContext::internal(&state),
-            ProjectCreateBuilder::default()
-                .name(uuid::Uuid::new_v4().simple().to_string())
-                .domain_id(domain.id.clone())
-                .options(ProjectOptionsBuilder::default().immutable(true).build()?)
+            &role.id,
+            RoleUpdateBuilder::default()
+                .options(RoleOptionsBuilder::default().immutable(true).build()?)
                 .build()?,
         )
         .await?;
 
     let result = state
         .provider
-        .get_resource_provider()
-        .delete_project(&ExecutionContext::internal(&state), &project.id)
+        .get_role_provider()
+        .delete_role(&ExecutionContext::internal(&state), &role.id)
         .await;
-    assert!(
-        result.is_err(),
-        "delete of an immutable project is rejected"
-    );
+    assert!(result.is_err(), "delete of an immutable role is rejected");
 
     state
         .provider
-        .get_resource_provider()
-        .update_project(
+        .get_role_provider()
+        .update_role(
             &ExecutionContext::internal(&state),
-            &project.id,
-            ProjectUpdateBuilder::default()
-                .options(ProjectOptionsBuilder::default().immutable(false).build()?)
+            &role.id,
+            RoleUpdateBuilder::default()
+                .options(RoleOptionsBuilder::default().immutable(false).build()?)
                 .build()?,
         )
         .await?;
 
     state
         .provider
-        .get_resource_provider()
-        .delete_project(&ExecutionContext::internal(&state), &project.id)
+        .get_role_provider()
+        .delete_role(&ExecutionContext::internal(&state), &role.id)
         .await?;
     assert!(
         state
             .provider
-            .get_resource_provider()
-            .get_project(&ExecutionContext::internal(&state), &project.id)
+            .get_role_provider()
+            .get_role(&ExecutionContext::internal(&state), &role.id)
             .await?
             .is_none()
     );

@@ -46,3 +46,38 @@ async fn test_update() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+#[traced_test]
+async fn test_update_blocked_when_immutable() -> Result<()> {
+    let tc = Arc::new(AsyncOpenStack::new(&CloudConfig::from_env()?).await?);
+    let name = format!("role_{}", Uuid::new_v4().simple());
+    let role: Role = create_role(
+        &tc,
+        RoleCreateBuilder::default()
+            .name(name)
+            .options(RoleOptionsBuilder::default().immutable(true).build()?)
+            .build()?,
+    )
+    .await?;
+
+    let result = update_role(
+        &tc,
+        &role.id,
+        RoleUpdateBuilder::default().name("updated_name").build()?,
+    )
+    .await;
+    assert!(result.is_err(), "update of an immutable role is rejected");
+
+    update_role(
+        &tc,
+        &role.id,
+        RoleUpdateBuilder::default()
+            .options(RoleOptionsBuilder::default().immutable(false).build()?)
+            .build()?,
+    )
+    .await?;
+    delete_role(&tc, &role.id).await?;
+
+    Ok(())
+}

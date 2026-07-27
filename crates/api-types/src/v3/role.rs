@@ -44,6 +44,32 @@ pub struct Role {
     #[cfg_attr(feature = "openapi", schema(inline, additional_properties))]
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
+
+    /// The resource options for the role. Available resource options are
+    /// documented in `RoleOptions`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub options: Option<RoleOptions>,
+}
+
+/// Role resource options.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
+pub struct RoleOptions {
+    /// When `true`, the role cannot be updated or deleted until an
+    /// administrator explicitly sets this back to `false`.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub immutable: Option<bool>,
 }
 
 /// The role reference data.
@@ -194,6 +220,13 @@ pub struct RoleCreate {
     #[cfg_attr(feature = "openapi", schema(inline, additional_properties))]
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
+
+    /// The resource options for the role. Available resource options are
+    /// documented in `RoleOptions`.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub options: Option<RoleOptions>,
 }
 
 /// New role creation request.
@@ -234,6 +267,13 @@ pub struct RoleUpdate {
     #[cfg_attr(feature = "openapi", schema(inline, additional_properties))]
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
+
+    /// The resource options for the role. Available resource options are
+    /// documented in `RoleOptions`.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub options: Option<RoleOptions>,
 }
 
 /// Role update request.

@@ -33,11 +33,15 @@ pub async fn create<C>(db: &C, domain: DomainCreate) -> Result<Domain, ResourceP
 where
     C: ConnectionTrait,
 {
-    TryInto::<db_project::ActiveModel>::try_into(domain)?
+    let options = domain.options.clone().unwrap_or_default();
+    let mut created: Domain = TryInto::<db_project::ActiveModel>::try_into(domain)?
         .insert(db)
         .await
         .context("persisting new domain data")?
-        .try_into()
+        .try_into()?;
+    crate::project_option::upsert(db, created.id.clone(), &options).await?;
+    created.options = options;
+    Ok(created)
 }
 
 #[cfg(test)]
@@ -60,6 +64,7 @@ mod tests {
             extra: std::collections::HashMap::new(),
             id: Some("1".into()),
             name: "name".into(),
+            options: None,
         };
 
         assert_eq!(

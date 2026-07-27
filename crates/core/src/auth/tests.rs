@@ -60,6 +60,7 @@ fn make_user_identity(user_id: impl Into<String>) -> PrincipalInfo {
             enabled: true,
             name: "default".to_string(),
             extra: HashMap::new(),
+            options: Default::default(),
         }),
         user_groups: Vec::new(),
     };
@@ -79,6 +80,7 @@ fn make_project(pid: impl Into<String>) -> Project {
         is_domain: false,
         parent_id: None,
         extra: HashMap::new(),
+        options: Default::default(),
     }
 }
 
@@ -91,6 +93,7 @@ fn make_project_scope(pid: impl Into<String>) -> ScopeInfo {
             enabled: true,
             name: "default".to_string(),
             extra: HashMap::new(),
+            options: Default::default(),
         },
     }
 }
@@ -102,6 +105,7 @@ fn make_domain_scope(did: impl Into<String>) -> ScopeInfo {
         enabled: true,
         name: "default".to_string(),
         extra: HashMap::new(),
+        options: Default::default(),
     })
 }
 
@@ -133,6 +137,7 @@ fn make_trust_scope(
             enabled: true,
             name: "default".to_string(),
             extra: HashMap::new(),
+            options: Default::default(),
         },
     }))
 }
@@ -174,6 +179,7 @@ fn disabled_domain_scope(did: impl Into<String>) -> ScopeInfo {
         enabled: false,
         name: "disabled".to_string(),
         extra: HashMap::new(),
+        options: Default::default(),
     })
 }
 
@@ -188,6 +194,7 @@ fn disabled_project_scope(pid: impl Into<String>) -> ScopeInfo {
             is_domain: false,
             parent_id: None,
             extra: HashMap::new(),
+            options: Default::default(),
         },
         project_domain: openstack_keystone_core_types::resource::Domain {
             id: "d1".to_string(),
@@ -195,6 +202,7 @@ fn disabled_project_scope(pid: impl Into<String>) -> ScopeInfo {
             enabled: true,
             name: "default".to_string(),
             extra: HashMap::new(),
+            options: Default::default(),
         },
     }
 }
@@ -210,6 +218,7 @@ fn disabled_project_domain_scope(pid: impl Into<String>) -> ScopeInfo {
             is_domain: false,
             parent_id: None,
             extra: HashMap::new(),
+            options: Default::default(),
         },
         project_domain: openstack_keystone_core_types::resource::Domain {
             id: "d1".to_string(),
@@ -217,6 +226,7 @@ fn disabled_project_domain_scope(pid: impl Into<String>) -> ScopeInfo {
             enabled: false,
             name: "disabled".to_string(),
             extra: HashMap::new(),
+            options: Default::default(),
         },
     }
 }
@@ -251,6 +261,7 @@ fn disabled_trust_scope(
             is_domain: false,
             parent_id: None,
             extra: HashMap::new(),
+            options: Default::default(),
         },
         project_domain: openstack_keystone_core_types::resource::Domain {
             id: "d1".to_string(),
@@ -258,6 +269,7 @@ fn disabled_trust_scope(
             enabled: true,
             name: "default".to_string(),
             extra: HashMap::new(),
+            options: Default::default(),
         },
     }))
 }
@@ -292,6 +304,7 @@ fn disabled_trust_project_domain_scope(
             is_domain: false,
             parent_id: None,
             extra: HashMap::new(),
+            options: Default::default(),
         },
         project_domain: openstack_keystone_core_types::resource::Domain {
             id: "d1".to_string(),
@@ -299,6 +312,7 @@ fn disabled_trust_project_domain_scope(
             enabled: false,
             name: "disabled".to_string(),
             extra: HashMap::new(),
+            options: Default::default(),
         },
     }))
 }
@@ -2742,6 +2756,7 @@ async fn test_new_for_scope_delegated_roles_never_exceed_delegation_matrix() {
             enabled: true,
             name: "default".to_string(),
             extra: HashMap::new(),
+            options: Default::default(),
         },
     }));
     let authz = AuthzInfoBuilder::default()

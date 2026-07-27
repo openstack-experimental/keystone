@@ -19,9 +19,12 @@ use sea_orm::{Cursor, SelectModel};
 
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::role::RoleProviderError;
-use openstack_keystone_core_types::role::{Role, RoleListParameters};
+use openstack_keystone_core_types::role::{Role, RoleListParameters, RoleOptions};
 
-use crate::entity::{prelude::Role as DbRole, role as db_role};
+use crate::entity::{
+    prelude::{Role as DbRole, RoleOption},
+    role as db_role,
+};
 use crate::role::NULL_DOMAIN_ID;
 
 /// Prepare the paginated query for listing roles.
@@ -79,13 +82,23 @@ pub async fn list(
     db: &DatabaseConnection,
     params: &RoleListParameters,
 ) -> Result<Vec<Role>, RoleProviderError> {
-    get_list_query(params)?
+    let rows = get_list_query(params)?
         .all(db)
         .await
-        .context("listing roles")?
-        .into_iter()
-        .map(TryInto::<Role>::try_into)
-        .collect::<Result<Vec<Role>, _>>()
+        .context("listing roles")?;
+    let options = rows
+        .load_many(RoleOption, db)
+        .await
+        .context("fetching options of the listed roles")?;
+
+    rows.into_iter()
+        .zip(options)
+        .map(|(row, opts)| {
+            let mut role: Role = row.try_into()?;
+            role.options = RoleOptions::from_iter(opts);
+            Ok(role)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -114,14 +127,17 @@ pub(super) mod tests {
                 // First query result - select user itself
                 vec![get_role_mock("1", "foo")],
             ])
+            .append_query_results([Vec::<crate::entity::role_option::Model>::new()])
             .append_query_results([
                 // First query result - select user itself
                 vec![get_role_mock("1", "foo")],
             ])
+            .append_query_results([Vec::<crate::entity::role_option::Model>::new()])
             .append_query_results([
                 // First query result - select user itself
                 vec![get_role_mock("1", "foo")],
             ])
+            .append_query_results([Vec::<crate::entity::role_option::Model>::new()])
             .into_connection();
         assert!(list(&db, &RoleListParameters::default()).await.is_ok());
         assert_eq!(
@@ -155,26 +171,33 @@ pub(super) mod tests {
         .await
         .unwrap();
 
-        // Checking transaction log
+        // Checking transaction log (indices 0, 2, 4 are the main "role"
+        // queries; the interleaved odd indices are the `load_many` options
+        // lookups)
+        let log = db.into_transaction_log();
         assert_eq!(
-            db.into_transaction_log(),
-            [
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"SELECT "role"."id", "role"."name", "role"."extra", "role"."domain_id", "role"."description" FROM "role" ORDER BY "role"."id" ASC"#,
-                    []
-                ),
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"SELECT "role"."id", "role"."name", "role"."extra", "role"."domain_id", "role"."description" FROM "role" WHERE "role"."domain_id" = $1 AND "role"."name" = $2 ORDER BY "role"."id" ASC"#,
-                    ["foo_domain".into(), "foo".into()]
-                ),
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"SELECT "role"."id", "role"."name", "role"."extra", "role"."domain_id", "role"."description" FROM "role" WHERE "role"."domain_id" = $1 ORDER BY "role"."id" ASC"#,
-                    [NULL_DOMAIN_ID.into()]
-                ),
-            ]
+            log[0],
+            Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"SELECT "role"."id", "role"."name", "role"."extra", "role"."domain_id", "role"."description" FROM "role" ORDER BY "role"."id" ASC"#,
+                []
+            ),
+        );
+        assert_eq!(
+            log[2],
+            Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"SELECT "role"."id", "role"."name", "role"."extra", "role"."domain_id", "role"."description" FROM "role" WHERE "role"."domain_id" = $1 AND "role"."name" = $2 ORDER BY "role"."id" ASC"#,
+                ["foo_domain".into(), "foo".into()]
+            ),
+        );
+        assert_eq!(
+            log[4],
+            Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"SELECT "role"."id", "role"."name", "role"."extra", "role"."domain_id", "role"."description" FROM "role" WHERE "role"."domain_id" = $1 ORDER BY "role"."id" ASC"#,
+                [NULL_DOMAIN_ID.into()]
+            ),
         );
     }
 
@@ -182,6 +205,7 @@ pub(super) mod tests {
     async fn test_list_pagination_over_fetches_and_uses_marker() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![get_role_mock("1", "a"), get_role_mock("2", "b")]])
+            .append_query_results([Vec::<crate::entity::role_option::Model>::new()])
             .into_connection();
 
         let roles = list(
@@ -203,5 +227,20 @@ pub(super) mod tests {
         let sql = &txns[0].statements()[0].sql;
         assert!(sql.contains(r#""role"."id" >"#));
         assert!(sql.contains("LIMIT"));
+    }
+
+    #[tokio::test]
+    async fn test_list_merges_options() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_role_mock("1", "foo")]])
+            .append_query_results([vec![crate::entity::role_option::Model {
+                role_id: "1".into(),
+                option_id: "IMMU".into(),
+                option_value: Some("true".into()),
+            }]])
+            .into_connection();
+
+        let roles = list(&db, &RoleListParameters::default()).await.unwrap();
+        assert_eq!(roles[0].options.immutable, Some(true));
     }
 }

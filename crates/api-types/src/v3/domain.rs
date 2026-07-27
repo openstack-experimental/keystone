@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use validator::Validate;
 
 use crate::Link;
+pub use crate::v3::project::ProjectOptions;
 
 /// Short domain representation.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -79,6 +80,14 @@ pub struct Domain {
     /// The domain name.
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
     pub name: String,
+
+    /// The resource options for the domain. A domain is a project with
+    /// `is_domain = true` and shares its resource options, hence the shared
+    /// `ProjectOptions` type.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub options: Option<ProjectOptions>,
 }
 
 /// New domain data.
@@ -120,6 +129,14 @@ pub struct DomainCreate {
     /// The domain name.
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
     pub name: String,
+
+    /// The resource options for the domain. A domain is a project with
+    /// `is_domain = true` and shares its resource options, hence the shared
+    /// `ProjectOptions` type.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub options: Option<ProjectOptions>,
 }
 
 /// Complete response with the domain data.
@@ -174,6 +191,14 @@ pub struct DomainUpdate {
     #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
     pub name: Option<String>,
+
+    /// The resource options for the domain. A domain is a project with
+    /// `is_domain = true` and shares its resource options, hence the shared
+    /// `ProjectOptions` type.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub options: Option<ProjectOptions>,
 }
 
 /// Domain update request.

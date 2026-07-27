@@ -20,6 +20,7 @@ use serde_json::Value;
 use validator::Validate;
 
 use crate::error::BuilderError;
+use crate::resource::project::ProjectOptions;
 
 /// Domain data.
 #[derive(Builder, Clone, Debug, Default, Deserialize, PartialEq, Serialize, Validate)]
@@ -46,6 +47,13 @@ pub struct Domain {
     #[builder(default)]
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
+
+    /// The resource options for the domain. A domain is a project row with
+    /// `is_domain = true` and shares the `project_option` table, hence the
+    /// shared [`ProjectOptions`](crate::resource::ProjectOptions) type.
+    #[builder(default)]
+    #[validate(nested)]
+    pub options: ProjectOptions,
 }
 
 /// New domain data.
@@ -74,6 +82,11 @@ pub struct DomainCreate {
     /// Additional domain properties.
     #[builder(default)]
     pub extra: HashMap<String, Value>,
+
+    /// The resource options for the domain.
+    #[builder(default)]
+    #[validate(nested)]
+    pub options: Option<ProjectOptions>,
 }
 
 /// Domain update data.
@@ -98,6 +111,12 @@ pub struct DomainUpdate {
     /// existing `extra` before persisting; an empty map means unchanged.
     #[builder(default)]
     pub extra: HashMap<String, Value>,
+
+    /// The resource options for the domain. `None` means unchanged; a field
+    /// left `None` within `Some(ProjectOptions { .. })` also means unchanged.
+    #[builder(default)]
+    #[validate(nested)]
+    pub options: Option<ProjectOptions>,
 }
 
 /// Domain listing parameters.

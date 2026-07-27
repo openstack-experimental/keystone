@@ -46,6 +46,29 @@ impl RoleService {
             .clone();
         Ok(Self { backend_driver })
     }
+
+    /// Reject the operation when the role is currently immutable and the
+    /// request does not itself clear the flag.
+    ///
+    /// Mirrors Python Keystone: a resource with `options.immutable == true`
+    /// rejects update/delete unless the update explicitly sets
+    /// `immutable: false` in the same request. Pass `new_options: None` for
+    /// delete, which can never clear the flag. When the role does not exist,
+    /// this is a no-op -- the caller's own lookup surfaces `RoleNotFound`.
+    async fn check_role_mutable<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        role_id: &'a str,
+        new_options: Option<&RoleOptions>,
+    ) -> Result<(), RoleProviderError> {
+        if let Some(current) = self.get_role(ctx, role_id).await?
+            && current.options.immutable == Some(true)
+            && new_options.and_then(|o| o.immutable) != Some(false)
+        {
+            return Err(RoleProviderError::Immutable(role_id.to_string()));
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -191,6 +214,8 @@ impl RoleApi for RoleService {
         role: RoleUpdate,
     ) -> Result<Role, RoleProviderError> {
         role.validate()?;
+        self.check_role_mutable(ctx, role_id, role.options.as_ref())
+            .await?;
         let role = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
             let state = ctx.state();
@@ -237,6 +262,7 @@ impl RoleApi for RoleService {
         ctx: &ExecutionContext<'a>,
         id: &'a str,
     ) -> Result<(), RoleProviderError> {
+        self.check_role_mutable(ctx, id, None).await?;
         if let Some(vsc) = ctx.ctx() {
             crate::audited_op! {
                 dispatcher: &ctx.state().event_dispatcher,
@@ -408,5 +434,129 @@ impl RoleApi for RoleService {
     ) -> Result<Vec<Role>, RoleProviderError> {
         params.validate()?;
         self.backend_driver.list_roles(ctx.state(), params).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::auth::ExecutionContext;
+    use crate::provider::Provider;
+    use crate::role::backend::MockRoleBackend;
+    use crate::tests::get_mocked_state;
+
+    fn make_role(id: &str, name: &str) -> Role {
+        RoleBuilder::default().id(id).name(name).build().unwrap()
+    }
+
+    fn make_immutable_role(id: &str, name: &str) -> Role {
+        let mut role = make_role(id, name);
+        role.options.immutable = Some(true);
+        role
+    }
+
+    #[tokio::test]
+    async fn test_update_role_blocked_when_immutable() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockRoleBackend::default();
+        backend
+            .expect_get_role()
+            .withf(|_, id: &'_ str| id == "rid")
+            .returning(|_, _| Ok(Some(make_immutable_role("rid", "admin"))));
+        let provider = RoleService {
+            backend_driver: Arc::new(backend),
+        };
+
+        let err = provider
+            .update_role(
+                &ExecutionContext::internal(&state),
+                "rid",
+                RoleUpdate {
+                    name: Some("new_name".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RoleProviderError::Immutable(id) if id == "rid"));
+    }
+
+    #[tokio::test]
+    async fn test_update_role_allowed_when_clearing_immutable() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockRoleBackend::default();
+        backend
+            .expect_get_role()
+            .withf(|_, id: &'_ str| id == "rid")
+            .returning(|_, _| Ok(Some(make_immutable_role("rid", "admin"))));
+        backend
+            .expect_update_role()
+            .withf(|_, id: &'_ str, _| id == "rid")
+            .returning(|_, _, _| Ok(make_role("rid", "admin")));
+        let provider = RoleService {
+            backend_driver: Arc::new(backend),
+        };
+
+        let result = provider
+            .update_role(
+                &ExecutionContext::internal(&state),
+                "rid",
+                RoleUpdate {
+                    options: Some(RoleOptions {
+                        immutable: Some(false),
+                    }),
+                    ..Default::default()
+                },
+            )
+            .await;
+        assert!(
+            result.is_ok(),
+            "clearing immutable in the same request must be allowed: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_role_blocked_when_immutable() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockRoleBackend::default();
+        backend
+            .expect_get_role()
+            .withf(|_, id: &'_ str| id == "rid")
+            .returning(|_, _| Ok(Some(make_immutable_role("rid", "admin"))));
+        let provider = RoleService {
+            backend_driver: Arc::new(backend),
+        };
+
+        let err = provider
+            .delete_role(&ExecutionContext::internal(&state), "rid")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RoleProviderError::Immutable(id) if id == "rid"));
+    }
+
+    #[tokio::test]
+    async fn test_delete_role_not_immutable_proceeds() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockRoleBackend::default();
+        backend
+            .expect_get_role()
+            .withf(|_, id: &'_ str| id == "rid")
+            .returning(|_, _| Ok(Some(make_role("rid", "admin"))));
+        backend
+            .expect_delete_role()
+            .withf(|_, id: &'_ str| id == "rid")
+            .returning(|_, _| Ok(()));
+        let provider = RoleService {
+            backend_driver: Arc::new(backend),
+        };
+
+        assert!(
+            provider
+                .delete_role(&ExecutionContext::internal(&state), "rid")
+                .await
+                .is_ok()
+        );
     }
 }

@@ -76,6 +76,7 @@ fn make_project() -> Project {
         is_domain: false,
         parent_id: None,
         extra: HashMap::new(),
+        options: Default::default(),
     }
 }
 
@@ -106,6 +107,7 @@ fn make_domain() -> Domain {
         enabled: true,
         description: None,
         extra: HashMap::new(),
+        options: Default::default(),
     }
 }
 
@@ -116,6 +118,7 @@ fn make_disabled_domain() -> Domain {
         enabled: false,
         description: None,
         extra: HashMap::new(),
+        options: Default::default(),
     }
 }
 
@@ -332,6 +335,7 @@ fn make_trust_with_roles(roles: Option<Vec<RoleRef>>) -> SecurityContext {
                     is_domain: false,
                     parent_id: None,
                     extra: HashMap::new(),
+                    options: Default::default(),
                 },
                 project_domain: make_domain(),
             })),

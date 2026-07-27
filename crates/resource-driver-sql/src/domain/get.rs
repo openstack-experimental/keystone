@@ -60,13 +60,19 @@ pub async fn get_domain_by_id<I: AsRef<str>>(
     db: &DatabaseConnection,
     domain_id: I,
 ) -> Result<Option<Domain>, ResourceProviderError> {
-    DbProject::find_by_id(domain_id.as_ref())
+    let entry = DbProject::find_by_id(domain_id.as_ref())
         .filter(db_project::Column::IsDomain.eq(true))
         .one(db)
         .await
-        .context("fetching domain by id")?
-        .map(TryInto::try_into)
-        .transpose()
+        .context("fetching domain by id")?;
+    match entry {
+        Some(model) => {
+            let mut domain: Domain = model.try_into()?;
+            domain.options = crate::project_option::list_by_project_id(db, &domain.id).await?;
+            Ok(Some(domain))
+        }
+        None => Ok(None),
+    }
 }
 
 /// Get a domain by its name.
@@ -85,12 +91,18 @@ pub async fn get_domain_by_name<N: AsRef<str>>(
         .filter(db_project::Column::IsDomain.eq(true))
         .filter(db_project::Column::Name.eq(domain_name.as_ref()));
 
-    domain_select
+    let entry = domain_select
         .one(db)
         .await
-        .context("fetching domain by name")?
-        .map(TryInto::try_into)
-        .transpose()
+        .context("fetching domain by name")?;
+    match entry {
+        Some(model) => {
+            let mut domain: Domain = model.try_into()?;
+            domain.options = crate::project_option::list_by_project_id(db, &domain.id).await?;
+            Ok(Some(domain))
+        }
+        None => Ok(None),
+    }
 }
 
 #[cfg(test)]
@@ -105,6 +117,7 @@ mod tests {
     async fn test_get_by_name() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![get_domain_mock("1")]])
+            .append_query_results([Vec::<crate::entity::project_option::Model>::new()])
             .into_connection();
 
         assert_eq!(
@@ -115,12 +128,12 @@ mod tests {
             get_domain_mock("1").try_into().unwrap()
         );
         assert_eq!(
-            db.into_transaction_log(),
-            [Transaction::from_sql_and_values(
+            db.into_transaction_log()[0],
+            Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 r#"SELECT "project"."id", "project"."name", "project"."extra", "project"."description", "project"."enabled", "project"."domain_id", "project"."parent_id", "project"."is_domain" FROM "project" WHERE "project"."is_domain" = $1 AND "project"."name" = $2 LIMIT $3"#,
                 [true.into(), "name".into(), 1u64.into()]
-            ),]
+            ),
         );
     }
 
@@ -128,6 +141,7 @@ mod tests {
     async fn test_get_by_id() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![get_domain_mock("1")]])
+            .append_query_results([Vec::<crate::entity::project_option::Model>::new()])
             .into_connection();
 
         assert_eq!(
@@ -138,13 +152,28 @@ mod tests {
             get_domain_mock("1").try_into().unwrap()
         );
         assert_eq!(
-            db.into_transaction_log(),
-            [Transaction::from_sql_and_values(
+            db.into_transaction_log()[0],
+            Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 r#"SELECT "project"."id", "project"."name", "project"."extra", "project"."description", "project"."enabled", "project"."domain_id", "project"."parent_id", "project"."is_domain" FROM "project" WHERE "project"."id" = $1 AND "project"."is_domain" = $2 LIMIT $3"#,
                 ["1".into(), true.into(), 1u64.into()]
-            ),]
+            ),
         );
+    }
+
+    #[tokio::test]
+    async fn test_get_by_id_merges_options() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_domain_mock("1")]])
+            .append_query_results([vec![crate::entity::project_option::Model {
+                project_id: "1".into(),
+                option_id: "IMMU".into(),
+                option_value: Some("true".into()),
+            }]])
+            .into_connection();
+
+        let domain = get_domain_by_id(&db, "1").await.unwrap().unwrap();
+        assert_eq!(domain.options.immutable, Some(true));
     }
 
     #[tokio::test]

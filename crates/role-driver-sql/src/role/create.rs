@@ -30,11 +30,15 @@ use crate::entity::role as db_role;
 /// # Returns
 /// A `Result` containing the created `Role`, or an `Error`.
 pub async fn create(db: &DatabaseConnection, role: RoleCreate) -> Result<Role, RoleProviderError> {
-    TryInto::<db_role::ActiveModel>::try_into(role)?
+    let options = role.options.clone().unwrap_or_default();
+    let mut created: Role = TryInto::<db_role::ActiveModel>::try_into(role)?
         .insert(db)
         .await
         .context("creating role")?
-        .try_into()
+        .try_into()?;
+    crate::role_option::upsert(db, created.id.clone(), &options).await?;
+    created.options = options;
+    Ok(created)
 }
 
 #[cfg(test)]
@@ -64,6 +68,7 @@ mod tests {
             domain_id: Some("default".to_string()),
             description: Some("A role for testing".to_string()),
             extra: HashMap::from([("key".into(), json!("value"))]),
+            options: None,
         };
 
         let created = create(&db, role_create).await.unwrap();
@@ -94,6 +99,7 @@ mod tests {
             domain_id: None, // ← No domain
             description: None,
             extra: HashMap::new(),
+            options: None,
         };
 
         let created = create(&db, role_create).await.unwrap();
@@ -125,6 +131,7 @@ mod tests {
                 ("custom".into(), json!("data")),
                 ("count".into(), json!(42)),
             ]),
+            options: None,
         };
 
         let created = create(&db, role_create).await.unwrap();
@@ -132,5 +139,39 @@ mod tests {
         assert_eq!(created.name, "Role With Extra");
         assert_eq!(*created.extra.get("custom").unwrap(), json!("data"));
         assert_eq!(*created.extra.get("count").unwrap(), json!(42));
+    }
+
+    #[tokio::test]
+    async fn test_create_with_immutable_option() {
+        use openstack_keystone_core_types::role::RoleOptions;
+
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![db_role::Model {
+                id: "role-1".into(),
+                domain_id: "default".into(),
+                name: "admin".into(),
+                description: None,
+                extra: None,
+            }]])
+            .append_query_results([vec![crate::entity::role_option::Model {
+                role_id: "role-1".into(),
+                option_id: "IMMU".into(),
+                option_value: Some("true".into()),
+            }]])
+            .into_connection();
+
+        let role_create = RoleCreate {
+            id: Some("role-1".to_string()),
+            name: "admin".to_string(),
+            domain_id: Some("default".to_string()),
+            description: None,
+            extra: HashMap::new(),
+            options: Some(RoleOptions {
+                immutable: Some(true),
+            }),
+        };
+
+        let created = create(&db, role_create).await.unwrap();
+        assert_eq!(created.options.immutable, Some(true));
     }
 }

@@ -529,6 +529,7 @@ mod tests {
             description: None,
             enabled: true,
             extra: Default::default(),
+            options: Default::default(),
         }));
         assert!(is_domain_scoped(&vsc, "domain-1"));
     }
@@ -541,6 +542,7 @@ mod tests {
             description: None,
             enabled: true,
             extra: Default::default(),
+            options: Default::default(),
         }));
         assert!(!is_domain_scoped(&vsc, "domain-2"));
     }
@@ -557,6 +559,7 @@ mod tests {
                 is_domain: false,
                 parent_id: None,
                 extra: Default::default(),
+                options: Default::default(),
             },
             project_domain: Domain {
                 id: "domain-1".to_string(),
@@ -564,6 +567,7 @@ mod tests {
                 description: None,
                 enabled: true,
                 extra: Default::default(),
+                options: Default::default(),
             },
         });
         assert!(!is_domain_scoped(&vsc, "domain-1"));

@@ -146,7 +146,8 @@ mod tests {
                 name: "2".into(),
                 extra: std::collections::HashMap::new(),
                 description: None,
-                domain_id: None
+                domain_id: None,
+                options: Default::default(),
             }],
             res.roles
         );

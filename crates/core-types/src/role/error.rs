@@ -25,6 +25,13 @@ pub enum RoleProviderError {
     #[error("backend driver error: {0}")]
     Driver(String),
 
+    /// The role has `options.immutable == true` and the requested update
+    /// does not itself clear that flag, or the request is a delete (which can
+    /// never clear it). Mirrors Python Keystone's `ResourceUpdateForbidden` /
+    /// `ResourceDeleteForbidden`.
+    #[error("role {0} is immutable")]
+    Immutable(String),
+
     /// Role imply not found.
     #[error("role implication {0} not found")]
     RoleImplyNotFound(String),

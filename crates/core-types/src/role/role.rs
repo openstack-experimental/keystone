@@ -47,6 +47,22 @@ pub struct Role {
     /// The role name.
     #[validate(length(min = 1, max = 255))]
     pub name: String,
+
+    /// The resource options for the role.
+    #[builder(default)]
+    #[validate(nested)]
+    pub options: RoleOptions,
+}
+
+/// Resource options for a role.
+#[derive(Builder, Clone, Debug, Default, PartialEq, Serialize, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(strip_option, into))]
+pub struct RoleOptions {
+    /// When `true`, the role cannot be updated or deleted until an
+    /// administrator explicitly sets this back to `false` -- which may
+    /// happen in the same request that changes other fields.
+    pub immutable: Option<bool>,
 }
 
 /// Short role representation (reference).
@@ -140,6 +156,11 @@ pub struct RoleCreate {
     /// The role name.
     #[validate(length(min = 1, max = 255))]
     pub name: String,
+
+    /// The resource options for the role.
+    #[builder(default)]
+    #[validate(nested)]
+    pub options: Option<RoleOptions>,
 }
 
 /// Role update data.
@@ -160,6 +181,12 @@ pub struct RoleUpdate {
     /// existing `extra` before persisting; an empty map means unchanged.
     #[builder(default)]
     pub extra: HashMap<String, Value>,
+
+    /// The resource options for the role. `None` means unchanged; a field
+    /// left `None` within `Some(RoleOptions { .. })` also means unchanged.
+    #[builder(default)]
+    #[validate(nested)]
+    pub options: Option<RoleOptions>,
 }
 
 /// Role inference (imply) data.

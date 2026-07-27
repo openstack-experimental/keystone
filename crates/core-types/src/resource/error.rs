@@ -41,6 +41,13 @@ pub enum ResourceProviderError {
     #[error("invalid project domain: {0}")]
     InvalidProjectDomain(String),
 
+    /// The resource has `options.immutable == true` and the requested update
+    /// does not itself clear that flag, or the request is a delete (which can
+    /// never clear it). Mirrors Python Keystone's `ResourceUpdateForbidden` /
+    /// `ResourceDeleteForbidden`.
+    #[error("resource {0} is immutable")]
+    Immutable(String),
+
     /// OAuth2 signing key provider error, surfaced when provisioning a
     /// domain's initial signing keypair synchronously on domain creation
     /// (ADR 0026 §3, "Domain creation").

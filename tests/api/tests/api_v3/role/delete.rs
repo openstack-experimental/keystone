@@ -38,3 +38,33 @@ async fn test_delete() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+#[traced_test]
+async fn test_delete_blocked_when_immutable() -> Result<()> {
+    let tc = Arc::new(AsyncOpenStack::new(&CloudConfig::from_env()?).await?);
+    let name = format!("role_{}", Uuid::new_v4().simple());
+    let role: Role = create_role(
+        &tc,
+        RoleCreateBuilder::default()
+            .name(name)
+            .options(RoleOptionsBuilder::default().immutable(true).build()?)
+            .build()?,
+    )
+    .await?;
+
+    let result = delete_role(&tc, &role.id).await;
+    assert!(result.is_err(), "delete of an immutable role is rejected");
+
+    update_role(
+        &tc,
+        &role.id,
+        RoleUpdateBuilder::default()
+            .options(RoleOptionsBuilder::default().immutable(false).build()?)
+            .build()?,
+    )
+    .await?;
+    delete_role(&tc, &role.id).await?;
+
+    Ok(())
+}

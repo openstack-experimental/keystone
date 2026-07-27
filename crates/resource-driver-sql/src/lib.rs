@@ -26,6 +26,7 @@ use openstack_keystone_core_types::resource::*;
 mod domain;
 pub mod entity;
 mod project;
+mod project_option;
 
 #[derive(Default)]
 pub struct SqlBackend {}
@@ -315,6 +316,7 @@ impl SqlDriver for SqlBackend {
                     enabled: false,
                     id: Some(domain::NULL_DOMAIN_ID.into()),
                     name: domain::NULL_DOMAIN_ID.into(),
+                    options: None,
                 },
             )
             .await

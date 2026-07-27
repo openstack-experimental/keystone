@@ -42,7 +42,14 @@ pub async fn get_project<I: AsRef<str>>(
         .one(db)
         .await
         .context("fetching project by id")?;
-    project_entry.map(TryInto::try_into).transpose()
+    match project_entry {
+        Some(model) => {
+            let mut project: Project = model.try_into()?;
+            project.options = crate::project_option::list_by_project_id(db, &project.id).await?;
+            Ok(Some(project))
+        }
+        None => Ok(None),
+    }
 }
 
 /// Get a project by its name and domain ID.
@@ -69,5 +76,45 @@ pub async fn get_project_by_name<N: AsRef<str>, D: AsRef<str>>(
         .one(db)
         .await
         .context("fetching project by name and domain")?;
-    project_entry.map(TryInto::try_into).transpose()
+    match project_entry {
+        Some(model) => {
+            let mut project: Project = model.try_into()?;
+            project.options = crate::project_option::list_by_project_id(db, &project.id).await?;
+            Ok(Some(project))
+        }
+        None => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use sea_orm::{DatabaseBackend, MockDatabase};
+
+    use super::*;
+    use crate::entity::project_option;
+    use crate::project::tests::get_project_mock;
+
+    #[tokio::test]
+    async fn test_get_project_merges_options() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_project_mock("1")]])
+            .append_query_results([vec![project_option::Model {
+                project_id: "1".into(),
+                option_id: "IMMU".into(),
+                option_value: Some("true".into()),
+            }]])
+            .into_connection();
+
+        let project = get_project(&db, "1").await.unwrap().unwrap();
+        assert_eq!(project.options.immutable, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_project_not_found() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([Vec::<db_project::Model>::new()])
+            .into_connection();
+
+        assert!(get_project(&db, "missing").await.unwrap().is_none());
+    }
 }

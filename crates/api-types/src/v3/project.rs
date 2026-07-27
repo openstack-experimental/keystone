@@ -98,10 +98,38 @@ pub struct Project {
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
     pub name: String,
 
+    /// The resource options for the project. Available resource options are
+    /// documented in `ProjectOptions`.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub options: Option<ProjectOptions>,
+
     /// The ID of the parent for the project.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub parent_id: Option<String>,
+}
+
+/// Project resource options.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
+pub struct ProjectOptions {
+    /// When `true`, the project cannot be updated or deleted until an
+    /// administrator explicitly sets this back to `false`. Also used for
+    /// domains, which persist through the same underlying project.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub immutable: Option<bool>,
 }
 
 /// New project data.
@@ -160,7 +188,13 @@ pub struct ProjectCreate {
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
     pub name: String,
 
-    // TODO: add options
+    /// The resource options for the project. Available resource options are
+    /// documented in `ProjectOptions`.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub options: Option<ProjectOptions>,
+
     /// The ID of the parent of the project.
     ///
     /// If specified on project creation, this places the project within a
@@ -246,6 +280,13 @@ pub struct ProjectUpdate {
     #[cfg_attr(feature = "builder", builder(default))]
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
     pub name: Option<String>,
+
+    /// The resource options for the project. Available resource options are
+    /// documented in `ProjectOptions`.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub options: Option<ProjectOptions>,
 }
 
 /// Project update request.

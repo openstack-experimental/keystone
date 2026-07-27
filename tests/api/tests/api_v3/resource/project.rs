@@ -97,6 +97,117 @@ async fn test_project_list() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_project_create_immutable_option() -> Result<()> {
+    let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
+    let domain = create_test_domain(&test_client).await?;
+    let project = create_project(
+        &test_client,
+        ProjectCreateBuilder::default()
+            .name(Uuid::new_v4().to_string())
+            .domain_id(domain.id.clone())
+            .options(ProjectOptionsBuilder::default().immutable(true).build()?)
+            .build()?,
+    )
+    .await?;
+    assert_eq!(
+        project.options.as_ref().and_then(|o| o.immutable),
+        Some(true)
+    );
+
+    let shown = get_project(&test_client, &project.id).await?;
+    assert_eq!(shown.options.as_ref().and_then(|o| o.immutable), Some(true));
+
+    // Clear immutable so the guard-driven cleanup does not fail.
+    update_project(
+        &test_client,
+        &project.id,
+        ProjectUpdateBuilder::default()
+            .options(ProjectOptionsBuilder::default().immutable(false).build()?)
+            .build()?,
+    )
+    .await?;
+
+    project.delete().await?;
+    domain.delete().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_project_update_blocked_when_immutable() -> Result<()> {
+    let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
+    let domain = create_test_domain(&test_client).await?;
+    let project = create_project(
+        &test_client,
+        ProjectCreateBuilder::default()
+            .name(Uuid::new_v4().to_string())
+            .domain_id(domain.id.clone())
+            .options(ProjectOptionsBuilder::default().immutable(true).build()?)
+            .build()?,
+    )
+    .await?;
+
+    let result = update_project(
+        &test_client,
+        &project.id,
+        ProjectUpdateBuilder::default()
+            .name("updated_name")
+            .build()?,
+    )
+    .await;
+    assert!(
+        result.is_err(),
+        "update of an immutable project is rejected"
+    );
+
+    update_project(
+        &test_client,
+        &project.id,
+        ProjectUpdateBuilder::default()
+            .options(ProjectOptionsBuilder::default().immutable(false).build()?)
+            .build()?,
+    )
+    .await?;
+
+    project.delete().await?;
+    domain.delete().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_project_delete_blocked_when_immutable() -> Result<()> {
+    let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
+    let domain = create_test_domain(&test_client).await?;
+    let project = create_project(
+        &test_client,
+        ProjectCreateBuilder::default()
+            .name(Uuid::new_v4().to_string())
+            .domain_id(domain.id.clone())
+            .options(ProjectOptionsBuilder::default().immutable(true).build()?)
+            .build()?,
+    )
+    .await?;
+
+    let result = delete_project(&test_client, &project.id).await;
+    assert!(
+        result.is_err(),
+        "delete of an immutable project is rejected"
+    );
+
+    update_project(
+        &test_client,
+        &project.id,
+        ProjectUpdateBuilder::default()
+            .options(ProjectOptionsBuilder::default().immutable(false).build()?)
+            .build()?,
+    )
+    .await?;
+
+    project.delete().await?;
+    domain.delete().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_project_update() -> Result<()> {
     let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
     let domain = create_test_domain(&test_client).await?;

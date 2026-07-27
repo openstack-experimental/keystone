@@ -19,10 +19,13 @@ use sea_orm::{Cursor, SelectModel};
 
 use openstack_keystone_core::error::DbContextExt;
 use openstack_keystone_core::resource::ResourceProviderError;
-use openstack_keystone_core_types::resource::{Domain, DomainListParameters};
+use openstack_keystone_core_types::resource::{Domain, DomainListParameters, ProjectOptions};
 
 use crate::domain::NULL_DOMAIN_ID;
-use crate::entity::{prelude::Project as DbProject, project as db_project};
+use crate::entity::{
+    prelude::{Project as DbProject, ProjectOption},
+    project as db_project,
+};
 
 /// Prepare the paginated query for listing domains.
 ///
@@ -83,12 +86,22 @@ pub async fn list(
     db: &DatabaseConnection,
     params: &DomainListParameters,
 ) -> Result<Vec<Domain>, ResourceProviderError> {
-    get_list_query(params)?
+    let rows = get_list_query(params)?
         .all(db)
         .await
-        .context("listing domains")?
-        .into_iter()
-        .map(TryInto::try_into)
+        .context("listing domains")?;
+    let options = rows
+        .load_many(ProjectOption, db)
+        .await
+        .context("fetching options of the listed domains")?;
+
+    rows.into_iter()
+        .zip(options)
+        .map(|(row, opts)| {
+            let mut domain: Domain = row.try_into()?;
+            domain.options = ProjectOptions::from_iter(opts);
+            Ok(domain)
+        })
         .collect()
 }
 
@@ -143,6 +156,7 @@ mod tests {
     async fn test_list_pagination_over_fetches_and_uses_marker() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![get_domain_mock("pid1"), get_domain_mock("pid2")]])
+            .append_query_results([Vec::<crate::entity::project_option::Model>::new()])
             .into_connection();
 
         let domains = list(
@@ -170,6 +184,7 @@ mod tests {
     async fn test_list() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![get_domain_mock("pid1")]])
+            .append_query_results([Vec::<crate::entity::project_option::Model>::new()])
             .into_connection();
 
         assert_eq!(
@@ -180,16 +195,32 @@ mod tests {
                 extra: std::collections::HashMap::new(),
                 id: "pid1".into(),
                 name: "name".into(),
+                options: Default::default(),
             }]
         );
 
         assert_eq!(
-            db.into_transaction_log(),
-            [Transaction::from_sql_and_values(
+            db.into_transaction_log()[0],
+            Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 r#"SELECT "project"."id", "project"."name", "project"."extra", "project"."description", "project"."enabled", "project"."domain_id", "project"."parent_id", "project"."is_domain" FROM "project" WHERE "project"."is_domain" = $1 AND "project"."id" <> $2 ORDER BY "project"."id" ASC"#,
                 [true.into(), NULL_DOMAIN_ID.into()]
-            ),]
+            ),
         );
+    }
+
+    #[tokio::test]
+    async fn test_list_merges_options() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_domain_mock("pid1")]])
+            .append_query_results([vec![crate::entity::project_option::Model {
+                project_id: "pid1".into(),
+                option_id: "IMMU".into(),
+                option_value: Some("true".into()),
+            }]])
+            .into_connection();
+
+        let domains = list(&db, &DomainListParameters::default()).await.unwrap();
+        assert_eq!(domains[0].options.immutable, Some(true));
     }
 }

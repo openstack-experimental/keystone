@@ -41,12 +41,14 @@ impl From<&provider_types::Domain> for api_types::DomainShort {
 
 impl From<provider_types::Domain> for api_types::Domain {
     fn from(value: provider_types::Domain) -> Self {
+        let opts: api_types::ProjectOptions = value.options.into();
         Self {
             description: value.description,
             enabled: value.enabled,
             extra: value.extra,
             id: value.id,
             name: value.name,
+            options: opts.immutable.is_some().then_some(opts),
         }
     }
 }
@@ -59,6 +61,7 @@ impl From<api_types::DomainCreate> for provider_types::DomainCreate {
             extra: value.extra,
             id: value.id,
             name: value.name,
+            options: value.options.map(Into::into),
         }
     }
 }
@@ -71,6 +74,7 @@ impl From<api_types::DomainUpdateRequest> for provider_types::DomainUpdate {
             enabled: domain.enabled,
             extra: domain.extra,
             name: domain.name,
+            options: domain.options.map(Into::into),
         }
     }
 }

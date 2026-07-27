@@ -36,7 +36,14 @@ pub async fn get<I: AsRef<str>>(
     let role_select = DbRole::find_by_id(id.as_ref());
 
     let entry: Option<db_role::Model> = role_select.one(db).await.context("fetching role by id")?;
-    entry.map(TryInto::try_into).transpose()
+    match entry {
+        Some(model) => {
+            let mut role: Role = model.try_into()?;
+            role.options = crate::role_option::list_by_role_id(db, &role.id).await?;
+            Ok(Some(role))
+        }
+        None => Ok(None),
+    }
 }
 
 #[cfg(test)]
@@ -56,6 +63,7 @@ pub(super) mod tests {
                 // First query result - select user itself
                 vec![get_role_mock("1", "foo")],
             ])
+            .append_query_results([Vec::<crate::entity::role_option::Model>::new()])
             .into_connection();
         assert_eq!(
             get(&db, "1").await.unwrap().unwrap(),
@@ -69,12 +77,27 @@ pub(super) mod tests {
 
         // Checking transaction log
         assert_eq!(
-            db.into_transaction_log(),
-            [Transaction::from_sql_and_values(
+            db.into_transaction_log()[0],
+            Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 r#"SELECT "role"."id", "role"."name", "role"."extra", "role"."domain_id", "role"."description" FROM "role" WHERE "role"."id" = $1 LIMIT $2"#,
                 ["1".into(), 1u64.into()]
-            ),]
+            ),
         );
+    }
+
+    #[tokio::test]
+    async fn test_get_merges_options() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![get_role_mock("1", "foo")]])
+            .append_query_results([vec![crate::entity::role_option::Model {
+                role_id: "1".into(),
+                option_id: "IMMU".into(),
+                option_value: Some("true".into()),
+            }]])
+            .into_connection();
+
+        let role = get(&db, "1").await.unwrap().unwrap();
+        assert_eq!(role.options.immutable, Some(true));
     }
 }

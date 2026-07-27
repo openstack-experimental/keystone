@@ -19,6 +19,22 @@ use openstack_keystone_core_types::resource as provider_types;
 
 use crate::v3::project as api_types;
 
+impl From<provider_types::ProjectOptions> for api_types::ProjectOptions {
+    fn from(value: provider_types::ProjectOptions) -> Self {
+        Self {
+            immutable: value.immutable,
+        }
+    }
+}
+
+impl From<api_types::ProjectOptions> for provider_types::ProjectOptions {
+    fn from(value: api_types::ProjectOptions) -> Self {
+        Self {
+            immutable: value.immutable,
+        }
+    }
+}
+
 impl From<provider_types::Project> for api_types::ProjectShort {
     fn from(value: provider_types::Project) -> Self {
         Self {
@@ -43,6 +59,7 @@ impl From<&provider_types::Project> for api_types::ProjectShort {
 
 impl From<provider_types::Project> for api_types::Project {
     fn from(value: provider_types::Project) -> Self {
+        let opts: api_types::ProjectOptions = value.options.into();
         Self {
             description: value.description,
             domain_id: value.domain_id,
@@ -51,6 +68,7 @@ impl From<provider_types::Project> for api_types::Project {
             id: value.id,
             is_domain: value.is_domain,
             name: value.name,
+            options: opts.immutable.is_some().then_some(opts),
             parent_id: value.parent_id,
         }
     }
@@ -66,6 +84,7 @@ impl From<api_types::ProjectCreate> for provider_types::ProjectCreate {
             id: None,
             is_domain: value.is_domain,
             name: value.name,
+            options: value.options.map(Into::into),
             parent_id: value.parent_id,
         }
     }
@@ -79,6 +98,7 @@ impl From<api_types::ProjectUpdateRequest> for provider_types::ProjectUpdate {
             enabled: project.enabled,
             extra: project.extra,
             name: project.name,
+            options: project.options.map(Into::into),
         }
     }
 }

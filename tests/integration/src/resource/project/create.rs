@@ -17,7 +17,7 @@ use eyre::Result;
 use tracing_test::traced_test;
 
 use openstack_keystone_core::auth::ExecutionContext;
-use openstack_keystone_core_types::resource::ProjectCreateBuilder;
+use openstack_keystone_core_types::resource::{ProjectCreateBuilder, ProjectOptionsBuilder};
 
 use crate::common::get_state;
 use crate::create_domain;
@@ -33,6 +33,51 @@ async fn test_create() -> Result<()> {
     assert!(!project.name.is_empty());
     assert_eq!(project.domain_id, domain.id);
     assert!(project.enabled);
+    Ok(())
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_create_with_immutable_option() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+
+    let project = state
+        .provider
+        .get_resource_provider()
+        .create_project(
+            &ExecutionContext::internal(&state),
+            ProjectCreateBuilder::default()
+                .name(uuid::Uuid::new_v4().simple().to_string())
+                .domain_id(domain.id.clone())
+                .options(ProjectOptionsBuilder::default().immutable(true).build()?)
+                .build()?,
+        )
+        .await?;
+
+    assert_eq!(project.options.immutable, Some(true));
+
+    let fetched = state
+        .provider
+        .get_resource_provider()
+        .get_project(&ExecutionContext::internal(&state), &project.id)
+        .await?
+        .expect("project should be there");
+    assert_eq!(fetched.options.immutable, Some(true));
+
+    // Clear immutable so the guard-driven cleanup does not fail.
+    state
+        .provider
+        .get_resource_provider()
+        .update_project(
+            &ExecutionContext::internal(&state),
+            &project.id,
+            openstack_keystone_core_types::resource::ProjectUpdateBuilder::default()
+                .options(ProjectOptionsBuilder::default().immutable(false).build()?)
+                .build()?,
+        )
+        .await?;
+
     Ok(())
 }
 

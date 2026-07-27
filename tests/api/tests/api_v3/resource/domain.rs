@@ -17,6 +17,7 @@ use eyre::Result;
 use uuid::Uuid;
 
 use openstack_keystone_api_types::v3::domain::*;
+use openstack_keystone_api_types::v3::project::ProjectOptionsBuilder;
 use openstack_sdk::AsyncOpenStack;
 
 use test_api::guard::ResourceGuard;
@@ -81,6 +82,104 @@ async fn test_domain_list() -> Result<()> {
         "domain list should contain the created domain"
     );
     assert_eq!(domains[0].id, domain.id);
+    domain.delete().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_domain_create_immutable_option() -> Result<()> {
+    let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
+    let domain = create_domain(
+        &test_client,
+        DomainCreateBuilder::default()
+            .name(Uuid::new_v4().to_string())
+            .options(ProjectOptionsBuilder::default().immutable(true).build()?)
+            .build()?,
+    )
+    .await?;
+    assert_eq!(
+        domain.options.as_ref().and_then(|o| o.immutable),
+        Some(true)
+    );
+
+    let shown = get_domain(&test_client, &domain.id)
+        .await?
+        .expect("domain must be found");
+    assert_eq!(shown.options.as_ref().and_then(|o| o.immutable), Some(true));
+
+    // Clear immutable so the guard-driven cleanup does not fail.
+    update_domain(
+        &test_client,
+        &domain.id,
+        DomainUpdateBuilder::default()
+            .options(ProjectOptionsBuilder::default().immutable(false).build()?)
+            .build()?,
+    )
+    .await?;
+
+    domain.delete().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_domain_update_blocked_when_immutable() -> Result<()> {
+    let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
+    let domain = create_domain(
+        &test_client,
+        DomainCreateBuilder::default()
+            .name(Uuid::new_v4().to_string())
+            .options(ProjectOptionsBuilder::default().immutable(true).build()?)
+            .build()?,
+    )
+    .await?;
+
+    let result = update_domain(
+        &test_client,
+        &domain.id,
+        DomainUpdateBuilder::default()
+            .name("updated_name")
+            .build()?,
+    )
+    .await;
+    assert!(result.is_err(), "update of an immutable domain is rejected");
+
+    update_domain(
+        &test_client,
+        &domain.id,
+        DomainUpdateBuilder::default()
+            .options(ProjectOptionsBuilder::default().immutable(false).build()?)
+            .build()?,
+    )
+    .await?;
+
+    domain.delete().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_domain_delete_blocked_when_immutable() -> Result<()> {
+    let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
+    let domain = create_domain(
+        &test_client,
+        DomainCreateBuilder::default()
+            .name(Uuid::new_v4().to_string())
+            .options(ProjectOptionsBuilder::default().immutable(true).build()?)
+            .build()?,
+    )
+    .await?;
+
+    let result = delete_domain(&test_client, &domain.id).await;
+    assert!(result.is_err(), "delete of an immutable domain is rejected");
+
+    update_domain(
+        &test_client,
+        &domain.id,
+        DomainUpdateBuilder::default()
+            .options(ProjectOptionsBuilder::default().immutable(false).build()?)
+            .build()?,
+    )
+    .await?;
+
     domain.delete().await?;
     Ok(())
 }

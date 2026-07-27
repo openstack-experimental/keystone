@@ -125,6 +125,7 @@ mod tests {
                     name: "p1_name".into(),
                     parent_id: None,
                     is_domain: false,
+                    options: Default::default(),
                 }])
             });
 
@@ -264,6 +265,7 @@ mod tests {
                         parent_id: None,
                         is_domain: false,
                         description: None,
+                        options: Default::default(),
                     },
                     ProviderProject {
                         domain_id: "did".into(),
@@ -274,6 +276,7 @@ mod tests {
                         parent_id: None,
                         is_domain: false,
                         description: None,
+                        options: Default::default(),
                     },
                 ])
             });
@@ -328,6 +331,7 @@ mod tests {
                     parent_id: None,
                     is_domain: false,
                     description: None,
+                    options: Default::default(),
                 }])
             });
 

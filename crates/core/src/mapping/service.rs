@@ -108,6 +108,7 @@ fn derive_authz_info(authorizations: &[Authorization]) -> Option<AuthzInfo> {
                 parent_id: None,
                 domain_id: project_domain_id.clone(),
                 extra: Default::default(),
+                options: Default::default(),
             };
             let domain = Domain {
                 id: project_domain_id.clone(),
@@ -115,6 +116,7 @@ fn derive_authz_info(authorizations: &[Authorization]) -> Option<AuthzInfo> {
                 description: None,
                 enabled: true,
                 extra: Default::default(),
+                options: Default::default(),
             };
             (
                 ScopeInfo::Project {
@@ -131,6 +133,7 @@ fn derive_authz_info(authorizations: &[Authorization]) -> Option<AuthzInfo> {
                 description: None,
                 enabled: true,
                 extra: Default::default(),
+                options: Default::default(),
             };
             (ScopeInfo::Domain(domain), roles.clone())
         }
@@ -283,6 +286,7 @@ impl MappingService {
                     enabled: true,
                     name: String::new(),
                     extra: HashMap::new(),
+                    options: Default::default(),
                 })
                 .build()
                 .map_err(Box::new)?

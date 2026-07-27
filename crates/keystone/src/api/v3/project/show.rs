@@ -169,6 +169,7 @@ mod tests {
                 is_domain: false,
                 name: "project_name".into(),
                 parent_id: None,
+                options: Default::default(),
             },
             res.project,
         );

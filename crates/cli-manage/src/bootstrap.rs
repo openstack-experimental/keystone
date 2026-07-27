@@ -720,6 +720,7 @@ mod tests {
             domain_id: None,
             description: None,
             extra: HashMap::new(),
+            options: None,
         }
     }
 
@@ -733,6 +734,7 @@ mod tests {
             description: None,
             is_domain: false,
             extra: HashMap::new(),
+            options: None,
         }
     }
 

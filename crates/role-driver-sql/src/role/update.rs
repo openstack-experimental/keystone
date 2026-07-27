@@ -56,11 +56,18 @@ where
         update_model.extra = Set(Some(serde_json::to_string(&role.extra)?));
     }
 
-    update_model
+    let mut updated: Role = update_model
         .update(db)
         .await
         .context("updating role")?
-        .try_into()
+        .try_into()?;
+
+    if let Some(opts) = role.options {
+        crate::role_option::upsert(db, role_id, &opts).await?;
+    }
+    updated.options = crate::role_option::list_by_role_id(db, role_id).await?;
+
+    Ok(updated)
 }
 
 #[cfg(test)]
@@ -77,12 +84,14 @@ mod tests {
                 vec![get_role_mock("1", "foo")],
                 vec![get_role_mock("1", "new_name")],
             ])
+            .append_query_results([Vec::<crate::entity::role_option::Model>::new()])
             .into_connection();
 
         let req = RoleUpdate {
             name: Some("new_name".into()),
             description: None,
             extra: Default::default(),
+            options: None,
         };
         let result = update(&db, "1", req).await.unwrap();
         assert_eq!(result, get_role_mock("1", "new_name").try_into().unwrap());
@@ -98,8 +107,42 @@ mod tests {
             name: Some("new_name".into()),
             description: None,
             extra: Default::default(),
+            options: None,
         };
         let result = update(&db, "missing", req).await;
         assert!(matches!(result, Err(RoleProviderError::RoleNotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn test_update_sets_immutable_option() {
+        use openstack_keystone_core_types::role::RoleOptions;
+
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([
+                vec![get_role_mock("1", "foo")],
+                vec![get_role_mock("1", "foo")],
+            ])
+            .append_query_results([vec![crate::entity::role_option::Model {
+                role_id: "1".into(),
+                option_id: "IMMU".into(),
+                option_value: Some("true".into()),
+            }]])
+            .append_query_results([vec![crate::entity::role_option::Model {
+                role_id: "1".into(),
+                option_id: "IMMU".into(),
+                option_value: Some("true".into()),
+            }]])
+            .into_connection();
+
+        let req = RoleUpdate {
+            name: None,
+            description: None,
+            extra: Default::default(),
+            options: Some(RoleOptions {
+                immutable: Some(true),
+            }),
+        };
+        let result = update(&db, "1", req).await.unwrap();
+        assert_eq!(result.options.immutable, Some(true));
     }
 }

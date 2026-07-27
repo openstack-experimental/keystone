@@ -19,12 +19,66 @@ use tracing_test::traced_test;
 use crate::common::get_state;
 use crate::create_domain;
 use openstack_keystone_core::auth::ExecutionContext;
+use openstack_keystone_core_types::resource::{DomainUpdateBuilder, ProjectOptionsBuilder};
 
 #[traced_test]
 #[tokio::test]
 async fn test_delete() -> Result<()> {
     let (state, _tmp) = get_state().await?;
     let domain = create_domain!(state)?;
+
+    state
+        .provider
+        .get_resource_provider()
+        .delete_domain(&ExecutionContext::internal(&state), &domain.id)
+        .await?;
+    assert!(
+        state
+            .provider
+            .get_resource_provider()
+            .get_domain(&ExecutionContext::internal(&state), &domain.id)
+            .await?
+            .is_none()
+    );
+    Ok(())
+}
+
+#[traced_test]
+#[tokio::test]
+async fn test_delete_blocked_when_immutable() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+
+    state
+        .provider
+        .get_resource_provider()
+        .update_domain(
+            &ExecutionContext::internal(&state),
+            &domain.id,
+            DomainUpdateBuilder::default()
+                .options(ProjectOptionsBuilder::default().immutable(true).build()?)
+                .build()?,
+        )
+        .await?;
+
+    let result = state
+        .provider
+        .get_resource_provider()
+        .delete_domain(&ExecutionContext::internal(&state), &domain.id)
+        .await;
+    assert!(result.is_err(), "delete of an immutable domain is rejected");
+
+    state
+        .provider
+        .get_resource_provider()
+        .update_domain(
+            &ExecutionContext::internal(&state),
+            &domain.id,
+            DomainUpdateBuilder::default()
+                .options(ProjectOptionsBuilder::default().immutable(false).build()?)
+                .build()?,
+        )
+        .await?;
 
     state
         .provider
