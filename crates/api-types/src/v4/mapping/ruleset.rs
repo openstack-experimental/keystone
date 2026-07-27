@@ -510,13 +510,6 @@ pub struct MappingRuleSetListParameters {
     /// Filter by enabled/disabled state.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
-    /// Limit number of entries per page.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u64>,
-    /// Page marker (ID of the last entry on the previous page).
-    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub marker: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

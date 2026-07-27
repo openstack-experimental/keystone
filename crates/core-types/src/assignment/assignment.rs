@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
+    ListPagination,
     error::BuilderError,
     role::{RoleRef, RoleRefBuilder},
 };
@@ -53,6 +54,29 @@ pub struct Assignment {
     /// Assignment through the role inference rules.
     #[builder(default)]
     pub implied_via: Option<String>,
+}
+
+impl Assignment {
+    /// Build a stable, opaque marker string uniquely identifying this
+    /// assignment for cursor pagination.
+    ///
+    /// Assignments have no single `id` column: they are composite-keyed on
+    /// `(type, actor_id, target_id, role_id, inherited, implied_via)` — the
+    /// same tuple `resolve_implied_roles()` already uses for deduplication
+    /// (full struct equality). `implied_via` must be included because two
+    /// distinct prior roles can each imply the same `role_id` for the same
+    /// actor/target, producing two rows that would otherwise collide.
+    pub fn pagination_marker(&self) -> String {
+        format!(
+            "{}:{}:{}:{}:{}:{}",
+            self.r#type,
+            self.actor_id,
+            self.target_id,
+            self.role_id,
+            self.inherited,
+            self.implied_via.as_deref().unwrap_or("")
+        )
+    }
 }
 
 impl TryInto<RoleRef> for Assignment {
@@ -286,6 +310,10 @@ pub struct RoleAssignmentListParameters {
     /// are also included in the results.
     #[builder(default)]
     pub resolve_implied_roles: bool,
+
+    /// Pagination modifiers (limit/marker/page_reverse).
+    #[builder(default)]
+    pub pagination: ListPagination,
 }
 
 /// Querying effective role assignments for list of actors (typically user with

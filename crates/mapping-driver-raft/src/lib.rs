@@ -625,6 +625,25 @@ impl RaftBackend {
                 }
             }
         }
+
+        res.sort_by(|a, b| a.mapping_id.cmp(&b.mapping_id));
+        if let Some(marker) = &params.pagination.marker {
+            if params.pagination.page_reverse {
+                res.retain(|x| x.mapping_id.as_str() < marker.as_str());
+            } else {
+                res.retain(|x| x.mapping_id.as_str() > marker.as_str());
+            }
+        }
+        if let Some(limit) = params.pagination.limit {
+            let limit = (limit + 1) as usize;
+            if params.pagination.page_reverse {
+                if res.len() > limit {
+                    res = res.split_off(res.len() - limit);
+                }
+            } else {
+                res.truncate(limit);
+            }
+        }
         Ok(res)
     }
 
@@ -1820,6 +1839,68 @@ mod tests {
         let result = backend.list_rulesets_impl(&storage, &params).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_list_rulesets_pagination_over_fetches_and_uses_marker() {
+        let backend = RaftBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_ruleset_impl(&storage, make_ruleset("rs-a", Some("domain-1"), true))
+            .await
+            .unwrap();
+        backend
+            .create_ruleset_impl(&storage, make_ruleset("rs-b", Some("domain-1"), true))
+            .await
+            .unwrap();
+        backend
+            .create_ruleset_impl(&storage, make_ruleset("rs-c", Some("domain-1"), true))
+            .await
+            .unwrap();
+        let params = MappingRuleSetListParameters {
+            pagination: openstack_keystone_core_types::ListPagination {
+                limit: Some(1),
+                marker: Some("rs-a".to_string()),
+                page_reverse: false,
+            },
+            ..MappingRuleSetListParameters::default()
+        };
+        let result = backend.list_rulesets_impl(&storage, &params).await.unwrap();
+        // limit+1 == 2 rows returned so the caller can detect a next page,
+        // and the marker excludes rs-a (already seen on the previous page).
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].mapping_id, "rs-b");
+        assert_eq!(result[1].mapping_id, "rs-c");
+    }
+
+    #[tokio::test]
+    async fn test_list_rulesets_pagination_reverse() {
+        let backend = RaftBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_ruleset_impl(&storage, make_ruleset("rs-a", Some("domain-1"), true))
+            .await
+            .unwrap();
+        backend
+            .create_ruleset_impl(&storage, make_ruleset("rs-b", Some("domain-1"), true))
+            .await
+            .unwrap();
+        backend
+            .create_ruleset_impl(&storage, make_ruleset("rs-c", Some("domain-1"), true))
+            .await
+            .unwrap();
+        let params = MappingRuleSetListParameters {
+            pagination: openstack_keystone_core_types::ListPagination {
+                limit: Some(1),
+                marker: Some("rs-c".to_string()),
+                page_reverse: true,
+            },
+            ..MappingRuleSetListParameters::default()
+        };
+        let result = backend.list_rulesets_impl(&storage, &params).await.unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].mapping_id, "rs-a");
+        assert_eq!(result[1].mapping_id, "rs-b");
     }
 
     // ---------------------------------------------------------------------------

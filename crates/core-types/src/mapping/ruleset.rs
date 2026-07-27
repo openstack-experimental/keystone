@@ -18,6 +18,7 @@ use validator::Validate;
 
 use super::resolution::{DomainResolutionMode, IdentitySource};
 use super::rule::MappingRule;
+use crate::ListPagination;
 
 /// A complete mapping ruleset stored in the distributed store.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Validate)]
@@ -99,11 +100,8 @@ pub struct MappingRuleSetListParameters {
     /// Filter by enabled/disabled state.
     pub enabled: Option<bool>,
 
-    /// Limit number of entries per page.
-    pub limit: Option<u64>,
-
-    /// Page marker (ID of the last entry on the previous page).
-    pub marker: Option<String>,
+    /// Pagination parameters.
+    pub pagination: ListPagination,
 }
 
 impl From<MappingRuleSetCreate> for MappingRuleSet {

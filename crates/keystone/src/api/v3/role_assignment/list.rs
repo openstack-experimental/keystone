@@ -14,13 +14,17 @@
 
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::{OriginalUri, Query, State},
     http::StatusCode,
     response::IntoResponse,
 };
 use serde_json::json;
 
+use openstack_keystone_api_types::PaginationQuery;
+use openstack_keystone_core_types::ListPagination;
+
 use crate::api::auth::Auth;
+use crate::api::common::paginate_forward;
 use crate::api::error::KeystoneApiError;
 use crate::api::v3::role_assignment::types::{
     Assignment, AssignmentList, RoleAssignmentListParameters,
@@ -32,7 +36,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 #[utoipa::path(
     get,
     path = "/role_assignments",
-    params(RoleAssignmentListParameters),
+    params(RoleAssignmentListParameters, PaginationQuery),
     description = "List roles",
     responses(
         (status = OK, description = "List of role assignments", body = AssignmentList),
@@ -47,7 +51,9 @@ use openstack_keystone_core::auth::ExecutionContext;
 )]
 pub(super) async fn list(
     Auth(user_auth): Auth,
+    OriginalUri(original_url): OriginalUri,
     Query(query): Query<RoleAssignmentListParameters>,
+    Query(pagination): Query<PaginationQuery>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     state
@@ -59,21 +65,37 @@ pub(super) async fn list(
             None,
         )
         .await?;
-    let assignments: Result<Vec<Assignment>, _> = state
+
+    let config = state.config_manager.config.read().await;
+    let mut provider_params: openstack_keystone_core_types::assignment::RoleAssignmentListParameters =
+        query.try_into()?;
+    provider_params.pagination = ListPagination {
+        // v3 stays python-keystone compatible: forward-only, no page_reverse.
+        limit: config.resolve_list_limit(&config.assignment.list_limit, pagination.limit),
+        marker: pagination.marker.clone(),
+        page_reverse: false,
+    };
+
+    let raw_assignments = state
         .provider
         .get_assignment_provider()
         .list_role_assignments(
             &ExecutionContext::from_auth(&state, &user_auth),
-            &query.try_into()?,
+            &provider_params,
         )
-        .await?
-        .into_iter()
-        .map(TryInto::try_into)
-        .collect();
+        .await?;
+
+    let (raw_assignments, links) =
+        paginate_forward(&config, raw_assignments, &pagination, original_url.path())?;
+
+    let assignments: Result<Vec<Assignment>, _> =
+        raw_assignments.into_iter().map(TryInto::try_into).collect();
+
     Ok((
         StatusCode::OK,
         Json(AssignmentList {
             role_assignments: assignments?,
+            links,
         }),
     )
         .into_response())
@@ -175,6 +197,7 @@ mod tests {
                     user_id: Some("user1".into()),
                     project_id: Some("project1".into()),
                     resolve_implied_roles: true,
+                    pagination: qp.pagination.clone(),
                     ..Default::default()
                 } == *qp
             })
@@ -198,6 +221,7 @@ mod tests {
                     user_id: Some("user2".into()),
                     domain_id: Some("domain2".into()),
                     resolve_implied_roles: true,
+                    pagination: qp.pagination.clone(),
                     ..Default::default()
                 } == *qp
             })
@@ -220,6 +244,7 @@ mod tests {
                     group_id: Some("group3".into()),
                     project_id: Some("project3".into()),
                     resolve_implied_roles: true,
+                    pagination: qp.pagination.clone(),
                     ..Default::default()
                 } == *qp
             })
@@ -291,5 +316,122 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    /// Backend over-fetched (returned `limit + 1 == 2` rows): a `next` link
+    /// is produced and the extra row trimmed. v3 never emits `previous`.
+    #[tokio::test]
+    async fn test_list_pagination_link() {
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, qp: &RoleAssignmentListParameters| qp.pagination.limit == Some(1))
+            .returning(|_, _| {
+                Ok(vec![
+                    Assignment {
+                        role_id: "1".into(),
+                        role_name: None,
+                        actor_id: "actor".into(),
+                        target_id: "target".into(),
+                        r#type: AssignmentType::UserProject,
+                        inherited: false,
+                        implied_via: None,
+                    },
+                    Assignment {
+                        role_id: "2".into(),
+                        role_name: None,
+                        actor_id: "actor".into(),
+                        target_id: "target".into(),
+                        r#type: AssignmentType::UserProject,
+                        inherited: false,
+                        implied_via: None,
+                    },
+                ])
+            });
+
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_assignment(assignment_mock),
+            true,
+            None,
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/role_assignments?limit=1")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let res: ApiAssignmentList = serde_json::from_slice(&body).unwrap();
+        assert_eq!(res.role_assignments.len(), 1);
+        assert!(res.links.is_some());
+        assert_eq!(res.links.as_ref().unwrap().len(), 1);
+        assert_eq!(res.links.as_ref().unwrap()[0].rel, "next");
+    }
+
+    /// Backend returned exactly `limit` rows (no over-fetched extra row): no
+    /// `next` link should be produced.
+    #[tokio::test]
+    async fn test_list_pagination_no_false_positive_next() {
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .withf(|_, qp: &RoleAssignmentListParameters| qp.pagination.limit == Some(1))
+            .returning(|_, _| {
+                Ok(vec![Assignment {
+                    role_id: "1".into(),
+                    role_name: None,
+                    actor_id: "actor".into(),
+                    target_id: "target".into(),
+                    r#type: AssignmentType::UserProject,
+                    inherited: false,
+                    implied_via: None,
+                }])
+            });
+
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_assignment(assignment_mock),
+            true,
+            None,
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/role_assignments?limit=1")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let res: ApiAssignmentList = serde_json::from_slice(&body).unwrap();
+        assert_eq!(res.role_assignments.len(), 1);
+        assert_eq!(res.links, None);
     }
 }

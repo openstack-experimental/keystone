@@ -117,3 +117,4 @@
     - [OAuth2 / OIDC Provider](adr/0026-oauth2-oidc-provider.md)
     - [LDAP identity backend](adr/0027-ldap-identity-driver.md)
     - [Quorum-Bypass Emergency Operations](adr/0028-oauth2-quorum-bypass-emergency-rotation.md)
+    - [Generalized Pagination](adr/0029-pagination.md)

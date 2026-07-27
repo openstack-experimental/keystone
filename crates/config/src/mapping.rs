@@ -15,6 +15,7 @@ use secrecy::SecretString;
 use serde::Deserialize;
 
 use crate::common::default_raft_driver;
+use crate::pagination::ListLimitConfig;
 
 /// Mapping provider.
 #[derive(Debug, Deserialize, Clone)]
@@ -33,6 +34,10 @@ pub struct MappingProvider {
     /// security posture.
     #[serde(default)]
     pub cluster_salt: Option<SecretString>,
+
+    /// `GET /v4/mapping/rulesets` pagination limits.
+    #[serde(default)]
+    pub list_limit: ListLimitConfig,
 }
 
 impl Default for MappingProvider {
@@ -40,6 +45,7 @@ impl Default for MappingProvider {
         Self {
             driver: default_raft_driver(),
             cluster_salt: None,
+            list_limit: ListLimitConfig::default(),
         }
     }
 }

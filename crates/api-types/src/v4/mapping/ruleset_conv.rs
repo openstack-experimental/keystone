@@ -368,8 +368,7 @@ impl From<api::MappingRuleSetListParameters> for core::MappingRuleSetListParamet
         Self {
             domain_id: value.domain_id,
             enabled: value.enabled,
-            limit: value.limit,
-            marker: value.marker,
+            pagination: Default::default(),
         }
     }
 }

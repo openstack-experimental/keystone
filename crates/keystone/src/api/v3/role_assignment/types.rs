@@ -14,6 +14,14 @@
 
 pub use openstack_keystone_api_types::v3::role_assignment::*;
 
+impl crate::api::common::ResourceIdentifier
+    for openstack_keystone_core_types::assignment::Assignment
+{
+    fn get_id(&self) -> String {
+        self.pagination_marker()
+    }
+}
+
 //use crate::api::error::KeystoneApiError;
 //use crate::assignment::types;
 //

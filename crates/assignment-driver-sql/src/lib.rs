@@ -314,8 +314,35 @@ impl AssignmentBackend for SqlBackend {
         request.targets(targets);
         request.actors(actors);
         request.resolve_implied_roles(params.resolve_implied_roles);
-        self.list_assignments_for_multiple_actors_and_targets(state, &request.build()?)
-            .await
+        let mut assignments = self
+            .list_assignments_for_multiple_actors_and_targets(state, &request.build()?)
+            .await?;
+
+        // No SQL cursor is possible here: results are a union of two queries
+        // (regular + system assignments) plus in-memory implied-role
+        // expansion, so pagination is applied post-fetch over the fully
+        // materialized, expanded set - the same in-memory over-fetch pattern
+        // used by the Raft-backed domains.
+        assignments.sort_by(|a, b| a.pagination_marker().cmp(&b.pagination_marker()));
+        if let Some(marker) = &params.pagination.marker {
+            if params.pagination.page_reverse {
+                assignments.retain(|x| x.pagination_marker().as_str() < marker.as_str());
+            } else {
+                assignments.retain(|x| x.pagination_marker().as_str() > marker.as_str());
+            }
+        }
+        if let Some(limit) = params.pagination.limit {
+            let limit = (limit + 1) as usize;
+            if params.pagination.page_reverse {
+                if assignments.len() > limit {
+                    assignments = assignments.split_off(assignments.len() - limit);
+                }
+            } else {
+                assignments.truncate(limit);
+            }
+        }
+
+        Ok(assignments)
     }
 
     /// Revoke assignment grant.
@@ -700,5 +727,100 @@ mod tests {
             "in {:?}",
             res
         );
+    }
+
+    /// `list_assignments` cannot push a cursor into SQL (union of two
+    /// queries + in-memory implied-role expansion), so pagination is applied
+    /// post-fetch: sorted by the composite marker, over-fetching by one row
+    /// to let the caller detect a next page without a false positive.
+    #[tokio::test]
+    async fn test_list_assignments_pagination_over_fetches_and_uses_marker() {
+        use openstack_keystone_core_types::ListPagination;
+        use openstack_keystone_core_types::assignment::RoleAssignmentListParametersBuilder;
+
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![
+                get_role_assignment_mock("1"),
+                get_role_assignment_mock("2"),
+                get_role_assignment_mock("3"),
+            ]])
+            .append_query_results([vec![] as Vec<entity::system_assignment::Model>])
+            .into_connection();
+
+        let provider = Provider::mocked_builder().build().unwrap();
+        let state = get_mock_state(db, provider).await;
+
+        let sot = SqlBackend {};
+        let res = sot
+            .list_assignments(
+                &state,
+                &RoleAssignmentListParametersBuilder::default()
+                    .group_id("scim-group")
+                    .pagination(ListPagination {
+                        limit: Some(1),
+                        marker: None,
+                        page_reverse: false,
+                    })
+                    .build()
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Over-fetched by one (limit + 1): role "1" then "2", role "3" trimmed.
+        assert_eq!(2, res.len(), "{:?}", res);
+        assert_eq!("1", res[0].role_id);
+        assert_eq!("2", res[1].role_id);
+    }
+
+    #[tokio::test]
+    async fn test_list_assignments_pagination_marker_filters_prior_page() {
+        use openstack_keystone_core_types::ListPagination;
+        use openstack_keystone_core_types::assignment::RoleAssignmentListParametersBuilder;
+
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![
+                get_role_assignment_mock("1"),
+                get_role_assignment_mock("2"),
+                get_role_assignment_mock("3"),
+            ]])
+            .append_query_results([vec![] as Vec<entity::system_assignment::Model>])
+            .into_connection();
+
+        let provider = Provider::mocked_builder().build().unwrap();
+        let state = get_mock_state(db, provider).await;
+
+        let marker = Assignment {
+            role_id: "1".into(),
+            role_name: None,
+            actor_id: "actor".into(),
+            target_id: "target".into(),
+            r#type: AssignmentType::UserProject,
+            inherited: false,
+            implied_via: None,
+        }
+        .pagination_marker();
+
+        let sot = SqlBackend {};
+        let res = sot
+            .list_assignments(
+                &state,
+                &RoleAssignmentListParametersBuilder::default()
+                    .group_id("scim-group")
+                    .pagination(ListPagination {
+                        limit: Some(5),
+                        marker: Some(marker),
+                        page_reverse: false,
+                    })
+                    .build()
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Only rows sorting strictly after the marker's role "1" remain.
+        assert_eq!(2, res.len(), "{:?}", res);
+        assert_eq!("2", res[0].role_id);
+        assert_eq!("3", res[1].role_id);
     }
 }

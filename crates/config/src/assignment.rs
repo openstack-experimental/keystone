@@ -14,6 +14,7 @@
 use serde::Deserialize;
 
 use crate::common::default_sql_driver;
+use crate::pagination::ListLimitConfig;
 
 /// Assignment Provider.
 #[derive(Debug, Deserialize, Clone)]
@@ -21,12 +22,17 @@ pub struct AssignmentProvider {
     /// Assignment provider driver.
     #[serde(default = "default_sql_driver")]
     pub driver: String,
+
+    /// `GET /v3/role_assignments` pagination limits.
+    #[serde(default)]
+    pub list_limit: ListLimitConfig,
 }
 
 impl Default for AssignmentProvider {
     fn default() -> Self {
         Self {
             driver: default_sql_driver(),
+            list_limit: ListLimitConfig::default(),
         }
     }
 }

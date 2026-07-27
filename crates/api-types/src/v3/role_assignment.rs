@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "validate")]
 use validator::Validate;
 
+use crate::Link;
+
 /// Assignment.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(
@@ -133,6 +135,10 @@ pub struct AssignmentList {
     /// Collection of role assignment objects.
     #[cfg_attr(feature = "validate", validate(nested))]
     pub role_assignments: Vec<Assignment>,
+
+    /// Pagination links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<Link>>,
 }
 
 /// List role assignments query parameters.
