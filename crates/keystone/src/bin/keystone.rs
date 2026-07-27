@@ -47,6 +47,7 @@ use tower_http::{
     trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
 };
 use tracing::{Level, debug, error, info, info_span, trace, warn};
+use tracing_appender::non_blocking::NonBlockingBuilder;
 use tracing_error::ErrorLayer;
 use tracing_subscriber::{
     Layer,
@@ -394,6 +395,14 @@ fn init_tracing(verbose: u8, cfg: &Config) -> Option<tracing_appender::non_block
         2 => LevelFilter::INFO,
         _ => LevelFilter::DEBUG,
     };
+    // File and journald log levels are driven by `cfg.default.debug`, not CLI
+    // verbosity, so `-v`/`-vv` only affect stderr.
+    let file_deps_log_level = if cfg.default.debug {
+        LevelFilter::DEBUG
+    } else {
+        LevelFilter::INFO
+    };
+
     let stderr_log_filter = Targets::new()
         .with_default(match verbose {
             0 => LevelFilter::WARN,
@@ -407,8 +416,10 @@ fn init_tracing(verbose: u8, cfg: &Config) -> Option<tracing_appender::non_block
         .with_target("h2", external_deps_log_level)
         .with_target("rustls", external_deps_log_level)
         .with_target("tower", external_deps_log_level)
+        .with_target("tower_http", LevelFilter::INFO)
         .with_target("openraft", external_deps_log_level)
-        .with_target("lsm_tree", external_deps_log_level);
+        .with_target("lsm_tree", external_deps_log_level)
+        .with_target("hyper_util", LevelFilter::ERROR);
 
     // Build the stderr log layer.
     let stderr_layer = tracing_subscriber::fmt::layer()
@@ -432,11 +443,13 @@ fn init_tracing(verbose: u8, cfg: &Config) -> Option<tracing_appender::non_block
             .with_target("cranelift_codegen", LevelFilter::ERROR)
             .with_target("wasmtime_internal_cranelift", LevelFilter::ERROR)
             .with_target("wasmtime", LevelFilter::ERROR)
-            .with_target("h2", external_deps_log_level)
-            .with_target("rustls", external_deps_log_level)
-            .with_target("tower", external_deps_log_level)
-            .with_target("openraft", external_deps_log_level)
-            .with_target("lsm_tree", external_deps_log_level);
+            .with_target("h2", file_deps_log_level)
+            .with_target("rustls", file_deps_log_level)
+            .with_target("tower", file_deps_log_level)
+            .with_target("tower_http", LevelFilter::INFO)
+            .with_target("openraft", file_deps_log_level)
+            .with_target("lsm_tree", file_deps_log_level)
+            .with_target("hyper_util", LevelFilter::ERROR);
 
         match tracing_journald::layer() {
             Ok(journald_layer) => {
@@ -460,7 +473,11 @@ fn init_tracing(verbose: u8, cfg: &Config) -> Option<tracing_appender::non_block
         let file_appender = tracing_appender::rolling::never(log_dir, "keystone.log");
         // make the file appender non-blocking; the guard must outlive the
         // registry to make sure buffered logs get flushed to output.
-        let (non_blocking, file_guard) = tracing_appender::non_blocking(file_appender);
+        // Explicitly disable lossy mode so events are never dropped when the
+        // worker thread can't keep up (e.g. under heavy journald pressure).
+        let (non_blocking, file_guard) = NonBlockingBuilder::default()
+            .lossy(false)
+            .finish(file_appender);
         guard = Some(file_guard);
 
         let log_file_filter = Targets::new()
@@ -472,11 +489,13 @@ fn init_tracing(verbose: u8, cfg: &Config) -> Option<tracing_appender::non_block
             .with_target("cranelift_codegen", LevelFilter::ERROR)
             .with_target("wasmtime_internal_cranelift", LevelFilter::ERROR)
             .with_target("wasmtime", LevelFilter::ERROR)
-            .with_target("h2", external_deps_log_level)
-            .with_target("rustls", external_deps_log_level)
-            .with_target("tower", external_deps_log_level)
-            .with_target("openraft", external_deps_log_level)
-            .with_target("lsm_tree", external_deps_log_level);
+            .with_target("h2", file_deps_log_level)
+            .with_target("rustls", file_deps_log_level)
+            .with_target("tower", file_deps_log_level)
+            .with_target("tower_http", LevelFilter::INFO)
+            .with_target("openraft", file_deps_log_level)
+            .with_target("lsm_tree", file_deps_log_level)
+            .with_target("hyper_util", LevelFilter::ERROR);
         log_layers.push(
             tracing_subscriber::fmt::layer()
                 // No colors in the log file
