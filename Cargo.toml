@@ -78,7 +78,7 @@ axum = { version = "0.8", default-features = false }
 axum-extra = { version = "0.12", default-features = false }
 axum-server = { version = "0.8", default-features = false }
 crc32fast = { version = "1.4" }
-base64 = { version = "0.22" }
+base64 = { version = "0.23" }
 base64urlsafedata = "0.5"
 bcrypt = { version = "0.19" }
 byteorder = { version = "1.5" }

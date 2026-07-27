@@ -800,6 +800,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "base64"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b25655df2c3cdd83c5e5b293b88acd880332b2ddadd7c30ac43144fdc0033da9"
+
+[[package]]
 name = "base64ct"
 version = "1.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4811,7 +4817,7 @@ dependencies = [
  "async-trait",
  "axum",
  "axum-extra",
- "base64 0.22.1",
+ "base64 0.23.0",
  "chrono",
  "clap",
  "color-eyre",
@@ -4919,7 +4925,7 @@ name = "openstack-keystone-api-types"
 version = "0.1.0"
 dependencies = [
  "axum",
- "base64 0.22.1",
+ "base64 0.23.0",
  "chrono",
  "derive_builder",
  "eyre",
@@ -5109,7 +5115,7 @@ dependencies = [
  "argon2",
  "async-trait",
  "axum",
- "base64 0.22.1",
+ "base64 0.23.0",
  "chrono",
  "config",
  "crc32fast",
@@ -5161,7 +5167,7 @@ dependencies = [
 name = "openstack-keystone-core-types"
 version = "0.1.1"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.0",
  "chrono",
  "derive_builder",
  "eyre",
@@ -5181,7 +5187,7 @@ name = "openstack-keystone-credential-driver-sql"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.0",
  "fernet",
  "inventory",
  "openstack-keystone-config",
@@ -5365,7 +5371,7 @@ name = "openstack-keystone-key-repository"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.0",
  "chrono",
  "fernet",
  "jsonwebtoken",
@@ -5469,7 +5475,7 @@ dependencies = [
 name = "openstack-keystone-password-hashing"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.0",
  "bcrypt",
  "hmac 0.13.0",
  "openstack-keystone-config",
@@ -5602,7 +5608,7 @@ dependencies = [
 name = "openstack-keystone-token-driver-fernet"
 version = "0.1.1"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.0",
  "base64urlsafedata",
  "byteorder",
  "bytes",
@@ -5683,7 +5689,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
- "base64 0.22.1",
+ "base64 0.23.0",
  "base64urlsafedata",
  "chrono",
  "derive_builder",
@@ -8872,7 +8878,7 @@ name = "test_api"
 version = "0.0.0"
 dependencies = [
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.0",
  "bytes",
  "chrono",
  "derive_builder",
