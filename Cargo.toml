@@ -107,7 +107,7 @@ hmac = { version = "0.13" }
 inventory = { version = "0.3" }
 ipnet = { version = "2" }
 itertools = { version = "0.15" }
-jsonwebtoken = { version = "10.4", features = ["rust_crypto"] }
+jsonwebtoken = { version = "11.0", features = ["rust_crypto"] }
 ldap3 = { version = "0.12", default-features = false, features = ["tls-rustls-aws-lc-rs"] }
 mockall = { version = "0.15" }
 mockall_double = { version = "0.3" }
