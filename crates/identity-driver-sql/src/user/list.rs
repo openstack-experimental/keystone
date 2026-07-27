@@ -12,10 +12,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashMap;
+
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
 use sea_orm::query::*;
-use sea_orm::{Cursor, SelectModel};
+use sea_orm::{Condition, Cursor, SelectModel};
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core::error::DbContextExt;
@@ -28,7 +30,7 @@ use crate::entity::{
     federated_user as db_federated_user, local_user as db_local_user,
     nonlocal_user as db_nonlocal_user, password as db_password,
     prelude::{FederatedUser, LocalUser, NonlocalUser, User as DbUser, UserOption as DbUserOption},
-    user as db_user,
+    user as db_user, user_option as db_user_option,
 };
 use crate::federated_user::MergeFederatedUserData;
 use crate::local_user;
@@ -76,13 +78,116 @@ fn get_user_list_query(
     Ok(cursor)
 }
 
+/// Fetch `local_user`, `nonlocal_user` and `user_option` data for a set of
+/// user ids in a single joined query.
+///
+/// `local_user` and `nonlocal_user` are `has_one` relations of `user` and
+/// `user_option` is `has_many`; all three are LEFT JOINed directly off `user`
+/// (star topology) and consolidated back into one entry per user id, instead
+/// of the three separate `IN (...)`-filtered round-trips this replaces. Only
+/// up to 4 entities (root + 3 children) can be consolidated this way with
+/// sea-orm's `SelectFourMany`, so `federated_user` (also `has_many`, but
+/// needs a 4th slot) and `password` (keyed off `local_user_id`, not
+/// `user_id`) stay as separate queries.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `user_ids`: The user ids to fetch details for.
+/// - `name`: Optional name filter, matched against `local_user.name` OR
+///   `nonlocal_user.name`.
+///
+/// # Returns
+/// A `Result` containing a map from user id to its `local_user`,
+/// `nonlocal_user` and `user_option` rows, or an `Error`.
+#[tracing::instrument(skip_all)]
+async fn fetch_joined_user_details(
+    db: &DatabaseConnection,
+    user_ids: &[String],
+    name: Option<&str>,
+) -> Result<
+    HashMap<
+        String,
+        (
+            Vec<db_local_user::Model>,
+            Vec<db_nonlocal_user::Model>,
+            Vec<db_user_option::Model>,
+        ),
+    >,
+    IdentityProviderError,
+> {
+    if user_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let mut select = DbUser::find()
+        .filter(db_user::Column::Id.is_in(user_ids))
+        .find_also_related(LocalUser)
+        .find_also_related(NonlocalUser)
+        .find_also(DbUser, DbUserOption);
+
+    if let Some(name) = name {
+        select = select.filter(
+            Condition::any()
+                .add(db_local_user::Column::Name.eq(name))
+                .add(db_nonlocal_user::Column::Name.eq(name)),
+        );
+    }
+
+    // Deliberately not using `.consolidate()`: it decodes every row into a
+    // flat `Vec<(user, Option<local>, Option<nonlocal>, Option<option>)>`
+    // and then does its own dedup/grouping pass into per-parent `Vec`s. We
+    // need our own `HashMap<user_id, _>` regardless (`list()` looks users up
+    // by id), so consolidating first and re-grouping from its output would
+    // be a second, redundant grouping pass. Group directly off the flat
+    // per-row tuples in a single pass instead.
+    let rows: Vec<(
+        db_user::Model,
+        Option<db_local_user::Model>,
+        Option<db_nonlocal_user::Model>,
+        Option<db_user_option::Model>,
+    )> = select
+        .all(db)
+        .await
+        .context("fetching joined local/nonlocal user and user option data")?;
+
+    let mut map: HashMap<
+        String,
+        (
+            Vec<db_local_user::Model>,
+            Vec<db_nonlocal_user::Model>,
+            Vec<db_user_option::Model>,
+        ),
+    > = HashMap::new();
+    for (u, l, n, o) in rows {
+        let entry = map.entry(u.id).or_default();
+        // `local`/`nonlocal` are has-one: the same row repeats on every
+        // cartesian row produced by the has-many `user_option` join, so only
+        // record it once per user instead of pushing a duplicate per row.
+        if entry.0.is_empty()
+            && let Some(l) = l
+        {
+            entry.0.push(l);
+        }
+        if entry.1.is_empty()
+            && let Some(n) = n
+        {
+            entry.1.push(n);
+        }
+        if let Some(o) = o {
+            entry.2.push(o);
+        }
+    }
+
+    Ok(map)
+}
+
 /// List users.
 ///
 /// List users in the database. Fetch matching `user` table entries first.
-/// Afterwards fetch in parallel `local_user`, `nonlocal_user`,
-/// `federated_user`, `user_option` entries merging results to the proper entry.
-/// For the local users additionally passwords are being retrieved to identify
-/// the password expiration date.
+/// Afterwards fetch, in parallel, `local_user`/`nonlocal_user`/`user_option`
+/// (joined in a single query, see [`fetch_joined_user_details`]) and
+/// `federated_user`. For the local users additionally passwords are being
+/// retrieved to identify the password expiration date.
 ///
 /// # Parameters
 /// - `conf`: The system configuration.
@@ -97,14 +202,8 @@ pub async fn list(
     db: &DatabaseConnection,
     params: &UserListParameters,
 ) -> Result<Vec<UserResponse>, IdentityProviderError> {
-    // Prepare basic selects
-    let mut local_user_select = LocalUser::find();
-    let mut nonlocal_user_select = NonlocalUser::find();
     let mut federated_user_select = FederatedUser::find();
-
     if let Some(name) = &params.name {
-        local_user_select = local_user_select.filter(db_local_user::Column::Name.eq(name));
-        nonlocal_user_select = nonlocal_user_select.filter(db_nonlocal_user::Column::Name.eq(name));
         federated_user_select =
             federated_user_select.filter(db_federated_user::Column::DisplayName.eq(name));
     }
@@ -115,26 +214,11 @@ pub async fn list(
         .await
         .context("fetching users data")?;
     let count_of_users_selected = db_users.len();
+    let user_ids: Vec<String> = db_users.iter().map(|u| u.id.clone()).collect();
 
     let user_type = params.user_type.unwrap_or(UserType::All);
-    let (user_opts, local_users, nonlocal_users, federated_users) = tokio::join!(
-        db_users.load_many(DbUserOption, db),
-        // Load local users when requested, otherwise return empty results list
-        async {
-            if user_type == UserType::Local || user_type == UserType::All {
-                db_users.load_one(local_user_select, db).await
-            } else {
-                Ok(vec![None; count_of_users_selected])
-            }
-        },
-        // Load nonlocal users when requested
-        async {
-            if user_type == UserType::NonLocal || user_type == UserType::All {
-                db_users.load_one(nonlocal_user_select, db).await
-            } else {
-                Ok(vec![None; count_of_users_selected])
-            }
-        },
+    let (joined, federated_users) = tokio::join!(
+        fetch_joined_user_details(db, &user_ids, params.name.as_deref()),
         // Load federated users when requested
         async {
             if user_type == UserType::Federated || user_type == UserType::All {
@@ -144,8 +228,25 @@ pub async fn list(
             }
         },
     );
+    let joined = joined?;
 
-    let locals = local_users.context("fetching local users data")?;
+    let locals: Vec<Option<db_local_user::Model>> = db_users
+        .iter()
+        .map(|u| joined.get(&u.id).and_then(|(l, _, _)| l.first().cloned()))
+        .collect();
+    let nonlocals: Vec<Option<db_nonlocal_user::Model>> = db_users
+        .iter()
+        .map(|u| joined.get(&u.id).and_then(|(_, n, _)| n.first().cloned()))
+        .collect();
+    let user_opts: Vec<Vec<db_user_option::Model>> = db_users
+        .iter()
+        .map(|u| {
+            joined
+                .get(&u.id)
+                .map(|(_, _, o)| o.clone())
+                .unwrap_or_default()
+        })
+        .collect();
 
     // For local users fetch passwords to determine password expiration
     let local_users_passwords: Vec<Option<Vec<db_password::Model>>> =
@@ -169,21 +270,25 @@ pub async fn list(
 
     let mut results: Vec<UserResponse> = Vec::new();
     for (u, (o, (l, (p, (n, f))))) in db_users.into_iter().zip(
-        user_opts.context("fetching user options")?.into_iter().zip(
+        user_opts.into_iter().zip(
             locals.into_iter().zip(
                 local_users_passwords.into_iter().zip(
-                    nonlocal_users
-                        .context("fetching nonlocal users data")?
-                        .into_iter()
-                        .zip(
-                            federated_users
-                                .context("fetching federated users data")?
-                                .into_iter(),
-                        ),
+                    nonlocals.into_iter().zip(
+                        federated_users
+                            .context("fetching federated users data")?
+                            .into_iter(),
+                    ),
                 ),
             ),
         ),
     ) {
+        // The joined query always fetches `local_user`/`nonlocal_user`
+        // regardless of `user_type` (unlike `federated_user`, which is only
+        // queried when requested), so gate them here to preserve the
+        // requested-type filtering.
+        let l = l.filter(|_| user_type == UserType::Local || user_type == UserType::All);
+        let n = n.filter(|_| user_type == UserType::NonLocal || user_type == UserType::All);
+
         let mut user_builder = UserResponseBuilder::default();
         user_builder.merge_user_data(
             &u,
@@ -216,13 +321,45 @@ mod tests {
     use openstack_keystone_config::Config;
     use openstack_keystone_core_types::ListPagination;
 
+    use std::collections::BTreeMap;
+
     use super::*;
     use crate::entity::password as db_password;
     use crate::federated_user::tests::*;
     use crate::local_user::tests::*;
     use crate::nonlocal_user::tests::*;
     use crate::user::tests::*;
-    use crate::user_option::tests::*;
+
+    /// Build a mocked row for the `user`/`local_user`/`nonlocal_user`/
+    /// `user_option` joined query, aliasing columns the way sea-orm's
+    /// `SelectFourMany` (star topology `consolidate()`) expects: `A_` for
+    /// `user`, `B_` for `local_user`, `C_` for `nonlocal_user`. Omitting a
+    /// branch's columns entirely (rather than setting them null) mirrors a
+    /// LEFT JOIN miss, since `from_query_result_optional` maps any decode
+    /// error - including a missing key - to `None`.
+    fn mock_join_row(
+        user: &db_user::Model,
+        local: Option<&db_local_user::Model>,
+        nonlocal: Option<&db_nonlocal_user::Model>,
+    ) -> BTreeMap<String, sea_orm::Value> {
+        let mut row = BTreeMap::new();
+        for col in db_user::Column::iter() {
+            row.insert(format!("A_{}", col.as_str()), user.get(col));
+        }
+        if let Some(l) = local {
+            for col in db_local_user::Column::iter() {
+                row.insert(format!("B_{}", col.as_str()), l.get(col));
+            }
+        }
+        if let Some(n) = nonlocal {
+            for col in db_nonlocal_user::Column::iter() {
+                row.insert(format!("C_{}", col.as_str()), n.get(col));
+            }
+        }
+        row
+    }
+
+    const JOIN_SQL_4_IDS: &str = r#"SELECT "user"."created_at" AS "A_created_at", "user"."default_project_id" AS "A_default_project_id", "user"."domain_id" AS "A_domain_id", "user"."enabled" AS "A_enabled", "user"."extra" AS "A_extra", "user"."id" AS "A_id", "user"."last_active_at" AS "A_last_active_at", "local_user"."id" AS "B_id", "local_user"."user_id" AS "B_user_id", "local_user"."domain_id" AS "B_domain_id", "local_user"."name" AS "B_name", "local_user"."failed_auth_count" AS "B_failed_auth_count", "local_user"."failed_auth_at" AS "B_failed_auth_at", "nonlocal_user"."domain_id" AS "C_domain_id", "nonlocal_user"."name" AS "C_name", "nonlocal_user"."user_id" AS "C_user_id", "user_option"."user_id" AS "D_user_id", "user_option"."option_id" AS "D_option_id", "user_option"."option_value" AS "D_option_value" FROM "user" LEFT JOIN "local_user" ON "user"."id" = "local_user"."user_id" AND "user"."domain_id" = "local_user"."domain_id" LEFT JOIN "nonlocal_user" ON "user"."id" = "nonlocal_user"."user_id" AND "user"."domain_id" = "nonlocal_user"."domain_id" LEFT JOIN "user_option" ON "user"."id" = "user_option"."user_id" WHERE "user"."id" IN ($1, $2, $3, $4)"#;
 
     #[tokio::test]
     async fn test_list() {
@@ -237,15 +374,16 @@ mod tests {
                 // a "bad" user with no user detail records
                 get_user_mock("4"),
             ]])
-            .append_query_results([[
-                get_user_options_mock("1", &UserOptions::default()),
-                get_user_options_mock("2", &UserOptions::default()),
-                get_user_options_mock("3", &UserOptions::default()),
-            ]
-            .into_iter()
-            .flatten()])
-            .append_query_results([vec![get_local_user_mock("1")]])
-            .append_query_results([vec![get_nonlocal_user_mock("2")]])
+            .append_query_results([vec![
+                mock_join_row(&get_user_mock("1"), Some(&get_local_user_mock("1")), None),
+                mock_join_row(
+                    &get_user_mock("2"),
+                    None,
+                    Some(&get_nonlocal_user_mock("2")),
+                ),
+                mock_join_row(&get_user_mock("3"), None, None),
+                mock_join_row(&get_user_mock("4"), None, None),
+            ]])
             .append_query_results([vec![get_federated_user_mock("3")]])
             .append_query_results([vec![db_password::Model::default()]])
             .into_connection();
@@ -264,17 +402,7 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" WHERE ("user_option"."user_id") IN (($1), ($2), ($3), ($4)) ORDER BY "user_option"."user_id" ASC, "user_option"."option_id" ASC"#,
-                    []
-                ),
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"SELECT "local_user"."id", "local_user"."user_id", "local_user"."domain_id", "local_user"."name", "local_user"."failed_auth_count", "local_user"."failed_auth_at" FROM "local_user" WHERE ("local_user"."user_id", "local_user"."domain_id") IN (($1, $2), ($3, $4), ($5, $6), ($7, $8))"#,
-                    []
-                ),
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"SELECT "nonlocal_user"."domain_id", "nonlocal_user"."name", "nonlocal_user"."user_id" FROM "nonlocal_user" WHERE ("nonlocal_user"."user_id", "nonlocal_user"."domain_id") IN (($1, $2), ($3, $4), ($5, $6), ($7, $8))"#,
+                    JOIN_SQL_4_IDS,
                     []
                 ),
                 Transaction::from_sql_and_values(
@@ -308,10 +436,16 @@ mod tests {
                 // a "bad" user with no user detail records
                 get_user_mock("4"),
             ]])
-            .append_query_results([[get_user_options_mock("1", &UserOptions::default())]
-                .into_iter()
-                .flatten()])
-            .append_query_results([vec![get_local_user_mock("1")]])
+            .append_query_results([vec![
+                mock_join_row(&get_user_mock("1"), Some(&get_local_user_mock("1")), None),
+                mock_join_row(
+                    &get_user_mock("2"),
+                    None,
+                    Some(&get_nonlocal_user_mock("2")),
+                ),
+                mock_join_row(&get_user_mock("3"), None, None),
+                mock_join_row(&get_user_mock("4"), None, None),
+            ]])
             .append_query_results([vec![db_password::Model::default()]])
             .into_connection();
 
@@ -335,12 +469,7 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" WHERE ("user_option"."user_id") IN (($1), ($2), ($3), ($4)) ORDER BY "user_option"."user_id" ASC, "user_option"."option_id" ASC"#,
-                    []
-                ),
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"SELECT "local_user"."id", "local_user"."user_id", "local_user"."domain_id", "local_user"."name", "local_user"."failed_auth_count", "local_user"."failed_auth_at" FROM "local_user" WHERE ("local_user"."user_id", "local_user"."domain_id") IN (($1, $2), ($3, $4), ($5, $6), ($7, $8))"#,
+                    JOIN_SQL_4_IDS,
                     []
                 ),
                 Transaction::from_sql_and_values(
@@ -361,8 +490,10 @@ mod tests {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             // Simulates the backend over-fetching `limit + 1 == 2` rows.
             .append_query_results([vec![get_user_mock("1"), get_user_mock("2")]])
-            .append_query_results([Vec::<crate::entity::user_option::Model>::new()])
-            .append_query_results([vec![get_local_user_mock("1"), get_local_user_mock("2")]])
+            .append_query_results([vec![
+                mock_join_row(&get_user_mock("1"), Some(&get_local_user_mock("1")), None),
+                mock_join_row(&get_user_mock("2"), Some(&get_local_user_mock("2")), None),
+            ]])
             .append_query_results([Vec::<db_password::Model>::new()])
             .into_connection();
 
@@ -395,8 +526,10 @@ mod tests {
     async fn test_list_page_reverse() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![get_user_mock("2"), get_user_mock("3")]])
-            .append_query_results([Vec::<crate::entity::user_option::Model>::new()])
-            .append_query_results([vec![get_local_user_mock("2"), get_local_user_mock("3")]])
+            .append_query_results([vec![
+                mock_join_row(&get_user_mock("2"), Some(&get_local_user_mock("2")), None),
+                mock_join_row(&get_user_mock("3"), Some(&get_local_user_mock("3")), None),
+            ]])
             .append_query_results([Vec::<db_password::Model>::new()])
             .into_connection();
 
@@ -440,10 +573,16 @@ mod tests {
                 // a "bad" user with no user detail records
                 get_user_mock("4"),
             ]])
-            .append_query_results([[get_user_options_mock("2", &UserOptions::default())]
-                .into_iter()
-                .flatten()])
-            .append_query_results([vec![get_nonlocal_user_mock("2")]])
+            .append_query_results([vec![
+                mock_join_row(&get_user_mock("1"), Some(&get_local_user_mock("1")), None),
+                mock_join_row(
+                    &get_user_mock("2"),
+                    None,
+                    Some(&get_nonlocal_user_mock("2")),
+                ),
+                mock_join_row(&get_user_mock("3"), None, None),
+                mock_join_row(&get_user_mock("4"), None, None),
+            ]])
             .into_connection();
 
         let config = Config::default();
@@ -467,12 +606,7 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" WHERE ("user_option"."user_id") IN (($1), ($2), ($3), ($4)) ORDER BY "user_option"."user_id" ASC, "user_option"."option_id" ASC"#,
-                    []
-                ),
-                Transaction::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    r#"SELECT "nonlocal_user"."domain_id", "nonlocal_user"."name", "nonlocal_user"."user_id" FROM "nonlocal_user" WHERE ("nonlocal_user"."user_id", "nonlocal_user"."domain_id") IN (($1, $2), ($3, $4), ($5, $6), ($7, $8))"#,
+                    JOIN_SQL_4_IDS,
                     []
                 ),
             ]) {
@@ -496,9 +630,16 @@ mod tests {
                 // a "bad" user with no user detail records
                 get_user_mock("4"),
             ]])
-            .append_query_results([[get_user_options_mock("3", &UserOptions::default())]
-                .into_iter()
-                .flatten()])
+            .append_query_results([vec![
+                mock_join_row(&get_user_mock("1"), Some(&get_local_user_mock("1")), None),
+                mock_join_row(
+                    &get_user_mock("2"),
+                    None,
+                    Some(&get_nonlocal_user_mock("2")),
+                ),
+                mock_join_row(&get_user_mock("3"), None, None),
+                mock_join_row(&get_user_mock("4"), None, None),
+            ]])
             .append_query_results([vec![get_federated_user_mock("3")]])
             .into_connection();
 
@@ -523,7 +664,7 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" WHERE ("user_option"."user_id") IN (($1), ($2), ($3), ($4)) ORDER BY "user_option"."user_id" ASC, "user_option"."option_id" ASC"#,
+                    JOIN_SQL_4_IDS,
                     []
                 ),
                 Transaction::from_sql_and_values(

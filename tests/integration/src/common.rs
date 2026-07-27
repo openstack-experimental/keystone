@@ -77,7 +77,10 @@ pub async fn setup_schema(db: &DbConn) -> Result<()> {
 /// By default (when `DATABASE_URL` var is unset) use inmemory sqlite.
 pub async fn get_isolated_database() -> Result<DatabaseConnection> {
     let db_conn = std::env::var("DATABASE_URL").unwrap_or("sqlite::memory:".to_string());
-    let opts: ConnectOptions = ConnectOptions::new(&db_conn).sqlx_logging(false).to_owned();
+    let log_queries = std::env::var("DATABASE_LOG_QUERIES").is_ok();
+    let opts: ConnectOptions = ConnectOptions::new(&db_conn)
+        .sqlx_logging(log_queries)
+        .to_owned();
     let root_db = Database::connect(opts)
         .await
         .wrap_err_with(|| format!("Failed to connect to database at {}", db_conn.clone()))?;
@@ -117,7 +120,7 @@ pub async fn get_isolated_database() -> Result<DatabaseConnection> {
         db_conn
     };
     let opts = ConnectOptions::new(&isolated_db_url)
-        .sqlx_logging(false)
+        .sqlx_logging(log_queries)
         .to_owned();
     let db = Database::connect(opts).await.wrap_err_with(|| {
         format!(
