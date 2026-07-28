@@ -62,6 +62,93 @@ async fn test_list() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+#[traced_test]
+async fn test_list_mixed_user_types() -> Result<()> {
+    let (state, _tmp) = get_state_with_config(|_| {}).await?;
+    let domain = create_domain!(state)?;
+    let prov = state.provider.get_identity_provider();
+
+    prov.create_user(
+        &ExecutionContext::internal(&state),
+        UserCreateBuilder::default()
+            .name(format!("local-{}", Uuid::new_v4()))
+            .domain_id(domain.id.clone())
+            .enabled(true)
+            .password("foobar123")
+            .build()?,
+    )
+    .await?;
+
+    prov.create_user(
+        &ExecutionContext::internal(&state),
+        UserCreateBuilder::default()
+            .name(format!("nonlocal-{}", Uuid::new_v4()))
+            .domain_id(domain.id.clone())
+            .enabled(true)
+            .user_type(UserType::NonLocal)
+            .build()?,
+    )
+    .await?;
+
+    let fed = FederationBuilder::default()
+        .idp_id("idp_id")
+        .unique_id("uid")
+        .protocols(vec![FederationProtocol {
+            protocol_id: "oidc".into(),
+            unique_id: "uid".into(),
+        }])
+        .build()?;
+    prov.create_user(
+        &ExecutionContext::internal(&state),
+        UserCreateBuilder::default()
+            .name(format!("federated-{}", Uuid::new_v4()))
+            .domain_id(domain.id.clone())
+            .enabled(true)
+            .federated(vec![fed])
+            .build()?,
+    )
+    .await?;
+
+    let users: Vec<UserResponse> = prov
+        .list_users(
+            &ExecutionContext::internal(&state),
+            &UserListParameters {
+                domain_id: Some(domain.id.clone()),
+                ..Default::default()
+            },
+        )
+        .await?
+        .into_iter()
+        .collect();
+
+    let local_count = users
+        .iter()
+        .filter(|u| u.name.starts_with("local-"))
+        .count();
+    let nonlocal_count = users
+        .iter()
+        .filter(|u| u.name.starts_with("nonlocal-"))
+        .count();
+    let federated_count = users
+        .iter()
+        .filter(|u| u.name.starts_with("federated-"))
+        .count();
+
+    assert_eq!(
+        users.len(),
+        3,
+        "expected 3 users (local/nonlocal/federated), got {}: {:?}",
+        users.len(),
+        users.iter().map(|u| &u.name).collect::<Vec<_>>()
+    );
+    assert_eq!(local_count, 1, "local user missing");
+    assert_eq!(nonlocal_count, 1, "nonlocal user missing");
+    assert_eq!(federated_count, 1, "federated user missing");
+
+    Ok(())
+}
+
 /// Profile user-list performance with a configurable user count.
 ///
 /// # Design

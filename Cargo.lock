@@ -5091,6 +5091,7 @@ dependencies = [
  "http-serde",
  "httpmock",
  "ipnet",
+ "log",
  "notify",
  "regex",
  "secrecy",

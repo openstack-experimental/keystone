@@ -19,9 +19,32 @@ use serde::Deserialize;
 pub struct DatabaseSection {
     /// Database URL.
     pub connection: SecretString,
+
+    /// SQL query logging verbosity, `0`-`100` (mirrors oslo_db's
+    /// `connection_debug`). `0` disables query logging (default); higher
+    /// values enable it at increasingly verbose tracing levels.
+    #[serde(default)]
+    pub connection_debug: u8,
 }
 
 impl DatabaseSection {
+    /// Whether SQL query logging should be enabled for the configured
+    /// `connection_debug` verbosity.
+    pub fn sqlx_logging_enabled(&self) -> bool {
+        self.connection_debug > 0
+    }
+
+    /// Tracing level to log SQL queries at for the configured
+    /// `connection_debug` verbosity.
+    pub fn sqlx_logging_level(&self) -> log::LevelFilter {
+        match self.connection_debug {
+            0 => log::LevelFilter::Off,
+            1..=33 => log::LevelFilter::Warn,
+            34..=66 => log::LevelFilter::Info,
+            _ => log::LevelFilter::Debug,
+        }
+    }
+
     pub fn get_connection(&self) -> SecretString {
         let val = self.connection.expose_secret();
         if let Some(slash_pos) = val.find("://") {
@@ -45,12 +68,14 @@ mod tests {
         // No driver suffix – no change
         let sot = DatabaseSection {
             connection: "mysql://u:p@h".into(),
+            ..Default::default()
         };
         assert_eq!("mysql://u:p@h", sot.get_connection().expose_secret());
 
         // Driver suffix stripped
         let sot = DatabaseSection {
             connection: "mysql+driver://u:p@h".into(),
+            ..Default::default()
         };
         assert_eq!("mysql://u:p@h", sot.get_connection().expose_secret());
     }
@@ -60,12 +85,14 @@ mod tests {
         // :// in password, driver stripped
         let sot = DatabaseSection {
             connection: "mysql+driver://u:p://x@h".into(),
+            ..Default::default()
         };
         assert_eq!("mysql://u:p://x@h", sot.get_connection().expose_secret());
 
         // Multiple :// in password, driver stripped
         let sot = DatabaseSection {
             connection: "mysql+driver://u://x:p://y@h".into(),
+            ..Default::default()
         };
         assert_eq!(
             "mysql://u://x:p://y@h",
@@ -78,90 +105,105 @@ mod tests {
         // Single + in password, no driver – unchanged
         let sot = DatabaseSection {
             connection: "mysql://u:p+q@h".into(),
+            ..Default::default()
         };
         assert_eq!("mysql://u:p+q@h", sot.get_connection().expose_secret());
 
         // Multiple + in password, no driver – unchanged
         let sot = DatabaseSection {
             connection: "mysql://u:a+b+c@h".into(),
+            ..Default::default()
         };
         assert_eq!("mysql://u:a+b+c@h", sot.get_connection().expose_secret());
 
         // Only + as password, no driver – unchanged
         let sot = DatabaseSection {
             connection: "mysql://u:+@h".into(),
+            ..Default::default()
         };
         assert_eq!("mysql://u:+@h", sot.get_connection().expose_secret());
 
         // + at end of password, no driver – unchanged
         let sot = DatabaseSection {
             connection: "mysql://u:pass+@h".into(),
+            ..Default::default()
         };
         assert_eq!("mysql://u:pass+@h", sot.get_connection().expose_secret());
 
         // Driver suffix + single + in password
         let sot = DatabaseSection {
             connection: "mysql+driver://u:p+q@h".into(),
+            ..Default::default()
         };
         assert_eq!("mysql://u:p+q@h", sot.get_connection().expose_secret());
 
         // Driver suffix + multiple + in password
         let sot = DatabaseSection {
             connection: "mysql+driver://u:a+b+c@h".into(),
+            ..Default::default()
         };
         assert_eq!("mysql://u:a+b+c@h", sot.get_connection().expose_secret());
 
         // Driver suffix + only + as password
         let sot = DatabaseSection {
             connection: "mysql+driver://u:+@h".into(),
+            ..Default::default()
         };
         assert_eq!("mysql://u:+@h", sot.get_connection().expose_secret());
 
         // Driver suffix + :// and + in password
         let sot = DatabaseSection {
             connection: "mysql+driver://u:p+q://r@h".into(),
+            ..Default::default()
         };
         assert_eq!("mysql://u:p+q://r@h", sot.get_connection().expose_secret());
 
         // + in username and password, no driver
         let sot = DatabaseSection {
             connection: "mysql://u+v:p+w@h".into(),
+            ..Default::default()
         };
         assert_eq!("mysql://u+v:p+w@h", sot.get_connection().expose_secret());
 
         // Driver suffix + + in username and password
         let sot = DatabaseSection {
             connection: "mysql+driver://u+v:p+w@h".into(),
+            ..Default::default()
         };
         assert_eq!("mysql://u+v:p+w@h", sot.get_connection().expose_secret());
 
         // Empty password, no driver
         let sot = DatabaseSection {
             connection: "mysql://u:@h".into(),
+            ..Default::default()
         };
         assert_eq!("mysql://u:@h", sot.get_connection().expose_secret());
 
         // Empty password, driver stripped
         let sot = DatabaseSection {
             connection: "mysql+driver://u:@h".into(),
+            ..Default::default()
         };
         assert_eq!("mysql://u:@h", sot.get_connection().expose_secret());
 
         // No password, no driver
         let sot = DatabaseSection {
             connection: "mysql://u@h".into(),
+            ..Default::default()
         };
         assert_eq!("mysql://u@h", sot.get_connection().expose_secret());
 
         // No password, driver stripped
         let sot = DatabaseSection {
             connection: "mysql+driver://u@h".into(),
+            ..Default::default()
         };
         assert_eq!("mysql://u@h", sot.get_connection().expose_secret());
 
         // Special chars in password: @, /, ?, #
         let sot = DatabaseSection {
             connection: "mysql+driver://u:p@ss/w?_r#k@h".into(),
+            ..Default::default()
         };
         assert_eq!(
             "mysql://u:p@ss/w?_r#k@h",
@@ -171,6 +213,7 @@ mod tests {
         // % encoded + in password (literal %2B)
         let sot = DatabaseSection {
             connection: "mysql+driver://u:%2B@h".into(),
+            ..Default::default()
         };
         assert_eq!("mysql://u:%2B@h", sot.get_connection().expose_secret());
     }
@@ -180,18 +223,21 @@ mod tests {
         // Multiple consecutive +
         let sot = DatabaseSection {
             connection: "mysql+driver+extra://u:p@h".into(),
+            ..Default::default()
         };
         assert_eq!("mysql://u:p@h", sot.get_connection().expose_secret());
 
         // No scheme separator – passthrough
         let sot = DatabaseSection {
             connection: "mysql+driver/u:p@h".into(),
+            ..Default::default()
         };
         assert_eq!("mysql+driver/u:p@h", sot.get_connection().expose_secret());
 
         // Empty connection
         let sot = DatabaseSection {
             connection: "".into(),
+            ..Default::default()
         };
         assert_eq!("", sot.get_connection().expose_secret());
     }

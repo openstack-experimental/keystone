@@ -18,6 +18,7 @@ eyre.workspace = true
 http.workspace = true
 http-serde = "2.1"
 ipnet = { workspace = true }
+log.workspace = true
 notify = "8.2"
 regex.workspace = true
 secrecy = { workspace = true, features = ["serde"] }

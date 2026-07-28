@@ -211,8 +211,8 @@ async fn main() -> Result<(), Report> {
     let cloned_token = token.clone();
 
     let opt: ConnectOptions = ConnectOptions::new(cfg.database.get_connection().expose_secret())
-        // Prevent dumping the password in plaintext.
-        .sqlx_logging(false)
+        .sqlx_logging(cfg.database.sqlx_logging_enabled())
+        .sqlx_logging_level(cfg.database.sqlx_logging_level())
         .to_owned();
 
     debug!("Establishing the database connection...");
