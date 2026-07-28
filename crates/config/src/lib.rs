@@ -1115,7 +1115,15 @@ mod tests {
         write_vault_config(&mut config_file, &server, 60);
 
         let _manager = ConfigManager::watched(config_file.path()).await.unwrap();
-        timeout(Duration::from_secs(4), async {
+        // Yield so the spawned watch-loop task can enter its first select!
+        // iteration and arm the vault_tick deadline based on the lookup TTL
+        // that was set during vault resolution in ConfigManager::watched().
+        // Without this yield, the test's timeout clock starts before the
+        // vault_tick is armed, making the effective wait window shorter and
+        // susceptible to scheduler jitter on loaded CI runners.
+        tokio::task::yield_now().await;
+
+        timeout(Duration::from_secs(5), async {
             while renewal.calls() == 0 {
                 sleep(Duration::from_millis(50)).await;
             }
