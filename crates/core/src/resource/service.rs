@@ -24,7 +24,23 @@ use openstack_keystone_core_types::resource::*;
 use crate::auth::{ExecutionContext, scope_domain_id};
 use crate::events::AuditDispatchError;
 use crate::plugin_manager::PluginManagerApi;
+use crate::request_cache::{cache_get, cache_remove, cache_set};
 use crate::resource::{ResourceApi, ResourceProviderError, backend::ResourceBackend};
+
+/// Request-cache namespace for [`Domain`] lookups by `domain_id`.
+const DOMAIN_CACHE_NS: &str = "resource.domain";
+/// Request-cache namespace for [`Project`] lookups by `project_id`.
+const PROJECT_CACHE_NS: &str = "resource.project";
+/// Request-cache namespace for a project's ancestor chain
+/// (`Vec<Project>`) by `project_id`. Safe to cache because `parent_id` is
+/// immutable after creation (`ProjectUpdate` has no `parent_id` field), so
+/// the ancestor *chain* for a given project never changes -- only the
+/// individual ancestor `Project` rows within it could go stale if one of
+/// them is updated later in the same request. That's the same accepted,
+/// request-scoped staleness window as ADR 0030's "known, accepted race";
+/// this cache is not reverse-indexed by ancestor id to invalidate on their
+/// updates too, since that's real complexity for a risk this narrow.
+const PROJECT_PARENTS_CACHE_NS: &str = "resource.project_parents";
 
 pub struct ResourceService {
     backend_driver: Arc<dyn ResourceBackend>,
@@ -381,6 +397,7 @@ impl ResourceApi for ResourceService {
             domain
         };
 
+        cache_set(DOMAIN_CACHE_NS, domain_id, domain.clone());
         Ok(domain)
     }
 
@@ -436,6 +453,7 @@ impl ResourceApi for ResourceService {
             project
         };
 
+        cache_set(PROJECT_CACHE_NS, project_id, project.clone());
         Ok(project)
     }
 
@@ -480,6 +498,7 @@ impl ResourceApi for ResourceService {
                 .await;
         }
 
+        cache_remove(DOMAIN_CACHE_NS, id);
         Ok(())
     }
 
@@ -535,6 +554,8 @@ impl ResourceApi for ResourceService {
                 .await;
         }
 
+        cache_remove(PROJECT_CACHE_NS, id);
+        cache_remove(PROJECT_PARENTS_CACHE_NS, id);
         Ok(())
     }
 
@@ -552,7 +573,17 @@ impl ResourceApi for ResourceService {
         ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
     ) -> Result<Option<Domain>, ResourceProviderError> {
-        self.backend_driver.get_domain(ctx.state(), domain_id).await
+        if let Some(domain) = cache_get::<Domain>(DOMAIN_CACHE_NS, domain_id) {
+            return Ok(Some(domain));
+        }
+        let domain = self
+            .backend_driver
+            .get_domain(ctx.state(), domain_id)
+            .await?;
+        if let Some(domain) = &domain {
+            cache_set(DOMAIN_CACHE_NS, domain_id, domain.clone());
+        }
+        Ok(domain)
     }
 
     /// Get a single project.
@@ -569,9 +600,17 @@ impl ResourceApi for ResourceService {
         ctx: &ExecutionContext<'a>,
         project_id: &'a str,
     ) -> Result<Option<Project>, ResourceProviderError> {
-        self.backend_driver
+        if let Some(project) = cache_get::<Project>(PROJECT_CACHE_NS, project_id) {
+            return Ok(Some(project));
+        }
+        let project = self
+            .backend_driver
             .get_project(ctx.state(), project_id)
-            .await
+            .await?;
+        if let Some(project) = &project {
+            cache_set(PROJECT_CACHE_NS, project_id, project.clone());
+        }
+        Ok(project)
     }
 
     /// Get a single project by name and domain ID.
@@ -609,9 +648,17 @@ impl ResourceApi for ResourceService {
         ctx: &ExecutionContext<'a>,
         project_id: &'a str,
     ) -> Result<Option<Vec<Project>>, ResourceProviderError> {
-        self.backend_driver
+        if let Some(parents) = cache_get::<Vec<Project>>(PROJECT_PARENTS_CACHE_NS, project_id) {
+            return Ok(Some(parents));
+        }
+        let parents = self
+            .backend_driver
             .get_project_parents(ctx.state(), project_id)
-            .await
+            .await?;
+        if let Some(parents) = &parents {
+            cache_set(PROJECT_PARENTS_CACHE_NS, project_id, parents.clone());
+        }
+        Ok(parents)
     }
 
     /// Find a single domain by its name.
@@ -1220,5 +1267,355 @@ mod tests {
             )
             .await;
         assert!(result.is_ok());
+    }
+
+    // --- Per-request cache (ADR 0030) -------------------------------------
+
+    #[tokio::test]
+    async fn test_get_domain_hits_backend_once_across_repeated_calls() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockResourceBackend::default();
+        backend
+            .expect_get_domain()
+            .times(1)
+            .withf(|_, id: &'_ str| id == "did")
+            .returning(|_, _| Ok(Some(make_domain("did"))));
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        crate::request_cache::RequestCache::scope(async {
+            let ctx = ExecutionContext::internal(&state);
+            let first = provider.get_domain(&ctx, "did").await.unwrap().unwrap();
+            let second = provider.get_domain(&ctx, "did").await.unwrap().unwrap();
+            assert_eq!(first, second);
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_get_domain_not_cached_outside_request_scope() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockResourceBackend::default();
+        backend
+            .expect_get_domain()
+            .times(2)
+            .withf(|_, id: &'_ str| id == "did")
+            .returning(|_, _| Ok(Some(make_domain("did"))));
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        let ctx = ExecutionContext::internal(&state);
+        provider.get_domain(&ctx, "did").await.unwrap();
+        // No `RequestCache::scope` established (mirrors CLI/background-job
+        // call paths) -- each call must hit the backend.
+        provider.get_domain(&ctx, "did").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_get_project_hits_backend_once_across_repeated_calls() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockResourceBackend::default();
+        backend
+            .expect_get_project()
+            .times(1)
+            .withf(|_, id: &'_ str| id == "pid")
+            .returning(|_, _| Ok(Some(make_project("pid", "did"))));
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        crate::request_cache::RequestCache::scope(async {
+            let ctx = ExecutionContext::internal(&state);
+            let first = provider.get_project(&ctx, "pid").await.unwrap().unwrap();
+            let second = provider.get_project(&ctx, "pid").await.unwrap().unwrap();
+            assert_eq!(first, second);
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_update_domain_refreshes_cache_instead_of_refetching() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockResourceBackend::default();
+        // Only the very first `get_domain` (populating the cache) and the
+        // one inside `check_domain_mutable` before it's cached should ever
+        // reach the backend -- exactly once total.
+        backend
+            .expect_get_domain()
+            .times(1)
+            .withf(|_, id: &'_ str| id == "did")
+            .returning(|_, _| Ok(Some(make_domain("did"))));
+        backend
+            .expect_update_domain()
+            .withf(|_, id: &'_ str, _| id == "did")
+            .returning(|_, _, update| {
+                let mut d = make_domain("did");
+                if let Some(name) = update.name {
+                    d.name = name;
+                }
+                Ok(d)
+            });
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        crate::request_cache::RequestCache::scope(async {
+            let ctx = ExecutionContext::internal(&state);
+            provider.get_domain(&ctx, "did").await.unwrap();
+
+            let updated = provider
+                .update_domain(
+                    &ctx,
+                    "did",
+                    DomainUpdate {
+                        name: Some("renamed".into()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(updated.name, "renamed");
+
+            let refetched = provider.get_domain(&ctx, "did").await.unwrap().unwrap();
+            assert_eq!(refetched.name, "renamed");
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_delete_domain_invalidates_cache() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockResourceBackend::default();
+        // Populated once by the initial `get_domain`, hit from cache inside
+        // `check_domain_mutable`, then re-fetched from the backend after
+        // deletion invalidates the cache entry.
+        backend
+            .expect_get_domain()
+            .times(2)
+            .withf(|_, id: &'_ str| id == "did")
+            .returning(|_, _| Ok(Some(make_domain("did"))));
+        backend
+            .expect_delete_domain()
+            .withf(|_, id: &'_ str| id == "did")
+            .returning(|_, _| Ok(()));
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        crate::request_cache::RequestCache::scope(async {
+            let ctx = ExecutionContext::internal(&state);
+            provider.get_domain(&ctx, "did").await.unwrap();
+            provider.delete_domain(&ctx, "did").await.unwrap();
+            // Cache entry was removed by the delete -- this call must reach
+            // the backend again rather than serve the deleted domain.
+            provider.get_domain(&ctx, "did").await.unwrap();
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_update_project_refreshes_cache_instead_of_refetching() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockResourceBackend::default();
+        backend
+            .expect_get_project()
+            .times(1)
+            .withf(|_, id: &'_ str| id == "pid")
+            .returning(|_, _| Ok(Some(make_project("pid", "did"))));
+        backend
+            .expect_update_project()
+            .withf(|_, id: &'_ str, _| id == "pid")
+            .returning(|_, _, update| {
+                let mut p = make_project("pid", "did");
+                if let Some(name) = update.name {
+                    p.name = name;
+                }
+                Ok(p)
+            });
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        crate::request_cache::RequestCache::scope(async {
+            let ctx = ExecutionContext::internal(&state);
+            provider.get_project(&ctx, "pid").await.unwrap();
+
+            let updated = provider
+                .update_project(
+                    &ctx,
+                    "pid",
+                    ProjectUpdate {
+                        name: Some("renamed".into()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(updated.name, "renamed");
+
+            let refetched = provider.get_project(&ctx, "pid").await.unwrap().unwrap();
+            assert_eq!(refetched.name, "renamed");
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_delete_project_invalidates_cache() {
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock
+            .expect_delete_credentials_for_project()
+            .withf(|_, pid: &'_ str| pid == "pid")
+            .returning(|_, _| Ok(()));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_credential(credential_mock)),
+        )
+        .await;
+        let mut backend = MockResourceBackend::default();
+        backend
+            .expect_get_project()
+            .times(2)
+            .withf(|_, id: &'_ str| id == "pid")
+            .returning(|_, _| Ok(Some(make_project("pid", "did"))));
+        backend
+            .expect_delete_project()
+            .withf(|_, id: &'_ str| id == "pid")
+            .returning(|_, _| Ok(()));
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        crate::request_cache::RequestCache::scope(async {
+            let ctx = ExecutionContext::internal(&state);
+            provider.get_project(&ctx, "pid").await.unwrap();
+            provider.delete_project(&ctx, "pid").await.unwrap();
+            provider.get_project(&ctx, "pid").await.unwrap();
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_get_project_parents_hits_backend_once_across_repeated_calls() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockResourceBackend::default();
+        backend
+            .expect_get_project_parents()
+            .times(1)
+            .withf(|_, id: &'_ str| id == "pid")
+            .returning(|_, _| Ok(Some(vec![make_project("parent", "did")])));
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        crate::request_cache::RequestCache::scope(async {
+            let ctx = ExecutionContext::internal(&state);
+            let first = provider
+                .get_project_parents(&ctx, "pid")
+                .await
+                .unwrap()
+                .unwrap();
+            let second = provider
+                .get_project_parents(&ctx, "pid")
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(first, second);
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_get_project_parents_not_cached_outside_request_scope() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockResourceBackend::default();
+        backend
+            .expect_get_project_parents()
+            .times(2)
+            .withf(|_, id: &'_ str| id == "pid")
+            .returning(|_, _| Ok(Some(vec![make_project("parent", "did")])));
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        let ctx = ExecutionContext::internal(&state);
+        provider.get_project_parents(&ctx, "pid").await.unwrap();
+        provider.get_project_parents(&ctx, "pid").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_get_project_parents_none_is_not_cached() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockResourceBackend::default();
+        backend
+            .expect_get_project_parents()
+            .times(2)
+            .withf(|_, id: &'_ str| id == "pid")
+            .returning(|_, _| Ok(None));
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        crate::request_cache::RequestCache::scope(async {
+            let ctx = ExecutionContext::internal(&state);
+            assert!(
+                provider
+                    .get_project_parents(&ctx, "pid")
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            // A `None` result (project not found) must not be cached as
+            // "no parents" -- it should keep hitting the backend.
+            assert!(
+                provider
+                    .get_project_parents(&ctx, "pid")
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_delete_project_invalidates_parents_cache() {
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock
+            .expect_delete_credentials_for_project()
+            .withf(|_, pid: &'_ str| pid == "pid")
+            .returning(|_, _| Ok(()));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_credential(credential_mock)),
+        )
+        .await;
+        let mut backend = MockResourceBackend::default();
+        backend
+            .expect_get_project_parents()
+            .times(2)
+            .withf(|_, id: &'_ str| id == "pid")
+            .returning(|_, _| Ok(Some(vec![make_project("parent", "did")])));
+        backend
+            .expect_get_project()
+            .returning(|_, _| Ok(Some(make_project("pid", "did"))));
+        backend
+            .expect_delete_project()
+            .withf(|_, id: &'_ str| id == "pid")
+            .returning(|_, _| Ok(()));
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        crate::request_cache::RequestCache::scope(async {
+            let ctx = ExecutionContext::internal(&state);
+            provider.get_project_parents(&ctx, "pid").await.unwrap();
+            provider.delete_project(&ctx, "pid").await.unwrap();
+            // Cache entry was removed by the delete -- this call must reach
+            // the backend again.
+            provider.get_project_parents(&ctx, "pid").await.unwrap();
+        })
+        .await;
     }
 }

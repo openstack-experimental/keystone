@@ -108,6 +108,7 @@ pub mod plugin_manager;
 pub mod policy;
 pub mod provider;
 pub mod rate_limit;
+pub mod request_cache;
 pub mod resource;
 pub mod revoke;
 pub mod role;

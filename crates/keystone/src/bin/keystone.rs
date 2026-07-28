@@ -27,6 +27,7 @@ use axum::{
     Router, ServiceExt,
     extract::{ConnectInfo, DefaultBodyLimit, State},
     http::{self, HeaderName, Request, StatusCode, header},
+    middleware,
     response::IntoResponse,
 };
 use clap::{Parser, ValueEnum};
@@ -81,6 +82,7 @@ use openstack_keystone::role::RoleHook;
 use openstack_keystone::scim;
 use openstack_keystone::server::listener::{raft_grpc, spiffe_tls, spiffe_tls_uds};
 use openstack_keystone::server::proxy_headers;
+use openstack_keystone::server::request_cache;
 use openstack_keystone::token::TokenHook;
 use openstack_keystone::trust::TrustHook;
 use openstack_keystone::webauthn;
@@ -794,6 +796,10 @@ async fn build_router(
             OpenStackRequestId::default(),
         ))
         //.layer(PropagateRequestIdLayer::new(x_request_id))
+        // Establish the per-request cache scope (ADR 0030) before any
+        // handler runs, so provider code anywhere on this request's task
+        // can reach it via `openstack_keystone_core::request_cache`.
+        .layer(middleware::from_fn(request_cache::with_request_cache))
         .sensitive_request_headers(sensitive_headers.clone())
         .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT))
         .layer(

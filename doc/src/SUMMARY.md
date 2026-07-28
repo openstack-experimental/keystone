@@ -118,3 +118,4 @@
     - [LDAP identity backend](adr/0027-ldap-identity-driver.md)
     - [Quorum-Bypass Emergency Operations](adr/0028-oauth2-quorum-bypass-emergency-rotation.md)
     - [Generalized Pagination](adr/0029-pagination.md)
+    - [Per-Request Cache via tokio::task_local!](adr/0030-per-request-cache.md)

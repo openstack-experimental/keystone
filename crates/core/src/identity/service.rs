@@ -34,7 +34,13 @@ use crate::auth::{
 use crate::events::AuditDispatchError;
 use crate::identity::{IdentityApi, IdentityProviderError, backend::IdentityBackend};
 use crate::plugin_manager::PluginManagerApi;
+use crate::request_cache::{cache_get, cache_remove, cache_set};
 use crate::resource::error::ResourceProviderError;
+
+/// Request-cache namespace for [`UserResponse`] lookups by `user_id`.
+const USER_CACHE_NS: &str = "identity.user";
+/// Request-cache namespace for [`Group`] lookups by `group_id`.
+const GROUP_CACHE_NS: &str = "identity.group";
 
 /// Identity provider.
 pub struct IdentityService {
@@ -719,6 +725,7 @@ impl IdentityApi for IdentityService {
                 .await;
         }
 
+        cache_remove(GROUP_CACHE_NS, group_id);
         Ok(())
     }
 
@@ -782,6 +789,7 @@ impl IdentityApi for IdentityService {
                 .await;
         }
 
+        cache_remove(USER_CACHE_NS, user_id);
         Ok(())
     }
 
@@ -819,14 +827,18 @@ impl IdentityApi for IdentityService {
         ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<Option<UserResponse>, IdentityProviderError> {
+        if let Some(user) = cache_get::<UserResponse>(USER_CACHE_NS, user_id) {
+            return Ok(Some(user));
+        }
         let user = self.backend_driver.get_user(ctx.state(), user_id).await?;
-        if self.caching
-            && let Some(user) = &user
-        {
-            self.user_id_domain_id_cache
-                .write()
-                .await
-                .insert(user_id.to_string(), user.domain_id.clone());
+        if let Some(user) = &user {
+            if self.caching {
+                self.user_id_domain_id_cache
+                    .write()
+                    .await
+                    .insert(user_id.to_string(), user.domain_id.clone());
+            }
+            cache_set(USER_CACHE_NS, user_id, user.clone());
         }
         Ok(user)
     }
@@ -941,7 +953,14 @@ impl IdentityApi for IdentityService {
         ctx: &ExecutionContext<'a>,
         group_id: &'a str,
     ) -> Result<Option<Group>, IdentityProviderError> {
-        self.backend_driver.get_group(ctx.state(), group_id).await
+        if let Some(group) = cache_get::<Group>(GROUP_CACHE_NS, group_id) {
+            return Ok(Some(group));
+        }
+        let group = self.backend_driver.get_group(ctx.state(), group_id).await?;
+        if let Some(group) = &group {
+            cache_set(GROUP_CACHE_NS, group_id, group.clone());
+        }
+        Ok(group)
     }
 
     /// List groups a user is a member of.
@@ -1037,6 +1056,7 @@ impl IdentityApi for IdentityService {
             group
         };
 
+        cache_set(GROUP_CACHE_NS, group_id, group.clone());
         Ok(group)
     }
 
@@ -1344,6 +1364,7 @@ impl IdentityApi for IdentityService {
             user
         };
 
+        cache_set(USER_CACHE_NS, user_id, user.clone());
         Ok(user)
     }
 
@@ -1395,6 +1416,7 @@ impl IdentityApi for IdentityService {
                 ))
                 .await;
         }
+        cache_remove(USER_CACHE_NS, user_id);
         Ok(())
     }
 
@@ -2357,5 +2379,280 @@ mod tests {
                 .is_ok(),
             "no password on update should skip validation"
         );
+    }
+
+    // --- Per-request cache (ADR 0030) -------------------------------------
+
+    use openstack_keystone_core_types::identity::{GroupBuilder, GroupUpdate};
+
+    fn make_user(id: &str) -> UserResponse {
+        UserResponseBuilder::default()
+            .id(id)
+            .domain_id("did")
+            .enabled(true)
+            .name(format!("{id}-name"))
+            .build()
+            .unwrap()
+    }
+
+    fn make_group(id: &str) -> Group {
+        GroupBuilder::default()
+            .id(id)
+            .domain_id("did")
+            .name(format!("{id}-name"))
+            .build()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_get_user_hits_backend_once_across_repeated_calls() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockIdentityBackend::default();
+        backend
+            .expect_get_user()
+            .times(1)
+            .withf(|_, uid: &'_ str| uid == "uid")
+            .returning(|_, _| Ok(Some(make_user("uid"))));
+        let provider = IdentityService::from_driver(backend);
+
+        crate::request_cache::RequestCache::scope(async {
+            let ctx = ExecutionContext::internal(&state);
+            let first = provider.get_user(&ctx, "uid").await.unwrap().unwrap();
+            let second = provider.get_user(&ctx, "uid").await.unwrap().unwrap();
+            assert_eq!(first, second);
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_get_user_not_cached_outside_request_scope() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockIdentityBackend::default();
+        backend
+            .expect_get_user()
+            .times(2)
+            .withf(|_, uid: &'_ str| uid == "uid")
+            .returning(|_, _| Ok(Some(make_user("uid"))));
+        let provider = IdentityService::from_driver(backend);
+
+        let ctx = ExecutionContext::internal(&state);
+        provider.get_user(&ctx, "uid").await.unwrap();
+        provider.get_user(&ctx, "uid").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_update_user_refreshes_cache_instead_of_refetching() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockIdentityBackend::default();
+        backend
+            .expect_get_user()
+            .times(1)
+            .withf(|_, uid: &'_ str| uid == "uid")
+            .returning(|_, _| Ok(Some(make_user("uid"))));
+        backend
+            .expect_update_user()
+            .withf(|_, uid: &'_ str, _| uid == "uid")
+            .returning(|_, _, update| {
+                let mut u = make_user("uid");
+                if let Some(name) = update.name {
+                    u.name = name;
+                }
+                Ok(u)
+            });
+        let provider = IdentityService::from_driver(backend);
+
+        crate::request_cache::RequestCache::scope(async {
+            let ctx = ExecutionContext::internal(&state);
+            provider.get_user(&ctx, "uid").await.unwrap();
+
+            let updated = provider
+                .update_user(
+                    &ctx,
+                    "uid",
+                    UserUpdateBuilder::default()
+                        .name("renamed".to_string())
+                        .build()
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(updated.name, "renamed");
+
+            let refetched = provider.get_user(&ctx, "uid").await.unwrap().unwrap();
+            assert_eq!(refetched.name, "renamed");
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_delete_user_invalidates_cache() {
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock
+            .expect_delete_credentials_for_user()
+            .withf(|_, uid: &'_ str| uid == "uid")
+            .returning(|_, _| Ok(()));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_credential(credential_mock)),
+        )
+        .await;
+        let mut backend = MockIdentityBackend::default();
+        backend
+            .expect_get_user()
+            .times(2)
+            .withf(|_, uid: &'_ str| uid == "uid")
+            .returning(|_, _| Ok(Some(make_user("uid"))));
+        backend
+            .expect_delete_user()
+            .withf(|_, uid: &'_ str| uid == "uid")
+            .returning(|_, _| Ok(()));
+        let provider = IdentityService::from_driver(backend);
+
+        crate::request_cache::RequestCache::scope(async {
+            let ctx = ExecutionContext::internal(&state);
+            provider.get_user(&ctx, "uid").await.unwrap();
+            provider.delete_user(&ctx, "uid").await.unwrap();
+            provider.get_user(&ctx, "uid").await.unwrap();
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_update_user_password_invalidates_cache() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockIdentityBackend::default();
+        backend
+            .expect_get_user()
+            .times(2)
+            .withf(|_, uid: &'_ str| uid == "uid")
+            .returning(|_, _| Ok(Some(make_user("uid"))));
+        backend
+            .expect_update_user_password()
+            .withf(|_, uid: &'_ str, _, _| uid == "uid")
+            .returning(|_, _, _, _| Ok(()));
+        let provider = IdentityService::from_driver(backend);
+
+        crate::request_cache::RequestCache::scope(async {
+            let ctx = ExecutionContext::internal(&state);
+            provider.get_user(&ctx, "uid").await.unwrap();
+            provider
+                .update_user_password(
+                    &ctx,
+                    "uid",
+                    SecretString::from("orig".to_string()),
+                    SecretString::from("newpassword".to_string()),
+                )
+                .await
+                .unwrap();
+            // `update_user_password` doesn't return a fresh `UserResponse`
+            // to refresh the cache with -- the cached entry must instead be
+            // invalidated so `password_expires_at` isn't served stale.
+            provider.get_user(&ctx, "uid").await.unwrap();
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_get_group_hits_backend_once_across_repeated_calls() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockIdentityBackend::default();
+        backend
+            .expect_get_group()
+            .times(1)
+            .withf(|_, gid: &'_ str| gid == "gid")
+            .returning(|_, _| Ok(Some(make_group("gid"))));
+        let provider = IdentityService::from_driver(backend);
+
+        crate::request_cache::RequestCache::scope(async {
+            let ctx = ExecutionContext::internal(&state);
+            let first = provider.get_group(&ctx, "gid").await.unwrap().unwrap();
+            let second = provider.get_group(&ctx, "gid").await.unwrap().unwrap();
+            assert_eq!(first, second);
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_get_group_not_cached_outside_request_scope() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockIdentityBackend::default();
+        backend
+            .expect_get_group()
+            .times(2)
+            .withf(|_, gid: &'_ str| gid == "gid")
+            .returning(|_, _| Ok(Some(make_group("gid"))));
+        let provider = IdentityService::from_driver(backend);
+
+        let ctx = ExecutionContext::internal(&state);
+        provider.get_group(&ctx, "gid").await.unwrap();
+        provider.get_group(&ctx, "gid").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_update_group_refreshes_cache_instead_of_refetching() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockIdentityBackend::default();
+        backend
+            .expect_get_group()
+            .times(1)
+            .withf(|_, gid: &'_ str| gid == "gid")
+            .returning(|_, _| Ok(Some(make_group("gid"))));
+        backend
+            .expect_update_group()
+            .withf(|_, gid: &'_ str, _| gid == "gid")
+            .returning(|_, _, update| {
+                let mut g = make_group("gid");
+                if let Some(name) = update.name {
+                    g.name = name;
+                }
+                Ok(g)
+            });
+        let provider = IdentityService::from_driver(backend);
+
+        crate::request_cache::RequestCache::scope(async {
+            let ctx = ExecutionContext::internal(&state);
+            provider.get_group(&ctx, "gid").await.unwrap();
+
+            let updated = provider
+                .update_group(
+                    &ctx,
+                    "gid",
+                    GroupUpdate {
+                        name: Some("renamed".into()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(updated.name, "renamed");
+
+            let refetched = provider.get_group(&ctx, "gid").await.unwrap().unwrap();
+            assert_eq!(refetched.name, "renamed");
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_delete_group_invalidates_cache() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockIdentityBackend::default();
+        backend
+            .expect_get_group()
+            .times(2)
+            .withf(|_, gid: &'_ str| gid == "gid")
+            .returning(|_, _| Ok(Some(make_group("gid"))));
+        backend
+            .expect_delete_group()
+            .withf(|_, gid: &'_ str| gid == "gid")
+            .returning(|_, _| Ok(()));
+        let provider = IdentityService::from_driver(backend);
+
+        crate::request_cache::RequestCache::scope(async {
+            let ctx = ExecutionContext::internal(&state);
+            provider.get_group(&ctx, "gid").await.unwrap();
+            provider.delete_group(&ctx, "gid").await.unwrap();
+            provider.get_group(&ctx, "gid").await.unwrap();
+        })
+        .await;
     }
 }
