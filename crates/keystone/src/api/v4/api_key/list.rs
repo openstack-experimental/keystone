@@ -92,8 +92,13 @@ pub(super) async fn list(
         .map(Into::into)
         .collect();
 
-    let (api_keys, links) =
-        paginate_bidirectional(&config, keys, &pagination, original_url.path())?;
+    let (api_keys, links) = paginate_bidirectional(
+        &config,
+        &config.api_key.list_limit,
+        keys,
+        &pagination,
+        &original_url,
+    )?;
 
     Ok((StatusCode::OK, Json(ApiKeyList { api_keys, links })).into_response())
 }

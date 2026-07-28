@@ -189,6 +189,27 @@ pub mod tests {
         policy_allow: bool,
         policy_allow_see_other_domains: Option<bool>,
     ) -> ServiceState {
+        get_mocked_state_with_config(
+            provider_builder,
+            policy_allow,
+            policy_allow_see_other_domains,
+            Config::default(),
+        )
+        .await
+    }
+
+    /// Like [`get_mocked_state`], but with a caller-supplied [`Config`].
+    ///
+    /// Needed to exercise anything the configuration governs — notably the
+    /// `list_limit`/`max_db_limit` pagination chain, which `Config::default()`
+    /// leaves entirely unset and therefore cannot distinguish a resolved
+    /// limit from the raw request value.
+    pub async fn get_mocked_state_with_config(
+        provider_builder: ProviderBuilder,
+        policy_allow: bool,
+        policy_allow_see_other_domains: Option<bool>,
+        config: Config,
+    ) -> ServiceState {
         let provider = provider_builder.build().unwrap();
 
         let mut policy_enforcer_mock = MockPolicy::default();
@@ -213,7 +234,7 @@ pub mod tests {
 
         Arc::new(
             Service::new(
-                ConfigManager::not_watched(Config::default()),
+                ConfigManager::not_watched(config),
                 DatabaseConnection::default(),
                 provider,
                 Arc::new(policy_enforcer_mock),

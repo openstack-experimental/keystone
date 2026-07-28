@@ -64,9 +64,17 @@ pub fn default_true() -> bool {
     true
 }
 
-/// Default page size applied when the client does not supply `limit`.
+/// Default `limit` when the client does not supply one: **`None`**.
+///
+/// Deliberately not a hard-coded page size. ADR 0029's precedence chain is
+/// "user limit -> per-resource `list_limit` -> global `[DEFAULT] list_limit`
+/// -> `max_db_limit`", and `Config::resolve_list_limit` only consults the
+/// configured values when the request carries no limit. Returning `Some(20)`
+/// here made `requested` always populated, which silently rendered every
+/// `list_limit` setting dead config. `None` also matches python keystone,
+/// whose `[DEFAULT] list_limit` is unset (no truncation) out of the box.
 pub fn default_list_limit() -> Option<u64> {
-    Some(20)
+    None
 }
 
 /// Shared pagination query parameters, reused by every v3/v4 list endpoint.

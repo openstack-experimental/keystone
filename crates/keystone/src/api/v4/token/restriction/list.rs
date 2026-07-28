@@ -100,9 +100,10 @@ pub(super) async fn list(
 
     let (restrictions, links) = paginate_bidirectional(
         &config,
+        &config.token_restriction.list_limit,
         token_restrictions,
         &pagination,
-        original_url.path(),
+        &original_url,
     )?;
 
     Ok((

@@ -81,7 +81,13 @@ pub(super) async fn list(
         .map(Into::into)
         .collect();
 
-    let (services, links) = paginate_forward(&config, services, &pagination, original_url.path())?;
+    let (services, links) = paginate_forward(
+        &config,
+        &config.catalog.list_limit,
+        services,
+        &pagination,
+        &original_url,
+    )?;
 
     Ok((StatusCode::OK, Json(ServiceList { services, links })).into_response())
 }

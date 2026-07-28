@@ -85,8 +85,13 @@ pub(super) async fn list(
         )
         .await?;
 
-    let (raw_assignments, links) =
-        paginate_forward(&config, raw_assignments, &pagination, original_url.path())?;
+    let (raw_assignments, links) = paginate_forward(
+        &config,
+        &config.assignment.list_limit,
+        raw_assignments,
+        &pagination,
+        &original_url,
+    )?;
 
     let assignments: Result<Vec<Assignment>, _> =
         raw_assignments.into_iter().map(TryInto::try_into).collect();

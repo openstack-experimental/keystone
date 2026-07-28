@@ -103,8 +103,13 @@ pub(super) async fn list(
         .map(Into::into)
         .collect();
 
-    let (instances, links) =
-        paginate_bidirectional(&config, instances, &pagination, original_url.path())?;
+    let (instances, links) = paginate_bidirectional(
+        &config,
+        &config.k8s_auth.list_limit,
+        instances,
+        &pagination,
+        &original_url,
+    )?;
     Ok((
         StatusCode::OK,
         Json(K8sAuthInstanceList { instances, links }),

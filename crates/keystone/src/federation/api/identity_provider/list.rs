@@ -96,10 +96,21 @@ pub(super) async fn list(
 
         Some(HashSet::from([query.domain_id.clone()]))
     };
+    // Resolve the effective limit *before* querying, so the backend fetches a
+    // bounded page. Passing the raw `pagination.limit` here let a request with
+    // no `?limit` read the whole table and only truncate afterwards, whenever
+    // a global `[DEFAULT] list_limit` was configured.
+    //
+    // The federation provider has no `list_limit` section of its own, so the
+    // global `[DEFAULT] list_limit`/`max_db_limit` fallbacks apply.
+    let config = state.config_manager.config.read().await;
+    let provider_limit = openstack_keystone_config::ListLimitConfig::default();
+    let limit = config.resolve_list_limit(&provider_limit, pagination.limit);
+
     let mut provider_list_params = ProviderIdentityProviderListParameters::from(query.clone());
     provider_list_params.domain_ids = domain_ids;
     provider_list_params.pagination = ListPagination {
-        limit: pagination.limit,
+        limit,
         marker: pagination.marker.clone(),
         page_reverse: pagination.page_reverse,
     };
@@ -116,12 +127,12 @@ pub(super) async fn list(
         .map(Into::into)
         .collect();
 
-    let config = state.config_manager.config.read().await;
     let (identity_providers, links) = paginate_bidirectional(
         &config,
+        &provider_limit,
         identity_providers,
         &pagination,
-        original_url.path(),
+        &original_url,
     )?;
     Ok((
         StatusCode::OK,
@@ -149,7 +160,7 @@ mod tests {
     use openstack_keystone_core_types::federation as provider_types;
 
     use super::{super::openapi_router, *};
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{get_mocked_state, get_mocked_state_with_config, test_fixture_scoped};
     use crate::federation::MockFederationProvider;
     use crate::provider::Provider;
 
@@ -287,7 +298,7 @@ mod tests {
                     name: Some("name".into()),
                     domain_ids: Some(HashSet::from([None, Some("domain_id".into())])),
                     pagination: ListPagination {
-                        limit: Some(20),
+                        limit: None,
                         marker: None,
                         page_reverse: false,
                     },
@@ -344,7 +355,7 @@ mod tests {
                     name: Some("name".into()),
                     domain_ids: Some(HashSet::from([None, Some("domain_id".into())])),
                     pagination: ListPagination {
-                        limit: Some(20),
+                        limit: None,
                         marker: None,
                         page_reverse: false,
                     },
@@ -518,5 +529,95 @@ mod tests {
         let res: IdentityProviderList = serde_json::from_slice(&body).unwrap();
         assert_eq!(res.links, None);
         assert_eq!(res.identity_providers.len(), 1);
+    }
+
+    /// The backend must receive the *resolved* limit, not the raw request.
+    /// With a global `[DEFAULT] list_limit` and no `?limit`, passing
+    /// `pagination.limit` straight through made the driver read the whole
+    /// table and only truncate afterwards.
+    #[traced_test]
+    #[tokio::test]
+    async fn test_list_backend_gets_global_default_limit() {
+        let mut federation_mock = MockFederationProvider::default();
+        federation_mock
+            .expect_list_identity_providers()
+            .withf(|_, qp: &provider_types::IdentityProviderListParameters| {
+                qp.pagination.limit == Some(7)
+            })
+            .returning(|_, _| Ok(Vec::new()));
+
+        let mut config = openstack_keystone_config::Config::default();
+        config.default.list_limit = Some(7);
+
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state_with_config(
+            Provider::mocked_builder().mock_federation(federation_mock),
+            true,
+            Some(true),
+            config,
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    /// A client `limit` above the global `max_db_limit` is clamped before the
+    /// query, so the driver never over-reads.
+    #[traced_test]
+    #[tokio::test]
+    async fn test_list_backend_limit_clamped_to_max_db_limit() {
+        let mut federation_mock = MockFederationProvider::default();
+        federation_mock
+            .expect_list_identity_providers()
+            .withf(|_, qp: &provider_types::IdentityProviderListParameters| {
+                qp.pagination.limit == Some(3)
+            })
+            .returning(|_, _| Ok(Vec::new()));
+
+        let mut config = openstack_keystone_config::Config::default();
+        config.default.max_db_limit = Some(3);
+
+        let vsc = test_fixture_scoped();
+        let state = get_mocked_state_with_config(
+            Provider::mocked_builder().mock_federation(federation_mock),
+            true,
+            Some(true),
+            config,
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/?limit=100")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }

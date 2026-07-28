@@ -84,7 +84,13 @@ pub(super) async fn list(
         .map(Into::into)
         .collect();
 
-    let (projects, links) = paginate_forward(&config, projects, &pagination, original_url.path())?;
+    let (projects, links) = paginate_forward(
+        &config,
+        &config.resource.list_limit,
+        projects,
+        &pagination,
+        &original_url,
+    )?;
 
     Ok((StatusCode::OK, Json(ProjectShortList { projects, links })).into_response())
 }

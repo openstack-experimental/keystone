@@ -25,7 +25,7 @@ use openstack_keystone_core_types::ListPagination;
 
 use super::types::{Credential, CredentialList, CredentialListParameters};
 use crate::api::auth::Auth;
-use crate::api::common::paginate_forward;
+use crate::api::common::{AuthorizedPage, collect_authorized_page, paginate_forward_filtered};
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -71,43 +71,64 @@ pub(super) async fn list(
         .await?;
 
     let config = state.config_manager.config.read().await;
-    let mut provider_params =
+    let base_params =
         openstack_keystone_core_types::credential::CredentialListParameters::from(query);
-    provider_params.pagination = ListPagination {
-        limit: config.resolve_list_limit(&config.credential.list_limit, pagination.limit),
-        marker: pagination.marker.clone(),
-        page_reverse: false,
+    let limit = config.resolve_list_limit(&config.credential.list_limit, pagination.limit);
+
+    // Bind by reference: `collect_authorized_page` takes `FnMut`, so the
+    // per-batch future must capture a `Copy` handle rather than move the
+    // context out of the closure.
+    let provider = state.provider.get_credential_provider();
+    let exec_ctx = ExecutionContext::from_auth(&state, &user_auth);
+    let exec = &exec_ctx;
+    let enforcer = &state.policy_enforcer;
+    let auth = &user_auth;
+
+    let page = collect_authorized_page(
+        limit,
+        pagination.marker.clone(),
+        |marker| {
+            let mut params = base_params.clone();
+            params.pagination = ListPagination {
+                limit,
+                marker,
+                page_reverse: false,
+            };
+            async move { Ok(provider.list_credentials(exec, &params).await?) }
+        },
+        |item: openstack_keystone_core_types::credential::Credential| async move {
+            match enforcer
+                .enforce(
+                    "identity/credential/show",
+                    auth,
+                    serde_json::Value::Null,
+                    Some(super::credential_policy_input(&item)),
+                )
+                .await
+            {
+                Ok(_) => Ok(Some(item)),
+                Err(PolicyError::Forbidden(_)) => Ok(None),
+                Err(err) => Err(err.into()),
+            }
+        },
+    )
+    .await?;
+    let page = AuthorizedPage {
+        items: page
+            .items
+            .into_iter()
+            .map(Credential::from)
+            .collect::<Vec<Credential>>(),
+        scan_budget_exhausted: page.scan_budget_exhausted,
     };
 
-    let raw = state
-        .provider
-        .get_credential_provider()
-        .list_credentials(
-            &ExecutionContext::from_auth(&state, &user_auth),
-            &provider_params,
-        )
-        .await?;
-
-    let mut credentials = Vec::with_capacity(raw.len());
-    for item in raw {
-        match state
-            .policy_enforcer
-            .enforce(
-                "identity/credential/show",
-                &user_auth,
-                serde_json::Value::Null,
-                Some(super::credential_policy_input(&item)),
-            )
-            .await
-        {
-            Ok(_) => credentials.push(Credential::from(item)),
-            Err(PolicyError::Forbidden(_)) => continue,
-            Err(err) => return Err(err.into()),
-        }
-    }
-
-    let (credentials, links) =
-        paginate_forward(&config, credentials, &pagination, original_url.path())?;
+    let (credentials, links) = paginate_forward_filtered(
+        &config,
+        &config.credential.list_limit,
+        page,
+        &pagination,
+        &original_url,
+    )?;
 
     Ok((StatusCode::OK, Json(CredentialList { credentials, links })).into_response())
 }

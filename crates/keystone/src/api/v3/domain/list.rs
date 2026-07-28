@@ -84,7 +84,13 @@ pub(super) async fn list(
         .map(Into::into)
         .collect();
 
-    let (domains, links) = paginate_forward(&config, domains, &pagination, original_url.path())?;
+    let (domains, links) = paginate_forward(
+        &config,
+        &config.resource.list_limit,
+        domains,
+        &pagination,
+        &original_url,
+    )?;
 
     Ok((StatusCode::OK, Json(DomainList { domains, links })).into_response())
 }

@@ -91,8 +91,13 @@ pub(super) async fn list(
         .map(Into::into)
         .collect();
 
-    let (scim_realms, links) =
-        paginate_bidirectional(&config, realms, &pagination, original_url.path())?;
+    let (scim_realms, links) = paginate_bidirectional(
+        &config,
+        &config.scim_realm.list_limit,
+        realms,
+        &pagination,
+        &original_url,
+    )?;
 
     Ok((StatusCode::OK, Json(ScimRealmList { scim_realms, links })).into_response())
 }

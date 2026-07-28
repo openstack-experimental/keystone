@@ -101,8 +101,13 @@ pub(super) async fn list(
         .map(Into::into)
         .collect();
 
-    let (mappings, links) =
-        paginate_bidirectional(&config, rulesets, &pagination, original_url.path())?;
+    let (mappings, links) = paginate_bidirectional(
+        &config,
+        &config.mapping.list_limit,
+        rulesets,
+        &pagination,
+        &original_url,
+    )?;
 
     Ok((StatusCode::OK, Json(MappingRuleSetList { mappings, links })).into_response())
 }

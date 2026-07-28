@@ -98,8 +98,13 @@ pub(super) async fn list(
         .map(Into::into)
         .collect();
 
-    let (oauth2_clients, links) =
-        paginate_bidirectional(&config, clients, &pagination, original_url.path())?;
+    let (oauth2_clients, links) = paginate_bidirectional(
+        &config,
+        &config.oauth2.list_limit,
+        clients,
+        &pagination,
+        &original_url,
+    )?;
 
     Ok((
         StatusCode::OK,

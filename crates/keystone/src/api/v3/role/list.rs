@@ -80,7 +80,13 @@ pub(super) async fn list(
         .map(Into::into)
         .collect();
 
-    let (roles, links) = paginate_forward(&config, roles, &pagination, original_url.path())?;
+    let (roles, links) = paginate_forward(
+        &config,
+        &config.role.list_limit,
+        roles,
+        &pagination,
+        &original_url,
+    )?;
 
     Ok((StatusCode::OK, Json(RoleList { roles, links })).into_response())
 }

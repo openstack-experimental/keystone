@@ -86,7 +86,13 @@ pub(super) async fn list(
         .map(Into::into)
         .collect();
 
-    let (users, links) = paginate_bidirectional(&config, users, &pagination, original_url.path())?;
+    let (users, links) = paginate_bidirectional(
+        &config,
+        &config.identity.list_limit,
+        users,
+        &pagination,
+        &original_url,
+    )?;
 
     Ok((StatusCode::OK, Json(UserList { users, links })).into_response())
 }

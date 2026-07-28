@@ -81,7 +81,13 @@ pub(super) async fn list(
         .map(Into::into)
         .collect();
 
-    let (regions, links) = paginate_forward(&config, regions, &pagination, original_url.path())?;
+    let (regions, links) = paginate_forward(
+        &config,
+        &config.catalog.list_limit,
+        regions,
+        &pagination,
+        &original_url,
+    )?;
 
     Ok((StatusCode::OK, Json(RegionList { regions, links })).into_response())
 }

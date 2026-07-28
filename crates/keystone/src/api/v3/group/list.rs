@@ -81,7 +81,13 @@ pub async fn list(
         .map(Into::into)
         .collect();
 
-    let (groups, links) = paginate_forward(&config, groups, &pagination, original_url.path())?;
+    let (groups, links) = paginate_forward(
+        &config,
+        &config.identity.list_limit,
+        groups,
+        &pagination,
+        &original_url,
+    )?;
 
     Ok((StatusCode::OK, Json(GroupList { groups, links })).into_response())
 }

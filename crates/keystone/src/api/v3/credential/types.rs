@@ -19,3 +19,18 @@ impl crate::api::common::ResourceIdentifier for Credential {
         self.id.clone()
     }
 }
+
+/// Marker for the *domain* credential so `collect_authorized_page` can advance
+/// its marker over raw backend rows.
+///
+/// Deliberately implemented on the domain type rather than converting rows to
+/// the API type before the per-item check: `credential_policy_input` must keep
+/// receiving exactly the object it received before, so adopting the shared
+/// page-filler changes no policy input.
+impl crate::api::common::ResourceIdentifier
+    for openstack_keystone_core_types::credential::Credential
+{
+    fn get_id(&self) -> String {
+        self.id.clone()
+    }
+}
