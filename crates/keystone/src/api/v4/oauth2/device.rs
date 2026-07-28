@@ -102,10 +102,7 @@ fn verify_csrf_token(grant: &DeviceCodeGrant, presented: &str) -> bool {
 }
 
 fn is_https(headers: &HeaderMap) -> bool {
-    headers
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-        == Some("https")
+    crate::api::common::is_https(headers)
 }
 
 fn device_cookie(device_code: String, secure: bool) -> Cookie<'static> {

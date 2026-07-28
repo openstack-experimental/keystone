@@ -18,7 +18,7 @@
 use axum::{
     Json,
     extract::State,
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
 use utoipa::{
@@ -96,22 +96,7 @@ async fn version(
     headers: HeaderMap,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
-    let host = state
-        .config_manager
-        .config
-        .read()
-        .await
-        .default
-        .public_endpoint
-        .clone()
-        .map(|x| x.to_string())
-        .or_else(|| {
-            headers
-                .get(header::HOST)
-                .and_then(|header| header.to_str().map(|val| format!("http://{val}")).ok())
-        })
-        .unwrap_or_else(|| "http://localhost".to_string());
-
+    let host = crate::api::common::public_base_url(&state, &headers).await;
     let res = Versions {
         versions: Values {
             values: vec![

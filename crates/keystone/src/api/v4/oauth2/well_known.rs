@@ -35,23 +35,12 @@ use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 
 pub(super) async fn base_url(state: &ServiceState, headers: &HeaderMap) -> String {
-    // Mirrors the fallback chain used by `api::v4::version`:
-    // `public_endpoint` -> `Host` header -> `http://localhost`.
-    state
-        .config_manager
-        .config
-        .read()
+    // Mirrors the fallback chain used by `api::common::public_base_url`:
+    // `public_endpoint` -> `Host` header + `X-Forwarded-Proto` -> `http://localhost`.
+    crate::api::common::public_base_url(state, headers)
         .await
-        .default
-        .public_endpoint
-        .clone()
-        .map(|x| x.to_string().trim_end_matches('/').to_owned())
-        .or_else(|| {
-            headers
-                .get(axum::http::header::HOST)
-                .and_then(|header| header.to_str().map(|val| format!("http://{val}")).ok())
-        })
-        .unwrap_or_else(|| "http://localhost".to_string())
+        .trim_end_matches('/')
+        .to_owned()
 }
 
 /// Publish the OIDC discovery document for a domain.

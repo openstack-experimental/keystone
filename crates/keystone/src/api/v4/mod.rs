@@ -17,12 +17,13 @@
 use axum::{
     Json,
     extract::{OriginalUri, Request, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
 use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
+use crate::api::common::public_base_url;
 use crate::api::error::KeystoneApiError;
 use crate::federation::api as federation;
 use crate::k8s_auth::api as k8s_auth;
@@ -93,21 +94,7 @@ async fn version(
     State(state): State<ServiceState>,
     _req: Request,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
-    let host = state
-        .config_manager
-        .config
-        .read()
-        .await
-        .default
-        .public_endpoint
-        .clone()
-        .map(|x| x.to_string())
-        .or_else(|| {
-            headers
-                .get(header::HOST)
-                .and_then(|header| header.to_str().map(|val| format!("http://{val}")).ok())
-        })
-        .unwrap_or_else(|| "http://localhost".to_string());
+    let host = public_base_url(&state, &headers).await;
     let link = Link {
         rel: "self".into(),
         href: format!("{}{}", host, uri.path()),

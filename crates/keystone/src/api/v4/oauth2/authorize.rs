@@ -145,10 +145,7 @@ fn verify_csrf_token(session: &PreAuthSession, presented: &str) -> bool {
 }
 
 fn is_https(headers: &HeaderMap) -> bool {
-    headers
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-        == Some("https")
+    crate::api::common::is_https(headers)
 }
 
 fn session_cookie(session_id: String, secure: bool) -> Cookie<'static> {

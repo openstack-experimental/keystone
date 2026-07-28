@@ -26,6 +26,9 @@ use crate::api::KeystoneApiError;
 use crate::auth::ExecutionContext;
 use crate::keystone::ServiceState;
 
+// Canonical header name for proxy-forwarded protocol.
+const FORWARDED_PROTO: &str = "x-forwarded-proto";
+
 /// Raw TCP peer address for the public interface only.
 ///
 /// Internal/admin requests return `None` even when `ConnectInfo` is populated
@@ -40,6 +43,44 @@ impl<S: Send + Sync> FromRequestParts<S> for PeerAddr {
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         Ok(PeerAddr(public_ingress_peer_addr(&parts.extensions)))
     }
+}
+
+/// Resolve the public-facing base URL for constructing absolute links
+/// in API responses.
+///
+/// Fallback chain:
+/// 1. `public_endpoint` from config
+/// 2. `Host` header with protocol from `X-Forwarded-Proto` (defaults to `http`)
+/// 3. `http://localhost` as last resort
+pub async fn public_base_url(state: &ServiceState, headers: &axum::http::HeaderMap) -> String {
+    state
+        .config_manager
+        .config
+        .read()
+        .await
+        .default
+        .public_endpoint
+        .clone()
+        .map(|x| x.to_string())
+        .or_else(|| {
+            headers.get(axum::http::header::HOST).and_then(|host| {
+                host.to_str().ok().map(|h| {
+                    let proto = headers
+                        .get(FORWARDED_PROTO)
+                        .and_then(|h| h.to_str().ok())
+                        .filter(|v| matches!(*v, "http" | "https"))
+                        .unwrap_or("http");
+                    format!("{proto}://{h}")
+                })
+            })
+        })
+        .unwrap_or_else(|| "http://localhost".to_string())
+}
+
+/// Returns true when the request arrived over HTTPS as indicated by the
+/// `X-Forwarded-Proto` header being set to `https`.
+pub fn is_https(headers: &axum::http::HeaderMap) -> bool {
+    headers.get(FORWARDED_PROTO).and_then(|h| h.to_str().ok()) == Some("https")
 }
 
 /// Get the domain by ID or Name.
@@ -414,5 +455,51 @@ mod tests {
             paginate_bidirectional(&Config::default(), fake_items(cnt), &query, "foo/bar").unwrap();
         assert_eq!(items.len(), expected_len);
         assert_eq!(links, expected_links);
+    }
+
+    #[rstest]
+    #[case("https", true)]
+    #[case("http", false)]
+    #[case("gre", false)]
+    fn test_is_https(#[case] header_value: &str, #[case] expected: bool) {
+        let mut headers = axum::http::HeaderMap::new();
+        if let Ok(hv) = header_value.parse::<axum::http::HeaderValue>() {
+            let _ = headers.insert(FORWARDED_PROTO, hv);
+        }
+        assert_eq!(is_https(&headers), expected);
+    }
+
+    #[rstest]
+    #[case(None, None, "http://localhost")]
+    #[case(Some("api.example.com"), None, "http://api.example.com")]
+    #[case(Some("api.example.com"), Some("https"), "https://api.example.com")]
+    #[case(Some("api.example.com"), Some("http"), "http://api.example.com")]
+    #[case(
+        Some("api.example.com:5000"),
+        Some("https"),
+        "https://api.example.com:5000"
+    )]
+    #[case(Some("api.example.com"), Some("gre"), "http://api.example.com")] // invalid proto falls back to http
+    #[tokio::test]
+    async fn test_public_base_url_from_headers(
+        #[case] host: Option<&str>,
+        #[case] forwarded_proto: Option<&str>,
+        #[case] expected: &str,
+    ) {
+        let mut headers = axum::http::HeaderMap::new();
+        if let Some(h) = host {
+            if let Ok(hv) = h.parse::<axum::http::HeaderValue>() {
+                let _ = headers.insert(axum::http::header::HOST, hv);
+            }
+        }
+        if let Some(p) = forwarded_proto {
+            if let Ok(pv) = p.parse::<axum::http::HeaderValue>() {
+                let _ = headers.insert(FORWARDED_PROTO, pv);
+            }
+        }
+        // get_mocked_state uses Config::default()
+        // which has public_endpoint == None, so the fallback to Host header applies.
+        let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
+        assert_eq!(public_base_url(&state, &headers).await, expected);
     }
 }
