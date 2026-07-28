@@ -1031,7 +1031,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[parallel]
+    #[serial]
     async fn test_shutdown_without_vault_is_noop() {
         let mut config_file = NamedTempFile::with_suffix(".conf").unwrap();
         writeln!(
@@ -1041,8 +1041,14 @@ mod tests {
         .unwrap();
 
         let manager = ConfigManager::watched(config_file.path()).await.unwrap();
-        // Must return promptly and not panic for a non-Vault configuration.
-        manager.shutdown().await;
+        // #[serial] prevents other config tests' notify watchers from firing
+        // spurious parent-directory events that queue into sync_rx, triggering
+        // repeated 500ms debounce sleeps. The biased select! prioritizes
+        // sync_rx.recv() over shutdown.cancelled(), so a flood of events can
+        // delay the shutdown break indefinitely.
+        timeout(Duration::from_secs(10), manager.shutdown())
+            .await
+            .expect("shutdown should not hang for a non-Vault configuration");
     }
 
     #[tokio::test]
@@ -1104,7 +1110,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[parallel]
+    #[serial]
     async fn test_renewable_vault_token_is_renewed_halfway_through_ttl() {
         let server = MockServer::start();
         let _lookup = mock_lookup(&server, true, 2);
@@ -1115,15 +1121,23 @@ mod tests {
         write_vault_config(&mut config_file, &server, 60);
 
         let _manager = ConfigManager::watched(config_file.path()).await.unwrap();
-        // Yield so the spawned watch-loop task can enter its first select!
-        // iteration and arm the vault_tick deadline based on the lookup TTL
-        // that was set during vault resolution in ConfigManager::watched().
-        // Without this yield, the test's timeout clock starts before the
-        // vault_tick is armed, making the effective wait window shorter and
-        // susceptible to scheduler jitter on loaded CI runners.
-        tokio::task::yield_now().await;
+        // The renewal deadline (half_ttl of the 2s lookup TTL = 1s) is set as an
+        // absolute Instant during vault::resolve(), before the spawned watch-loop
+        // task has entered its select!. We need the task to:
+        // 1. Start and reach its select! loop
+        // 2. Have sleep_until() fire when the 1s deadline passes
+        // 3. Get picked by select! (biased — sync_rx.recv() wins if a notify event is
+        //    queued from spawn-time filesystem activity)
+        //
+        // yield_now() is insufficient on loaded CI runners because it only gives
+        // one scheduling opportunity. A short sleep gives the executor repeated
+        // chances to run the spawned task.
+        // #[serial] prevents other config tests' notify watchers from firing
+        // spurious directory events that fill sync_rx and starve vault_tick via
+        // select! bias.
+        sleep(Duration::from_millis(100)).await;
 
-        timeout(Duration::from_secs(5), async {
+        timeout(Duration::from_secs(10), async {
             while renewal.calls() == 0 {
                 sleep(Duration::from_millis(50)).await;
             }
