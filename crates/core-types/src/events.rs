@@ -173,6 +173,15 @@ pub enum EventPayload {
     Trust {
         id: String,
     },
+
+    // Policy blob store (legacy `/v3/policies`)
+    //
+    // Carries the ID only. The policy `blob` is arbitrary caller-supplied
+    // data and `blob` is on the audit denylist enforced by
+    // `tools/check_event_payload_no_secret_fields.py`.
+    Policy {
+        id: String,
+    },
 }
 
 impl Event {

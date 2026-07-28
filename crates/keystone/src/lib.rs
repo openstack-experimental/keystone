@@ -105,6 +105,7 @@ include!(concat!(env!("OUT_DIR"), "/inventory_anchors.rs"));
 
 pub mod plugin_manager;
 pub mod policy;
+pub mod policy_store;
 pub mod provider;
 pub mod resource;
 pub mod revoke;

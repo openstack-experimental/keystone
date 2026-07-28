@@ -56,6 +56,8 @@ use crate::oauth2_key::Oauth2KeyProviderError;
 use crate::oauth2_key::backend::Oauth2KeyBackend;
 use crate::oauth2_session::Oauth2SessionProviderError;
 use crate::oauth2_session::backend::Oauth2SessionBackend;
+use crate::policy_store::PolicyStoreProviderError;
+use crate::policy_store::backend::PolicyStoreBackend;
 use crate::resource::backend::ResourceBackend;
 use crate::resource::error::ResourceProviderError;
 use crate::revoke::RevokeProviderError;
@@ -121,6 +123,7 @@ declare_backend_registry!(
     dyn Oauth2KeyBackend,
     dyn Oauth2SessionBackend,
     dyn K8sAuthBackend,
+    dyn PolicyStoreBackend,
     dyn ResourceBackend,
     dyn RevokeBackend,
     dyn RoleBackend,
@@ -445,6 +448,19 @@ pub trait PluginManagerApi {
         name: S,
     ) -> Result<&Arc<dyn TrustBackend>, TrustProviderError>;
 
+    /// Get registered policy store backend (legacy `/v3/policies`).
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn PolicyStoreBackend>)` if found, otherwise
+    ///   `Err(PolicyStoreProviderError)`.
+    fn get_policy_store_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn PolicyStoreBackend>, PolicyStoreProviderError>;
+
     /// Register API Key backend.
     ///
     /// # Parameters
@@ -658,4 +674,15 @@ pub trait PluginManagerApi {
     /// - `name`: The name to register the backend under.
     /// - `plugin`: The backend implementation.
     fn register_trust_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn TrustBackend>);
+
+    /// Register policy store backend (legacy `/v3/policies`).
+    ///
+    /// # Parameters
+    /// - `name`: The name to register the backend under.
+    /// - `plugin`: The backend implementation.
+    fn register_policy_store_backend<S: AsRef<str>>(
+        &mut self,
+        name: S,
+        plugin: Arc<dyn PolicyStoreBackend>,
+    );
 }

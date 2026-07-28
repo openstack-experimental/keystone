@@ -25,6 +25,7 @@ pub mod identity;
 pub mod macros;
 pub mod mapping;
 pub mod oauth2;
+pub mod policy;
 pub mod region;
 pub mod resource;
 pub mod role;

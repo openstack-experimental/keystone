@@ -4866,6 +4866,7 @@ dependencies = [
  "openstack-keystone-oauth2-key-driver-raft",
  "openstack-keystone-oauth2-session-driver-raft",
  "openstack-keystone-password-hashing",
+ "openstack-keystone-policy-store-driver-sql",
  "openstack-keystone-resource-driver-sql",
  "openstack-keystone-revoke-driver-sql",
  "openstack-keystone-role-driver-sql",
@@ -5516,6 +5517,21 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-test",
+]
+
+[[package]]
+name = "openstack-keystone-policy-store-driver-sql"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "inventory",
+ "openstack-keystone-core",
+ "openstack-keystone-core-types",
+ "sea-orm",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

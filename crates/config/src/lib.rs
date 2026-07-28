@@ -92,6 +92,7 @@ mod oauth2;
 mod oslo_middleware;
 mod pagination;
 mod policy;
+mod policy_store;
 mod rate_limit;
 mod resource;
 mod revoke;
@@ -134,6 +135,7 @@ pub use oauth2::*;
 pub use oslo_middleware::*;
 pub use pagination::*;
 pub use policy::*;
+pub use policy_store::*;
 pub use rate_limit::*;
 pub use resource::*;
 pub use revoke::*;
@@ -295,6 +297,13 @@ pub struct Config {
     /// to exist (ADR-0022, Invariant 8).
     #[serde(rename = "rate_limit_user_auth", default)]
     pub rate_limit_user_auth: RateLimitSection,
+
+    /// Policy store provider configuration (legacy `/v3/policies`).
+    ///
+    /// Bound to `[policy]`, matching python keystone. The OPA authorization
+    /// configuration is a different section, `[api_policy]` above.
+    #[serde(default)]
+    pub policy: PolicyStoreProvider,
 
     /// Resource provider configuration.
     #[serde(default)]

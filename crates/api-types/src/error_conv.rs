@@ -35,6 +35,7 @@ use openstack_keystone_core_types::identity::IdentityProviderError;
 use openstack_keystone_core_types::mapping::MappingProviderError;
 use openstack_keystone_core_types::oauth2_client::Oauth2ClientProviderError;
 use openstack_keystone_core_types::oauth2_key::Oauth2KeyProviderError;
+use openstack_keystone_core_types::policy_store::PolicyStoreProviderError;
 use openstack_keystone_core_types::resource::ResourceProviderError;
 use openstack_keystone_core_types::revoke::RevokeProviderError;
 use openstack_keystone_core_types::role::RoleProviderError;
@@ -226,6 +227,20 @@ impl From<CredentialProviderError> for KeystoneApiError {
             | CredentialProviderError::MissingProjectId
             | CredentialProviderError::InvalidBlob(..)
             | CredentialProviderError::ImmutableField(..)) => Self::BadRequest(err.to_string()),
+            other => Self::InternalError(other.to_string()),
+        }
+    }
+}
+
+impl From<PolicyStoreProviderError> for KeystoneApiError {
+    fn from(value: PolicyStoreProviderError) -> Self {
+        match value {
+            ref err @ PolicyStoreProviderError::Conflict(..) => Self::Conflict(err.to_string()),
+            PolicyStoreProviderError::PolicyNotFound(x) => Self::NotFound {
+                resource: "policy".into(),
+                identifier: x,
+            },
+            PolicyStoreProviderError::Validation { source } => Self::BadRequest(source.to_string()),
             other => Self::InternalError(other.to_string()),
         }
     }

@@ -32,6 +32,7 @@ use crate::mapping::MappingProviderError;
 use crate::oauth2_client::Oauth2ClientProviderError;
 use crate::oauth2_key::Oauth2KeyProviderError;
 use crate::oauth2_session::Oauth2SessionProviderError;
+use crate::policy_store::PolicyStoreProviderError;
 use crate::resource::ResourceProviderError;
 use crate::revoke::RevokeProviderError;
 use crate::role::RoleProviderError;
@@ -226,6 +227,14 @@ pub enum KeystoneError {
     /// start when this error is returned (ADR-0022, Invariant 2).
     #[error("invalid rate limit configuration: {0}")]
     RateLimitConfig(String),
+
+    /// Policy store provider (legacy `/v3/policies`).
+    #[error(transparent)]
+    PolicyStoreProvider {
+        /// The source of the error.
+        #[from]
+        source: PolicyStoreProviderError,
+    },
 
     /// Resource provider.
     #[error(transparent)]

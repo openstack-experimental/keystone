@@ -123,7 +123,7 @@ pub(crate) mod tests {
     pub use openstack_keystone_core::api::policy_contract;
     pub use openstack_keystone_core::api::tests::{
         get_capturing_state, get_mocked_state, get_mocked_state_with_config,
-        get_state_with_mock_policy, test_fixture_scoped,
+        get_state_with_mock_policy, get_state_with_policy, test_fixture_scoped,
     };
 
     use std::net::SocketAddr;
@@ -383,6 +383,45 @@ pub(crate) mod tests {
                     application_credential: app_cred,
                     token: None,
                 })
+                .principal(PrincipalInfo {
+                    identity: user_identity(user_id),
+                })
+                .authorization(authz)
+                .build();
+            ValidatedSecurityContext::test_new(sc)
+        }
+
+        /// A plain password-authenticated caller in the **system** scope with
+        /// `roles` — the `RULE_ADMIN_OR_SYSTEM_READER` shape python keystone
+        /// uses for read verbs, which the project-scoped [`member_vsc`]
+        /// cannot express.
+        ///
+        /// `scope` is the raw system-scope value; the literal `"system"` is
+        /// aliased to `"all"` by `Credentials`, which is what
+        /// `input.credentials.system` compares against in Rego.
+        pub fn system_scoped_vsc(
+            user_id: &str,
+            scope: &str,
+            roles: &[&str],
+        ) -> ValidatedSecurityContext {
+            let authz = AuthzInfoBuilder::default()
+                .scope(ScopeInfo::System(scope.to_string()))
+                .roles(
+                    roles
+                        .iter()
+                        .enumerate()
+                        .map(|(i, name)| RoleRef {
+                            domain_id: None,
+                            id: format!("role-{i}"),
+                            name: Some((*name).to_string()),
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .build()
+                .unwrap();
+
+            let sc = SecurityContext::test_build()
+                .authentication_context(AuthenticationContext::Password)
                 .principal(PrincipalInfo {
                     identity: user_identity(user_id),
                 })

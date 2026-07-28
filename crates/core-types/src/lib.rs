@@ -37,6 +37,7 @@ pub mod mapping;
 pub mod oauth2_client;
 pub mod oauth2_key;
 pub mod oauth2_session;
+pub mod policy_store;
 pub mod resource;
 pub mod revoke;
 pub mod role;

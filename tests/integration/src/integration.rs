@@ -32,6 +32,7 @@ mod oauth2_key_janitor;
 mod oauth2_session;
 mod oauth2_token_exchange;
 mod oauth2_token_verify;
+mod policy_store;
 mod resource;
 mod revoke;
 mod role;

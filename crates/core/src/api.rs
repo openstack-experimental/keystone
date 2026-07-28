@@ -327,6 +327,34 @@ pub mod tests {
         }
     }
 
+    /// Like [`get_mocked_state`], but wired to a caller-supplied
+    /// [`crate::policy::PolicyEnforcer`].
+    ///
+    /// [`get_mocked_state`] decides uniformly (allow-all or deny-all) and
+    /// [`get_capturing_state`] always allows, so neither can express
+    /// "allow the collection check, deny *this* item" — which is exactly
+    /// what a list handler's per-item re-check (security model I8) needs to
+    /// be tested for, along with propagation of non-`Forbidden` policy
+    /// errors.
+    pub async fn get_state_with_policy(
+        provider_builder: ProviderBuilder,
+        policy: Arc<dyn crate::policy::PolicyEnforcer>,
+    ) -> ServiceState {
+        let provider = provider_builder.build().unwrap();
+        Arc::new(
+            Service::new(
+                ConfigManager::not_watched(Config::default()),
+                DatabaseConnection::default(),
+                provider,
+                policy,
+                AuditDispatcher::noop(),
+                None,
+            )
+            .await
+            .unwrap(),
+        )
+    }
+
     /// Like [`get_mocked_state`], but wired to a [`CapturingPolicy`] instead
     /// of an allow/deny-only mock, so the test can inspect exactly what
     /// `(policy_name, target, existing)` the handler under test sent.

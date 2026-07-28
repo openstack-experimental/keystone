@@ -106,6 +106,7 @@ pub mod oauth2_key;
 pub mod oauth2_session;
 pub mod plugin_manager;
 pub mod policy;
+pub mod policy_store;
 pub mod provider;
 pub mod rate_limit;
 pub mod request_cache;

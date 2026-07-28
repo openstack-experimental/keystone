@@ -1703,6 +1703,53 @@ mod scim_resource {
 }
 pub use scim_resource::MockScimResourceProvider;
 
+mod policy_store {
+    use super::*;
+
+    use openstack_keystone_core_types::policy_store::*;
+
+    use crate::policy_store::{PolicyStoreApi, PolicyStoreProviderError};
+
+    mock! {
+        pub PolicyStoreProvider {}
+
+        #[async_trait]
+        impl PolicyStoreApi for PolicyStoreProvider {
+            async fn create_policy<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                policy: PolicyCreate,
+            ) -> Result<Policy, PolicyStoreProviderError>;
+
+            async fn delete_policy<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                id: &'a str,
+            ) -> Result<(), PolicyStoreProviderError>;
+
+            async fn get_policy<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                id: &'a str,
+            ) -> Result<Option<Policy>, PolicyStoreProviderError>;
+
+            async fn list_policies<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                params: &PolicyListParameters,
+            ) -> Result<Vec<Policy>, PolicyStoreProviderError>;
+
+            async fn update_policy<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                id: &'a str,
+                policy: PolicyUpdate,
+            ) -> Result<Policy, PolicyStoreProviderError>;
+        }
+    }
+}
+pub use policy_store::MockPolicyStoreProvider;
+
 mod trust {
     use super::*;
 

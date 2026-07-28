@@ -53,6 +53,8 @@ use openstack_keystone_core::oauth2_key::Oauth2KeyProviderError;
 use openstack_keystone_core::oauth2_key::backend::Oauth2KeyBackend;
 use openstack_keystone_core::oauth2_session::Oauth2SessionProviderError;
 use openstack_keystone_core::oauth2_session::backend::Oauth2SessionBackend;
+use openstack_keystone_core::policy_store::PolicyStoreProviderError;
+use openstack_keystone_core::policy_store::backend::PolicyStoreBackend;
 use openstack_keystone_core::resource::backend::ResourceBackend;
 use openstack_keystone_core::resource::error::ResourceProviderError;
 use openstack_keystone_core::revoke::RevokeProviderError;
@@ -118,6 +120,7 @@ pub struct PluginManager {
     token_restriction_backends: HashMap<String, Arc<dyn TokenRestrictionBackend>>,
     /// Trust backend plugins.
     trust_backends: HashMap<String, Arc<dyn TrustBackend>>,
+    policy_store_backends: HashMap<String, Arc<dyn PolicyStoreBackend>>,
 }
 
 impl PluginManagerApi for PluginManager {
@@ -542,6 +545,24 @@ impl PluginManagerApi for PluginManager {
             ))
     }
 
+    /// Get registered policy store backend (legacy `/v3/policies`).
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing a reference to the `PolicyStoreBackend` if found,
+    /// or a `PolicyStoreProviderError`.
+    #[allow(clippy::borrowed_box)]
+    fn get_policy_store_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn PolicyStoreBackend>, PolicyStoreProviderError> {
+        self.policy_store_backends.get(name.as_ref()).ok_or(
+            PolicyStoreProviderError::UnsupportedDriver(name.as_ref().to_string()),
+        )
+    }
+
     /// Register API Key backend.
     ///
     /// # Parameters
@@ -828,6 +849,20 @@ impl PluginManagerApi for PluginManager {
         self.trust_backends
             .insert(name.as_ref().to_string(), plugin);
     }
+
+    /// Register policy store backend (legacy `/v3/policies`).
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to register.
+    /// * `plugin` - The backend implementation to register.
+    fn register_policy_store_backend<S: AsRef<str>>(
+        &mut self,
+        name: S,
+        plugin: Arc<dyn PolicyStoreBackend>,
+    ) {
+        self.policy_store_backends
+            .insert(name.as_ref().to_string(), plugin);
+    }
 }
 
 impl PluginManager {
@@ -870,6 +905,7 @@ impl PluginManager {
             token_backends: HashMap::new(),
             token_restriction_backends: HashMap::new(),
             trust_backends: HashMap::new(),
+            policy_store_backends: HashMap::new(),
         };
         register_backends(config, &mut slf.api_key_backends).await?;
         register_backends(config, &mut slf.application_credential_backends).await?;
@@ -893,6 +929,7 @@ impl PluginManager {
         register_backends(config, &mut slf.token_backends).await?;
         register_backends(config, &mut slf.token_restriction_backends).await?;
         register_backends(config, &mut slf.trust_backends).await?;
+        register_backends(config, &mut slf.policy_store_backends).await?;
         Ok(slf)
     }
 }

@@ -68,6 +68,9 @@ use crate::oauth2_session::MockOauth2SessionProvider;
 use crate::oauth2_session::Oauth2SessionApi;
 use crate::plugin_manager::PluginManagerApi;
 #[cfg(any(test, feature = "mock"))]
+use crate::policy_store::MockPolicyStoreProvider;
+use crate::policy_store::PolicyStoreApi;
+#[cfg(any(test, feature = "mock"))]
 use crate::resource::MockResourceProvider;
 use crate::resource::ResourceApi;
 #[cfg(any(test, feature = "mock"))]
@@ -121,6 +124,8 @@ pub struct Provider {
     oauth2_session: Box<dyn Oauth2SessionApi>,
     /// K8s auth provider.
     k8s_auth: Box<dyn K8sAuthApi>,
+    /// Policy store provider (legacy `/v3/policies`).
+    policy_store: Box<dyn PolicyStoreApi>,
     /// Resource provider.
     resource: Box<dyn ResourceApi>,
     /// Revoke provider.
@@ -256,6 +261,12 @@ impl ProviderBuilder {
         new
     }
 
+    pub fn mock_policy_store(self, value: impl PolicyStoreApi + 'static) -> Self {
+        let mut new = self;
+        new.policy_store = Some(Box::new(value));
+        new
+    }
+
     pub fn mock_token(self, value: impl TokenApi + 'static) -> Self {
         let mut new = self;
         new.token = Some(Box::new(value));
@@ -318,6 +329,10 @@ impl Provider {
             crate::k8s_auth::K8sAuthService::new(cfg, plugin_manager, k8s_http_client)
                 .map_err(|e| KeystoneError::K8sAuthProvider { source: e })?,
         );
+        let policy_store = Box::new(crate::policy_store::PolicyStoreService::new(
+            cfg,
+            plugin_manager,
+        )?);
         let resource = Box::new(crate::resource::ResourceService::new(cfg, plugin_manager)?);
         let revoke = Box::new(crate::revoke::RevokeService::new(cfg, plugin_manager)?);
         let role = Box::new(crate::role::RoleService::new(cfg, plugin_manager)?);
@@ -347,6 +362,7 @@ impl Provider {
             oauth2_key,
             oauth2_session,
             k8s_auth,
+            policy_store,
             resource,
             revoke,
             role,
@@ -375,6 +391,7 @@ impl Provider {
             .mock_oauth2_session(MockOauth2SessionProvider::default())
             .mock_federation(MockFederationProvider::default())
             .mock_k8s_auth(MockK8sAuthProvider::default())
+            .mock_policy_store(MockPolicyStoreProvider::default())
             .mock_resource(MockResourceProvider::default())
             .mock_revoke(MockRevokeProvider::default())
             .mock_role(MockRoleProvider::default())
@@ -482,6 +499,13 @@ impl Provider {
     /// Get the token provider.
     pub fn get_token_provider(&self) -> &dyn TokenApi {
         &*self.token
+    }
+
+    /// Get the policy store provider (legacy `/v3/policies`).
+    ///
+    /// Unrelated to [`crate::policy`], which is the OPA authorization client.
+    pub fn get_policy_store_provider(&self) -> &dyn PolicyStoreApi {
+        &*self.policy_store
     }
 
     /// Get the trust provider.

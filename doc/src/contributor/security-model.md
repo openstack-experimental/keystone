@@ -260,13 +260,24 @@ shipping it leaks EC2 secret keys / TOTP seeds into OPA decision logs.
 **Where:** `credential_policy_input()` in
 `crates/keystone/src/api/v3/credential/mod.rs`, used by all credential handlers.
 
+A stronger variant exists for `/v3/policies`, whose stored document (`blob`)
+*and* open-ended `extra` map are both arbitrary caller-supplied data: the
+`to_policy_input()` methods in `crates/api-types/src/v3/policy.rs` **construct**
+the policy input from an allowlist (`id`, `type`) instead of removing known-bad
+keys. Prefer that shape for any resource with an open key space — a denylist
+cannot cover `extra`.
+
 ### I8 — List re-checks every item individually
 
 **What:** list endpoints run the collection-level policy first, then re-enforce
 the per-item `show` policy against **each record's own** identifiers, dropping
-unreadable rows. **Why:** a permissive list filter must not leak individual
-objects the caller cannot read (CVE-2019-19687). **Where:**
-`crates/keystone/src/api/v3/credential/list.rs`.
+unreadable rows. A policy failure that is *not* `Forbidden` (OPA unreachable,
+malformed decision) must be propagated, not treated as "drop this item" —
+otherwise an infrastructure fault silently returns a truncated collection.
+**Why:** a permissive list filter must not leak individual objects the caller
+cannot read (CVE-2019-19687). **Where:**
+`crates/keystone/src/api/v3/credential/list.rs`,
+`crates/keystone/src/api/v3/policy/list.rs`.
 
 ## 5. Delegated-auth specifics
 
@@ -392,3 +403,29 @@ carries it, ticked by the reviewer, not just this prose reference.
   (security review V5): creation warns unconditionally on a non-empty
   `access_rules` list, and `application_credential.reject_unenforced_access_rules`
   (default `false`) can be set to fail loud instead.
+- **`input.credentials.system_scope` is a dead key in several policies.**
+  `Credentials.system` (`crates/core/src/policy.rs`) serializes the system
+  scope under the field name `system`; nothing ever emits `system_scope`, so
+  any rule comparing against it is unreachable. It fails *closed* (access is
+  denied, never granted), so this is a functional gap rather than a
+  vulnerability. `policy/policy/*.rego` uses the correct
+  `input.credentials.system`.
+
+  The affected rules are **not** uniform, and a global key rename would be
+  wrong. Each needs checking against the python default it is meant to mirror:
+
+  | Rego | Python default | Effect of the dead key |
+  | --- | --- | --- |
+  | `assignment/list` | `RULE_ADMIN_OR_SYSTEM_READER` | Real: system reader is denied |
+  | `auth/token/show` | admin or token owner, plus system reader | Real: system reader is denied |
+  | `endpoint/{list,show}` | `RULE_ADMIN_OR_SYSTEM_READER` | Real: system reader is denied |
+  | `service/{list,show}` | `RULE_ADMIN_OR_SYSTEM_READER` | Real: system reader is denied |
+  | `auth/project/list` | any valid token | None — the rego is `default allow := true`, so nothing is denied |
+  | `auth/token/revoke` | admin or token owner (no system reader) | None — the `system_scope` lines are commented out |
+  | `region/{list,show}` | `check_str=''` (any valid token) | Different bug: the rego is `default allow := false`, so it is *stricter* than python regardless of the key; renaming would not fix it |
+
+  Needs a follow-up issue for an endpoint-by-endpoint audit against the
+  [Identity API policy reference](https://docs.openstack.org/keystone/latest/configuration/policy.html),
+  not a blanket search-and-replace. This class of bug is exactly what the Gate
+  B3 real-`opa run` handler tests catch and hand-written Rego unit tests
+  cannot.

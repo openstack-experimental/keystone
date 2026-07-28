@@ -20,6 +20,7 @@ pub mod ec2tokens;
 pub mod endpoint;
 pub mod group;
 pub mod os_ec2_credential;
+pub mod policy;
 pub mod project;
 pub mod region;
 pub mod role;
@@ -40,6 +41,8 @@ mod domain_conv;
 mod endpoint_conv;
 #[cfg(feature = "conv")]
 mod group_conv;
+#[cfg(feature = "conv")]
+mod policy_conv;
 #[cfg(feature = "conv")]
 mod project_conv;
 #[cfg(feature = "conv")]
