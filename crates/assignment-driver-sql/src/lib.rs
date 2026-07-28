@@ -59,9 +59,15 @@ inventory::submit! {
 impl SqlBackend {
     /// Resolve implied roles for a set of assignments.
     ///
-    /// Fetches role imply rules, computes transitive closure, and generates
-    /// assignment entries for each implied role. Does NOT resolve role names
-    /// (that's the provider's responsibility).
+    /// Walks the imply-rule graph breadth-first, starting only from the
+    /// role IDs present in `assignments` and fetching each frontier role's
+    /// direct rules via `list_role_imply_rules_by_prior`, instead of pulling
+    /// the entire `implied_role` table. Effective-role sets are typically a
+    /// handful of roles, so this trades one full-table scan for a few
+    /// narrow, indexed lookups. Computes transitive closure over the
+    /// resulting (small) subgraph, and generates assignment entries for
+    /// each implied role. Does NOT resolve role names (that's the
+    /// provider's responsibility).
     ///
     /// Returns a `Vec<Assignment>` containing both the original assignments
     /// and any additionally generated implied role assignments.
@@ -72,17 +78,33 @@ impl SqlBackend {
         assignments: Vec<Assignment>,
     ) -> Result<Vec<Assignment>, AssignmentProviderError> {
         let exec = ExecutionContext::internal(state);
-        let rules = state
-            .provider
-            .get_role_provider()
-            .list_role_imply_rules(&exec)
-            .await?;
         let mut imply_rules: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-        for rule in &rules {
-            imply_rules
-                .entry(rule.prior_role.id.clone())
-                .or_default()
-                .insert(rule.implied_role.id.clone());
+        let mut visited: HashSet<String> = HashSet::new();
+        let mut frontier: BTreeSet<String> =
+            assignments.iter().map(|a| a.role_id.clone()).collect();
+        while !frontier.is_empty() {
+            let mut next_frontier: BTreeSet<String> = BTreeSet::new();
+            for role_id in frontier {
+                if !visited.insert(role_id.clone()) {
+                    continue;
+                }
+                let rules = state
+                    .provider
+                    .get_role_provider()
+                    .list_role_imply_rules_by_prior(&exec, &role_id)
+                    .await?;
+                for rule in rules {
+                    let implied_id = rule.implied_role.id.clone();
+                    imply_rules
+                        .entry(rule.prior_role.id.clone())
+                        .or_default()
+                        .insert(implied_id.clone());
+                    if !visited.contains(&implied_id) {
+                        next_frontier.insert(implied_id);
+                    }
+                }
+            }
+            frontier = next_frontier;
         }
         // Transitive expansion
         let mut changed = true;
@@ -415,23 +437,29 @@ mod tests {
             .into_connection();
 
         let mut role_mock = MockRoleProvider::default();
-        role_mock.expect_list_role_imply_rules().returning(|_e| {
-            Ok(vec![
-                RoleImplyBuilder::default()
-                    .prior_role(RoleRef {
-                        id: "1".into(),
-                        name: Some("r1".into()),
-                        domain_id: None,
-                    })
-                    .implied_role(RoleRef {
-                        id: "2".into(),
-                        name: Some("r2".into()),
-                        domain_id: None,
-                    })
-                    .build()
-                    .unwrap(),
-            ])
-        });
+        role_mock
+            .expect_list_role_imply_rules_by_prior()
+            .returning(|_e, prior_role_id| {
+                if prior_role_id == "1" {
+                    Ok(vec![
+                        RoleImplyBuilder::default()
+                            .prior_role(RoleRef {
+                                id: "1".into(),
+                                name: Some("r1".into()),
+                                domain_id: None,
+                            })
+                            .implied_role(RoleRef {
+                                id: "2".into(),
+                                name: Some("r2".into()),
+                                domain_id: None,
+                            })
+                            .build()
+                            .unwrap(),
+                    ])
+                } else {
+                    Ok(vec![])
+                }
+            });
         let provider = Provider::mocked_builder()
             .mock_role(role_mock)
             .build()
@@ -649,23 +677,29 @@ mod tests {
             .into_connection();
 
         let mut role_mock = MockRoleProvider::default();
-        role_mock.expect_list_role_imply_rules().returning(|_e| {
-            Ok(vec![
-                RoleImplyBuilder::default()
-                    .prior_role(RoleRef {
-                        id: "1".into(),
-                        name: Some("r1".into()),
-                        domain_id: None,
-                    })
-                    .implied_role(RoleRef {
-                        id: "2".into(),
-                        name: Some("r2".into()),
-                        domain_id: None,
-                    })
-                    .build()
-                    .unwrap(),
-            ])
-        });
+        role_mock
+            .expect_list_role_imply_rules_by_prior()
+            .returning(|_e, prior_role_id| {
+                if prior_role_id == "1" {
+                    Ok(vec![
+                        RoleImplyBuilder::default()
+                            .prior_role(RoleRef {
+                                id: "1".into(),
+                                name: Some("r1".into()),
+                                domain_id: None,
+                            })
+                            .implied_role(RoleRef {
+                                id: "2".into(),
+                                name: Some("r2".into()),
+                                domain_id: None,
+                            })
+                            .build()
+                            .unwrap(),
+                    ])
+                } else {
+                    Ok(vec![])
+                }
+            });
         let provider = Provider::mocked_builder()
             .mock_role(role_mock)
             .build()

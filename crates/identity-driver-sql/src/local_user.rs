@@ -28,6 +28,7 @@ mod load;
 mod set;
 
 pub use create::create;
+pub use load::load_local_user_with_latest_password;
 pub use load::load_local_user_with_passwords;
 pub use load::load_local_users_passwords;
 pub use set::*;

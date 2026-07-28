@@ -412,7 +412,7 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "password"."id", "password"."local_user_id", "password"."self_service", "password"."created_at", "password"."expires_at", "password"."password_hash", "password"."created_at_int", "password"."expires_at_int" FROM "password" WHERE "password"."local_user_id" IN ($1) ORDER BY "password"."created_at_int" DESC"#,
+                    r#"SELECT DISTINCT ON ("local_user_id") "password"."id", "password"."local_user_id", "password"."self_service", "password"."created_at", "password"."expires_at", "password"."password_hash", "password"."created_at_int", "password"."expires_at_int" FROM "password" WHERE "password"."local_user_id" IN ($1) ORDER BY "password"."local_user_id" ASC, "password"."created_at_int" DESC"#,
                     []
                 ),
             ]) {
@@ -474,7 +474,7 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "password"."id", "password"."local_user_id", "password"."self_service", "password"."created_at", "password"."expires_at", "password"."password_hash", "password"."created_at_int", "password"."expires_at_int" FROM "password" WHERE "password"."local_user_id" IN ($1) ORDER BY "password"."created_at_int" DESC"#,
+                    r#"SELECT DISTINCT ON ("local_user_id") "password"."id", "password"."local_user_id", "password"."self_service", "password"."created_at", "password"."expires_at", "password"."password_hash", "password"."created_at_int", "password"."expires_at_int" FROM "password" WHERE "password"."local_user_id" IN ($1) ORDER BY "password"."local_user_id" ASC, "password"."created_at_int" DESC"#,
                     []
                 ),
             ]) {

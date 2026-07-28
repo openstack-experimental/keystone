@@ -77,7 +77,7 @@ pub async fn get(
     if let Some(user) = user_entry {
         let (user_opts, local_user_with_passwords) = tokio::join!(
             user.find_related(UserOption).all(db),
-            local_user::load_local_user_with_passwords(
+            local_user::load_local_user_with_latest_password(
                 db,
                 Some(&user_id),
                 None::<&str>,
@@ -277,6 +277,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_user_local() {
+        let (lu, pw) = local_user::tests::get_local_user_with_password_mock("1", 1)
+            .into_iter()
+            .next()
+            .unwrap();
         // Create MockDatabase with mock query results
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([
@@ -292,8 +296,12 @@ mod tests {
                 }],
             ])
             .append_query_results([
-                // Third query result - local user with passwords
-                local_user::tests::get_local_user_with_password_mock("1", 1),
+                // Third query result - local user
+                vec![lu],
+            ])
+            .append_query_results([
+                // Fourth query result - latest password for the local user
+                vec![pw],
             ])
             .into_connection();
         let config = Config::default();
@@ -331,8 +339,13 @@ mod tests {
                 ),
                 Transaction::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    r#"SELECT "local_user"."id" AS "A_id", "local_user"."user_id" AS "A_user_id", "local_user"."domain_id" AS "A_domain_id", "local_user"."name" AS "A_name", "local_user"."failed_auth_count" AS "A_failed_auth_count", "local_user"."failed_auth_at" AS "A_failed_auth_at", "password"."id" AS "B_id", "password"."local_user_id" AS "B_local_user_id", "password"."self_service" AS "B_self_service", "password"."created_at" AS "B_created_at", "password"."expires_at" AS "B_expires_at", "password"."password_hash" AS "B_password_hash", "password"."created_at_int" AS "B_created_at_int", "password"."expires_at_int" AS "B_expires_at_int" FROM "local_user" LEFT JOIN "password" ON "local_user"."id" = "password"."local_user_id" WHERE "local_user"."user_id" = $1 ORDER BY "local_user"."id" ASC, "password"."created_at_int" DESC"#,
-                    ["1".into()]
+                    r#"SELECT "local_user"."id", "local_user"."user_id", "local_user"."domain_id", "local_user"."name", "local_user"."failed_auth_count", "local_user"."failed_auth_at" FROM "local_user" WHERE "local_user"."user_id" = $1 LIMIT $2"#,
+                    ["1".into(), 1u64.into()]
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"SELECT "password"."id", "password"."local_user_id", "password"."self_service", "password"."created_at", "password"."expires_at", "password"."password_hash", "password"."created_at_int", "password"."expires_at_int" FROM "password" WHERE "password"."local_user_id" = $1 ORDER BY "password"."created_at_int" DESC LIMIT $2"#,
+                    [1i32.into(), 1u64.into()]
                 ),
             ]
         );

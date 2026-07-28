@@ -34,7 +34,7 @@ use openstack_keystone_core_types::auth::{
     AuthzInfo, AuthzInfoBuilder, ScopeInfo, SecurityContext, TrustProjectInfo,
 };
 use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
-use openstack_keystone_core_types::resource::ResourceProviderError;
+use openstack_keystone_core_types::resource::{Domain, ResourceProviderError};
 use openstack_keystone_core_types::role::{Role, RoleListParameters, RoleRef};
 use openstack_keystone_core_types::token::{
     FernetToken, TokenRestriction, TokenRestrictionCreate, TokenRestrictionListParameters,
@@ -107,12 +107,28 @@ impl TokenService {
 
     /// Build [`AuthzInfo`] from a token by fetching scope objects
     /// from DB.
+    ///
+    /// `known_domain` is the caller's already-resolved user domain: when a
+    /// project scope's `domain_id` matches it, that `Domain` is reused
+    /// instead of issuing a second `get_domain` lookup for the same row.
     async fn build_authz_info_from_fernet_token(
         &self,
         state: &ServiceState,
         token: &FernetToken,
+        known_domain: &Domain,
     ) -> Result<AuthzInfo, TokenProviderError> {
         let ctx = ExecutionContext::internal(state);
+        let get_project_domain = async |domain_id: &str| -> Result<Domain, TokenProviderError> {
+            if domain_id == known_domain.id {
+                return Ok(known_domain.clone());
+            }
+            Ok(state
+                .provider
+                .get_resource_provider()
+                .get_domain(&ctx, domain_id)
+                .await?
+                .ok_or(ResourceProviderError::DomainNotFound(domain_id.to_owned()))?)
+        };
         let scope = match token {
             FernetToken::ApplicationCredential(data) => {
                 let project = state
@@ -123,29 +139,15 @@ impl TokenService {
                     .ok_or(ResourceProviderError::ProjectNotFound(
                         data.project_id.clone(),
                     ))?;
-                let project_domain = state
-                    .provider
-                    .get_resource_provider()
-                    .get_domain(&ctx, &project.domain_id)
-                    .await?
-                    .ok_or(ResourceProviderError::DomainNotFound(
-                        project.domain_id.clone(),
-                    ))?;
+                let project_domain = get_project_domain(&project.domain_id).await?;
                 ScopeInfo::Project {
                     project,
                     project_domain,
                 }
             }
-            FernetToken::DomainScope(data) => ScopeInfo::Domain(
-                state
-                    .provider
-                    .get_resource_provider()
-                    .get_domain(&ctx, &data.domain_id)
-                    .await?
-                    .ok_or(ResourceProviderError::DomainNotFound(
-                        data.domain_id.clone(),
-                    ))?,
-            ),
+            FernetToken::DomainScope(data) => {
+                ScopeInfo::Domain(get_project_domain(&data.domain_id).await?)
+            }
             FernetToken::ProjectScope(data) => {
                 let project = state
                     .provider
@@ -155,29 +157,15 @@ impl TokenService {
                     .ok_or(ResourceProviderError::ProjectNotFound(
                         data.project_id.clone(),
                     ))?;
-                let project_domain = state
-                    .provider
-                    .get_resource_provider()
-                    .get_domain(&ctx, &project.domain_id)
-                    .await?
-                    .ok_or(ResourceProviderError::DomainNotFound(
-                        project.domain_id.clone(),
-                    ))?;
+                let project_domain = get_project_domain(&project.domain_id).await?;
                 ScopeInfo::Project {
                     project,
                     project_domain,
                 }
             }
-            FernetToken::FederationDomainScope(data) => ScopeInfo::Domain(
-                state
-                    .provider
-                    .get_resource_provider()
-                    .get_domain(&ctx, &data.domain_id)
-                    .await?
-                    .ok_or(ResourceProviderError::DomainNotFound(
-                        data.domain_id.clone(),
-                    ))?,
-            ),
+            FernetToken::FederationDomainScope(data) => {
+                ScopeInfo::Domain(get_project_domain(&data.domain_id).await?)
+            }
             FernetToken::FederationProjectScope(data) => {
                 let project = state
                     .provider
@@ -187,14 +175,7 @@ impl TokenService {
                     .ok_or(ResourceProviderError::ProjectNotFound(
                         data.project_id.clone(),
                     ))?;
-                let project_domain = state
-                    .provider
-                    .get_resource_provider()
-                    .get_domain(&ctx, &project.domain_id)
-                    .await?
-                    .ok_or(ResourceProviderError::DomainNotFound(
-                        project.domain_id.clone(),
-                    ))?;
+                let project_domain = get_project_domain(&project.domain_id).await?;
                 ScopeInfo::Project {
                     project,
                     project_domain,
@@ -210,14 +191,7 @@ impl TokenService {
                     .ok_or(ResourceProviderError::ProjectNotFound(
                         data.project_id.clone(),
                     ))?;
-                let project_domain = state
-                    .provider
-                    .get_resource_provider()
-                    .get_domain(&ctx, &project.domain_id)
-                    .await?
-                    .ok_or(ResourceProviderError::DomainNotFound(
-                        project.domain_id.clone(),
-                    ))?;
+                let project_domain = get_project_domain(&project.domain_id).await?;
                 let trust = state
                     .provider
                     .get_trust_provider()
@@ -239,14 +213,7 @@ impl TokenService {
                     .ok_or(ResourceProviderError::ProjectNotFound(
                         data.project_id.clone(),
                     ))?;
-                let project_domain = state
-                    .provider
-                    .get_resource_provider()
-                    .get_domain(&ctx, &project.domain_id)
-                    .await?
-                    .ok_or(ResourceProviderError::DomainNotFound(
-                        project.domain_id.clone(),
-                    ))?;
+                let project_domain = get_project_domain(&project.domain_id).await?;
                 ScopeInfo::Project {
                     project,
                     project_domain,
@@ -371,14 +338,14 @@ impl TokenService {
                     UserIdentityInfoBuilder::default()
                         .user_id(token.user_id())
                         .user(user.clone())
-                        .user_domain(user_domain)
+                        .user_domain(user_domain.clone())
                         .build()?,
                 ),
             })
             .expires_at(*token.expires_at())
             .authorization(
                 // populate scope info
-                self.build_authz_info_from_fernet_token(state, &token)
+                self.build_authz_info_from_fernet_token(state, &token, &user_domain)
                     .await?,
             );
         if let FernetToken::Restricted(restriction) = &token {

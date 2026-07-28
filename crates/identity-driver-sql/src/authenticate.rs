@@ -22,7 +22,9 @@ use openstack_keystone_core::identity::IdentityProviderError;
 use openstack_keystone_core_types::identity::{UserPasswordAuthRequest, UserResponseBuilder};
 use openstack_keystone_password_hashing as password_hashing;
 
-use crate::entity::{local_user as db_local_user, password as db_password};
+use crate::entity::local_user as db_local_user;
+#[cfg(test)]
+use crate::entity::password as db_password;
 use crate::local_user;
 use crate::local_user::MergeLocalUserData;
 use crate::password;
@@ -58,7 +60,7 @@ pub async fn authenticate_by_password(
     db: &DatabaseConnection,
     auth: &UserPasswordAuthRequest,
 ) -> Result<AuthenticationResult, IdentityProviderError> {
-    let user_with_passwords = local_user::load_local_user_with_passwords(
+    let user_with_passwords = local_user::load_local_user_with_latest_password(
         db,
         auth.id.as_ref(),
         auth.name.as_ref(),
@@ -112,9 +114,8 @@ pub async fn authenticate_by_password(
         return Err(AuthenticationError::UserDisabled(local_user_entry.user_id.clone()).into());
     }
 
-    let passwords: Vec<db_password::Model> = password.into_iter().collect();
-    let latest_password = passwords
-        .first()
+    let latest_password = password
+        .as_ref()
         .ok_or(IdentityProviderError::NoPasswordsForUser(
             local_user_entry.user_id.clone(),
         ))?;
@@ -158,7 +159,7 @@ pub async fn authenticate_by_password(
                 .as_ref(),
         )
         .merge_local_user_data(&local_user_entry)
-        .merge_passwords_data(passwords)
+        .merge_passwords_data(password)
         .build()?;
 
     Ok(AuthenticationResultBuilder::default()
@@ -454,12 +455,14 @@ mod tests {
         let config = Config::default();
         let password = String::from("pass");
         let password_secret = SecretString::from(password.clone());
+        let (lu, pw) = get_local_user_with_password_mock(
+            password_hashing::hash_password(&config, &password_secret)
+                .await
+                .unwrap(),
+        );
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([vec![get_local_user_with_password_mock(
-                password_hashing::hash_password(&config, &password_secret)
-                    .await
-                    .unwrap(),
-            )]])
+            .append_query_results([vec![lu]])
+            .append_query_results([vec![pw]])
             .append_query_results([user_option::tests::get_user_options_mock(
                 "user_id",
                 &UserOptions::default(),
@@ -486,17 +489,25 @@ mod tests {
 
         // Checking transaction log
         let log = db.into_transaction_log();
-        assert_eq!(log.len(), 4);
+        assert_eq!(log.len(), 5);
         assert_eq!(
             log[0],
             Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"SELECT "local_user"."id" AS "A_id", "local_user"."user_id" AS "A_user_id", "local_user"."domain_id" AS "A_domain_id", "local_user"."name" AS "A_name", "local_user"."failed_auth_count" AS "A_failed_auth_count", "local_user"."failed_auth_at" AS "A_failed_auth_at", "password"."id" AS "B_id", "password"."local_user_id" AS "B_local_user_id", "password"."self_service" AS "B_self_service", "password"."created_at" AS "B_created_at", "password"."expires_at" AS "B_expires_at", "password"."password_hash" AS "B_password_hash", "password"."created_at_int" AS "B_created_at_int", "password"."expires_at_int" AS "B_expires_at_int" FROM "local_user" LEFT JOIN "password" ON "local_user"."id" = "password"."local_user_id" WHERE "local_user"."user_id" = $1 ORDER BY "local_user"."id" ASC, "password"."created_at_int" DESC"#,
-                ["user_id".into()]
+                r#"SELECT "local_user"."id", "local_user"."user_id", "local_user"."domain_id", "local_user"."name", "local_user"."failed_auth_count", "local_user"."failed_auth_at" FROM "local_user" WHERE "local_user"."user_id" = $1 LIMIT $2"#,
+                ["user_id".into(), 1u64.into()]
             )
         );
         assert_eq!(
             log[1],
+            Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"SELECT "password"."id", "password"."local_user_id", "password"."self_service", "password"."created_at", "password"."expires_at", "password"."password_hash", "password"."created_at_int", "password"."expires_at_int" FROM "password" WHERE "password"."local_user_id" = $1 ORDER BY "password"."created_at_int" DESC LIMIT $2"#,
+                [1i32.into(), 1u64.into()]
+            )
+        );
+        assert_eq!(
+            log[2],
             Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" WHERE "user_option"."user_id" = $1"#,
@@ -504,7 +515,7 @@ mod tests {
             )
         );
         assert_eq!(
-            log[2],
+            log[3],
             Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 r#"SELECT "user"."created_at", "user"."default_project_id", "user"."domain_id", "user"."enabled", "user"."extra", "user"."id", "user"."last_active_at" FROM "user" WHERE "user"."id" = $1 LIMIT $2"#,
@@ -513,7 +524,7 @@ mod tests {
         );
 
         // Verify the UPDATE statement for successful authentication
-        let update_debug = format!("{:?}", log[3]);
+        let update_debug = format!("{:?}", log[4]);
         assert!(
             update_debug.contains("UPDATE \\\"user\\\" SET \\\"last_active_at\\\"")
                 && update_debug.contains("user_id"),
@@ -531,20 +542,20 @@ mod tests {
         let mut config = Config::default();
         config.security_compliance.lockout_failure_attempts = Some(5);
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([vec![(
-                db_local_user::Model {
-                    id: 1,
-                    user_id: "user_id".into(),
-                    domain_id: "foo_domain".into(),
-                    name: "foo_domain".into(),
-                    failed_auth_count: Some(10),
-                    failed_auth_at: Some(Utc::now().naive_utc()),
-                },
+            .append_query_results([vec![db_local_user::Model {
+                id: 1,
+                user_id: "user_id".into(),
+                domain_id: "foo_domain".into(),
+                name: "foo_domain".into(),
+                failed_auth_count: Some(10),
+                failed_auth_at: Some(Utc::now().naive_utc()),
+            }]])
+            .append_query_results([vec![
                 db_password::ModelBuilder::default()
                     .local_user_id(1)
                     .build()
                     .unwrap(),
-            )]])
+            ]])
             .append_query_results([user_option::tests::get_user_options_mock(
                 "user_id",
                 &UserOptions::default(),
@@ -578,15 +589,15 @@ mod tests {
         let password = "foo_pass";
         config.security_compliance.lockout_failure_attempts = Some(5);
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([vec![(
-                db_local_user::Model {
-                    id: 1,
-                    user_id: "user_id".into(),
-                    domain_id: "foo_domain".into(),
-                    name: "foo_domain".into(),
-                    failed_auth_count: Some(10),
-                    failed_auth_at: Some(Utc::now().naive_utc()),
-                },
+            .append_query_results([vec![db_local_user::Model {
+                id: 1,
+                user_id: "user_id".into(),
+                domain_id: "foo_domain".into(),
+                name: "foo_domain".into(),
+                failed_auth_count: Some(10),
+                failed_auth_at: Some(Utc::now().naive_utc()),
+            }]])
+            .append_query_results([vec![
                 db_password::ModelBuilder::default()
                     .local_user_id(1)
                     .password_hash(
@@ -596,7 +607,7 @@ mod tests {
                     )
                     .build()
                     .unwrap(),
-            )]])
+            ]])
             .append_exec_results([MockExecResult {
                 rows_affected: 1,
                 ..Default::default()
@@ -636,13 +647,13 @@ mod tests {
     async fn test_authenticate_wrong_password() {
         let config = Config::default();
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([vec![(
-                get_local_user_mock("user_id"),
+            .append_query_results([vec![get_local_user_mock("user_id")]])
+            .append_query_results([vec![
                 db_password::ModelBuilder::default()
                     .password_hash("wrong_password")
                     .build()
                     .unwrap(),
-            )]])
+            ]])
             .append_query_results([user_option::tests::get_user_options_mock(
                 "user_id",
                 &UserOptions::default(),
@@ -673,19 +684,27 @@ mod tests {
 
         // Verify that the failure was logged
         let log = db.into_transaction_log();
-        assert_eq!(log.len(), 4);
+        assert_eq!(log.len(), 5);
 
-        // Verify first 3 transactions exactly
+        // Verify first transactions exactly
         assert_eq!(
             log[0],
             Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"SELECT "local_user"."id" AS "A_id", "local_user"."user_id" AS "A_user_id", "local_user"."domain_id" AS "A_domain_id", "local_user"."name" AS "A_name", "local_user"."failed_auth_count" AS "A_failed_auth_count", "local_user"."failed_auth_at" AS "A_failed_auth_at", "password"."id" AS "B_id", "password"."local_user_id" AS "B_local_user_id", "password"."self_service" AS "B_self_service", "password"."created_at" AS "B_created_at", "password"."expires_at" AS "B_expires_at", "password"."password_hash" AS "B_password_hash", "password"."created_at_int" AS "B_created_at_int", "password"."expires_at_int" AS "B_expires_at_int" FROM "local_user" LEFT JOIN "password" ON "local_user"."id" = "password"."local_user_id" WHERE "local_user"."user_id" = $1 ORDER BY "local_user"."id" ASC, "password"."created_at_int" DESC"#,
-                ["user_id".into()]
+                r#"SELECT "local_user"."id", "local_user"."user_id", "local_user"."domain_id", "local_user"."name", "local_user"."failed_auth_count", "local_user"."failed_auth_at" FROM "local_user" WHERE "local_user"."user_id" = $1 LIMIT $2"#,
+                ["user_id".into(), 1u64.into()]
             )
         );
         assert_eq!(
             log[1],
+            Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"SELECT "password"."id", "password"."local_user_id", "password"."self_service", "password"."created_at", "password"."expires_at", "password"."password_hash", "password"."created_at_int", "password"."expires_at_int" FROM "password" WHERE "password"."local_user_id" = $1 ORDER BY "password"."created_at_int" DESC LIMIT $2"#,
+                [1i32.into(), 1u64.into()]
+            )
+        );
+        assert_eq!(
+            log[2],
             Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 r#"SELECT "user_option"."user_id", "user_option"."option_id", "user_option"."option_value" FROM "user_option" WHERE "user_option"."user_id" = $1"#,
@@ -693,7 +712,7 @@ mod tests {
             )
         );
         assert_eq!(
-            log[2],
+            log[3],
             Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 r#"SELECT "user"."created_at", "user"."default_project_id", "user"."domain_id", "user"."enabled", "user"."extra", "user"."id", "user"."last_active_at" FROM "user" WHERE "user"."id" = $1 LIMIT $2"#,
@@ -703,7 +722,7 @@ mod tests {
 
         // Verify the UPDATE statement for failed auth logging
         // timestamp (ChronoDateTime) is dynamic so we check via debug string
-        let update_debug = format!("{:?}", log[3]);
+        let update_debug = format!("{:?}", log[4]);
         assert!(
             update_debug.contains("UPDATE \\\"local_user\\\" SET \\\"failed_auth_count\\\"")
                 && update_debug.contains("\\\"failed_auth_at\\\""),
@@ -728,7 +747,7 @@ mod tests {
     async fn test_authenticate_user_not_found() {
         let config = Config::default();
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([Vec::<(db_local_user::Model, db_password::Model)>::new()])
+            .append_query_results([Vec::<db_local_user::Model>::new()])
             .into_connection();
         match authenticate_by_password(
             &config,
@@ -757,8 +776,8 @@ mod tests {
             log[0],
             Transaction::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                r#"SELECT "local_user"."id" AS "A_id", "local_user"."user_id" AS "A_user_id", "local_user"."domain_id" AS "A_domain_id", "local_user"."name" AS "A_name", "local_user"."failed_auth_count" AS "A_failed_auth_count", "local_user"."failed_auth_at" AS "A_failed_auth_at", "password"."id" AS "B_id", "password"."local_user_id" AS "B_local_user_id", "password"."self_service" AS "B_self_service", "password"."created_at" AS "B_created_at", "password"."expires_at" AS "B_expires_at", "password"."password_hash" AS "B_password_hash", "password"."created_at_int" AS "B_created_at_int", "password"."expires_at_int" AS "B_expires_at_int" FROM "local_user" LEFT JOIN "password" ON "local_user"."id" = "password"."local_user_id" WHERE "local_user"."user_id" = $1 ORDER BY "local_user"."id" ASC, "password"."created_at_int" DESC"#,
-                ["nonexistent_user".into()]
+                r#"SELECT "local_user"."id", "local_user"."user_id", "local_user"."domain_id", "local_user"."name", "local_user"."failed_auth_count", "local_user"."failed_auth_at" FROM "local_user" WHERE "local_user"."user_id" = $1 LIMIT $2"#,
+                ["nonexistent_user".into(), 1u64.into()]
             )
         );
     }
@@ -779,7 +798,7 @@ mod tests {
         let mut not_found_total = std::time::Duration::ZERO;
         for _ in 0..iterations {
             let db = MockDatabase::new(DatabaseBackend::Postgres)
-                .append_query_results([Vec::<(db_local_user::Model, db_password::Model)>::new()])
+                .append_query_results([Vec::<db_local_user::Model>::new()])
                 .into_connection();
             let start = std::time::Instant::now();
             let _ = authenticate_by_password(
@@ -799,13 +818,13 @@ mod tests {
         let mut wrong_password_total = std::time::Duration::ZERO;
         for _ in 0..iterations {
             let db = MockDatabase::new(DatabaseBackend::Postgres)
-                .append_query_results([vec![(
-                    get_local_user_mock("user_id"),
+                .append_query_results([vec![get_local_user_mock("user_id")]])
+                .append_query_results([vec![
                     db_password::ModelBuilder::default()
                         .password_hash("wrong_hash")
                         .build()
                         .unwrap(),
-                )]])
+                ]])
                 .append_query_results([user_option::tests::get_user_options_mock(
                     "user_id",
                     &UserOptions::default(),
@@ -857,8 +876,8 @@ mod tests {
         let password = String::from("foo_pass");
         let password_secret = SecretString::from(password.clone());
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([vec![(
-                get_local_user_mock("user_id"),
+            .append_query_results([vec![get_local_user_mock("user_id")]])
+            .append_query_results([vec![
                 db_password::ModelBuilder::default()
                     .password_hash(
                         password_hashing::hash_password(&config, &password_secret)
@@ -868,7 +887,7 @@ mod tests {
                     .expires(DateTime::<Utc>::MIN_UTC)
                     .build()
                     .unwrap(),
-            )]])
+            ]])
             .append_query_results([user_option::tests::get_user_options_mock(
                 "user_id",
                 &UserOptions::default(),
@@ -904,8 +923,8 @@ mod tests {
         let password = String::from("foo_pass");
         let password_secret = SecretString::from(password.clone());
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([vec![(
-                get_local_user_mock("user_id"),
+            .append_query_results([vec![get_local_user_mock("user_id")]])
+            .append_query_results([vec![
                 db_password::ModelBuilder::expired()
                     .password_hash(
                         password_hashing::hash_password(&config, &password_secret)
@@ -914,7 +933,7 @@ mod tests {
                     )
                     .build()
                     .unwrap(),
-            )]])
+            ]])
             .append_query_results([user_option::tests::get_user_options_mock(
                 "user_id",
                 &UserOptions {
