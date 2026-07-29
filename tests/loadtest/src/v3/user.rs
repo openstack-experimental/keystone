@@ -22,11 +22,41 @@ use crate::Session;
 const DEFAULT_DOMAIN_ID: &str = "default";
 
 static SEEDED_USER_IDS: OnceLock<Vec<String>> = OnceLock::new();
+static SEEDED_USER_CREDS: OnceLock<Vec<crate::seed::SeededUserCred>> = OnceLock::new();
+static AUTH_PROJECT_ID: OnceLock<String> = OnceLock::new();
 
 /// Call once before `GooseAttack::execute()` to share the seeded user ID pool
 /// with all virtual users.
 pub fn set_seeded_ids(ids: Vec<String>) {
     SEEDED_USER_IDS.set(ids).ok();
+}
+
+/// Call once before `GooseAttack::execute()` to share the seeded user
+/// credential pool (id + password) with the password-auth scenarios.
+pub fn set_seeded_creds(creds: Vec<crate::seed::SeededUserCred>) {
+    SEEDED_USER_CREDS.set(creds).ok();
+}
+
+/// Return a randomly chosen seeded user credential, or `None` if the pool is
+/// empty (seed failed entirely).
+pub fn random_seeded_cred() -> Option<&'static crate::seed::SeededUserCred> {
+    let creds = SEEDED_USER_CREDS.get()?;
+    if creds.is_empty() {
+        return None;
+    }
+    Some(&creds[fastrand::usize(..creds.len())])
+}
+
+/// Call once before `GooseAttack::execute()` to share the project every
+/// seeded user has a role assignment on, for project-scoped password auth.
+pub fn set_auth_project_id(id: String) {
+    AUTH_PROJECT_ID.set(id).ok();
+}
+
+/// Return the project every seeded user has a role assignment on, if seeding
+/// succeeded.
+pub fn auth_project_id() -> Option<&'static str> {
+    AUTH_PROJECT_ID.get().map(String::as_str)
 }
 
 /// List all users (read-heavy scenario transaction).

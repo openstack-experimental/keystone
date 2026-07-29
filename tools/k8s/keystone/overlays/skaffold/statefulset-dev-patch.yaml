@@ -77,4 +77,4 @@ spec:
               value: "4242424242424242424242424242424242424242424242424242424242424242"
             - name: KEYSTONE_ALLOW_ENV_KEK
               value: "1"
-          command: ["keystone", "-vv"]
+          command: ["keystone", "-v"]

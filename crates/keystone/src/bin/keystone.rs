@@ -187,7 +187,7 @@ async fn main() -> Result<(), Report> {
     // Guard must stay alive for the process lifetime to flush buffered
     // file-appender logs; binding to `_guard` (rather than dropping the
     // `Option`) keeps that lifetime tied to `main`'s scope.
-    let _guard = init_tracing(args.verbose, &cfg);
+    let _guard = init_tracing(args.verbose, &cfg)?;
     color_eyre::install()?;
 
     info!("Starting Keystone...");
@@ -464,7 +464,10 @@ async fn main() -> Result<(), Report> {
 /// Returns the file-appender's `WorkerGuard`, if file logging is enabled.
 /// The caller must keep this alive for the process lifetime — dropping it
 /// stops buffered log lines from being flushed.
-fn init_tracing(verbose: u8, cfg: &Config) -> Option<tracing_appender::non_blocking::WorkerGuard> {
+fn init_tracing(
+    verbose: u8,
+    cfg: &Config,
+) -> Result<Option<tracing_appender::non_blocking::WorkerGuard>> {
     let external_deps_log_level = match verbose {
         0 => LevelFilter::ERROR,
         1 => LevelFilter::WARN,
@@ -586,7 +589,7 @@ fn init_tracing(verbose: u8, cfg: &Config) -> Option<tracing_appender::non_block
         .with(log_layers)
         .init();
 
-    guard
+    Ok(guard)
 }
 
 /// Build the file-log appender for `[DEFAULT] log_dir`, honoring the

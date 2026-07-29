@@ -12,9 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-pub(crate) mod auth;
-pub(crate) mod domain;
-pub(crate) mod project;
-pub(crate) mod role;
-pub(crate) mod role_assignment;
-pub(crate) mod user;
+pub(crate) mod lifecycle;
+pub(crate) mod password;
+pub(crate) mod rescope;
+pub(crate) mod system;

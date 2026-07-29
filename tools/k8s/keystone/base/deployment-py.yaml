@@ -5,7 +5,7 @@ metadata:
     app.kubernetes.io/name: keystone-py
   name: keystone-py
 spec:
-  replicas: 1
+  replicas: 2
   revisionHistoryLimit: 10
   progressDeadlineSeconds: 300
   selector:
@@ -41,8 +41,16 @@ spec:
                 secretKeyRef:
                   key: fqdn-uri
                   name: keystone-db-app
-          command: ["uwsgi", "--http-socket", ":5000", "-b", "65535", "-w", "keystone.server.wsgi:initialize_public_application()", "-p", "4"]
+          command: ["uwsgi", "--http-socket", ":5000", "-b", "65535", "--listen", "1024", "-w", "keystone.server.wsgi:initialize_public_application()", "--master", "--lazy-apps", "-p", "4"]
           image: py-keystone
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+            limits:
+              cpu: "4"
+              memory: 4Gi
           livenessProbe:
             failureThreshold: 3
             httpGet:

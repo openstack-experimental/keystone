@@ -24,6 +24,7 @@ spec:
                   key: fqdn-uri
                   name: keystone-db-app
           image: py-keystone
+          imagePullPolicy: IfNotPresent
           name: keystone-db-py
           command: [keystone-manage, db_sync]
           volumeMounts:
@@ -39,6 +40,7 @@ spec:
                   key: fqdn-uri
                   name: keystone-db-app
           image: keystone-rs
+          imagePullPolicy: IfNotPresent
           name: keystone-db-rs
           command: [keystone-manage, db, up]
           volumeMounts:
@@ -56,6 +58,7 @@ spec:
                   key: fqdn-uri
                   name: keystone-db-app
           image: py-keystone
+          imagePullPolicy: IfNotPresent
           name: keystone-bootstrap
           command: [keystone-manage, "bootstrap", "--bootstrap-username", "admin", "--bootstrap-password", "password", "--bootstrap-public-url", "http://keystone-py.local", "--bootstrap-internal-url", "http://keystone-py.default.svc.cluster.local:5000", "--bootstrap-region-id", "RegionOne"]
           volumeMounts:

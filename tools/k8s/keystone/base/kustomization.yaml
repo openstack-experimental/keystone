@@ -26,3 +26,4 @@ resources:
   - sa.yaml
   - service.yaml
   - ingress.yaml
+  - memcached.yaml

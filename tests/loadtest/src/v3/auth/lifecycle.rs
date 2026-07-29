@@ -121,5 +121,32 @@ pub async fn token_lifecycle(user: &mut GooseUser) -> TransactionResult {
 
     user.request(goose_request).await?;
 
+    // Validate the revoked token: a revoked token must not still validate.
+    let revalidate_req = user
+        .get_request_builder(&GooseMethod::Get, "/v3/auth/tokens")?
+        .header("x-auth-token", &existing_token)
+        .header("x-subject-token", &new_token);
+
+    let goose_request = GooseRequest::builder()
+        .name("GET /v3/auth/tokens (validate revoked)")
+        .set_request_builder(revalidate_req)
+        .build();
+
+    let mut goose = user.request(goose_request).await?;
+    if let Ok(response) = &goose.response {
+        if response.status().is_success() {
+            return user.set_failure(
+                "revoked token still validated successfully",
+                &mut goose.request,
+                None,
+                None,
+            );
+        }
+        // A revoked token is expected to be rejected (typically 404); mark
+        // this non-2xx response as a success so it doesn't pollute Goose's
+        // error stats with an expected negative-test outcome.
+        return user.set_success(&mut goose.request);
+    }
+
     Ok(())
 }

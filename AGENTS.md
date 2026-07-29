@@ -106,6 +106,66 @@ Backend traits in `crates/core/src/backend.rs` follow CRUD naming:
   with a mock built the same wrong way won't catch it. Only a live-server
   request through the real password-auth path surfaces it.
 
+## Running loadtests locally (`tests/loadtest`)
+
+- `tools/run-loadtest-local.sh [goose args...]` sets up postgres (docker),
+  SPIRE, an embedded-OPA rust `keystone`, bootstraps the admin user, seeds
+  data, builds `tests/loadtest`, and runs it against `http://localhost:8080`.
+  Extra args are forwarded to `load_test`, e.g.:
+  `tools/run-loadtest-local.sh --users 20 --hatch-rate 4 --run-time 30s --report-file reports/run.md`.
+  `tools/teardown-loadtest.sh` tears everything down; the runner calls it
+  itself at the start of every run, so a stale environment from an
+  interrupted run is cleaned up automatically.
+- Requires a working `docker` CLI (postgres container). On a podman-only
+  host, alias `docker` to `podman` and use fully-qualified image refs
+  (`docker.io/postgres:17`) — an unqualified `postgres:17` fails to resolve
+  without configured unqualified-search registries.
+- `tests/loadtest` is excluded from the main workspace (`exclude` in root
+  `Cargo.toml`) — it's a standalone crate. Build it with
+  `cd tests/loadtest && cargo build`, never `cargo build -p load_test` from
+  the repo root.
+- **Never pipe the runner through `tail`** — same root cause as the
+  `test_api` warning above: the script backgrounds SPIRE/OPA/keystone
+  daemons that inherit the pipe's write fd and never let it close, so the
+  whole thing looks hung even after the actual test finished. Run it via
+  `nohup ... > /tmp/out.log 2>&1 &` and read the file, or poll with
+  `kill -0 <pid>` in a loop.
+- `keystone-manage db up` alone is **not** enough against a fresh postgres —
+  it only applies versioned migrations for the drivers that ship them
+  (credential, federation, k8s-auth, token-restriction, webauthn). Identity,
+  role, assignment, resource, catalog etc. use entity-based schema creation
+  via `keystone-manage db sync` instead. Run both, `sync` before `up`.
+- `openstack_sdk`'s auth-cache (`$HOME/.osc/`, enabled by default, keyed by
+  cloud-config hash) survives across server restarts. Since each run
+  bootstraps a brand-new admin user, a stale cache entry would make the SDK
+  replay a token for a user id that no longer exists in the fresh DB —
+  surfaces as widespread, seemingly random 401/500s that have nothing to do
+  with the actual server. The runner works around this by pointing
+  `load_test` at an isolated `$HOME` (under `STATE_DIR`, wiped every run)
+  via `HOME=`/`OS_CLIENT_CONFIG_PATH=` rather than touching your real
+  `~/.osc` or `~/.config/openstack`. If you invoke the SDK some other way
+  and hit "user cannot be found: `<id>`" against a freshly bootstrapped
+  keystone, check `~/.osc` for a stale entry before assuming a real bug.
+- `AsyncOpenStack`/`CloudConfig` accepts either a `clouds.yaml` entry
+  (`OS_CLOUD=<name>`) or plain `OS_*` auth env vars
+  (`OS_AUTH_URL`/`OS_USERNAME`/`OS_PASSWORD`/...) via
+  `CloudConfig::from_env()` — `tests/loadtest/src/main.rs`'s
+  `load_cloud_config()` prefers the env-var form whenever `OS_AUTH_URL` is
+  set, falling back to `OS_CLOUD` + clouds.yaml otherwise, so a clouds.yaml
+  file isn't a hard requirement to run the suite.
+- Goose logs any non-2xx response into its `ERRORS`/status-code tables at
+  the HTTP layer regardless of the transaction's own pass/fail logic.
+  Negative-test transactions (wrong password, revoke-then-validate, rescope
+  to a nonexistent project) must call `user.set_success(&mut goose.request)`
+  once they've confirmed the rejection was the *expected* outcome, or the
+  top-line failure percentage reads misleadingly high even though nothing
+  is actually broken.
+- Loadtest also runs against a keystone deployed via skaffold to local k3s
+  (see `doc/src/contributor/development.md` for that setup) — skip
+  `tools/run-loadtest-local.sh` entirely and point `load_test` straight at
+  the cluster's exposed URL/port with `--host`, using `OS_CLOUD`/`OS_*` env
+  vars matching that deployment's admin credentials.
+
 ## Commit Message Rules
 
 - **Format**: Conventional Commits (`type: subject body`) enforced by

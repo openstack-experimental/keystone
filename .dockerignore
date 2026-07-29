@@ -2,6 +2,7 @@ Dockerfile
 doc
 .git/
 .gitignore
+.claude/
 .github/
 tools/
 skaffold.yaml

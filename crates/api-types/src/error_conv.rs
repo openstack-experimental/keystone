@@ -286,6 +286,11 @@ impl From<IdentityProviderError> for KeystoneApiError {
                 resource: "group".into(),
                 identifier: x,
             },
+            // Delegate to the dedicated `ResourceProviderError` conversion
+            // below instead of falling through to the generic `InternalError`
+            // catch-all - e.g. `DomainNotFound` from resolving a
+            // password-auth `domain.name` must surface as 404, not 500.
+            IdentityProviderError::ResourceProvider { source } => source.into(),
             ref err @ IdentityProviderError::Conflict(..) => Self::Conflict(err.to_string()),
             ref err @ IdentityProviderError::SecurityCompliance(..) => {
                 Self::BadRequest(err.to_string())
