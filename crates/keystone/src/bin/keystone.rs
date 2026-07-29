@@ -42,10 +42,10 @@ use tokio_util::sync::CancellationToken;
 use tower::util::MapRequestLayer;
 use tower::{Layer as _, ServiceBuilder};
 use tower_http::{
-    LatencyUnit, ServiceBuilderExt,
+    ServiceBuilderExt,
     normalize_path::NormalizePathLayer,
     request_id::{MakeRequestId, PropagateRequestIdLayer, RequestId, SetRequestIdLayer},
-    trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
+    trace::{DefaultOnRequest, TraceLayer},
 };
 use tracing::{Level, debug, error, info, info_span, trace, warn};
 use tracing_appender::non_blocking::NonBlockingBuilder;
@@ -80,6 +80,7 @@ use openstack_keystone::resource::ResourceHook;
 use openstack_keystone::revoke::RevokeHook;
 use openstack_keystone::role::RoleHook;
 use openstack_keystone::scim;
+use openstack_keystone::server::access_log::log_request;
 use openstack_keystone::server::listener::{raft_grpc, spiffe_tls, spiffe_tls_uds};
 use openstack_keystone::server::proxy_headers;
 use openstack_keystone::server::request_cache;
@@ -834,12 +835,17 @@ async fn build_router(
                 // DEBUG (tower-http's own upstream default) instead of
                 // doubling every request's log volume at INFO.
                 .on_request(DefaultOnRequest::new().level(Level::DEBUG))
-                .on_response(
-                    DefaultOnResponse::new()
-                        .level(Level::INFO)
-                        .latency_unit(LatencyUnit::Micros),
-                ),
+                // Finish-of-request logging is done by `log_request` below
+                // instead of `DefaultOnResponse`, so the message text
+                // carries uri/request-id inline (see access_log module docs).
+                .on_response(()),
         )
+        // Logs one INFO line per request with method/uri/request-id/status/
+        // latency folded into the message text (not just span fields), so
+        // log collectors that only index MESSAGE (e.g. journald) can search
+        // on them. Must stay layered after TraceLayer so it runs inside the
+        // request span.
+        .layer(middleware::from_fn(log_request))
         // Compress responses
         .compression()
         .sensitive_response_headers(sensitive_headers)
