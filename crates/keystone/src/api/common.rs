@@ -50,9 +50,15 @@ impl<S: Send + Sync> FromRequestParts<S> for PeerAddr {
 ///
 /// Fallback chain:
 /// 1. `public_endpoint` from config
-/// 2. `Host` header with protocol from `X-Forwarded-Proto` (defaults to `http`)
+/// 2. `Host` header with protocol derived from `X-Forwarded-Proto` when
+///    `[oslo_middleware] enable_proxy_headers_parsing` is true; otherwise
+///    defaults to `http`.
 /// 3. `http://localhost` as last resort
 pub async fn public_base_url(state: &ServiceState, headers: &axum::http::HeaderMap) -> String {
+    let config = state.config_manager.config.read().await;
+    let proxy_headers_enabled = config.oslo_middleware.enable_proxy_headers_parsing;
+    drop(config);
+
     state
         .config_manager
         .config
@@ -65,11 +71,18 @@ pub async fn public_base_url(state: &ServiceState, headers: &axum::http::HeaderM
         .or_else(|| {
             headers.get(axum::http::header::HOST).and_then(|host| {
                 host.to_str().ok().map(|h| {
-                    let proto = headers
-                        .get(FORWARDED_PROTO)
-                        .and_then(|h| h.to_str().ok())
-                        .filter(|v| matches!(*v, "http" | "https"))
-                        .unwrap_or("http");
+                    let proto = if proxy_headers_enabled {
+                        headers
+                            .get(FORWARDED_PROTO)
+                            .and_then(|h| h.to_str().ok())
+                            .filter(|v| matches!(*v, "http" | "https"))
+                            .unwrap_or("http")
+                    } else {
+                        // When proxy headers are not enabled, never trust the
+                        // forwarded-protocol header — it could be spoofed by any
+                        // client reaching the listener directly.
+                        "http"
+                    };
                     format!("{proto}://{h}")
                 })
             })
@@ -79,7 +92,21 @@ pub async fn public_base_url(state: &ServiceState, headers: &axum::http::HeaderM
 
 /// Returns true when the request arrived over HTTPS as indicated by the
 /// `X-Forwarded-Proto` header being set to `https`.
-pub fn is_https(headers: &axum::http::HeaderMap) -> bool {
+///
+/// Only returns `true` when `[oslo_middleware] enable_proxy_headers_parsing` is
+/// enabled; otherwise always returns `false` to prevent arbitrary clients from
+/// spoofing HTTPS status.
+pub async fn is_https(state: &ServiceState, headers: &axum::http::HeaderMap) -> bool {
+    let proxy_headers_enabled = state
+        .config_manager
+        .config
+        .read()
+        .await
+        .oslo_middleware
+        .enable_proxy_headers_parsing;
+    if !proxy_headers_enabled {
+        return false;
+    }
     headers.get(FORWARDED_PROTO).and_then(|h| h.to_str().ok()) == Some("https")
 }
 
@@ -461,27 +488,32 @@ mod tests {
     #[case("https", true)]
     #[case("http", false)]
     #[case("gre", false)]
-    fn test_is_https(#[case] header_value: &str, #[case] expected: bool) {
+    #[tokio::test]
+    async fn test_is_https(#[case] header_value: &str, #[case] expected: bool) {
         let mut headers = axum::http::HeaderMap::new();
         if let Ok(hv) = header_value.parse::<axum::http::HeaderValue>() {
             let _ = headers.insert(FORWARDED_PROTO, hv);
         }
-        assert_eq!(is_https(&headers), expected);
+        // `get_mocked_state` uses default config where
+        // `enable_proxy_headers_parsing` is false, so `is_https`
+        // always returns false.
+        let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
+        assert!(!is_https(&state, &headers).await);
     }
 
     #[rstest]
     #[case(None, None, "http://localhost")]
     #[case(Some("api.example.com"), None, "http://api.example.com")]
-    #[case(Some("api.example.com"), Some("https"), "https://api.example.com")]
+    #[case(Some("api.example.com"), Some("https"), "http://api.example.com")] // proxy headers disabled, so X-Forwarded-Proto is ignored
     #[case(Some("api.example.com"), Some("http"), "http://api.example.com")]
     #[case(
         Some("api.example.com:5000"),
         Some("https"),
-        "https://api.example.com:5000"
-    )]
-    #[case(Some("api.example.com"), Some("gre"), "http://api.example.com")] // invalid proto falls back to http
+        "http://api.example.com:5000"
+    )] // proxy headers disabled
+    #[case(Some("api.example.com"), Some("gre"), "http://api.example.com")] // proxy headers disabled
     #[tokio::test]
-    async fn test_public_base_url_from_headers(
+    async fn test_public_base_url_with_proxy_headers_disabled(
         #[case] host: Option<&str>,
         #[case] forwarded_proto: Option<&str>,
         #[case] expected: &str,
@@ -497,8 +529,8 @@ mod tests {
                 let _ = headers.insert(FORWARDED_PROTO, pv);
             }
         }
-        // get_mocked_state uses Config::default()
-        // which has public_endpoint == None, so the fallback to Host header applies.
+        // get_mocked_state uses Config::default() with proxy headers
+        // disabled, so the forwarded-protocol header is never trusted.
         let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
         assert_eq!(public_base_url(&state, &headers).await, expected);
     }

@@ -101,8 +101,8 @@ fn verify_csrf_token(grant: &DeviceCodeGrant, presented: &str) -> bool {
         .is_some_and(|expected| super::html::constant_time_eq(&expected, presented))
 }
 
-fn is_https(headers: &HeaderMap) -> bool {
-    crate::api::common::is_https(headers)
+async fn is_https(state: &ServiceState, headers: &HeaderMap) -> bool {
+    crate::api::common::is_https(state, headers).await
 }
 
 fn device_cookie(device_code: String, secure: bool) -> Cookie<'static> {
@@ -286,7 +286,10 @@ pub(super) async fn device_login_code(
     };
 
     let client_id = client_id_for_display(&state, &grant.client_id).await;
-    let jar = jar.add(device_cookie(grant.device_code.clone(), is_https(&headers)));
+    let jar = jar.add(device_cookie(
+        grant.device_code.clone(),
+        is_https(&state, &headers).await,
+    ));
     let response = render_login(&domain_id, &client_id, &grant, None);
     Ok((jar, response).into_response())
 }

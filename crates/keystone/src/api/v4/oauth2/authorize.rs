@@ -144,8 +144,8 @@ fn verify_csrf_token(session: &PreAuthSession, presented: &str) -> bool {
         .is_some_and(|expected| super::html::constant_time_eq(&expected, presented))
 }
 
-fn is_https(headers: &HeaderMap) -> bool {
-    crate::api::common::is_https(headers)
+async fn is_https(state: &ServiceState, headers: &HeaderMap) -> bool {
+    crate::api::common::is_https(state, headers).await
 }
 
 fn session_cookie(session_id: String, secure: bool) -> Cookie<'static> {
@@ -387,7 +387,7 @@ pub(super) async fn authorize(
 
     let jar = CookieJar::new().add(session_cookie(
         session.session_id.clone(),
-        is_https(&headers),
+        is_https(&state, &headers).await,
     ));
     let response = render_login(&domain_id, &session, None);
     Ok((jar, response).into_response())
