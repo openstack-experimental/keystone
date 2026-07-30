@@ -239,8 +239,8 @@ pub trait CatalogApi: Send + Sync {
     /// - `id`: The unique identifier of the endpoint group.
     ///
     /// # Returns
-    /// A `Result` containing an `Option` with the `EndpointGroup` if found, or a
-    /// `CatalogProviderError`.
+    /// A `Result` containing an `Option` with the `EndpointGroup` if found, or
+    /// a `CatalogProviderError`.
     async fn get_endpoint_group<'a>(
         &self,
         exec: &ExecutionContext<'a>,

@@ -87,7 +87,29 @@ where
             .cloned()
             .unwrap_or(Interface::Public);
 
+        // Resolved once and stamped on every `vsc` this extractor builds, so
+        // audit events for every authenticated request carry the client IP
+        // without each handler needing its own `PeerAddr` extractor.
+        //
+        // `public_ingress_peer_addr` is the raw, pre-resolution TCP peer
+        // (behind a trusted reverse proxy, that's the proxy's address, not
+        // the real client's) -- it must be re-resolved through the
+        // operator's configured trusted-proxy/forwarding-header settings,
+        // exactly like `rate_limit::check_ip` and `api_key_auth` do, or
+        // every audited event behind a proxy would record the proxy's IP.
+        let raw_peer_addr = crate::net::public_ingress_peer_addr(&parts.extensions);
+
         let state = Arc::from_ref(state);
+
+        let peer_addr = {
+            let config = state.config_manager.config.read().await;
+            crate::net::resolve_client_ip_from_headers(
+                &parts.headers,
+                raw_peer_addr.map(|addr| addr.ip()),
+                &config.oslo_middleware.trusted_proxies,
+                config.oslo_middleware.trusted_header,
+            )
+        };
 
         // Check the SPIFFE svid first as the primary identity source
         if let Some(svid) = parts.extensions.get::<SpiffeId>() {
@@ -122,12 +144,15 @@ where
 
                 let mut ctx = SecurityContext::try_from(auth_result)?;
                 ctx.set_is_admin();
-                let vsc = ValidatedSecurityContext::new_for_scope(
+                let mut vsc = ValidatedSecurityContext::new_for_scope(
                     ctx,
                     ScopeInfo::System("all".into()),
                     &state,
                 )
                 .await?;
+                if let Some(addr) = peer_addr {
+                    vsc.set_peer_addr(addr.to_string());
+                }
                 return Ok(Auth(vsc));
             }
 
@@ -142,8 +167,11 @@ where
                 )
                 .await?;
             let ctx = SecurityContext::try_from(result)?;
-            let vsc =
+            let mut vsc =
                 ValidatedSecurityContext::new_for_scope(ctx, ScopeInfo::Unscoped, &state).await?;
+            if let Some(addr) = peer_addr {
+                vsc.set_peer_addr(addr.to_string());
+            }
             return Ok(Auth(vsc));
         }
 
@@ -155,7 +183,7 @@ where
         {
             tracing::debug!("authenticating request with the x-auth-token");
             let auth_token = SecretString::from(auth_header.to_owned());
-            let vsc = state
+            let mut vsc = state
                 .provider
                 .get_token_provider()
                 .authorize_by_token(
@@ -170,6 +198,9 @@ where
 
             vsc.fully_resolved()?;
             reject_if_ec2(&vsc)?;
+            if let Some(addr) = peer_addr {
+                vsc.set_peer_addr(addr.to_string());
+            }
             return Ok(Auth(vsc));
         }
 
@@ -234,14 +265,22 @@ mod tests {
     use std::sync::Arc;
 
     async fn create_test_state(mapping_provider: MockMappingProvider) -> ServiceState {
-        let config = Config::default();
+        create_test_state_with_config(mapping_provider, Config::default(), None).await
+    }
+
+    async fn create_test_state_with_config(
+        mapping_provider: MockMappingProvider,
+        config: Config,
+        token_provider: Option<crate::token::MockTokenProvider>,
+    ) -> ServiceState {
         let config_manager = ConfigManager::not_watched(config);
         let policy_enforcer = Arc::new(MockPolicy::default());
         let db = sea_orm::DatabaseConnection::default();
-        let provider = Provider::mocked_builder()
-            .mock_mapping(mapping_provider)
-            .build()
-            .unwrap();
+        let mut provider_builder = Provider::mocked_builder().mock_mapping(mapping_provider);
+        if let Some(token_provider) = token_provider {
+            provider_builder = provider_builder.mock_token(token_provider);
+        }
+        let provider = provider_builder.build().unwrap();
         let service = Service {
             config_manager,
             db,
@@ -677,6 +716,69 @@ mod tests {
 
         let result = Auth::from_request_parts(&mut parts, &state).await;
         assert!(result.is_ok());
+    }
+
+    /// The raw TCP peer (`OriginalPeerAddr`) is a trusted reverse proxy;
+    /// `peer_addr` on the `Auth`-built `ValidatedSecurityContext` must carry
+    /// the XFF-resolved real client, never the proxy's own address.
+    /// Regression test: this extractor previously stamped the raw peer
+    /// directly, which would silently record every proxy's IP in audit
+    /// events for every authenticated request behind a reverse proxy.
+    #[tokio::test]
+    async fn test_x_auth_token_peer_addr_uses_resolved_ip_behind_trusted_proxy() {
+        use crate::net::OriginalPeerAddr;
+        use crate::token::MockTokenProvider;
+
+        let mut config = Config::default();
+        config
+            .oslo_middleware
+            .trusted_proxies
+            .push("10.0.0.0/8".parse().unwrap());
+
+        let mut token_mock = MockTokenProvider::new();
+        token_mock.expect_authorize_by_token().once().returning(
+            move |_exec, _token, _allow_rescope, _restrict_to| {
+                let mut security_context = SecurityContextTestingBuilder::default()
+                    .authentication_context(AuthenticationContext::Password)
+                    .principal(
+                        PrincipalInfoBuilder::default()
+                            .identity(IdentityInfo::Principal(
+                                PrincipalIdentityInfoBuilder::default()
+                                    .id("token-user")
+                                    .issuer("test.domain")
+                                    .build()
+                                    .unwrap(),
+                            ))
+                            .build()
+                            .unwrap(),
+                    )
+                    .build();
+                security_context.set_authorization_scope(ScopeInfo::Unscoped)?;
+                Ok(ValidatedSecurityContext::test_new(security_context))
+            },
+        );
+
+        let state =
+            create_test_state_with_config(MockMappingProvider::new(), config, Some(token_mock))
+                .await;
+
+        let mut parts = make_parts();
+        parts
+            .headers
+            .insert("X-Auth-Token", "valid-token-string".parse().unwrap());
+        parts
+            .headers
+            .insert("x-forwarded-for", "203.0.113.77".parse().unwrap());
+        let peer: std::net::SocketAddr = "10.0.0.1:1234".parse().unwrap();
+        parts.extensions.insert(OriginalPeerAddr(peer));
+
+        let result = Auth::from_request_parts(&mut parts, &state).await;
+        let auth = result.expect("token auth should succeed");
+        assert_eq!(
+            auth.0.inner().peer_addr(),
+            Some("203.0.113.77"),
+            "peer_addr must be the XFF-resolved client, not the trusted proxy's own address"
+        );
     }
 
     #[tokio::test]

@@ -141,6 +141,7 @@ pub fn build_initiator_from_vsc(vsc: &ValidatedSecurityContext) -> Initiator {
         domain_id.filter(|id| id != "unknown"),
         None,
     )
+    .with_address(vsc.inner().peer_addr().map(str::to_string))
 }
 
 /// Build an all-`"unknown"` [`Initiator`] for total auth failure.
@@ -210,7 +211,7 @@ impl AuditHook for CadfAuditHook {
         let event_id = format!("{}:{}", node_id, Uuid::new_v4());
         let payload = CadfEventPayload::new(
             event_id,
-            "1.0".to_string(),
+            "1.1".to_string(),
             "default".to_string(),
             ctx.correlation_id().to_string(),
             event.timestamp.to_rfc3339(),
@@ -242,7 +243,37 @@ impl AuditHook for CadfAuditHook {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use openstack_keystone_core_types::auth::{
+        AuthenticationContext, IdentityInfo, PrincipalInfo, SecurityContextTestingBuilder,
+        UserIdentityInfo,
+    };
     use openstack_keystone_core_types::events::EventPayload;
+    use openstack_keystone_core_types::identity::{UserOptions, UserResponse};
+    use std::collections::HashMap;
+
+    fn make_user_identity(user_id: impl Into<String>) -> PrincipalInfo {
+        let uid = user_id.into();
+        let u = UserResponse {
+            id: uid.clone(),
+            domain_id: "d1".to_string(),
+            enabled: true,
+            name: "u".to_string(),
+            extra: HashMap::new(),
+            default_project_id: None,
+            federated: None,
+            options: UserOptions::default(),
+            password_expires_at: None,
+        };
+        let ui = UserIdentityInfo {
+            user_id: uid.clone(),
+            user: Some(u),
+            user_domain: None,
+            user_groups: Vec::new(),
+        };
+        PrincipalInfo {
+            identity: IdentityInfo::User(ui),
+        }
+    }
 
     #[test]
     fn map_event_to_action_covers_all_variants() {
@@ -322,6 +353,31 @@ mod tests {
         let target = build_target_from_event(&e);
         assert_eq!(target.id, "unknown");
         assert_eq!(target.type_uri, "data/security/identity/user");
+    }
+
+    #[test]
+    fn build_initiator_from_vsc_carries_peer_addr_as_address() {
+        let mut ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity("uid"))
+            .build();
+        ctx.set_peer_addr("203.0.113.42");
+        let vsc = ValidatedSecurityContext::test_new(ctx);
+
+        let initiator = build_initiator_from_vsc(&vsc);
+        assert_eq!(initiator.address(), Some("203.0.113.42"));
+    }
+
+    #[test]
+    fn build_initiator_from_vsc_without_peer_addr_has_no_address() {
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity("uid"))
+            .build();
+        let vsc = ValidatedSecurityContext::test_new(ctx);
+
+        let initiator = build_initiator_from_vsc(&vsc);
+        assert_eq!(initiator.address(), None);
     }
 
     #[test]

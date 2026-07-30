@@ -190,7 +190,7 @@ pub fn emit_perimeter_authenticate_event(
     let event_id = format!("{}:{}", node_id, Uuid::new_v4());
     let payload = CadfEventPayload::new(
         event_id,
-        "1.0".to_string(),
+        "1.1".to_string(),
         "default".to_string(),
         correlation_id.to_string(),
         chrono::Utc::now().to_rfc3339(),
@@ -230,7 +230,7 @@ pub fn emit_api_key_control_event(
     let event_id = format!("{}:{}", node_id, Uuid::new_v4());
     let payload = CadfEventPayload::new(
         event_id,
-        "1.0".to_string(),
+        "1.1".to_string(),
         "default".to_string(),
         correlation_id.to_string(),
         chrono::Utc::now().to_rfc3339(),
@@ -270,7 +270,7 @@ pub fn emit_oauth2_session_event(
     let event_id = format!("{}:{}", node_id, Uuid::new_v4());
     let payload = CadfEventPayload::new(
         event_id,
-        "1.0".to_string(),
+        "1.1".to_string(),
         "default".to_string(),
         correlation_id.to_string(),
         chrono::Utc::now().to_rfc3339(),
@@ -309,7 +309,7 @@ pub async fn emit_oauth2_refresh_reuse_critical_event(
     let event_id = format!("{}:{}", node_id, Uuid::new_v4());
     let payload = CadfEventPayload::new(
         event_id,
-        "1.0".to_string(),
+        "1.1".to_string(),
         "default".to_string(),
         correlation_id.to_string(),
         chrono::Utc::now().to_rfc3339(),
@@ -354,7 +354,7 @@ pub fn emit_oauth2_key_rotation_event(
     let event_id = format!("{}:{}", node_id, Uuid::new_v4());
     let payload = CadfEventPayload::new(
         event_id,
-        "1.0".to_string(),
+        "1.1".to_string(),
         "default".to_string(),
         correlation_id.to_string(),
         chrono::Utc::now().to_rfc3339(),
@@ -396,7 +396,7 @@ pub async fn emit_oauth2_emergency_key_rotation_critical_event(
     let event_id = format!("{}:{}", node_id, Uuid::new_v4());
     let payload = CadfEventPayload::new(
         event_id,
-        "1.0".to_string(),
+        "1.1".to_string(),
         "default".to_string(),
         correlation_id.to_string(),
         chrono::Utc::now().to_rfc3339(),
@@ -451,7 +451,7 @@ pub async fn emit_oauth2_local_emergency_key_reconciled_event(
     let event_id = format!("{}:{}", node_id, Uuid::new_v4());
     let payload = CadfEventPayload::new(
         event_id.clone(),
-        "1.0".to_string(),
+        "1.1".to_string(),
         "default".to_string(),
         correlation_id.to_string(),
         chrono::Utc::now().to_rfc3339(),

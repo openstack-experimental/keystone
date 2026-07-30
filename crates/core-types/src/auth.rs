@@ -308,6 +308,18 @@ pub struct SecurityContext {
     /// for contexts created outside an HTTP request (e.g. tests, CLI).
     #[builder(default)]
     correlation_id: Option<String>,
+
+    /// Client IP address the request was received from, for audit purposes.
+    ///
+    /// Set by the `Auth` extractor / auth handlers immediately after the
+    /// context is constructed. This is the trusted-proxy/forwarding-header
+    /// resolved effective client address (`resolve_client_ip_from_headers`,
+    /// ADR 0022) -- NOT `public_ingress_peer_addr`'s raw TCP peer, which is
+    /// the proxy's own address whenever Keystone sits behind one. Defaults
+    /// to `None` for contexts created outside an HTTP request (e.g. tests,
+    /// CLI).
+    #[builder(default)]
+    peer_addr: Option<String>,
 }
 
 /// Builder for constructing [`SecurityContext`] in test code.
@@ -383,6 +395,7 @@ impl SecurityContextTestingBuilder {
             token_restriction: self.token_restriction,
             token: self.token,
             correlation_id: None,
+            peer_addr: None,
         }
     }
 }
@@ -612,6 +625,19 @@ impl SecurityContext {
     /// Called by the auth handler immediately after the VSC is constructed.
     pub fn set_correlation_id(&mut self, id: impl Into<String>) {
         self.correlation_id = Some(id.into());
+    }
+
+    /// Returns the client IP address the request was received from, if set.
+    pub fn peer_addr(&self) -> Option<&str> {
+        self.peer_addr.as_deref()
+    }
+
+    /// Attach the client peer address to this context.
+    ///
+    /// Called by the `Auth` extractor / auth handlers immediately after the
+    /// context is constructed.
+    pub fn set_peer_addr(&mut self, addr: impl Into<String>) {
+        self.peer_addr = Some(addr.into());
     }
 
     /// Construct a [`SecurityContext`] for testing and mocks via a builder.

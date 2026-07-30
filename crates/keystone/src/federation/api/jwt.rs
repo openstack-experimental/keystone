@@ -28,7 +28,7 @@ use crate::audit::{CorrelationId, emit_perimeter_authenticate_event, error_varia
 use crate::federation::api::error::OidcError;
 use crate::keystone::ServiceState;
 use openstack_keystone_audit::sanitize::{HostKind, sanitize_initiator_host};
-use openstack_keystone_audit::types::Initiator;
+use openstack_keystone_audit::types::{Host, Initiator};
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::auth::AuthenticationResult;
 use openstack_keystone_core_types::mapping::auth::MappingAuthRequest;
@@ -79,7 +79,8 @@ pub async fn login(
     // is recorded as `Initiator.host` regardless of outcome (ADR 0023 §"Perimeter
     // Auditing").
     let host = sanitize_initiator_host(&idp_id, HostKind::FederationIdpUuid)
-        .or_else(|| sanitize_initiator_host(&idp_id, HostKind::FederationIdpNonUuid));
+        .or_else(|| sanitize_initiator_host(&idp_id, HostKind::FederationIdpNonUuid))
+        .map(Host::from_id);
     let initiator = Initiator::new("unknown".to_string(), None, None, host);
     let (outcome, reason) = match &result {
         Ok(_) => ("success", None),

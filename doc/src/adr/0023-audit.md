@@ -11,6 +11,24 @@ Accepted
 > sanitization rules, `refresh_hmac_key` version-collision fix, HMAC key
 > retention policy, cross-node spool tamper detection, and
 > `map_event_to_action` dangling-reference correction.
+>
+> **Schema v1.1 (2026-07-30):** Two fixes applied after real-world audit logs
+> showed successful logins and mutations recording `"unknown"` identifiers
+> and no client IP at all:
+> 1. `sanitize_audit_id` rejected every ID Keystone actually mints. It only
+>    accepted canonical hyphenated UUIDs (36 chars); every real ID uses
+>    `Uuid::new_v4().simple()` (32 hex chars, no hyphens). Now accepts both
+>    shapes.
+> 2. `Initiator.host` — a bare `String` carrying only the pre-auth signal —
+>    is restructured into a CADF-conformant nested `Host` object
+>    (DSP0262 §9.3.3) with `id` (the former string value) and a new
+>    `address` attribute for the client network address. Per spec, `host` on
+>    a `Resource` (which `Initiator` is) is a structured type; `address` is
+>    that type's designated network-address attribute, not a sibling field
+>    on `Initiator`. This is a breaking wire-format change (`host` was a
+>    string, is now an object), so the payload `version` field bumps from
+>    `"1.0"` to `"1.1"`. SIEMs parsing `host` as a string must be updated to
+>    read it as an object before ingesting v1.1 events.
 
 ## Context
 
@@ -92,26 +110,48 @@ impl CadfEvent {
     pub fn boot_session_id(&self) -> &str { &self.event.boot_session_id }
 }
 
+// `host` is a nested CADF `Host` object (DSP0262 §9.3.3), not a bare
+// string — `Resource.host` (Initiator is a `Resource`) is spec-defined as a
+// structured type with `id`, `address`, `agent`, `platform`. Only `id` and
+// `address` are populated; `agent`/`platform` are valid but unused.
 #[derive(Serialize, Clone)]
-pub struct Initiator {
-    id: String, project_id: Option<String>, domain_id: Option<String>,
+pub struct Host {
     /// Pre-auth signal (EC2 access key, federation idp_id). No PII.
     /// Content arrives before authentication and is fully attacker-controlled.
-    /// Sanitization rules (enforced at construction, not by Initiator itself):
+    /// Sanitization rules (enforced at construction, not by Host itself):
     ///   EC2 access key  — must match /^AKIA[A-Z0-9]{16}$/; rejected otherwise.
     ///   Federation idp_id (UUID) — passed through sanitize_audit_id().
     ///   Federation idp_id (non-UUID) — filtered to [a-zA-Z0-9._-], max 64 chars.
     ///   Any other value — filtered to printable ASCII (0x20–0x7E), max 128 chars.
     ///   Field is omitted (None) if empty after filtering.
-    host: Option<String>,
+    id: Option<String>,
+    /// Client network address. Parsed via `std::net::IpAddr` and re-rendered
+    /// through `Display`; anything that doesn't parse as an IP is dropped
+    /// rather than stored raw. Field is omitted (None) if never set.
+    address: Option<String>,
+}
+impl Host {
+    fn from_id(id: String) -> Self { Self { id: Some(id), address: None } }
+    pub fn id(&self) -> Option<&str> { self.id.as_deref() }
+    pub fn address(&self) -> Option<&str> { self.address.as_deref() }
+}
+
+#[derive(Serialize, Clone)]
+pub struct Initiator {
+    id: String, project_id: Option<String>, domain_id: Option<String>,
+    host: Option<Host>,
 }
 impl Initiator {
     fn new(id: String, project_id: Option<String>, domain_id: Option<String>,
-        host: Option<String>) -> Self
+        host: Option<Host>) -> Self
     { Self { id, project_id, domain_id, host } }
     pub fn id(&self) -> &str { &self.id }
     pub fn project_id(&self) -> Option<&str> { self.project_id.as_deref() }
     pub fn domain_id(&self) -> Option<&str> { self.domain_id.as_deref() }
+    pub fn host(&self) -> Option<&Host> { self.host.as_ref() }
+    /// Attach a client IP to `host.address`, sanitized. Preserves any
+    /// pre-auth `host.id` signal already set.
+    fn with_address(mut self, address: Option<String>) -> Self { /* ... */ self }
 }
 #[derive(Serialize, Clone)]
 pub struct Target { pub id: String, pub type_uri: String }
@@ -133,7 +173,12 @@ impl VerifiedFernetToken {
 }
 ```
 
-**ID sanitization** - Strips non-ASCII, caps at 64 chars:
+**ID sanitization** - Strips non-ASCII, caps at 64 chars. Accepts either
+UUID rendering Keystone actually produces: canonical hyphenated, or
+`Uuid::simple()` (no hyphens) — the latter is what every resource ID
+minted across the codebase uses (`Uuid::new_v4().simple()`), so a
+strict-canonical-only check (schema v1.0) coerced every real ID to
+`"unknown"`:
 
 ```rust
 fn sanitize_audit_id(id: &str) -> String {
@@ -142,17 +187,17 @@ fn sanitize_audit_id(id: &str) -> String {
         .filter(|c| c.is_ascii_hexdigit() || *c == '-')
         .take(64).collect();
     if cleaned.is_empty() { return "unknown".to_string(); }
-    // Strict UUID check: len 36, 4 hyphens at canonical positions, 32 hex digits.
-    // Reject any non-UUID format — prevents crafted ID bypass.
-    if cleaned.len() == 36
+    // Canonical: len 36, 4 hyphens at canonical positions, 32 hex digits.
+    let is_canonical = cleaned.len() == 36
         && cleaned.chars().filter(|c| *c == '-').count() == 4
         && cleaned.chars().filter(|c| c.is_ascii_hexdigit()).count() == 32
         && cleaned.get(8..9) == Some("-")
         && cleaned.get(13..14) == Some("-")
         && cleaned.get(18..19) == Some("-")
-        && cleaned.get(23..24) == Some("-") {
-        cleaned
-    } else { "unknown".to_string() }
+        && cleaned.get(23..24) == Some("-");
+    // Simple: exactly 32 hex digits, no hyphens (Uuid::simple() format).
+    let is_simple = cleaned.len() == 32 && cleaned.chars().all(|c| c.is_ascii_hexdigit());
+    if is_canonical || is_simple { cleaned } else { "unknown".to_string() }
 }
 ```
 
@@ -177,10 +222,11 @@ impl AuditDispatcher {
     // Signs over unsigned payload. HMAC input is the JCS-canonical (RFC 8785)
     // UTF-8 JSON of all payload fields with keys in lexicographic order, no
     // extra whitespace. Most Option-typed fields serialize as `null` when
-    // absent. Exception: `Initiator.host` uses skip_serializing_if and is
-    // **omitted entirely** (not set to `null`) when absent. SIEMs MUST
-    // re-serialize the received JSON (minus `signature`) without inserting
-    // absent keys. This is the sole canonical form for HMAC verification.
+    // absent. Exception: `Initiator.host` (and, nested within it, `host.id`
+    // / `host.address`) uses skip_serializing_if and is **omitted entirely**
+    // (not set to `null`) when absent. SIEMs MUST re-serialize the received
+    // JSON (minus `signature`) without inserting absent keys. This is the
+    // sole canonical form for HMAC verification.
     fn finalize_event(&self, partial: CadfEventPayload) -> CadfEvent {
         let (key, version) = self.hmac_key_and_version.load_full().as_ref();
         let completed = CadfEventPayload {
@@ -254,8 +300,21 @@ Captures access attempts at the boundary.
    parsed but policy/scope failed): uses `VerifiedFernetToken` from
    `vsc.verified_token()` to extract sanitized initiator. For endpoints with
    pre-auth identity signals (EC2 `access` key, federation `idp_id`), include
-   non-PII identifiers as `initiator.host` or a custom attachment — these don't
-   require a validated context and don't risk PII leakage.
+   non-PII identifiers as `initiator.host.id` — these don't require a
+   validated context and don't risk PII leakage. The client network address
+   is stamped separately as `initiator.host.address` once available, resolved
+   via ADR 0022's `resolve_client_ip_from_headers` under its own trusted-proxy
+   configuration (`[oslo_middleware]`) — **not** `public_ingress_peer_addr`,
+   which returns the raw, pre-resolution TCP peer (the reverse proxy's own
+   address whenever Keystone sits behind one) and exists so each trust
+   boundary (rate limiting, auth-plugin dispatch, audit) can apply its own
+   resolution independently, per the `crate::net` module's trusted-proxy
+   model. For authenticated requests, the `Auth` extractor resolves it once
+   and sets it on every `ValidatedSecurityContext` it builds (via
+   `SecurityContext.peer_addr`, mirroring how `correlation_id` is threaded);
+   the login endpoint, which authenticates before any `ValidatedSecurityContext`
+   exists, resolves and stamps it directly, independently of the raw peer
+   address it separately feeds to rate limiting and auth-plugin dispatch.
 
 2. **Completion (Middleware):** Post-handler extracts `CorrelationId` and
    `ReadOnlyInitiator`, emits event with HTTP status mapped to outcome.

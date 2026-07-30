@@ -1781,6 +1781,35 @@ fn correlation_id_reflects_set_value_and_falls_back_to_unknown() {
     assert_eq!(vsc_without_correlation_id.correlation_id(), "unknown");
 }
 
+/// `peer_addr()` returns whatever was attached via `set_peer_addr` (on
+/// either `SecurityContext` or, via the `ValidatedSecurityContext`
+/// delegate, after the context is already wrapped), and `None` when never
+/// set -- mirrors `correlation_id`'s set-after-construction shape, used so
+/// the `Auth` extractor / login handler can stamp the resolved client IP
+/// onto an already-built context.
+#[test]
+fn peer_addr_reflects_set_value_and_defaults_to_none() {
+    let mut ctx = SecurityContextTestingBuilder::default()
+        .authentication_context(AuthenticationContext::Password)
+        .principal(make_user_identity("uid"))
+        .build();
+    ctx.set_peer_addr("203.0.113.42");
+    let mut vsc = ValidatedSecurityContext::test_new(ctx);
+    assert_eq!(vsc.inner().peer_addr(), Some("203.0.113.42"));
+
+    // Delegate setter on ValidatedSecurityContext itself (needed where only
+    // the wrapped VSC is in hand, e.g. the X-Auth-Token branch of `Auth`).
+    vsc.set_peer_addr("198.51.100.7");
+    assert_eq!(vsc.inner().peer_addr(), Some("198.51.100.7"));
+
+    let ctx_without_peer_addr = SecurityContextTestingBuilder::default()
+        .authentication_context(AuthenticationContext::Password)
+        .principal(make_user_identity("uid"))
+        .build();
+    let vsc_without_peer_addr = ValidatedSecurityContext::test_new(ctx_without_peer_addr);
+    assert_eq!(vsc_without_peer_addr.inner().peer_addr(), None);
+}
+
 // --- Mapping: domain scope match returns pre-populated roles ---
 #[tokio::test]
 async fn test_new_for_scope_mapping_domain_scope_match() {

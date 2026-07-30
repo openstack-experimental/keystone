@@ -155,7 +155,7 @@ pub(crate) async fn emit_wasm_plugin_audit(
     let node_id = dispatcher.node_id().to_string();
     let payload = CadfEventPayload::new(
         format!("{node_id}:{}", Uuid::new_v4()),
-        "1.0".to_string(),
+        "1.1".to_string(),
         "default".to_string(),
         Uuid::new_v4().to_string(),
         chrono::Utc::now().to_rfc3339(),

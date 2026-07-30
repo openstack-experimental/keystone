@@ -32,8 +32,13 @@ pub enum HostKind {
 /// Sanitize a resource / principal UUID for use in audit records.
 ///
 /// Strips everything except hex digits and hyphens, caps at 64 characters,
-/// then applies a strict UUID-format check (len 36, 4 hyphens at positions
-/// 8/13/18/23, 32 hex digits). Returns `"unknown"` for anything that fails.
+/// then accepts either of the two UUID renderings Keystone actually produces:
+/// canonical hyphenated (len 36, hyphens at positions 8/13/18/23, 32 hex
+/// digits) or simple/no-hyphen (`Uuid::simple()`, exactly 32 hex digits, no
+/// hyphens) — which is the format `Uuid::new_v4().simple()` produces and is
+/// used for every resource ID minted across the codebase (projects, users,
+/// roles, tokens, etc.). Returns `"unknown"` for anything that fails both
+/// shapes.
 pub fn sanitize_audit_id(id: &str) -> String {
     if id.trim().is_empty() {
         return "unknown".to_string();
@@ -46,14 +51,15 @@ pub fn sanitize_audit_id(id: &str) -> String {
     if cleaned.is_empty() {
         return "unknown".to_string();
     }
-    if cleaned.len() == 36
+    let is_canonical_uuid = cleaned.len() == 36
         && cleaned.chars().filter(|c| *c == '-').count() == 4
         && cleaned.chars().filter(|c| c.is_ascii_hexdigit()).count() == 32
         && cleaned.get(8..9) == Some("-")
         && cleaned.get(13..14) == Some("-")
         && cleaned.get(18..19) == Some("-")
-        && cleaned.get(23..24) == Some("-")
-    {
+        && cleaned.get(23..24) == Some("-");
+    let is_simple_uuid = cleaned.len() == 32 && cleaned.chars().all(|c| c.is_ascii_hexdigit());
+    if is_canonical_uuid || is_simple_uuid {
         cleaned
     } else {
         "unknown".to_string()
@@ -102,6 +108,20 @@ pub fn sanitize_initiator_host(raw: &str, kind: HostKind) -> Option<String> {
     }
 }
 
+/// Sanitize a client IP address for use as `Initiator.address`.
+///
+/// Parses via [`std::net::IpAddr`] and re-renders through `Display` so the
+/// stored value is guaranteed to be a well-formed IPv4/IPv6 address (no
+/// port, no scope id oddities, no injected characters) rather than whatever
+/// a proxy header happened to contain. Returns `None` for anything that
+/// doesn't parse as an IP.
+pub fn sanitize_initiator_address(raw: &str) -> Option<String> {
+    raw.trim()
+        .parse::<std::net::IpAddr>()
+        .ok()
+        .map(|ip| ip.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,6 +141,29 @@ mod tests {
     #[test]
     fn non_uuid_hex_string_returns_unknown() {
         assert_eq!(sanitize_audit_id("deadbeef"), "unknown");
+    }
+
+    #[test]
+    fn simple_uuid_no_hyphens_passes() {
+        // Uuid::new_v4().simple() format used for every resource ID minted
+        // across the codebase (projects, users, roles, tokens, etc.).
+        let id = "550e8400e29b41d4a716446655440000";
+        assert_eq!(sanitize_audit_id(id), id);
+    }
+
+    #[test]
+    fn simple_uuid_uppercase_passes() {
+        let id = "550E8400E29B41D4A716446655440000";
+        assert_eq!(sanitize_audit_id(id), id);
+    }
+
+    #[test]
+    fn thirty_two_hex_chars_but_not_uuid_shape_still_passes() {
+        // Any 32-char pure-hex string is accepted as "simple UUID" shaped;
+        // this is intentional since Keystone doesn't validate UUID version
+        // bits elsewhere either.
+        let id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        assert_eq!(sanitize_audit_id(id), id);
     }
 
     #[test]
@@ -217,6 +260,35 @@ mod tests {
         let raw = "a".repeat(200);
         let result = sanitize_initiator_host(&raw, HostKind::Other).unwrap_or_default();
         assert_eq!(result.len(), 128);
+    }
+
+    // ---- sanitize_initiator_address ----
+
+    #[test]
+    fn valid_ipv4_passes() {
+        assert_eq!(
+            sanitize_initiator_address("203.0.113.42"),
+            Some("203.0.113.42".to_string())
+        );
+    }
+
+    #[test]
+    fn valid_ipv6_passes() {
+        assert_eq!(
+            sanitize_initiator_address("2001:db8::1"),
+            Some("2001:db8::1".to_string())
+        );
+    }
+
+    #[test]
+    fn address_with_port_rejected() {
+        assert_eq!(sanitize_initiator_address("203.0.113.42:8080"), None);
+    }
+
+    #[test]
+    fn garbage_address_rejected() {
+        assert_eq!(sanitize_initiator_address("'; DROP TABLE x; --"), None);
+        assert_eq!(sanitize_initiator_address(""), None);
     }
 
     #[test]

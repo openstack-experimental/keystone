@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Create token (authenticate).
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 
 use axum::{
     Json,
@@ -64,12 +64,28 @@ pub(super) async fn create(
     PeerAddr(peer_addr): PeerAddr,
     TracedJson(req): TracedJson<AuthRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
-    let result = create_inner(&state, query, req, &headers, peer_addr).await;
-    let initiator = result
-        .as_ref()
-        .ok()
-        .map(|(vsc, _)| build_initiator_from_vsc(vsc))
-        .unwrap_or_else(build_initiator_unknown);
+    // Client IP for the audit trail, resolved through the operator's
+    // configured trusted-proxy/forwarding-header settings. This is a
+    // distinct trust boundary from rate limiting and auth-plugin dispatch
+    // inside `create_inner`, which each apply their own resolution over the
+    // same raw `peer_addr` (see `crate::net` module docs) -- `peer_addr`
+    // itself is the raw, pre-resolution TCP peer and must not be recorded
+    // directly, or every audited login behind a reverse proxy would record
+    // the proxy's address instead of the real client's.
+    let audit_ip = {
+        let config = state.config_manager.config.read().await;
+        openstack_keystone_core::net::resolve_client_ip_from_headers(
+            &headers,
+            peer_addr.map(|addr| addr.ip()),
+            &config.oslo_middleware.trusted_proxies,
+            config.oslo_middleware.trusted_header,
+        )
+    };
+    let result = create_inner(&state, query, req, &headers, peer_addr, audit_ip).await;
+    let initiator = match result.as_ref() {
+        Ok((vsc, _)) => build_initiator_from_vsc(vsc),
+        Err(_) => build_initiator_unknown().with_address(audit_ip.map(|ip| ip.to_string())),
+    };
     let (outcome, reason) = match &result {
         Ok(_) => ("success", None),
         Err(e) => ("failure", Some(error_variant_name(e))),
@@ -86,6 +102,7 @@ async fn create_inner(
     req: AuthRequest,
     headers: &HeaderMap,
     peer_addr: Option<SocketAddr>,
+    audit_ip: Option<IpAddr>,
 ) -> Result<(ValidatedSecurityContext, Response), KeystoneApiError> {
     req.validate()?;
 
@@ -116,11 +133,14 @@ async fn create_inner(
         return Err(KeystoneApiError::AuthenticationRescopeForbidden);
     }
 
-    let vsc = state
+    let mut vsc = state
         .provider
         .get_token_provider()
         .issue_token_context(state, &ctx, &authz_info)
         .await?;
+    if let Some(ip) = audit_ip {
+        vsc.set_peer_addr(ip.to_string());
+    }
 
     let mut api_token = TokenResponse {
         token: TokenBuilder::try_from(&vsc)?.build()?,
@@ -794,6 +814,75 @@ mod tests {
         assert!(
             resp2.headers().contains_key(header::RETRY_AFTER),
             "429 response must carry Retry-After header"
+        );
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_audit_initiator_address_uses_resolved_ip_behind_trusted_proxy() {
+        // The raw TCP peer (`ConnectInfo`) is a trusted reverse proxy; the
+        // audited `initiator.host.address` must be the XFF-resolved real
+        // client, never the proxy's own address. Regression test for a bug
+        // where `public_ingress_peer_addr`'s raw peer was recorded directly,
+        // which would silently record every proxy's IP in production.
+        let mut config = Config::default();
+        config
+            .oslo_middleware
+            .trusted_proxies
+            .push("10.0.0.0/8".parse().unwrap());
+
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_authenticate_by_password()
+            .returning(|_, _| Err(IdentityProviderError::UserNotFound("uid".into())));
+        let provider = Provider::mocked_builder()
+            .mock_identity(identity_mock)
+            .build()
+            .unwrap();
+
+        let (audit_dispatcher, mut receivers) = AuditDispatcher::new(
+            "test-node",
+            uuid::Uuid::new_v4().to_string(),
+            Arc::from(b"test-hmac-key-32-bytes-long!!!!".as_slice()),
+            0,
+        );
+
+        let state = Arc::new(
+            Service::new(
+                ConfigManager::not_watched(config),
+                DatabaseConnection::default(),
+                provider,
+                Arc::new(MockPolicy::default()),
+                audit_dispatcher,
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+
+        let peer: SocketAddr = "10.0.0.1:1234".parse().unwrap();
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let mut request = Request::builder()
+            .uri("/")
+            .method("POST")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("x-forwarded-for", "203.0.113.55")
+            .body(Body::from(auth_body()))
+            .unwrap();
+        request.extensions_mut().insert(ConnectInfo(peer));
+        let _ = api.as_service().oneshot(request).await.unwrap();
+
+        let event = receivers
+            .perimeter
+            .try_recv()
+            .expect("perimeter audit event should have been emitted");
+        assert_eq!(
+            event.payload().initiator().address(),
+            Some("203.0.113.55"),
+            "audit initiator must carry the XFF-resolved client IP, not the trusted proxy's own address"
         );
     }
 

@@ -520,6 +520,18 @@ impl ValidatedSecurityContext {
         self.0.correlation_id().unwrap_or("unknown")
     }
 
+    /// Attach the client peer address to this context.
+    ///
+    /// Called by the `Auth` extractor immediately after the VSC is
+    /// constructed, and by the login handler after building the pre-scope
+    /// context. `Deref` only exposes read access to the inner
+    /// `SecurityContext`, so this delegate is needed wherever only a
+    /// [`ValidatedSecurityContext`] (not the raw `SecurityContext`) is in
+    /// hand.
+    pub fn set_peer_addr(&mut self, addr: impl Into<String>) {
+        self.0.set_peer_addr(addr);
+    }
+
     /// Construct without validation. ONLY for tests and mocks.
     #[cfg(any(test, feature = "mock"))]
     pub fn test_new(ctx: SecurityContext) -> Self {

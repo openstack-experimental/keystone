@@ -28,7 +28,7 @@ use crate::federation::api::error::OidcError;
 use crate::federation::api::types::*;
 use crate::keystone::ServiceState;
 use openstack_keystone_audit::sanitize::{HostKind, sanitize_initiator_host};
-use openstack_keystone_audit::types::Initiator;
+use openstack_keystone_audit::types::{Host, Initiator};
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::auth::AuthenticationResult;
 use openstack_keystone_core_types::mapping::auth::MappingAuthRequest;
@@ -81,7 +81,8 @@ pub async fn callback(
     let initiator = match &idp_id_out {
         Some(idp_id) => {
             let host = sanitize_initiator_host(idp_id, HostKind::FederationIdpUuid)
-                .or_else(|| sanitize_initiator_host(idp_id, HostKind::FederationIdpNonUuid));
+                .or_else(|| sanitize_initiator_host(idp_id, HostKind::FederationIdpNonUuid))
+                .map(Host::from_id);
             Initiator::new("unknown".to_string(), None, None, host)
         }
         None => build_initiator_unknown(),

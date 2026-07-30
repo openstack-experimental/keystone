@@ -109,6 +109,9 @@ impl CadfEventPayload {
     pub fn outcome(&self) -> &str {
         &self.outcome
     }
+    pub fn initiator(&self) -> &Initiator {
+        &self.initiator
+    }
     pub fn observer(&self) -> &Observer {
         &self.observer
     }
@@ -154,11 +157,58 @@ impl CadfEvent {
     }
 }
 
+/// CADF `Resource.host` sub-object (DSP0262 §9.3.3, "Host Data Type").
+///
+/// Per the CADF spec, `host` on a `Resource` (and therefore on `Initiator`,
+/// which is a `Resource`) is itself a structured type, not a bare string.
+/// The spec defines four attributes: `id`, `address`, `agent`, `platform`.
+/// Only `id` and `address` are populated here; `agent`/`platform` are valid
+/// CADF attributes we don't currently capture and are omitted rather than
+/// modeled speculatively.
+///
+/// - `id`: pre-auth identity signal (EC2 access key, federation idp_id).
+///   Content arrives before authentication and is fully attacker-controlled;
+///   sanitized at construction (see `sanitize::sanitize_initiator_host`).
+/// - `address`: the client network address the request was received from.
+///   Sanitized via `sanitize::sanitize_initiator_address` (parses as a
+///   well-formed `IpAddr`; anything else is dropped, never stored raw).
+///
+/// # Serialization note
+///
+/// Both fields are **omitted entirely** (not set to `null`) when absent,
+/// via `#[serde(skip_serializing_if = "Option::is_none")]`. See
+/// [`Initiator`]'s serialization note for the same rule at the `host` level.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct Host {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    address: Option<String>,
+}
+
+impl Host {
+    /// Construct a `Host` carrying only a pre-auth identity signal (`id`).
+    pub fn from_id(id: String) -> Self {
+        Self {
+            id: Some(id),
+            address: None,
+        }
+    }
+
+    pub fn id(&self) -> Option<&str> {
+        self.id.as_deref()
+    }
+    pub fn address(&self) -> Option<&str> {
+        self.address.as_deref()
+    }
+}
+
 /// Audit initiator — only opaque identifiers, never PII.
 ///
 /// Human-readable fields (usernames, emails, project names) are excluded by
-/// design. The `host` field carries pre-auth signals; sanitization rules are
-/// enforced at construction time (see `sanitize::sanitize_initiator_host`).
+/// design. The `host` field is a [`Host`] sub-object carrying pre-auth
+/// signals and the client network address; sanitization rules are enforced
+/// at construction time, never on raw input (see `sanitize` module).
 ///
 /// # Serialization note
 ///
@@ -175,10 +225,8 @@ pub struct Initiator {
     id: String,
     project_id: Option<String>,
     domain_id: Option<String>,
-    /// Pre-auth signal (EC2 access key, federation idp_id). No PII.
-    /// Omitted from serialization (not null'd) when absent.
     #[serde(skip_serializing_if = "Option::is_none")]
-    host: Option<String>,
+    host: Option<Host>,
 }
 
 impl Initiator {
@@ -186,7 +234,7 @@ impl Initiator {
         id: String,
         project_id: Option<String>,
         domain_id: Option<String>,
-        host: Option<String>,
+        host: Option<Host>,
     ) -> Self {
         Self {
             id,
@@ -194,6 +242,27 @@ impl Initiator {
             domain_id,
             host,
         }
+    }
+
+    /// Attach a client IP address to `host.address`, sanitized via
+    /// [`crate::sanitize::sanitize_initiator_address`]. Preserves any
+    /// pre-auth `host.id` signal already set.
+    #[must_use]
+    pub fn with_address(mut self, address: Option<String>) -> Self {
+        let Some(address) = address.and_then(|a| crate::sanitize::sanitize_initiator_address(&a))
+        else {
+            return self;
+        };
+        match &mut self.host {
+            Some(host) => host.address = Some(address),
+            None => {
+                self.host = Some(Host {
+                    id: None,
+                    address: Some(address),
+                })
+            }
+        }
+        self
     }
 
     pub fn id(&self) -> &str {
@@ -205,8 +274,12 @@ impl Initiator {
     pub fn domain_id(&self) -> Option<&str> {
         self.domain_id.as_deref()
     }
-    pub fn host(&self) -> Option<&str> {
-        self.host.as_deref()
+    pub fn host(&self) -> Option<&Host> {
+        self.host.as_ref()
+    }
+    /// Convenience passthrough for `host.address`.
+    pub fn address(&self) -> Option<&str> {
+        self.host.as_ref().and_then(Host::address)
     }
 }
 
@@ -283,5 +356,51 @@ mod tests {
             !dispatcher.verify_hmac(&event, &key),
             "tampered signature must fail"
         );
+    }
+
+    #[test]
+    fn with_address_creates_host_when_none_set() {
+        let initiator = Initiator::new("uid".to_string(), None, None, None)
+            .with_address(Some("203.0.113.42".to_string()));
+        assert_eq!(initiator.address(), Some("203.0.113.42"));
+        assert_eq!(initiator.host().and_then(Host::id), None);
+    }
+
+    #[test]
+    fn with_address_preserves_existing_host_id() {
+        let initiator = Initiator::new(
+            "uid".to_string(),
+            None,
+            None,
+            Some(Host::from_id("idp-1".to_string())),
+        )
+        .with_address(Some("203.0.113.42".to_string()));
+        assert_eq!(initiator.host().and_then(Host::id), Some("idp-1"));
+        assert_eq!(initiator.address(), Some("203.0.113.42"));
+    }
+
+    #[test]
+    fn with_address_invalid_ip_leaves_host_untouched() {
+        let initiator = Initiator::new("uid".to_string(), None, None, None)
+            .with_address(Some("not-an-ip".to_string()));
+        assert!(initiator.host().is_none());
+        assert_eq!(initiator.address(), None);
+    }
+
+    #[test]
+    fn host_serializes_nested_under_initiator() {
+        let initiator = Initiator::new("uid".to_string(), None, None, None)
+            .with_address(Some("203.0.113.42".to_string()));
+        let json = serde_json::to_value(&initiator).unwrap();
+        assert_eq!(json["host"]["address"], "203.0.113.42");
+        assert!(json["host"].get("id").is_none());
+        assert!(json.get("address").is_none(), "no top-level address field");
+    }
+
+    #[test]
+    fn host_omitted_entirely_when_absent() {
+        let initiator = Initiator::new("uid".to_string(), None, None, None);
+        let json = serde_json::to_value(&initiator).unwrap();
+        assert!(json.get("host").is_none());
     }
 }

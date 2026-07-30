@@ -615,8 +615,8 @@ impl CatalogApi for CatalogService {
     /// - `id`: The unique identifier of the endpoint group.
     ///
     /// # Returns
-    /// A `Result` containing an `Option` with the endpoint group if found, or an
-    /// `Error`.
+    /// A `Result` containing an `Option` with the endpoint group if found, or
+    /// an `Error`.
     async fn get_endpoint_group<'a>(
         &self,
         exec: &ExecutionContext<'a>,
