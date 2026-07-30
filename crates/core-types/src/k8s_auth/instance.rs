@@ -75,7 +75,7 @@ pub struct K8sAuthInstanceCreate {
     /// the Kubernetes API server.
     pub host: String,
 
-    /// Optional ID for the configuration
+    /// Optional ID for the configuration.
     pub id: Option<String>,
 
     /// K8s auth name.

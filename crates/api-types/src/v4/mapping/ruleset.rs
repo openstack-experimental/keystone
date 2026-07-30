@@ -168,7 +168,7 @@ impl validator::Validate for MatchCondition {
 ///
 /// External-tagged per ADR-0020 examples:
 /// `{ "all_of": [...] }`, `{ "any_of": [...] }`,
-/// `{ "all_of_strict": { "conditions": [...], "require_all_keys": bool } }`
+/// `{ "all_of_strict": { "conditions": [...], "require_all_keys": bool } }`.
 ///
 /// Note: Does NOT derive `utoipa::ToSchema` to avoid infinite recursion with
 /// `MatchCondition`. The `value_type = serde_json::Value` is used at the

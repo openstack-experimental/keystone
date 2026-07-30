@@ -122,11 +122,12 @@ pub(super) async fn update(
 
     let location = resource_location(&state, &realm.domain_id, "Users", &id).await;
     let mut response_headers = HeaderMap::new();
+    #[allow(clippy::expect_used)]
     response_headers.insert(
         "etag",
         etag_header(index.version)
             .parse()
-            .expect("weak etag is valid header value"),
+            .expect("etag format is always a valid header value"),
     );
     Ok((
         response_headers,

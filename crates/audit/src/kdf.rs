@@ -40,8 +40,10 @@ pub fn derive_audit_hmac_key(kek: &[u8], node_id: &str) -> [u8; 32] {
     let info = format!("keystone-audit-hmac-v1:{node_id}");
     // Expand-only: KEK is already uniform random, Extract is a no-op
     // security-wise (same justification as ADR 0016-v2 §3.1).
+    #[allow(clippy::expect_used)]
     let hk = Hkdf::<Sha256>::from_prk(kek).expect("KEK must be >= 32 bytes (SHA-256 output size)");
     let mut out = [0u8; 32];
+    #[allow(clippy::expect_used)]
     hk.expand(info.as_bytes(), &mut out)
         .expect("32 bytes is always a valid HKDF-SHA256 output length");
     out

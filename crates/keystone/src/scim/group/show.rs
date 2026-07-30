@@ -97,11 +97,12 @@ pub(super) async fn show(
 
     let location = resource_location(&state, &realm.domain_id, "Groups", &id).await;
     let mut headers = HeaderMap::new();
+    #[allow(clippy::expect_used)]
     headers.insert(
         "etag",
         etag_header(index.version)
             .parse()
-            .expect("weak etag is valid header value"),
+            .expect("etag format is always a valid header value"),
     );
     Ok((
         headers,

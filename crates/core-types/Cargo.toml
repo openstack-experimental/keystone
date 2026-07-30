@@ -30,3 +30,6 @@ url.workspace = true
 default = []
 bench_internals = []
 mock = []
+
+[lints]
+workspace = true

@@ -43,10 +43,9 @@ pub(crate) async fn resource_location(
     id: &str,
 ) -> String {
     let config = state.config_manager.config.read().await;
-    let base = config
-        .default
-        .public_endpoint
-        .clone()
-        .unwrap_or_else(|| Url::parse("http://localhost").expect("static URL is valid"));
+    let base = config.default.public_endpoint.clone().unwrap_or_else(|| {
+        #[allow(clippy::expect_used)]
+        Url::parse("http://localhost").expect("http://localhost is a valid URL")
+    });
     scim_location(&base, domain_id, resource_segment, id)
 }

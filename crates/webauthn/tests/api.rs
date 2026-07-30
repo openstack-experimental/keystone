@@ -47,6 +47,7 @@ use openstack_keystone_webauthn::api::init_extension;
 mod common;
 use common::get_state;
 
+#[allow(clippy::unwrap_used)]
 fn get_provider_mocks(user_id: &Uuid) -> ProviderBuilder {
     let provider_builder = Provider::mocked_builder();
     let mut token_mock = MockTokenProvider::default();

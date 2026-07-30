@@ -5156,6 +5156,7 @@ dependencies = [
  "sha1 0.11.0",
  "sha2 0.11.0",
  "subtle",
+ "temp-env",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",

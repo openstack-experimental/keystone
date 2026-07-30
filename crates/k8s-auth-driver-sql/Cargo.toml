@@ -26,6 +26,5 @@ sea-orm = { workspace = true, features = ["mock", "sqlx-sqlite" ]}
 tokio = { workspace = true, features = ["macros"] }
 uuid = { workspace = true, features = ["v4"] }
 
-
 [lints]
 workspace = true

@@ -26,13 +26,14 @@
 //! 5. Compare with the `signature` value.
 //!
 //! To regenerate vectors after an intentional algorithm change, run:
-//! `cargo test --test hmac_vectors write_hmac_vectors -- --ignored`
+//! `cargo test --test hmac_vectors write_hmac_vectors -- --ignored`.
 
 use std::sync::Arc;
 
 use openstack_keystone_audit::{AuditDispatcher, CadfEvent};
 use serde_json::Value;
 
+#[allow(clippy::expect_used)]
 fn hex_decode(s: &str) -> Vec<u8> {
     (0..s.len())
         .step_by(2)
@@ -48,6 +49,7 @@ struct Vector {
     event: Value,
 }
 
+#[allow(clippy::unwrap_used)]
 fn vectors_path() -> std::path::PathBuf {
     // CARGO_MANIFEST_DIR is crates/audit; walk up two levels to workspace root.
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -59,6 +61,7 @@ fn vectors_path() -> std::path::PathBuf {
         .join("tests/audit/hmac_vectors.jsonl")
 }
 
+#[allow(clippy::print_stdout)]
 #[test]
 fn verify_hmac_vectors() {
     let path = vectors_path();

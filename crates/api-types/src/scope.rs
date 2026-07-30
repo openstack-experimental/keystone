@@ -33,7 +33,7 @@ pub enum Scope {
     Domain(Domain),
     /// System scope.
     System(System),
-    /// Unscoped
+    /// Unscoped.
     Unscoped,
 }
 

@@ -329,10 +329,11 @@ impl MappingService {
                     auth_count = match_result.authorizations.len(),
                     "no authorization derived from match_result (wildcard rule or empty), setting unscoped"
                 );
+                #[allow(clippy::expect_used)]
                 let authz = AuthzInfoBuilder::default()
                     .scope(ScopeInfo::Unscoped)
                     .build()
-                    .expect("unscoped authz build should never fail");
+                    .expect("unscoped authz with no constraints must not fail");
                 AuthenticationResultBuilder::default()
                     .principal(principal)
                     .context(ctx)

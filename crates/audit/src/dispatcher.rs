@@ -235,7 +235,9 @@ impl AuditDispatcher {
 /// correct for flat and nested JSON objects.
 pub(crate) fn compute_hmac_sha256(payload: &CadfEventPayload, key: &[u8]) -> String {
     let canonical = jcs_canonical(payload);
-    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
+    #[allow(clippy::expect_used)]
+    let mut mac = HmacSha256::new_from_slice(key)
+        .expect("HMAC accepts any key length; keys are always 32-byte HKDF-derived");
     mac.update(canonical.as_bytes());
     let result = mac.finalize();
     hex::encode(result.into_bytes())
@@ -246,6 +248,7 @@ pub(crate) fn compute_hmac_sha256(payload: &CadfEventPayload, key: &[u8]) -> Str
 /// See `compute_hmac_sha256` for the field-inclusion rules (notably
 /// `Initiator.host` is omitted, not null'd, when absent).
 fn jcs_canonical(payload: &CadfEventPayload) -> String {
+    #[allow(clippy::expect_used)]
     let value = serde_json::to_value(payload).expect("CadfEventPayload is always serializable");
     sort_json_keys(value).to_string()
 }

@@ -65,6 +65,7 @@ openstack-keystone-audit = { workspace = true, features = ["testing"] }
 openstack-keystone-core-types = { workspace = true, features = ["mock"] }
 rstest.workspace = true
 tempfile.workspace = true
+temp-env.workspace = true
 tokio = { workspace = true, features = ["process"] }
 tracing-test = { workspace = true, features = ["no-env-filter"] }
 url.workspace = true
@@ -74,3 +75,6 @@ default = []
 api = ["openstack-keystone-api-types/builder", "dep:axum", "openstack-keystone-api-types/conv"]
 bench_internals = []
 mock = ["dep:mockall", "openstack-keystone-core-types/mock", "openstack-keystone-audit/testing"]
+
+[lints]
+workspace = true

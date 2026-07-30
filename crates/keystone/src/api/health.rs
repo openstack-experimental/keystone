@@ -46,9 +46,6 @@ struct RaftStatus {
 impl RaftStatus {
     /// Creates a successful Raft status.
     ///
-    /// # Parameters
-    /// None
-    ///
     /// # Returns
     /// A `RaftStatus` indicating the check was successful.
     pub fn ok() -> Self {

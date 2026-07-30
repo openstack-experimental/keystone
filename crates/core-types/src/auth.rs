@@ -42,7 +42,7 @@ use crate::role::RoleRef;
 use crate::token::{FernetToken, TokenRestriction};
 use crate::trust::Trust;
 
-/// Namespace UUID for the virtual ID generation based on the UUIDv5
+/// Namespace UUID for the virtual ID generation based on the UUIDv5.
 const NAMESPACE_UUID: Uuid = uuid!("96f0e3b8-0d21-41bc-bd0d-457da94345f9");
 
 #[derive(Error, Debug)]
@@ -364,6 +364,7 @@ impl SecurityContextTestingBuilder {
         self
     }
 
+    #[allow(clippy::expect_used)]
     pub fn build(self) -> SecurityContext {
         let authentication_context = self
             .authentication_context
@@ -1272,13 +1273,13 @@ pub enum AuthenticationContext {
         /// Original token with the ApplicationCredential payload type.
         token: Option<FernetToken>,
     },
-    /// Login using OIDC federation
+    /// Login using OIDC federation.
     Oidc {
         oidc: OidcContext,
         /// Original token with the Federated payload type.
         token: Option<FernetToken>,
     },
-    /// K8s Auth
+    /// K8s Auth.
     K8s(K8sContext),
     /// Login with password.
     Password,

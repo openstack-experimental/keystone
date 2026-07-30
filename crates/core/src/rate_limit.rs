@@ -20,6 +20,7 @@
 //! publishing it. A failed reload therefore leaves the last-known-good
 //! limiter and its counters in service.
 
+#[cfg(any(feature = "api", test))]
 use std::net::IpAddr;
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -41,6 +42,11 @@ use crate::net::resolve_client_ip_from_headers;
 ///
 /// IPv4 uses the complete `/32`; IPv6 stores only the network half of its
 /// `/64`, grouping privacy-extension addresses without allocating a string.
+// Variants are only constructed by `rate_limit_key_for_ip`, which is
+// `#[cfg(any(feature = "api", test))]`-gated (it needs `axum::http::HeaderMap`
+// to resolve the client IP); the type itself must stay always-available since
+// `IpRateLimiter`/`global_ip_limiter` are not feature-gated.
+#[cfg_attr(not(any(feature = "api", test)), allow(dead_code))]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum IpRateLimitKey {
     V4(u32),
@@ -78,6 +84,8 @@ impl AppliedRateLimitConfig {
 struct RateLimitSnapshot {
     applied_config: AppliedRateLimitConfig,
     global_ip_limiter: Option<Arc<IpRateLimiter>>,
+    // Only read by `check_ip`, which is `#[cfg(any(feature = "api", test))]`-gated.
+    #[cfg_attr(not(any(feature = "api", test)), allow(dead_code))]
     trusted_proxies: Vec<IpNet>,
     user_auth_limiter: Option<Arc<UserRateLimiter>>,
 }
@@ -267,6 +275,7 @@ fn build_limiter<K: Clone + Eq + std::hash::Hash>(
     Ok(Some(Arc::new(DefaultKeyedRateLimiter::keyed(quota))))
 }
 
+#[cfg(any(feature = "api", test))]
 fn rate_limit_key_for_ip(ip: IpAddr) -> IpRateLimitKey {
     match ip {
         IpAddr::V4(ip) => IpRateLimitKey::V4(u32::from(ip)),

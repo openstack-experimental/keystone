@@ -63,3 +63,6 @@ webauthn-rs-proto.workspace = true
 [features]
 default = []
 bench_internals = []
+
+[lints]
+workspace = true

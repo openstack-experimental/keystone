@@ -489,7 +489,7 @@ mod tests {
     #[case("http", false)]
     #[case("gre", false)]
     #[tokio::test]
-    async fn test_is_https(#[case] header_value: &str, #[case] expected: bool) {
+    async fn test_is_https(#[case] header_value: &str, #[case] _expected: bool) {
         let mut headers = axum::http::HeaderMap::new();
         if let Ok(hv) = header_value.parse::<axum::http::HeaderValue>() {
             let _ = headers.insert(FORWARDED_PROTO, hv);
@@ -519,15 +519,15 @@ mod tests {
         #[case] expected: &str,
     ) {
         let mut headers = axum::http::HeaderMap::new();
-        if let Some(h) = host {
-            if let Ok(hv) = h.parse::<axum::http::HeaderValue>() {
-                let _ = headers.insert(axum::http::header::HOST, hv);
-            }
+        if let Some(h) = host
+            && let Ok(hv) = h.parse::<axum::http::HeaderValue>()
+        {
+            let _ = headers.insert(axum::http::header::HOST, hv);
         }
-        if let Some(p) = forwarded_proto {
-            if let Ok(pv) = p.parse::<axum::http::HeaderValue>() {
-                let _ = headers.insert(FORWARDED_PROTO, pv);
-            }
+        if let Some(p) = forwarded_proto
+            && let Ok(pv) = p.parse::<axum::http::HeaderValue>()
+        {
+            let _ = headers.insert(FORWARDED_PROTO, pv);
         }
         // get_mocked_state uses Config::default() with proxy headers
         // disabled, so the forwarded-protocol header is never trusted.

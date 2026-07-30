@@ -10,15 +10,8 @@ repository.workspace = true
 homepage.workspace = true
 exclude.workspace = true
 
-[lints.rust]
-unsafe_code = "forbid"
-
-[lints.clippy]
-enum_glob_use = "deny"
-expect_used = "deny"
-print_stdout = "deny"
-unwrap_used = "deny"
-doc_paragraphs_missing_punctuation = "warn"
+[lints]
+workspace = true
 
 [dependencies]
 openstack-keystone-storage-crypto.workspace = true

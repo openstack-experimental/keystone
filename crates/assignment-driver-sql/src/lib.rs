@@ -356,7 +356,7 @@ impl AssignmentBackend for SqlBackend {
         // expansion, so pagination is applied post-fetch over the fully
         // materialized, expanded set - the same in-memory over-fetch pattern
         // used by the Raft-backed domains.
-        assignments.sort_by(|a, b| a.pagination_marker().cmp(&b.pagination_marker()));
+        assignments.sort_by_key(|a| a.pagination_marker());
         if let Some(marker) = &params.pagination.marker {
             if params.pagination.page_reverse {
                 assignments.retain(|x| x.pagination_marker().as_str() < marker.as_str());

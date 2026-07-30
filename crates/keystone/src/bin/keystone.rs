@@ -760,13 +760,13 @@ async fn warn_on_unresolvable_auth_methods(shared_state: &ServiceState) {
 /// from the outside, not be added via `Router::layer()` (which runs *after*
 /// route matching, by which point "/v3/users/" has already failed to match
 /// the "/v3/users" route). No HTTP redirect is involved.
-/// <https://docs.rs/tower-http/latest/tower_http/normalize_path/index.html>
+/// <https://docs.rs/tower-http/latest/tower_http/normalize_path/index.html>.
 ///
 /// SwaggerUi is deliberately merged in *after* normalization and kept out
 /// of the normalized service: SwaggerUi's own handler issues an internal
 /// redirect between "/swagger-ui" and "/swagger-ui/", and trimming the
 /// trailing slash before that handler runs turns the redirect into an
-/// infinite loop. <https://github.com/juhaku/utoipa/issues/1467>
+/// infinite loop. <https://github.com/juhaku/utoipa/issues/1467>.
 async fn build_router(
     shared_state: &ServiceState,
     token: &CancellationToken,
@@ -896,6 +896,7 @@ async fn start_raft(
     if cfg.distributed_storage.is_some() {
         let raft_cancel_token = token.clone();
         let raft_config = cfg.clone();
+        #[allow(clippy::expect_used)]
         let raft_storage = concrete_storage.as_ref().expect("storage is None").clone();
         let raft_storage_init = raft_storage.clone();
 
@@ -962,7 +963,11 @@ async fn spawn_opa_subprocess(
         };
 
         let health_url = match &opa_socket_path {
-            Some(_) => "http://localhost/health".parse().unwrap(),
+            Some(_) =>
+            {
+                #[allow(clippy::unwrap_used)]
+                "http://localhost/health".parse().unwrap()
+            }
             None => opa_url.join("/health").unwrap_or_else(|_| opa_url.clone()),
         };
 

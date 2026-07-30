@@ -360,9 +360,11 @@ impl CoreHostFunctions {
             expires_at: (chrono::Utc::now() + chrono::TimeDelta::seconds(HANDLE_TTL_SECS))
                 .timestamp(),
         };
+        #[allow(clippy::expect_used)]
         let payload = serde_json::to_vec(&claims).expect("HandleClaims always serializes");
+        #[allow(clippy::expect_used)]
         let mut mac = <HmacSha256 as KeyInit>::new_from_slice(&self.handle_key)
-            .expect("HMAC-SHA256 accepts any key length");
+            .expect("HMAC-SHA256 accepts any key length; handle_key is 32-byte random");
         mac.update(&payload);
         let tag = mac.finalize().into_bytes();
         ResolvedIdentityHandle(format!("{}.{}", B64.encode(payload), B64.encode(tag)))
@@ -1837,23 +1839,25 @@ mod tests {
         )
         .await;
 
-        // SAFETY: test-only, single-threaded w.r.t. this specific env var name.
-        unsafe { std::env::set_var("DYNAMIC_PLUGIN_TEST_SECRET_ROUNDTRIP", "s3cr3t") };
         let mut guest_headers = HashMap::new();
         guest_headers.insert("X-Guest".to_string(), "1".to_string());
 
-        let response = host
-            .http_fetch(
-                "acme",
-                HttpFetchRequest {
-                    method: "GET".to_string(),
-                    url: "http://93.184.216.34/data".to_string(),
-                    headers: guest_headers,
-                    body: None,
-                },
-            )
-            .expect("fetch should succeed via the scripted fetcher");
-        unsafe { std::env::remove_var("DYNAMIC_PLUGIN_TEST_SECRET_ROUNDTRIP") };
+        let response = temp_env::with_var(
+            "DYNAMIC_PLUGIN_TEST_SECRET_ROUNDTRIP",
+            Some("s3cr3t"),
+            || {
+                host.http_fetch(
+                    "acme",
+                    HttpFetchRequest {
+                        method: "GET".to_string(),
+                        url: "http://93.184.216.34/data".to_string(),
+                        headers: guest_headers,
+                        body: None,
+                    },
+                )
+                .expect("fetch should succeed via the scripted fetcher")
+            },
+        );
 
         assert_eq!(response.status, 200);
         assert_eq!(response.body, "hello");

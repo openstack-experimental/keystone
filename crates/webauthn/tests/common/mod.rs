@@ -66,7 +66,7 @@ pub async fn setup_schema(db: &DbConn) -> Result<()> {
     Ok(())
 }
 
-/// Prepare the isolated Database
+/// Prepare the isolated Database.
 ///
 /// Based on the `DATABASE_URL` environment variable prepare the database for
 /// the tests:
@@ -76,6 +76,7 @@ pub async fn setup_schema(db: &DbConn) -> Result<()> {
 /// - other - use whatever passed.
 ///
 /// By default (when `DATABASE_URL` var is unset) use inmemory sqlite.
+#[allow(clippy::expect_used)]
 pub async fn get_isolated_database() -> Result<DatabaseConnection> {
     let db_conn = std::env::var("DATABASE_URL").unwrap_or("sqlite::memory:".to_string());
     let opts: ConnectOptions = ConnectOptions::new(&db_conn).sqlx_logging(false).to_owned();
@@ -131,6 +132,7 @@ pub async fn get_isolated_database() -> Result<DatabaseConnection> {
     Ok(db)
 }
 
+#[allow(clippy::unwrap_used)]
 pub async fn get_state(
     provider_builder: Option<ProviderBuilder>,
 ) -> Result<(CombinedExtensionState, TempDir)> {

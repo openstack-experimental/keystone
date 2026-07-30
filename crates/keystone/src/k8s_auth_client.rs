@@ -179,6 +179,7 @@ impl K8sHttpClient for MockK8sHttpClient {
     ) -> Result<QueryTokenReviewResult, K8sAuthProviderError> {
         let claims = KeystoneK8sHttpClient::validate_jwt(jwt)?;
 
+        #[allow(clippy::unwrap_used)]
         let response = self.response.lock().unwrap().take();
         match response {
             Some(r) => r,

@@ -39,6 +39,23 @@ use crate::nonlocal_user::MergeNonlocalUserData;
 use crate::password::MergePasswordData;
 use crate::user::MergeUserData;
 
+/// `local_user`/`nonlocal_user`/`user_option` rows for one `user`, as
+/// returned by [`fetch_joined_user_details`].
+type JoinedUserDetails = (
+    Vec<db_local_user::Model>,
+    Vec<db_nonlocal_user::Model>,
+    Vec<db_user_option::Model>,
+);
+
+/// A single flat row from the joined `user`/`local_user`/`nonlocal_user`/
+/// `user_option` query, before grouping into [`JoinedUserDetails`].
+type JoinedUserDetailsRow = (
+    db_user::Model,
+    Option<db_local_user::Model>,
+    Option<db_nonlocal_user::Model>,
+    Option<db_user_option::Model>,
+);
+
 /// Prepare the paginated query for listing the main `user` rows.
 ///
 /// # Parameters
@@ -104,17 +121,7 @@ async fn fetch_joined_user_details(
     db: &DatabaseConnection,
     user_ids: &[String],
     name: Option<&str>,
-) -> Result<
-    HashMap<
-        String,
-        (
-            Vec<db_local_user::Model>,
-            Vec<db_nonlocal_user::Model>,
-            Vec<db_user_option::Model>,
-        ),
-    >,
-    IdentityProviderError,
-> {
+) -> Result<HashMap<String, JoinedUserDetails>, IdentityProviderError> {
     if user_ids.is_empty() {
         return Ok(HashMap::new());
     }
@@ -140,24 +147,12 @@ async fn fetch_joined_user_details(
     // by id), so consolidating first and re-grouping from its output would
     // be a second, redundant grouping pass. Group directly off the flat
     // per-row tuples in a single pass instead.
-    let rows: Vec<(
-        db_user::Model,
-        Option<db_local_user::Model>,
-        Option<db_nonlocal_user::Model>,
-        Option<db_user_option::Model>,
-    )> = select
+    let rows: Vec<JoinedUserDetailsRow> = select
         .all(db)
         .await
         .context("fetching joined local/nonlocal user and user option data")?;
 
-    let mut map: HashMap<
-        String,
-        (
-            Vec<db_local_user::Model>,
-            Vec<db_nonlocal_user::Model>,
-            Vec<db_user_option::Model>,
-        ),
-    > = HashMap::new();
+    let mut map: HashMap<String, JoinedUserDetails> = HashMap::new();
     for (u, l, n, o) in rows {
         let entry = map.entry(u.id).or_default();
         // `local`/`nonlocal` are has-one: the same row repeats on every

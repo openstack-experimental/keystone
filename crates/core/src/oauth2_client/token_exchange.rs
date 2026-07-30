@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # RFC 8693 Token Exchange (ADR 0026 §12, "v2 Shape", implemented here as
-//! the follow-up amendment the ADR itself defers to)
+//! the follow-up amendment the ADR itself defers to).
 //!
 //! Trades an existing Keystone-native delegated credential (trust or
 //! application credential; EC2 is deferred, see

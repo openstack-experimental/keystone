@@ -19,19 +19,35 @@
 use std::env;
 use std::fs;
 use std::path::Path;
+use std::process;
 
 fn main() {
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+    let manifest_dir = match env::var("CARGO_MANIFEST_DIR") {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("CARGO_MANIFEST_DIR not set: {e}");
+            process::exit(1);
+        }
+    };
     let cargo_toml = Path::new(&manifest_dir).join("Cargo.toml");
-    let content = fs::read_to_string(&cargo_toml).unwrap();
+    let content = match fs::read_to_string(&cargo_toml) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("Failed to read {}: {e}", cargo_toml.display());
+            process::exit(1);
+        }
+    };
 
     let parsed: toml::Value = toml::from_str(&content)
         .unwrap_or_else(|e| panic!("Failed to parse {}: {}", cargo_toml.display(), e));
 
-    let deps = parsed
-        .get("dependencies")
-        .and_then(|v| v.as_table())
-        .expect("Cargo.toml must have a [dependencies] section");
+    let deps = match parsed.get("dependencies").and_then(|v| v.as_table()) {
+        Some(v) => v,
+        None => {
+            eprintln!("Cargo.toml must have a [dependencies] section");
+            process::exit(1);
+        }
+    };
 
     let mut plugin_deps = Vec::new();
 
@@ -52,7 +68,13 @@ fn main() {
 
     plugin_deps.sort();
 
-    let out_dir = env::var("OUT_DIR").unwrap();
+    let out_dir = match env::var("OUT_DIR") {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("OUT_DIR not set: {e}");
+            process::exit(1);
+        }
+    };
     let out_file = Path::new(&out_dir).join("inventory_anchors.rs");
 
     let mut s = String::new();
@@ -67,6 +89,9 @@ fn main() {
     }
     s.push_str("];\n");
 
-    fs::write(&out_file, s).unwrap();
+    if let Err(e) = fs::write(&out_file, s) {
+        eprintln!("Failed to write {}: {e}", out_file.display());
+        process::exit(1);
+    }
     println!("cargo::rerun-if-changed={}", cargo_toml.display());
 }

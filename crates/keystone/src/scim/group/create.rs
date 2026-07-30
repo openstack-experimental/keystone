@@ -31,6 +31,26 @@ use crate::scim::group::membership::validate_members_owned_by_realm;
 use crate::scim::location::resource_location;
 use crate::scim::types::{MAX_GROUP_MEMBERS, ScimGroup, ScimGroupWrite};
 
+#[allow(clippy::expect_used)]
+fn insert_etag_header(headers: &mut HeaderMap, version: u64) {
+    headers.insert(
+        "etag",
+        etag_header(version)
+            .parse()
+            .expect("etag format is always a valid header value"),
+    );
+}
+
+#[allow(clippy::expect_used)]
+fn insert_location_header(headers: &mut HeaderMap, location: &str) {
+    headers.insert(
+        "location",
+        location
+            .parse()
+            .expect("scim location from base URL is always a valid header value"),
+    );
+}
+
 pub(super) async fn create(
     ScimRealmAuth { ctx, realm }: ScimRealmAuth,
     State(state): State<ServiceState>,
@@ -143,18 +163,8 @@ pub(super) async fn create(
 
     let location = resource_location(&state, &realm.domain_id, "Groups", &group.id).await;
     let mut headers = HeaderMap::new();
-    headers.insert(
-        "etag",
-        etag_header(index.version)
-            .parse()
-            .expect("weak etag is valid header value"),
-    );
-    headers.insert(
-        "location",
-        location
-            .parse()
-            .expect("scim location is a valid header value"),
-    );
+    insert_etag_header(&mut headers, index.version);
+    insert_location_header(&mut headers, &location);
     Ok((
         StatusCode::CREATED,
         headers,

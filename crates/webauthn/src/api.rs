@@ -160,9 +160,6 @@ pub async fn init_extension(
 /// # Parameters
 /// - `cancel`: Token used to cancel the cleanup task.
 /// - `state`: The combined extension state.
-///
-/// # Returns
-/// `()`
 async fn cleanup(cancel: CancellationToken, state: CombinedExtensionState) {
     let mut interval = time::interval(Duration::from_secs(60));
     interval.tick().await;
