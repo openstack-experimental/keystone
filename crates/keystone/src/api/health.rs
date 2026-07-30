@@ -18,6 +18,7 @@ use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::keystone::ServiceState;
+use openstack_keystone_core::keystone::SpiffeHealthStatus;
 
 /// The health status.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, ToSchema)]
@@ -139,6 +140,66 @@ impl PolicyStatus {
     }
 }
 
+/// Health status of the SPIFFE mTLS material (ADR 0016-v2).
+///
+/// Tracks whether this node's live SPIFFE `X509Source` is still able to
+/// present a fresh SVID. A pod that has been running long enough for its
+/// SVID/trust bundle to silently drift out of sync with a freshly-joined
+/// peer will keep failing peer mTLS handshakes without ever tripping the
+/// other health checks (DB/policy/raft can all be fine) — this check exists
+/// so k8s notices and restarts the pod instead of it wedging for weeks.
+#[derive(Clone, Debug, PartialEq, Serialize, ToSchema)]
+struct SpiffeStatus {
+    /// The error message.
+    message: Option<String>,
+    /// Status of the SPIFFE mTLS material.
+    status: HealthStatus,
+}
+
+impl SpiffeStatus {
+    pub fn ok() -> Self {
+        Self {
+            message: None,
+            status: HealthStatus::Ok,
+        }
+    }
+
+    /// Builds an `Error` status from a plain message.
+    ///
+    /// Used instead of an `err<E: std::error::Error>(...)` constructor
+    /// because the underlying
+    /// [`openstack_keystone_core::keystone::SpiffeHealthStatus::Error`]
+    /// variant only carries a `String` — the real `spiffe::X509SourceError`
+    /// is converted to a message inside the `crates/keystone`-local closure
+    /// that builds it, since `core` must not depend on the `spiffe` crate.
+    pub fn err_msg<M>(message: M) -> Self
+    where
+        M: Into<String>,
+    {
+        Self {
+            message: Some(message.into()),
+            status: HealthStatus::Error,
+        }
+    }
+
+    pub fn skipped() -> Self {
+        Self {
+            message: None,
+            status: HealthStatus::Skipped,
+        }
+    }
+
+    pub fn warn<M>(message: M) -> Self
+    where
+        M: Into<String>,
+    {
+        Self {
+            message: Some(message.into()),
+            status: HealthStatus::Warn,
+        }
+    }
+}
+
 /// The health components of the system.
 #[derive(Clone, Debug, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
@@ -149,6 +210,8 @@ struct HealthComponents {
     database: DatabaseStatus,
     /// Status of the policy enforcement engine.
     policy: PolicyStatus,
+    /// Status of the SPIFFE mTLS material.
+    spiffe: SpiffeStatus,
 }
 
 impl HealthComponents {
@@ -159,6 +222,7 @@ impl HealthComponents {
             .status
             .max(self.database.status)
             .max(self.policy.status)
+            .max(self.spiffe.status)
     }
 }
 
@@ -197,6 +261,7 @@ async fn ready(State(state): State<ServiceState>) -> impl IntoResponse {
         database: check_database(&state).await,
         policy: check_policy_engine(&state).await,
         raft: check_storage(&state).await,
+        spiffe: check_spiffe(&state).await,
     };
 
     let status = components.overall_status();
@@ -230,6 +295,7 @@ async fn health(State(state): State<ServiceState>) -> impl IntoResponse {
         database: check_database(&state).await,
         policy: check_policy_engine(&state).await,
         raft: check_storage(&state).await,
+        spiffe: check_spiffe(&state).await,
     };
 
     let status = components.overall_status();
@@ -278,6 +344,36 @@ async fn check_policy_engine(state: &ServiceState) -> PolicyStatus {
     }
 }
 
+/// Perform SPIFFE mTLS material health checks.
+///
+/// Returns `skipped` when no SPIFFE health-check hook has been installed on
+/// this node (no SPIFFE mTLS interface configured — see
+/// `Service::set_spiffe_health_check`). Otherwise calls the installed hook,
+/// which queries the live `spiffe::X509Source`'s own reported health/expiry
+/// rather than attempting a real loopback mTLS handshake, mirroring
+/// `check_storage`'s `is_initialized()`-only approach. `core` (and thus the
+/// `SpiffeHealthStatus` type this maps from) has no dependency on the
+/// `spiffe` crate — the actual `X509Source` inspection happens in the
+/// closure built by `crates/keystone/src/bin/keystone.rs`:
+///
+/// * `err` — the source itself is unreachable/closed.
+/// * `warn` — the source is open but its current SVID/material is stale or
+///   expired; this is exactly the incident scenario: a 40-day-old pod whose
+///   SVID silently drifted out of sync with a freshly-joined peer.
+/// * `ok` — the source is open and reports healthy, current material.
+async fn check_spiffe(state: &ServiceState) -> SpiffeStatus {
+    let guard = state.spiffe_health_check.read().await;
+    let Some(check) = guard.as_ref() else {
+        return SpiffeStatus::skipped();
+    };
+
+    match check() {
+        SpiffeHealthStatus::Ok => SpiffeStatus::ok(),
+        SpiffeHealthStatus::Warn(msg) => SpiffeStatus::warn(msg),
+        SpiffeHealthStatus::Error(msg) => SpiffeStatus::err_msg(msg),
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use axum::body::Body;
@@ -316,7 +412,8 @@ pub(crate) mod tests {
             HealthComponents {
                 raft: RaftStatus::ok(),
                 database: DatabaseStatus::ok(),
-                policy: PolicyStatus::ok()
+                policy: PolicyStatus::ok(),
+                spiffe: SpiffeStatus::skipped(),
             }
             .overall_status()
         );
@@ -325,7 +422,8 @@ pub(crate) mod tests {
             HealthComponents {
                 raft: RaftStatus::skipped(),
                 database: DatabaseStatus::ok(),
-                policy: PolicyStatus::ok()
+                policy: PolicyStatus::ok(),
+                spiffe: SpiffeStatus::skipped(),
             }
             .overall_status()
         );
@@ -334,7 +432,8 @@ pub(crate) mod tests {
             HealthComponents {
                 raft: RaftStatus::warn("warn"),
                 database: DatabaseStatus::ok(),
-                policy: PolicyStatus::ok()
+                policy: PolicyStatus::ok(),
+                spiffe: SpiffeStatus::skipped(),
             }
             .overall_status()
         );
@@ -343,7 +442,8 @@ pub(crate) mod tests {
             HealthComponents {
                 raft: RaftStatus::skipped(),
                 database: DatabaseStatus::ok(),
-                policy: PolicyStatus::warn("")
+                policy: PolicyStatus::warn(""),
+                spiffe: SpiffeStatus::skipped(),
             }
             .overall_status()
         );
@@ -352,7 +452,8 @@ pub(crate) mod tests {
             HealthComponents {
                 raft: RaftStatus::err(dummy_err()),
                 database: DatabaseStatus::ok(),
-                policy: PolicyStatus::warn("")
+                policy: PolicyStatus::warn(""),
+                spiffe: SpiffeStatus::skipped(),
             }
             .overall_status()
         );
@@ -361,7 +462,8 @@ pub(crate) mod tests {
             HealthComponents {
                 raft: RaftStatus::ok(),
                 database: DatabaseStatus::err(dummy_err()),
-                policy: PolicyStatus::ok()
+                policy: PolicyStatus::ok(),
+                spiffe: SpiffeStatus::skipped(),
             }
             .overall_status()
         );

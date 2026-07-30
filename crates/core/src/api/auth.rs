@@ -253,6 +253,7 @@ mod tests {
 
             storage: None,
             local_emergency_store: tokio::sync::RwLock::new(None),
+            spiffe_health_check: tokio::sync::RwLock::new(None),
             local_emergency_leaderless_tracker:
                 openstack_keystone_local_emergency_store::LeaderlessTracker::new(),
             api_key_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
@@ -376,6 +377,7 @@ mod tests {
 
             storage: None,
             local_emergency_store: tokio::sync::RwLock::new(None),
+            spiffe_health_check: tokio::sync::RwLock::new(None),
             local_emergency_leaderless_tracker:
                 openstack_keystone_local_emergency_store::LeaderlessTracker::new(),
             api_key_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
@@ -492,6 +494,7 @@ mod tests {
 
             storage: None,
             local_emergency_store: tokio::sync::RwLock::new(None),
+            spiffe_health_check: tokio::sync::RwLock::new(None),
             local_emergency_leaderless_tracker:
                 openstack_keystone_local_emergency_store::LeaderlessTracker::new(),
             api_key_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
@@ -573,6 +576,7 @@ mod tests {
 
             storage: None,
             local_emergency_store: tokio::sync::RwLock::new(None),
+            spiffe_health_check: tokio::sync::RwLock::new(None),
             local_emergency_leaderless_tracker:
                 openstack_keystone_local_emergency_store::LeaderlessTracker::new(),
             api_key_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
@@ -652,6 +656,7 @@ mod tests {
 
             storage: None,
             local_emergency_store: tokio::sync::RwLock::new(None),
+            spiffe_health_check: tokio::sync::RwLock::new(None),
             local_emergency_leaderless_tracker:
                 openstack_keystone_local_emergency_store::LeaderlessTracker::new(),
             api_key_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
@@ -728,6 +733,7 @@ mod tests {
 
             storage: None,
             local_emergency_store: tokio::sync::RwLock::new(None),
+            spiffe_health_check: tokio::sync::RwLock::new(None),
             local_emergency_leaderless_tracker:
                 openstack_keystone_local_emergency_store::LeaderlessTracker::new(),
             api_key_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(

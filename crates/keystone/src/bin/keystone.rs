@@ -64,7 +64,9 @@ use openstack_keystone::assignment::AssignmentHook;
 use openstack_keystone::auth_plugin_http_client::KeystoneDynamicPluginHttpFetcher;
 use openstack_keystone::auth_plugin_identity::DynamicPluginIdentityHook;
 use openstack_keystone::catalog::CatalogHook;
-use openstack_keystone::config::{Config, ConfigManager, Interface, ListenerConfig};
+use openstack_keystone::config::{
+    Config, ConfigManager, Interface, ListenerConfig, RaftTlsConfiguration,
+};
 use openstack_keystone::federation::FederationHook;
 use openstack_keystone::identity::IdentityHook;
 use openstack_keystone::idmapping::IdMappingHook;
@@ -96,6 +98,7 @@ use openstack_keystone_core::auth_plugin_startup::load_auth_plugins;
 use openstack_keystone_core::cadf_hook::CadfAuditHook;
 use openstack_keystone_core::db::sync_schema;
 use openstack_keystone_core::error::KeystoneError;
+use openstack_keystone_core::keystone::SpiffeHealthStatus;
 use openstack_keystone_core::oauth2_key::janitor as oauth2_key_janitor;
 use openstack_keystone_core::scim_resource::janitor as scim_resource_janitor;
 use openstack_keystone_credential_driver_sql::fernet::FernetKeyRepository;
@@ -286,6 +289,49 @@ async fn main() -> Result<(), Report> {
         shared_state
             .set_local_emergency_store(storage.local_emergency_store.clone())
             .await;
+    }
+
+    // Wire a live SPIFFE `X509Source` into the shared service state, when
+    // this deployment has SPIFFE mTLS configured on any interface, so the
+    // `/ready` probe's `SpiffeStatus` check (crates/keystone/src/api/health.rs)
+    // can observe SVID freshness. This is a dedicated source built solely for
+    // the health check - independent of (and in addition to) the per-listener
+    // `X509Source` instances each mTLS listener builds for itself. Best-effort:
+    // a failure here only disables the health signal, it must not block
+    // startup, since the real mTLS listeners perform their own independent
+    // SPIFFE initialization and will surface their own errors if SPIRE is
+    // unreachable.
+    //
+    // The `spiffe` crate itself must stay out of `openstack-keystone-core`
+    // (a transport-agnostic domain layer) - so instead of storing the
+    // `X509Source` on `Service` directly, a closure capturing it is handed
+    // over, mapped down to `core`'s spiffe-crate-free `SpiffeHealthStatus`
+    // enum. `core` only ever sees the closure's `SpiffeHealthStatus` output.
+    if spiffe_mtls_configured(&cfg) {
+        match spiffe::X509Source::new().await {
+            Ok(source) => {
+                let source = Arc::new(source);
+                let check: Arc<dyn Fn() -> SpiffeHealthStatus + Send + Sync> =
+                    Arc::new(move || match source.svid() {
+                        Err(err) => SpiffeHealthStatus::Error(err.to_string()),
+                        Ok(_svid) => {
+                            if source.is_healthy() {
+                                SpiffeHealthStatus::Ok
+                            } else {
+                                SpiffeHealthStatus::Warn(
+                                    "SPIFFE X509Source SVID is stale or expired; peer mTLS \
+                                     handshakes may be failing silently"
+                                        .to_string(),
+                                )
+                            }
+                        }
+                    });
+                shared_state.set_spiffe_health_check(check).await;
+            }
+            Err(e) => {
+                warn!("Failed to initialize SPIFFE X509Source for health checks: {e}");
+            }
+        }
     }
 
     // Also evicts stale rate-limit keyed-store entries (ADR-0022) and
@@ -1256,6 +1302,29 @@ async fn spawn_public_listener(
         }
     }
     Ok(())
+}
+
+/// Returns `true` if this deployment has SPIFFE mTLS configured on at least
+/// one interface (internal REST, admin UDS, or the Raft gRPC listener).
+///
+/// Used to gate the dedicated health-check `X509Source` (see the
+/// `set_spiffe_source` call site in `main`) — mirrors the "is SPIFFE enabled"
+/// signal `check_storage` already uses for `state.storage.is_none()`.
+fn spiffe_mtls_configured(cfg: &Config) -> bool {
+    let internal_spiffe = matches!(
+        cfg.interface_internal.as_ref().map(|i| &i.listener),
+        Some(ListenerConfig::Spiffe(_))
+    );
+    // The admin interface only ever speaks SPIFFE mTLS over a Unix socket
+    // (see `spawn_admin_listener`), so its mere presence is enough.
+    let admin_spiffe = cfg.interface_admin.is_some();
+    let raft_spiffe = matches!(
+        cfg.distributed_storage
+            .as_ref()
+            .map(|ds| &ds.tls_configuration),
+        Some(RaftTlsConfiguration::Spiffe(_))
+    );
+    internal_spiffe || admin_spiffe || raft_spiffe
 }
 
 /// Start the SPIFFE mTLS listener on the internal interface, when configured.

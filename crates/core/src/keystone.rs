@@ -33,6 +33,25 @@ use crate::policy::PolicyEnforcer;
 use crate::provider::Provider;
 use crate::rate_limit::RateLimitState;
 
+/// Outcome of a SPIFFE mTLS material freshness check, reported by the
+/// closure installed via [`Service::set_spiffe_health_check`].
+///
+/// Deliberately free of any `spiffe`-crate types: `core` is a
+/// transport-agnostic domain layer and must not depend on that crate (an
+/// infra/transport concern that belongs in `crates/keystone`). The real
+/// closure - built in `crates/keystone/src/bin/keystone.rs` - inspects a
+/// live `spiffe::X509Source` and maps its state down to this enum.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SpiffeHealthStatus {
+    /// The SPIFFE source is open and reports healthy, current material.
+    Ok,
+    /// The SPIFFE source is open but its current SVID/material is stale or
+    /// expired.
+    Warn(String),
+    /// The SPIFFE source itself is unreachable/closed.
+    Error(String),
+}
+
 // Placing ServiceState behind Arc is necessary to address DatabaseConnection
 // not implementing Clone.
 //#[derive(Clone)]
@@ -125,6 +144,26 @@ pub struct Service {
     /// `CRITICAL` log line).
     pub auth_plugin_load_failures: RwLock<HashMap<String, u64>>,
 
+    /// Type-erased hook used to observe SPIFFE mTLS material freshness for
+    /// the readiness probe (see `crates/keystone/src/api/health.rs`'s
+    /// `SpiffeStatus`).
+    ///
+    /// `core` is a transport-agnostic domain layer and must not depend on
+    /// the `spiffe` crate (that's an infra/transport concern), so this holds
+    /// a plain closure returning [`SpiffeHealthStatus`] - a spiffe-crate-free
+    /// enum - rather than an `Arc<spiffe::X509Source>` directly. `None`
+    /// unless the deployment has SPIFFE mTLS configured on at least one
+    /// interface. Populated post-construction (like `local_emergency_store`
+    /// above) via [`Self::set_spiffe_health_check`] - the real closure,
+    /// which captures a live `spiffe::X509Source`, is built in
+    /// `crates/keystone/src/bin/keystone.rs` once the config is known,
+    /// independent of the per-listener `X509Source` instances each mTLS
+    /// listener builds for itself in
+    /// `crates/keystone/src/server/listener/spiffe_common.rs`. This one
+    /// exists solely to give the health check a live handle it can query
+    /// without touching those listener-owned sources.
+    pub spiffe_health_check: RwLock<Option<Arc<dyn Fn() -> SpiffeHealthStatus + Send + Sync>>>,
+
     /// Shutdown flag.
     pub shutdown: bool,
 }
@@ -208,6 +247,7 @@ impl Service {
             rate_limiters,
             auth_plugin_limiters: RwLock::new(HashMap::new()),
             auth_plugin_load_failures: RwLock::new(HashMap::new()),
+            spiffe_health_check: RwLock::new(None),
             shutdown: false,
         })
     }
@@ -218,6 +258,18 @@ impl Service {
     /// distributed storage configured.
     pub async fn set_local_emergency_store(&self, store: Arc<dyn LocalEmergencyStore>) {
         *self.local_emergency_store.write().await = Some(store);
+    }
+
+    /// Install the SPIFFE health-check hook used by the readiness probe's
+    /// `SpiffeStatus` check. A no-op path (`spiffe_health_check` stays
+    /// `None`) if this is never called, e.g. on a node with no SPIFFE mTLS
+    /// interface configured. The closure is expected to be cheap and
+    /// non-blocking - it's called on every `/health`/`/ready` probe.
+    pub async fn set_spiffe_health_check(
+        &self,
+        check: Arc<dyn Fn() -> SpiffeHealthStatus + Send + Sync>,
+    ) {
+        *self.spiffe_health_check.write().await = Some(check);
     }
 
     /// Terminates the Keystone service.
