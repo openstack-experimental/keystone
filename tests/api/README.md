@@ -70,6 +70,9 @@ member.cleanup().await?;
 // Same, but with the role granted on `system: all`:
 let reader = SystemScopedUser::provision(&admin, "default", "reader").await?;
 reader.cleanup().await?;
+
+// For multiple project-scoped fixtures, attempt every cleanup even if one fails:
+cleanup_project_scoped_users([first, second]).await?;
 ```
 
 Both are provisioned *and* torn down with the admin session passed in, so
@@ -77,7 +80,10 @@ cleanup never depends on the underprivileged session, and both undo their
 partial work if a later provisioning step fails. When you compose fixtures
 yourself, mirror that: on error, release what you already hold with
 `warn_on_cleanup_failure("…", fixture.cleanup().await)`, which logs a failed
-best-effort cleanup instead of shadowing the error that triggered it.
+best-effort cleanup instead of shadowing the error that triggered it. For normal
+teardown of several project-scoped fixtures, use
+`cleanup_project_scoped_users`, which attempts every deletion before returning
+the first error.
 
 ### Invalid-auth requests (`test_api::common::raw_request`)
 

@@ -32,7 +32,9 @@ use openstack_sdk::{AsyncOpenStack, config::CloudConfig};
 
 use test_api::asserts::{assert_forbidden, assert_unauthorized};
 use test_api::common::raw_request;
-use test_api::fixtures::{ProjectScopedUser, warn_on_cleanup_failure};
+use test_api::fixtures::{
+    ProjectScopedUser, cleanup_project_scoped_users, warn_on_cleanup_failure,
+};
 use test_api::identity::user::{UserGroupsRequest, list_user_groups};
 
 async fn admin_session() -> Result<Arc<AsyncOpenStack>> {
@@ -68,13 +70,14 @@ async fn test_user_groups_forbidden_project_scoped_user() -> Result<()> {
         }
     };
 
+    let list_result = list_user_groups(&a.session, &b.user.id, UserGroupsRequest::default()).await;
+    let cleanup_result = cleanup_project_scoped_users([a, b]).await;
+
+    cleanup_result?;
     assert_forbidden(
-        list_user_groups(&a.session, &b.user.id, UserGroupsRequest::default()).await,
+        list_result,
         "a project-scoped user must not read another user's group memberships",
     );
-
-    a.cleanup().await?;
-    b.cleanup().await?;
     Ok(())
 }
 

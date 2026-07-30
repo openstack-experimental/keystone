@@ -38,7 +38,9 @@ use openstack_sdk::{AsyncOpenStack, config::CloudConfig};
 use test_api::asserts::{assert_forbidden, assert_status, assert_unauthorized};
 use test_api::common::raw_request;
 use test_api::credential::ec2::*;
-use test_api::fixtures::{ProjectScopedUser, warn_on_cleanup_failure};
+use test_api::fixtures::{
+    ProjectScopedUser, cleanup_project_scoped_users, warn_on_cleanup_failure,
+};
 
 async fn admin_session() -> Result<Arc<AsyncOpenStack>> {
     Ok(Arc::new(
@@ -91,8 +93,7 @@ async fn test_ec2_credential_create_forbidden_cross_user() -> Result<()> {
         "a member must not create EC2 credentials for another user",
     );
 
-    a.cleanup().await?;
-    b.cleanup().await?;
+    cleanup_project_scoped_users([a, b]).await?;
     Ok(())
 }
 
@@ -141,8 +142,7 @@ async fn test_ec2_credential_show_forbidden_cross_user() -> Result<()> {
     );
 
     delete_ec2_credential(&admin, &b.user.id, &cred.access).await?;
-    a.cleanup().await?;
-    b.cleanup().await?;
+    cleanup_project_scoped_users([a, b]).await?;
     Ok(())
 }
 
@@ -188,7 +188,7 @@ async fn test_ec2_credential_list_forbidden_cross_user() -> Result<()> {
     let admin = admin_session().await?;
     let (a, b) = two_members(&admin).await?;
 
-    assert_forbidden(
+    let list_result =
         list_ec2_credentials(&a.session, &b.user.id, Ec2CredentialListRequest::default())
             .await
             .map(|creds| {
@@ -196,12 +196,14 @@ async fn test_ec2_credential_list_forbidden_cross_user() -> Result<()> {
                     .into_iter()
                     .map(|cred| cred.access)
                     .collect::<Vec<_>>()
-            }),
+            });
+    let cleanup_result = cleanup_project_scoped_users([a, b]).await;
+
+    cleanup_result?;
+    assert_forbidden(
+        list_result,
         "a member must not list another user's EC2 credentials",
     );
-
-    a.cleanup().await?;
-    b.cleanup().await?;
     Ok(())
 }
 
@@ -252,8 +254,7 @@ async fn test_ec2_credential_delete_forbidden_cross_user() -> Result<()> {
 
     // The credential must have survived; admin cleans up.
     delete_ec2_credential(&admin, &b.user.id, &cred.access).await?;
-    a.cleanup().await?;
-    b.cleanup().await?;
+    cleanup_project_scoped_users([a, b]).await?;
     Ok(())
 }
 

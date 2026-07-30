@@ -124,9 +124,32 @@ impl ProjectScopedUser {
     /// Delete the fixture user and project with the admin session that
     /// created them.
     pub async fn cleanup(self) -> Result<()> {
-        self.user.delete().await?;
-        self.project.delete().await?;
-        Ok(())
+        let user_cleanup_result = self.user.delete().await;
+        let project_cleanup_result = self.project.delete().await;
+        user_cleanup_result?;
+        project_cleanup_result
+    }
+}
+
+/// Delete every project-scoped fixture, attempting all cleanups before
+/// returning the first error.
+pub async fn cleanup_project_scoped_users(
+    fixtures: impl IntoIterator<Item = ProjectScopedUser>,
+) -> Result<()> {
+    let mut first_error = None;
+    for fixture in fixtures {
+        if let Err(error) = fixture.cleanup().await {
+            if first_error.is_none() {
+                first_error = Some(error);
+            } else {
+                tracing::warn!(?error, "additional project-scoped fixture cleanup failed");
+            }
+        }
+    }
+
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(()),
     }
 }
 

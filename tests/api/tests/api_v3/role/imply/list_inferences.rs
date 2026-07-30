@@ -65,12 +65,14 @@ async fn test_list_role_inferences_forbidden_project_scoped_member() -> Result<(
     let admin = Arc::new(AsyncOpenStack::new(&CloudConfig::from_env()?).await?);
     let member = ProjectScopedUser::provision(&admin, "default", "member").await?;
 
+    let list_result = list_role_inferences(&member.session).await;
+    let cleanup_result = member.cleanup().await;
+
+    cleanup_result?;
     assert_forbidden(
-        list_role_inferences(&member.session).await,
+        list_result,
         "a project-scoped member must not list global role inferences",
     );
-
-    member.cleanup().await?;
     Ok(())
 }
 
