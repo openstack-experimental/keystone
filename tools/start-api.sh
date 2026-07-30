@@ -156,7 +156,7 @@ echo "$AXUM_PID" > "$STATE_DIR/keystone.pid"
 # 6. Wait for the local port to become active
 URL="http://127.0.0.1:8080"
 URL_METRICS="http://127.0.0.1:8099"
-for i in {1..30}; do
+for i in {1..60}; do
     if curl -s "$URL_METRICS/health" > /dev/null; then
         echo "✅ Keystone health url started responding!"
         # Wait for the admin socket to appear

@@ -188,6 +188,7 @@ async fn main() -> Result<(), Report> {
     color_eyre::install()?;
 
     info!("Starting Keystone...");
+    let startup_timer = std::time::Instant::now();
 
     // ADR 0019 §4: refuse to start if the credential Fernet key repository
     // contains the well-known Null Key, unless the operator has explicitly
@@ -254,6 +255,10 @@ async fn main() -> Result<(), Report> {
         .map(|s| s as Arc<dyn StorageApi>);
 
     let audit_dispatcher = init_audit(&cfg).await?;
+    debug!(
+        "init_audit took {:.3}s",
+        startup_timer.elapsed().as_secs_f32()
+    );
 
     let shared_state = Arc::new(
         KeystoneServiceState::new(
@@ -265,6 +270,10 @@ async fn main() -> Result<(), Report> {
             storage_for_service,
         )
         .await?,
+    );
+    debug!(
+        "ServiceState created in {:.3}s",
+        startup_timer.elapsed().as_secs_f32()
     );
 
     // Wire the node-local, quorum-bypass emergency store (ADR 0028) into the
@@ -282,6 +291,7 @@ async fn main() -> Result<(), Report> {
     // Also evicts stale rate-limit keyed-store entries (ADR-0022) and
     // shrinks idle auth-plugin invocation limiters (ADR-0025 §7) on the
     // same 60 s tick.
+    let listen_phase_start = std::time::Instant::now();
     spawn(cleanup(cloned_token, shared_state.clone()));
 
     // API Key (SCIM ingress) janitor: proactive inactivity disablement and
@@ -314,6 +324,11 @@ async fn main() -> Result<(), Report> {
     ));
 
     subscribe_event_hooks(&shared_state).await;
+    let subscribe_hooks_took = listen_phase_start.elapsed();
+    debug!(
+        "subscribe_event_hooks took {:.3}s",
+        subscribe_hooks_took.as_secs_f32()
+    );
 
     // Dynamic auth plugins (ADR 0025): loaded post-construction, since
     // `CoreHostFunctions` needs a fully-built `ServiceState` - see
@@ -324,9 +339,16 @@ async fn main() -> Result<(), Report> {
         Arc::new(KeystoneDynamicPluginHttpFetcher::new()),
     )
     .await;
+    let load_plugins_took = listen_phase_start.elapsed();
+    debug!(
+        "load_auth_plugins took {:.3}s",
+        load_plugins_took.as_secs_f32()
+    );
     warn_on_unresolvable_auth_methods(&shared_state).await;
 
     let app = build_router(&shared_state, &token, main_router, openapi).await?;
+    let build_router_took = listen_phase_start.elapsed();
+    debug!("build_router took {:.3}s", build_router_took.as_secs_f32());
 
     // Shutdown watcher
     let global_shutdown_token = token.clone();
@@ -346,6 +368,11 @@ async fn main() -> Result<(), Report> {
     spawn_internal_listener(&cfg, app.clone(), &token, &mut handles)?;
     spawn_metrics_listener(&cfg, &shared_state, &token, &mut handles).await?;
     spawn_admin_listener(&cfg, app, &token, &mut handles);
+
+    info!(
+        "Keystone is now running (startup took {:.3}s)",
+        startup_timer.elapsed().as_secs_f32()
+    );
 
     // Wait for both (or handle errors)
     info!("Waiting on {} listener tasks in JoinSet", handles.len());
