@@ -26,6 +26,7 @@
 //! | wrong signature | `test_ec2_token_bad_signature_rejected` |
 //! | stale timestamp | `test_ec2_token_stale_timestamp_rejected` |
 //! | issued token validates at /v3/auth/tokens | `test_ec2_token_validates_at_auth_tokens` |
+//! | issued token is rejected as ordinary X-Auth-Token | `test_ec2_token_rejected_as_x_auth_token` |
 //! | token-from-token reauth still allowed | `test_ec2_token_reauth_allowed` |
 //!
 //! The signature is produced by `test_api::auth::ec2`'s independent SigV2
@@ -44,9 +45,9 @@ use openstack_keystone_api_types::v3::auth::token::TokenResponse;
 use openstack_keystone_api_types::v3::os_ec2_credential::Ec2Credential;
 use openstack_sdk::{AsyncOpenStack, config::CloudConfig};
 
-use test_api::asserts::{assert_forbidden, assert_unauthorized};
+use test_api::asserts::{assert_forbidden, assert_status, assert_unauthorized};
 use test_api::auth::ec2::{ec2_token_request_body, post_ec2_token, post_ec2_token_extract};
-use test_api::common::TestClient;
+use test_api::common::{TestClient, raw_request};
 use test_api::credential::ec2::{create_ec2_credential, delete_ec2_credential};
 use test_api::fixtures::{FIXTURE_PASSWORD, ProjectScopedUser, warn_on_cleanup_failure};
 
@@ -87,9 +88,11 @@ async fn cleanup(
     member: ProjectScopedUser,
     cred: &Ec2Credential,
 ) -> Result<()> {
-    delete_ec2_credential(admin, &member.user.id, &cred.access).await?;
-    member.cleanup().await?;
-    Ok(())
+    let credential_cleanup_result =
+        delete_ec2_credential(admin, &member.user.id, &cred.access).await;
+    let member_cleanup_result = member.cleanup().await;
+    credential_cleanup_result?;
+    member_cleanup_result
 }
 
 #[tokio::test]
@@ -157,13 +160,17 @@ async fn test_ec2_token_forbidden_member_caller() -> Result<()> {
         .to_string();
 
     let body = ec2_token_request_body(&cred.access, &cred.secret, None, None)?;
-    let response = post_ec2_token(Some(&member_token), body).await?;
+    let response_result = post_ec2_token(Some(&member_token), body).await;
+    let cleanup_result = cleanup(&admin, member, &cred).await;
+
+    let response = response_result?;
+    cleanup_result?;
     assert_forbidden(
-        response.error_for_status(),
+        response
+            .error_for_status()
+            .map(|response| response.status()),
         "member callers must be denied by policy",
     );
-
-    cleanup(&admin, member, &cred).await?;
     Ok(())
 }
 
@@ -173,16 +180,21 @@ async fn test_ec2_token_bad_signature_rejected() -> Result<()> {
     let (member, cred) = member_with_credential(&admin).await?;
 
     let body = ec2_token_request_body(&cred.access, &cred.secret, None, Some("bogus-signature"))?;
-    let (status, subject_token, _) =
-        post_ec2_token_extract(Some(&admin_token().await?), body).await?;
-    assert_eq!(
-        status,
-        StatusCode::UNAUTHORIZED,
-        "a wrong signature must not authenticate"
-    );
-    assert!(subject_token.is_none(), "no token may be issued");
+    let response_result = post_ec2_token(Some(&admin_token().await?), body).await;
+    let cleanup_result = cleanup(&admin, member, &cred).await;
 
-    cleanup(&admin, member, &cred).await?;
+    let response = response_result?;
+    cleanup_result?;
+    assert!(
+        !response.headers().contains_key("X-Subject-Token"),
+        "no token may be issued"
+    );
+    assert_unauthorized(
+        response
+            .error_for_status()
+            .map(|response| response.status()),
+        "a wrong signature must not authenticate",
+    );
     Ok(())
 }
 
@@ -199,16 +211,21 @@ async fn test_ec2_token_stale_timestamp_rejected() -> Result<()> {
         Some("2011-10-03T15:19:30Z".to_string()),
         None,
     )?;
-    let (status, subject_token, _) =
-        post_ec2_token_extract(Some(&admin_token().await?), body).await?;
-    assert_eq!(
-        status,
-        StatusCode::UNAUTHORIZED,
-        "a stale signed request must not authenticate"
-    );
-    assert!(subject_token.is_none(), "no token may be issued");
+    let response_result = post_ec2_token(Some(&admin_token().await?), body).await;
+    let cleanup_result = cleanup(&admin, member, &cred).await;
 
-    cleanup(&admin, member, &cred).await?;
+    let response = response_result?;
+    cleanup_result?;
+    assert!(
+        !response.headers().contains_key("X-Subject-Token"),
+        "no token may be issued"
+    );
+    assert_unauthorized(
+        response
+            .error_for_status()
+            .map(|response| response.status()),
+        "a stale signed request must not authenticate",
+    );
     Ok(())
 }
 
@@ -264,6 +281,26 @@ async fn test_ec2_token_validates_at_auth_tokens() -> Result<()> {
     );
 
     cleanup(&admin, member, &cred).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_ec2_token_rejected_as_x_auth_token() -> Result<()> {
+    let admin = admin_session().await?;
+    let (member, cred, token) = issue_ec2_token(&admin).await?;
+
+    let response_result = raw_request(http::Method::GET, "v3/projects", Some(&token), None).await;
+    let cleanup_result = cleanup(&admin, member, &cred).await;
+
+    let response = response_result?;
+    cleanup_result?;
+    assert_status(
+        response
+            .error_for_status()
+            .map(|response| response.status()),
+        StatusCode::BAD_REQUEST,
+        "an EC2-issued token must not authenticate ordinary API requests",
+    );
     Ok(())
 }
 

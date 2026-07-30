@@ -240,14 +240,25 @@ fn flat_spiffe_claims(svid: &SpiffeId) -> MappingAuthRequest {
 ///
 /// # Returns
 ///
-/// `Ok(())` when the auth type is not EC2, `Err(403 Forbidden)` otherwise.
+/// `Ok(())` when the auth type is not EC2, `Err(400 Bad Request)` otherwise
+/// (`KeystoneApiError::SelectedAuthenticationForbidden` — the same variant
+/// used for `AuthenticationError::TokenRenewalForbidden` — always maps to
+/// 400, never 403, per `error_conv.rs`).
 fn reject_if_ec2(user_auth: &ValidatedSecurityContext) -> Result<(), KeystoneApiError> {
     // SECURITY: this must stay here unchanged to prevent security vulnerabilities
     // from the EC2 auth reuse.
+    //
+    // A bare EC2 credential (not minted under a trust/app-cred) surfaces as
+    // `AuthenticationContext::Ec2Credential` directly. One minted under a
+    // trust/app-cred reconstructs `AuthenticationContext::Trust` /
+    // `ApplicationCredential` on redemption instead (security-model.md §5),
+    // so it must also be caught via the immutable `ec2credential` marker in
+    // the auth-method chain, which survives that reconstruction.
     if matches!(
         user_auth.inner().authentication_context(),
         AuthenticationContext::Ec2Credential
-    ) {
+    ) || user_auth.inner().auth_methods().contains("ec2credential")
+    {
         return Err(KeystoneApiError::SelectedAuthenticationForbidden);
     }
     Ok(())
@@ -848,6 +859,98 @@ mod tests {
             )),
             auth_plugin_registry: tokio::sync::RwLock::new(Arc::new(
                 openstack_keystone_auth_plugin_core::EmptyAuthPluginRuntime,
+            )),
+            core_host_functions: tokio::sync::RwLock::new(None),
+            rate_limiters: crate::rate_limit::RateLimitState::default(),
+            auth_plugin_limiters: tokio::sync::RwLock::new(std::collections::HashMap::new()),
+            auth_plugin_load_failures: tokio::sync::RwLock::new(std::collections::HashMap::new()),
+            shutdown: false,
+        });
+
+        let mut parts = make_parts();
+        parts
+            .headers
+            .insert("X-Auth-Token", "valid-token-string".parse().unwrap());
+
+        let result = Auth::from_request_parts(&mut parts, &state).await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            KeystoneApiError::SelectedAuthenticationForbidden
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_x_auth_token_ec2credential_method_rejected() {
+        use crate::token::MockTokenProvider;
+
+        let config = Config::default();
+        let config_manager = ConfigManager::not_watched(config);
+        let policy_enforcer = Arc::new(MockPolicy::default());
+        let db = sea_orm::DatabaseConnection::default();
+
+        let mut token_mock = MockTokenProvider::new();
+        token_mock.expect_authorize_by_token().once().returning(
+            move |_exec, _token, _allow_rescope, _restrict_to| {
+                let mut security_context = SecurityContextTestingBuilder::default()
+                    .authentication_context(AuthenticationContext::Token(
+                        openstack_keystone_core_types::token::FernetToken::ProjectScope(
+                            openstack_keystone_core_types::token::ProjectScopePayload {
+                                user_id: "token-user".into(),
+                                methods: vec!["ec2credential".into()],
+                                audit_ids: vec![],
+                                expires_at: chrono::Utc::now(),
+                                project_id: "token-project".into(),
+                                ..Default::default()
+                            },
+                        ),
+                    ))
+                    .principal(
+                        PrincipalInfoBuilder::default()
+                            .identity(IdentityInfo::Principal(
+                                PrincipalIdentityInfoBuilder::default()
+                                    .id("token-user")
+                                    .issuer("test.domain")
+                                    .build()
+                                    .unwrap(),
+                            ))
+                            .build()
+                            .unwrap(),
+                    )
+                    .build();
+                // Fully resolve the context by setting authorization
+                security_context.set_authorization_scope(ScopeInfo::Unscoped)?;
+                Ok(ValidatedSecurityContext::test_new(security_context))
+            },
+        );
+
+        let provider = Provider::mocked_builder()
+            .mock_mapping(MockMappingProvider::new())
+            .mock_token(token_mock)
+            .build()
+            .unwrap();
+        let state = Arc::new(Service {
+            config_manager,
+            db,
+            policy_enforcer,
+            provider,
+            event_dispatcher: crate::events::EventDispatcher::production(),
+
+            audit_dispatcher: openstack_keystone_audit::AuditDispatcher::noop(),
+
+            storage: None,
+            local_emergency_store: tokio::sync::RwLock::new(None),
+            spiffe_health_check: tokio::sync::RwLock::new(None),
+            local_emergency_leaderless_tracker:
+                openstack_keystone_local_emergency_store::LeaderlessTracker::new(),
+            api_key_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
+                governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
+            )),
+            oauth2_token_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
+                governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
+            )),
+            auth_plugin_registry: tokio::sync::RwLock::new(Arc::new(
+                openstack_keystone_auth_plugin_runtime::WasmPluginRegistry::default(),
             )),
             core_host_functions: tokio::sync::RwLock::new(None),
             rate_limiters: crate::rate_limit::RateLimitState::default(),
