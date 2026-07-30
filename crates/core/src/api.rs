@@ -246,6 +246,33 @@ pub mod tests {
         )
     }
 
+    /// Initialize service state with a caller-configured policy mock.
+    ///
+    /// This supports handler tests whose policy decision depends on the
+    /// individual resource instead of a single allow/deny value.
+    pub async fn get_state_with_mock_policy(
+        provider_builder: ProviderBuilder,
+        mut policy_enforcer_mock: MockPolicy,
+    ) -> ServiceState {
+        let provider = provider_builder.build().unwrap();
+        policy_enforcer_mock
+            .expect_health_check()
+            .returning(|| Ok(()));
+
+        Arc::new(
+            Service::new(
+                ConfigManager::not_watched(Config::default()),
+                DatabaseConnection::default(),
+                provider,
+                Arc::new(policy_enforcer_mock),
+                AuditDispatcher::noop(),
+                None,
+            )
+            .await
+            .unwrap(),
+        )
+    }
+
     /// One recorded `enforce()` call, as observed by [`CapturingPolicy`].
     ///
     /// This is Gate B2 (security review V3a, issue #978): the shared,

@@ -24,6 +24,7 @@ use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::api::v3::group::types::{Group, GroupList};
 use crate::keystone::ServiceState;
+use crate::policy::PolicyError;
 use openstack_keystone_core::auth::ExecutionContext;
 
 /// List groups a user is member of
@@ -70,14 +71,31 @@ pub(super) async fn groups(
         .await?;
     match current {
         Some(_) => {
-            let groups: Vec<Group> = state
+            let raw_groups = state
                 .provider
                 .get_identity_provider()
                 .list_groups_of_user(&ExecutionContext::from_auth(&state, &user_auth), &user_id)
-                .await?
-                .into_iter()
-                .map(Into::into)
-                .collect();
+                .await?;
+
+            // CVE-2019-19687 / security-model I8: membership in a readable
+            // user must not reveal a group the caller cannot itself read.
+            let mut groups = Vec::with_capacity(raw_groups.len());
+            for group in raw_groups {
+                match state
+                    .policy_enforcer
+                    .enforce(
+                        "identity/group/show",
+                        &user_auth,
+                        serde_json::Value::Null,
+                        Some(json!({"group": &group})),
+                    )
+                    .await
+                {
+                    Ok(_) => groups.push(Group::from(group)),
+                    Err(PolicyError::Forbidden(_)) => continue,
+                    Err(error) => return Err(error.into()),
+                }
+            }
             Ok((
                 StatusCode::OK,
                 Json(GroupList {
@@ -105,14 +123,169 @@ mod tests {
     use tower_http::trace::TraceLayer;
 
     use super::super::openapi_router;
-    use crate::api::tests::{get_mocked_state, test_fixture_scoped};
+    use crate::api::tests::{
+        get_capturing_state, get_mocked_state, get_state_with_mock_policy, test_fixture_scoped,
+    };
     use crate::identity::MockIdentityProvider;
+    use crate::policy::{MockPolicy, PolicyError, PolicyEvaluationResult};
     use crate::{
         api::v3::group::types::{GroupBuilder as ApiGroupBuilder, GroupList},
         provider::Provider,
     };
     use openstack_keystone_core_types::identity::Group;
-    use openstack_keystone_core_types::identity::UserResponseBuilder;
+    use openstack_keystone_core_types::identity::{UserResponse, UserResponseBuilder};
+
+    #[tokio::test]
+    async fn test_groups_rechecks_each_group_policy() -> eyre::Result<()> {
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock.expect_get_user().returning(|_, _| {
+            Ok(Some(UserResponse {
+                default_project_id: None,
+                domain_id: "domain-a".into(),
+                enabled: true,
+                extra: Default::default(),
+                federated: None,
+                id: "user-id".into(),
+                name: "user-name".into(),
+                options: Default::default(),
+                password_expires_at: None,
+            }))
+        });
+        identity_mock
+            .expect_list_groups_of_user()
+            .returning(|_, _| {
+                Ok(vec![
+                    Group {
+                        id: "visible".into(),
+                        name: "visible".into(),
+                        domain_id: "domain-a".into(),
+                        ..Default::default()
+                    },
+                    Group {
+                        id: "hidden".into(),
+                        name: "hidden".into(),
+                        domain_id: "domain-b".into(),
+                        ..Default::default()
+                    },
+                ])
+            });
+
+        let (state, policy) =
+            get_capturing_state(Provider::mocked_builder().mock_identity(identity_mock)).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/user-id/groups")
+                    .extension(test_fixture_scoped())
+                    .body(Body::empty())?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let calls = policy.calls();
+        assert_eq!(calls.len(), 3);
+        assert_eq!(calls[0].policy_name, "identity/user/show");
+        for (call, expected_id) in calls.iter().skip(1).zip(["visible", "hidden"]) {
+            assert_eq!(call.policy_name, "identity/group/show");
+            assert_eq!(call.target, serde_json::Value::Null);
+            assert_eq!(
+                call.existing
+                    .as_ref()
+                    .and_then(|value| value.pointer("/group/id"))
+                    .and_then(serde_json::Value::as_str),
+                Some(expected_id),
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_groups_drops_items_denied_by_show_policy() -> eyre::Result<()> {
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock.expect_get_user().returning(|_, _| {
+            Ok(Some(UserResponse {
+                default_project_id: None,
+                domain_id: "domain-a".into(),
+                enabled: true,
+                extra: Default::default(),
+                federated: None,
+                id: "user-id".into(),
+                name: "user-name".into(),
+                options: Default::default(),
+                password_expires_at: None,
+            }))
+        });
+        identity_mock
+            .expect_list_groups_of_user()
+            .returning(|_, _| {
+                Ok(vec![
+                    Group {
+                        id: "visible".into(),
+                        name: "visible".into(),
+                        domain_id: "domain-a".into(),
+                        ..Default::default()
+                    },
+                    Group {
+                        id: "hidden".into(),
+                        name: "hidden".into(),
+                        domain_id: "domain-b".into(),
+                        ..Default::default()
+                    },
+                ])
+            });
+
+        let mut policy = MockPolicy::default();
+        policy
+            .expect_enforce()
+            .returning(|policy_name, _, _, existing| {
+                let hidden_group = policy_name == "identity/group/show"
+                    && existing
+                        .as_ref()
+                        .and_then(|value| value.pointer("/group/id"))
+                        .and_then(serde_json::Value::as_str)
+                        == Some("hidden");
+                if hidden_group {
+                    Err(PolicyError::Forbidden(PolicyEvaluationResult::forbidden()))
+                } else {
+                    Ok(PolicyEvaluationResult::allowed_admin())
+                }
+            });
+
+        let state = get_state_with_mock_policy(
+            Provider::mocked_builder().mock_identity(identity_mock),
+            policy,
+        )
+        .await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/user-id/groups")
+                    .extension(test_fixture_scoped())
+                    .body(Body::empty())?,
+            )
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await?.to_bytes();
+        let groups: GroupList = serde_json::from_slice(&body)?;
+        assert_eq!(
+            groups
+                .groups
+                .into_iter()
+                .map(|group| group.id)
+                .collect::<Vec<_>>(),
+            vec!["visible"],
+        );
+        Ok(())
+    }
 
     #[tokio::test]
     async fn test_groups() {

@@ -25,6 +25,7 @@ use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::api::v3::group::types::{Group, GroupList};
 use crate::keystone::ServiceState;
+use crate::policy::PolicyError;
 use openstack_keystone_core::auth::ExecutionContext;
 
 /// List groups a user is member of
@@ -63,14 +64,31 @@ pub(super) async fn groups(
 
     match current {
         Some(_) => {
-            let groups: Vec<Group> = state
+            let raw_groups = state
                 .provider
                 .get_identity_provider()
                 .list_groups_of_user(&ExecutionContext::from_auth(&state, &user_auth), &user_id)
-                .await?
-                .into_iter()
-                .map(Into::into)
-                .collect();
+                .await?;
+
+            // CVE-2019-19687 / security-model I8: membership in a readable
+            // user must not reveal a group the caller cannot itself read.
+            let mut groups = Vec::with_capacity(raw_groups.len());
+            for group in raw_groups {
+                match state
+                    .policy_enforcer
+                    .enforce(
+                        "identity/group/show",
+                        &user_auth,
+                        serde_json::Value::Null,
+                        Some(json!({"group": &group})),
+                    )
+                    .await
+                {
+                    Ok(_) => groups.push(Group::from(group)),
+                    Err(PolicyError::Forbidden(_)) => continue,
+                    Err(error) => return Err(error.into()),
+                }
+            }
 
             Ok((
                 StatusCode::OK,
