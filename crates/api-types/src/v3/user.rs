@@ -673,6 +673,7 @@ mod tests {
         //);
     }
 
+    #[cfg(feature = "validate")]
     #[test]
     fn federation_protocol_accepts_long_external_unique_id() {
         let long_unique_id =
@@ -686,6 +687,7 @@ mod tests {
         assert!(protocol.validate().is_ok());
     }
 
+    #[cfg(feature = "validate")]
     #[test]
     fn federation_protocol_rejects_overlong_unique_id() {
         let protocol = FederationProtocol {
