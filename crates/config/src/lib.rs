@@ -608,7 +608,16 @@ impl ConfigManager {
                 if let Ok(event) = res {
                     // Only trigger for data modifications or name changes (renames/symlink swaps)
                     if event.kind.is_modify() || event.kind.is_create() {
-                        let _ = sync_tx.blocking_send(event);
+                        // `try_send`, not `blocking_send`: this callback runs on
+                        // notify's single background event-loop thread, which
+                        // also services `watch()`/`unwatch()` control requests.
+                        // Blocking here until `sync_rx` is drained can deadlock
+                        // that thread against a concurrent `watcher.watch()`
+                        // call (e.g. while registering the initial watch set)
+                        // that can only be serviced once this send completes.
+                        // A dropped event is harmless: the consumer already
+                        // coalesces any backlog via the `try_recv` drain below.
+                        let _ = sync_tx.try_send(event);
                     }
                 }
             })
