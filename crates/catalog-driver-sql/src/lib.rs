@@ -89,7 +89,10 @@ impl CatalogBackend for SqlBackend {
         project_id: &'a str,
         endpoint_group_id: &'a str,
     ) -> Result<(), CatalogProviderError> {
-        Ok(project_endpoint_group::add(&state.db.connection(), project_id, endpoint_group_id).await?)
+        Ok(
+            project_endpoint_group::add(&state.db.connection(), project_id, endpoint_group_id)
+                .await?,
+        )
     }
 
     /// Check whether an endpoint is associated with a project.
@@ -111,7 +114,10 @@ impl CatalogBackend for SqlBackend {
         project_id: &'a str,
         endpoint_group_id: &'a str,
     ) -> Result<bool, CatalogProviderError> {
-        Ok(project_endpoint_group::check(&state.db.connection(), project_id, endpoint_group_id).await?)
+        Ok(
+            project_endpoint_group::check(&state.db.connection(), project_id, endpoint_group_id)
+                .await?,
+        )
     }
 
     /// Create a new endpoint.
@@ -365,7 +371,10 @@ impl CatalogBackend for SqlBackend {
         state: &ServiceState,
         project_id: &'a str,
     ) -> Result<Vec<EndpointGroup>, CatalogProviderError> {
-        Ok(project_endpoint_group::list_endpoint_groups(&state.db.connection(), project_id).await?)
+        Ok(
+            project_endpoint_group::list_endpoint_groups(&state.db.connection(), project_id)
+                .await?,
+        )
     }
 
     /// List regions.
@@ -434,7 +443,10 @@ impl CatalogBackend for SqlBackend {
         project_id: &'a str,
         endpoint_group_id: &'a str,
     ) -> Result<(), CatalogProviderError> {
-        Ok(project_endpoint_group::remove(&state.db.connection(), project_id, endpoint_group_id).await?)
+        Ok(
+            project_endpoint_group::remove(&state.db.connection(), project_id, endpoint_group_id)
+                .await?,
+        )
     }
 
     /// Update an existing endpoint.

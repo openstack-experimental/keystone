@@ -181,7 +181,8 @@ impl SqlBackend {
         params: &RoleAssignmentListForMultipleActorTargetParameters,
     ) -> Result<Vec<Assignment>, AssignmentProviderError> {
         let assignments =
-            assignment::list_for_multiple_actors_and_targets(&state.db.connection(), params).await?;
+            assignment::list_for_multiple_actors_and_targets(&state.db.connection(), params)
+                .await?;
 
         if params.resolve_implied_roles {
             self.resolve_implied_roles(state, assignments).await

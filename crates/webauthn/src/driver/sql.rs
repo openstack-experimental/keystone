@@ -154,7 +154,13 @@ impl WebauthnApi for SqlDriver {
         credential_id: &str,
         credential: &WebauthnCredential,
     ) -> Result<WebauthnCredential, WebauthnError> {
-        credential::update(&exec.state().db.connection(), user_id, credential_id, credential).await
+        credential::update(
+            &exec.state().db.connection(),
+            user_id,
+            credential_id,
+            credential,
+        )
+        .await
     }
 }
 

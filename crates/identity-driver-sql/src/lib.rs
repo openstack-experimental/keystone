@@ -107,10 +107,14 @@ impl IdentityBackend for SqlBackend {
         group_id: &'a str,
         idp_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
-        Ok(
-            user_group::add_user_to_group_expiring(&state.db.connection(), user_id, group_id, idp_id, None)
-                .await?,
+        Ok(user_group::add_user_to_group_expiring(
+            &state.db.connection(),
+            user_id,
+            group_id,
+            idp_id,
+            None,
         )
+        .await?)
     }
 
     /// Add user group membership relations.
@@ -146,7 +150,13 @@ impl IdentityBackend for SqlBackend {
         memberships: Vec<(&'a str, &'a str)>,
         idp_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
-        Ok(user_group::add_users_to_groups_expiring(&state.db.connection(), memberships, idp_id, None).await?)
+        Ok(user_group::add_users_to_groups_expiring(
+            &state.db.connection(),
+            memberships,
+            idp_id,
+            None,
+        )
+        .await?)
     }
 
     /// Authenticate a user by a password.
@@ -384,7 +394,8 @@ impl IdentityBackend for SqlBackend {
         unique_id: &'a str,
     ) -> Result<Option<UserResponse>, IdentityProviderError> {
         if let Some(federated_user) =
-            federated_user::find_by_idp_and_unique_id(&state.db.connection(), idp_id, unique_id).await?
+            federated_user::find_by_idp_and_unique_id(&state.db.connection(), idp_id, unique_id)
+                .await?
         {
             let config = state.config_manager.config.read().await;
             return user::get(&config, &state.db.connection(), &federated_user.user_id).await;
@@ -551,10 +562,13 @@ impl IdentityBackend for SqlBackend {
         group_id: &'a str,
         idp_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
-        Ok(
-            user_group::remove_user_from_group_expiring(&state.db.connection(), user_id, group_id, idp_id)
-                .await?,
+        Ok(user_group::remove_user_from_group_expiring(
+            &state.db.connection(),
+            user_id,
+            group_id,
+            idp_id,
         )
+        .await?)
     }
 
     /// Remove the user from multiple groups.
@@ -594,10 +608,13 @@ impl IdentityBackend for SqlBackend {
         group_ids: HashSet<&'a str>,
         idp_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
-        Ok(
-            user_group::remove_user_from_groups_expiring(&state.db.connection(), user_id, group_ids, idp_id)
-                .await?,
+        Ok(user_group::remove_user_from_groups_expiring(
+            &state.db.connection(),
+            user_id,
+            group_ids,
+            idp_id,
         )
+        .await?)
     }
 
     /// Set group memberships of the user.
@@ -689,8 +706,14 @@ impl IdentityBackend for SqlBackend {
         new_password: SecretString,
     ) -> Result<(), IdentityProviderError> {
         let config = state.config_manager.config.read().await;
-        local_user::update_password(&state.db.connection(), &config, user_id, original_password, new_password)
-            .await
+        local_user::update_password(
+            &state.db.connection(),
+            &config,
+            user_id,
+            original_password,
+            new_password,
+        )
+        .await
     }
 }
 
