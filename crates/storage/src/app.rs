@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -24,6 +25,7 @@ use openstack_keystone_storage_crypto::{DekEpoch, EnvKek, KekProvider};
 use crate::protobuf as pb;
 use openraft::ReadPolicy;
 use openraft::errors::{ForwardToLeader, LinearizableReadError, RaftError};
+use openraft::type_config::TypeConfigExt;
 use tonic::Code;
 use tonic::service::Routes;
 use tonic::transport::Channel;
@@ -778,6 +780,84 @@ pub struct Storage {
     pub(crate) local_emergency_config: openstack_keystone_config::LocalEmergencyProvider,
 }
 
+/// Total number of retry attempts for `ensure_linearizable` when transient
+/// errors occur. `ForwardToLeader` without leader info can appear during an
+/// election while the leader cache refreshes; `QuorumNotEnough` can appear when
+/// multiple in-flight `ReadIndex` or `client_write` calls compete for quorum.
+/// Subsequent calls should succeed once the transient condition clears.
+const ENSURE_LINEARIZABLE_RETRIES: u32 = 6;
+
+/// Delay between retries (ms) — short enough to complete before caller-timeout,
+/// long enough for the follower's leader cache to refresh.
+const ENSURE_LINEARIZABLE_RETRY_DELAY_MS: u64 = 8;
+
+/// Outcome of the `ensure_linearizable` retry loop.
+enum EnsureLinearizableOutcome {
+    /// We are the leader; proceed to local read.
+    Leader,
+    /// Forward the read to the given leader.
+    Forward(NodeId, String),
+    /// All retries exhausted without resolving; fall back to local read.
+    Fallback,
+}
+
+impl Storage {
+    /// Calls `ensure_linearizable(ReadIndex)` with automatic retry for
+    /// transient `QuorumNotEnough` errors that occur during concurrent Raft
+    /// activity.
+    ///
+    /// Returns `Ok(EnsureLinearizableOutcome::Leader)` when this node is
+    /// leader, `Ok(EnsureLinearizableOutcome::Forward(addr))` when a leader
+    /// should handle the read, or `Err` for an unrecoverable failure.
+    async fn ensure_linearizable_with_retry(
+        &self,
+    ) -> Result<EnsureLinearizableOutcome, ApiStoreError> {
+        for attempt in 0..ENSURE_LINEARIZABLE_RETRIES {
+            match self.raft.ensure_linearizable(ReadPolicy::ReadIndex).await {
+                Ok(_) => {
+                    return Ok(EnsureLinearizableOutcome::Leader);
+                }
+                Err(RaftError::APIError(LinearizableReadError::ForwardToLeader(
+                    ForwardToLeader {
+                        leader_id: Some(id),
+                        leader_node: Some(node),
+                    },
+                ))) => {
+                    return Ok(EnsureLinearizableOutcome::Forward(id, node.rpc_addr));
+                }
+                Err(RaftError::APIError(LinearizableReadError::ForwardToLeader(_))) => {
+                    // ForwardToLeader without leader info during election — retry.
+                    debug!(
+                        "ensure_linearizable (ReadIndex) returned ForwardToLeader \
+                             without leader info (attempt {}); retrying",
+                        attempt + 1
+                    );
+                }
+                Err(RaftError::APIError(LinearizableReadError::QuorumNotEnough(_))) => {
+                    debug!(
+                        "ensure_linearizable (ReadIndex) returned QuorumNotEnough \
+                             (attempt {}); retrying",
+                        attempt + 1
+                    );
+                }
+                Err(RaftError::Fatal(f)) => {
+                    return Err(ApiStoreError::Other(Box::new(StoreError::Other(
+                        eyre::eyre!("ensure_linearizable (ReadIndex) fatal: {f:?}"),
+                    ))));
+                }
+            }
+
+            if attempt + 1 < ENSURE_LINEARIZABLE_RETRIES {
+                TypeConfig::sleep(Duration::from_millis(ENSURE_LINEARIZABLE_RETRY_DELAY_MS)).await;
+            }
+        }
+
+        // All retries exhausted without getting leader status or a valid leader
+        // address. Fall through to local read as best-effort.
+        Ok(EnsureLinearizableOutcome::Fallback)
+    }
+}
+
 #[async_trait]
 impl StorageApi for Storage {
     /// Checks whether a given key is present in the keyspace of the distributed
@@ -817,39 +897,39 @@ impl StorageApi for Storage {
         // Check ReadIndex first. On the leader we can safely proceed to
         // local reads. On a follower ReadIndex returns ForwardToLeader and
         // we forward the entire read to the leader – which already has the
-        // committed data.
-        match self.raft.ensure_linearizable(ReadPolicy::ReadIndex).await {
-            Ok(_) => {}
-            Err(RaftError::APIError(LinearizableReadError::ForwardToLeader(ForwardToLeader {
-                leader_id,
-                leader_node,
-            }))) => {
-                if let (Some(lead_id), Some(lead_node)) = (leader_id, leader_node) {
+        // committed data. The retry loop also handles transient QuorumNotEnough
+        // errors that occur during concurrent Raft activity.
+        match self.ensure_linearizable_with_retry().await? {
+            EnsureLinearizableOutcome::Leader => {}
+            EnsureLinearizableOutcome::Forward(lead_id, leader_addr) => {
+                {
                     debug!(
                         leader_id = lead_id,
-                        leader_addr = lead_node.rpc_addr,
+                        leader_addr = %leader_addr,
                         "ensure_linearizable (ReadIndex) returned ForwardToLeader; \
                          forwarding get_by_key to leader"
                     );
 
-                    if let Ok(forwarded) = self
-                        .forwarded_get_by_key(lead_id, lead_node.rpc_addr, key, keyspace)
+                    if let Ok(result) = self
+                        .forwarded_get_by_key(lead_id, leader_addr.clone(), key, keyspace)
                         .await
                     {
-                        return Ok(forwarded);
+                        return Ok(result);
                     }
-                    debug!("forwarded get_by_key failed; falling back to local read");
-                } else {
+
+                    // Forward failed: the leader we found is unreachable (e.g., a removed node
+                    // with stale leader cache pointing to an old leader). Fall through to local
+                    // read as the best-effort fallback.
                     debug!(
-                        "ensure_linearizable (ReadIndex) returned ForwardToLeader \
-                         without leader info; falling back to local read"
+                        leader_id = lead_id,
+                        leader_addr = %leader_addr,
+                        "forwarded_get_by_key to leader failed, falling back to local read"
                     );
                 }
             }
-            Err(e) => {
-                return Err(ApiStoreError::Other(Box::new(StoreError::Other(
-                    eyre::eyre!("ReadIndex failed: {e:?}"),
-                ))));
+            EnsureLinearizableOutcome::Fallback => {
+                // Retries exhausted without resolving leader status. Fall
+                // through to local read as best-effort.
             }
         }
 
@@ -912,40 +992,34 @@ impl StorageApi for Storage {
 
         // On the leader, ReadIndex guarantees linearizable read. On a follower,
         // ReadIndex returns ForwardToLeader, so we forward the prefix scan to
-        // the leader via gRPC.
-        match self.raft.ensure_linearizable(ReadPolicy::ReadIndex).await {
-            Ok(_) => {}
-            Err(RaftError::APIError(LinearizableReadError::ForwardToLeader(ForwardToLeader {
-                leader_id,
-                leader_node,
-            }))) => {
-                if let (Some(lead_id), Some(lead_node)) = (leader_id, leader_node) {
-                    debug!(
-                        leader_id = lead_id,
-                        leader_addr = lead_node.rpc_addr,
-                        "ensure_linearizable (ReadIndex) returned ForwardToLeader; \
-                         forwarding prefix to leader"
-                    );
+        // the leader via gRPC. The retry loop also handles transient QuorumNotEnough
+        // errors that occur during concurrent Raft activity.
+        match self.ensure_linearizable_with_retry().await? {
+            EnsureLinearizableOutcome::Leader => {}
+            EnsureLinearizableOutcome::Forward(lead_id, leader_addr) => {
+                debug!(
+                    leader_id = lead_id,
+                    leader_addr = %leader_addr,
+                    "ensure_linearizable (ReadIndex) returned ForwardToLeader; \
+                     forwarding prefix to leader"
+                );
 
-                    if let Ok(forwarded) = self
-                        .forwarded_prefix_read(lead_id, lead_node.rpc_addr, prefix, keyspace)
-                        .await
-                    {
-                        return Ok(forwarded);
-                    }
-                    debug!("forwarded prefix failed; falling back to local read");
-                } else {
-                    // No leader info — fall back to local read (e.g., removed node).
-                    debug!(
-                        "ensure_linearizable (ReadIndex) returned ForwardToLeader \
-                         without leader info; falling back to local read"
-                    );
+                if let Ok(result) = self
+                    .forwarded_prefix_read(lead_id, leader_addr.clone(), prefix, keyspace)
+                    .await
+                {
+                    return Ok(result);
                 }
+
+                debug!(
+                    leader_id = lead_id,
+                    leader_addr = %leader_addr,
+                    "forwarded_prefix_read to leader failed, falling back to local read"
+                );
             }
-            Err(e) => {
-                return Err(ApiStoreError::Other(Box::new(StoreError::Other(
-                    eyre::eyre!("ReadIndex failed: {e:?}"),
-                ))));
+            EnsureLinearizableOutcome::Fallback => {
+                // Retries exhausted without resolving leader status. Fall
+                // through to local read as best-effort.
             }
         }
 
@@ -1006,39 +1080,34 @@ impl StorageApi for Storage {
     async fn prefix_index(&self, prefix: &[u8]) -> Result<Vec<String>, ApiStoreError> {
         // On the leader, ReadIndex guarantees linearizable read. On a follower,
         // ReadIndex returns ForwardToLeader, so we forward the prefix-index
-        // scan to the leader via gRPC.
-        match self.raft.ensure_linearizable(ReadPolicy::ReadIndex).await {
-            Ok(_) => {}
-            Err(RaftError::APIError(LinearizableReadError::ForwardToLeader(ForwardToLeader {
-                leader_id,
-                leader_node,
-            }))) => {
-                if let (Some(lead_id), Some(lead_node)) = (leader_id, leader_node) {
-                    debug!(
-                        leader_id = lead_id,
-                        leader_addr = lead_node.rpc_addr,
-                        "ensure_linearizable (ReadIndex) returned ForwardToLeader \
-                         for prefix_index; forwarding to leader"
-                    );
+        // scan to the leader via gRPC. The retry loop also handles transient
+        // QuorumNotEnough errors that occur during concurrent Raft activity.
+        match self.ensure_linearizable_with_retry().await? {
+            EnsureLinearizableOutcome::Leader => {}
+            EnsureLinearizableOutcome::Forward(lead_id, leader_addr) => {
+                debug!(
+                    leader_id = lead_id,
+                    leader_addr = %leader_addr,
+                    "ensure_linearizable (ReadIndex) returned ForwardToLeader \
+                     for prefix_index; forwarding to leader"
+                );
 
-                    if let Ok(forwarded) = self
-                        .forwarded_prefix_index(lead_id, lead_node.rpc_addr, prefix)
-                        .await
-                    {
-                        return Ok(forwarded);
-                    }
-                    debug!("forwarded prefix_index failed; falling back to local read");
-                } else {
-                    debug!(
-                        "ensure_linearizable (ReadIndex) returned ForwardToLeader \
-                         without leader info; falling back to local read"
-                    );
+                if let Ok(result) = self
+                    .forwarded_prefix_index(lead_id, leader_addr.clone(), prefix)
+                    .await
+                {
+                    return Ok(result);
                 }
+
+                debug!(
+                    leader_id = lead_id,
+                    leader_addr = %leader_addr,
+                    "forwarded_prefix_index to leader failed, falling back to local read"
+                );
             }
-            Err(e) => {
-                return Err(ApiStoreError::Other(Box::new(StoreError::Other(
-                    eyre::eyre!("ReadIndex failed: {e:?}"),
-                ))));
+            EnsureLinearizableOutcome::Fallback => {
+                // Retries exhausted without resolving leader status. Fall
+                // through to local read as best-effort.
             }
         }
 

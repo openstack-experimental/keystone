@@ -14,6 +14,7 @@
 
 use std::sync::Arc;
 
+use openraft::ReadPolicy;
 use tonic::{Request, Response, Status};
 
 use crate::DataTier;
@@ -58,6 +59,23 @@ impl StorageServiceImpl {
             state_machine_store,
         }
     }
+
+    /// Re-confirm this node is still leader with an up-to-date read index
+    /// before serving a forwarded read.
+    ///
+    /// A follower that observed `ForwardToLeader` forwards the read here,
+    /// but leadership can change between that observation and this RPC
+    /// landing -- without re-checking, a former leader would serve a local
+    /// read that is no longer guaranteed linearizable (e.g. a competing
+    /// leader committed writes this node hasn't seen), silently breaking
+    /// read-your-writes for the forwarded caller.
+    async fn ensure_leader_linearizable(&self) -> Result<(), Status> {
+        self.raft_node
+            .ensure_linearizable(ReadPolicy::ReadIndex)
+            .await
+            .map(|_| ())
+            .map_err(|e| Status::unavailable(format!("not linearizable leader: {e}")))
+    }
 }
 
 #[tonic::async_trait]
@@ -98,6 +116,7 @@ impl StorageService for StorageServiceImpl {
         &self,
         request: Request<pb::api::ForwardedGetRequest>,
     ) -> Result<Response<pb::api::ForwardedGetResponse>, Status> {
+        self.ensure_leader_linearizable().await?;
         let req = request.into_inner();
         let key = match std::str::from_utf8(&req.key) {
             Ok(s) => s.to_string(),
@@ -177,6 +196,7 @@ impl StorageService for StorageServiceImpl {
         &self,
         request: Request<pb::api::ForwardedPrefixRequest>,
     ) -> Result<Response<pb::api::ForwardedPrefixResponse>, Status> {
+        self.ensure_leader_linearizable().await?;
         let req = request.into_inner();
 
         let ks = match &req.keyspace {
@@ -256,6 +276,7 @@ impl StorageService for StorageServiceImpl {
         &self,
         request: Request<pb::api::ForwardedPrefixIndexRequest>,
     ) -> Result<Response<pb::api::ForwardedPrefixIndexResponse>, Status> {
+        self.ensure_leader_linearizable().await?;
         let req = request.into_inner();
 
         let items: Vec<_> = self

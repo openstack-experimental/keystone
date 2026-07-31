@@ -693,6 +693,252 @@ async fn test_node_restart_inner() -> Result<()> {
     Ok(())
 }
 
+/// Regression test for GitHub #1135: intermittent false-negative prefix_index
+/// reads under concurrent load on the leader.
+///
+/// Even when `ensure_linearizable(ReadPolicy::ReadIndex)` succeeds directly on
+/// the leader (no ForwardToLeader), `prefix_index` can return an empty result
+/// for index entries that have already been committed via Raft.  This happens
+/// when OpenRaft's read-index check passes before the Fjall batch for that
+/// entry has finished committing and become visible to the index() iterator.
+///
+/// The test creates a 3-node cluster and hammers the leader with concurrent
+/// set_index_key + prefix_index operations using many parallel tasks.  A
+/// passing run means the race window has been closed or is too narrow to hit;
+/// a failing run means the mitigation is insufficient.
+#[serial_test::serial]
+#[tracing_test::traced_test]
+#[test]
+fn test_prefix_index_leader_race_concurrent() {
+    TypeConfig::run(test_prefix_index_leader_race_concurrent_inner()).unwrap();
+}
+
+// Port offset to avoid conflicts with other cluster tests.
+const PREFIX_INDEX_RACE_PORT_BASE: u16 = 300;
+
+#[allow(unsafe_code)]
+async fn test_prefix_index_leader_race_concurrent_inner() -> Result<()> {
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+
+    let tls_configuration = make_certificates()?;
+
+    // --- Start 3 nodes in threads.
+    let instance1 = Arc::new(
+        InstanceHolder::new_with_port(1, PREFIX_INDEX_RACE_PORT_BASE, tls_configuration.clone())
+            .await?,
+    );
+    let instance2 = Arc::new(
+        InstanceHolder::new_with_port(2, PREFIX_INDEX_RACE_PORT_BASE, tls_configuration.clone())
+            .await?,
+    );
+    let instance3 = Arc::new(
+        InstanceHolder::new_with_port(3, PREFIX_INDEX_RACE_PORT_BASE, tls_configuration.clone())
+            .await?,
+    );
+
+    let inst1 = instance1.clone();
+    let _h1 = thread::spawn(move || {
+        let mut rt = AsyncRuntimeOf::<TypeConfig>::new(1);
+        let _ = rt.block_on(start_raft_app(&inst1.config, &inst1.storage));
+    });
+
+    let inst2 = instance2.clone();
+    let _h2 = thread::spawn(move || {
+        let mut rt = AsyncRuntimeOf::<TypeConfig>::new(1);
+        let _ = rt.block_on(start_raft_app(&inst2.config, &inst2.storage));
+    });
+
+    let inst3 = instance3.clone();
+    let _h3 = thread::spawn(move || {
+        let mut rt = AsyncRuntimeOf::<TypeConfig>::new(1);
+        let _ = rt.block_on(start_raft_app(&inst3.config, &inst3.storage));
+    });
+
+    TypeConfig::sleep(Duration::from_millis(200)).await;
+
+    let tls_client_config = get_client_tls_config(&instance1.config)?;
+    let mut admin_client1 = new_admin_client(
+        instance1
+            .config
+            .distributed_storage
+            .as_ref()
+            .unwrap()
+            .node_cluster_addr
+            .clone(),
+        &tls_client_config,
+    )
+    .await?;
+
+    admin_client1
+        .init(pb::raft::InitRequest {
+            nodes: vec![new_node_with_port(1, PREFIX_INDEX_RACE_PORT_BASE)],
+        })
+        .await?;
+    wait_for_leader(&mut admin_client1, 1).await;
+
+    admin_client1
+        .add_learner(pb::raft::AddLearnerRequest {
+            node: Some(new_node_with_port(2, PREFIX_INDEX_RACE_PORT_BASE)),
+        })
+        .await?;
+    admin_client1
+        .add_learner(pb::raft::AddLearnerRequest {
+            node: Some(new_node_with_port(3, PREFIX_INDEX_RACE_PORT_BASE)),
+        })
+        .await?;
+
+    admin_client1
+        .change_membership(pb::raft::ChangeMembershipRequest {
+            members: vec![1, 2, 3],
+            retain: false,
+        })
+        .await?;
+
+    TypeConfig::sleep(Duration::from_millis(500)).await;
+
+    let metrics = admin_client1.metrics(()).await?.into_inner();
+    assert_eq!(
+        metrics.current_leader,
+        Some(1),
+        "node 1 must be leader for this test"
+    );
+
+    // --- Phase 1: Sequential write + immediate prefix_index read on same node.
+    //
+    // This exercises the apply-order-vs-batch-commit race: `set_index_key`
+    // writes to the leader's Raft log and waits for commit, but the local
+    // prefix_index scan may execute before the state machine's batch.commit()
+    // for that entry has finished.
+    // Sequential write + immediate prefix_index read on leader (phase 1).
+    // Uses 100 iterations to increase chance of hitting the narrow race window.
+    let phase1_iterations = 100;
+    let mut phase1_failures = 0;
+
+    for i in 0..phase1_iterations {
+        let idx_key = format!("race:idx:seq:{}", i);
+
+        // Write the index key via Raft (goes through leader's apply path).
+        instance1.storage.set_index_key(idx_key.clone()).await?;
+
+        // Immediately read using prefix_index on the SAME leader node — this
+        // avoids any follower replication delay and isolates the apply-vs-read
+        // race within a single node.
+        let results = instance1
+            .storage
+            .prefix_index("race:idx:seq:".as_bytes())
+            .await?;
+
+        if !results.iter().any(|k| k == &idx_key) {
+            phase1_failures += 1;
+            println!(
+                "PHASE1 ITER {}: prefix_index missing key '{}', found {} entries",
+                i,
+                idx_key,
+                results.len()
+            );
+        }
+    }
+
+    // Drop sequential keys before phase 2 to reduce index size for concurrent
+    // hammering.
+    for i in 0..phase1_iterations {
+        let idx_key = format!("race:idx:seq:{}", i);
+        instance1.storage.remove_index(idx_key).await?;
+    }
+    TypeConfig::sleep(Duration::from_millis(500)).await;
+
+    // --- Phase 2: Concurrent writes + reads on the leader.
+    //
+    // Multiple tasks concurrently create index keys and query prefix_index via
+    // the leader node.  This reproduces the loadtest scenario from #1135 where
+    // many parallelauthenticated API requests each create + look up mapping
+    // rulesets.
+    // Concurrent writes + reads on leader (phase 2).
+    let phase2_iterations = 80;
+    let leader_storage = instance1.storage.clone();
+    let phase2_prefix = "race:idx:conc:";
+    let (phase2_tx, mut phase2_rx) = tokio::sync::mpsc::channel::<bool>(phase2_iterations);
+
+    let mut handles = Vec::with_capacity(phase2_iterations);
+    for i in 0..phase2_iterations {
+        let storage = leader_storage.clone();
+        let prefix = phase2_prefix.to_string();
+        let tx = phase2_tx.clone();
+
+        let handle = tokio::spawn(async move {
+            let idx_key = format!("{}{}", prefix, i);
+            let mut ok = true;
+
+            // Write the index key.
+            if let Err(e) = storage.set_index_key(idx_key.clone()).await {
+                eprintln!("set_index_key failed for {}: {}", idx_key, e);
+                ok = false;
+            }
+
+            // Immediately read via prefix_index on the leader.
+            match storage.prefix_index(prefix.as_bytes()).await {
+                Ok(results) => {
+                    if !results.iter().any(|k| k == &idx_key) {
+                        println!(
+                            "PHASE2 TASK {}: prefix_index missing key '{}', found {} entries",
+                            i,
+                            idx_key,
+                            results.len()
+                        );
+                        ok = false;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("prefix_index failed {}: {}", i, e);
+                    ok = false;
+                }
+            }
+
+            let _ = tx.send(ok).await;
+        });
+        handles.push(handle);
+    }
+    drop(phase2_tx);
+
+    // Await all tasks and count failures.
+    let mut phase2_failures = 0;
+    for handle in handles {
+        let _ = handle.await;
+    }
+    while let Some(task_ok) = phase2_rx.recv().await {
+        if !task_ok {
+            phase2_failures += 1;
+        }
+    }
+
+    drop(admin_client1);
+    drop(tls_client_config);
+
+    let total_failures = phase1_failures + phase2_failures;
+    let total_ops = phase1_iterations + phase2_iterations;
+
+    println!(
+        "prefix_index leader-race test complete: phase1={}/{} failures, \
+         phase2={}/{} failures, total={}/{} failures",
+        phase1_failures,
+        phase1_iterations,
+        phase2_failures,
+        phase2_iterations,
+        total_failures,
+        total_ops
+    );
+
+    if total_failures > 0 {
+        panic!(
+            "prefix_index false-negative detected: {total_failures} failures out of \
+             {total_ops} total operations (phase1={phase1_failures}, phase2={phase2_failures})"
+        );
+    }
+
+    Ok(())
+}
+
 #[allow(dead_code)]
 struct InstanceHolder {
     pub node_id: u64,

@@ -60,6 +60,14 @@ use crate::v4::oauth2::{
     jwks as oauth2_jwks, list_clients as oauth2_client_list,
     show_client as oauth2_client_show, well_known as oauth2_well_known,
 };
+use crate::v4::scim_realm::{
+    list as scim_realm_list, show as scim_realm_show, update as scim_realm_update,
+};
+use crate::v4::scim_sync::{
+    provision_api_key as scim_sync_provision_api_key, sync_create as scim_sync_create,
+    sync_delete as scim_sync_delete, sync_list as scim_sync_list, sync_patch as scim_sync_patch,
+    sync_show as scim_sync_show,
+};
 
 /// Per-GooseUser session state shared across transactions.
 pub struct Session {
@@ -103,6 +111,10 @@ async fn main() -> Result<(), GooseError> {
     }
     if let Some(auth_role_id) = &seed_state.auth_role_id {
         v3::role_assignment::set_auth_role_id(auth_role_id.clone());
+    }
+    if let Some(scim_realm_provider_id) = &seed_state.scim_realm_provider_id {
+        v4::scim_realm::set_realm_provider_id(scim_realm_provider_id.clone());
+        v4::scim_sync::set_realm_provider_id(scim_realm_provider_id.clone());
     }
 
     // Default to 45 users so all weighted scenarios get at least 1 user
@@ -278,6 +290,33 @@ async fn main() -> Result<(), GooseError> {
                 .set_weight(3)?
                 .register_transaction(transaction!(oauth2_jwks))
                 .register_transaction(transaction!(oauth2_well_known)),
+        )
+        // Raft-backed SCIM realm reads (ADR 0024): scim-realm-driver-raft.
+        // No per-VU create/delete -- realm is seeded once (no delete endpoint
+        // exists, only per-resource purge), shared read-mostly across VUs.
+        .register_scenario(
+            scenario!("ScimRealmRead")
+                .set_weight(1)?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(scim_realm_show))
+                .register_transaction(transaction!(scim_realm_list))
+                .register_transaction(transaction!(scim_realm_update)),
+        )
+        // Real SCIM sync simulation (ADR 0021 + 0024): unlike ScimRealmRead
+        // (admin x-auth-token reads), this authenticates via a per-VU
+        // `kscim_...` API Key bearer against `/SCIM/v2`, the actual ingress
+        // path an IdP-side SCIM connector uses -- provision, reconcile
+        // (list/show), attribute drift (PATCH), offboard (DELETE).
+        .register_scenario(
+            scenario!("ScimSync")
+                .set_weight(1)?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(scim_sync_provision_api_key).set_on_start())
+                .register_transaction(transaction!(scim_sync_create).set_on_start())
+                .register_transaction(transaction!(scim_sync_list))
+                .register_transaction(transaction!(scim_sync_show))
+                .register_transaction(transaction!(scim_sync_patch))
+                .register_transaction(transaction!(scim_sync_delete).set_on_stop()),
         );
 
     attack.execute().await?;

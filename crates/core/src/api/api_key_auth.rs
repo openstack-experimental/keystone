@@ -25,7 +25,7 @@ use axum::extract::{FromRef, FromRequestParts, Path};
 use axum::http::request::Parts;
 use governor::clock::Clock as _;
 use ipnet::IpNet;
-use tracing::warn;
+use tracing::{debug, warn};
 
 use openstack_keystone_core_types::api_key::ApiClientResource;
 use openstack_keystone_core_types::auth::AuthenticationError;
@@ -241,12 +241,25 @@ async fn resolve_verified_api_client(
         // Dummy hash: burn the same Argon2id cost as a real verification
         // to prevent timing-based enumeration of valid lookup hashes
         // (ADR 0021 Invariant 7).
+        debug!(
+            domain_id,
+            lookup_hash = %parsed.lookup_hash,
+            "api_key lookup returned no resource"
+        );
         let _ = crypto::generate_dummy_hash(&cfg).await;
         return Err(AuthenticationError::Unauthorized.into());
     };
 
     let now = chrono::Utc::now().timestamp();
     if !resource.is_active(now) {
+        debug!(
+            domain_id,
+            lookup_hash = %parsed.lookup_hash,
+            enabled = resource.enabled,
+            expires_at = resource.expires_at,
+            now,
+            "api_key resource found but inactive"
+        );
         let _ = crypto::generate_dummy_hash(&cfg).await;
         return Err(AuthenticationError::Unauthorized.into());
     }
@@ -260,6 +273,20 @@ async fn resolve_verified_api_client(
         cfg.trusted_header,
     );
     if !ip_allowed(effective_ip, &resource.allowed_ips) {
+        // Burn the same Argon2id cost as a real verification here too --
+        // otherwise this branch returns near-instantly while the
+        // not-found/inactive/wrong-secret branches all pay the hashing
+        // cost, letting an attacker distinguish "this lookup_hash exists
+        // but my IP is disallowed" from "this lookup_hash doesn't exist"
+        // by response latency alone (ADR 0021 Invariant 7).
+        debug!(
+            domain_id,
+            client_id = %resource.client_id,
+            ?effective_ip,
+            allowed_ips = ?resource.allowed_ips,
+            "api_key resource found but IP not allowed"
+        );
+        let _ = crypto::generate_dummy_hash(&cfg).await;
         return Err(AuthenticationError::Unauthorized.into());
     }
 
@@ -271,6 +298,12 @@ async fn resolve_verified_api_client(
             AuthenticationError::Unauthorized
         })?;
     if !verified {
+        debug!(
+            domain_id,
+            client_id = %resource.client_id,
+            lookup_hash = %parsed.lookup_hash,
+            "api_key resource found, IP allowed, but secret verification failed"
+        );
         return Err(AuthenticationError::Unauthorized.into());
     }
 

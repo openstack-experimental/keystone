@@ -30,6 +30,8 @@ pub const SEED_USER_PASSWORD: &str = "LoadTestSeedPassw0rd!";
 /// project-scoped password auth scenarios.
 const AUTH_PROJECT_NAME: &str = "loadtest-authproject";
 const AUTH_ROLE_NAME: &str = "member";
+const SCIM_IDP_NAME: &str = "loadtest-scim-idp";
+const SCIM_REALM_PROVIDER_ID: &str = "loadtest-scim-realm";
 
 /// A seeded user's credentials, usable for password authentication.
 #[derive(Clone)]
@@ -50,6 +52,14 @@ pub struct SeedState {
     /// Role every seeded user is granted on `auth_project_id`; used to
     /// exercise the `role.id` filter on `GET /v3/role_assignments`.
     pub auth_role_id: Option<String>,
+    /// Federation identity provider backing `scim_realm_provider_id`, used by
+    /// the SCIM realm loadtest scenario (ADR 0024). SCIM realms cannot be
+    /// created without a real, existing IdP (`get_identity_provider` check).
+    pub scim_idp_id: Option<String>,
+    /// `provider_id` of the SCIM realm seeded for `ScimRealmRead`. There is
+    /// no realm-delete endpoint (only per-resource purge), so this realm is
+    /// not torn down -- only the backing IdP is, best-effort, in `cleanup`.
+    pub scim_realm_provider_id: Option<String>,
 }
 
 /// Create background resources so list endpoints return non-trivial result sets.
@@ -61,6 +71,8 @@ pub async fn seed(host: &str, token: &str) -> SeedState {
         user_creds: Vec::new(),
         auth_project_id: None,
         auth_role_id: None,
+        scim_idp_id: None,
+        scim_realm_provider_id: None,
     };
 
     for i in 0..SEED_USERS {
@@ -103,7 +115,110 @@ pub async fn seed(host: &str, token: &str) -> SeedState {
         None => eprintln!("seed: failed to set up auth project for password-auth scenarios"),
     }
 
+    match seed_scim_realm(&client, host, token).await {
+        Some((idp_id, provider_id)) => {
+            eprintln!("seed: created SCIM idp {idp_id} + realm {provider_id}");
+            state.scim_idp_id = Some(idp_id);
+            state.scim_realm_provider_id = Some(provider_id);
+        }
+        None => eprintln!("seed: failed to set up SCIM idp/realm for ScimRealmRead scenario"),
+    }
+
     state
+}
+
+/// Create a global federation IdP and a SCIM realm bound to it, so the SCIM
+/// realm loadtest scenario (raft-backed, ADR 0024) has a real realm to read.
+/// `create_realm` 404s unless the referenced `idp_id` already resolves via
+/// `get_identity_provider`, so the IdP must exist first.
+async fn seed_scim_realm(client: &Client, host: &str, token: &str) -> Option<(String, String)> {
+    let idp_body = json!({
+        "identity_provider": {
+            "name": SCIM_IDP_NAME,
+            "domain_id": DEFAULT_DOMAIN_ID
+        }
+    });
+    let resp = client
+        .post(format!("{host}/v4/federation/identity_providers"))
+        .header("x-auth-token", token)
+        .json(&idp_body)
+        .send()
+        .await
+        .ok()?;
+    let idp_id = if resp.status() == reqwest::StatusCode::CONFLICT {
+        // A prior interrupted run's IdP survived cleanup -- reuse it by name
+        // rather than aborting seed setup.
+        let resp = client
+            .get(format!(
+                "{host}/v4/federation/identity_providers?domain_id={DEFAULT_DOMAIN_ID}"
+            ))
+            .header("x-auth-token", token)
+            .send()
+            .await
+            .ok()?;
+        if !resp.status().is_success() {
+            eprintln!("seed: list identity_providers HTTP {}", resp.status());
+            return None;
+        }
+        let val: serde_json::Value = resp.json().await.ok()?;
+        val["identity_providers"]
+            .as_array()?
+            .iter()
+            .find(|idp| idp["name"].as_str() == Some(SCIM_IDP_NAME))?["id"]
+            .as_str()?
+            .to_owned()
+    } else {
+        if !resp.status().is_success() {
+            eprintln!("seed: create identity_provider HTTP {}", resp.status());
+            return None;
+        }
+        let val: serde_json::Value = resp.json().await.ok()?;
+        val["identity_provider"]["id"].as_str()?.to_owned()
+    };
+
+    let realm_body = json!({
+        "scim_realm": {
+            "domain_id": DEFAULT_DOMAIN_ID,
+            "provider_id": SCIM_REALM_PROVIDER_ID,
+            "idp_id": idp_id,
+            "display_name": "Loadtest SCIM realm"
+        }
+    });
+    let resp = client
+        .post(format!("{host}/v4/scim_realms"))
+        .header("x-auth-token", token)
+        .json(&realm_body)
+        .send()
+        .await
+        .ok()?;
+    if resp.status() == reqwest::StatusCode::CONFLICT {
+        // A prior run's realm survived (no delete endpoint exists for it,
+        // ADR 0024) -- reuse it rather than aborting seed setup.
+        let resp = client
+            .get(format!(
+                "{host}/v4/scim_realms/{DEFAULT_DOMAIN_ID}/{SCIM_REALM_PROVIDER_ID}"
+            ))
+            .header("x-auth-token", token)
+            .send()
+            .await
+            .ok()?;
+        if !resp.status().is_success() {
+            eprintln!("seed: fetch existing scim_realm HTTP {}", resp.status());
+            return None;
+        }
+        let val: serde_json::Value = resp.json().await.ok()?;
+        let existing_idp_id = val["scim_realm"]["idp_id"].as_str()?.to_owned();
+        let provider_id = val["scim_realm"]["provider_id"].as_str()?.to_owned();
+        return Some((existing_idp_id, provider_id));
+    }
+    if !resp.status().is_success() {
+        eprintln!("seed: create scim_realm HTTP {}", resp.status());
+        return None;
+    }
+    let val: serde_json::Value = resp.json().await.ok()?;
+    let provider_id = val["scim_realm"]["provider_id"].as_str()?.to_owned();
+
+    Some((idp_id, provider_id))
 }
 
 /// Create a dedicated project and grant every seeded user a `member` role on
@@ -212,6 +327,18 @@ pub async fn cleanup(host: &str, token: &str, state: &SeedState) {
         .await
     {
         eprintln!("seed cleanup: failed to delete auth project {auth_project_id}: {e}");
+    }
+
+    if let Some(idp_id) = &state.scim_idp_id
+        && let Err(e) = delete(
+            &client,
+            host,
+            token,
+            &format!("/v4/federation/identity_providers/{idp_id}"),
+        )
+        .await
+    {
+        eprintln!("seed cleanup: failed to delete scim idp {idp_id}: {e}");
     }
 
     eprintln!(

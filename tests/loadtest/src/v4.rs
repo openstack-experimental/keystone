@@ -15,3 +15,5 @@
 pub(crate) mod api_key;
 pub(crate) mod mapping;
 pub(crate) mod oauth2;
+pub(crate) mod scim_realm;
+pub(crate) mod scim_sync;

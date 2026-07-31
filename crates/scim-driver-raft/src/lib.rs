@@ -290,6 +290,11 @@ impl ScimRealmBackend for RaftBackend {
             Err(StoreError::Conflict { description, .. }) => {
                 Err(ScimRealmProviderError::Conflict(description))
             }
+            Err(StoreError::StorageApi { source })
+                if matches!(source, ApiStoreError::Conflict { .. }) =>
+            {
+                Err(ScimRealmProviderError::Conflict(source.to_string()))
+            }
             Err(e) => Err(ScimRealmProviderError::raft(e)),
         }
     }
@@ -336,13 +341,18 @@ impl ScimRealmBackend for RaftBackend {
             .ok_or(ScimRealmProviderError::RaftNotAvailable)?;
         match self.update_impl(raft, domain_id, provider_id, data).await {
             Ok(obj) => Ok(obj),
-            Err(e) => {
-                if e.to_string().contains("not found") {
-                    Err(ScimRealmProviderError::NotFound(provider_id.to_string()))
-                } else {
-                    Err(ScimRealmProviderError::raft(e))
-                }
+            Err(StoreError::Conflict { description, .. }) => {
+                Err(ScimRealmProviderError::Conflict(description))
             }
+            Err(StoreError::StorageApi { source })
+                if matches!(source, ApiStoreError::Conflict { .. }) =>
+            {
+                Err(ScimRealmProviderError::Conflict(source.to_string()))
+            }
+            Err(ref e) if e.to_string().contains("not found") => {
+                Err(ScimRealmProviderError::NotFound(provider_id.to_string()))
+            }
+            Err(e) => Err(ScimRealmProviderError::raft(e)),
         }
     }
 }
