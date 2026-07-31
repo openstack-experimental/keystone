@@ -84,7 +84,7 @@ impl DbState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_orm::{ConnectionTrait, Statement};
+    use sea_orm::ConnectionTrait;
 
     async fn sqlite_memory() -> DatabaseConnection {
         Database::connect("sqlite::memory:")
@@ -111,10 +111,7 @@ mod tests {
 
         let pre_swap = state.connection();
         pre_swap
-            .execute(Statement::from_string(
-                pre_swap.get_database_backend(),
-                "CREATE TABLE marker (id INTEGER)",
-            ))
+            .execute_unprepared("CREATE TABLE marker (id INTEGER)")
             .await
             .expect("create marker table on original connection");
 
@@ -129,12 +126,7 @@ mod tests {
             .expect("reconnect to a valid DSN should succeed");
 
         let post_swap = state.connection();
-        let result = post_swap
-            .execute(Statement::from_string(
-                post_swap.get_database_backend(),
-                "SELECT * FROM marker",
-            ))
-            .await;
+        let result = post_swap.execute_unprepared("SELECT * FROM marker").await;
         assert!(
             result.is_err(),
             "post-swap connection must not see state from the pre-swap connection"
