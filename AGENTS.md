@@ -165,6 +165,15 @@ Backend traits in `crates/core/src/backend.rs` follow CRUD naming:
   `tools/run-loadtest-local.sh` entirely and point `load_test` straight at
   the cluster's exposed URL/port with `--host`, using `OS_CLOUD`/`OS_*` env
   vars matching that deployment's admin credentials.
+- `tests/loadtest/sample_metrics.sh <output-file> [interval-seconds]` polls
+  `kubectl top` (keystone-rs/keystone-py pods + node) and host
+  free/loadavg on a loop, for correlating CPU/memory against a concurrent
+  loadtest run in the skaffold k3s deployment. Requires metrics-server
+  already working (`kubectl top nodes` succeeds standalone). Run it in the
+  background bracketing the `load_test` invocation, then `kill` it:
+  `./sample_metrics.sh /tmp/metrics.log 3 & SAMPLER=$!; load_test ...; kill "$SAMPLER"`.
+  See the script's header comment for the output format and an `awk`
+  one-liner to derive per-pod min/max/avg memory from it.
 
 ## Commit Message Rules
 

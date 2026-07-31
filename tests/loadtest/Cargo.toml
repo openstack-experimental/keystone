@@ -7,6 +7,7 @@ edition = "2024"
 dist = false
 
 [dependencies]
+chrono = "0.4"
 goose = { version = "^0.18" }
 tokio = { version = "1.49" }
 openstack_sdk = { version = "^0.22", default-features = false, features = ["async", "identity"] }

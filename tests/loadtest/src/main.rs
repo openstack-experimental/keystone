@@ -22,6 +22,7 @@ use std::env;
 
 mod seed;
 mod v3;
+mod v4;
 
 use crate::v3::auth::lifecycle::{token_lifecycle, validate as validate_token};
 use crate::v3::auth::password::{
@@ -46,6 +47,19 @@ use crate::v3::user::{
     create as user_create, delete as user_delete, list as user_list, show as user_show,
     show_random as user_show_random,
 };
+use crate::v4::api_key::{
+    create as api_key_create, list as api_key_list, revoke as api_key_revoke,
+    show as api_key_show,
+};
+use crate::v4::mapping::{
+    create as mapping_create, delete as mapping_delete, list as mapping_list,
+    show as mapping_show,
+};
+use crate::v4::oauth2::{
+    create_client as oauth2_client_create, delete_client as oauth2_client_delete,
+    jwks as oauth2_jwks, list_clients as oauth2_client_list,
+    show_client as oauth2_client_show, well_known as oauth2_well_known,
+};
 
 /// Per-GooseUser session state shared across transactions.
 pub struct Session {
@@ -57,6 +71,15 @@ pub struct Session {
     pub project_id: Option<String>,
     /// ID of the role created in on_start for RoleCRUD scenario.
     pub role_id: Option<String>,
+    /// client_id of the API key created in on_start for ApiKeyCRUD scenario
+    /// (raft-backed, ADR 0021).
+    pub api_key_client_id: Option<String>,
+    /// mapping_id of the ruleset created in on_start for MappingCRUD
+    /// scenario (raft-backed, ADR 0020).
+    pub mapping_id: Option<String>,
+    /// provider_id of the OAuth2 client created in on_start for
+    /// OAuth2ClientCRUD scenario (raft-backed, ADR 0026).
+    pub oauth2_client_id: Option<String>,
 }
 
 #[tokio::main]
@@ -213,6 +236,48 @@ async fn main() -> Result<(), GooseError> {
             scenario!("SystemScopeAuth")
                 .set_weight(2)?
                 .register_transaction(transaction!(system_scope_auth)),
+        )
+        // Raft-backed API Key CRUD (ADR 0021): create/revoke go through
+        // api-key-driver-raft's log-append + quorum-commit write path.
+        .register_scenario(
+            scenario!("ApiKeyCRUD")
+                .set_weight(1)?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(api_key_create).set_on_start())
+                .register_transaction(transaction!(api_key_show))
+                .register_transaction(transaction!(api_key_list))
+                .register_transaction(transaction!(api_key_revoke).set_on_stop()),
+        )
+        // Raft-backed Mapping ruleset CRUD (ADR 0020): mapping-driver-raft is
+        // the largest raft driver -- rules carry nested claim/identity/role
+        // payloads, so this exercises bigger raft log entries than api_key.
+        .register_scenario(
+            scenario!("MappingCRUD")
+                .set_weight(1)?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(mapping_create).set_on_start())
+                .register_transaction(transaction!(mapping_show))
+                .register_transaction(transaction!(mapping_list))
+                .register_transaction(transaction!(mapping_delete).set_on_stop()),
+        )
+        // Raft-backed OAuth2 client CRUD (ADR 0026 §5): oauth2-client-driver-raft.
+        .register_scenario(
+            scenario!("OAuth2ClientCRUD")
+                .set_weight(1)?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(oauth2_client_create).set_on_start())
+                .register_transaction(transaction!(oauth2_client_show))
+                .register_transaction(transaction!(oauth2_client_list))
+                .register_transaction(transaction!(oauth2_client_delete).set_on_stop()),
+        )
+        // Read-heavy OAuth2 discovery: jwks + well-known are unauthenticated,
+        // linearizable-read-policy paths (ADR 0016-v2 §3) -- the actual
+        // steady-state traffic most OAuth2 relying parties generate.
+        .register_scenario(
+            scenario!("OAuth2Discovery")
+                .set_weight(3)?
+                .register_transaction(transaction!(oauth2_jwks))
+                .register_transaction(transaction!(oauth2_well_known)),
         );
 
     attack.execute().await?;
@@ -251,6 +316,9 @@ pub async fn openstack_login(user: &mut GooseUser) -> TransactionResult {
         user_id: None,
         project_id: None,
         role_id: None,
+        api_key_client_id: None,
+        mapping_id: None,
+        oauth2_client_id: None,
     });
     Ok(())
 }
