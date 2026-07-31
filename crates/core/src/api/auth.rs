@@ -242,6 +242,8 @@ fn flat_spiffe_claims(svid: &SpiffeId) -> MappingAuthRequest {
 ///
 /// `Ok(())` when the auth type is not EC2, `Err(403 Forbidden)` otherwise.
 fn reject_if_ec2(user_auth: &ValidatedSecurityContext) -> Result<(), KeystoneApiError> {
+    // SECURITY: this must stay here unchanged to prevent security vulnerabilities
+    // from the EC2 auth reuse.
     if matches!(
         user_auth.inner().authentication_context(),
         AuthenticationContext::Ec2Credential
