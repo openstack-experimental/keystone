@@ -545,8 +545,7 @@ fn init_tracing(verbose: u8, cfg: &Config) -> Option<tracing_appender::non_block
     let mut guard = None;
 
     if let Some(log_dir) = &cfg.default.log_dir {
-        // create a file appender that rotates hourly
-        let file_appender = tracing_appender::rolling::never(log_dir, "keystone.log");
+        let file_appender = build_file_appender(log_dir, &cfg.default);
         // make the file appender non-blocking; the guard must outlive the
         // registry to make sure buffered logs get flushed to output.
         // Explicitly disable lossy mode so events are never dropped when the
@@ -588,6 +587,57 @@ fn init_tracing(verbose: u8, cfg: &Config) -> Option<tracing_appender::non_block
         .init();
 
     guard
+}
+
+/// Build the file-log appender for `[DEFAULT] log_dir`, honoring the
+/// `oslo_log`-mirroring rotation options (`log_rotation_type`,
+/// `log_rotate_interval_type`, `max_logfile_count`) documented on
+/// [`openstack_keystone::config::DefaultSection`].
+///
+/// Called before the tracing subscriber is installed by `init_tracing`, so
+/// diagnostics here use `eprintln!` directly rather than the `tracing`
+/// macros.
+fn build_file_appender(
+    log_dir: &std::path::Path,
+    default: &openstack_keystone::config::DefaultSection,
+) -> tracing_appender::rolling::RollingFileAppender {
+    use openstack_keystone::config::{LogRotateIntervalType, LogRotationType};
+    use tracing_appender::rolling::{RollingFileAppender, Rotation};
+
+    let rotation = match default.log_rotation_type {
+        LogRotationType::None => Rotation::NEVER,
+        LogRotationType::Interval => {
+            if !matches!(default.log_rotate_interval, None | Some(1)) {
+                eprintln!(
+                    "log_rotate_interval={} is not supported (rotation only ever \
+                     happens on a single {:?} unit boundary); ignoring the configured value",
+                    default.log_rotate_interval.unwrap_or(1),
+                    default.log_rotate_interval_type
+                );
+            }
+            match default.log_rotate_interval_type {
+                LogRotateIntervalType::Minutes => Rotation::MINUTELY,
+                LogRotateIntervalType::Hours => Rotation::HOURLY,
+                LogRotateIntervalType::Days | LogRotateIntervalType::Midnight => Rotation::DAILY,
+            }
+        }
+    };
+
+    let mut builder = RollingFileAppender::builder()
+        .rotation(rotation)
+        .filename_prefix("keystone")
+        .filename_suffix("log");
+    if let Some(max_logfile_count) = default.max_logfile_count {
+        builder = builder.max_log_files(max_logfile_count);
+    }
+
+    builder.build(log_dir).unwrap_or_else(|err| {
+        eprintln!(
+            "Failed to build the rotating log file appender ({err}); falling back to a \
+             single non-rotating log file"
+        );
+        tracing_appender::rolling::never(log_dir, "keystone.log")
+    })
 }
 
 /// Load or generate the persisted audit HMAC key-encryption-key (KEK),
