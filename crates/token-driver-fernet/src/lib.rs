@@ -592,6 +592,21 @@ pub fn bench_get_fernet_timestamp(payload: &str) -> Result<DateTime<Utc>, Fernet
     get_fernet_timestamp(payload)
 }
 
+#[cfg(feature = "fuzz_internals")]
+/// Exposed only for `cargo-fuzz` (`fuzz/fuzz_targets/fuzz_fernet_decode.rs`).
+///
+/// Targets the hand-rolled MessagePack payload decoder directly, bypassing
+/// Fernet's AEAD decrypt: that decrypt is the actual security boundary (an
+/// attacker without a valid key can't reach `decode` at all), so a fuzzer
+/// forging arbitrary bytes as ciphertext would almost never get past it and
+/// would never exercise the parser. `Config::default()` is fine here since
+/// `decode` only consults `auth_map`/`auth_methods_code_cache`, never key
+/// material.
+pub fn fuzz_decode(data: &[u8]) -> Result<FernetToken, FernetDriverError> {
+    let provider = FernetTokenProvider::new(Config::default());
+    provider.decode(&mut &data[..], Utc::now())
+}
+
 #[cfg(test)]
 pub mod tests {
     use std::fs::File;
@@ -1048,5 +1063,111 @@ pub mod tests {
         let encrypted = provider.encrypt(&token).unwrap();
         let dec_token = discard_issued_at(provider.decrypt(&encrypted).unwrap());
         assert_eq!(token, dec_token);
+    }
+
+    /// Not a real test: regenerates `fuzz/corpus/fuzz_fernet_decode/*.bin`,
+    /// the seed corpus for the `fuzz_fernet_decode` cargo-fuzz target. Run
+    /// manually after changing a payload's wire shape:
+    /// `cargo test -p openstack-keystone-token-driver-fernet -- --ignored
+    /// generate_fuzz_corpus`.
+    #[test]
+    #[ignore = "run manually to regenerate the fuzz_fernet_decode seed corpus"]
+    fn generate_fuzz_corpus() {
+        let provider = FernetTokenProvider::new(setup_config());
+        let out_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fuzz/corpus/fuzz_fernet_decode");
+        std::fs::create_dir_all(&out_dir).unwrap();
+
+        let now = Local::now().trunc_subsecs(0).into();
+        let seeds: Vec<(&str, FernetToken)> = vec![
+            (
+                "unscoped",
+                FernetToken::Unscoped(UnscopedPayload {
+                    user_id: Uuid::new_v4().simple().to_string(),
+                    methods: vec!["password".into()],
+                    audit_ids: vec!["Zm9vCg".into()],
+                    expires_at: now,
+                    ..Default::default()
+                }),
+            ),
+            (
+                "domain_scope",
+                FernetToken::DomainScope(DomainScopePayload {
+                    user_id: Uuid::new_v4().simple().to_string(),
+                    methods: vec!["password".into()],
+                    domain_id: Uuid::new_v4().simple().to_string(),
+                    audit_ids: vec!["Zm9vCg".into()],
+                    expires_at: now,
+                    ..Default::default()
+                }),
+            ),
+            (
+                "project_scope",
+                FernetToken::ProjectScope(ProjectScopePayload {
+                    user_id: Uuid::new_v4().simple().to_string(),
+                    methods: vec!["password".into()],
+                    project_id: Uuid::new_v4().simple().to_string(),
+                    audit_ids: vec!["Zm9vCg".into()],
+                    expires_at: now,
+                    ..Default::default()
+                }),
+            ),
+            (
+                "trust",
+                FernetToken::Trust(TrustPayload {
+                    user_id: Uuid::new_v4().simple().to_string(),
+                    methods: vec!["password".into()],
+                    trust_id: Uuid::new_v4().simple().to_string(),
+                    project_id: Uuid::new_v4().simple().to_string(),
+                    audit_ids: vec!["Zm9vCg".into()],
+                    expires_at: now,
+                    ..Default::default()
+                }),
+            ),
+            (
+                "federation_unscoped",
+                FernetToken::FederationUnscoped(FederationUnscopedPayload {
+                    user_id: Uuid::new_v4().simple().to_string(),
+                    methods: vec!["password".into()],
+                    group_ids: vec!["g1".into()],
+                    idp_id: "idp_id".into(),
+                    protocol_id: "proto".into(),
+                    audit_ids: vec!["Zm9vCg".into()],
+                    expires_at: now,
+                    ..Default::default()
+                }),
+            ),
+            (
+                "application_credential",
+                FernetToken::ApplicationCredential(ApplicationCredentialPayload {
+                    user_id: Uuid::new_v4().simple().to_string(),
+                    methods: vec!["application_credential".into()],
+                    project_id: Uuid::new_v4().simple().to_string(),
+                    application_credential_id: Uuid::new_v4().simple().to_string(),
+                    audit_ids: vec!["Zm9vCg".into()],
+                    expires_at: now,
+                    ..Default::default()
+                }),
+            ),
+            (
+                "restricted",
+                FernetToken::Restricted(RestrictedPayload {
+                    user_id: Uuid::new_v4().simple().to_string(),
+                    methods: vec!["password".into()],
+                    token_restriction_id: Uuid::new_v4().simple().to_string(),
+                    project_id: Uuid::new_v4().simple().to_string(),
+                    allow_renew: true,
+                    allow_rescope: true,
+                    audit_ids: vec!["Zm9vCg".into()],
+                    expires_at: now,
+                    ..Default::default()
+                }),
+            ),
+        ];
+
+        for (name, token) in seeds {
+            let payload = provider.encode(&token).unwrap();
+            std::fs::write(out_dir.join(format!("{name}.bin")), &payload).unwrap();
+        }
     }
 }

@@ -9,6 +9,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
+arbitrary = { workspace = true, features = ["derive"], optional = true }
 base64.workspace = true
 chrono = { workspace = true, features = ["serde", "now"] }
 derive_builder.workspace = true
@@ -30,6 +31,7 @@ url.workspace = true
 default = []
 bench_internals = []
 mock = []
+fuzzing = ["dep:arbitrary"]
 
 [lints]
 workspace = true

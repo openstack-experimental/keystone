@@ -43,3 +43,4 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"]}
 [features]
 default = []
 bench_internals = []
+fuzz_internals = []

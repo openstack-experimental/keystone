@@ -70,6 +70,7 @@ exclude = [
 
 [workspace.dependencies]
 aes-gcm = { version = "0.11" }
+arbitrary = { version = "1" }
 arc-swap = { version = "1.7" }
 argon2 = { version = "0.5" }
 askama = { version = "0.16" }
@@ -155,6 +156,7 @@ openstack-keystone-token-restriction-driver-sql = { version = "0.1", path = "cra
 openstack-keystone-trust-driver-sql = { version = "0.1", path = "crates/trust-driver-sql/" }
 openstack-keystone-webauthn = { version = "0.1", path = "crates/webauthn/"}
 prost = { version = "0.14" }
+proptest = { version = "1" }
 rand = { version = "0.10" }
 regex = { version = "1.12" }
 regex-syntax = "0.8"

@@ -63,6 +63,7 @@ mockall.workspace = true
 openstack-keystone-api-types = { workspace = true, features = ["builder", "conv"] }
 openstack-keystone-audit = { workspace = true, features = ["testing"] }
 openstack-keystone-core-types = { workspace = true, features = ["mock"] }
+proptest.workspace = true
 rstest.workspace = true
 tempfile.workspace = true
 temp-env.workspace = true

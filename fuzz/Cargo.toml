@@ -1,0 +1,58 @@
+[package]
+name = "keystone-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = { version = "1", features = ["derive"] }
+libfuzzer-sys = "0.4"
+openstack-keystone-auth-plugin-runtime = { path = "../crates/auth-plugin-runtime" }
+openstack-keystone-core = { path = "../crates/core" }
+openstack-keystone-core-types = { path = "../crates/core-types", features = ["fuzzing"] }
+openstack-keystone-token-driver-fernet = { path = "../crates/token-driver-fernet", features = ["fuzz_internals"] }
+
+# Use independent workspace for fuzzers
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "fuzz_fernet_decode"
+path = "fuzz_targets/fuzz_fernet_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_auth_contract_response"
+path = "fuzz_targets/fuzz_auth_contract_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_route_contract_response"
+path = "fuzz_targets/fuzz_route_contract_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_mapping_contract_response"
+path = "fuzz_targets/fuzz_mapping_contract_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_ec2_signature"
+path = "fuzz_targets/fuzz_ec2_signature.rs"
+test = false
+doc = false
+bench = false

@@ -966,6 +966,92 @@ mod tests {
         assert!(Credentials::try_from(&vsc).is_ok());
     }
 
+    /// Property-based generalization of the scope-drift tests above (Gate F
+    /// / security-review.md §5.2 "Scope pinning"): for *any* delegation
+    /// project / token-scope project string pair, not just the two
+    /// hand-picked fixtures, the tripwire must reject a mismatch and never
+    /// reject a match. Named as a `proptest` candidate rather than a
+    /// cargo-fuzz byte-slice target because the input here is a structured
+    /// invariant over typed values (two project-id strings, a variant
+    /// choice), not a parser over raw bytes.
+    mod scope_pinning_property {
+        use proptest::prelude::*;
+
+        use super::*;
+
+        fn project_id_strategy() -> impl Strategy<Value = String> {
+            "[a-zA-Z0-9_-]{0,24}"
+        }
+
+        proptest! {
+            #[test]
+            fn app_cred_delegation_is_pinned_to_token_scope(
+                delegation_project in project_id_strategy(),
+                token_project in project_id_strategy(),
+                unrestricted in any::<bool>(),
+            ) {
+                let vsc = vsc_with_ctx_and_project(
+                    AuthenticationContext::ApplicationCredential {
+                        application_credential: make_ac(&delegation_project, unrestricted),
+                        token: None,
+                    },
+                    &token_project,
+                );
+                let result = Credentials::try_from(&vsc);
+                if delegation_project == token_project {
+                    let creds = result.expect("matching scope must not be rejected");
+                    prop_assert_eq!(
+                        creds.delegated_project_id.as_deref(),
+                        Some(delegation_project.as_str())
+                    );
+                    prop_assert_eq!(creds.project_id.as_deref(), Some(token_project.as_str()));
+                } else {
+                    prop_assert!(matches!(result, Err(PolicyError::ScopeDrift)));
+                }
+            }
+
+            #[test]
+            fn trust_delegation_is_pinned_to_token_scope(
+                delegation_project in project_id_strategy(),
+                token_project in project_id_strategy(),
+            ) {
+                let vsc = vsc_with_ctx_and_project(
+                    AuthenticationContext::Trust {
+                        trust: make_trust_ctx(Some(&delegation_project)),
+                        token: None,
+                    },
+                    &token_project,
+                );
+                let result = Credentials::try_from(&vsc);
+                if delegation_project == token_project {
+                    let creds = result.expect("matching scope must not be rejected");
+                    prop_assert_eq!(
+                        creds.delegated_project_id.as_deref(),
+                        Some(delegation_project.as_str())
+                    );
+                } else {
+                    prop_assert!(matches!(result, Err(PolicyError::ScopeDrift)));
+                }
+            }
+
+            /// A trust with no bound project has nothing to drift against --
+            /// must always succeed regardless of the token-scope project.
+            #[test]
+            fn trust_without_project_never_drifts(token_project in project_id_strategy()) {
+                let vsc = vsc_with_ctx_and_project(
+                    AuthenticationContext::Trust {
+                        trust: make_trust_ctx(None),
+                        token: None,
+                    },
+                    &token_project,
+                );
+                let creds = Credentials::try_from(&vsc)
+                    .expect("no delegation project means nothing to drift against");
+                prop_assert_eq!(creds.delegated_project_id, None);
+            }
+        }
+    }
+
     /// `PolicyEvaluationResult::valid()` is true exactly when `violations`
     /// is `Some(&[])` -- `None` (evaluation never ran / no violation rule
     /// exists) and a non-empty list both mean "not valid".

@@ -23,6 +23,7 @@ use crate::error::BuilderError;
 /// payload produced by `keystoneclient.contrib.ec2.utils.Ec2Signer` and
 /// consumed by Python Keystone's `EC2TokensResource._check_signature()`.
 #[derive(Builder, Clone, Debug, Default, PartialEq)]
+#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
 pub struct Ec2SignatureRequest {

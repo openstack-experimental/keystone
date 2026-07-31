@@ -1,0 +1,70 @@
+name: Fuzz testing
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    - cron: '0 4 * * 0' # weekly, Sunday 04:00 UTC
+  workflow_dispatch: # allow manual triggering
+  pull_request:
+    paths:
+      - '.github/workflows/fuzz.yml'
+      - 'fuzz/**'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_fernet_decode
+          - fuzz_auth_contract_response
+          - fuzz_route_contract_response
+          - fuzz_mapping_contract_response
+          - fuzz_ec2_signature
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install nightly Rust
+        uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921 # stable
+        with:
+          toolchain: nightly
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: "fuzz -> target"
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      # Gate F (security review, doc/src/contributor/security-review.md):
+      # coverage-guided fuzzing of the untrusted-input parsers reachable
+      # pre-authentication -- the Fernet MessagePack token decoder, the
+      # three WASM auth-plugin host<->guest JSON response boundaries
+      # (full_auth/route/mapping), and the EC2 (POST /v3/ec2tokens)
+      # multi-version signature string-to-sign parsers. Scheduled/manual
+      # only, like Gate G's mutation testing: a useful run needs minutes of
+      # wall time per target, not a per-PR budget.
+      - name: Run cargo fuzz
+        working-directory: fuzz
+        run: |
+          cargo +nightly fuzz run ${{ matrix.target }} -- \
+            -max_total_time=120 -detect_leaks=0
+
+      - name: Upload crash artifacts
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        if: failure()
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}

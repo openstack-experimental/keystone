@@ -485,7 +485,7 @@ additive to the existing pipeline (`ci.yml`, `linters.yml`, `audit.yml`,
 | **C**  | Invariant-test presence check: every delegated-auth policy carries a scope-drift negative case; every new scope/auth arm has a matrix row                                                                              | V1/V2 — silent boundary regression                                                                              | Med      |
 | **D**  | Generated `(auth method × scope × restricted?)` matrix test through `new_for_scope()` with "roles ⊆ delegation" assertion                                                                                              | V1/V2 — the I4 near-miss class                                                                                  | Med      |
 | **E**  | Rego lint for the undefined-argument footgun (`object.get(…, null)` required for delegated helper args)                                                                                                                | V3 — I2 trap                                                                                                    | Low      |
-| **F**  | Fuzz `Credentials::try_from`, Fernet token decode, and (when built) the WASM host↔guest JSON boundary                                                                                                                  | V1/V7 — malformed-input logic bugs                                                                              | Med      |
+| **F**  | Fuzz `Credentials::try_from`, Fernet token decode, and (when built) the WASM host↔guest JSON boundary — landed 2026-07-30 (`fuzz/`, `.github/workflows/fuzz.yml`): Fernet decode, the WASM boundary, and EC2 signature verification (`fuzz_ec2_signature`, `arbitrary`-derived); `Credentials::try_from`'s scope-pinning invariant is covered by a `proptest` suite in `crates/core/src/policy.rs` instead (structured typed-value invariant, not a byte parser) | V1/V7 — malformed-input logic bugs                                                                              | Med      |
 | **G**  | Mutation testing (`cargo-mutants`) scoped to `core`/`core-types` auth+policy modules, to prove the negative tests actually fail on a regression                                                                        | all — verifies the tests have teeth                                                                             | Med      |
 | **H**  | Sign the OPA policy bundle (cosign) + verify signature/digest at load                                                                                                                                                  | V4 — policy supply chain                                                                                        | Med      |
 | **I**  | Structural "no secret in policy input / audit / error string" serialization test                                                                                                                                       | V9                                                                                                              | Low      |
@@ -525,9 +525,13 @@ the hot spots. To find _gaps_ rather than confirm _behavior_:
      never exceed the original delegation's role set.
    - _Scope pinning:_ `delegated_project_id == project_id` holds for every
      delegated `Credentials` the projection can produce (the tripwire, as a
-     property, not just a per-policy assertion).
-   - _Revocation:_ authority removed at T is unusable after T (V10). Use
-     `proptest` to search the input space around these.
+     property, not just a per-policy assertion). **Implemented** 2026-07-30:
+     `crates/core/src/policy.rs`'s `scope_pinning_property` `proptest`
+     module, covering `ApplicationCredential` and `Trust` delegation across
+     the project-id string space.
+   - _Delegation monotonicity_ and _revocation_ (authority removed at T is
+     unusable after T, V10) remain open — use `proptest` to search the
+     input space around these.
 3. **Matrix/exhaustiveness tests tied to the enums** (Gate D) so coverage grows
    automatically with the type system. 3a. **Test the handler→policy input
    contract and its composition, not just the policy** (Gates B2/B3, vector
@@ -547,7 +551,20 @@ the hot spots. To find _gaps_ rather than confirm _behavior_:
    invariant is broken — a negative test that still passes after you delete the
    check is worse than none.
 6. **Fuzzing** the untrusted-input parsers (Gate F): Fernet decode, the OPA
-   response deserializer, and the WASM boundary.
+   response deserializer, and the WASM boundary. `fuzz/` (cargo-fuzz,
+   `.github/workflows/fuzz.yml`, weekly + manual) covers the Fernet
+   MessagePack decoder, the three WASM host↔guest JSON boundaries
+   (`full_auth`/`route`/`mapping`), and EC2 signature verification
+   (`fuzz_ec2_signature`, structured `arbitrary`-derived harness over
+   `Ec2SignatureRequest` rather than a flat byte slice, since it's a
+   multi-field struct feeding multi-version string-to-sign
+   canonicalization). `Credentials::try_from`'s scope-pinning invariant
+   (property 2 above) is instead covered by a `proptest` suite
+   (`crates/core/src/policy.rs`, `scope_pinning_property` module) sweeping
+   the delegation-project/token-scope-project string space for both
+   `ApplicationCredential` and `Trust` delegation — a typed-value
+   invariant, not a byte parser, so `proptest` fit better than cargo-fuzz
+   here.
 
 ## 6. Penetration testing targets
 
