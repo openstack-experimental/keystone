@@ -41,7 +41,7 @@ pub type StoredMembership = openraft::alias::StoredMembershipOf<TypeConfig>;
 pub type Node = <TypeConfig as openraft::RaftTypeConfig>::Node;
 
 pub type SnapshotMeta = openraft::alias::SnapshotMetaOf<TypeConfig>;
-pub type Snapshot = openraft::alias::SnapshotOf<TypeConfig>;
+pub type Snapshot = openraft::alias::SnapshotOf<TypeConfig, Vec<u8>>;
 pub type RPCError<E = openraft::errors::Infallible> = openraft::error::RPCError<TypeConfig, E>;
 pub type StreamingError = openraft::errors::StreamingError<TypeConfig>;
 pub type ClientWriteError = openraft::errors::ClientWriteError<TypeConfig>;

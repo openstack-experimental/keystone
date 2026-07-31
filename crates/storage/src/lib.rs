@@ -194,7 +194,6 @@ openraft::declare_raft_types!(
         Vote = pb::raft::Vote,
         Entry = pb::raft::Entry,
         Node = pb::raft::Node,
-        SnapshotData = Vec<u8>,
 );
 
 /// Create a pair of `FjallLogStore` and `FjallStateMachine` sharing a Fjall DB.

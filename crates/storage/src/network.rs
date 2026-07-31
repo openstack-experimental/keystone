@@ -333,6 +333,8 @@ impl NetVote<TypeConfig> for NetworkConnection {
 }
 
 impl NetSnapshot<TypeConfig> for NetworkConnection {
+    type SnapshotData = Vec<u8>;
+
     async fn full_snapshot(
         &mut self,
         vote: Vote,

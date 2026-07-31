@@ -115,7 +115,7 @@ mockall = { version = "0.15" }
 mockall_double = { version = "0.3" }
 nix = { version = "0.31", default-features = false }
 openidconnect = { version = "4.0" }
-openraft = { version = "=0.10.0-alpha.27" }
+openraft = { version = "=0.10.0-alpha.31" }
 openstack-keystone-api-key-driver-raft = { version = "0.1", path = "crates/api-key-driver-raft/" }
 openstack-keystone-api-types = { version = "0.1", features = ["openapi", "validate", "conv"], path = "crates/api-types" }
 openstack-keystone-audit = { version = "0.1.0", path = "crates/audit" }

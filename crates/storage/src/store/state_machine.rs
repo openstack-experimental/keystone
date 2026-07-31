@@ -27,10 +27,10 @@ use openraft::OptionalSend;
 use openraft::RaftSnapshotBuilder;
 use openraft::SnapshotMeta;
 use openraft::StorageError;
+use openraft::alias::LogIdOf;
 use openraft::alias::SnapshotMetaOf;
 use openraft::alias::SnapshotOf;
 use openraft::alias::StoredMembershipOf;
-use openraft::alias::{LogIdOf, SnapshotDataOf};
 use openraft::entry::RaftEntry;
 use openraft::storage::EntryResponder;
 use openraft::storage::RaftStateMachine;
@@ -1120,8 +1120,10 @@ fn decrypt_snapshot_file(
 }
 
 impl RaftSnapshotBuilder<TypeConfig> for Arc<FjallStateMachine> {
+    type SnapshotData = Vec<u8>;
+
     #[tracing::instrument(level = "trace", skip(self))]
-    async fn build_snapshot(&mut self) -> Result<SnapshotOf<TypeConfig>, io::Error> {
+    async fn build_snapshot(&mut self) -> Result<SnapshotOf<TypeConfig, Vec<u8>>, io::Error> {
         let (last_applied_log, last_membership) = self.get_meta()?;
 
         let snapshot_idx: u64 = rand::rng().random_range(0..1000);
@@ -1219,6 +1221,7 @@ impl RaftSnapshotBuilder<TypeConfig> for Arc<FjallStateMachine> {
 }
 
 impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
+    type SnapshotData = Vec<u8>;
     type SnapshotBuilder = Self;
 
     #[tracing::instrument(skip(self))]
@@ -1234,7 +1237,7 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn begin_receiving_snapshot(&mut self) -> Result<SnapshotDataOf<TypeConfig>, io::Error> {
+    async fn begin_receiving_snapshot(&mut self) -> Result<Vec<u8>, io::Error> {
         Ok(Vec::new())
     }
 
@@ -1242,7 +1245,7 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
     async fn install_snapshot(
         &mut self,
         meta: &SnapshotMetaOf<TypeConfig>,
-        snapshot: SnapshotDataOf<TypeConfig>,
+        snapshot: Vec<u8>,
     ) -> Result<(), io::Error> {
         tracing::info!(
             { snapshot_size = snapshot.len() },
@@ -1327,7 +1330,9 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn get_current_snapshot(&mut self) -> Result<Option<SnapshotOf<TypeConfig>>, io::Error> {
+    async fn get_current_snapshot(
+        &mut self,
+    ) -> Result<Option<SnapshotOf<TypeConfig, Vec<u8>>>, io::Error> {
         let mut latest_snapshot_id: Option<String> = None;
 
         for entry in fs::read_dir(&self.snapshot_dir)? {
