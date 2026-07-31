@@ -119,3 +119,4 @@
     - [Quorum-Bypass Emergency Operations](adr/0028-oauth2-quorum-bypass-emergency-rotation.md)
     - [Generalized Pagination](adr/0029-pagination.md)
     - [Per-Request Cache via tokio::task_local!](adr/0030-per-request-cache.md)
+    - [Prometheus Metrics Catalog](adr/0031-prometheus-metrics.md)
