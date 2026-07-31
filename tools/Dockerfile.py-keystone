@@ -1,8 +1,8 @@
 FROM python:3.12-bookworm
 
-LABEL org.opencontainers.image.description "Python Keystone container for tests of Rust Keystone compatibility"
+LABEL org.opencontainers.image.description="Python Keystone container for tests of Rust Keystone compatibility"
 
-RUN pip3 install keystone==27.0 uwsgi psycopg2-binary
+RUN pip3 install keystone==27.0 uwsgi psycopg2-binary python-memcached
 
 WORKDIR /app
 
