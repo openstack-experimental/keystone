@@ -92,6 +92,7 @@ pub mod catalog;
 pub mod common;
 pub mod credential;
 pub mod db;
+pub mod db_state;
 pub mod error;
 pub mod events;
 pub mod federation;

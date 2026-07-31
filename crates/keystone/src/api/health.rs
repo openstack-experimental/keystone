@@ -312,7 +312,7 @@ async fn health(State(state): State<ServiceState>) -> impl IntoResponse {
 
 /// Perform DB related checks.
 async fn check_database(state: &ServiceState) -> DatabaseStatus {
-    match state.db.ping().await {
+    match state.db.connection().ping().await {
         Ok(()) => DatabaseStatus::ok(),
         Err(err) => DatabaseStatus::err(err),
     }

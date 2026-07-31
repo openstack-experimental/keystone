@@ -64,7 +64,7 @@ impl TrustBackend for SqlBackend {
         state: &ServiceState,
         trust: TrustCreate,
     ) -> Result<Trust, TrustProviderError> {
-        trust::create(&state.db, trust).await
+        trust::create(&state.db.connection(), trust).await
     }
 
     /// Delete a trust by ID.
@@ -74,7 +74,7 @@ impl TrustBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), TrustProviderError> {
-        trust::delete(&state.db, id).await
+        trust::delete(&state.db.connection(), id).await
     }
 
     /// Get trust by ID.
@@ -84,7 +84,7 @@ impl TrustBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<Option<Trust>, TrustProviderError> {
-        Ok(trust::get(&state.db, id).await?)
+        Ok(trust::get(&state.db.connection(), id).await?)
     }
 
     /// Resolve trust chain by the trust ID.
@@ -94,7 +94,7 @@ impl TrustBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<Option<Vec<Trust>>, TrustProviderError> {
-        Ok(trust::get_delegation_chain(&state.db, id).await?)
+        Ok(trust::get_delegation_chain(&state.db.connection(), id).await?)
     }
 
     /// List trusts.
@@ -104,7 +104,7 @@ impl TrustBackend for SqlBackend {
         state: &ServiceState,
         params: &TrustListParameters,
     ) -> Result<Vec<Trust>, TrustProviderError> {
-        Ok(trust::list(&state.db, params).await?)
+        Ok(trust::list(&state.db.connection(), params).await?)
     }
 }
 

@@ -71,7 +71,7 @@ impl ResourceBackend for SqlBackend {
         state: &ServiceState,
         domain_id: &'a str,
     ) -> Result<bool, ResourceProviderError> {
-        Ok(domain::get_domain_enabled(&state.db, domain_id).await?)
+        Ok(domain::get_domain_enabled(&state.db.connection(), domain_id).await?)
     }
 
     /// Create new domain.
@@ -88,7 +88,7 @@ impl ResourceBackend for SqlBackend {
         state: &ServiceState,
         domain: DomainCreate,
     ) -> Result<Domain, ResourceProviderError> {
-        Ok(domain::create(&state.db, domain).await?)
+        Ok(domain::create(&state.db.connection(), domain).await?)
     }
 
     /// Create new project.
@@ -105,7 +105,7 @@ impl ResourceBackend for SqlBackend {
         state: &ServiceState,
         project: ProjectCreate,
     ) -> Result<Project, ResourceProviderError> {
-        Ok(project::create(&state.db, project).await?)
+        Ok(project::create(&state.db.connection(), project).await?)
     }
 
     /// Update domain.
@@ -124,7 +124,7 @@ impl ResourceBackend for SqlBackend {
         domain_id: &'a str,
         domain: DomainUpdate,
     ) -> Result<Domain, ResourceProviderError> {
-        Ok(domain::update(&state.db, domain_id, domain).await?)
+        Ok(domain::update(&state.db.connection(), domain_id, domain).await?)
     }
 
     /// Update a project.
@@ -143,7 +143,7 @@ impl ResourceBackend for SqlBackend {
         project_id: &'a str,
         project: ProjectUpdate,
     ) -> Result<Project, ResourceProviderError> {
-        Ok(project::update(&state.db, project_id, project).await?)
+        Ok(project::update(&state.db.connection(), project_id, project).await?)
     }
 
     /// Delete domain by the ID.
@@ -157,7 +157,7 @@ impl ResourceBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), ResourceProviderError> {
-        Ok(domain::delete(&state.db, id).await?)
+        Ok(domain::delete(&state.db.connection(), id).await?)
     }
 
     /// Delete project by the ID.
@@ -171,7 +171,7 @@ impl ResourceBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), ResourceProviderError> {
-        Ok(project::delete(&state.db, id).await?)
+        Ok(project::delete(&state.db.connection(), id).await?)
     }
 
     /// Get single domain by ID.
@@ -189,7 +189,7 @@ impl ResourceBackend for SqlBackend {
         state: &ServiceState,
         domain_id: &'a str,
     ) -> Result<Option<Domain>, ResourceProviderError> {
-        Ok(domain::get_domain_by_id(&state.db, domain_id).await?)
+        Ok(domain::get_domain_by_id(&state.db.connection(), domain_id).await?)
     }
 
     /// Get single domain by Name.
@@ -207,7 +207,7 @@ impl ResourceBackend for SqlBackend {
         state: &ServiceState,
         domain_name: &'a str,
     ) -> Result<Option<Domain>, ResourceProviderError> {
-        Ok(domain::get_domain_by_name(&state.db, domain_name).await?)
+        Ok(domain::get_domain_by_name(&state.db.connection(), domain_name).await?)
     }
 
     /// Get single project by ID.
@@ -225,7 +225,7 @@ impl ResourceBackend for SqlBackend {
         state: &ServiceState,
         project_id: &'a str,
     ) -> Result<Option<Project>, ResourceProviderError> {
-        Ok(project::get_project(&state.db, project_id).await?)
+        Ok(project::get_project(&state.db.connection(), project_id).await?)
     }
 
     /// Get single project by Name and Domain ID.
@@ -245,7 +245,7 @@ impl ResourceBackend for SqlBackend {
         name: &'a str,
         domain_id: &'a str,
     ) -> Result<Option<Project>, ResourceProviderError> {
-        Ok(project::get_project_by_name(&state.db, name, domain_id).await?)
+        Ok(project::get_project_by_name(&state.db.connection(), name, domain_id).await?)
     }
 
     /// Get project parents.
@@ -263,7 +263,7 @@ impl ResourceBackend for SqlBackend {
         state: &ServiceState,
         project_id: &'a str,
     ) -> Result<Option<Vec<Project>>, ResourceProviderError> {
-        Ok(project::get_project_parents(&state.db, project_id).await?)
+        Ok(project::get_project_parents(&state.db.connection(), project_id).await?)
     }
 
     /// List domains.
@@ -280,7 +280,7 @@ impl ResourceBackend for SqlBackend {
         state: &ServiceState,
         params: &DomainListParameters,
     ) -> Result<Vec<Domain>, ResourceProviderError> {
-        Ok(domain::list(&state.db, params).await?)
+        Ok(domain::list(&state.db.connection(), params).await?)
     }
 
     /// List projects.
@@ -297,7 +297,7 @@ impl ResourceBackend for SqlBackend {
         state: &ServiceState,
         params: &ProjectListParameters,
     ) -> Result<Vec<Project>, ResourceProviderError> {
-        Ok(project::list(&state.db, params).await?)
+        Ok(project::list(&state.db.connection(), params).await?)
     }
 }
 

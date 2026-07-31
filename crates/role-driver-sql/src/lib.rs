@@ -120,7 +120,7 @@ impl RoleBackend for SqlBackend {
         state: &ServiceState,
         params: RoleCreate,
     ) -> Result<Role, RoleProviderError> {
-        Ok(role::create(&state.db, params).await?)
+        Ok(role::create(&state.db.connection(), params).await?)
     }
 
     /// Create a role imply rule.
@@ -139,7 +139,7 @@ impl RoleBackend for SqlBackend {
         prior_role_id: &'a str,
         implied_role_id: &'a str,
     ) -> Result<RoleImply, RoleProviderError> {
-        Ok(implied_role::create(&state.db, prior_role_id, implied_role_id).await?)
+        Ok(implied_role::create(&state.db.connection(), prior_role_id, implied_role_id).await?)
     }
 
     /// Check if a role imply rule exists.
@@ -155,7 +155,7 @@ impl RoleBackend for SqlBackend {
         prior_role_id: &'a str,
         implied_role_id: &'a str,
     ) -> Result<bool, RoleProviderError> {
-        Ok(implied_role::check(&state.db, prior_role_id, implied_role_id).await?)
+        Ok(implied_role::check(&state.db.connection(), prior_role_id, implied_role_id).await?)
     }
 
     /// Update a role.
@@ -173,7 +173,7 @@ impl RoleBackend for SqlBackend {
         role_id: &'a str,
         role: RoleUpdate,
     ) -> Result<Role, RoleProviderError> {
-        Ok(role::update(&state.db, role_id, role).await?)
+        Ok(role::update(&state.db.connection(), role_id, role).await?)
     }
 
     /// Delete a role by the ID.
@@ -189,7 +189,7 @@ impl RoleBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), RoleProviderError> {
-        Ok(role::delete(&state.db, id).await?)
+        Ok(role::delete(&state.db.connection(), id).await?)
     }
 
     /// Delete a role imply rule.
@@ -207,7 +207,7 @@ impl RoleBackend for SqlBackend {
         prior_role_id: &'a str,
         implied_role_id: &'a str,
     ) -> Result<(), RoleProviderError> {
-        Ok(implied_role::delete(&state.db, prior_role_id, implied_role_id).await?)
+        Ok(implied_role::delete(&state.db.connection(), prior_role_id, implied_role_id).await?)
     }
 
     /// Expand implied roles.
@@ -226,7 +226,7 @@ impl RoleBackend for SqlBackend {
         state: &ServiceState,
         roles: &mut Vec<RoleRef>,
     ) -> Result<(), RoleProviderError> {
-        expand_implied_roles(&state.db, roles).await
+        expand_implied_roles(&state.db.connection(), roles).await
     }
 
     /// Get single role by ID.
@@ -244,7 +244,7 @@ impl RoleBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<Option<Role>, RoleProviderError> {
-        Ok(role::get(&state.db, id).await?)
+        Ok(role::get(&state.db.connection(), id).await?)
     }
 
     /// Get a role imply rule.
@@ -264,7 +264,7 @@ impl RoleBackend for SqlBackend {
         prior_role_id: &'a str,
         implied_role_id: &'a str,
     ) -> Result<Option<RoleImply>, RoleProviderError> {
-        Ok(implied_role::get(&state.db, prior_role_id, implied_role_id).await?)
+        Ok(implied_role::get(&state.db.connection(), prior_role_id, implied_role_id).await?)
     }
 
     /// List role imply rules.
@@ -279,7 +279,7 @@ impl RoleBackend for SqlBackend {
         &self,
         state: &ServiceState,
     ) -> Result<Vec<RoleImply>, RoleProviderError> {
-        Ok(implied_role::list(&state.db).await?)
+        Ok(implied_role::list(&state.db.connection()).await?)
     }
 
     /// List role imply rules for a specific prior role.
@@ -296,7 +296,7 @@ impl RoleBackend for SqlBackend {
         state: &ServiceState,
         prior_role_id: &'a str,
     ) -> Result<Vec<RoleImply>, RoleProviderError> {
-        Ok(implied_role::list_by_prior(&state.db, prior_role_id).await?)
+        Ok(implied_role::list_by_prior(&state.db.connection(), prior_role_id).await?)
     }
 
     /// List roles.
@@ -316,7 +316,7 @@ impl RoleBackend for SqlBackend {
         // TODO: Add possibility to list roles with expansion and filter (e.g.,
         // token_restriction has list of roles that need to be returned
         // resolved)
-        Ok(role::list(&state.db, params).await?)
+        Ok(role::list(&state.db.connection(), params).await?)
     }
 }
 

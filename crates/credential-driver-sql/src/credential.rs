@@ -35,7 +35,7 @@ impl CredentialBackend for SqlBackend {
         rec: CredentialCreate,
     ) -> Result<Credential, CredentialProviderError> {
         let cfg = state.config_manager.config.read().await;
-        create::create(&cfg, &state.db, rec).await
+        create::create(&cfg, &state.db.connection(), rec).await
     }
 
     async fn get_credential<'a>(
@@ -44,7 +44,7 @@ impl CredentialBackend for SqlBackend {
         id: &'a str,
     ) -> Result<Option<Credential>, CredentialProviderError> {
         let cfg = state.config_manager.config.read().await;
-        get::get(&cfg, &state.db, id).await
+        get::get(&cfg, &state.db.connection(), id).await
     }
 
     async fn get_credential_by_ec2_access<'a>(
@@ -53,7 +53,7 @@ impl CredentialBackend for SqlBackend {
         access: &'a str,
     ) -> Result<Option<Credential>, CredentialProviderError> {
         let cfg = state.config_manager.config.read().await;
-        get::get_by_ec2_access(&cfg, &state.db, access).await
+        get::get_by_ec2_access(&cfg, &state.db.connection(), access).await
     }
 
     async fn list_credentials(
@@ -62,7 +62,7 @@ impl CredentialBackend for SqlBackend {
         params: &CredentialListParameters,
     ) -> Result<Vec<Credential>, CredentialProviderError> {
         let cfg = state.config_manager.config.read().await;
-        list::list(&cfg, &state.db, params).await
+        list::list(&cfg, &state.db.connection(), params).await
     }
 
     async fn list_credentials_for_user<'a>(
@@ -72,7 +72,7 @@ impl CredentialBackend for SqlBackend {
         r#type: Option<&'a str>,
     ) -> Result<Vec<Credential>, CredentialProviderError> {
         let cfg = state.config_manager.config.read().await;
-        list::list_for_user(&cfg, &state.db, user_id, r#type).await
+        list::list_for_user(&cfg, &state.db.connection(), user_id, r#type).await
     }
 
     async fn update_credential<'a>(
@@ -82,7 +82,7 @@ impl CredentialBackend for SqlBackend {
         rec: CredentialUpdate,
     ) -> Result<Credential, CredentialProviderError> {
         let cfg = state.config_manager.config.read().await;
-        update::update(&cfg, &state.db, id, rec).await
+        update::update(&cfg, &state.db.connection(), id, rec).await
     }
 
     async fn delete_credential<'a>(
@@ -90,7 +90,7 @@ impl CredentialBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), CredentialProviderError> {
-        delete::delete(&state.db, id).await
+        delete::delete(&state.db.connection(), id).await
     }
 
     async fn delete_credentials_for_user<'a>(
@@ -98,7 +98,7 @@ impl CredentialBackend for SqlBackend {
         state: &ServiceState,
         user_id: &'a str,
     ) -> Result<(), CredentialProviderError> {
-        delete::delete_for_user(&state.db, user_id).await
+        delete::delete_for_user(&state.db.connection(), user_id).await
     }
 
     async fn delete_credentials_for_project<'a>(
@@ -106,6 +106,6 @@ impl CredentialBackend for SqlBackend {
         state: &ServiceState,
         project_id: &'a str,
     ) -> Result<(), CredentialProviderError> {
-        delete::delete_for_project(&state.db, project_id).await
+        delete::delete_for_project(&state.db.connection(), project_id).await
     }
 }

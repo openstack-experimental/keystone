@@ -73,7 +73,7 @@ impl K8sAuthBackend for SqlBackend {
         state: &ServiceState,
         config: K8sAuthInstanceCreate,
     ) -> Result<K8sAuthInstance, K8sAuthProviderError> {
-        Ok(instance::create(&state.db, config).await?)
+        Ok(instance::create(&state.db.connection(), config).await?)
     }
 
     /// Delete K8s auth.
@@ -90,7 +90,7 @@ impl K8sAuthBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), K8sAuthProviderError> {
-        Ok(instance::delete(&state.db, id).await?)
+        Ok(instance::delete(&state.db.connection(), id).await?)
     }
 
     /// Get K8s auth instance.
@@ -108,7 +108,7 @@ impl K8sAuthBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<Option<K8sAuthInstance>, K8sAuthProviderError> {
-        Ok(instance::get(&state.db, id).await?)
+        Ok(instance::get(&state.db.connection(), id).await?)
     }
 
     /// List K8s auth auth_instances.
@@ -125,7 +125,7 @@ impl K8sAuthBackend for SqlBackend {
         state: &ServiceState,
         params: &K8sAuthInstanceListParameters,
     ) -> Result<Vec<K8sAuthInstance>, K8sAuthProviderError> {
-        Ok(instance::list(&state.db, params).await?)
+        Ok(instance::list(&state.db.connection(), params).await?)
     }
 
     /// Update K8s auth instance.
@@ -144,7 +144,7 @@ impl K8sAuthBackend for SqlBackend {
         id: &'a str,
         data: K8sAuthInstanceUpdate,
     ) -> Result<K8sAuthInstance, K8sAuthProviderError> {
-        Ok(instance::update(&state.db, id, data).await?)
+        Ok(instance::update(&state.db.connection(), id, data).await?)
     }
 }
 

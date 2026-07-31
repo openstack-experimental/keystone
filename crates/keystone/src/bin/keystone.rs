@@ -371,6 +371,15 @@ async fn main() -> Result<(), Report> {
         shared_state.clone(),
     ));
 
+    // Rebuild the database connection whenever its resolved connection
+    // string changes across a configuration reload, including a
+    // Vault-backed `[database] connection` re-resolving to rotated
+    // credentials.
+    spawn(reconnect_db_on_config_change(
+        token.clone(),
+        shared_state.clone(),
+    ));
+
     subscribe_event_hooks(&shared_state).await;
     let subscribe_hooks_took = listen_phase_start.elapsed();
     debug!(
@@ -1666,6 +1675,65 @@ async fn reload_rate_limits_on_config_change(cancel: CancellationToken, state: S
             }
             () = cancel.cancelled() => {
                 info!("Cancellation requested. Stopping rate-limit reload task.");
+                break;
+            }
+        }
+    }
+}
+
+/// Rebuild the database connection when its resolved connection string
+/// changes across a configuration reload (including a Vault-backed
+/// `[database] connection` re-resolving to rotated credentials).
+///
+/// Triggered only by `ConfigManager::notify_tx` - there is deliberately no
+/// periodic timer fallback. A TLS certificate referenced by path inside the
+/// connection string (e.g. `sslrootcert=...`) that rotates on disk without
+/// the connection string itself changing is not detected by this mechanism.
+///
+/// An unreachable host or an invalid/stale rotated credential is logged and
+/// the existing connection is left in service (last-known-good), matching
+/// [`reload_rate_limits_on_config_change`] above.
+async fn reconnect_db_on_config_change(cancel: CancellationToken, state: ServiceState) {
+    let mut reload_rx = state.config_manager.notify_tx.subscribe();
+    let mut current_dsn = state
+        .config_manager
+        .config
+        .read()
+        .await
+        .database
+        .get_connection();
+    loop {
+        tokio::select! {
+            recv = reload_rx.recv() => {
+                match recv {
+                    Ok(()) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        let config = state.config_manager.config.read().await;
+                        let new_dsn = config.database.get_connection();
+                        if new_dsn.expose_secret() == current_dsn.expose_secret() {
+                            continue;
+                        }
+                        let opt = ConnectOptions::new(new_dsn.expose_secret())
+                            .sqlx_logging(config.database.sqlx_logging_enabled())
+                            .sqlx_logging_level(config.database.sqlx_logging_level())
+                            .to_owned();
+                        drop(config);
+                        match state.db.reconnect(opt).await {
+                            Ok(()) => {
+                                info!("Database connection reloaded");
+                                current_dsn = new_dsn;
+                            }
+                            Err(error) => error!(
+                                %error,
+                                "Failed to reconnect to database with reloaded configuration; \
+                                 retaining last-known-good connection"
+                            ),
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            () = cancel.cancelled() => {
+                info!("Cancellation requested. Stopping database reconnect task.");
                 break;
             }
         }
