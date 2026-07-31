@@ -264,11 +264,18 @@ impl TlsConfiguration {
 }
 
 /// Server interface type.
-#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Interface {
     Admin,
     Internal,
     Public,
+    /// The dedicated health/metrics listener (`interface_metrics`). Only
+    /// ever attached to that listener's own router — see
+    /// `crates/keystone/src/server/http_metrics.rs` and
+    /// `docs/superpowers/specs/2026-07-31-http-status-metrics-design.md`
+    /// for why this is safe alongside the security-relevant use of this
+    /// enum in `crates/core/src/api/auth.rs`.
+    Metrics,
 }
 
 #[cfg(test)]
@@ -323,5 +330,18 @@ tls_client_ca_file = {:?}
             cfg.tls_key_content
                 .is_some_and(|x| x.expose_secret() == "key".as_bytes()),
         );
+    }
+
+    #[test]
+    fn interface_is_hashable_and_copy() {
+        use std::collections::HashSet;
+
+        let a = Interface::Public;
+        let b = a; // requires Copy
+        let mut set: HashSet<Interface> = HashSet::new(); // requires Eq + Hash
+        set.insert(a);
+        set.insert(b);
+        set.insert(Interface::Metrics);
+        assert_eq!(set.len(), 2);
     }
 }

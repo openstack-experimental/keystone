@@ -24,7 +24,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
-    Router, ServiceExt,
+    Extension, Router, ServiceExt,
     extract::{ConnectInfo, DefaultBodyLimit, State},
     http::{self, HeaderName, Request, StatusCode, header},
     middleware,
@@ -83,6 +83,8 @@ use openstack_keystone::revoke::RevokeHook;
 use openstack_keystone::role::RoleHook;
 use openstack_keystone::scim;
 use openstack_keystone::server::access_log::log_request;
+use openstack_keystone::server::http_metrics::format_prometheus_text as format_http_metrics_text;
+use openstack_keystone::server::http_metrics::{HttpMetrics, record_http_metrics};
 use openstack_keystone::server::listener::{raft_grpc, spiffe_tls, spiffe_tls_uds};
 use openstack_keystone::server::proxy_headers;
 use openstack_keystone::server::request_cache;
@@ -392,7 +394,7 @@ async fn main() -> Result<(), Report> {
     );
     warn_on_unresolvable_auth_methods(&shared_state).await;
 
-    let app = build_router(&shared_state, &token, main_router, openapi).await?;
+    let (app, http_metrics) = build_router(&shared_state, &token, main_router, openapi).await?;
     let build_router_took = listen_phase_start.elapsed();
     debug!("build_router took {:.3}s", build_router_took.as_secs_f32());
 
@@ -412,7 +414,7 @@ async fn main() -> Result<(), Report> {
     spawn_opa_subprocess(&cfg, &token, &mut handles).await?;
     spawn_public_listener(&cfg, app.clone(), &token, &mut handles).await?;
     spawn_internal_listener(&cfg, app.clone(), &token, &mut handles)?;
-    spawn_metrics_listener(&cfg, &shared_state, &token, &mut handles).await?;
+    spawn_metrics_listener(&cfg, &shared_state, &http_metrics, &token, &mut handles).await?;
     spawn_admin_listener(&cfg, app, &token, &mut handles);
 
     info!(
@@ -898,7 +900,7 @@ async fn build_router(
     token: &CancellationToken,
     main_router: Router<ServiceState>,
     openapi: utoipa::openapi::OpenApi,
-) -> Result<Router, Report> {
+) -> Result<(Router, Option<Arc<HttpMetrics>>), Report> {
     let x_request_id = HeaderName::from_static("x-openstack-request-id");
     let sensitive_headers: Arc<[_]> = vec![
         header::AUTHORIZATION,
@@ -1003,12 +1005,34 @@ async fn build_router(
 
     app = app.layer(middleware);
 
+    let http_metrics = if shared_state
+        .config_manager
+        .config
+        .read()
+        .await
+        .interface_metrics
+        .http_requests_enabled
+    {
+        let http_metrics = Arc::new(HttpMetrics::new());
+        // `Router::layer()` applies in *reverse* call order (last-added is
+        // outermost, unlike `ServiceBuilder`'s top-to-bottom convention
+        // used above) — `Extension` must be added *after* `from_fn` so it
+        // runs first and the extractor inside `record_http_metrics` has
+        // something to read.
+        app = app
+            .layer(middleware::from_fn(record_http_metrics))
+            .layer(Extension(http_metrics.clone()));
+        Some(http_metrics)
+    } else {
+        None
+    };
+
     let normalized_app = NormalizePathLayer::trim_trailing_slash().layer(app);
     let app = Router::new()
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", openapi))
         .fallback_service(normalized_app);
 
-    Ok(app)
+    Ok((app, http_metrics))
 }
 
 /// Start the Raft gRPC listener and join the cluster, when distributed
@@ -1430,6 +1454,7 @@ fn spawn_internal_listener(
 async fn spawn_metrics_listener(
     cfg: &Config,
     shared_state: &ServiceState,
+    http_metrics: &Option<Arc<HttpMetrics>>,
     token: &CancellationToken,
     handles: &mut tokio::task::JoinSet<()>,
 ) -> Result<(), Report> {
@@ -1441,10 +1466,19 @@ async fn spawn_metrics_listener(
     let cancel_token = token.clone();
 
     let (metrics_router, _) = api::metrics_router().split_for_parts();
-    let metrics_app = Router::new()
+    let mut metrics_app = Router::new()
         .merge(metrics_router.with_state(shared_state.clone()))
         .route("/metrics", axum::routing::get(metrics_handler))
         .with_state(shared_state.clone());
+    if let Some(http_metrics) = http_metrics {
+        // Same reverse-order caveat as `build_router`: `from_fn` must be
+        // added first (innermost) so both `Extension` layers, added after,
+        // run before it and have already inserted their values.
+        metrics_app = metrics_app
+            .layer(middleware::from_fn(record_http_metrics))
+            .layer(Extension(Interface::Metrics))
+            .layer(Extension(http_metrics.clone()));
+    }
 
     handles.spawn(async move {
         if let Err(e) = axum::serve(listener, metrics_app.into_make_service())
@@ -1503,7 +1537,10 @@ fn spawn_admin_listener(
 /// exposition format (v0.0.4). No authentication required; operators are
 /// expected to firewall `:5000/metrics` (or expose it only on an internal
 /// interface).
-async fn metrics_handler(State(state): State<ServiceState>) -> impl IntoResponse {
+async fn metrics_handler(
+    State(state): State<ServiceState>,
+    http_metrics: Option<Extension<Arc<HttpMetrics>>>,
+) -> impl IntoResponse {
     let mut body =
         openstack_keystone_audit::metrics::format_prometheus_text(&state.audit_dispatcher);
     body.push_str(
@@ -1511,6 +1548,9 @@ async fn metrics_handler(State(state): State<ServiceState>) -> impl IntoResponse
             &*state.auth_plugin_load_failures.read().await,
         ),
     );
+    if let Some(Extension(http_metrics)) = http_metrics {
+        body.push_str(&format_http_metrics_text(&http_metrics));
+    }
     (
         StatusCode::OK,
         [(
@@ -1715,7 +1755,7 @@ mod tests {
         let (main_router, _main_api) = api::openapi_router().split_for_parts();
         let openapi = api::ApiDoc::openapi();
 
-        let app = build_router(&state, &token, main_router, openapi)
+        let (app, _http_metrics) = build_router(&state, &token, main_router, openapi)
             .await
             .expect("router assembly succeeds");
 
@@ -1748,7 +1788,7 @@ mod tests {
         let (main_router, _main_api) = api::openapi_router().split_for_parts();
         let openapi = api::ApiDoc::openapi();
 
-        let app = build_router(&state, &token, main_router, openapi)
+        let (app, _http_metrics) = build_router(&state, &token, main_router, openapi)
             .await
             .expect("router assembly succeeds");
 
@@ -1767,6 +1807,198 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let body = response.into_body().collect().await.unwrap().to_bytes();
         assert!(!body.is_empty());
+    }
+
+    #[tokio::test]
+    async fn build_router_records_http_metrics_when_enabled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cfg = test_config(tmp.path().to_path_buf());
+        cfg.interface_metrics.http_requests_enabled = true;
+        let state = test_state(cfg).await;
+        let token = CancellationToken::new();
+        let (main_router, _main_api) = api::openapi_router().split_for_parts();
+        let openapi = api::ApiDoc::openapi();
+
+        let (app, http_metrics) = build_router(&state, &token, main_router, openapi)
+            .await
+            .expect("router assembly succeeds");
+        let http_metrics = http_metrics.expect("HttpMetrics must be Some when enabled");
+
+        let _ = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v3/")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let text = format_http_metrics_text(&http_metrics);
+        // The matched-path template for this route is "/v3" (no trailing
+        // slash) even though the request URI is "/v3/": `NormalizePathLayer`
+        // trims the trailing slash before the request reaches the inner
+        // router (and `record_http_metrics`), so the label reflects the
+        // canonical route template, not the raw request URI.
+        assert!(
+            text.contains("keystone_http_requests_total{method=\"GET\",route=\"/v3\""),
+            "expected a recorded /v3 request, got:\n{text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn build_router_skips_http_metrics_when_disabled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cfg = test_config(tmp.path().to_path_buf());
+        cfg.interface_metrics.http_requests_enabled = false;
+        let state = test_state(cfg).await;
+        let token = CancellationToken::new();
+        let (main_router, _main_api) = api::openapi_router().split_for_parts();
+        let openapi = api::ApiDoc::openapi();
+
+        let (app, http_metrics) = build_router(&state, &token, main_router, openapi)
+            .await
+            .expect("router assembly succeeds");
+        assert!(
+            http_metrics.is_none(),
+            "HttpMetrics must be None when disabled"
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v3/")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "disabling metrics must not break normal routing"
+        );
+    }
+
+    /// Reports whether an `Interface` extension is present on the request
+    /// by the time it reaches this handler, mounted inside `build_router`'s
+    /// `main_router`. Used by
+    /// `build_router_never_inserts_interface_extension` below to guard the
+    /// security-critical invariant that `build_router`'s main `app` never
+    /// gains an `Interface` extension: `crates/core/src/api/auth.rs` reads
+    /// that extension to gate the admin-SVID auth short-circuit, and only
+    /// connection-level listener code (never the shared router built here)
+    /// is supposed to stamp it — see
+    /// `crates/keystone/src/server/http_metrics.rs`'s `record_http_metrics`
+    /// doc comment for the full rationale.
+    async fn interface_probe_handler(req: Request<axum::body::Body>) -> String {
+        match req.extensions().get::<Interface>() {
+            Some(iface) => format!("present:{iface:?}"),
+            None => "absent".to_owned(),
+        }
+    }
+
+    #[tokio::test]
+    async fn build_router_never_inserts_interface_extension() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = test_state(test_config(tmp.path().to_path_buf())).await;
+        let token = CancellationToken::new();
+        let main_router: Router<ServiceState> = Router::new().route(
+            "/__test_interface_probe",
+            axum::routing::get(interface_probe_handler),
+        );
+        let openapi = api::ApiDoc::openapi();
+
+        let (app, _http_metrics) = build_router(&state, &token, main_router, openapi)
+            .await
+            .expect("router assembly succeeds");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/__test_interface_probe")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(
+            body, "absent",
+            "build_router's main app must never stamp an Interface extension \
+             itself — that extension gates the admin-SVID auth short-circuit \
+             in crates/core/src/api/auth.rs, and only connection-level \
+             listener code is supposed to set it"
+        );
+    }
+
+    #[tokio::test]
+    async fn metrics_handler_includes_http_metrics_when_enabled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cfg = test_config(tmp.path().to_path_buf());
+        cfg.interface_metrics.http_requests_enabled = true;
+        let state = test_state(cfg).await;
+
+        let http_metrics = Arc::new(HttpMetrics::new());
+        http_metrics.record_request(
+            &axum::http::Method::GET,
+            "/v3/probe",
+            200,
+            std::time::Duration::from_millis(1),
+        );
+
+        let app = Router::new()
+            .route("/metrics", axum::routing::get(metrics_handler))
+            .layer(Extension(http_metrics))
+            .with_state(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let text = String::from_utf8_lossy(&body);
+        assert!(text.contains(
+            "keystone_http_requests_total{method=\"GET\",route=\"/v3/probe\",status=\"200\"} 1"
+        ));
+    }
+
+    #[tokio::test]
+    async fn metrics_handler_omits_http_metrics_when_disabled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cfg = test_config(tmp.path().to_path_buf());
+        cfg.interface_metrics.http_requests_enabled = false;
+        let state = test_state(cfg).await;
+
+        // No `Extension<Arc<HttpMetrics>>` layered at all, matching what
+        // `spawn_metrics_listener` does when the flag is off.
+        let app = Router::new()
+            .route("/metrics", axum::routing::get(metrics_handler))
+            .with_state(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let text = String::from_utf8_lossy(&body);
+        assert!(!text.contains("keystone_http_requests_total"));
+        // The always-on metrics must still be present.
+        assert!(text.contains("keystone_audit_events_total"));
     }
 
     #[tokio::test]

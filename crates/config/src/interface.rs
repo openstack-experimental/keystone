@@ -73,12 +73,21 @@ pub struct MetricsInterface {
     /// `0.0.0.0:8099`.
     #[serde(default = "default_metrics_tcp_address")]
     pub tcp_address: SocketAddr,
+
+    /// Whether to record and expose the `keystone_http_requests_total` /
+    /// `keystone_http_request_duration_seconds` /
+    /// `keystone_http_requests_in_flight` metric trio (ADR 0031). Defaults
+    /// to enabled; set to `false` to disable the recording middleware
+    /// entirely (not just hide it from `/metrics`).
+    #[serde(default = "crate::common::default_true")]
+    pub http_requests_enabled: bool,
 }
 
 impl Default for MetricsInterface {
     fn default() -> Self {
         Self {
             tcp_address: default_metrics_tcp_address(),
+            http_requests_enabled: true,
         }
     }
 }
@@ -165,5 +174,20 @@ trust_domains = "a,b,c"
         } else {
             panic!("should be Http listener");
         }
+    }
+
+    #[test]
+    fn metrics_interface_http_requests_enabled_defaults_true() {
+        let sot: MetricsInterface = serde_json::from_value(json!({})).unwrap();
+        assert!(sot.http_requests_enabled);
+    }
+
+    #[test]
+    fn metrics_interface_http_requests_enabled_explicit_false() {
+        let sot: MetricsInterface = serde_json::from_value(json!({
+            "http_requests_enabled": false,
+        }))
+        .unwrap();
+        assert!(!sot.http_requests_enabled);
     }
 }
