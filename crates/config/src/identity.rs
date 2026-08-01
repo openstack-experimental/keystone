@@ -11,14 +11,18 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::common::default_sql_driver;
 use crate::pagination::ListLimitConfig;
 
 /// Identity provider.
-#[derive(Debug, Deserialize, Clone)]
+///
+/// Also the single definition of the `identity` group of the per-domain
+/// configuration API; see [`crate::ldap::LdapProvider`] for how the two are
+/// related.
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct IdentityProvider {
     /// Caching.
     #[serde(default)]
@@ -42,6 +46,7 @@ pub struct IdentityProvider {
     pub password_hashing_algorithm: PasswordHashingAlgo,
 
     /// Default number of password hashing rounds.
+    #[serde(default)]
     pub password_hash_rounds: Option<usize>,
 
     /// User options id to name mapping.
@@ -69,7 +74,7 @@ impl Default for IdentityProvider {
 }
 
 /// Password hashing algorithm.
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub enum PasswordHashingAlgo {
     /// Bcrypt.
     #[default]

@@ -15,21 +15,33 @@
 //!
 //! Maps 1:1 with Python Keystone's `[ldap]` config section (`conf.ldap.*`) so
 //! a config file written for Python Keystone works unmodified here.
+//!
+//! The struct is also the single definition of the `ldap` group of the
+//! per-domain configuration API (`/v3/domains/{domain_id}/config/ldap`): a
+//! domain's stored options are overlaid onto the serialized `[ldap]` section
+//! and read back as an `LdapProvider`. Nothing about an option is therefore
+//! spelled twice, and the only thing the domain configuration layer adds is
+//! the whitelist of option *names* a domain may override.
 use std::collections::{HashMap, HashSet};
 
 use secrecy::SecretString;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// LDAP identity backend configuration.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct LdapProvider {
     // --- Connection ---
     /// LDAP server URL.
     #[serde(default = "default_url")]
     pub url: String,
     /// Service bind DN used for all directory queries.
+    #[serde(default)]
     pub user: Option<String>,
     /// Service bind password.
+    ///
+    /// Never serialized: it is the one sensitive option of the per-domain
+    /// configuration API, which may write it but must never return it.
+    #[serde(default, skip_serializing)]
     pub password: Option<SecretString>,
     /// Enable TLS for the connection.
     #[serde(default)]
@@ -42,9 +54,11 @@ pub struct LdapProvider {
     /// follow-up; see ADR-0027 implementation notes). Set
     /// `tls_req_cert = never` for a self-signed test directory in the
     /// meantime, or install the CA into the system trust store.
+    #[serde(default)]
     pub tls_cacertfile: Option<String>,
     /// Path to a directory of CA certificates used to validate the LDAP
     /// server. Same not-yet-applied caveat as `tls_cacertfile`.
+    #[serde(default)]
     pub tls_cacertdir: Option<String>,
     /// Certificate validation strictness for TLS connections.
     #[serde(default)]
@@ -56,7 +70,11 @@ pub struct LdapProvider {
     #[serde(default)]
     pub randomize_urls: bool,
     /// Enable the service connection pool.
-    #[serde(default = "default_true_bool")]
+    ///
+    /// Serialized as `use_pool`, which is the python-keystone and domain API
+    /// spelling. `pool` remains accepted for existing Rust Keystone config
+    /// files and remains the field name used by the LDAP driver.
+    #[serde(default = "default_true_bool", rename = "use_pool", alias = "pool")]
     pub pool: bool,
     /// Service connection pool size.
     #[serde(default = "default_pool_size")]
@@ -75,7 +93,14 @@ pub struct LdapProvider {
     pub pool_connection_lifetime: f64,
     /// Enable the dedicated authentication connection pool, isolating
     /// end-user bind storms from the service query pool.
-    #[serde(default = "default_true_bool")]
+    ///
+    /// Serialized as `use_auth_pool`; `auth_pool` remains accepted for
+    /// existing Rust Keystone config files. See [`Self::pool`].
+    #[serde(
+        default = "default_true_bool",
+        rename = "use_auth_pool",
+        alias = "auth_pool"
+    )]
     pub auth_pool: bool,
     /// Authentication connection pool size.
     #[serde(default = "default_auth_pool_size")]
@@ -128,6 +153,7 @@ pub struct LdapProvider {
     /// Attribute mapped to a user's `default_project_id`. Unused by this
     /// read-only backend (Python only consults it on write), kept for config
     /// parity.
+    #[serde(default)]
     pub user_default_project_id_attribute: Option<String>,
     /// Attribute used to determine whether a user is enabled.
     #[serde(default = "default_user_enabled_attribute")]
@@ -136,6 +162,7 @@ pub struct LdapProvider {
     /// state, when the attribute stores a bitmask rather than a boolean
     /// (e.g. Active Directory's `userAccountControl`). Ignores
     /// `user_enabled_invert` when set, matching Python Keystone.
+    #[serde(default)]
     pub user_enabled_mask: Option<i32>,
     /// Invert the interpretation of `user_enabled_attribute`. Has no effect
     /// when `user_enabled_mask` or `user_enabled_emulation` is in use.
@@ -149,17 +176,22 @@ pub struct LdapProvider {
     pub user_enabled_default: String,
     /// Extra LDAP attributes exposed under `extra` in the API response,
     /// mapped as `ldap_attribute -> extra_key`.
-    #[serde(default)]
+    #[serde(default, with = "attribute_mapping")]
     pub user_additional_attribute_mapping: HashMap<String, String>,
     /// Additional LDAP filter clause AND-ed into every user search.
+    #[serde(default)]
     pub user_filter: Option<String>,
     /// Attributes never surfaced as `extra`, even if mapped.
-    #[serde(default = "default_user_attribute_ignore")]
+    #[serde(
+        default = "default_user_attribute_ignore",
+        serialize_with = "serialize_sorted"
+    )]
     pub user_attribute_ignore: HashSet<String>,
     /// Emulate the enabled attribute via group membership.
     #[serde(default)]
     pub user_enabled_emulation: bool,
     /// DN of the group used for enabled-emulation membership checks.
+    #[serde(default)]
     pub user_enabled_emulation_dn: Option<String>,
     /// Use the group configuration options for the enabled-emulation group.
     #[serde(default)]
@@ -190,13 +222,14 @@ pub struct LdapProvider {
     #[serde(default)]
     pub group_members_are_ids: bool,
     /// Attributes never surfaced as `extra`, even if mapped.
-    #[serde(default)]
+    #[serde(default, serialize_with = "serialize_sorted")]
     pub group_attribute_ignore: HashSet<String>,
     /// Extra LDAP attributes exposed under `extra` in the API response,
     /// mapped as `ldap_attribute -> extra_key`.
-    #[serde(default)]
+    #[serde(default, with = "attribute_mapping")]
     pub group_additional_attribute_mapping: HashMap<String, String>,
     /// Additional LDAP filter clause AND-ed into every group search.
+    #[serde(default)]
     pub group_filter: Option<String>,
     /// Use `LDAP_MATCHING_RULE_IN_CHAIN` for Active Directory nested group
     /// resolution.
@@ -270,7 +303,7 @@ impl Default for LdapProvider {
 }
 
 /// TLS certificate validation strictness (`[ldap] tls_req_cert`).
-#[derive(Debug, Default, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
 pub enum TlsReqCert {
     /// Reject the connection if no certificate is provided or verification
     /// fails.
@@ -289,7 +322,7 @@ pub enum TlsReqCert {
 }
 
 /// Default search scope for subtree LDAP operations (`[ldap] query_scope`).
-#[derive(Debug, Default, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
 pub enum QueryScope {
     /// Single-level search relative to the tree DN.
     #[default]
@@ -307,7 +340,7 @@ pub enum QueryScope {
 /// per-search or per-connection alias-dereferencing control. Every search
 /// therefore uses the `ldap3`/OpenLDAP client library default regardless of
 /// this setting (tracked as a follow-up; see ADR-0027 implementation notes).
-#[derive(Debug, Default, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
 pub enum AliasDereferencing {
     /// Fall back to the default dereferencing behavior configured by the
     /// underlying LDAP client library.
@@ -326,6 +359,109 @@ pub enum AliasDereferencing {
     /// Dereference aliases only when locating the search base.
     #[serde(rename = "finding")]
     Finding,
+}
+
+/// Serialize a set of attribute names as a sorted list.
+///
+/// A `HashSet` has no order of its own, and these options are reported
+/// verbatim by `GET /v3/domains/config/ldap/default`; sorting keeps that
+/// response stable from one run to the next.
+///
+/// # Parameters
+/// - `values`: The attribute names.
+/// - `serializer`: The serde serializer.
+///
+/// # Returns
+/// - `Result<S::Ok, S::Error>` - The serialized list.
+fn serialize_sorted<S: serde::Serializer>(
+    values: &HashSet<String>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    let mut values: Vec<&String> = values.iter().collect();
+    values.sort();
+    serializer.collect_seq(values)
+}
+
+/// `ldap_attribute:keystone_attribute` mappings, in oslo.config's spelling.
+///
+/// python-keystone declares the `*_additional_attribute_mapping` options as
+/// list options whose entries are `ldap_attribute:keystone_attribute` pairs,
+/// which is how a config file and the per-domain configuration API both
+/// deliver them. A JSON object is accepted as well, for config sources that
+/// can express one.
+mod attribute_mapping {
+    use std::collections::HashMap;
+
+    use serde::de::{Deserializer, Error as _};
+    use serde::{Deserialize, Serialize, Serializer};
+
+    /// Every accepted spelling of a mapping.
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Repr {
+        /// The comma separated form a config file delivers.
+        Csv(String),
+        /// The `attribute:key` list form.
+        List(Vec<String>),
+        /// The object form.
+        Map(HashMap<String, String>),
+    }
+
+    /// Deserialize a mapping from either spelling.
+    ///
+    /// # Parameters
+    /// - `deserializer`: The serde deserializer.
+    ///
+    /// # Returns
+    /// - `Result<HashMap<String, String>, D::Error>` - The mapping, or an error
+    ///   when a list entry is not an `attribute:key` pair.
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<HashMap<String, String>, D::Error> {
+        let entries = match Repr::deserialize(deserializer)? {
+            Repr::Map(mapping) => return Ok(mapping),
+            Repr::List(entries) => entries,
+            Repr::Csv(entries) => entries
+                .split(',')
+                .map(str::trim)
+                .filter(|entry| !entry.is_empty())
+                .map(str::to_string)
+                .collect(),
+        };
+        entries
+            .into_iter()
+            .map(|entry| {
+                entry
+                    .split_once(':')
+                    .map(|(attribute, key)| (attribute.trim().to_string(), key.trim().to_string()))
+                    .ok_or_else(|| {
+                        D::Error::custom(format!(
+                            "expected an `ldap_attribute:keystone_attribute` pair, got `{entry}`"
+                        ))
+                    })
+            })
+            .collect()
+    }
+
+    /// Serialize a mapping in the list spelling, sorted for stability.
+    ///
+    /// # Parameters
+    /// - `mapping`: The mapping.
+    /// - `serializer`: The serde serializer.
+    ///
+    /// # Returns
+    /// - `Result<S::Ok, S::Error>` - The serialized list.
+    pub(super) fn serialize<S: Serializer>(
+        mapping: &HashMap<String, String>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let mut entries: Vec<String> = mapping
+            .iter()
+            .map(|(attribute, key)| format!("{attribute}:{key}"))
+            .collect();
+        entries.sort();
+        entries.serialize(serializer)
+    }
 }
 
 fn default_url() -> String {
@@ -454,6 +590,103 @@ mod tests {
         assert!(!cfg.group_members_are_ids);
         assert!(cfg.pool);
         assert!(cfg.auth_pool);
+    }
+
+    #[test]
+    fn test_parse_pooling_flags_in_both_spellings() {
+        for (spelling, flag) in [("use_pool", "pool"), ("use_auth_pool", "auth_pool")] {
+            for name in [spelling, flag] {
+                let c = Config::builder()
+                    .add_source(File::from_str(
+                        &format!("[ldap]\n{name} = false\n"),
+                        FileFormat::Ini,
+                    ))
+                    .build()
+                    .unwrap();
+                let parsed: LdapProvider = c.get("ldap").unwrap();
+                let parsed = match spelling {
+                    "use_pool" => parsed.pool,
+                    _ => parsed.auth_pool,
+                };
+                assert!(!parsed, "`{name}` was ignored");
+            }
+        }
+    }
+
+    #[test]
+    fn test_attribute_mapping_spellings() {
+        let c = Config::builder()
+            .add_source(File::from_str(
+                r#"
+[ldap]
+user_additional_attribute_mapping = mail:email, l:location
+"#,
+                FileFormat::Ini,
+            ))
+            .build()
+            .unwrap();
+        let parsed: LdapProvider = c.get("ldap").unwrap();
+        assert_eq!(
+            parsed.user_additional_attribute_mapping,
+            HashMap::from([
+                ("mail".to_string(), "email".to_string()),
+                ("l".to_string(), "location".to_string()),
+            ])
+        );
+
+        // The list spelling is also what serialization produces, sorted so the
+        // per-domain configuration default endpoints answer stably.
+        assert_eq!(
+            serde_json::to_value(&parsed).unwrap()["user_additional_attribute_mapping"],
+            serde_json::json!(["l:location", "mail:email"])
+        );
+    }
+
+    #[test]
+    fn test_serialization_omits_the_password() {
+        let cfg = LdapProvider {
+            password: Some(SecretString::from("s3cr3t")),
+            ..LdapProvider::default()
+        };
+        let encoded = serde_json::to_value(&cfg).unwrap();
+        assert!(
+            !encoded.to_string().contains("s3cr3t"),
+            "the bind password was serialized"
+        );
+        assert!(encoded.get("password").is_none());
+    }
+
+    #[test]
+    fn test_round_trips_through_json() {
+        let cfg = LdapProvider {
+            url: "ldaps://directory.example.com".into(),
+            user_attribute_ignore: HashSet::from(["mail".into(), "enabled".into()]),
+            group_additional_attribute_mapping: HashMap::from([(
+                "description".to_string(),
+                "purpose".to_string(),
+            )]),
+            ..LdapProvider::default()
+        };
+        let decoded: LdapProvider = serde_json::from_value(serde_json::to_value(&cfg).unwrap())
+            .expect("a serialized section deserializes back");
+        assert_eq!(decoded.url, cfg.url);
+        assert_eq!(decoded.user_attribute_ignore, cfg.user_attribute_ignore);
+        assert_eq!(
+            decoded.group_additional_attribute_mapping,
+            cfg.group_additional_attribute_mapping
+        );
+    }
+
+    #[test]
+    fn test_deserializes_a_partial_section() {
+        // Every field either carries a `#[serde(default)]` or has a declared
+        // default, so a partial object decodes: this is what lets a domain's
+        // stored options be overlaid onto the global section.
+        let parsed: LdapProvider =
+            serde_json::from_value(serde_json::json!({"url": "ldap://host"})).unwrap();
+        assert_eq!(parsed.url, "ldap://host");
+        assert_eq!(parsed.user_objectclass, default_user_objectclass());
+        assert!(parsed.user.is_none());
     }
 
     #[test]

@@ -23,6 +23,7 @@ use crate::auth::AuthenticationError;
 use crate::auth_plugin_identity::AuthPluginIdentityProviderError;
 use crate::catalog::CatalogProviderError;
 use crate::credential::CredentialProviderError;
+use crate::domain_config::DomainConfigProviderError;
 use crate::federation::FederationProviderError;
 use crate::identity::IdentityProviderError;
 use crate::idmapping::IdMappingProviderError;
@@ -114,6 +115,14 @@ pub enum KeystoneError {
         /// The source of the error.
         #[from]
         source: CredentialProviderError,
+    },
+
+    /// Domain configuration provider.
+    #[error(transparent)]
+    DomainConfigProvider {
+        /// The source of the error.
+        #[from]
+        source: DomainConfigProviderError,
     },
 
     /// Auth plugin identity-binding index provider.

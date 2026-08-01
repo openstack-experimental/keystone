@@ -26,6 +26,7 @@ pub mod auth;
 pub mod auth_plugin_identity;
 pub mod catalog;
 pub mod credential;
+pub mod domain_config;
 pub mod error;
 pub mod events;
 pub mod federation;
