@@ -80,6 +80,7 @@ pub mod audit;
 pub mod auth;
 pub mod auth_plugin_http_client;
 pub mod auth_plugin_identity;
+pub mod auth_plugin_startup;
 pub mod catalog;
 pub mod common;
 pub mod config;

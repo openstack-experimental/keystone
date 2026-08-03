@@ -24,7 +24,7 @@
 //! HTTP-shaped caller.
 use std::collections::HashMap;
 
-use openstack_keystone_auth_plugin_runtime::{
+use openstack_keystone_auth_plugin_core::{
     AuthPluginRequest, AuthPluginResponse, MappingResponse, RouteRequest, RouteResponse,
     WORKLOAD_ID_CLAIM_KEY,
 };
@@ -91,9 +91,9 @@ pub async fn authenticate_via_wasm_plugin(
     request: WasmPluginAuthRequest,
 ) -> Result<AuthenticationResult, WasmPluginAuthError> {
     let registry = state.auth_plugin_registry.read().await.clone();
-    let Some(loaded) = registry.get(plugin_name) else {
+    if !registry.contains(plugin_name) {
         return Err(WasmPluginAuthError::NotFound);
-    };
+    }
 
     let config = {
         let cfg = state.config_manager.config.read().await;
@@ -217,7 +217,9 @@ pub async fn authenticate_via_wasm_plugin(
     // thread's other work to a different thread for the duration, so a slow
     // or spinning plugin invocation doesn't stall unrelated async tasks
     // sharing this runtime.
-    let raw_response = match tokio::task::block_in_place(|| loaded.invoke("authenticate", &input)) {
+    let raw_response = match tokio::task::block_in_place(|| {
+        registry.invoke(plugin_name, "authenticate", &input)
+    }) {
         Ok(bytes) => bytes,
         Err(e) => {
             let _ = emit_wasm_plugin_audit(
@@ -233,7 +235,7 @@ pub async fn authenticate_via_wasm_plugin(
     };
 
     let response =
-        match openstack_keystone_auth_plugin_runtime::decode_and_validate_response(&raw_response) {
+        match openstack_keystone_auth_plugin_core::decode_and_validate_response(&raw_response) {
             Ok(response) => response,
             Err(e) => {
                 let _ = emit_wasm_plugin_audit(
@@ -401,9 +403,9 @@ pub async fn authenticate_via_wasm_mapping_plugin(
     request: WasmPluginAuthRequest,
 ) -> Result<AuthenticationResult, WasmPluginAuthError> {
     let registry = state.auth_plugin_registry.read().await.clone();
-    let Some(loaded) = registry.get(plugin_name) else {
+    if !registry.contains(plugin_name) {
         return Err(WasmPluginAuthError::NotFound);
-    };
+    }
 
     let config = {
         let cfg = state.config_manager.config.read().await;
@@ -514,26 +516,9 @@ pub async fn authenticate_via_wasm_mapping_plugin(
     // See the `authenticate` dispatch's identical comment above -
     // `block_in_place` keeps a slow/spinning guest invocation from stalling
     // unrelated async work on this runtime.
-    let raw_response = match tokio::task::block_in_place(|| loaded.invoke("mapping", &input)) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            let _ = emit_wasm_plugin_audit(
-                state,
-                plugin_name,
-                "mapping",
-                "failure",
-                Some(e.to_string()),
-            )
-            .await;
-            return Err(WasmPluginAuthError::InvokeFailed(e.to_string()));
-        }
-    };
-
-    let response =
-        match openstack_keystone_auth_plugin_runtime::decode_and_validate_mapping_response(
-            &raw_response,
-        ) {
-            Ok(response) => response,
+    let raw_response =
+        match tokio::task::block_in_place(|| registry.invoke(plugin_name, "mapping", &input)) {
+            Ok(bytes) => bytes,
             Err(e) => {
                 let _ = emit_wasm_plugin_audit(
                     state,
@@ -543,9 +528,26 @@ pub async fn authenticate_via_wasm_mapping_plugin(
                     Some(e.to_string()),
                 )
                 .await;
-                return Err(WasmPluginAuthError::MalformedResponse(e.to_string()));
+                return Err(WasmPluginAuthError::InvokeFailed(e.to_string()));
             }
         };
+
+    let response = match openstack_keystone_auth_plugin_core::decode_and_validate_mapping_response(
+        &raw_response,
+    ) {
+        Ok(response) => response,
+        Err(e) => {
+            let _ = emit_wasm_plugin_audit(
+                state,
+                plugin_name,
+                "mapping",
+                "failure",
+                Some(e.to_string()),
+            )
+            .await;
+            return Err(WasmPluginAuthError::MalformedResponse(e.to_string()));
+        }
+    };
 
     let claims = match response {
         MappingResponse::Deny { reason } => {
@@ -639,9 +641,9 @@ pub async fn route_via_wasm_plugin(
     peer_ip: Option<std::net::IpAddr>,
 ) -> Result<RouteDecision, WasmPluginAuthError> {
     let registry = state.auth_plugin_registry.read().await.clone();
-    let Some(loaded) = registry.get(plugin_name) else {
+    if !registry.contains(plugin_name) {
         return Err(WasmPluginAuthError::NotFound);
-    };
+    }
 
     let config = {
         let cfg = state.config_manager.config.read().await;
@@ -756,23 +758,24 @@ pub async fn route_via_wasm_plugin(
     // See the `authenticate` dispatch's identical comment above -
     // `block_in_place` keeps a slow/spinning guest invocation from stalling
     // unrelated async work on this runtime.
-    let raw_response = match tokio::task::block_in_place(|| loaded.invoke("route", &input)) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            let _ = emit_wasm_route_audit(
-                state,
-                plugin_name,
-                methods,
-                "failure",
-                None,
-                Some(e.to_string()),
-            )
-            .await;
-            return Err(WasmPluginAuthError::InvokeFailed(e.to_string()));
-        }
-    };
+    let raw_response =
+        match tokio::task::block_in_place(|| registry.invoke(plugin_name, "route", &input)) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                let _ = emit_wasm_route_audit(
+                    state,
+                    plugin_name,
+                    methods,
+                    "failure",
+                    None,
+                    Some(e.to_string()),
+                )
+                .await;
+                return Err(WasmPluginAuthError::InvokeFailed(e.to_string()));
+            }
+        };
 
-    let response = match openstack_keystone_auth_plugin_runtime::decode_and_validate_route_response(
+    let response = match openstack_keystone_auth_plugin_core::decode_and_validate_route_response(
         &raw_response,
     ) {
         Ok(response) => response,
@@ -854,6 +857,52 @@ pub async fn route_via_wasm_plugin(
 /// construction) actually works together, matching the plan's acceptance
 /// criteria: provision on first login, idempotent second login, bad-handle
 /// denial, claims land under `plugin_claims.<plugin_name>.*` only.
+/// Test-only equivalent of `crates/keystone`'s `load_auth_plugins` (moved
+/// there so this crate never depends on the extism-backed
+/// `openstack-keystone-auth-plugin-runtime` crate in production code) -
+/// used by this module's acceptance tests, which need a *real* loaded
+/// `WasmPluginRegistry` to exercise `authenticate_via_wasm_plugin` and
+/// friends end to end. `openstack-keystone-auth-plugin-runtime` is a
+/// dev-dependency of this crate for exactly this purpose - it never appears
+/// in a non-test build.
+#[cfg(test)]
+async fn load_plugins_for_test(
+    state: &ServiceState,
+    http_fetcher: std::sync::Arc<dyn crate::auth_plugin_http::DynamicPluginHttpFetcher>,
+) {
+    use crate::auth_plugin::{CoreHostFunctions, PluginInvocationLimiter, as_host_functions};
+
+    let (section, configs) = {
+        let cfg = state.config_manager.config.read().await;
+        (cfg.auth_plugins.clone(), cfg.auth_plugin.clone())
+    };
+
+    let core_host_functions =
+        std::sync::Arc::new(CoreHostFunctions::new(state.clone(), http_fetcher));
+    let host_functions = as_host_functions(core_host_functions.clone());
+
+    let (registry, _errors) = openstack_keystone_auth_plugin_runtime::WasmPluginRegistry::load(
+        &section,
+        &configs,
+        Some(&host_functions),
+    );
+
+    let limiters: HashMap<String, std::sync::Arc<PluginInvocationLimiter>> = configs
+        .iter()
+        .filter(|(name, _)| registry.contains(name))
+        .map(|(name, cfg)| {
+            (
+                name.clone(),
+                std::sync::Arc::new(PluginInvocationLimiter::new(cfg)),
+            )
+        })
+        .collect();
+
+    *state.auth_plugin_registry.write().await = std::sync::Arc::new(registry);
+    *state.core_host_functions.write().await = Some(core_host_functions);
+    *state.auth_plugin_limiters.write().await = limiters;
+}
+
 #[cfg(test)]
 mod acceptance_tests {
     use std::path::{Path, PathBuf};
@@ -867,7 +916,6 @@ mod acceptance_tests {
 
     use crate::auth_plugin_http::{DynamicPluginHttpFetcher, FetchResponse};
     use crate::auth_plugin_identity::MockDynamicPluginIdentityProvider;
-    use crate::auth_plugin_startup::load_auth_plugins;
     use crate::identity::MockIdentityProvider;
     use crate::keystone::Service;
     use crate::policy::MockPolicy;
@@ -1018,7 +1066,7 @@ mod acceptance_tests {
             .unwrap(),
         );
 
-        load_auth_plugins(&state, Arc::new(UnreachableHttpFetcher)).await;
+        load_plugins_for_test(&state, Arc::new(UnreachableHttpFetcher)).await;
         for name in plugin_names {
             assert!(
                 state.auth_plugin_registry.read().await.contains(name),
@@ -1407,7 +1455,6 @@ mod mapping_acceptance_tests {
 
     use crate::auth_plugin_http::{DynamicPluginHttpFetcher, FetchResponse};
     use crate::auth_plugin_identity::MockDynamicPluginIdentityProvider;
-    use crate::auth_plugin_startup::load_auth_plugins;
     use crate::identity::MockIdentityProvider;
     use crate::keystone::Service;
     use crate::mocks::MockMappingProvider;
@@ -1540,7 +1587,7 @@ mod mapping_acceptance_tests {
             .unwrap(),
         );
 
-        load_auth_plugins(&state, Arc::new(UnreachableHttpFetcher)).await;
+        load_plugins_for_test(&state, Arc::new(UnreachableHttpFetcher)).await;
         assert!(
             state
                 .auth_plugin_registry
@@ -1656,7 +1703,6 @@ mod route_acceptance_tests {
 
     use crate::auth_plugin_http::{DynamicPluginHttpFetcher, FetchResponse};
     use crate::auth_plugin_identity::MockDynamicPluginIdentityProvider;
-    use crate::auth_plugin_startup::load_auth_plugins;
     use crate::identity::MockIdentityProvider;
     use crate::keystone::Service;
     use crate::policy::MockPolicy;
@@ -1783,7 +1829,7 @@ mod route_acceptance_tests {
             .unwrap(),
         );
 
-        load_auth_plugins(&state, Arc::new(UnreachableHttpFetcher)).await;
+        load_plugins_for_test(&state, Arc::new(UnreachableHttpFetcher)).await;
         assert!(
             state
                 .auth_plugin_registry
@@ -1859,7 +1905,7 @@ mod route_acceptance_tests {
             .unwrap(),
         );
 
-        load_auth_plugins(&state, Arc::new(UnreachableHttpFetcher)).await;
+        load_plugins_for_test(&state, Arc::new(UnreachableHttpFetcher)).await;
         assert!(
             state
                 .auth_plugin_registry

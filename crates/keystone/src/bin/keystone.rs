@@ -63,6 +63,7 @@ use openstack_keystone::application_credential::ApplicationCredentialHook;
 use openstack_keystone::assignment::AssignmentHook;
 use openstack_keystone::auth_plugin_http_client::KeystoneDynamicPluginHttpFetcher;
 use openstack_keystone::auth_plugin_identity::DynamicPluginIdentityHook;
+use openstack_keystone::auth_plugin_startup::load_auth_plugins;
 use openstack_keystone::catalog::CatalogHook;
 use openstack_keystone::config::{
     Config, ConfigManager, Interface, ListenerConfig, RaftTlsConfiguration,
@@ -96,7 +97,6 @@ use openstack_keystone_audit::spool::{replay_spool, run_spool_writer, spool_path
 use openstack_keystone_audit::{AuditDispatcher, HmacKeyStore, derive_audit_hmac_key};
 use openstack_keystone_core::api_key::janitor as api_key_janitor;
 use openstack_keystone_core::auth::ExecutionContext;
-use openstack_keystone_core::auth_plugin_startup::load_auth_plugins;
 use openstack_keystone_core::cadf_hook::CadfAuditHook;
 use openstack_keystone_core::db::sync_schema;
 use openstack_keystone_core::error::KeystoneError;
@@ -1544,7 +1544,7 @@ async fn metrics_handler(
     let mut body =
         openstack_keystone_audit::metrics::format_prometheus_text(&state.audit_dispatcher);
     body.push_str(
-        &openstack_keystone_core::auth_plugin_startup::format_load_failure_metrics(
+        &openstack_keystone::auth_plugin_startup::format_load_failure_metrics(
             &*state.auth_plugin_load_failures.read().await,
         ),
     );

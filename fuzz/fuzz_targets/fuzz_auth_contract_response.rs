@@ -14,7 +14,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use openstack_keystone_auth_plugin_runtime::decode_and_validate_response;
+use openstack_keystone_auth_plugin_core::decode_and_validate_response;
 
 // `decode_and_validate_response` is the host-side decoder for a `full_auth`
 // -mode WASM auth plugin's `authenticate` response (ADR 0025 §7): raw bytes

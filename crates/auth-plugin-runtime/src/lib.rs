@@ -41,25 +41,22 @@ use openstack_keystone_config::{DynamicPluginConfig, DynamicPluginsSection};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-mod auth_contract;
 mod host_functions;
-mod mapping_contract;
-mod route_contract;
-pub use auth_contract::{
-    AuthPluginRequest, AuthPluginResponse, MAX_CLAIM_KEY_BYTES, MAX_CLAIM_VALUE_BYTES, MAX_CLAIMS,
-    MAX_RESPONSE_BYTES, RESERVED_ENVELOPE_KEY, RESERVED_KEY_PREFIX, ResponseBoundsError,
-    decode_and_validate_response,
-};
-pub use host_functions::{
-    AssignRoleRequest, GuestUserCreate, HostFunctions, HttpFetchRequest, HttpFetchResponse,
-    ProvisionUserRequest, ResolvedIdentityHandle, RoleAssignmentTarget,
-};
-pub use mapping_contract::{
-    MappingResponse, MappingResponseBoundsError, WORKLOAD_ID_CLAIM_KEY,
-    decode_and_validate_mapping_response,
-};
-pub use route_contract::{
-    RouteRequest, RouteResponse, RouteResponseBoundsError, decode_and_validate_route_response,
+
+// Re-exported for existing/incidental consumers of this crate's public API
+// (e.g. `tests/reference_plugin.rs`) - the actual definitions live in
+// `openstack-keystone-auth-plugin-core`, the extism-free crate. Anything
+// that only needs these types (not `WasmPluginRegistry`/`LoadedPlugin`
+// execution) should depend on that crate directly instead of this one, so
+// it never pulls in `extism`.
+pub use openstack_keystone_auth_plugin_core::{
+    AssignRoleRequest, AuthPluginRequest, AuthPluginResponse, AuthPluginRuntime, GuestUserCreate,
+    HostFunctions, HttpFetchRequest, HttpFetchResponse, InvokeError, MAX_CLAIM_KEY_BYTES,
+    MAX_CLAIM_VALUE_BYTES, MAX_CLAIMS, MAX_RESPONSE_BYTES, MappingResponse,
+    MappingResponseBoundsError, ProvisionUserRequest, RESERVED_ENVELOPE_KEY, RESERVED_KEY_PREFIX,
+    ResolvedIdentityHandle, ResponseBoundsError, RoleAssignmentTarget, RouteRequest, RouteResponse,
+    RouteResponseBoundsError, WORKLOAD_ID_CLAIM_KEY, decode_and_validate_mapping_response,
+    decode_and_validate_response, decode_and_validate_route_response,
 };
 
 /// WebAssembly linear memory page size, per the Wasm spec (64 KiB).
@@ -94,45 +91,23 @@ pub enum PluginLoadError {
     },
 }
 
-/// Why a single invocation of a loaded plugin failed. Per ADR 0025 §7,
-/// exceeding any bound fails only that invocation - the plugin stays
-/// loaded and registered for the next call.
-#[derive(Debug, Error)]
-pub enum InvokeError {
-    /// The plugin's `fuel_limit` (instruction budget) was exhausted before
-    /// the call returned.
-    #[error("plugin exceeded its fuel_limit and was aborted")]
-    FuelExhausted,
-    /// The plugin's `timeout_ms` wall-clock budget elapsed before the call
-    /// returned.
-    #[error("plugin exceeded its timeout_ms and was aborted")]
-    Timeout,
-    /// Any other guest-side failure: a trap (e.g. an allocation past
-    /// `memory_limit_mb`, an explicit panic/abort in the guest), a
-    /// malformed call, or an instantiation failure.
-    #[error("plugin invocation failed: {0}")]
-    Trap(String),
-}
-
-impl InvokeError {
-    /// Extism/wasmtime don't expose a typed distinction between "ran out of
-    /// fuel" and "hit the epoch deadline" versus an ordinary trap - both
-    /// surface as an [`extism::Error`] whose message is produced by
-    /// wasmtime. Classify on the (stable, wasmtime-owned) message text
-    /// rather than leaving every resource-limit violation as an
-    /// undifferentiated [`InvokeError::Trap`].
-    fn classify(err: extism::Error) -> Self {
-        let msg = err.to_string();
-        if msg.contains("fuel") {
-            InvokeError::FuelExhausted
-        } else if msg.contains("timeout")
-            || msg.contains("epoch deadline")
-            || msg.contains("interrupt")
-        {
-            InvokeError::Timeout
-        } else {
-            InvokeError::Trap(msg)
-        }
+/// Extism/wasmtime don't expose a typed distinction between "ran out of
+/// fuel" and "hit the epoch deadline" versus an ordinary trap - both
+/// surface as an [`extism::Error`] whose message is produced by wasmtime.
+/// Classify on the (stable, wasmtime-owned) message text rather than
+/// leaving every resource-limit violation as an undifferentiated
+/// [`InvokeError::Trap`]. A free function (not an inherent method) because
+/// `InvokeError` is defined in `openstack-keystone-auth-plugin-core`, not
+/// this crate.
+fn classify_invoke_error(err: extism::Error) -> InvokeError {
+    let msg = err.to_string();
+    if msg.contains("fuel") {
+        InvokeError::FuelExhausted
+    } else if msg.contains("timeout") || msg.contains("epoch deadline") || msg.contains("interrupt")
+    {
+        InvokeError::Timeout
+    } else {
+        InvokeError::Trap(msg)
     }
 }
 
@@ -160,7 +135,7 @@ impl LoadedPlugin {
             .map_err(|e| InvokeError::Trap(e.to_string()))?;
         plugin
             .call::<&[u8], Vec<u8>>(function, input)
-            .map_err(InvokeError::classify)
+            .map_err(classify_invoke_error)
     }
 }
 
@@ -300,6 +275,27 @@ impl WasmPluginRegistry {
     /// True if `name` was loaded and checksum-verified successfully.
     pub fn contains(&self, name: &str) -> bool {
         self.plugins.contains_key(name)
+    }
+}
+
+impl AuthPluginRuntime for WasmPluginRegistry {
+    fn contains(&self, name: &str) -> bool {
+        WasmPluginRegistry::contains(self, name)
+    }
+
+    fn invoke(&self, name: &str, function: &str, input: &[u8]) -> Result<Vec<u8>, InvokeError> {
+        let Some(loaded) = self.get(name) else {
+            return Err(InvokeError::Trap(format!("plugin {name} is not loaded")));
+        };
+        loaded.invoke(function, input)
+    }
+
+    fn len(&self) -> usize {
+        WasmPluginRegistry::len(self)
+    }
+
+    fn is_empty(&self) -> bool {
+        WasmPluginRegistry::is_empty(self)
     }
 }
 

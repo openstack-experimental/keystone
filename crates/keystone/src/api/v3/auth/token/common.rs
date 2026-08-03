@@ -488,13 +488,13 @@ mod route_dispatch_tests {
 
     use openstack_keystone_config::{Config, ConfigManager, DynamicPluginsSection};
     use openstack_keystone_core::auth_plugin_http::DynamicPluginHttpFetcher;
-    use openstack_keystone_core::auth_plugin_startup::load_auth_plugins;
     use openstack_keystone_core_types::identity::UserResponseBuilder;
     use sha2::{Digest, Sha256};
 
     use super::super::types::*;
     use super::*;
     use crate::auth_plugin_identity::MockDynamicPluginIdentityProvider;
+    use crate::auth_plugin_startup::load_auth_plugins;
     use crate::identity::MockIdentityProvider;
     use crate::keystone::{AuditDispatcher, Service};
     use crate::policy::MockPolicy;

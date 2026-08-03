@@ -1273,13 +1273,13 @@ mod auth_plugin_http_tests {
     use openstack_keystone_audit::AuditDispatcher;
     use openstack_keystone_config::{Config, ConfigManager, DynamicPluginsSection, PluginMode};
     use openstack_keystone_core::auth_plugin_http::DynamicPluginHttpFetcher;
-    use openstack_keystone_core::auth_plugin_startup::load_auth_plugins;
     use openstack_keystone_core_types::auth::*;
     use openstack_keystone_core_types::identity::UserResponseBuilder;
     use openstack_keystone_core_types::resource::DomainBuilder;
 
     use crate::api::v3::auth::token::types::*;
     use crate::auth_plugin_identity::MockDynamicPluginIdentityProvider;
+    use crate::auth_plugin_startup::load_auth_plugins;
     use crate::catalog::MockCatalogProvider;
     use crate::identity::MockIdentityProvider;
     use crate::keystone::{Service, ServiceState};

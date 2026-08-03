@@ -14,7 +14,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use openstack_keystone_auth_plugin_runtime::decode_and_validate_mapping_response;
+use openstack_keystone_auth_plugin_core::decode_and_validate_mapping_response;
 
 // Host-side decoder for a `mapping`-mode WASM plugin's response (ADR 0025
 // §4/§7) — same untrusted-guest-output trust class as

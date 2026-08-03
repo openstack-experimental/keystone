@@ -14,17 +14,23 @@
 //! Post-construction dynamic auth plugin loading (ADR 0025), mirroring
 //! `subscribe_event_hooks`'s wiring pattern in
 //! `crates/keystone/src/bin/keystone.rs`: [`CoreHostFunctions`] needs an
-//! already-built [`ServiceState`], so plugins can only be loaded *after*
+//! already-built `ServiceState`, so plugins can only be loaded *after*
 //! `Service::new` returns and the result is `Arc`-wrapped - not from inside
 //! `Service::new` itself.
+//!
+//! Lives here (not in `openstack-keystone-core`) so `core` never depends on
+//! the extism-backed `openstack-keystone-auth-plugin-runtime` crate in
+//! production code - only this top-level service crate, which actually
+//! constructs the real `WasmPluginRegistry`, does.
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use openstack_keystone_auth_plugin_runtime::WasmPluginRegistry;
-
-use crate::auth_plugin::{CoreHostFunctions, PluginInvocationLimiter, as_host_functions};
-use crate::auth_plugin_http::DynamicPluginHttpFetcher;
-use crate::keystone::ServiceState;
+use openstack_keystone_core::auth_plugin::{
+    CoreHostFunctions, PluginInvocationLimiter, as_host_functions,
+};
+use openstack_keystone_core::auth_plugin_http::DynamicPluginHttpFetcher;
+use openstack_keystone_core::keystone::ServiceState;
 
 /// Load every configured dynamic auth plugin against `state`, populating
 /// `state.auth_plugin_registry`/`state.core_host_functions`. Never fails
@@ -107,14 +113,16 @@ starts normally.\n\
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth_plugin_http::FetchResponse;
-    use crate::keystone::Service;
-    use crate::provider::Provider;
     use async_trait::async_trait;
     use openstack_keystone_audit::AuditDispatcher;
     use openstack_keystone_config::{Config, ConfigManager};
+    use openstack_keystone_core::auth_plugin_http::FetchResponse;
     use std::collections::HashMap;
     use std::net::SocketAddr;
+
+    use crate::keystone::Service;
+    use crate::policy::MockPolicy;
+    use crate::provider::Provider;
 
     struct UnreachableHttpFetcher;
 
@@ -149,7 +157,7 @@ mod tests {
                 ConfigManager::not_watched(cfg),
                 sea_orm::DatabaseConnection::default(),
                 Provider::mocked_builder().build().unwrap(),
-                Arc::new(crate::policy::MockPolicy::default()),
+                Arc::new(MockPolicy::default()),
                 audit_dispatcher,
                 None,
             )
@@ -207,7 +215,7 @@ mod tests {
                 ConfigManager::not_watched(cfg),
                 sea_orm::DatabaseConnection::default(),
                 Provider::mocked_builder().build().unwrap(),
-                Arc::new(crate::policy::MockPolicy::default()),
+                Arc::new(MockPolicy::default()),
                 audit_dispatcher,
                 None,
             )

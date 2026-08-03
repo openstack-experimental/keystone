@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! ADR 0025 Phase 1 (PR 1.1): [`CoreHostFunctions`] implements
-//! `openstack_keystone_auth_plugin_runtime::HostFunctions` - all four
+//! `openstack_keystone_auth_plugin_core::HostFunctions` - all four
 //! host functions (§6 A-D) - against this crate's real
 //! `IdentityApi`/`AssignmentApi`/`RoleApi`/`ResourceApi`/
 //! `DynamicPluginIdentityApi`, with namespace-scoped storage (a raft-backed
@@ -21,11 +21,11 @@
 //! `allowed_provision_domains` enforcement (§6.B/D), connect-time SSRF
 //! hardening for `http_fetch` (§6.A), and mandatory CADF audit (§6.E).
 //!
-//! Not yet implemented: wiring a
-//! [`WasmPluginRegistry`](openstack_keystone_auth_plugin_runtime::WasmPluginRegistry)
-//! into process startup / live auth dispatch - that's Phase 1's PR 1.2,
-//! which is also where this crate's `HostFunctions` implementation first
-//! becomes reachable from a live auth request.
+//! The extism-backed `WasmPluginRegistry` that actually loads and invokes
+//! plugins lives in `openstack-keystone-auth-plugin-runtime` and is wired up
+//! by `crates/keystone` (not this crate, which only ever sees it through
+//! the extism-free `AuthPluginRuntime` trait -
+//! `openstack_keystone_auth_plugin_core::AuthPluginRuntime`).
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
@@ -37,7 +37,7 @@ use sha2::Sha256;
 use tokio::sync::Semaphore;
 use uuid::Uuid;
 
-use openstack_keystone_auth_plugin_runtime::{
+use openstack_keystone_auth_plugin_core::{
     AssignRoleRequest, GuestUserCreate, HostFunctions, HttpFetchRequest, HttpFetchResponse,
     ProvisionUserRequest, ResolvedIdentityHandle, RoleAssignmentTarget,
 };
@@ -235,7 +235,7 @@ pub struct PluginInvocationLimiter {
 }
 
 impl PluginInvocationLimiter {
-    pub(crate) fn new(config: &DynamicPluginConfig) -> Self {
+    pub fn new(config: &DynamicPluginConfig) -> Self {
         let per_source_quota = Quota::per_minute(
             config
                 .invocation_rate_limit_per_source_per_minute
@@ -317,7 +317,7 @@ impl PluginInvocationLimiter {
     }
 }
 
-/// `openstack_keystone_auth_plugin_runtime::HostFunctions` implementation
+/// `openstack_keystone_auth_plugin_core::HostFunctions` implementation
 /// backed by this crate's real `IdentityApi`/`AuditDispatcher`.
 pub struct CoreHostFunctions {
     state: ServiceState,

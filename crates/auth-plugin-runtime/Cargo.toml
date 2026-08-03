@@ -12,6 +12,7 @@ exclude.workspace = true
 
 [dependencies]
 extism.workspace = true
+openstack-keystone-auth-plugin-core.workspace = true
 openstack-keystone-config.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

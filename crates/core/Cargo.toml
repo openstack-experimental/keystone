@@ -19,7 +19,7 @@ chrono = { workspace = true, default-features = false }
 crc32fast.workspace = true
 data-encoding.workspace = true
 derive_builder.workspace = true
-openstack-keystone-auth-plugin-runtime.workspace = true
+openstack-keystone-auth-plugin-core.workspace = true
 eyre.workspace = true
 governor.workspace = true
 hmac.workspace = true
@@ -58,6 +58,7 @@ subtle = "2.6.1"
 [dev-dependencies]
 axum = { workspace = true, default-features = false, features = ["json", "tokio"] }
 config = { workspace = true }
+openstack-keystone-auth-plugin-runtime.workspace = true
 httpmock = { version = "0.8", features = ["http2"] }
 mockall.workspace = true
 openstack-keystone-api-types = { workspace = true, features = ["builder", "conv"] }

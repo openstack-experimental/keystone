@@ -86,7 +86,6 @@ pub mod auth_plugin;
 pub mod auth_plugin_auth;
 pub mod auth_plugin_http;
 pub mod auth_plugin_identity;
-pub mod auth_plugin_startup;
 pub mod cadf_hook;
 pub mod catalog;
 pub mod common;

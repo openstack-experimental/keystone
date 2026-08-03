@@ -21,7 +21,7 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 use openstack_keystone_audit::AuditDispatcher;
-use openstack_keystone_auth_plugin_runtime::WasmPluginRegistry;
+use openstack_keystone_auth_plugin_core::{AuthPluginRuntime, EmptyAuthPluginRuntime};
 use openstack_keystone_config::ConfigManager;
 use openstack_keystone_local_emergency_store::{LeaderlessTracker, LocalEmergencyStore};
 use openstack_keystone_storage_api::StorageApi;
@@ -106,14 +106,18 @@ pub struct Service {
     /// `api_key_rate_limiter` above, own tunable blast radius.
     pub oauth2_token_rate_limiter: Arc<DefaultKeyedRateLimiter<String>>,
 
-    /// Loaded dynamic auth plugins (ADR 0025). Empty until
-    /// `crate::auth_plugin_startup::load_auth_plugins` runs
-    /// post-construction - `CoreHostFunctions` needs a `ServiceState`,
-    /// which doesn't exist until `Service::new` returns, so this can't be
-    /// populated inline here (mirrors how `subscribe_event_hooks` wires
-    /// provider hooks onto an already-`Arc`-wrapped `Service` at process
-    /// startup, in `crates/keystone/src/bin/keystone.rs`).
-    pub auth_plugin_registry: RwLock<Arc<WasmPluginRegistry>>,
+    /// Loaded dynamic auth plugins (ADR 0025). Empty (an
+    /// [`EmptyAuthPluginRuntime`]) until `crates/keystone`'s
+    /// `load_auth_plugins` runs post-construction - `CoreHostFunctions`
+    /// needs a `ServiceState`, which doesn't exist until `Service::new`
+    /// returns, so this can't be populated inline here (mirrors how
+    /// `subscribe_event_hooks` wires provider hooks onto an already-`Arc`-
+    /// wrapped `Service` at process startup, in
+    /// `crates/keystone/src/bin/keystone.rs`). A trait object
+    /// (`dyn AuthPluginRuntime`) rather than the concrete, extism-backed
+    /// `WasmPluginRegistry` so this crate never depends on `extism` - only
+    /// `crates/keystone` (which constructs the real registry) does.
+    pub auth_plugin_registry: RwLock<Arc<dyn AuthPluginRuntime>>,
 
     /// The [`CoreHostFunctions`] instance the dynamic plugin registry above
     /// was loaded with - kept alongside the registry so dispatch code can
@@ -131,17 +135,16 @@ pub struct Service {
 
     /// Per-plugin invocation rate/concurrency limiters (ADR 0025 §7), keyed
     /// by plugin name - populated alongside `auth_plugin_registry` by
-    /// `crate::auth_plugin_startup::load_auth_plugins`, one entry per
-    /// successfully loaded plugin.
+    /// `crates/keystone`'s `load_auth_plugins`, one entry per successfully
+    /// loaded plugin.
     pub auth_plugin_limiters: RwLock<HashMap<String, Arc<PluginInvocationLimiter>>>,
 
     /// Cumulative dynamic auth plugin load failure count, keyed by plugin
     /// name (ADR 0025 §5: a checksum mismatch, missing file, or compile
     /// error at load time is never fatal to the process - this is the
     /// backing counter for the `keystone_auth_plugin_load_failure{plugin_name}`
-    /// metric §5 calls for, incremented by
-    /// `crate::auth_plugin_startup::load_auth_plugins` alongside its
-    /// `CRITICAL` log line).
+    /// metric §5 calls for, incremented by `crates/keystone`'s
+    /// `load_auth_plugins` alongside its `CRITICAL` log line).
     pub auth_plugin_load_failures: RwLock<HashMap<String, u64>>,
 
     /// Type-erased hook used to observe SPIFFE mTLS material freshness for
@@ -242,7 +245,7 @@ impl Service {
             local_emergency_leaderless_tracker: LeaderlessTracker::new(),
             api_key_rate_limiter,
             oauth2_token_rate_limiter,
-            auth_plugin_registry: RwLock::new(Arc::new(WasmPluginRegistry::default())),
+            auth_plugin_registry: RwLock::new(Arc::new(EmptyAuthPluginRuntime)),
             core_host_functions: RwLock::new(None),
             rate_limiters,
             auth_plugin_limiters: RwLock::new(HashMap::new()),

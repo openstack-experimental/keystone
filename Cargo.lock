@@ -4847,6 +4847,7 @@ dependencies = [
  "openstack-keystone-assignment-driver-sql",
  "openstack-keystone-audit",
  "openstack-keystone-auth-plugin-identity-driver-raft",
+ "openstack-keystone-auth-plugin-runtime",
  "openstack-keystone-catalog-driver-sql",
  "openstack-keystone-config",
  "openstack-keystone-core",
@@ -5003,6 +5004,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "openstack-keystone-auth-plugin-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "openstack-keystone-auth-plugin-identity-driver-raft"
 version = "0.1.0"
 dependencies = [
@@ -5020,6 +5030,7 @@ version = "0.1.0"
 dependencies = [
  "config",
  "extism",
+ "openstack-keystone-auth-plugin-core",
  "openstack-keystone-config",
  "serde",
  "serde_json",
@@ -5141,6 +5152,7 @@ dependencies = [
  "mockall",
  "openstack-keystone-api-types",
  "openstack-keystone-audit",
+ "openstack-keystone-auth-plugin-core",
  "openstack-keystone-auth-plugin-runtime",
  "openstack-keystone-config",
  "openstack-keystone-core-types",

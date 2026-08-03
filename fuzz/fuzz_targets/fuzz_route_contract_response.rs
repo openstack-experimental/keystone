@@ -14,7 +14,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use openstack_keystone_auth_plugin_runtime::decode_and_validate_route_response;
+use openstack_keystone_auth_plugin_core::decode_and_validate_route_response;
 
 // Host-side decoder for a `route`-mode WASM plugin's `route` response (ADR
 // 0025 §4/§7) — same untrusted-guest-output trust class as

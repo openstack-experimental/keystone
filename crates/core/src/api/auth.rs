@@ -304,7 +304,7 @@ mod tests {
                 governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
             )),
             auth_plugin_registry: tokio::sync::RwLock::new(Arc::new(
-                openstack_keystone_auth_plugin_runtime::WasmPluginRegistry::default(),
+                openstack_keystone_auth_plugin_core::EmptyAuthPluginRuntime,
             )),
             core_host_functions: tokio::sync::RwLock::new(None),
             rate_limiters: crate::rate_limit::RateLimitState::default(),
@@ -428,7 +428,7 @@ mod tests {
                 governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
             )),
             auth_plugin_registry: tokio::sync::RwLock::new(Arc::new(
-                openstack_keystone_auth_plugin_runtime::WasmPluginRegistry::default(),
+                openstack_keystone_auth_plugin_core::EmptyAuthPluginRuntime,
             )),
             core_host_functions: tokio::sync::RwLock::new(None),
             rate_limiters: crate::rate_limit::RateLimitState::default(),
@@ -545,7 +545,7 @@ mod tests {
                 governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
             )),
             auth_plugin_registry: tokio::sync::RwLock::new(Arc::new(
-                openstack_keystone_auth_plugin_runtime::WasmPluginRegistry::default(),
+                openstack_keystone_auth_plugin_core::EmptyAuthPluginRuntime,
             )),
             core_host_functions: tokio::sync::RwLock::new(None),
             rate_limiters: crate::rate_limit::RateLimitState::default(),
@@ -627,7 +627,7 @@ mod tests {
                 governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
             )),
             auth_plugin_registry: tokio::sync::RwLock::new(Arc::new(
-                openstack_keystone_auth_plugin_runtime::WasmPluginRegistry::default(),
+                openstack_keystone_auth_plugin_core::EmptyAuthPluginRuntime,
             )),
             core_host_functions: tokio::sync::RwLock::new(None),
             rate_limiters: crate::rate_limit::RateLimitState::default(),
@@ -707,7 +707,7 @@ mod tests {
                 governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
             )),
             auth_plugin_registry: tokio::sync::RwLock::new(Arc::new(
-                openstack_keystone_auth_plugin_runtime::WasmPluginRegistry::default(),
+                openstack_keystone_auth_plugin_core::EmptyAuthPluginRuntime,
             )),
             core_host_functions: tokio::sync::RwLock::new(None),
             rate_limiters: crate::rate_limit::RateLimitState::default(),
@@ -847,7 +847,7 @@ mod tests {
                 governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
             )),
             auth_plugin_registry: tokio::sync::RwLock::new(Arc::new(
-                openstack_keystone_auth_plugin_runtime::WasmPluginRegistry::default(),
+                openstack_keystone_auth_plugin_core::EmptyAuthPluginRuntime,
             )),
             core_host_functions: tokio::sync::RwLock::new(None),
             rate_limiters: crate::rate_limit::RateLimitState::default(),

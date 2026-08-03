@@ -42,6 +42,7 @@ openstack-keystone-api-types = { workspace = true, features = ["openapi", "valid
 openstack-keystone-audit.workspace = true
 openstack-keystone-appcred-driver-sql.workspace = true
 openstack-keystone-assignment-driver-sql.workspace = true
+openstack-keystone-auth-plugin-runtime.workspace = true
 openstack-keystone-catalog-driver-sql.workspace = true
 openstack-keystone-config.workspace = true
 openstack-keystone-credential-driver-sql.workspace = true

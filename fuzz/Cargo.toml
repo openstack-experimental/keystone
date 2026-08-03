@@ -10,7 +10,7 @@ cargo-fuzz = true
 [dependencies]
 arbitrary = { version = "1", features = ["derive"] }
 libfuzzer-sys = "0.4"
-openstack-keystone-auth-plugin-runtime = { path = "../crates/auth-plugin-runtime" }
+openstack-keystone-auth-plugin-core = { path = "../crates/auth-plugin-core" }
 openstack-keystone-core = { path = "../crates/core" }
 openstack-keystone-core-types = { path = "../crates/core-types", features = ["fuzzing"] }
 openstack-keystone-token-driver-fernet = { path = "../crates/token-driver-fernet", features = ["fuzz_internals"] }
