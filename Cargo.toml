@@ -71,14 +71,14 @@ exclude = [
 [workspace.dependencies]
 aes-gcm = { version = "0.11" }
 arbitrary = { version = "1" }
-arc-swap = { version = "1.7" }
+arc-swap = { version = "1.9" }
 argon2 = { version = "0.5" }
 askama = { version = "0.16" }
 async-trait = { version = "0.1" }
 axum = { version = "0.8", default-features = false }
 axum-extra = { version = "0.12", default-features = false }
 axum-server = { version = "0.8", default-features = false }
-crc32fast = { version = "1.4" }
+crc32fast = { version = "1.5" }
 base64 = { version = "0.23" }
 base64urlsafedata = "0.5"
 bcrypt = { version = "0.19" }
@@ -100,8 +100,8 @@ futures = { version = "0.3" }
 futures-util = { version = "0.3" }
 governor = "0.10"
 http-body-util = "0.1"
-http = { version = "1.4" }
-hyper = { version = "1.10" }
+http = { version = "1.5" }
+hyper = { version = "1.11" }
 hyper-util = { version = "0.1" }
 hkdf = { version = "0.13" }
 hmac = { version = "0.13" }
@@ -158,7 +158,7 @@ openstack-keystone-webauthn = { version = "0.1", path = "crates/webauthn/"}
 prost = { version = "0.14" }
 proptest = { version = "1" }
 rand = { version = "0.10" }
-regex = { version = "1.12" }
+regex = { version = "1.13" }
 regex-syntax = "0.8"
 reqwest = { version = "0.13" }
 rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
@@ -168,7 +168,7 @@ rmp-serde = "1.3"
 rustls = { version = "0.23" }
 schemars = { version = "1.2" }
 scopeguard = "1.2.0"
-serial_test = { version = "3.2" }
+serial_test = { version = "3.5" }
 sea-orm = { version = "2.0", default-features = false }
 sea-orm-migration = { version = "2.0", default-features = false }
 secrecy = { version = "0.10" }
@@ -184,7 +184,7 @@ spiffe-rustls-tokio = { version = "0.4" }
 temp-env = { version = "0.3" }
 tempfile = { version = "3.27" }
 thiserror = { version = "2.0" }
-tokio = { version = "1.52", default-features = false }
+tokio = { version = "1.53", default-features = false }
 tokio-rustls = "0.26.4"
 tokio-util = { version = "0.7" }
 tonic = { version = "0.14", default-features = false }
@@ -202,7 +202,7 @@ url-macro = { version = "0.2" }
 utoipa = { version = "5.5" }
 utoipa-axum = { version = "0.2" }
 utoipa-swagger-ui = { version = "9.0", default-features = false }
-uuid = { version = "1.23", features = ["v4"] }
+uuid = { version = "1.24", features = ["v4"] }
 validator = { version = "0.20" }
 vaultrs = { version = "0.8", default-features = false, features = ["rustls"] }
 x509-parser = { version = "0.18" }
