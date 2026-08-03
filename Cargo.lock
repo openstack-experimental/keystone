@@ -4884,6 +4884,7 @@ dependencies = [
  "openstack-keystone-token-restriction-driver-sql",
  "openstack-keystone-trust-driver-sql",
  "openstack-keystone-webauthn",
+ "pem",
  "rand 0.10.1",
  "rcgen",
  "reqwest",

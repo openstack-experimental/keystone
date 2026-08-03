@@ -213,7 +213,7 @@ pub struct TlsConfiguration {
     /// peers.
     #[builder(default)]
     #[serde(default)]
-    pub(crate) tls_client_ca_file: Option<PathBuf>,
+    pub tls_client_ca_file: Option<PathBuf>,
 
     /// The TLS client certificate file content.
     #[builder(default)]
@@ -223,7 +223,7 @@ pub struct TlsConfiguration {
     /// Path to the TLS client certificate file.
     #[builder(default)]
     #[serde(default)]
-    pub(crate) tls_cert_file: Option<PathBuf>,
+    pub tls_cert_file: Option<PathBuf>,
 
     /// The TLS certificate key file content.
     #[builder(default)]
@@ -233,7 +233,7 @@ pub struct TlsConfiguration {
     /// Path to the TLS certificate key file.
     #[builder(default)]
     #[serde(default)]
-    pub(crate) tls_key_file: Option<PathBuf>,
+    pub tls_key_file: Option<PathBuf>,
 }
 
 impl TlsConfiguration {

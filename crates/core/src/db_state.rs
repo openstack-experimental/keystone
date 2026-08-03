@@ -25,11 +25,12 @@
 //! Reconnection is triggered only by a detected configuration change (see
 //! `reconnect_db_on_config_change` in the `keystone` binary, which reacts to
 //! `ConfigManager::notify_tx` - including a Vault-backed `[database]
-//! connection` re-resolving to rotated credentials). There is deliberately
-//! no periodic timer fallback. A TLS certificate referenced by path inside
-//! the connection string (e.g. `sslrootcert=...`) that rotates on disk
-//! without the connection string itself changing is not detected by this
-//! mechanism.
+//! connection` re-resolving to rotated credentials, or a `[database]
+//! tls_cert_file`/`tls_key_file`/`tls_client_ca_file` rotating on disk (see
+//! the `openstack_keystone::db_reload` module for that detection). There is
+//! deliberately no periodic timer fallback. TLS parameters embedded
+//! directly in the DSN query string (e.g. `sslrootcert=...`) remain static
+//! for the process lifetime unless the DSN itself changes.
 
 use arc_swap::ArcSwap;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection, DbErr};

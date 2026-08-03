@@ -67,6 +67,8 @@ use openstack_keystone::catalog::CatalogHook;
 use openstack_keystone::config::{
     Config, ConfigManager, Interface, ListenerConfig, RaftTlsConfiguration,
 };
+use openstack_keystone::db_reload;
+use openstack_keystone::db_spiffe;
 use openstack_keystone::federation::FederationHook;
 use openstack_keystone::identity::IdentityHook;
 use openstack_keystone::idmapping::IdMappingHook;
@@ -332,6 +334,42 @@ async fn main() -> Result<(), Report> {
             }
             Err(e) => {
                 warn!("Failed to initialize SPIFFE X509Source for health checks: {e}");
+            }
+        }
+    }
+
+    // Keep [database] TLS material fed from Keystone's own SPIFFE SVID/trust
+    // bundle when `[database] spiffe_managed = true`. Best-effort: a failure
+    // to establish the SPIFFE source only disables this writer, it must not
+    // block startup - `Config::finish_load` already validated at config-load
+    // time that the three target paths are set. See `db_spiffe`'s module doc
+    // for why this is a file bridge rather than per-handshake SPIFFE mTLS.
+    if cfg.database.spiffe_managed {
+        match (
+            &cfg.database.tls.tls_cert_file,
+            &cfg.database.tls.tls_key_file,
+            &cfg.database.tls.tls_client_ca_file,
+        ) {
+            (Some(cert_file), Some(key_file), Some(ca_file)) => {
+                let writer_cfg = db_spiffe::DbSpiffeWriterConfig {
+                    cert_file: cert_file.clone(),
+                    key_file: key_file.clone(),
+                    ca_file: ca_file.clone(),
+                };
+                let writer_token = token.clone();
+                spawn(async move {
+                    if let Err(error) = db_spiffe::run(writer_token, writer_cfg).await {
+                        warn!(%error, "Database SPIFFE writer task failed");
+                    }
+                });
+            }
+            _ => {
+                // Config::finish_load already rejects this combination at
+                // load time; reaching here would mean that invariant broke.
+                warn!(
+                    "[database] spiffe_managed = true but tls_cert_file/tls_key_file/\
+                     tls_client_ca_file are not all set; skipping the SPIFFE writer task"
+                );
             }
         }
     }
@@ -1681,14 +1719,19 @@ async fn reload_rate_limits_on_config_change(cancel: CancellationToken, state: S
     }
 }
 
-/// Rebuild the database connection when its resolved connection string
-/// changes across a configuration reload (including a Vault-backed
-/// `[database] connection` re-resolving to rotated credentials).
+/// Rebuild the database connection when its resolved connection string, or
+/// any of its configured `[database]` TLS files, change across a
+/// configuration reload - including a Vault-backed `[database] connection`
+/// re-resolving to rotated credentials, or a `tls_cert_file`/`tls_key_file`/
+/// `tls_client_ca_file` rotating on disk (from an external process or
+/// Keystone's own `db_spiffe` writer) without the DSN string itself
+/// changing.
 ///
 /// Triggered only by `ConfigManager::notify_tx` - there is deliberately no
-/// periodic timer fallback. A TLS certificate referenced by path inside the
-/// connection string (e.g. `sslrootcert=...`) that rotates on disk without
-/// the connection string itself changing is not detected by this mechanism.
+/// periodic timer fallback. TLS parameters embedded directly in the DSN
+/// query string (e.g. `sslrootcert=...`) are static for the process
+/// lifetime unless the DSN itself changes; only the structured
+/// `[database] tls_*_file` fields get rotation detection.
 ///
 /// An unreachable host or an invalid/stale rotated credential is logged and
 /// the existing connection is left in service (last-known-good), matching
@@ -1702,6 +1745,8 @@ async fn reconnect_db_on_config_change(cancel: CancellationToken, state: Service
         .await
         .database
         .get_connection();
+    let mut current_tls_mtimes =
+        db_reload::db_tls_mtimes(&*state.config_manager.config.read().await);
     loop {
         tokio::select! {
             recv = reload_rx.recv() => {
@@ -1709,18 +1754,23 @@ async fn reconnect_db_on_config_change(cancel: CancellationToken, state: Service
                     Ok(()) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                         let config = state.config_manager.config.read().await;
                         let new_dsn = config.database.get_connection();
-                        if new_dsn.expose_secret() == current_dsn.expose_secret() {
+                        let new_tls_mtimes = db_reload::db_tls_mtimes(&config);
+                        if new_dsn.expose_secret() == current_dsn.expose_secret()
+                            && new_tls_mtimes == current_tls_mtimes
+                        {
                             continue;
                         }
-                        let opt = ConnectOptions::new(new_dsn.expose_secret())
+                        let mut opt = ConnectOptions::new(new_dsn.expose_secret())
                             .sqlx_logging(config.database.sqlx_logging_enabled())
                             .sqlx_logging_level(config.database.sqlx_logging_level())
                             .to_owned();
+                        db_reload::apply_db_tls(&mut opt, &config.database.tls);
                         drop(config);
                         match state.db.reconnect(opt).await {
                             Ok(()) => {
                                 info!("Database connection reloaded");
                                 current_dsn = new_dsn;
+                                current_tls_mtimes = new_tls_mtimes;
                             }
                             Err(error) => error!(
                                 %error,
