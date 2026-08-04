@@ -22,10 +22,12 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub internal_id: i32,
     pub id: String,
+    #[sea_orm(unique_key = "duplicate_app_cred_constraint")]
     pub name: String,
     pub secret_hash: String,
     #[sea_orm(column_type = "Text", nullable)]
     pub description: Option<String>,
+    #[sea_orm(unique_key = "duplicate_app_cred_constraint")]
     pub user_id: String,
     pub project_id: Option<String>,
     pub expires_at: Option<i64>,

@@ -208,3 +208,38 @@ async fn test_create_role() -> Result<(), Report> {
     );
     Ok(())
 }
+
+#[tokio::test]
+#[traced_test]
+async fn test_create_duplicate() -> Result<(), Report> {
+    let (state, _) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let project = create_project!(state, domain.id.clone())?;
+    let user = create_user!(state, domain.id.clone())?;
+    let sot = ApplicationCredentialCreate {
+        id: Some(Uuid::new_v4().to_string()),
+        name: Uuid::new_v4().to_string(),
+        project_id: project.id.clone(),
+        roles: vec![],
+        user_id: user.id.clone(),
+        ..Default::default()
+    };
+    state
+        .provider
+        .get_application_credential_provider()
+        .create_application_credential(&ExecutionContext::internal(&state), sot.clone())
+        .await?;
+
+    let res = state
+        .provider
+        .get_application_credential_provider()
+        .create_application_credential(&ExecutionContext::internal(&state), sot.clone())
+        .await;
+
+    if let Err(ApplicationCredentialProviderError::Conflict(_)) = res {
+    } else {
+        panic!("creating duplicated application credential must fail");
+    }
+
+    Ok(())
+}
