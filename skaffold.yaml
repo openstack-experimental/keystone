@@ -102,8 +102,79 @@ deploy:
             # Wait for all Raft pods to be ready before join
             command: ["kubectl", "wait", "--for=condition=ready", "pod", "-l", "app.kubernetes.io/name=keystone-rs", "--timeout=180s"]
         - host:
-            # Join non-zero Raft nodes to the cluster (node 0 initialized by bootstrap)
-            command: ["sh", "-c", 'REPLICAS=$(kubectl get sts keystone-rs -o jsonpath="{.spec.replicas}"); for i in $(seq 1 $(($REPLICAS - 1))); do kubectl exec keystone-rs-$i -- keystone-manage storage join https://keystone-rs-0.keystone-rs-internal.default.svc.cluster.local:8300 || true; done']
+            # Join non-zero Raft nodes to the cluster (node 0 initialized by
+            # bootstrap). Run from each joining node so its own
+            # ``config` node_id and node_cluster_addr are used in the
+            # add_learner request sent to the leader (ADR 0016-v2 §4.1).
+            # Fail-fast (no || true) so a broken cluster is caught early.
+            command: ["sh", "-c", 'REPLICAS=$(kubectl get sts keystone-rs -o jsonpath="{.spec.replicas}"); for i in $(seq 1 $(($REPLICAS - 1))); do kubectl exec keystone-rs-$i -- keystone-manage storage join https://keystone-rs-0.keystone-rs-internal.default.svc.cluster.local:8300; sleep 2; done']
+        - host:
+            # Wait for replication to start so promote doesn't race the
+            # initial add_learner log entry (learner must have a non-None
+            # replication state before it can be promoted).
+            # Wait for all joined nodes to appear in the cluster membership
+            # by polling list-peers from the leader (node 0). Counts table
+            # data rows (those starting with "│" and containing a node
+            # hostname). This avoids a blind sleep and works reliably for
+            # any replica count.
+            command:
+              - sh
+              - -c
+              - |
+                REPLICAS=$(kubectl get sts keystone-rs -o jsonpath="{.spec.replicas}")
+                max_attempts=60
+                attempt=0
+                until [ "$attempt" -ge "$max_attempts" ]; do
+                  OUTPUT=$(kubectl exec keystone-rs-0 -- keystone-manage storage list-peers 2>&1)
+                  FOUND=0
+                  for i in $(seq 0 $((REPLICAS - 1))); do
+                    if echo "$OUTPUT" | grep -q "keystone-rs-$i.keystone-rs-internal"; then
+                      FOUND=$((FOUND + 1))
+                    fi
+                  done
+                  if [ "$FOUND" -eq "$REPLICAS" ]; then
+                    echo "All $REPLICAS nodes present in cluster membership"
+                    break
+                  fi
+                  attempt=$((attempt + 1))
+                  echo "Wait-replication: $FOUND/$REPLICAS nodes visible (attempt $attempt)"
+                  sleep 2
+                done
+                if [ "$attempt" -ge "$max_attempts" ]; then
+                  echo "Wait-replication timed out: only $FOUND/$REPLICAS nodes visible"
+                  exit 1
+                fi
+        - host:
+            # Promote newly-joined learners to voters (ADR 0016-v2 §4.1
+            # "Step 4: promote"). Run from node 0 (the leader) so the
+            # change_membership RPC is sent to the right node.
+            command: ["sh", "-c", 'REPLICAS=$(kubectl get sts keystone-rs -o jsonpath="{.spec.replicas}"); for i in $(seq 1 $(($REPLICAS - 1))); do kubectl exec keystone-rs-0 -- keystone-manage storage promote $i; done']
+        - host:
+            # Verify all replicas are voters before proceeding. Polls
+            # list-peers from node 0 and counts rows where the Voter
+            # column (last before closing │) contains "yes".
+            command:
+              - sh
+              - -c
+              - |
+                REPLICAS=$(kubectl get sts keystone-rs -o jsonpath="{.spec.replicas}")
+                max_attempts=30
+                attempt=0
+                until [ "$attempt" -ge "$max_attempts" ]; do
+                  OUTPUT=$(kubectl exec keystone-rs-0 -- keystone-manage storage list-peers 2>&1)
+                  VOTERS=$(echo "$OUTPUT" | grep -cP '\x{2506}\s+yes\s+\x{2502}' || true)
+                  if [ "$VOTERS" -ge "$REPLICAS" ]; then
+                    echo "All $REPLICAS replicas confirmed as voters"
+                    break
+                  fi
+                  attempt=$((attempt + 1))
+                  echo "Post-promote verify: $VOTERS voters (need $REPLICAS, attempt $attempt)"
+                  sleep 2
+                done
+                if [ "$attempt" -ge "$max_attempts" ]; then
+                  echo "Post-promote verification failed: only $VOTERS voters"
+                  exit 1
+                fi
         - host:
             # ADR 0026 §3: `default` is bootstrapped by the legacy Python
             # `keystone-manage bootstrap` (bootstrap-job.yaml), which writes

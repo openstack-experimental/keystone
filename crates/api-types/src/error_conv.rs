@@ -76,6 +76,7 @@ impl IntoResponse for KeystoneApiError {
             KeystoneApiError::InternalError(_) | KeystoneApiError::Other(..) => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
+            KeystoneApiError::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
             KeystoneApiError::UnprocessableEntity(_) => StatusCode::UNPROCESSABLE_ENTITY,
             _ => StatusCode::BAD_REQUEST,
         };
@@ -350,6 +351,9 @@ impl From<ApiKeyProviderError> for KeystoneApiError {
             // never leak detail to the client (ADR 0021 §6.D OPSEC leakage);
             // callers on that path should prefer mapping these to a generic
             // `AuthenticationError::Unauthorized` before this conversion runs.
+            ApiKeyProviderError::RaftNotAvailable => Self::NotImplemented(
+                "API Key storage requires distributed storage (raft)".to_string(),
+            ),
             other => Self::InternalError(other.to_string()),
         }
     }
@@ -364,6 +368,9 @@ impl From<Oauth2ClientProviderError> for KeystoneApiError {
             },
             Oauth2ClientProviderError::Conflict(x) => Self::Conflict(x),
             Oauth2ClientProviderError::Validation(x) => Self::UnprocessableEntity(x),
+            Oauth2ClientProviderError::RaftNotAvailable => Self::NotImplemented(
+                "OAuth2 client storage requires distributed storage (raft)".to_string(),
+            ),
             other => Self::InternalError(other.to_string()),
         }
     }
@@ -402,6 +409,10 @@ impl From<Oauth2KeyProviderError> for KeystoneApiError {
             Oauth2KeyProviderError::LocalEmergencyCandidateRevoked(x) => Self::Conflict(format!(
                 "local emergency rotation candidate {x} has been revoked and cannot be reconciled"
             )),
+            Oauth2KeyProviderError::RaftNotAvailable => Self::NotFound {
+                resource: "oauth2_signing_key".into(),
+                identifier: "no raft storage configured for OAuth2 signing keys".into(),
+            },
             other => Self::InternalError(other.to_string()),
         }
     }
@@ -409,10 +420,15 @@ impl From<Oauth2KeyProviderError> for KeystoneApiError {
 
 impl From<AuthPluginIdentityProviderError> for KeystoneApiError {
     fn from(value: AuthPluginIdentityProviderError) -> Self {
-        // Every variant is an infra/storage failure with no client-actionable
-        // distinction (ADR 0025 §6.B/§6.C); surface as a generic 500 without
-        // leaking backend detail on the linking path.
-        Self::InternalError(value.to_string())
+        match value {
+            AuthPluginIdentityProviderError::RaftNotAvailable => Self::NotImplemented(
+                "auth plugin identity provider requires distributed storage (raft)".to_string(),
+            ),
+            // Every other variant is an infra/storage failure with no client-actionable
+            // distinction (ADR 0025 §6.B/§6.C); surface as a generic 500 without
+            // leaking backend detail on the linking path.
+            other => Self::InternalError(other.to_string()),
+        }
     }
 }
 
@@ -452,8 +468,8 @@ impl From<MappingProviderError> for KeystoneApiError {
             MappingProviderError::RoleNotFound(x) => Self::UnprocessableEntity(format!(
                 "rule references role '{x}' which does not exist"
             )),
-            MappingProviderError::RaftNotAvailable => Self::InternalError(
-                "raft storage is not available in the mapping provider".to_string(),
+            MappingProviderError::RaftNotAvailable => Self::NotImplemented(
+                "mapping provider requires distributed storage (raft)".to_string(),
             ),
             MappingProviderError::RaftStoreError { source } => {
                 Self::InternalError(format!("raft storage error: {source}"))
@@ -481,8 +497,8 @@ impl From<ScimRealmProviderError> for KeystoneApiError {
                 identifier: x,
             },
             ScimRealmProviderError::Conflict(x) => Self::Conflict(x),
-            ScimRealmProviderError::RaftNotAvailable => Self::InternalError(
-                "raft storage is not available in the scim_realm provider".to_string(),
+            ScimRealmProviderError::RaftNotAvailable => Self::NotImplemented(
+                "SCIM realm provider requires distributed storage (raft)".to_string(),
             ),
             ScimRealmProviderError::RaftStoreError { source } => {
                 Self::InternalError(format!("raft storage error: {source}"))
@@ -510,8 +526,8 @@ impl From<ScimResourceProviderError> for KeystoneApiError {
                 identifier: x,
             },
             ScimResourceProviderError::Conflict(x) => Self::Conflict(x),
-            ScimResourceProviderError::RaftNotAvailable => Self::InternalError(
-                "raft storage is not available in the scim_resource provider".to_string(),
+            ScimResourceProviderError::RaftNotAvailable => Self::NotImplemented(
+                "SCIM resource provider requires distributed storage (raft)".to_string(),
             ),
             ScimResourceProviderError::RaftStoreError { source } => {
                 Self::InternalError(format!("raft storage error: {source}"))
@@ -593,6 +609,9 @@ impl From<KeystoneError> for KeystoneApiError {
             KeystoneError::Json { source } => source.into(),
             KeystoneError::K8sAuthProvider { source } => source.into(),
             KeystoneError::PolicyEnforcementNotAvailable => KeystoneApiError::internal(value),
+            KeystoneError::RaftNotAvailable => {
+                Self::NotImplemented("distributed storage (raft) is not configured".to_string())
+            }
             KeystoneError::ResourceProvider { source } => source.into(),
             KeystoneError::RevokeProvider { source } => source.into(),
             KeystoneError::RoleProvider { source } => source.into(),
@@ -742,10 +761,14 @@ mod tests {
     fn mapping_provider_raft_not_available() {
         let err = MappingProviderError::RaftNotAvailable;
         let api_err: KeystoneApiError = err.into();
-        assert!(matches!(
-            api_err,
-            KeystoneApiError::InternalError(msg) if !msg.is_empty()
-        ));
+        match &api_err {
+            KeystoneApiError::NotImplemented(msg) => assert!(!msg.is_empty()),
+            other => panic!("expected NotImplemented, got {:?}", other),
+        }
+        assert_eq!(
+            <KeystoneApiError as IntoResponse>::into_response(api_err).status(),
+            StatusCode::NOT_IMPLEMENTED
+        );
     }
 
     #[test]
@@ -893,5 +916,90 @@ mod tests {
             .get(header::RETRY_AFTER)
             .expect("Retry-After header must be present");
         assert_eq!(retry_after.to_str().unwrap(), "42");
+    }
+
+    #[test]
+    fn oauth2_key_raft_not_available_returns_404() {
+        let err = Oauth2KeyProviderError::RaftNotAvailable;
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(api_err, KeystoneApiError::NotFound { .. }));
+        assert_eq!(
+            <KeystoneApiError as IntoResponse>::into_response(api_err).status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    #[test]
+    fn api_key_raft_not_available_returns_501() {
+        let err = ApiKeyProviderError::RaftNotAvailable;
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(api_err, KeystoneApiError::NotImplemented(..)));
+        assert_eq!(
+            <KeystoneApiError as IntoResponse>::into_response(api_err).status(),
+            StatusCode::NOT_IMPLEMENTED
+        );
+    }
+
+    #[test]
+    fn oauth2_client_raft_not_available_returns_501() {
+        let err = Oauth2ClientProviderError::RaftNotAvailable;
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(api_err, KeystoneApiError::NotImplemented(..)));
+        assert_eq!(
+            <KeystoneApiError as IntoResponse>::into_response(api_err).status(),
+            StatusCode::NOT_IMPLEMENTED
+        );
+    }
+
+    #[test]
+    fn scim_realm_raft_not_available_returns_501() {
+        let err = ScimRealmProviderError::RaftNotAvailable;
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(api_err, KeystoneApiError::NotImplemented(..)));
+        assert_eq!(
+            <KeystoneApiError as IntoResponse>::into_response(api_err).status(),
+            StatusCode::NOT_IMPLEMENTED
+        );
+    }
+
+    #[test]
+    fn scim_resource_raft_not_available_returns_501() {
+        let err = ScimResourceProviderError::RaftNotAvailable;
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(api_err, KeystoneApiError::NotImplemented(..)));
+        assert_eq!(
+            <KeystoneApiError as IntoResponse>::into_response(api_err).status(),
+            StatusCode::NOT_IMPLEMENTED
+        );
+    }
+
+    #[test]
+    fn auth_plugin_identity_raft_not_available_returns_501() {
+        let err = AuthPluginIdentityProviderError::RaftNotAvailable;
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(api_err, KeystoneApiError::NotImplemented(..)));
+        assert_eq!(
+            <KeystoneApiError as IntoResponse>::into_response(api_err).status(),
+            StatusCode::NOT_IMPLEMENTED
+        );
+    }
+
+    #[test]
+    fn keystone_raft_not_available_returns_501() {
+        let err = KeystoneError::RaftNotAvailable;
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(api_err, KeystoneApiError::NotImplemented(..)));
+        assert_eq!(
+            <KeystoneApiError as IntoResponse>::into_response(api_err).status(),
+            StatusCode::NOT_IMPLEMENTED
+        );
+    }
+
+    #[test]
+    fn not_implemented_variant_returns_501() {
+        let err = KeystoneApiError::NotImplemented("test feature not available".to_string());
+        assert_eq!(err.to_string(), "test feature not available");
+        let response = <KeystoneApiError as IntoResponse>::into_response(err);
+        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
     }
 }

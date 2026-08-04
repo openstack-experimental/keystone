@@ -119,8 +119,12 @@ echo "✅ Keystone bootstrap completed!"
 mkdir -p tests/loadtest/reports
 (cd tests/loadtest && \
     HOME="$LOADTEST_HOME" \
-    OS_CLIENT_CONFIG_PATH="${REAL_HOME}/.config/openstack" \
-    OS_CLOUD=admin \
+    OS_AUTH_URL="http://localhost:8080/v3" \
+    OS_USERNAME=admin \
+    OS_PASSWORD=password \
+    OS_USER_DOMAIN_NAME=default \
+    OS_PROJECT_NAME=admin \
+    OS_PROJECT_DOMAIN_NAME=default \
     ./target/release/load_test \
     --host http://localhost:8080 \
     "$@")

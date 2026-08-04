@@ -42,6 +42,9 @@ impl From<K8sAuthProviderError> for crate::error::KeystoneApiError {
             K8sAuthProviderError::InsecureAlgorithm => Self::forbidden(source),
             K8sAuthProviderError::InvalidToken => Self::forbidden(source),
             K8sAuthProviderError::MappingEngine(_) => Self::forbidden(source),
+            K8sAuthProviderError::RaftNotAvailable => Self::NotImplemented(
+                "K8s auth provider requires distributed storage (raft)".to_string(),
+            ),
             other => Self::InternalError(other.to_string()),
         }
     }

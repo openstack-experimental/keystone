@@ -178,103 +178,6 @@ jobs:
         if: failure()
         run: docker logs opa
 
-  loadtest:
-    runs-on: ubuntu-latest
-    if: "success() && github.event_name != 'merge_group' && github.actor != 'openstack-experimental-release-plz'"
-    needs:
-      - build
-    permissions:
-      contents: read
-      packages: read
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_USER: keystone
-          POSTGRES_PASSWORD: '1234'
-        ports:
-          - 5432:5432
-        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
-
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
-      - uses: ./.github/actions/deploy_keystone
-
-      - name: Build Load test binary
-        working-directory: tests/loadtest
-        run: cargo build --release
-
-      - name: Run load test
-        working-directory: tests/loadtest
-        env:
-          OS_CLOUD: admin
-        run: |
-          mkdir -p reports
-          ./target/release/load_test \
-            --host http://localhost:8080 \
-            --hatch-rate 2 \
-            --run-time 30s \
-            --report-file reports/loadtest-report-rust.html \
-            --report-file reports/loadtest-report-rust.md
-          ./target/release/load_test \
-            --host http://localhost:5001 \
-            --hatch-rate 2 \
-            --run-time 30s \
-            --report-file reports/loadtest-report-python.html \
-            --report-file reports/loadtest-report-python.md
-
-      - name: Upload report
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
-        with:
-          name: loadtest-report
-          path: tests/loadtest/reports/
-
-      - name: Dump py-keystone logs
-        if: failure()
-        run: docker logs keystone
-
-      - name: Dump rust keystone log
-        if: failure()
-        run: cat rust.log
-
-      - name: Dump OPA log
-        if: failure()
-        run: docker logs opa
-
-  loadtest-track:
-    if: "success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'openstack-experimental-release-plz'"
-    runs-on: ubuntu-latest
-    needs:
-      - loadtest
-    permissions:
-      pull-requests: write
-    steps:
-      - name: Fetch pre-built artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v5.0.0
-        with:
-          name: loadtest-report
-
-      - name: Extract report
-        id: metrics
-        run: |
-          SUMMARY=$(cat loadtest-report-rust.md || echo "No summary found")
-          echo "summary<<EOF" >> $GITHUB_OUTPUT
-          echo "$SUMMARY" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Post Loadtest results to PR
-        if: github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
-        with:
-          header: loadtest
-          message: |
-            🦢 **Load Test Results**
-
-            ${{ steps.metrics.outputs.summary }}
-
-            [View full report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
-
   k3s-test:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -346,6 +249,49 @@ jobs:
         run: |
           skaffold verify --profile github-ci -m keystone --env-file github-oidc.env -a build.artifacts -v debug
 
+      - name: Install Rust and build loadtest binary
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          source "$HOME/.cargo/env"
+          (cd tests/loadtest && cargo build --release)
+
+      - name: Run loadtest against keystone-rs
+        env:
+          HOME: /tmp/loadtest-home
+          OS_AUTH_URL: http://localhost:8080/v3
+          OS_USERNAME: admin
+          OS_PASSWORD: password
+          OS_USER_DOMAIN_ID: default
+          OS_PROJECT_NAME: admin
+          OS_PROJECT_DOMAIN_ID: default
+        run: |
+          # Port-forward to keystone-rs and wait for readiness
+          kubectl port-forward svc/keystone-rs 8080:8080 > /dev/null 2>&1 &
+          PORT_FORWARD_PID=$!
+          for i in $(seq 1 60); do
+            if curl -s http://localhost:8080/health/ > /dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+
+          mkdir -p tests/loadtest/reports
+          (cd tests/loadtest && ./target/release/load_test \
+              --host http://localhost:8080 \
+              --hatch-rate 2 \
+              --run-time 30s \
+              --report-file reports/loadtest-report-rust.html \
+              --report-file reports/loadtest-report-rust.md)
+
+          kill $PORT_FORWARD_PID 2>/dev/null || true
+
+      - name: Upload loadtest report
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: loadtest-report
+          path: tests/loadtest/reports/
+
       - name: Run tempest identity compatibility tests
         id: tempest_verify
         continue-on-error: true
@@ -400,6 +346,39 @@ jobs:
       - name: Dump events
         if: failure()
         run: kubectl get events
+
+  loadtest-track:
+    if: "success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'openstack-experimental-release-plz'"
+    runs-on: ubuntu-latest
+    needs:
+      - k3s-test
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Fetch pre-built artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v5.0.0
+        with:
+          name: loadtest-report
+
+      - name: Extract report
+        id: metrics
+        run: |
+          SUMMARY=$(cat loadtest-report-rust.md || echo "No summary found")
+          echo "summary<<EOF" >> $GITHUB_OUTPUT
+          echo "$SUMMARY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Post Loadtest results to PR
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
+        with:
+          header: loadtest
+          message: |
+            🦢 **Load Test Results**
+
+            ${{ steps.metrics.outputs.summary }}
+
+            [View full report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
   tempest-track:
     if: "success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'openstack-experimental-release-plz'"

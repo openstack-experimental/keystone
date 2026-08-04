@@ -62,6 +62,12 @@ pub enum KeystoneApiError {
         identifier: String,
     },
 
+    /// The requested operation requires optional infrastructure that is not
+    /// configured (e.g. raft-based providers when `[distributed_storage]` is
+    /// absent).  This is a permanent configuration gap, not a transient error.
+    #[error("{0}")]
+    NotImplemented(String),
+
     /// Others.
     #[error(transparent)]
     Other(#[from] eyre::Report),

@@ -252,6 +252,36 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
+    #[tokio::test]
+    async fn test_jwks_returns_not_found_when_raft_not_available() {
+        // When raft storage is not configured, the OAuth2 key provider
+        // returns RaftNotAvailable, which should map to 404 for JWKS
+        // (meaning no signing keys available for this domain).
+        let mut mock = MockOauth2KeyProvider::default();
+        mock.expect_jwks().returning(|_, _| {
+            Err(openstack_keystone_core_types::oauth2_key::Oauth2KeyProviderError::RaftNotAvailable)
+        });
+        let provider = Provider::mocked_builder().mock_oauth2_key(mock);
+        let state = default_get_mocked_state(provider, true, None).await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state.clone());
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/domain-1/jwks")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
     /// Global per-IP rate limiting fires before provider call (ADR-0022,
     /// Invariant 4, 8). The first request consumes the burst token and passes
     /// through to the provider; the second from the same IP must be rejected
