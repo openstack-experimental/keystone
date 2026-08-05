@@ -39,7 +39,6 @@ mod group;
 mod local_user;
 mod nonlocal_user;
 mod password;
-mod service_account;
 mod user;
 mod user_group;
 mod user_option;
@@ -206,25 +205,6 @@ impl IdentityBackend for SqlBackend {
         Ok(group::create(&state.db, group).await?)
     }
 
-    /// Create service account.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `sa`: The service account creation parameters.
-    ///
-    /// # Returns
-    /// A `Result` containing the created `ServiceAccount` if successful, or an
-    /// `Error`.
-    #[tracing::instrument(skip(self, state))]
-    async fn create_service_account(
-        &self,
-        state: &ServiceState,
-        sa: ServiceAccountCreate,
-    ) -> Result<ServiceAccount, IdentityProviderError> {
-        let config = state.config_manager.config.read().await;
-        Ok(service_account::create(&config, &state.db, sa, None).await?)
-    }
-
     /// Create user.
     ///
     /// # Parameters
@@ -293,25 +273,6 @@ impl IdentityBackend for SqlBackend {
         group_id: &'a str,
     ) -> Result<Option<Group>, IdentityProviderError> {
         Ok(group::get(&state.db, group_id).await?)
-    }
-
-    /// Get single service account by ID.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `user_id`: The ID of the user.
-    ///
-    /// # Returns
-    /// A `Result` containing an `Option` with the `ServiceAccount` if found, or
-    /// an `Error`.
-    #[tracing::instrument(skip(self, state))]
-    async fn get_service_account<'a>(
-        &self,
-        state: &ServiceState,
-        user_id: &'a str,
-    ) -> Result<Option<ServiceAccount>, IdentityProviderError> {
-        let config = state.config_manager.config.read().await;
-        Ok(service_account::get(&config, &state.db, user_id).await?)
     }
 
     /// Get single user by ID.

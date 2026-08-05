@@ -58,7 +58,4 @@ pub enum UserType {
     Local,
     /// Non-local users only.
     NonLocal,
-    /// Service account users only.
-    #[serde(rename = "service_account")]
-    ServiceAccount,
 }

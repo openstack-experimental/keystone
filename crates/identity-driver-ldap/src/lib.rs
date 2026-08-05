@@ -208,14 +208,6 @@ impl IdentityBackend for LdapBackend {
         Err(readonly("create_group"))
     }
 
-    async fn create_service_account(
-        &self,
-        _state: &ServiceState,
-        _sa: ServiceAccountCreate,
-    ) -> Result<ServiceAccount, IdentityProviderError> {
-        Err(not_implemented("service accounts"))
-    }
-
     async fn create_user(
         &self,
         _state: &ServiceState,
@@ -254,14 +246,6 @@ impl IdentityBackend for LdapBackend {
             group_id,
         )
         .await
-    }
-
-    async fn get_service_account<'a>(
-        &self,
-        _state: &ServiceState,
-        _user_id: &'a str,
-    ) -> Result<Option<ServiceAccount>, IdentityProviderError> {
-        Ok(None)
     }
 
     #[tracing::instrument(skip(self, state))]

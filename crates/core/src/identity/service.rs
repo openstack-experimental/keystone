@@ -567,60 +567,6 @@ impl IdentityApi for IdentityService {
         Ok(group)
     }
 
-    /// Create service account.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `sa`: The service account details to create.
-    async fn create_service_account<'a>(
-        &self,
-        ctx: &ExecutionContext<'a>,
-        sa: ServiceAccountCreate,
-    ) -> Result<ServiceAccount, IdentityProviderError> {
-        let mut mod_sa = sa;
-        if mod_sa.id.is_none() {
-            mod_sa.id = Some(Uuid::new_v4().simple().to_string());
-        }
-        if mod_sa.enabled.is_none() {
-            mod_sa.enabled = Some(true);
-        }
-        mod_sa.validate()?;
-        let service_account = if let Some(vsc) = ctx.ctx() {
-            let backend_driver = &self.backend_driver;
-            let state = ctx.state();
-            let sa_clone = mod_sa.clone();
-            let sa_id = sa_clone.id.clone();
-            let dispatch = crate::audited_op! {
-                dispatcher: &ctx.state().event_dispatcher,
-                ctx: vsc,
-                event: Event::new(
-                    Operation::Create,
-                    EventPayload::ServiceAccount { id: sa_id.unwrap_or_default() },
-                ),
-                operation: async {
-                    backend_driver.create_service_account(state, sa_clone).await
-                },
-                on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
-            };
-            dispatch?
-        } else {
-            let sa = self
-                .backend_driver
-                .create_service_account(ctx.state(), mod_sa)
-                .await?;
-            ctx.state()
-                .event_dispatcher
-                .emit(Event::new(
-                    Operation::Create,
-                    EventPayload::ServiceAccount { id: sa.id.clone() },
-                ))
-                .await;
-            sa
-        };
-
-        Ok(service_account)
-    }
-
     /// Create user.
     ///
     /// # Parameters
@@ -791,26 +737,6 @@ impl IdentityApi for IdentityService {
 
         cache_remove(USER_CACHE_NS, user_id);
         Ok(())
-    }
-
-    /// Get a service account by ID.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `user_id`: The ID of the service account to retrieve.
-    ///
-    /// # Returns
-    /// - `Result<Option<ServiceAccount>, IdentityProviderError>` - A `Result`
-    ///   containing an `Option` with the service account if found, or an
-    ///   `Error`.
-    async fn get_service_account<'a>(
-        &self,
-        ctx: &ExecutionContext<'a>,
-        user_id: &'a str,
-    ) -> Result<Option<ServiceAccount>, IdentityProviderError> {
-        self.backend_driver
-            .get_service_account(ctx.state(), user_id)
-            .await
     }
 
     /// Get single user.

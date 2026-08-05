@@ -246,9 +246,6 @@ pub struct UserOptions {
     pub multi_factor_auth_rules: Option<Vec<Vec<String>>>,
 
     pub multi_factor_auth_enabled: Option<bool>,
-
-    /// Identifies whether the user is a service account.
-    pub is_service_account: Option<bool>,
 }
 
 /// User federation data.
@@ -331,9 +328,6 @@ pub enum UserType {
 
     /// Non-local users (users without local authentication).
     NonLocal,
-
-    /// Service Accounts (bots, etc).
-    ServiceAccount,
 }
 
 /// User password information.

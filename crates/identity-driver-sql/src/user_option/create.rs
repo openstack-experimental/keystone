@@ -67,34 +67,4 @@ mod tests {
         let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
         create(&db, "1", &UserOptions::default()).await.unwrap();
     }
-
-    #[tokio::test]
-    async fn test_create_issa() {
-        let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([vec![db_user_option::Model {
-                user_id: "1".into(),
-                option_id: "ISSA".into(),
-                option_value: Some("true".into()),
-            }]])
-            .into_connection();
-        create(
-            &db,
-            "1",
-            &UserOptions {
-                is_service_account: Some(true),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(
-            db.into_transaction_log(),
-            [Transaction::from_sql_and_values(
-                DatabaseBackend::Postgres,
-                r#"INSERT INTO "user_option" ("user_id", "option_id", "option_value") VALUES ($1, $2, $3) RETURNING "user_id", "option_id""#,
-                ["1".into(), "ISSA".into(), "true".into(),]
-            ),]
-        );
-    }
 }

@@ -138,11 +138,6 @@ pub enum EventPayload {
         id: String,
     },
 
-    // Identity service accounts
-    ServiceAccount {
-        id: String,
-    },
-
     // Token
     TokenRestriction {
         id: String,

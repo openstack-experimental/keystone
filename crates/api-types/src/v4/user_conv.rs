@@ -23,7 +23,6 @@ impl From<api_types::UserType> for provider_types::UserType {
             api_types::UserType::Federated => Self::Federated,
             api_types::UserType::Local => Self::Local,
             api_types::UserType::NonLocal => Self::NonLocal,
-            api_types::UserType::ServiceAccount => Self::ServiceAccount,
         }
     }
 }

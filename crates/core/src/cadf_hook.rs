@@ -97,7 +97,6 @@ fn build_target_from_event(event: &Event) -> Target {
         EventPayload::Region { id } => (id, "data/compute/catalog/region"),
         EventPayload::Service { id } => (id, "data/compute/catalog/service"),
         EventPayload::Trust { id } => (id, "data/security/identity/trust"),
-        EventPayload::ServiceAccount { id } => (id, "data/security/identity/service-account"),
         EventPayload::TokenRestriction { id } => (id, "data/security/identity/token-restriction"),
         EventPayload::IdentityProvider { id } => (id, "data/security/identity/identity-provider"),
         EventPayload::AuthState { id } => (id, "data/security/identity/auth-state"),

@@ -301,23 +301,4 @@ pub mod tests {
     //    let sot = req.to_user_active_model(&cfg, Some(now)).unwrap();
     //    assert_eq!(sot.last_active_at, Set(Some(now.naive_utc().date())));
     //}
-
-    //#[test]
-    //fn test_active_record_from_sa_create() {
-    //    let now = Utc::now();
-    //    let req = ServiceAccountCreate {
-    //        domain_id: "did".into(),
-    //        enabled: Some(true),
-    //        id: Some("said".into()),
-    //        name: "sa_name".into(),
-    //    };
-    //    let cfg = Config::default();
-    //    let sot = req.to_user_active_model(&cfg, Some(now)).unwrap();
-    //    assert_eq!(sot.default_project_id, NotSet);
-    //    assert_eq!(sot.domain_id, Set("did".into()));
-    //    assert_eq!(sot.enabled, Set(Some(true)));
-    //    assert_eq!(sot.extra, Set(Some("{}".into())));
-    //    assert_eq!(sot.id, Set("said".into()));
-    //    assert_eq!(sot.last_active_at, NotSet);
-    //}
 }

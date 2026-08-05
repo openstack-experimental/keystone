@@ -68,12 +68,12 @@ pub fn user_list_filter(
     if !domain_matches(&params.domain_id, default_domain_id) {
         return ListDecision::EmptyResult;
     }
-    // LDAP users are always non-local, non-federated, non-service-account:
+    // LDAP users are always non-local, non-federated:
     // a single flat directory namespace with no local password/federation
     // tables (ADR-0027 §11).
     if matches!(
         params.user_type,
-        Some(UserType::Local) | Some(UserType::Federated) | Some(UserType::ServiceAccount)
+        Some(UserType::Local) | Some(UserType::Federated)
     ) {
         return ListDecision::EmptyResult;
     }
@@ -223,12 +223,8 @@ mod tests {
     }
 
     #[test]
-    fn test_user_list_filter_local_federated_service_account_short_circuit() {
-        for user_type in [
-            UserType::Local,
-            UserType::Federated,
-            UserType::ServiceAccount,
-        ] {
+    fn test_user_list_filter_local_federated_short_circuit() {
+        for user_type in [UserType::Local, UserType::Federated] {
             let params = UserListParametersBuilder::default()
                 .user_type(Some(user_type))
                 .build()

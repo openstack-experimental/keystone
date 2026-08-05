@@ -955,12 +955,6 @@ mod identity {
                 group: GroupCreate,
             ) -> Result<Group, IdentityProviderError>;
 
-            async fn create_service_account<'a>(
-                &self,
-                ctx: &ExecutionContext<'a>,
-                sa: ServiceAccountCreate,
-            ) -> Result<ServiceAccount, IdentityProviderError>;
-
             async fn create_user<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
@@ -999,12 +993,6 @@ mod identity {
                 ctx: &ExecutionContext<'a>,
                 group_id: &'a str,
             ) -> Result<Option<Group>, IdentityProviderError>;
-
-            async fn get_service_account<'a>(
-                &self,
-                ctx: &ExecutionContext<'a>,
-                user_id: &'a str,
-            ) -> Result<Option<ServiceAccount>, IdentityProviderError>;
 
             async fn get_user<'a>(
                 &self,

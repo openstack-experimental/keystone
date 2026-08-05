@@ -115,17 +115,6 @@ pub trait IdentityApi: Send + Sync {
         group: GroupCreate,
     ) -> Result<Group, IdentityProviderError>;
 
-    /// Create service account.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `sa`: The service account details to create.
-    async fn create_service_account<'a>(
-        &self,
-        ctx: &ExecutionContext<'a>,
-        sa: ServiceAccountCreate,
-    ) -> Result<ServiceAccount, IdentityProviderError>;
-
     /// Create a new user.
     ///
     /// # Parameters
@@ -162,22 +151,6 @@ pub trait IdentityApi: Send + Sync {
         ctx: &ExecutionContext<'a>,
         group_id: &'a str,
     ) -> Result<Option<Group>, IdentityProviderError>;
-
-    /// Get single service account by ID.
-    ///
-    /// # Parameters
-    /// - `state`: The service state.
-    /// - `user_id`: The ID of the service account to retrieve.
-    ///
-    /// # Returns
-    /// - `Result<Option<ServiceAccount>, IdentityProviderError>` - A `Result`
-    ///   containing an `Option` with the service account if found, or an
-    ///   `Error`.
-    async fn get_service_account<'a>(
-        &self,
-        ctx: &ExecutionContext<'a>,
-        user_id: &'a str,
-    ) -> Result<Option<ServiceAccount>, IdentityProviderError>;
 
     /// Get a user by ID.
     ///

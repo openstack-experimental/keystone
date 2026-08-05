@@ -40,7 +40,6 @@ impl From<api_types::UserOptions> for provider_types::UserOptions {
             ignore_user_inactivity: value.ignore_user_inactivity,
             multi_factor_auth_rules: value.multi_factor_auth_rules,
             multi_factor_auth_enabled: value.multi_factor_auth_enabled,
-            is_service_account: None,
         }
     }
 }

@@ -49,9 +49,6 @@ impl FromIterator<user_option::Model> for UserOptions {
                 ("MFAE", Some(val)) => {
                     user_opts.multi_factor_auth_enabled = val.parse().ok();
                 }
-                ("ISSA", Some(val)) => {
-                    user_opts.is_service_account = val.parse().ok();
-                }
                 _ => {}
             }
         }
@@ -129,13 +126,6 @@ impl UserOptionIntoModelIterator for UserOptions {
                 option_value: Some(val.to_string()),
             });
         }
-        if let Some(val) = &self.is_service_account {
-            res.push(user_option::Model {
-                user_id: uid.clone(),
-                option_id: "ISSA".into(),
-                option_value: Some(val.to_string()),
-            });
-        }
         Ok(res)
     }
 }
@@ -188,7 +178,6 @@ pub(crate) mod tests {
             ignore_user_inactivity: Some(true),
             multi_factor_auth_rules: Some(vec![vec!["a".into(), "b".into()]]),
             multi_factor_auth_enabled: Some(true),
-            is_service_account: Some(true),
         }
         .to_model_iter("uid")
         .unwrap()
@@ -229,13 +218,7 @@ pub(crate) mod tests {
             option_id: "MFAE".into(),
             option_value: Some("true".into())
         }),);
-        assert!(rows.contains(&user_option::Model {
-            user_id: "uid".into(),
-            option_id: "ISSA".into(),
-            option_value: Some("true".into())
-        }));
     }
-
     #[test]
     fn test_to_model_iter_1000() {
         let sot = UserOptions {
@@ -371,27 +354,6 @@ pub(crate) mod tests {
         let rows = vec![user_option::Model {
             user_id: "uid".into(),
             option_id: "MFAE".into(),
-            option_value: Some("true".into()),
-        }];
-        assert_eq!(
-            sot.to_model_iter("uid")
-                .unwrap()
-                .into_iter()
-                .collect::<Vec<user_option::Model>>(),
-            rows
-        );
-        assert_eq!(sot, UserOptions::from_iter(rows.into_iter()));
-    }
-
-    #[test]
-    fn test_issa() {
-        let sot = UserOptions {
-            is_service_account: Some(true),
-            ..Default::default()
-        };
-        let rows = vec![user_option::Model {
-            user_id: "uid".into(),
-            option_id: "ISSA".into(),
             option_value: Some("true".into()),
         }];
         assert_eq!(

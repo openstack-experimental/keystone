@@ -17,11 +17,9 @@ use openstack_keystone_core_types::identity::UserResponseBuilder;
 use crate::entity::nonlocal_user as db_nonlocal_user;
 
 mod create;
-mod get;
 mod update;
 
 pub use create::create;
-pub use get::*;
 pub use update::update_name;
 
 pub trait MergeNonlocalUserData {

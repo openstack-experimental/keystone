@@ -16,10 +16,8 @@
 
 mod error;
 mod group;
-mod service_account;
 mod user;
 
 pub use error::*;
 pub use group::*;
-pub use service_account::*;
 pub use user::*;
