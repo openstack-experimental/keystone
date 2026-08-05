@@ -68,7 +68,8 @@ pub(super) async fn create(
 
     let mut target = serde_json::to_value(&payload.application_credential)?;
     target["user_id"] = json!(user_id);
-    // Check payload has secret field,if yes copy target variable and remove secret from copied variable and pass it to policy enforcer
+    // Check payload has secret field,if yes copy target variable and remove secret
+    // from copied variable and pass it to policy enforcer
     let mut target_for_policy = target.clone();
     if let Some(obj) = target_for_policy.as_object_mut() {
         obj.remove("secret");

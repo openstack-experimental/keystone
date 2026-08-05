@@ -30,12 +30,12 @@
 //!
 //! - `parent = ("users", user_id)` prefixes the endpoint with a parent
 //!   collection and its ID, for sub-resources such as
-//!   `users/{user_id}/credentials/OS-EC2`. The request struct gains a
-//!   `user_id` field and every generated wrapper takes it as the first
-//!   argument after `tc`.
+//!   `users/{user_id}/credentials/OS-EC2`. The request struct gains a `user_id`
+//!   field and every generated wrapper takes it as the first argument after
+//!   `tc`.
 //! - Omitting `body_key` from a `create` block serializes `create_type`
-//!   unwrapped at the request root, for legacy bodies that are not nested
-//!   under a resource key.
+//!   unwrapped at the request root, for legacy bodies that are not nested under
+//!   a resource key.
 //!
 //! Canonical field order per operation (all fields required, see arms
 //! below):

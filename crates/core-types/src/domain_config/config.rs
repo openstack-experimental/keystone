@@ -25,8 +25,8 @@
 //! [`openstack_keystone_config::LdapProvider`]:
 //!
 //! - [`DomainConfig::resolve_identity`] / [`DomainConfig::resolve_ldap`]
-//!   overlay a domain's options onto the global section and hand back the
-//!   very struct the identity backend is configured with;
+//!   overlay a domain's options onto the global section and hand back the very
+//!   struct the identity backend is configured with;
 //! - [`DomainConfig::defaults`] serializes the global sections and keeps the
 //!   whitelisted keys, which is what the `/v3/domains/config/…/default`
 //!   endpoints answer;
@@ -453,8 +453,8 @@ impl DomainConfig {
     /// outside the whitelist is left empty on purpose, and stores nothing.
     ///
     /// # Returns
-    /// - `Result<(), DomainConfigProviderError>` - `Ok(())` when the payload
-    ///   is usable, otherwise [`DomainConfigProviderError::EmptyConfig`].
+    /// - `Result<(), DomainConfigProviderError>` - `Ok(())` when the payload is
+    ///   usable, otherwise [`DomainConfigProviderError::EmptyConfig`].
     pub fn validate(&self) -> Result<(), DomainConfigProviderError> {
         if self.groups.is_empty() {
             return Err(DomainConfigProviderError::EmptyConfig);

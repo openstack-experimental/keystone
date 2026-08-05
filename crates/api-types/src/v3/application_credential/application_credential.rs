@@ -161,7 +161,8 @@ pub struct ApplicationCredentialCreateRequest {
     pub application_credential: ApplicationCredentialCreate,
 }
 
-/// Application credential as returned by create — includes secret (shown once only).
+/// Application credential as returned by create — includes secret (shown once
+/// only).
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]

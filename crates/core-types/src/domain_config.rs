@@ -24,8 +24,8 @@
 //!   each holding a flat set of *options*,
 //! - an option is only storable when it is explicitly listed as either
 //!   whitelisted or sensitive (see [`whitelisted_options`] /
-//!   [`sensitive_options`]); anything else is dropped with a warning, so
-//!   making a new option domain-configurable is always a deliberate act,
+//!   [`sensitive_options`]); anything else is dropped with a warning, so making
+//!   a new option domain-configurable is always a deliberate act,
 //! - sensitive options (today only `ldap.password`) are stored separately and
 //!   are never returned by the API: they are stripped on serialization and
 //!   redacted in `Debug`.

@@ -17,4 +17,4 @@ pub use crate::api::v3::user::types::{
     Federation, FederationProtocol, User, UserCreate, UserCreateRequest, UserList, UserOptions,
     UserResponse, UserUpdateRequest,
 };
-pub use openstack_keystone_api_types::v4::user::UserListParameters;
+pub use openstack_keystone_api_types::v4::user::{UserListParameters, UserType};

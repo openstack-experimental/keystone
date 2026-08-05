@@ -24,8 +24,8 @@ use crate::error::BuilderError;
 /// `InvalidDomainConfig`, which the v3 API reports as `403 Forbidden` (see
 /// `api-ref/source/v3/domains-config-v3.inc`: "If you try to create or update
 /// configuration options for groups other than the `identity` or `ldap`
-/// groups, the `Forbidden (403)` response code is returned"). [`Self::NotFound`]
-/// corresponds to `DomainConfigNotFound` (`404`).
+/// groups, the `Forbidden (403)` response code is returned").
+/// [`Self::NotFound`] corresponds to `DomainConfigNotFound` (`404`).
 #[derive(Error, Debug)]
 pub enum DomainConfigProviderError {
     /// Conflict.

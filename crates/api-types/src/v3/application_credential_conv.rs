@@ -154,6 +154,7 @@ impl PartialEq for api_types_application_credential::ApplicationCredentialCreate
             && self.name == other.name
             && self.roles == other.roles
             && self.unrestricted == other.unrestricted
-        // secret is intentionally excluded — SecretBox does not implement PartialEq
+        // secret is intentionally excluded — SecretBox does not implement
+        // PartialEq
     }
 }

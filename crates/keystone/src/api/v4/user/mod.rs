@@ -34,6 +34,7 @@ use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::keystone::ServiceState;
+use openstack_keystone_api_types::v4::user::UserType;
 
 pub mod types;
 
@@ -52,7 +53,8 @@ mod update;
 
 User management endpoints for creating, retrieving, updating, and deleting users.
         "#),
-    )
+    ),
+    components(schemas(UserType)),
 )]
 pub struct ApiDoc;
 

@@ -155,8 +155,8 @@ pub trait DomainConfigBackend: Send + Sync {
     /// - `config`: The options to change; only `group` may be populated.
     ///
     /// # Returns
-    /// - `Result<DomainConfigGroup, DomainConfigProviderError>` - The
-    ///   resulting group, or an error.
+    /// - `Result<DomainConfigGroup, DomainConfigProviderError>` - The resulting
+    ///   group, or an error.
     async fn update_domain_config_group<'a>(
         &self,
         state: &ServiceState,
