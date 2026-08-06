@@ -255,9 +255,17 @@ escape hatch.
 - **Updatable**: `type`, `blob`, `project_id`.
 - **Immutable**: `user_id` and `project_id` may not be changed to point at a
   user or project the acting user has no access to (CVE-2020-12691). Within the
-  `blob`, the following fields are additionally immutable: `access` (the EC2
-  access key — changing it would desynchronize the record from its
-  SHA-256-derived `id`), `trust_id`, `app_cred_id`, and `access_token_id`.
+  `blob`, the following fields are additionally immutable: `trust_id`,
+  `app_cred_id`, and `access_token_id`. The EC2 access key (`blob.access`) is
+  **not** immutable, matching keystone-py's actual behaviour: its update
+  handler only ever enforces immutability on `trust_id`/`app_cred_id`/
+  `access_token_id`/`access_id`, and `access_id` is not a real blob field (the
+  access value is stored under `access`), so that part of the check is a
+  permanent no-op upstream. Changing `access` leaves the credential's
+  SHA-256-derived `id` unchanged (it is computed once at Create and never
+  recomputed), so the row becomes reachable via the *old* access value's hash
+  with the *new* access value in its blob -- a known keystone-py quirk, not a
+  Rust-specific behaviour.
 - **Process**: Updating the `blob` triggers automatic re-encryption with the
   current Primary Key and updates `key_hash`.
 
