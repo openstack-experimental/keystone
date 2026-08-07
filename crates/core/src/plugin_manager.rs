@@ -40,6 +40,7 @@ use crate::catalog::backend::CatalogBackend;
 use crate::catalog::error::CatalogProviderError;
 use crate::credential::CredentialProviderError;
 use crate::credential::backend::CredentialBackend;
+use crate::domain_config::backend::DomainConfigBackend;
 use crate::federation::backend::FederationBackend;
 use crate::federation::error::FederationProviderError;
 use crate::identity::backend::IdentityBackend;
@@ -114,6 +115,7 @@ declare_backend_registry!(
     dyn AssignmentBackend,
     dyn CatalogBackend,
     dyn CredentialBackend,
+    dyn DomainConfigBackend,
     dyn DynamicPluginIdentityBackend,
     dyn FederationBackend,
     dyn IdentityBackend,
