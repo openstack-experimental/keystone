@@ -4854,6 +4854,7 @@ dependencies = [
  "openstack-keystone-core-types",
  "openstack-keystone-credential-driver-sql",
  "openstack-keystone-distributed-storage",
+ "openstack-keystone-domain-config-driver-sql",
  "openstack-keystone-federation-driver-sql",
  "openstack-keystone-identity-driver-ldap",
  "openstack-keystone-identity-driver-sql",
@@ -5285,6 +5286,20 @@ dependencies = [
  "uuid",
  "x509-parser 0.18.1",
  "zeroize",
+]
+
+[[package]]
+name = "openstack-keystone-domain-config-driver-sql"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "inventory",
+ "openstack-keystone-core",
+ "openstack-keystone-core-types",
+ "sea-orm",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

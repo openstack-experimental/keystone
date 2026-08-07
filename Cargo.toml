@@ -13,6 +13,7 @@ members = [
   "crates/auth-plugin-core",
   "crates/auth-plugin-identity-driver-raft",
   "crates/auth-plugin-runtime",
+  "crates/domain-config-driver-sql",
   "crates/federation-driver-sql",
   "crates/identity-driver-ldap",
   "crates/identity-driver-sql",
@@ -129,6 +130,7 @@ openstack-keystone-core = { version = "0.1.0", path = "crates/core" }
 openstack-keystone-core-types = { version = "0.1.0", path = "crates/core-types" }
 openstack-keystone-credential-driver-sql = { version = "0.1", path = "crates/credential-driver-sql/" }
 openstack-keystone-distributed-storage = { version = "0.1.0", path = "crates/storage"}
+openstack-keystone-domain-config-driver-sql = { version = "0.1", path = "crates/domain-config-driver-sql/" }
 openstack-keystone-auth-plugin-core = { version = "0.1.0", path = "crates/auth-plugin-core" }
 openstack-keystone-auth-plugin-identity-driver-raft = { version = "0.1.0", path = "crates/auth-plugin-identity-driver-raft" }
 openstack-keystone-auth-plugin-runtime = { version = "0.1.0", path = "crates/auth-plugin-runtime" }

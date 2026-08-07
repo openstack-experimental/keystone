@@ -50,6 +50,7 @@ openstack-keystone-auth-plugin-identity-driver-raft.workspace = true
 openstack-keystone-core = { workspace = true, features = ["api"] }
 openstack-keystone-core-types.workspace = true
 openstack-keystone-distributed-storage.workspace = true
+openstack-keystone-domain-config-driver-sql.workspace = true
 openstack-keystone-storage-api.workspace = true
 openstack-keystone-federation-driver-sql.workspace = true
 openstack-keystone-k8s-auth-driver-sql.workspace = true

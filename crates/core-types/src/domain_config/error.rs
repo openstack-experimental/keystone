@@ -40,6 +40,12 @@ pub enum DomainConfigProviderError {
     #[error("no options specified")]
     EmptyConfig,
 
+    /// A group scoped request carried options of another group.
+    #[error(
+        "trying to update group {0}, so that, and only that, group must be specified in the config"
+    )]
+    GroupMismatch(String),
+
     /// A group in the request did not carry a mapping of options.
     #[error("the value of group {0} specified in the config should be a dictionary of options")]
     GroupNotAMapping(String),

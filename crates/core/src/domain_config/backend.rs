@@ -237,6 +237,73 @@ pub trait DomainConfigBackend: Send + Sync {
         option: &'a str,
     ) -> Result<(), DomainConfigProviderError>;
 
+    /// Try to register a domain for a configuration type.
+    ///
+    /// A registration is a lock one domain holds over a configuration type, so
+    /// that at most one domain drives a given mechanism at a time —
+    /// python-keystone claims the `SQL` type for the single domain whose
+    /// identity backend may be the SQL one while domain specific drivers are
+    /// loaded from the database.
+    ///
+    /// Drivers are expected to make the claim atomic (python-keystone relies on
+    /// the primary key of its `config_register` table) rather than reading the
+    /// current holder and then writing: two nodes claiming the same type
+    /// concurrently must not both be told they hold it.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `domain_id`: The ID of the domain claiming the type.
+    /// - `driver_type`: The registration type to claim.
+    ///
+    /// # Returns
+    /// - `Result<bool, DomainConfigProviderError>` - `true` when the domain now
+    ///   holds the registration, `false` when somebody already does — which
+    ///   includes the domain making the request, matching python-keystone's
+    ///   `obtain_registration`.
+    async fn obtain_registration<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+        driver_type: &'a str,
+    ) -> Result<bool, DomainConfigProviderError>;
+
+    /// Read which domain holds the registration of a configuration type.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `driver_type`: The registration type to look up.
+    ///
+    /// # Returns
+    /// - `Result<Option<String>, DomainConfigProviderError>` - The ID of the
+    ///   domain holding it, `None` when nobody does (python-keystone's
+    ///   `ConfigRegistrationNotFound`), or an error.
+    async fn read_registration<'a>(
+        &self,
+        state: &ServiceState,
+        driver_type: &'a str,
+    ) -> Result<Option<String>, DomainConfigProviderError>;
+
+    /// Release the registrations a domain holds.
+    ///
+    /// Releasing what the domain does not hold is not an error, and never takes
+    /// a registration away from another domain.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `domain_id`: The ID of the domain releasing them.
+    /// - `driver_type`: The single type to release, or `None` for every type
+    ///   the domain holds.
+    ///
+    /// # Returns
+    /// - `Result<(), DomainConfigProviderError>` - `Ok(())` if successful, or
+    ///   an error.
+    async fn release_registration<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+        driver_type: Option<&'a str>,
+    ) -> Result<(), DomainConfigProviderError>;
+
     /// Get the global defaults a domain without configuration falls back to.
     ///
     /// Backs `GET /v3/domains/config/default`. Defaults come from the running
