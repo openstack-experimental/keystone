@@ -18,7 +18,7 @@ path="src/main.rs"
 async-trait.workspace = true
 clap = { workspace = true, features = ["derive"] }
 color-eyre.workspace = true
-comfy-table = "7.2"
+comfy-table = "8.0"
 eyre.workspace = true
 futures.workspace = true
 inventory.workspace = true
