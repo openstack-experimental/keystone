@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 use async_trait::async_trait;
 use clap::Parser;
 use color_eyre::{Report, eyre::eyre};
-use comfy_table::{ContentArrangement, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
+use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL};
 
 use openstack_keystone_config::Config;
 
@@ -45,8 +45,7 @@ impl PerformAction for ListPeersCommand {
                 .collect::<BTreeSet<_>>();
             let mut table = Table::new();
             table
-                .load_preset(UTF8_FULL)
-                .apply_modifier(UTF8_ROUND_CORNERS)
+                .load_style(UTF8_FULL.with_rounded_corners())
                 .set_content_arrangement(ContentArrangement::Dynamic);
             table.set_header(vec!["Address", "Node ID", "Leader", "Voter"]);
             for node in membership.nodes.values() {
