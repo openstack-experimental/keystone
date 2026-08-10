@@ -49,8 +49,8 @@ pub async fn log_request(req: Request, next: Next) -> Response {
     let latency_us = start.elapsed().as_micros();
 
     tracing::info!(
-        %method,
-        %uri,
+        http_method=%method,
+        http_uri=%uri,
         %request_id,
         %status,
         latency_us,
