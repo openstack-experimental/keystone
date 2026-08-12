@@ -234,13 +234,18 @@ pub async fn update_credential<I: AsRef<str>>(
     .await?)
 }
 
+/// Delete a credential by ID.
+pub async fn delete_credential<I: AsRef<str>>(tc: &Arc<AsyncOpenStack>, id: I) -> Result<()> {
+    Ok(openstack_sdk::api::ignore(CredentialDeleteRequest {
+        id: id.as_ref().into(),
+    })
+    .query_async(tc.as_ref())
+    .await?)
+}
+
 #[async_trait::async_trait]
 impl DeletableResource for Credential {
     async fn delete(&self, state: &Arc<AsyncOpenStack>) -> Result<()> {
-        Ok(openstack_sdk::api::ignore(CredentialDeleteRequest {
-            id: self.id.clone().into(),
-        })
-        .query_async(state.as_ref())
-        .await?)
+        delete_credential(state, &self.id).await
     }
 }

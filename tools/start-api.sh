@@ -3,6 +3,8 @@ set -euo pipefail
 
 STATE_DIR="/tmp/nextest/keystone"
 CONFIG_FILE="${STATE_DIR}/etc/keystone.conf"
+CLIENT_HOME="${STATE_DIR}/client-home"
+CLIENT_CONFIG_FILE="${STATE_DIR}/client-config/clouds.yaml"
 AXUM_PID=""
 SPIRE_SOCKET="/tmp/spire-ci-test-harness/agent.sock"
 SPIFFE_ENDPOINT_SOCKET="unix:///${SPIRE_SOCKET}"
@@ -14,6 +16,17 @@ rm -rf "$STATE_DIR"
 
 mkdir -p "$STATE_DIR"
 mkdir -p "$STATE_DIR/etc/fernet-keys"
+mkdir -p "$CLIENT_HOME"
+mkdir -p "$(dirname "$CLIENT_CONFIG_FILE")"
+
+# API runs bootstrap a fresh database on every invocation. Disable the SDK's
+# persistent token cache so a prior run's admin token cannot be replayed
+# against the new database, and so revocation tests cannot share a cached
+# token with concurrently running tests.
+cat << EOF > "$CLIENT_CONFIG_FILE"
+cache:
+  auth: false
+EOF
 
 # Generate self-signed CA + leaf TLS certificates for distributed storage
 SSL_DIR="$STATE_DIR"
@@ -141,6 +154,9 @@ sha256 = ${PLUGIN_SHA256}
 mode = full_auth
 capabilities = provision_user
 provision_domain_id = d
+# The live suite runs concurrently; provisioning through host callbacks can
+# exceed the production default under dev-container load.
+timeout_ms = 5000
 
 EOF
 
@@ -197,6 +213,8 @@ for i in {1..60}; do
         echo "OS_USER_DOMAIN_ID=default" >> "$NEXTEST_ENV"
         echo "OS_PROJECT_NAME=admin" >> "$NEXTEST_ENV"
         echo "OS_PROJECT_DOMAIN_ID=default" >> "$NEXTEST_ENV"
+        echo "HOME=${CLIENT_HOME}" >> "$NEXTEST_ENV"
+        echo "OS_CLIENT_CONFIG_PATH=${CLIENT_CONFIG_FILE}" >> "$NEXTEST_ENV"
         echo "KEYSTONE_DEV_KEK=4242424242424242424242424242424242424242424242424242424242424242" >> "$NEXTEST_ENV"
         echo "KEYSTONE_ALLOW_ENV_KEK=1" >> "$NEXTEST_ENV"
         echo "Server started and bootstrapped successfully."

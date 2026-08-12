@@ -149,21 +149,24 @@ impl RestEndpoint for ImpliedRoleCheckRequest {
     }
 }
 
-/// Check if a role imply rule exists.
+/// Check that a role imply rule exists.
+///
+/// The original HTTP error is preserved so callers can distinguish policy
+/// denial from a missing rule.
 pub async fn check_implied_role(
     client: &Arc<AsyncOpenStack>,
     prior_role_id: &str,
     implied_role_id: &str,
-) -> Result<bool> {
+) -> Result<()> {
     let req = ImpliedRoleCheckRequest {
         prior_role_id: prior_role_id.to_string(),
         implied_role_id: implied_role_id.to_string(),
     };
 
-    Ok(openstack_sdk::api::ignore(req)
+    openstack_sdk::api::ignore(req)
         .query_async(client.as_ref())
-        .await
-        .is_ok())
+        .await?;
+    Ok(())
 }
 
 #[derive(Clone, Debug)]
