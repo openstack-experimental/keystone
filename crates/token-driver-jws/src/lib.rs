@@ -121,12 +121,12 @@ impl TokenBackend for JwsTokenProvider {
         // §3's JWKS publishing, scoped here to whatever this provider's
         // own key source currently holds).
         let candidates = std::iter::once(&active.primary).chain(active.previous.iter());
-        let mut last_err: Option<JwsDriverError> = None;
+        let mut last_error: Option<JwsDriverError> = None;
         for material in candidates {
             let decoding_key = match to_decoding_key(material) {
-                Ok(k) => k,
-                Err(e) => {
-                    last_err = Some(JwsDriverError::from(e));
+                Ok(key) => key,
+                Err(error) => {
+                    last_error = Some(JwsDriverError::from(error));
                     continue;
                 }
             };
@@ -134,15 +134,21 @@ impl TokenBackend for JwsTokenProvider {
             validation.validate_exp = true;
             match decode::<JwsClaims>(credential, &decoding_key, &validation) {
                 Ok(token_data) => {
-                    return token_data
-                        .claims
-                        .into_token_payload()
-                        .map_err(TokenProviderError::from);
+                    return token_data.claims.into_token_payload().map_err(|error| {
+                        TokenProviderError::InvalidToken {
+                            source: Box::new(JwsDriverError::from(error)),
+                        }
+                    });
                 }
-                Err(e) => last_err = Some(JwsDriverError::from(e)),
+                Err(error) => last_error = Some(JwsDriverError::from(error)),
             }
         }
-        Err(last_err.unwrap_or(JwsDriverError::KeysNotLoaded).into())
+        match last_error {
+            Some(source) => Err(TokenProviderError::InvalidToken {
+                source: Box::new(source),
+            }),
+            None => Err(JwsDriverError::KeysNotLoaded.into()),
+        }
     }
 
     fn encode(&self, token: &TokenPayload) -> Result<String, TokenProviderError> {
@@ -258,6 +264,39 @@ mod tests {
         });
         let mut encoded = provider.encode(&token).unwrap();
         encoded.push('x');
-        assert!(provider.decode(&encoded).is_err());
+        assert!(matches!(
+            provider.decode(&encoded),
+            Err(TokenProviderError::InvalidToken { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_decode_falls_back_to_previous_when_primary_is_corrupt()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let mut provider = provider_with_keys(dir.path()).await;
+        let token = TokenPayload::Unscoped(UnscopedPayload {
+            user_id: "previous-key-user".into(),
+            methods: vec!["password".into()],
+            audit_ids: vec!["previous-key-audit".into()],
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            issued_at: chrono::Utc::now(),
+            ..Default::default()
+        });
+        let encoded = provider.encode(&token)?;
+        let previous = provider.active()?.primary.clone();
+        let mut corrupt_primary = previous.clone();
+        corrupt_primary.public_key_der = vec![0];
+        provider.active = Some(ActiveKeys {
+            primary: corrupt_primary,
+            previous: Some(previous),
+        });
+
+        let decoded = provider.decode(&encoded)?;
+        assert!(matches!(
+            decoded,
+            TokenPayload::Unscoped(payload) if payload.user_id == "previous-key-user"
+        ));
+        Ok(())
     }
 }
