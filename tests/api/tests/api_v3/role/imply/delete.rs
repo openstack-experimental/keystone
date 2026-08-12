@@ -21,6 +21,7 @@ use uuid::Uuid;
 use openstack_keystone_api_types::v3::role::*;
 use openstack_sdk::{AsyncOpenStack, config::CloudConfig};
 
+use test_api::asserts::assert_status;
 use test_api::role::imply::*;
 use test_api::role::{create_role, delete_role};
 
@@ -42,14 +43,16 @@ async fn test_delete_implied_role() -> Result<()> {
     create_implied_role(&tc, &prior_role.id, &implied_role.id).await?;
 
     // Verify it exists before deletion
-    let exists = check_implied_role(&tc, &prior_role.id, &implied_role.id).await?;
-    assert!(exists, "implied rule should exist before deletion");
+    check_implied_role(&tc, &prior_role.id, &implied_role.id).await?;
 
     delete_implied_role(&tc, &prior_role.id, &implied_role.id).await?;
 
     // Verify it's gone
-    let exists = check_implied_role(&tc, &prior_role.id, &implied_role.id).await?;
-    assert!(!exists, "implied rule should not exist after deletion");
+    assert_status(
+        check_implied_role(&tc, &prior_role.id, &implied_role.id).await,
+        http::StatusCode::NOT_FOUND,
+        "a deleted implication must return 404",
+    );
 
     delete_role(&tc, &implied_role.id).await?;
     delete_role(&tc, &prior_role.id).await?;
