@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Reusable live-API fixtures for authorization-matrix tests.
 
+use std::future::Future;
 use std::sync::Arc;
 
 use eyre::{OptionExt, Result};
@@ -26,7 +27,8 @@ use openstack_keystone_api_types::v3::user::{User, UserCreateBuilder};
 use openstack_sdk::AsyncOpenStack;
 
 use crate::assignment::grant::{add_project_grant, add_system_grant};
-use crate::common::get_user_session;
+use crate::auth::token::revoke_token;
+use crate::common::{TestClient, get_user_session};
 use crate::guard::{AsyncResourceGuard, ResourceGuard};
 use crate::identity::user::create_user;
 use crate::resource::project::create_project;
@@ -41,6 +43,50 @@ pub fn warn_on_cleanup_failure(what: &str, result: Result<()>) {
     if let Err(error) = result {
         tracing::warn!("failed to clean up {what} after an error: {error:?}");
     }
+}
+
+/// Await `second` and return both fixtures, cleaning `first` if provisioning
+/// the second fixture fails.
+///
+/// This closes the otherwise easy-to-miss leak window between two sequential
+/// live-server fixture creations.
+pub async fn provision_fixture_pair<A, B, S, C, CleanupFuture>(
+    first: A,
+    second: S,
+    cleanup_first: C,
+    first_description: &str,
+) -> Result<(A, B)>
+where
+    S: Future<Output = Result<B>>,
+    C: FnOnce(A) -> CleanupFuture,
+    CleanupFuture: Future<Output = Result<()>>,
+{
+    match second.await {
+        Ok(second) => Ok((first, second)),
+        Err(error) => {
+            warn_on_cleanup_failure(first_description, cleanup_first(first).await);
+            Err(error)
+        }
+    }
+}
+
+/// Return a system-admin client whose default authentication token has already
+/// been revoked by a separate system-admin session.
+pub async fn revoked_admin_client() -> Result<TestClient> {
+    let mut revoker = TestClient::default()?;
+    revoker.auth_admin_system().await?;
+    let mut caller = TestClient::default()?;
+    caller.auth_admin_system().await?;
+    let caller_token = caller
+        .token
+        .as_ref()
+        .ok_or_eyre("the caller must be authenticated")?;
+    let status = revoke_token(&revoker, caller_token).await?.status();
+    eyre::ensure!(
+        status == http::StatusCode::NO_CONTENT,
+        "revoking fixture token returned HTTP {status}"
+    );
+    Ok(caller)
 }
 
 /// A real user provisioned through the live API holding a bootstrap role

@@ -125,6 +125,351 @@ pub mod grant {
         .await?;
         Ok(())
     }
+    #[derive(Builder, Clone, Debug)]
+    #[builder(setter(strip_option, into))]
+    struct ProjectUserRoleCheck<'a> {
+        project_id: Cow<'a, str>,
+        user_id: Cow<'a, str>,
+        role_id: Cow<'a, str>,
+    }
+
+    impl RestEndpoint for ProjectUserRoleCheck<'_> {
+        fn method(&self) -> http::Method {
+            http::Method::HEAD
+        }
+
+        fn endpoint(&self) -> Cow<'static, str> {
+            format!(
+                "projects/{}/users/{}/roles/{}",
+                self.project_id, self.user_id, self.role_id
+            )
+            .into()
+        }
+
+        fn service_type(&self) -> ServiceType {
+            ServiceType::Identity
+        }
+
+        fn api_version(&self) -> Option<ApiVersion> {
+            Some(ApiVersion::new(3, 0))
+        }
+    }
+
+    #[derive(Builder, Clone, Debug)]
+    #[builder(setter(strip_option, into))]
+    struct ProjectUserRoleRevoke<'a> {
+        project_id: Cow<'a, str>,
+        user_id: Cow<'a, str>,
+        role_id: Cow<'a, str>,
+    }
+
+    impl RestEndpoint for ProjectUserRoleRevoke<'_> {
+        fn method(&self) -> http::Method {
+            http::Method::DELETE
+        }
+
+        fn endpoint(&self) -> Cow<'static, str> {
+            format!(
+                "projects/{}/users/{}/roles/{}",
+                self.project_id, self.user_id, self.role_id
+            )
+            .into()
+        }
+
+        fn service_type(&self) -> ServiceType {
+            ServiceType::Identity
+        }
+
+        fn api_version(&self) -> Option<ApiVersion> {
+            Some(ApiVersion::new(3, 0))
+        }
+    }
+
+    #[derive(Builder, Clone, Debug)]
+    #[builder(setter(strip_option, into))]
+    struct ProjectUserRoleList<'a> {
+        project_id: Cow<'a, str>,
+        user_id: Cow<'a, str>,
+    }
+
+    impl RestEndpoint for ProjectUserRoleList<'_> {
+        fn method(&self) -> http::Method {
+            http::Method::GET
+        }
+
+        fn endpoint(&self) -> Cow<'static, str> {
+            format!("projects/{}/users/{}/roles", self.project_id, self.user_id).into()
+        }
+
+        fn response_key(&self) -> Option<Cow<'static, str>> {
+            Some("roles".into())
+        }
+
+        fn service_type(&self) -> ServiceType {
+            ServiceType::Identity
+        }
+
+        fn api_version(&self) -> Option<ApiVersion> {
+            Some(ApiVersion::new(3, 0))
+        }
+    }
+
+    #[derive(Builder, Clone, Debug)]
+    #[builder(setter(strip_option, into))]
+    struct SystemUserRoleCheck<'a> {
+        user_id: Cow<'a, str>,
+        role_id: Cow<'a, str>,
+    }
+
+    impl RestEndpoint for SystemUserRoleCheck<'_> {
+        fn method(&self) -> http::Method {
+            http::Method::HEAD
+        }
+
+        fn endpoint(&self) -> Cow<'static, str> {
+            format!("system/users/{}/roles/{}", self.user_id, self.role_id).into()
+        }
+
+        fn service_type(&self) -> ServiceType {
+            ServiceType::Identity
+        }
+
+        fn api_version(&self) -> Option<ApiVersion> {
+            Some(ApiVersion::new(3, 0))
+        }
+    }
+
+    #[derive(Builder, Clone, Debug)]
+    #[builder(setter(strip_option, into))]
+    struct SystemUserRoleRevoke<'a> {
+        user_id: Cow<'a, str>,
+        role_id: Cow<'a, str>,
+    }
+
+    impl RestEndpoint for SystemUserRoleRevoke<'_> {
+        fn method(&self) -> http::Method {
+            http::Method::DELETE
+        }
+
+        fn endpoint(&self) -> Cow<'static, str> {
+            format!("system/users/{}/roles/{}", self.user_id, self.role_id).into()
+        }
+
+        fn service_type(&self) -> ServiceType {
+            ServiceType::Identity
+        }
+
+        fn api_version(&self) -> Option<ApiVersion> {
+            Some(ApiVersion::new(3, 0))
+        }
+    }
+
+    #[derive(Builder, Clone, Debug)]
+    #[builder(setter(strip_option, into))]
+    struct SystemUserRoleList<'a> {
+        user_id: Cow<'a, str>,
+    }
+
+    impl RestEndpoint for SystemUserRoleList<'_> {
+        fn method(&self) -> http::Method {
+            http::Method::GET
+        }
+
+        fn endpoint(&self) -> Cow<'static, str> {
+            format!("system/users/{}/roles", self.user_id).into()
+        }
+
+        fn response_key(&self) -> Option<Cow<'static, str>> {
+            Some("roles".into())
+        }
+
+        fn service_type(&self) -> ServiceType {
+            ServiceType::Identity
+        }
+
+        fn api_version(&self) -> Option<ApiVersion> {
+            Some(ApiVersion::new(3, 0))
+        }
+    }
+
+    /// Check a project role grant, preserving HTTP errors.
+    pub async fn check_project_grant<P, U, R>(
+        client: &Arc<AsyncOpenStack>,
+        project_id: P,
+        user_id: U,
+        role_id: R,
+    ) -> Result<()>
+    where
+        P: AsRef<str>,
+        U: AsRef<str>,
+        R: AsRef<str>,
+    {
+        openstack_sdk::api::ignore(
+            ProjectUserRoleCheckBuilder::default()
+                .project_id(project_id.as_ref())
+                .user_id(user_id.as_ref())
+                .role_id(role_id.as_ref())
+                .build()?,
+        )
+        .query_async(client.as_ref())
+        .await?;
+        Ok(())
+    }
+
+    /// Revoke a project role grant.
+    pub async fn revoke_project_grant<P, U, R>(
+        client: &Arc<AsyncOpenStack>,
+        project_id: P,
+        user_id: U,
+        role_id: R,
+    ) -> Result<()>
+    where
+        P: AsRef<str>,
+        U: AsRef<str>,
+        R: AsRef<str>,
+    {
+        openstack_sdk::api::ignore(
+            ProjectUserRoleRevokeBuilder::default()
+                .project_id(project_id.as_ref())
+                .user_id(user_id.as_ref())
+                .role_id(role_id.as_ref())
+                .build()?,
+        )
+        .query_async(client.as_ref())
+        .await?;
+        Ok(())
+    }
+
+    /// List roles granted to a user on a project.
+    pub async fn list_project_roles<P, U>(
+        client: &Arc<AsyncOpenStack>,
+        project_id: P,
+        user_id: U,
+    ) -> Result<Vec<openstack_keystone_api_types::v3::role_assignment::Role>>
+    where
+        P: AsRef<str>,
+        U: AsRef<str>,
+    {
+        Ok(ProjectUserRoleListBuilder::default()
+            .project_id(project_id.as_ref())
+            .user_id(user_id.as_ref())
+            .build()?
+            .query_async(client.as_ref())
+            .await?)
+    }
+
+    /// Check a system role grant, preserving HTTP errors.
+    pub async fn check_system_grant<U, R>(
+        client: &Arc<AsyncOpenStack>,
+        user_id: U,
+        role_id: R,
+    ) -> Result<()>
+    where
+        U: AsRef<str>,
+        R: AsRef<str>,
+    {
+        openstack_sdk::api::ignore(
+            SystemUserRoleCheckBuilder::default()
+                .user_id(user_id.as_ref())
+                .role_id(role_id.as_ref())
+                .build()?,
+        )
+        .query_async(client.as_ref())
+        .await?;
+        Ok(())
+    }
+
+    /// Revoke a system role grant.
+    pub async fn revoke_system_grant<U, R>(
+        client: &Arc<AsyncOpenStack>,
+        user_id: U,
+        role_id: R,
+    ) -> Result<()>
+    where
+        U: AsRef<str>,
+        R: AsRef<str>,
+    {
+        openstack_sdk::api::ignore(
+            SystemUserRoleRevokeBuilder::default()
+                .user_id(user_id.as_ref())
+                .role_id(role_id.as_ref())
+                .build()?,
+        )
+        .query_async(client.as_ref())
+        .await?;
+        Ok(())
+    }
+
+    /// List roles granted to a user on the system scope.
+    pub async fn list_system_roles<U>(
+        client: &Arc<AsyncOpenStack>,
+        user_id: U,
+    ) -> Result<Vec<openstack_keystone_api_types::v3::role_assignment::Role>>
+    where
+        U: AsRef<str>,
+    {
+        Ok(SystemUserRoleListBuilder::default()
+            .user_id(user_id.as_ref())
+            .build()?
+            .query_async(client.as_ref())
+            .await?)
+    }
+}
+#[derive(Clone, Debug, Default)]
+pub struct RoleAssignmentListRequest {
+    pub domain_id: Option<String>,
+    pub group_id: Option<String>,
+    pub effective: Option<bool>,
+    pub project_id: Option<String>,
+    pub role_id: Option<String>,
+    pub user_id: Option<String>,
+    pub include_names: Option<bool>,
+}
+
+impl RestEndpoint for RoleAssignmentListRequest {
+    fn method(&self) -> http::Method {
+        http::Method::GET
+    }
+
+    fn endpoint(&self) -> Cow<'static, str> {
+        "role_assignments".into()
+    }
+
+    fn parameters(&self) -> QueryParams<'_> {
+        let mut params = QueryParams::default();
+        params.push_opt("scope.domain.id", self.domain_id.as_ref());
+        params.push_opt("group.id", self.group_id.as_ref());
+        if let Some(effective) = self.effective {
+            params.push("effective", effective);
+        }
+        params.push_opt("scope.project.id", self.project_id.as_ref());
+        params.push_opt("role.id", self.role_id.as_ref());
+        params.push_opt("user.id", self.user_id.as_ref());
+        if let Some(include_names) = self.include_names {
+            params.push("include_names", include_names);
+        }
+        params
+    }
+
+    fn response_key(&self) -> Option<Cow<'static, str>> {
+        Some("role_assignments".into())
+    }
+
+    fn service_type(&self) -> ServiceType {
+        ServiceType::Identity
+    }
+
+    fn api_version(&self) -> Option<ApiVersion> {
+        Some(ApiVersion::new(3, 0))
+    }
+}
+
+/// List role assignments using the top-level collection endpoint.
+pub async fn list_role_assignments(
+    client: &Arc<AsyncOpenStack>,
+    params: RoleAssignmentListRequest,
+) -> Result<Vec<openstack_keystone_api_types::v3::role_assignment::Assignment>> {
+    Ok(params.query_async(client.as_ref()).await?)
 }
 
 /// The same grant/check/list/revoke surface through `/v4`.

@@ -30,6 +30,15 @@ crud_endpoint! {
         service = Identity,
         api_version = (3, 0),
     }
+    show {
+        request = UserShowRequest,
+        func = get_user,
+        path = "users",
+        model = User,
+        response_key = "user",
+        service = Identity,
+        api_version = (3, 0),
+    }
     update {
         request = UserUpdateRequest,
         func = update_user,
@@ -41,8 +50,19 @@ crud_endpoint! {
         service = Identity,
         api_version = (3, 0),
     }
-    delete_impl {
+    list {
+        request = UserListRequest,
+        func = list_users,
+        path = "users",
+        model = User,
+        response_key = "users",
+        service = Identity,
+        api_version = (3, 0),
+        query = [domain_id, name, unique_id],
+    }
+    delete {
         request = UserDeleteRequest,
+        func = delete_user,
         path = "users",
         model = User,
         service = Identity,

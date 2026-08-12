@@ -448,8 +448,8 @@ pub async fn session_for_config(config: &CloudConfig) -> Result<Arc<AsyncOpenSta
 
 /// Send a raw HTTP request to the server at `KEYSTONE_URL`, bypassing the
 /// SDK. Useful for invalid-authentication (401) tests and for endpoints
-/// whose token handling the SDK cannot express (e.g. presenting an
-/// EC2-issued token).
+/// whose authentication-header handling the configured SDK session cannot
+/// express.
 ///
 /// `token: None` sends no `x-auth-token` header at all.
 pub async fn raw_request(
@@ -463,7 +463,9 @@ pub async fn raw_request(
         .parse()?;
     let mut request = Client::new().request(method, base_url.join(path)?);
     if let Some(token) = token {
-        request = request.header("x-auth-token", token);
+        let mut header = HeaderValue::from_str(token)?;
+        header.set_sensitive(true);
+        request = request.header("x-auth-token", header);
     }
     if let Some(body) = body {
         request = request.json(&body);

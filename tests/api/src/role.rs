@@ -22,9 +22,22 @@ use openstack_sdk::api::rest_endpoint_prelude::*;
 use openstack_sdk::{AsyncOpenStack, api::QueryAsync};
 
 use crate::guard::*;
+use crate::macros::crud_endpoint;
 
 pub mod imply;
 pub mod v4;
+
+crud_endpoint! {
+    show {
+        request = RoleShowRequest,
+        func = get_role,
+        path = "roles",
+        model = Role,
+        response_key = "role",
+        service = Identity,
+        api_version = (3, 0),
+    }
+}
 
 #[derive(Builder, Clone, Debug, Default)]
 #[builder(setter(strip_option, into))]
@@ -187,10 +200,6 @@ impl RestEndpoint for RoleDeleteRequest {
 #[async_trait::async_trait]
 impl DeletableResource for Role {
     async fn delete(&self, state: &Arc<AsyncOpenStack>) -> Result<()> {
-        Ok(openstack_sdk::api::ignore(RoleDeleteRequest {
-            id: self.id.clone(),
-        })
-        .query_async(state.as_ref())
-        .await?)
+        delete_role(state, &self.id).await
     }
 }

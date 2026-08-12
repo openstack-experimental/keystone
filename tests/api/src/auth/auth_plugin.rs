@@ -11,13 +11,13 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Federation identity provider REST endpoint helpers.
-//!
-//! Only the surface `test_api::scim_realm` and `test_api::scim` need to
-//! provision a realm's required `idp_id` -- create and delete. Full identity
-//! provider CRUD is out of scope for the SCIM test suites.
+//! Dynamic authentication plugin REST endpoint helpers.
 
-use std::borrow::Cow;
+use std::{borrow::Cow, sync::Arc};
+
+use eyre::Result;
+use openstack_sdk::AsyncOpenStack;
+use openstack_sdk::api::QueryAsync;
 
 use openstack_sdk::api::rest_endpoint_prelude::*;
 
@@ -42,4 +42,47 @@ impl RestEndpoint for AuthPluginRevokeAllRequest {
     fn api_version(&self) -> Option<ApiVersion> {
         Some(ApiVersion::new(4, 0))
     }
+}
+
+#[derive(Clone, Debug)]
+struct AuthPluginIdentityLinkDeleteRequest {
+    plugin_name: String,
+    external_id: String,
+}
+
+impl RestEndpoint for AuthPluginIdentityLinkDeleteRequest {
+    fn method(&self) -> http::Method {
+        http::Method::DELETE
+    }
+
+    fn endpoint(&self) -> Cow<'static, str> {
+        format!(
+            "auth_plugins/{}/identity_links/{}",
+            self.plugin_name, self.external_id
+        )
+        .into()
+    }
+
+    fn service_type(&self) -> ServiceType {
+        ServiceType::Identity
+    }
+
+    fn api_version(&self) -> Option<ApiVersion> {
+        Some(ApiVersion::new(4, 0))
+    }
+}
+
+/// Delete one external identity link and revoke tokens issued through it.
+pub async fn delete_identity_link(
+    client: &Arc<AsyncOpenStack>,
+    plugin_name: &str,
+    external_id: &str,
+) -> Result<()> {
+    openstack_sdk::api::ignore(AuthPluginIdentityLinkDeleteRequest {
+        plugin_name: plugin_name.to_string(),
+        external_id: external_id.to_string(),
+    })
+    .query_async(client.as_ref())
+    .await?;
+    Ok(())
 }
