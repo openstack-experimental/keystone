@@ -163,6 +163,12 @@ pub struct CredentialUpdate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blob: Option<String>,
 
+    /// New project association.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "validate", validate(length(max = 64)))]
+    pub project_id: Option<String>,
+
     /// New credential type.
     #[cfg_attr(feature = "builder", builder(default))]
     #[serde(skip_serializing_if = "Option::is_none")]
