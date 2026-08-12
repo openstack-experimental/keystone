@@ -449,7 +449,6 @@ carries it, ticked by the reviewer, not just this prose reference.
   | `endpoint/{list,show}` | `RULE_ADMIN_OR_SYSTEM_READER` | Real: system reader is denied |
   | `service/{list,show}` | `RULE_ADMIN_OR_SYSTEM_READER` | Real: system reader is denied |
   | `auth/project/list` | any valid token | None — the rego is `default allow := true`, so nothing is denied |
-  | `auth/token/revoke` | admin or token owner (no system reader) | None — the `system_scope` lines are commented out |
   | `region/{list,show}` | `check_str=''` (any valid token) | Different bug: the rego is `default allow := false`, so it is *stricter* than python regardless of the key; renaming would not fix it |
 
   Needs a follow-up issue for an endpoint-by-endpoint audit against the

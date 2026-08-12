@@ -87,7 +87,7 @@ pub(super) async fn show(
             None,
         )
         .await
-        .inspect_err(|e| error!("{:?}", e.to_string()))
+        .inspect_err(|error| error!(?error, "subject-token validation failed"))
         .map_err(|_| KeystoneApiError::NotFound {
             resource: "token".into(),
             identifier: String::new(),

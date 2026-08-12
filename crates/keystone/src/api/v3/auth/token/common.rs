@@ -15,17 +15,16 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
 
+use crate::api::error::KeystoneApiError;
+use crate::api::v3::auth::token::types::AuthRequest;
+use crate::auth::*;
+use crate::keystone::ServiceState;
 use openstack_keystone_config::PluginMode;
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::auth_plugin_auth::{
     WasmPluginAuthError, WasmPluginAuthRequest, authenticate_via_wasm_mapping_plugin,
     authenticate_via_wasm_plugin, route_via_wasm_plugin,
 };
-
-use crate::api::error::KeystoneApiError;
-use crate::api::v3::auth::token::types::AuthRequest;
-use crate::auth::*;
-use crate::keystone::ServiceState;
 
 /// Authenticate the user ignoring any scope information. It is important not to
 /// expose any hints that user, project, domain, etc might exist before we have
@@ -227,6 +226,7 @@ mod tests {
     use openstack_keystone_core_types::auth::*;
     use openstack_keystone_core_types::identity::{UserPasswordAuthRequest, UserResponseBuilder};
     use openstack_keystone_core_types::resource::Domain;
+    use openstack_keystone_core_types::token::TokenProviderError;
     use secrecy::ExposeSecret;
 
     use super::super::types::*;
@@ -440,6 +440,78 @@ mod tests {
             .await
             .unwrap()
         );
+    }
+
+    #[test]
+    fn test_token_authentication_error_preserves_cadf_reasons() {
+        let cases = [
+            (AuthenticationError::AuthTokenExpired, "TokenExpired"),
+            (
+                AuthenticationError::UserDisabled("disabled-user".into()),
+                "UserDisabled",
+            ),
+            (
+                AuthenticationError::UserLocked("locked-user".into()),
+                "UserLocked",
+            ),
+            (AuthenticationError::ScopeNotAllowed, "ScopeNotAllowed"),
+        ];
+
+        for (authentication_error, expected_reason) in cases {
+            let api_error: KeystoneApiError =
+                TokenProviderError::Authentication(authentication_error).into();
+            assert_eq!(
+                crate::audit::error_variant_name(&api_error),
+                expected_reason
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_request_rejects_revoked_token() {
+        let mut token_mock = MockTokenProvider::default();
+        token_mock
+            .expect_authorize_by_token()
+            .withf(
+                |_,
+                 _id: &secrecy::SecretString,
+                 allow_expired: &Option<bool>,
+                 window: &Option<i64>| {
+                    *allow_expired == Some(false) && window.is_none()
+                },
+            )
+            .returning(|_, _, _, _| {
+                Err(openstack_keystone_core_types::token::TokenProviderError::TokenRevoked)
+            });
+        let state = get_mocked_state(
+            Provider::mocked_builder().mock_token(token_mock),
+            true,
+            None,
+        )
+        .await;
+
+        let result = authenticate_request(
+            &state,
+            &AuthRequest {
+                auth: AuthRequestInner {
+                    identity: Identity {
+                        methods: vec!["token".to_string()],
+                        password: None,
+                        token: Some(TokenAuth {
+                            id: "revoked".into(),
+                        }),
+                        totp: None,
+                        extra: Default::default(),
+                    },
+                    scope: None,
+                },
+            },
+            &axum::http::HeaderMap::new(),
+            None,
+        )
+        .await;
+
+        assert!(matches!(result, Err(KeystoneApiError::Unauthorized { .. })));
     }
 
     #[tokio::test]
