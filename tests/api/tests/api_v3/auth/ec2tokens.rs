@@ -265,10 +265,10 @@ async fn test_ec2_token_validates_at_auth_tokens() -> Result<()> {
     let mut tc = TestClient::default()?;
     tc.auth_admin().await?;
     let rsp = test_api::auth::token::check_token(&tc, &token.clone().into()).await?;
-    assert_eq!(
-        rsp.status(),
+    test_api::asserts::assert_response_status(
+        &rsp,
         StatusCode::OK,
-        "an EC2-issued token must still validate at GET /v3/auth/tokens"
+        "an EC2-issued token must still validate at GET /v3/auth/tokens",
     );
     let response: TokenResponse = rsp.json().await?;
     assert!(

@@ -39,7 +39,7 @@ use eyre::Result;
 use uuid::Uuid;
 
 use openstack_keystone_api_types::v3::auth::token::IdentityBuilder;
-use openstack_keystone_api_types::v3::domain::DomainCreateBuilder;
+use openstack_keystone_api_types::v3::domain::{Domain, DomainCreateBuilder};
 use openstack_keystone_api_types::v4::mapping::ruleset::{
     ClaimCondition, DomainResolutionMode, IdentityBinding, IdentitySource, MappingRuleSetCreate,
     MatchCondition, MatchCriteria,
@@ -47,9 +47,13 @@ use openstack_keystone_api_types::v4::mapping::ruleset::{
 use openstack_sdk::config::CloudConfig;
 use openstack_sdk::{AsyncOpenStack, api::RawQueryAsync};
 
+use test_api::asserts::assert_unauthorized;
 use test_api::auth::auth_plugin::*;
-use test_api::auth::token::auth_token;
-use test_api::guard::ResourceGuard;
+use test_api::auth::token::{auth_token, authenticate_identity};
+use test_api::common::TestClient;
+use test_api::fixtures::warn_on_cleanup_failure;
+use test_api::guard::{AsyncResourceGuard, ResourceGuard};
+use test_api::identity::user::delete_user;
 use test_api::mapping::ruleset::create_ruleset;
 use test_api::resource::domain::create_domain;
 use test_api::resource::get_system_scope_config;
@@ -63,25 +67,17 @@ use test_api::resource::get_system_scope_config;
 /// literally named `"d"` for `provision_user`'s downstream "fetch the user's
 /// domain" step to resolve, or token issuance 401s with
 /// `DomainNotFound("d")` even though provisioning itself succeeded.
-/// Idempotent: ignores an already-exists error so this is safe to call from
-/// more than one test in the same server lifetime.
-async fn ensure_domain_d_exists(admin: &Arc<AsyncOpenStack>) {
-    // Intentionally leaked (not `.delete()`d): this domain is meant to
-    // outlive this single test, so other tests/reruns sharing the server's
-    // DB lifetime see it already there instead of racing to recreate it.
-    if let Ok(guard) = create_domain(
+/// The caller owns the returned guard and must delete it after plugin cleanup.
+async fn create_domain_d(admin: &Arc<AsyncOpenStack>) -> Result<AsyncResourceGuard<Domain>> {
+    create_domain(
         admin,
         DomainCreateBuilder::default()
             .id("d".to_string())
             .name("d".to_string())
             .enabled(true)
-            .build()
-            .expect("domain create request should build"),
+            .build()?,
     )
     .await
-    {
-        std::mem::forget(guard);
-    }
 }
 
 /// (b) A `route`-mode plugin redirects to an allowlisted real `full_auth`
@@ -89,14 +85,15 @@ async fn ensure_domain_d_exists(admin: &Arc<AsyncOpenStack>) {
 /// issues its own token - proves the full chain over real HTTP with no
 /// mocks anywhere.
 #[tokio::test]
-async fn test_route_to_full_auth_target_issues_token() -> Result<()> {
+async fn test_application_credential_route_issues_token() -> Result<()> {
     // System scope, not project scope: creating a domain requires system
     // admin privileges (`identity/resource/domain/create` policy).
     let admin = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
-    ensure_domain_d_exists(&admin).await;
+    let domain = create_domain_d(&admin).await?;
 
     let test_client = AsyncOpenStack::new(&CloudConfig::from_env()?).await?;
-    let cred_id = format!("tf-{}", Uuid::new_v4().simple());
+    let external_id = Uuid::new_v4().simple().to_string();
+    let cred_id = format!("tf-{external_id}");
     let identity = IdentityBuilder::default()
         .methods(vec!["application_credential".to_string()])
         .extra(HashMap::from([(
@@ -104,14 +101,37 @@ async fn test_route_to_full_auth_target_issues_token() -> Result<()> {
             serde_json::json!({"application_credential_id": cred_id}),
         )]))
         .build()?;
-    let (_token, _secret) = auth_token(&test_client, identity, None).await?;
+    let auth_result = auth_token(&test_client, identity, None).await;
+    let (token, _secret) = match auth_result {
+        Ok(result) => result,
+        Err(error) => {
+            warn_on_cleanup_failure("auth-plugin domain", domain.delete().await);
+            return Err(error);
+        }
+    };
+
+    let link_cleanup = delete_identity_link(&admin, "hacked_appcred_handler", &external_id).await;
+    let user_cleanup = delete_user(&admin, &token.user.id).await;
+    let domain_cleanup = domain.delete().await;
+    link_cleanup?;
+    user_cleanup?;
+    domain_cleanup?;
+
+    assert!(
+        token
+            .methods
+            .iter()
+            .any(|method| method == "hacked_appcred_handler"),
+        "the routed full-auth plugin must be recorded in the immutable authentication chain"
+    );
+    assert_eq!(token.user.domain.id.as_deref(), Some("d"));
     Ok(())
 }
 
 /// (e) A router `Deny` fails the whole request closed over real HTTP.
 #[tokio::test]
 async fn test_route_deny_is_rejected() -> Result<()> {
-    let test_client = AsyncOpenStack::new(&CloudConfig::from_env()?).await?;
+    let test_client = TestClient::default()?;
     let identity = IdentityBuilder::default()
         .methods(vec!["application_credential".to_string()])
         .extra(HashMap::from([(
@@ -119,18 +139,33 @@ async fn test_route_deny_is_rejected() -> Result<()> {
             serde_json::json!({"application_credential_id": "deny-me"}),
         )]))
         .build()?;
-    let res = auth_token(&test_client, identity, None).await;
+    let response = authenticate_identity(&test_client, identity, None).await?;
+    assert_unauthorized(
+        response.error_for_status(),
+        "a route plugin Deny response must reject the entire authentication request",
+    );
+    Ok(())
+}
 
-    match res {
-        Ok(_) => panic!("a plugin Deny response must be rejected"),
-        Err(e) => {
-            let err_str = e.to_string();
-            assert!(
-                err_str.contains("401") || err_str.to_lowercase().contains("unauthorized"),
-                "expected an authentication failure, got: {err_str}"
-            );
-        }
-    }
+/// A non-routed application-credential-shaped request is passed back to the
+/// normal auth-method dispatcher. The current server has no built-in
+/// application-credential authentication handler, so it must fail closed rather than issue a
+/// password, token, or plugin identity by fallback.
+#[tokio::test]
+async fn test_application_credential_passthrough_fails_closed() -> Result<()> {
+    let test_client = TestClient::default()?;
+    let identity = IdentityBuilder::default()
+        .methods(vec!["application_credential".to_string()])
+        .extra(HashMap::from([(
+            "application_credential".to_string(),
+            serde_json::json!({"application_credential_id": "native-not-implemented"}),
+        )]))
+        .build()?;
+    let response = authenticate_identity(&test_client, identity, None).await?;
+    assert_unauthorized(
+        response.error_for_status(),
+        "an unhandled application credential must not authenticate by fallback",
+    );
     Ok(())
 }
 
@@ -165,19 +200,12 @@ async fn test_mapping_plugin_ruleset_lifecycle() -> Result<()> {
 
     // --- Before any ruleset exists: reject, don't fall back. ---
     let ident = identity(format!("no-rule-{}", Uuid::new_v4().simple()))?;
-    let res = auth_token(test_client.as_ref(), ident, None).await;
-    match res {
-        Ok(_) => {
-            panic!("no matching ruleset must be rejected, not fall back to a default identity")
-        }
-        Err(e) => {
-            let err_str = e.to_string();
-            assert!(
-                err_str.contains("401") || err_str.to_lowercase().contains("unauthorized"),
-                "expected an authentication failure, got: {err_str}"
-            );
-        }
-    }
+    let raw_client = TestClient::default()?;
+    let response = authenticate_identity(&raw_client, ident, None).await?;
+    assert_unauthorized(
+        response.error_for_status(),
+        "no matching ruleset must be rejected, not fall back to a default identity",
+    );
 
     // --- Provision a ruleset, then the same shape of request succeeds. ---
     let user_name = format!("mapped-user-{}", Uuid::new_v4().simple());
@@ -241,14 +269,21 @@ async fn test_mapping_plugin_ruleset_lifecycle() -> Result<()> {
     .await?;
 
     let ident = identity(format!("alice-{}", Uuid::new_v4().simple()))?;
-    let (token_data, _secret) = auth_token(test_client.as_ref(), ident, None).await?;
+    let auth_result = auth_token(test_client.as_ref(), ident, None).await;
+    let (token_data, _secret) = match auth_result {
+        Ok(result) => result,
+        Err(error) => {
+            warn_on_cleanup_failure("auth-plugin mapping ruleset", ruleset.delete().await);
+            return Err(error);
+        }
+    };
+    let actual_user_name = token_data.user.name;
+    ruleset.delete().await?;
     assert_eq!(
-        token_data.user.name.clone(),
+        actual_user_name,
         Some(user_name),
         "token user name should match the mapped rule"
     );
-
-    ruleset.delete().await?;
     Ok(())
 }
 
