@@ -12,8 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use eyre::Result;
-use std::collections::HashMap;
+use eyre::{OptionExt, Result};
 use std::sync::Arc;
 use tracing_test::traced_test;
 use uuid::Uuid;
@@ -32,11 +31,6 @@ use test_api::role::list_roles;
 async fn test_list_system_roles_for_user() -> Result<()> {
     let test_client = Arc::new(AsyncOpenStack::new(&CloudConfig::from_env()?).await?);
 
-    let _auth_token = test_client
-        .get_auth_info()
-        .expect("must be authenticated")
-        .token;
-
     let user = create_user(
         &test_client,
         UserCreateBuilder::default()
@@ -47,30 +41,33 @@ async fn test_list_system_roles_for_user() -> Result<()> {
     )
     .await?;
 
-    // List should be empty initially
-    let listed_roles: Vec<Role> = list_system_roles(&test_client, &user.id).await?;
-    assert!(listed_roles.is_empty());
+    let result: Result<(bool, Vec<Role>, String, String)> = async {
+        let initially_empty = list_system_roles(&test_client, &user.id).await?.is_empty();
+        let roles = list_roles(&test_client).await?;
+        let reader_role = roles
+            .iter()
+            .find(|role| role.name == "reader")
+            .map(|role| role.id.clone())
+            .ok_or_eyre("the bootstrap reader role must exist")?;
+        let member_role = roles
+            .iter()
+            .find(|role| role.name == "member")
+            .map(|role| role.id.clone())
+            .ok_or_eyre("the bootstrap member role must exist")?;
 
-    let roles: HashMap<String, String> = list_roles(&test_client)
-        .await?
-        .into_iter()
-        .map(|r| (r.name, r.id))
-        .collect();
-    let reader_role = roles.get("reader").expect("reader role must exist");
-    let member_role = roles.get("member").expect("member role must exist");
-
-    // Grant two roles
-    add_system_grant(&test_client, &user.id, &reader_role).await?;
-    add_system_grant(&test_client, &user.id, &member_role).await?;
-
-    // List should now return two roles
-    let listed_roles: Vec<Role> = list_system_roles(&test_client, &user.id).await?;
-    assert_eq!(listed_roles.len(), 2);
-
-    let listed_role_ids: Vec<String> = listed_roles.iter().map(|r| r.id.clone()).collect();
-    assert!(listed_role_ids.contains(&member_role.to_string()));
-    assert!(listed_role_ids.contains(&reader_role.to_string()));
-
+        add_system_grant(&test_client, &user.id, &reader_role).await?;
+        add_system_grant(&test_client, &user.id, &member_role).await?;
+        let listed_roles = list_system_roles(&test_client, &user.id).await?;
+        Ok((initially_empty, listed_roles, reader_role, member_role))
+    }
+    .await;
     user.delete().await?;
+
+    let (initially_empty, listed_roles, reader_role, member_role) = result?;
+    let listed_role_ids: Vec<&str> = listed_roles.iter().map(|role| role.id.as_str()).collect();
+    assert!(initially_empty, "a new user must have no system grants");
+    assert_eq!(listed_roles.len(), 2);
+    assert!(listed_role_ids.contains(&member_role.as_str()));
+    assert!(listed_role_ids.contains(&reader_role.as_str()));
     Ok(())
 }

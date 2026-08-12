@@ -12,14 +12,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use eyre::Result;
-use std::collections::HashMap;
+use eyre::{OptionExt, Result};
+use http::StatusCode;
 use std::sync::Arc;
 use tracing_test::traced_test;
 use uuid::Uuid;
 
 use openstack_keystone_api_types::v3::user::UserCreateBuilder;
 use openstack_sdk::{AsyncOpenStack, config::CloudConfig};
+use test_api::asserts::assert_status;
 
 use super::*;
 use test_api::guard::*;
@@ -31,11 +32,6 @@ use test_api::role::list_roles;
 async fn test_check_system_role_grant() -> Result<()> {
     let test_client = Arc::new(AsyncOpenStack::new(&CloudConfig::from_env()?).await?);
 
-    let _auth_token = test_client
-        .get_auth_info()
-        .expect("must be authenticated")
-        .token;
-
     let user = create_user(
         &test_client,
         UserCreateBuilder::default()
@@ -46,21 +42,25 @@ async fn test_check_system_role_grant() -> Result<()> {
     )
     .await?;
 
-    let roles: HashMap<String, String> = list_roles(&test_client)
+    let member_role = list_roles(&test_client)
         .await?
         .into_iter()
-        .map(|r| (r.name, r.id))
-        .collect();
-    let member_role = roles.get("member").expect("member role must exist");
+        .find(|role| role.name == "member")
+        .map(|role| role.id)
+        .ok_or_eyre("the bootstrap member role must exist")?;
 
     // No grant should exist initially
-    assert!(!check_grant(&test_client, &user.id, &member_role).await?);
+    assert_status(
+        check_grant(&test_client, &user.id, &member_role).await,
+        StatusCode::NOT_FOUND,
+        "an absent system grant must return 404",
+    );
 
     // Grant the role
     add_system_grant(&test_client, &user.id, &member_role).await?;
 
     // Now check should succeed
-    assert!(check_grant(&test_client, &user.id, &member_role).await?);
+    check_grant(&test_client, &user.id, &member_role).await?;
 
     user.delete().await?;
     Ok(())

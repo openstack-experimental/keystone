@@ -21,6 +21,7 @@ use uuid::Uuid;
 use openstack_keystone_api_types::v3::role::*;
 use openstack_sdk::{AsyncOpenStack, config::CloudConfig};
 
+use test_api::asserts::assert_status;
 use test_api::role::imply::*;
 use test_api::role::{create_role, delete_role};
 
@@ -41,8 +42,7 @@ async fn test_check_implied_role_exists() -> Result<()> {
 
     create_implied_role(&tc, &prior_role.id, &implied_role.id).await?;
 
-    let exists = check_implied_role(&tc, &prior_role.id, &implied_role.id).await?;
-    assert!(exists, "implied rule should exist after creation");
+    check_implied_role(&tc, &prior_role.id, &implied_role.id).await?;
 
     delete_implied_role(&tc, &prior_role.id, &implied_role.id).await?;
 
@@ -74,13 +74,12 @@ async fn test_check_implied_role_multiple() -> Result<()> {
 
     create_implied_role(&tc, &prior_role.id, &implied_role1.id).await?;
 
-    let exists1 = check_implied_role(&tc, &prior_role.id, &implied_role1.id).await?;
-    assert!(exists1, "first implied rule should exist");
+    check_implied_role(&tc, &prior_role.id, &implied_role1.id).await?;
 
-    let exists2 = check_implied_role(&tc, &prior_role.id, &implied_role2.id).await?;
-    assert!(
-        !exists2,
-        "second implied rule should not exist after creation"
+    assert_status(
+        check_implied_role(&tc, &prior_role.id, &implied_role2.id).await,
+        http::StatusCode::NOT_FOUND,
+        "an absent implication must return 404",
     );
 
     delete_implied_role(&tc, &prior_role.id, &implied_role1.id).await?;
