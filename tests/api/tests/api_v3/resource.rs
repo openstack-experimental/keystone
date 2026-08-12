@@ -13,4 +13,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod domain;
+mod domain_authorization;
 mod project;
+mod project_authorization;
