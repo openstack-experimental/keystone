@@ -4946,6 +4946,7 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "thiserror 2.0.19",
+ "tracing",
  "url",
  "utoipa",
  "uuid",

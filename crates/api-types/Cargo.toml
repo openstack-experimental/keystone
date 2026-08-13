@@ -33,6 +33,7 @@ validator = { workspace = true, features = ["derive"], optional = true }
 webauthn-rs-proto.workspace = true
 url = { workspace = true, optional = true }
 uuid = { workspace = true, features = ["v4"], optional = true }
+tracing.workspace = true
 
 [lints]
 workspace = true

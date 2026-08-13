@@ -20,6 +20,7 @@ use {
         response::{IntoResponse, Response},
     },
     serde_json::json,
+    std::error::Error,
 };
 
 use openstack_keystone_core_types::api_key::ApiKeyProviderError;
@@ -81,6 +82,14 @@ impl IntoResponse for KeystoneApiError {
             KeystoneApiError::UnprocessableEntity(_) => StatusCode::UNPROCESSABLE_ENTITY,
             _ => StatusCode::BAD_REQUEST,
         };
+
+        tracing::debug!(
+            error_type = std::any::type_name::<KeystoneApiError>(),
+            status_code = status_code.as_u16(),
+            message = %self.to_string(),
+            source = ?self.source(),
+            "Returning API error response",
+        );
 
         (
             status_code,
