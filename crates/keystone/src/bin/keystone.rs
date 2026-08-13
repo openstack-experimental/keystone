@@ -234,14 +234,18 @@ async fn main() -> Result<(), Report> {
             .await
             .wrap_err("failed to sync schema for in-memory database")?;
     };
+    debug!("Database connection established.");
 
     let plugin_manager = PluginManager::with_config(&cfg)
         .await
         .wrap_err("initializing plugin manager")?;
+    debug!("Plugin manager initialized.");
     let k8s_http_client: Arc<dyn openstack_keystone_core::k8s_auth::K8sHttpClient> =
         Arc::new(KeystoneK8sHttpClient::new());
     let provider = Provider::new(&cfg, &plugin_manager, k8s_http_client)?;
+    debug!("Central provider manager initialized.");
     let policy = HttpPolicyEnforcer::new(cfg.api_policy.opa_base_url.clone()).await?;
+    debug!("Policy enforcer started.");
 
     let concrete_storage: Option<Arc<Storage>> = if cfg.distributed_storage.is_some() {
         let storage = openstack_keystone_distributed_storage::app::init_storage(&cfg_mgr)
@@ -720,6 +724,21 @@ async fn init_audit(cfg: &Config) -> Result<Arc<AuditDispatcher>, Report> {
         AUDIT_HMAC_KEY_VERSION,
     );
 
+    // Start background spool writers for both QoS channels BEFORE replay so
+    // the critical channel (capacity 256) is drained as events are dispatched.
+    // Without this, replay blocks indefinitely when the spool has >256 events
+    // because no consumer is running to accept dispatched events.
+    spawn(run_spool_writer(
+        audit_receivers.perimeter,
+        spool_dir.clone(),
+        audit_cfg.node_id.clone(),
+    ));
+    spawn(run_spool_writer(
+        audit_receivers.critical,
+        spool_dir.clone(),
+        audit_cfg.node_id.clone(),
+    ));
+
     // Replay the spool file left by the previous run (at-least-once delivery).
     //
     // `MultiKeyStore` holds all key versions seen during this process lifetime.
@@ -748,18 +767,6 @@ async fn init_audit(cfg: &Config) -> Result<Arc<AuditDispatcher>, Report> {
     )
     .await
     .wrap_err("audit spool replay failed")?;
-
-    // Start background spool writers for both QoS channels.
-    spawn(run_spool_writer(
-        audit_receivers.perimeter,
-        spool_dir.clone(),
-        audit_cfg.node_id.clone(),
-    ));
-    spawn(run_spool_writer(
-        audit_receivers.critical,
-        spool_dir,
-        audit_cfg.node_id.clone(),
-    ));
 
     Ok(audit_dispatcher)
 }
