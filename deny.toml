@@ -73,7 +73,11 @@ ignore = [
     #"RUSTSEC-0000-0000",
     { id = "RUSTSEC-2023-0071", reason = "rsa have still not released update"},
     { id = "RUSTSEC-2024-0436", reason = "utoipa-axum does not have replacement yet"},
-    { id = "RUSTSEC-2026-0222", reason = "wait for deps to update"}
+    { id = "RUSTSEC-2026-0222", reason = "wait for deps to update"},
+    "RUSTSEC-2026-0247",
+    "RUSTSEC-2026-0250",
+    "RUSTSEC-2026-0251",
+    { id = "RUSTSEC-2026-0255", reason = "waiting for deps"}
     #{ id = "RUSTSEC-0000-0000", reason = "you can specify a reason the advisory is ignored" },
     #"a-crate-that-is-yanked@0.1.1", # you can also ignore yanked crate versions if you wish
     #{ crate = "a-crate-that-is-yanked@0.1.1", reason = "you can specify why you are ignoring the yanked crate" },
