@@ -65,19 +65,43 @@ impl TryFrom<db_trust::Model> for Trust {
             }
         }
 
+        if let Some(val) = value.redelegation_count {
+            match u32::try_from(val) {
+                Ok(val) => {
+                    builder.redelegation_count(val);
+                }
+                Err(_) => {
+                    error!(
+                        trust_id = %value.id,
+                        redelegation_count = val,
+                        "trust.redelegation_count is negative; treating as unset"
+                    );
+                }
+            }
+        }
+
+        if let Some(val) = value.remaining_uses {
+            match u32::try_from(val) {
+                Ok(val) => {
+                    builder.remaining_uses(val);
+                }
+                Err(_) => {
+                    error!(
+                        trust_id = %value.id,
+                        remaining_uses = val,
+                        "trust.remaining_uses is negative; treating as unset"
+                    );
+                }
+            }
+        }
+
         builder.id(value.id);
         builder.impersonation(value.impersonation);
         if let Some(val) = &value.project_id {
             builder.project_id(val);
         }
-        if let Some(val) = value.remaining_uses {
-            builder.remaining_uses(val);
-        }
         if let Some(val) = &value.redelegated_trust_id {
             builder.redelegated_trust_id(val);
-        }
-        if let Some(val) = value.redelegation_count {
-            builder.redelegation_count(val);
         }
         builder.trustor_user_id(value.trustor_user_id);
         builder.trustee_user_id(value.trustee_user_id);

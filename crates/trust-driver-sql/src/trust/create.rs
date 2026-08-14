@@ -38,11 +38,16 @@ impl TryFrom<TrustCreate> for db_trust::ActiveModel {
             impersonation: Set(value.impersonation),
             deleted_at: NotSet,
             expires_at: NotSet,
-            remaining_uses: Set(value.remaining_uses),
+            // Column signed `INT` (see entity comment); remaining_uses is
+            // always small, cast never truncates in practice.
+            remaining_uses: Set(value.remaining_uses.map(|v| v as i32)),
             extra: Set(value.extra.map(|v| serde_json::to_string(&v)).transpose()?),
             expires_at_int: Set(value.expires_at.map(|v| v.timestamp_micros())),
             redelegated_trust_id: Set(value.redelegated_trust_id),
-            redelegation_count: Set(value.redelegation_count),
+            // Column is signed `INT` (see entity comment); `redelegation_count`
+            // is always small and bounded by `max_redelegation_count`
+            // config, so the cast never truncates in practice.
+            redelegation_count: Set(value.redelegation_count.map(|v| v as i32)),
         })
     }
 }

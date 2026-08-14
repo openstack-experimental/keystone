@@ -27,12 +27,20 @@ pub struct Model {
     pub impersonation: bool,
     pub deleted_at: Option<DateTime>,
     pub expires_at: Option<DateTime>,
-    pub remaining_uses: Option<u32>,
+    // Deployed column is a signed `INT` (see `redelegation_count` comment
+    // below for why the Rust type has to match).
+    pub remaining_uses: Option<i32>,
     #[sea_orm(column_type = "Text", nullable)]
     pub extra: Option<String>,
     pub expires_at_int: Option<i64>,
     pub redelegated_trust_id: Option<String>,
-    pub redelegation_count: Option<u32>,
+    // Deployed column is a signed `INT` (predates this field, and `db
+    // sync` never alters existing columns), not the `INT UNSIGNED` that
+    // sea-orm's default codegen maps `u32` to -- sqlx's typed decode then
+    // rejects every non-null value on existing installs. Keep the Rust
+    // field signed to match what's actually on disk; convert to the
+    // domain's `u32` at the `TryFrom<Model>`/`create` boundary instead.
+    pub redelegation_count: Option<i32>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

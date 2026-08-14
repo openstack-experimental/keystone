@@ -152,8 +152,9 @@ where
 /// - `options`: The options to persist.
 ///
 /// # Returns
-/// - `Result<(Vec<whitelisted_config::ActiveModel>, Vec<sensitive_config::ActiveModel>), DomainConfigProviderError>` -
-///   The readable and the sensitive rows.
+/// - `Result<(Vec<whitelisted_config::ActiveModel>,
+///   Vec<sensitive_config::ActiveModel>), DomainConfigProviderError>` - The
+///   readable and the sensitive rows.
 #[allow(clippy::type_complexity)]
 pub(crate) fn to_rows<'a, I>(
     domain_id: &str,

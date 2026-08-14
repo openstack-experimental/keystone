@@ -93,8 +93,8 @@
 //! - `update`: private request struct, `RestEndpoint` impl (PATCH `path/{id}`,
 //!   JSON body under `body_key`), and `pub async fn <func>(tc, id,
 //!   <update_type>) -> Result<model>`. `update_put` is the identical arm
-//!   emitting `PUT` instead — every v4 update handler declares `put` where
-//!   its v3 counterpart declares `patch`, so v4 helpers need it.
+//!   emitting `PUT` instead — every v4 update handler declares `put` where its
+//!   v3 counterpart declares `patch`, so v4 helpers need it.
 //! - `list`: **public** request struct with `Option<String>` query fields,
 //!   `RestEndpoint` impl (GET `path`), and `pub async fn <func>(tc, params) ->
 //!   Result<Vec<model>>`.

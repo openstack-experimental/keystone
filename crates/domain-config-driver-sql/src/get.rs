@@ -161,9 +161,9 @@ pub async fn get_config<C: ConnectionTrait>(
 /// - `group`: The group to read.
 ///
 /// # Returns
-/// - `Result<Option<DomainConfigGroup>, DomainConfigProviderError>` - The
-///   group without any sensitive option, or `None` when the domain has no
-///   readable option stored in it.
+/// - `Result<Option<DomainConfigGroup>, DomainConfigProviderError>` - The group
+///   without any sensitive option, or `None` when the domain has no readable
+///   option stored in it.
 pub async fn get_group<C: ConnectionTrait>(
     db: &C,
     domain_id: &str,
