@@ -37,7 +37,7 @@ use crate::entity::{
 fn build_query_filters(
     params: &RevocationEventListParameters,
 ) -> Result<Select<DbRevocationEvent>, RevokeProviderError> {
-    tracing::info!("Query parameters: {:?}", params);
+    tracing::debug!("Query parameters: {:?}", params);
     let mut select = DbRevocationEvent::find();
 
     //if let Some(val) = &params.access_token_id {

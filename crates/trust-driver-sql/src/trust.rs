@@ -41,14 +41,28 @@ impl TryFrom<db_trust::Model> for Trust {
             builder.deleted_at(val.and_utc());
         }
         if let Some(val) = value.expires_at_int {
-            builder.expires_at(
-                DateTime::from_timestamp_micros(val)
-                    .map(|val| val.to_utc())
-                    .ok_or_else(|| Self::Error::ExpirationDateTimeParse {
-                        id: value.id.clone(),
-                        expires_at: val,
-                    })?,
-            );
+            match DateTime::from_timestamp_micros(val).map(|val| val.to_utc()) {
+                Some(dt) => {
+                    builder.expires_at(dt);
+                }
+                None => {
+                    // `expires_at_int` is out of chrono's representable
+                    // range (corrupt write, bad migration, manual DB edit).
+                    // Hard-erroring here would 500 every read of this trust
+                    // forever; fall back to the legacy `expires_at` column
+                    // if it still holds a usable value, otherwise treat the
+                    // trust as non-expiring rather than making it
+                    // permanently unreadable.
+                    error!(
+                        trust_id = %value.id,
+                        expires_at_int = val,
+                        "trust.expires_at_int is out of range; falling back to expires_at"
+                    );
+                    if let Some(val) = value.expires_at {
+                        builder.expires_at(val.and_utc());
+                    }
+                }
+            }
         } else if let Some(val) = value.expires_at {
             builder.expires_at(val.and_utc());
         }

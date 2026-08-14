@@ -47,11 +47,21 @@ pub async fn log_error_body(req: Request, next: Next) -> Response {
     let (parts, body) = response.into_parts();
     match to_bytes(body, MAX_LOGGED_BODY_BYTES).await {
         Ok(bytes) => {
-            tracing::debug!(
-                status_code = status.as_u16(),
-                body = %String::from_utf8_lossy(&bytes),
-                "Returning error response",
-            );
+            // 5xx must be visible under a default INFO deployment; 4xx are
+            // client-caused and stay at debug.
+            if status.is_server_error() {
+                tracing::error!(
+                    status_code = status.as_u16(),
+                    body = %String::from_utf8_lossy(&bytes),
+                    "Returning error response",
+                );
+            } else {
+                tracing::debug!(
+                    status_code = status.as_u16(),
+                    body = %String::from_utf8_lossy(&bytes),
+                    "Returning error response",
+                );
+            }
             Response::from_parts(parts, Body::from(bytes))
         }
         Err(error) => {
@@ -60,11 +70,19 @@ pub async fn log_error_body(req: Request, next: Next) -> Response {
             // the original body can't be forwarded intact; log what we can
             // and fail closed with an empty body rather than send a
             // truncated/corrupt one.
-            tracing::debug!(
-                status_code = status.as_u16(),
-                %error,
-                "Failed to buffer error response body for logging",
-            );
+            if status.is_server_error() {
+                tracing::error!(
+                    status_code = status.as_u16(),
+                    %error,
+                    "Failed to buffer error response body for logging",
+                );
+            } else {
+                tracing::debug!(
+                    status_code = status.as_u16(),
+                    %error,
+                    "Failed to buffer error response body for logging",
+                );
+            }
             Response::from_parts(parts, Body::empty())
         }
     }

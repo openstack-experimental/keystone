@@ -83,13 +83,27 @@ impl IntoResponse for KeystoneApiError {
             _ => StatusCode::BAD_REQUEST,
         };
 
-        tracing::debug!(
-            error_type = std::any::type_name::<KeystoneApiError>(),
-            status_code = status_code.as_u16(),
-            message = %self.to_string(),
-            source = ?self.source(),
-            "Returning API error response",
-        );
+        // 5xx must be visible under a default INFO deployment (nothing else
+        // in the request path logs the actual cause at INFO); 4xx are
+        // client-caused and stay at debug to avoid drowning out real
+        // problems.
+        if status_code.is_server_error() {
+            tracing::error!(
+                error_type = std::any::type_name::<KeystoneApiError>(),
+                status_code = status_code.as_u16(),
+                message = %self.to_string(),
+                source = ?self.source(),
+                "Returning API error response",
+            );
+        } else {
+            tracing::debug!(
+                error_type = std::any::type_name::<KeystoneApiError>(),
+                status_code = status_code.as_u16(),
+                message = %self.to_string(),
+                source = ?self.source(),
+                "Returning API error response",
+            );
+        }
 
         (
             status_code,

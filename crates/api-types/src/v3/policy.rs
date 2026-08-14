@@ -19,8 +19,8 @@
 //! * **Requests** accept a `String` only, per `keystone/policy/schema.py`
 //!   (`{'blob': {'type': 'string'}}`). An object-valued `blob` is a 400.
 //! * **Responses** carry an arbitrary JSON value, because the stored column
-//!   round-trips whatever was written and rows created by older python
-//!   keystone releases may hold objects.
+//!   round-trips whatever was written and rows created by older python keystone
+//!   releases may hold objects.
 
 use std::collections::HashMap;
 

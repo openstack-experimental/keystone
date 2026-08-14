@@ -79,7 +79,7 @@ impl RevokeApi for RevokeService {
         ctx: &ExecutionContext<'a>,
         token_security_context: &ValidatedSecurityContext,
     ) -> Result<bool, RevokeProviderError> {
-        tracing::info!("Checking for the revocation events");
+        tracing::debug!("Checking for the revocation events");
         self.backend_driver
             .is_token_revoked(ctx.state(), token_security_context)
             .await
