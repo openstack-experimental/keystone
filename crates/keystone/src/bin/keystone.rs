@@ -84,6 +84,7 @@ use openstack_keystone::revoke::RevokeHook;
 use openstack_keystone::role::RoleHook;
 use openstack_keystone::scim;
 use openstack_keystone::server::access_log::log_request;
+use openstack_keystone::server::error_log::log_error_body;
 use openstack_keystone::server::http_metrics::format_prometheus_text as format_http_metrics_text;
 use openstack_keystone::server::http_metrics::{HttpMetrics, record_http_metrics};
 use openstack_keystone::server::listener::{raft_grpc, spiffe_tls, spiffe_tls_uds};
@@ -981,6 +982,11 @@ async fn build_router(
         // on them. Must stay layered after TraceLayer so it runs inside the
         // request span.
         .layer(middleware::from_fn(log_request))
+        // Logs the body of any 4xx/5xx response (not just `KeystoneApiError`
+        // ones — extractor rejections build their own response and never
+        // reach handler code). Must stay layered before `.compression()` so
+        // it reads the body while it's still plain JSON.
+        .layer(middleware::from_fn(log_error_body))
         // Compress responses
         .compression()
         .sensitive_response_headers(sensitive_headers)

@@ -401,6 +401,7 @@ fn validate_token_auth_secret(value: &TokenAuth) -> Result<(), validator::Valida
 pub struct CreateTokenParameters {
     /// The authentication response excludes the service catalog. By default,
     /// the response includes the service catalog.
+    #[serde(default, deserialize_with = "crate::deserialize_lenient_bool_opt")]
     pub nocatalog: Option<bool>,
 }
 
@@ -410,9 +411,11 @@ pub struct CreateTokenParameters {
 pub struct ValidateTokenParameters {
     /// The authentication response excludes the service catalog. By default,
     /// the response includes the service catalog.
+    #[serde(default, deserialize_with = "crate::deserialize_lenient_bool_opt")]
     pub nocatalog: Option<bool>,
     /// Allow fetching a token that has expired. By default expired tokens
     /// return a 404 exception.
+    #[serde(default, deserialize_with = "crate::deserialize_lenient_bool_opt")]
     pub allow_expired: Option<bool>,
 }
 
@@ -440,6 +443,29 @@ mod tests {
     use super::*;
 
     const PWD: &str = "hunter2-plaintext";
+
+    #[test]
+    fn validate_token_parameters_accepts_lenient_bool_query_values() {
+        for (raw, expected) in [
+            ("allow_expired=1", Some(true)),
+            ("allow_expired=0", Some(false)),
+            ("allow_expired=true", Some(true)),
+            ("allow_expired=false", Some(false)),
+            ("allow_expired=yes", Some(true)),
+            ("allow_expired=no", Some(false)),
+        ] {
+            let params: ValidateTokenParameters = serde_urlencoded::from_str(raw)
+                .unwrap_or_else(|e| panic!("failed to parse `{raw}`: {e}"));
+            assert_eq!(params.allow_expired, expected, "input: {raw}");
+        }
+    }
+
+    #[test]
+    fn validate_token_parameters_rejects_garbage_bool_query_value() {
+        let err = serde_urlencoded::from_str::<ValidateTokenParameters>("allow_expired=maybe")
+            .unwrap_err();
+        assert!(err.to_string().contains("invalid boolean value"));
+    }
 
     #[test]
     fn user_password_deserializes_plaintext_and_debug_never_leaks() {

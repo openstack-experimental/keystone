@@ -64,6 +64,29 @@ pub fn default_true() -> bool {
     true
 }
 
+/// Deserialize an `Option<bool>` query parameter leniently.
+///
+/// OpenStack's python keystone (via `oslo.utils.strutils.bool_from_string`)
+/// accepts `1`/`0`, `yes`/`no`, `on`/`off`, and `true`/`false` (any case) for
+/// boolean query params like `nocatalog`/`allow_expired`. Plain
+/// `Option<bool>` only accepts `true`/`false` and 400s on anything else
+/// (e.g. `allow_expired=1`), which is what real clients send. Use as
+/// `#[serde(default, deserialize_with = "deserialize_lenient_bool_opt")]`
+/// on `Option<bool>` query fields.
+pub fn deserialize_lenient_bool_opt<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    match raw.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(Some(true)),
+        "0" | "false" | "no" | "off" => Ok(Some(false)),
+        other => Err(serde::de::Error::custom(format!(
+            "invalid boolean value: `{other}`"
+        ))),
+    }
+}
+
 /// Default `limit` when the client does not supply one: **`None`**.
 ///
 /// Deliberately not a hard-coded page size. ADR 0029's precedence chain is
