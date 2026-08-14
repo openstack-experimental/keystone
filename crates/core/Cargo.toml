@@ -34,7 +34,7 @@ openstack-keystone-local-emergency-store.workspace = true
 openstack-keystone-storage-api.workspace = true
 jsonwebtoken.workspace = true
 mockall = { workspace = true, optional = true }
-p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
+p256 = { version = "0.14", features = ["ecdsa", "pkcs8"] }
 rand.workspace = true
 rsa = "0.9"
 regex.workspace = true
