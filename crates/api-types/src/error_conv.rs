@@ -608,6 +608,9 @@ impl From<TokenProviderError> for KeystoneApiError {
             | TokenProviderError::TrustorUserDisabled(_) => {
                 Self::unauthorized(value, None::<String>)
             }
+            TokenProviderError::Expired
+            | TokenProviderError::InvalidToken { .. }
+            | TokenProviderError::TokenRevoked => Self::unauthorized(value, None::<String>),
             TokenProviderError::DomainDisabled(x) => Self::NotFound {
                 resource: "domain".into(),
                 identifier: x,
@@ -678,6 +681,32 @@ impl From<KeystoneError> for KeystoneApiError {
 mod tests {
     use super::*;
     use axum::http::StatusCode;
+
+    #[test]
+    fn token_credential_rejections_return_401() {
+        let errors = [
+            TokenProviderError::Expired,
+            TokenProviderError::InvalidToken {
+                source: Box::new(std::io::Error::other("invalid token detail")),
+            },
+            TokenProviderError::TokenRevoked,
+        ];
+
+        for error in errors {
+            let api_error: KeystoneApiError = error.into();
+            assert!(matches!(api_error, KeystoneApiError::Unauthorized { .. }));
+            assert_eq!(api_error.into_response().status(), StatusCode::UNAUTHORIZED);
+        }
+    }
+
+    #[test]
+    fn token_driver_failure_remains_internal() {
+        let api_error: KeystoneApiError = TokenProviderError::Driver {
+            source: Box::new(std::io::Error::other("database unavailable")),
+        }
+        .into();
+        assert!(matches!(api_error, KeystoneApiError::InternalError(_)));
+    }
 
     #[test]
     fn mapping_provider_not_found() {

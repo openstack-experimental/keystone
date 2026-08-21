@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod auth_plugin;
+mod authorization;
 mod password;
 mod revoke;
 mod token;

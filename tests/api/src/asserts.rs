@@ -19,9 +19,75 @@
 //! the expected status, the extracted status, and the complete original
 //! error chain.
 
-use eyre::Report;
+use std::future::Future;
+
+use eyre::{Report, Result};
 use http::StatusCode;
 use openstack_sdk::{OpenStackError, RestError, api::ApiError};
+use reqwest::Response;
+
+use crate::common::raw_request;
+
+/// A raw request expected to be rejected as unauthenticated.
+#[derive(Debug)]
+pub struct RawUnauthorizedRequest<'a> {
+    pub method: http::Method,
+    pub path: &'a str,
+    pub body: Option<serde_json::Value>,
+    pub message: &'a str,
+}
+
+/// Assert the status carried by a raw HTTP response.
+#[track_caller]
+pub fn assert_response_status(response: &Response, expected: StatusCode, message: &str) {
+    let actual = response.status();
+    assert!(
+        actual == expected,
+        "{message}: expected HTTP {expected}, got {actual}; URL: {}",
+        response.url()
+    );
+}
+
+/// Send one raw request and assert a 401 response.
+pub async fn assert_raw_request_unauthorized(
+    request: RawUnauthorizedRequest<'_>,
+    token: Option<&str>,
+) -> Result<()> {
+    assert_raw_request_unauthorized_with_cleanup(request, token, |_| async { Ok(()) }).await
+}
+
+/// Send one raw request and assert a 401 response, cleaning up any resource
+/// created if a regression unexpectedly allows the request.
+pub async fn assert_raw_request_unauthorized_with_cleanup<F, CleanupFuture>(
+    request: RawUnauthorizedRequest<'_>,
+    token: Option<&str>,
+    cleanup: F,
+) -> Result<()>
+where
+    F: FnOnce(Response) -> CleanupFuture,
+    CleanupFuture: Future<Output = Result<()>>,
+{
+    let response = raw_request(request.method, request.path, token, request.body).await?;
+    let response = if response.status().is_success() {
+        cleanup(response).await?;
+        panic!("{}: request unexpectedly succeeded", request.message);
+    } else {
+        response
+    };
+    assert_unauthorized(response.error_for_status().map(|_| ()), request.message);
+    Ok(())
+}
+
+/// Assert the same authentication mode across a request matrix.
+pub async fn assert_raw_requests_unauthorized<'a>(
+    requests: impl IntoIterator<Item = RawUnauthorizedRequest<'a>>,
+    token: Option<&str>,
+) -> Result<()> {
+    for request in requests {
+        assert_raw_request_unauthorized(request, token).await?;
+    }
+    Ok(())
+}
 
 /// Extract the HTTP status code carried by an error chain, if any.
 ///

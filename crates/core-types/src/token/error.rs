@@ -96,6 +96,16 @@ pub enum TokenProviderError {
     #[error(transparent)]
     IdentityProvider(#[from] IdentityProviderError),
 
+    /// The presented token cannot be decoded or validated as a token.
+    ///
+    /// The source is retained for operator diagnostics while API conversions
+    /// expose only the generic authentication failure to the client.
+    #[error("invalid token")]
+    InvalidToken {
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+    },
+
     /// The project is disabled.
     #[error("project disabled")]
     ProjectDisabled(String),

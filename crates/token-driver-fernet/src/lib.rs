@@ -490,7 +490,24 @@ impl TokenBackend for FernetTokenProvider {
     /// `TokenProviderError`.
     #[tracing::instrument(level = "trace", skip(self, credential))]
     fn decode(&self, credential: &str) -> Result<FernetToken, TokenProviderError> {
-        Ok(self.decrypt(credential)?)
+        self.decrypt(credential).map_err(|error| match error {
+            error @ (FernetDriverError::AuditIdWrongFormat
+            | FernetDriverError::Base64Decode(_)
+            | FernetDriverError::FernetDecryption(_)
+            | FernetDriverError::InvalidToken
+            | FernetDriverError::InvalidTokenType(_)
+            | FernetDriverError::InvalidTokenUuid
+            | FernetDriverError::InvalidTokenUuidMarker(_)
+            | FernetDriverError::RmpValueRead(_)
+            | FernetDriverError::TokenTimestampOverflow { .. }
+            | FernetDriverError::TryFromIntError(_)
+            | FernetDriverError::UnsupportedAuthMethods(_)
+            | FernetDriverError::Uuid(_)
+            | FernetDriverError::Validation(_)) => TokenProviderError::InvalidToken {
+                source: Box::new(error),
+            },
+            other => other.into(),
+        })
     }
 
     /// Encrypt the token.
@@ -644,6 +661,21 @@ pub mod tests {
     fn discard_issued_at(mut token: FernetToken) -> FernetToken {
         token.set_issued_at(Default::default());
         token
+    }
+
+    #[tokio::test]
+    async fn test_decode_classifies_malformed_credential_as_invalid_token()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut provider = FernetTokenProvider::new(setup_config());
+        provider.load_keys().await?;
+
+        match TokenBackend::decode(&provider, "not-a-fernet-token") {
+            Err(TokenProviderError::InvalidToken { source }) => {
+                assert!(!source.to_string().is_empty());
+            }
+            result => panic!("expected invalid token, got {result:?}"),
+        }
+        Ok(())
     }
 
     #[tokio::test]

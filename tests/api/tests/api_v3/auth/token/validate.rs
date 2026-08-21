@@ -12,7 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use eyre::Result;
+use eyre::{OptionExt, Result};
 
 use openstack_keystone_api_types::v3::auth::token::*;
 
@@ -24,13 +24,15 @@ async fn test_validate_own() -> Result<()> {
     let mut admin_client = TestClient::default()?;
     admin_client.auth_admin().await?;
 
-    let _auth_rsp: TokenResponse = check_token(
-        &admin_client,
-        admin_client.token.as_ref().expect("must be authenticated"),
-    )
-    .await?
-    .json()
-    .await?;
+    let subject = admin_client
+        .token
+        .as_ref()
+        .ok_or_eyre("the admin client must be authenticated")?;
+    let _auth_rsp: TokenResponse = check_token(&admin_client, subject)
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
     Ok(())
 }
 
@@ -38,10 +40,17 @@ async fn test_validate_own() -> Result<()> {
 async fn test_validate_nocatalog_flag() -> Result<()> {
     let mut admin_client = TestClient::default()?;
     admin_client.auth_admin().await?;
-    let subject = admin_client.token.as_ref().expect("must be authenticated");
+    let subject = admin_client
+        .token
+        .as_ref()
+        .ok_or_eyre("the admin client must be authenticated")?;
 
     // Without nocatalog – catalog must be present.
-    let rsp: TokenResponse = check_token(&admin_client, subject).await?.json().await?;
+    let rsp: TokenResponse = check_token(&admin_client, subject)
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
     assert!(
         rsp.token.catalog.is_some(),
         "catalog must be present when nocatalog is not set"
@@ -50,6 +59,7 @@ async fn test_validate_nocatalog_flag() -> Result<()> {
     // With nocatalog=true – catalog must be absent.
     let rsp_no: TokenResponse = check_token_with_nocatalog(&admin_client, subject, true)
         .await?
+        .error_for_status()?
         .json()
         .await?;
     assert!(
@@ -60,6 +70,7 @@ async fn test_validate_nocatalog_flag() -> Result<()> {
     // With nocatalog=false – catalog must be present (same as default).
     let rsp_yes: TokenResponse = check_token_with_nocatalog(&admin_client, subject, false)
         .await?
+        .error_for_status()?
         .json()
         .await?;
     assert!(

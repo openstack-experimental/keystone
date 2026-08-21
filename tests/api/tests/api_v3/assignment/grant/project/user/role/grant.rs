@@ -12,10 +12,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use eyre::Result;
+use eyre::{OptionExt, Result};
 use tracing_test::traced_test;
 use uuid::Uuid;
 
@@ -33,11 +32,6 @@ use test_api::role::list_roles;
 #[traced_test]
 async fn test_grant_project_role_to_user() -> Result<()> {
     let test_client = Arc::new(AsyncOpenStack::new(&CloudConfig::from_env()?).await?);
-
-    let _auth_token = test_client
-        .get_auth_info()
-        .expect("must be authenticated")
-        .token;
 
     let user = create_user(
         &test_client,
@@ -61,14 +55,14 @@ async fn test_grant_project_role_to_user() -> Result<()> {
     )
     .await?;
 
-    let roles: HashMap<String, String> = list_roles(&test_client)
+    let member_role = list_roles(&test_client)
         .await?
         .into_iter()
-        .map(|r| (r.name, r.id))
-        .collect();
-    let member_role = roles.get("member").expect("member role must exist");
-    add_project_grant(&test_client, &project.id, &user.id, member_role).await?;
-    assert!(check_grant(&test_client, &project.id, &user.id, member_role).await?);
+        .find(|role| role.name == "member")
+        .map(|role| role.id)
+        .ok_or_eyre("the bootstrap member role must exist")?;
+    add_project_grant(&test_client, &project.id, &user.id, &member_role).await?;
+    check_grant(&test_client, &project.id, &user.id, &member_role).await?;
 
     user.delete().await?;
     project.delete().await?;

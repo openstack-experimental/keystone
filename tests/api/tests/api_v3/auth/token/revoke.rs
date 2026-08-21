@@ -12,86 +12,58 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use eyre::Result;
+use eyre::{OptionExt, Result};
 use reqwest::StatusCode;
-use secrecy::ExposeSecret;
+use secrecy::SecretString;
 use tracing_test::traced_test;
 
-use test_api::auth::token::*;
-use test_api::common::*;
+use test_api::asserts::assert_unauthorized;
+use test_api::auth::token::{authenticate_by_token, check_token, revoke_token};
+use test_api::common::TestClient;
 
 #[tokio::test]
-#[traced_test]
-async fn test_revoke() -> Result<()> {
-    let mut admin_client = TestClient::default()?;
-    admin_client.auth_admin().await?;
+async fn test_invalid_token_cannot_be_used_for_authentication() -> Result<()> {
+    let client = TestClient::default()?;
+    let invalid = SecretString::from("invalid-token");
+    let response = authenticate_by_token(&client, &invalid, None).await?;
 
-    let mut test_client = TestClient::default()?;
-    test_client.auth_admin().await?;
-    let test_token = test_client.token.as_ref().expect("must be authenticated");
-
-    check_token(&admin_client, test_token).await?;
-
-    let rsp = admin_client
-        .client
-        .delete(admin_client.base_url.join("v3/auth/tokens")?)
-        .header("x-subject-token", test_token.expose_secret())
-        .send()
-        .await?;
-    assert_eq!(rsp.status(), StatusCode::NO_CONTENT);
-
-    let rsp = check_token(&admin_client, test_token).await?;
-    assert_eq!(rsp.status(), StatusCode::NOT_FOUND);
+    assert_unauthorized(
+        response.error_for_status(),
+        "an invalid token must not authenticate for a new token",
+    );
     Ok(())
 }
 
-// #[tokio::test]
-// #[traced_test]
-// async fn test_revoke_parent_invalidates_child() -> Result<()> {
-//     let mut admin_client = TestClient::default()?;
-//     admin_client.auth_admin().await?;
-//
-//     let mut parent_client = TestClient::default()?;
-//     parent_client.auth_admin().await?;
-//     let parent_token = parent_client.token.as_ref().expect("must be
-// authenticated");
-//
-//     let mut child_client = TestClient::default()?;
-//     child_client
-//         .auth_token(
-//             &parent_token.expose_secret(),
-//             Some(Scope::Project(
-//                 ScopeProjectBuilder::default()
-//                     .name("admin")
-//                     .domain(DomainBuilder::default().id("default").build()?)
-//                     .build()?,
-//             )),
-//         )
-//         .await?;
-//
-//     let child_token = child_client.token.as_ref().expect("must be
-// authenticated");
-//
-//     check_token(&admin_client, parent_token).await?;
-//
-//     check_token(&admin_client, child_token).await?;
-//
-//     let rsp = admin_client
-//         .client
-//         .delete(admin_client.base_url.join("v3/auth/tokens")?)
-//         .header("x-subject-token", parent_token.expose_secret())
-//         .send()
-//         .await?;
-//     assert_eq!(rsp.status(), StatusCode::NO_CONTENT, "token can be revoked");
-//
-//     assert_eq!(
-//         StatusCode::NOT_FOUND,
-//         check_token(&admin_client, parent_token).await?.status()
-//     );
-//
-//     assert_eq!(
-//         StatusCode::NOT_FOUND,
-//         check_token(&admin_client, child_token).await?.status()
-//     );
-//     Ok(())
-// }
+#[tokio::test]
+#[traced_test]
+async fn test_revoked_token_cannot_be_validated_or_used_for_authentication() -> Result<()> {
+    let mut admin_client = TestClient::default()?;
+    admin_client.auth_admin().await?;
+
+    let mut subject_client = TestClient::default()?;
+    subject_client.auth_admin().await?;
+    let subject_token = subject_client
+        .token
+        .as_ref()
+        .ok_or_eyre("the subject client must be authenticated")?;
+
+    assert_eq!(
+        check_token(&admin_client, subject_token).await?.status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        revoke_token(&admin_client, subject_token).await?.status(),
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        check_token(&admin_client, subject_token).await?.status(),
+        StatusCode::NOT_FOUND
+    );
+
+    let response = authenticate_by_token(&admin_client, subject_token, None).await?;
+    assert_unauthorized(
+        response.error_for_status(),
+        "a revoked token must not authenticate for a new token",
+    );
+    Ok(())
+}
