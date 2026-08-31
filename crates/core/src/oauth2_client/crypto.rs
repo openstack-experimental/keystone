@@ -12,9 +12,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # OAuth2 client secret generation & Argon2id hashing (ADR 0026 §5)
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::password_hash::phc::PasswordHash;
+use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 use argon2::{Algorithm, Argon2, Params, Version};
-use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
 use rand::RngExt;
 use rand::distr::{Alphanumeric, SampleString};
 use secrecy::SecretString;
@@ -32,10 +32,10 @@ const ENTROPY_LEN: usize = 43;
 /// ADR 0021 Invariant 7). Deliberately not derived from any request data.
 const DUMMY_ENTROPY: &str = "keystone-oauth2-client-dummy-entropy-constant-time-padding";
 
-fn generate_salt() -> String {
+fn generate_salt() -> [u8; 16] {
     let mut bytes = [0u8; 16];
     rand::rng().fill(&mut bytes);
-    STANDARD_NO_PAD.encode(bytes)
+    bytes
 }
 
 fn build_params(config: &Oauth2Provider) -> Result<Params, Oauth2ClientProviderError> {
@@ -67,10 +67,8 @@ pub async fn hash_secret(
     tokio::task::spawn_blocking(move || {
         let params = build_params(&config)?;
         let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-        let salt = SaltString::from_b64(generate_salt().as_str())
-            .map_err(Oauth2ClientProviderError::crypto)?;
         argon2
-            .hash_password(secret_plain.as_bytes(), &salt)
+            .hash_password_with_salt(secret_plain.as_bytes(), &generate_salt())
             .map(|h| h.to_string())
             .map_err(Oauth2ClientProviderError::crypto)
     })
@@ -109,7 +107,8 @@ pub async fn generate_dummy_hash(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use argon2::password_hash::{PasswordHash, PasswordVerifier};
+    use argon2::password_hash::PasswordVerifier;
+    use argon2::password_hash::phc::PasswordHash;
     use secrecy::ExposeSecret;
 
     fn test_config() -> Oauth2Provider {

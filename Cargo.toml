@@ -75,7 +75,7 @@ exclude = [
 aes-gcm = { version = "0.11" }
 arbitrary = { version = "1" }
 arc-swap = { version = "1.9" }
-argon2 = { version = "0.5" }
+argon2 = { version = "0.6" }
 askama = { version = "0.16" }
 async-trait = { version = "0.1" }
 axum = { version = "0.8", default-features = false }

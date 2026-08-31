@@ -12,9 +12,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # API Key Argon2id hashing & verification (ADR 0021 §3 Step 3, §6.B).
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::password_hash::phc::PasswordHash;
+use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 use argon2::{Algorithm, Argon2, Params, Version};
-use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
 use rand::RngExt;
 
 use openstack_keystone_config::ApiKeyProvider;
@@ -26,10 +26,10 @@ use crate::api_key::ApiKeyProviderError;
 /// 7). Deliberately not derived from any request data.
 const DUMMY_ENTROPY: &str = "keystone-api-key-dummy-entropy-constant-time-padding";
 
-fn _generate_salt() -> String {
+fn _generate_salt() -> [u8; 16] {
     let mut bytes = [0u8; 16];
     rand::rng().fill(&mut bytes);
-    STANDARD_NO_PAD.encode(bytes)
+    bytes
 }
 
 fn build_params(config: &ApiKeyProvider) -> Result<Params, ApiKeyProviderError> {
@@ -53,10 +53,8 @@ pub async fn hash_secret(
     tokio::task::spawn_blocking(move || {
         let params = build_params(&config)?;
         let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-        let salt =
-            SaltString::from_b64(_generate_salt().as_str()).map_err(ApiKeyProviderError::crypto)?;
         argon2
-            .hash_password(entropy.as_bytes(), &salt)
+            .hash_password_with_salt(entropy.as_bytes(), &_generate_salt())
             .map(|h| h.to_string())
             .map_err(ApiKeyProviderError::crypto)
     })
