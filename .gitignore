@@ -16,3 +16,6 @@ doc/html
 /mutants.out.old/
 
 __pycache__/
+
+# Claude Code agent worktrees/scratch state
+/.claude/

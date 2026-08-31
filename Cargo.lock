@@ -5464,6 +5464,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "openstack-keystone-metrics"
+version = "0.1.0"
+dependencies = [
+ "dashmap",
+]
+
+[[package]]
 name = "openstack-keystone-oauth2-client-driver-raft"
 version = "0.1.0"
 dependencies = [
