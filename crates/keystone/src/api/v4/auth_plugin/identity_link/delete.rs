@@ -126,6 +126,12 @@ pub(crate) async fn delete(
             },
         )
         .await?;
+    // ADR 0031 "Tokens": an admin-authorized identity-link deletion is an
+    // explicit admin action, not the affected user's own request or a
+    // resource-cascade side effect.
+    openstack_keystone_core::token::TOKEN_METRICS
+        .revoked_total
+        .inc(["admin"]);
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }

@@ -329,6 +329,12 @@ impl TrustApi for TrustService {
                 },
             )
             .await?;
+        // ADR 0031 "Tokens": deleting the trust cascades revocation of every
+        // outstanding token minted under it - `"cascade"`, not
+        // `"expired_trust"` (there is no separate automatic-expiry
+        // revocation path today; expiry is checked passively at validation
+        // time via the token's own `expires_at`).
+        crate::token::TOKEN_METRICS.revoked_total.inc(["cascade"]);
 
         Ok(())
     }

@@ -183,7 +183,12 @@ where
         {
             tracing::debug!("authenticating request with the x-auth-token");
             let auth_token = SecretString::from(auth_header.to_owned());
-            let mut vsc = state
+            // ADR 0031 "Authentication": every `X-Auth-Token` re-authentication
+            // is `method = "token"`. Timed/recorded around the provider call
+            // (not the whole extractor) so the outcome/reason reflect exactly
+            // this authentication step.
+            let auth_start = std::time::Instant::now();
+            let token_result = state
                 .provider
                 .get_token_provider()
                 .authorize_by_token(
@@ -192,7 +197,17 @@ where
                     Some(false),
                     None,
                 )
-                .await
+                .await;
+            let reason = token_result
+                .as_ref()
+                .err()
+                .map(crate::token::metrics::token_failure_reason);
+            crate::auth_metrics::AUTH_METRICS.record_attempt(
+                "token",
+                auth_start.elapsed().as_secs_f64(),
+                reason,
+            );
+            let mut vsc = token_result
                 .inspect_err(|e| error!("{:#?}", e))
                 .map_err(|_| KeystoneApiError::UnauthorizedNoContext)?;
 

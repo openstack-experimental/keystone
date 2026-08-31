@@ -225,13 +225,25 @@ impl MappingService {
 
         // 3. Evaluate claims against ruleset — named rule hint is tried first,
         // then standard first-match-wins iteration
-        let match_result = engine::evaluate_ruleset(
+        let eval_started = std::time::Instant::now();
+        let eval_result = engine::evaluate_ruleset(
             &ruleset,
             &req.claims,
             ruleset.domain_id.as_deref(),
             req.rule_name.as_deref(),
-        )?
-        .ok_or(MappingProviderError::NoMatchingRule)?;
+        );
+        crate::mapping::metrics::MAPPING_METRICS
+            .evaluation_duration_seconds
+            .record(eval_started.elapsed().as_secs_f64());
+        let eval_outcome = match &eval_result {
+            Ok(Some(_)) => crate::mapping::metrics::OUTCOME_MATCHED,
+            Ok(None) => crate::mapping::metrics::OUTCOME_NO_MATCH,
+            Err(_) => crate::mapping::metrics::OUTCOME_ERROR,
+        };
+        crate::mapping::metrics::MAPPING_METRICS
+            .evaluations_total
+            .inc([eval_outcome]);
+        let match_result = eval_result?.ok_or(MappingProviderError::NoMatchingRule)?;
 
         // 4. Resolve identity mode: explicit rule value > source-based default
         let identity_mode = match_result
@@ -1248,12 +1260,29 @@ impl MappingApi for MappingService {
     }
 
     /// Authenticate a principal through the unified mapping engine.
+    ///
+    /// When `req.source` is `IdentitySource::Federation`, also records
+    /// `keystone_federation_authentications_total{idp_id,outcome}` (ADR
+    /// 0031) — `idp_id` is the operator-configured identity provider the
+    /// caller authenticated against, and `outcome` reflects whether the
+    /// overall mapping authentication succeeded.
     async fn authenticate_by_mapping<'a>(
         &self,
         exec: &ExecutionContext<'a>,
         req: &'a MappingAuthRequest,
     ) -> Result<AuthenticationResult, MappingProviderError> {
-        self.authenticate_by_mapping_internal(exec, req).await
+        let result = self.authenticate_by_mapping_internal(exec, req).await;
+        if let IdentitySource::Federation { idp_id } = &req.source {
+            let outcome = if result.is_ok() {
+                crate::federation::metrics::OUTCOME_SUCCESS
+            } else {
+                crate::federation::metrics::OUTCOME_FAILURE
+            };
+            crate::federation::metrics::FEDERATION_METRICS
+                .authentications_total
+                .inc([idp_id.as_str(), outcome]);
+        }
+        result
     }
 }
 

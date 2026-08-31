@@ -217,9 +217,28 @@ pub async fn authenticate_via_wasm_plugin(
     // thread's other work to a different thread for the duration, so a slow
     // or spinning plugin invocation doesn't stall unrelated async tasks
     // sharing this runtime.
-    let raw_response = match tokio::task::block_in_place(|| {
-        registry.invoke(plugin_name, "authenticate", &input)
-    }) {
+    // ADR 0031 "Authentication": `keystone_auth_plugin_invocations_total`/
+    // `keystone_auth_plugin_duration_seconds`, timed around the actual WASM
+    // call only - `plugin_name` is already confirmed loaded/registered at
+    // this point (`registry.contains` above), so it comes from the finite,
+    // operator-configured `[auth_plugin.*]` set, never client input.
+    let invoke_start = std::time::Instant::now();
+    let invoke_result =
+        tokio::task::block_in_place(|| registry.invoke(plugin_name, "authenticate", &input));
+    crate::auth_metrics::AUTH_METRICS
+        .plugin_duration_seconds
+        .record([plugin_name], invoke_start.elapsed().as_secs_f64());
+    crate::auth_metrics::AUTH_METRICS
+        .plugin_invocations_total
+        .inc([
+            plugin_name,
+            if invoke_result.is_ok() {
+                "success"
+            } else {
+                "failure"
+            },
+        ]);
+    let raw_response = match invoke_result {
         Ok(bytes) => bytes,
         Err(e) => {
             let _ = emit_wasm_plugin_audit(
@@ -516,21 +535,38 @@ pub async fn authenticate_via_wasm_mapping_plugin(
     // See the `authenticate` dispatch's identical comment above -
     // `block_in_place` keeps a slow/spinning guest invocation from stalling
     // unrelated async work on this runtime.
-    let raw_response =
-        match tokio::task::block_in_place(|| registry.invoke(plugin_name, "mapping", &input)) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                let _ = emit_wasm_plugin_audit(
-                    state,
-                    plugin_name,
-                    "mapping",
-                    "failure",
-                    Some(e.to_string()),
-                )
-                .await;
-                return Err(WasmPluginAuthError::InvokeFailed(e.to_string()));
-            }
-        };
+    // ADR 0031 "Authentication": see the `authenticate` dispatch's identical
+    // comment above.
+    let invoke_start = std::time::Instant::now();
+    let invoke_result =
+        tokio::task::block_in_place(|| registry.invoke(plugin_name, "mapping", &input));
+    crate::auth_metrics::AUTH_METRICS
+        .plugin_duration_seconds
+        .record([plugin_name], invoke_start.elapsed().as_secs_f64());
+    crate::auth_metrics::AUTH_METRICS
+        .plugin_invocations_total
+        .inc([
+            plugin_name,
+            if invoke_result.is_ok() {
+                "success"
+            } else {
+                "failure"
+            },
+        ]);
+    let raw_response = match invoke_result {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            let _ = emit_wasm_plugin_audit(
+                state,
+                plugin_name,
+                "mapping",
+                "failure",
+                Some(e.to_string()),
+            )
+            .await;
+            return Err(WasmPluginAuthError::InvokeFailed(e.to_string()));
+        }
+    };
 
     let response = match openstack_keystone_auth_plugin_core::decode_and_validate_mapping_response(
         &raw_response,
@@ -758,22 +794,39 @@ pub async fn route_via_wasm_plugin(
     // See the `authenticate` dispatch's identical comment above -
     // `block_in_place` keeps a slow/spinning guest invocation from stalling
     // unrelated async work on this runtime.
-    let raw_response =
-        match tokio::task::block_in_place(|| registry.invoke(plugin_name, "route", &input)) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                let _ = emit_wasm_route_audit(
-                    state,
-                    plugin_name,
-                    methods,
-                    "failure",
-                    None,
-                    Some(e.to_string()),
-                )
-                .await;
-                return Err(WasmPluginAuthError::InvokeFailed(e.to_string()));
-            }
-        };
+    // ADR 0031 "Authentication": see the `authenticate` dispatch's identical
+    // comment above.
+    let invoke_start = std::time::Instant::now();
+    let invoke_result =
+        tokio::task::block_in_place(|| registry.invoke(plugin_name, "route", &input));
+    crate::auth_metrics::AUTH_METRICS
+        .plugin_duration_seconds
+        .record([plugin_name], invoke_start.elapsed().as_secs_f64());
+    crate::auth_metrics::AUTH_METRICS
+        .plugin_invocations_total
+        .inc([
+            plugin_name,
+            if invoke_result.is_ok() {
+                "success"
+            } else {
+                "failure"
+            },
+        ]);
+    let raw_response = match invoke_result {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            let _ = emit_wasm_route_audit(
+                state,
+                plugin_name,
+                methods,
+                "failure",
+                None,
+                Some(e.to_string()),
+            )
+            .await;
+            return Err(WasmPluginAuthError::InvokeFailed(e.to_string()));
+        }
+    };
 
     let response = match openstack_keystone_auth_plugin_core::decode_and_validate_route_response(
         &raw_response,

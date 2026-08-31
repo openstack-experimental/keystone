@@ -37,6 +37,9 @@ use openstack_keystone_core_types::error::KeystoneError;
 
 #[cfg(any(feature = "api", test))]
 use crate::net::resolve_client_ip_from_headers;
+#[cfg(any(feature = "api", test))]
+use crate::rate_limit_metrics::SCOPE_PER_IP;
+use crate::rate_limit_metrics::{RATE_LIMIT_METRICS, SCOPE_PER_USER};
 
 /// Allocation-free global-IP bucket key.
 ///
@@ -150,6 +153,12 @@ impl RateLimitState {
     /// operator-selected forwarding header when the TCP peer is trusted. An
     /// absent peer identifies an internal/admin interface and bypasses this
     /// public-ingress limiter.
+    ///
+    /// Records `keystone_rate_limit_evaluations_total{scope="per_ip",...}`
+    /// (and `..._rejections_total` on the `Err` branch) only when a live
+    /// limiter actually evaluates a bucket key — the disabled-limiter and
+    /// no-resolvable-client-ip bypass paths above return early without
+    /// recording, since no rate-limit evaluation actually took place there.
     #[cfg(any(feature = "api", test))]
     pub fn check_ip(
         &self,
@@ -170,10 +179,12 @@ impl RateLimitState {
         };
 
         let key = rate_limit_key_for_ip(client_ip);
-        limiter.check_key(&key).map_err(|not_until| {
+        let result = limiter.check_key(&key).map_err(|not_until| {
             let wait = not_until.wait_time_from(limiter.clock().now());
             wait.max(Duration::from_secs(1))
-        })
+        });
+        RATE_LIMIT_METRICS.record(SCOPE_PER_IP, result.is_ok());
+        result
     }
 
     /// Check the per-user authentication bucket (ADR-0022, Invariant 8).
@@ -183,16 +194,23 @@ impl RateLimitState {
     /// CPU-intensive credential verification (Invariant 4). Keying on
     /// unverified input would let an attacker mint unlimited fresh buckets
     /// from novel usernames.
+    ///
+    /// Records `keystone_rate_limit_evaluations_total{scope="per_user",...}`
+    /// (and `..._rejections_total` on the `Err` branch) only when the
+    /// limiter is enabled; see [`Self::check_ip`] for why the disabled-case
+    /// early return is not counted as an evaluation.
     pub fn check_user(&self, user_id: &str) -> Result<(), Duration> {
         let snapshot = self.snapshot.load();
         let Some(limiter) = snapshot.user_auth_limiter.as_ref() else {
             return Ok(());
         };
 
-        limiter.check_key(&user_id.to_owned()).map_err(|not_until| {
+        let result = limiter.check_key(&user_id.to_owned()).map_err(|not_until| {
             let wait = not_until.wait_time_from(limiter.clock().now());
             wait.max(Duration::from_secs(1))
-        })
+        });
+        RATE_LIMIT_METRICS.record(SCOPE_PER_USER, result.is_ok());
+        result
     }
 
     /// Return whether the global-IP limiter is active.

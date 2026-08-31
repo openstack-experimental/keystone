@@ -1295,6 +1295,21 @@ impl Storage {
         self.raft.metrics().borrow_watched().current_leader
     }
 
+    /// Renders this node's `keystone_raft_*` Prometheus metrics (ADR 0031)
+    /// in text-exposition format: reads through to the live `openraft`
+    /// metrics snapshot for the gauges (`is_leader`, `term`,
+    /// `last_log_index`, `last_applied_index`, `replication_lag`) and
+    /// includes the incrementally-recorded `apply_duration_seconds`
+    /// histogram. `borrow_watched()` is a cheap, non-blocking watch-channel
+    /// read, so this is safe to call on every `/metrics` scrape.
+    pub fn format_raft_prometheus_metrics(&self) -> String {
+        let metrics_rx = self.raft.metrics();
+        let live = metrics_rx.borrow_watched();
+        self.state_machine_store
+            .raft_prometheus_metrics()
+            .format_prometheus_text(&live, self.node_id)
+    }
+
     /// Enumerate current Raft membership peers (excluding self) from the
     /// live metrics snapshot, for the ADR 0028 §5 gossip sweep. Reuses the
     /// same membership source `Metrics`/`list_peers` already expose --

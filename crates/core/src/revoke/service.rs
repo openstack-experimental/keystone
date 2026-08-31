@@ -98,7 +98,18 @@ impl RevokeApi for RevokeService {
         ctx: &ExecutionContext<'a>,
         token: &FernetToken,
     ) -> Result<(), RevokeProviderError> {
-        self.backend_driver.revoke_token(ctx.state(), token).await
+        self.backend_driver.revoke_token(ctx.state(), token).await?;
+        // ADR 0031 "Tokens": `keystone_token_revoked_total{reason}`. This
+        // `RevokeApi::revoke_token` method (as opposed to the more general
+        // `create_revocation_event`) has exactly one caller across the
+        // workspace - `DELETE /v3/auth/tokens`
+        // (`crates/keystone/src/api/v3/auth/token/delete.rs`), the token
+        // owner (or an admin) explicitly revoking one specific token -
+        // hence the fixed `"user_request"` reason here.
+        crate::token::TOKEN_METRICS
+            .revoked_total
+            .inc(["user_request"]);
+        Ok(())
     }
 }
 

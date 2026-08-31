@@ -409,6 +409,12 @@ pub struct FjallStateMachine {
     /// silently land in an already-deregistered, soon-to-be-discarded
     /// partition — applied per Raft, invisible to every future read.
     keyspace_lifecycle: Arc<RwLock<()>>,
+    /// ADR 0031 Raft Prometheus metrics. Owned here (rather than only on
+    /// `app::Storage`) because `apply_duration_seconds` must be recorded at
+    /// the actual per-entry apply call site below; `app::Storage` reaches
+    /// the same instance via `raft_prometheus_metrics()` to also render the
+    /// `openraft`-snapshot-derived gauges for `/metrics`.
+    raft_prometheus_metrics: Arc<crate::prometheus_metrics::KeystoneRaftPrometheusMetrics>,
 }
 
 impl FjallStateMachine {
@@ -464,7 +470,19 @@ impl FjallStateMachine {
             quarantine,
             pending_rotations,
             keyspace_lifecycle: Arc::new(RwLock::new(())),
+            raft_prometheus_metrics: Arc::new(
+                crate::prometheus_metrics::KeystoneRaftPrometheusMetrics::new(),
+            ),
         })
+    }
+
+    /// This node's ADR 0031 Raft Prometheus metrics. Shared (via `Arc`)
+    /// with `app::Storage`, which reads it to render `/metrics` output
+    /// alongside a fresh `openraft::RaftMetrics` snapshot.
+    pub fn raft_prometheus_metrics(
+        &self,
+    ) -> &Arc<crate::prometheus_metrics::KeystoneRaftPrometheusMetrics> {
+        &self.raft_prometheus_metrics
     }
 
     /// Get the database handle.
@@ -1384,6 +1402,12 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
         let mut entries = entries;
 
         while let Some((entry, responder)) = entries.try_next().await? {
+            // ADR 0031 `keystone_raft_apply_duration_seconds`: measures one
+            // committed log entry's full apply — write/encrypt, commit, and
+            // the fsync-equivalent `persist(SyncAll)` below — a real
+            // per-operation latency, unlike the read-through snapshot gauges
+            // in `prometheus_metrics`.
+            let apply_start = Instant::now();
             // Held for this entry's whole processing+commit (there is no
             // further `.await` in this loop body until the next iteration),
             // so a concurrent `drop_keyspace` can't observe a keyspace as
@@ -1976,6 +2000,10 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
             self.db
                 .persist(PersistMode::SyncAll)
                 .map_err(|e| io::Error::other(e.to_string()))?;
+
+            self.raft_prometheus_metrics
+                .apply_duration_seconds
+                .record(apply_start.elapsed().as_secs_f64());
 
             if let Some(responder) = responder {
                 responder.send(crate::ZeroizingResponse {

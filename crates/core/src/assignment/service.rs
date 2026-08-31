@@ -308,6 +308,9 @@ impl AssignmentApi for AssignmentService {
             .get_revoke_provider()
             .create_revocation_event(ctx, revocation_event)
             .await?;
+        // ADR 0031 "Tokens": revoking a grant cascades revocation of every
+        // token carrying that role - `"cascade"`, not a direct user request.
+        crate::token::TOKEN_METRICS.revoked_total.inc(["cascade"]);
 
         Ok(())
     }

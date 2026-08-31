@@ -226,11 +226,40 @@ impl TokenService {
 
     /// Validate the token and produce a [`ValidatedSecurityContext`].
     ///
-    /// Decodes the fernet token, checks expiration, expands the resource data ,
+    /// Thin wrapper around [`Self::validate_to_context_inner`] recording
+    /// `keystone_token_validated_total{driver,outcome}` and
+    /// `keystone_token_validation_duration_seconds{driver}` (ADR 0031
+    /// "Tokens") around every call, regardless of which `TokenApi` method
+    /// (`authorize_by_token`/`validate_to_context`) reached it — both route
+    /// through here, so instrumenting this single spot avoids double
+    /// counting.
+    async fn validate_to_context_impl(
+        &self,
+        ctx: &ExecutionContext<'_>,
+        credential: &str,
+        allow_expired: Option<bool>,
+        window_seconds: Option<i64>,
+    ) -> Result<ValidatedSecurityContext, TokenProviderError> {
+        let driver = self.config.token.provider.to_string();
+        let start = std::time::Instant::now();
+        let result = self
+            .validate_to_context_inner(ctx, credential, allow_expired, window_seconds)
+            .await;
+        let outcome = if result.is_ok() { "success" } else { "failure" };
+        crate::token::TOKEN_METRICS
+            .validated_total
+            .inc([&driver, outcome]);
+        crate::token::TOKEN_METRICS
+            .validation_duration_seconds
+            .record([&driver], start.elapsed().as_secs_f64());
+        result
+    }
+
+    /// Decodes the fernet token, checks expiration, expands the resource data,
     /// checks for revocation, builds a [`SecurityContext`] from the token
     /// data, validates the context, resolves effective roles, and
     /// returns the locked context.
-    async fn validate_to_context_impl(
+    async fn validate_to_context_inner(
         &self,
         ctx: &ExecutionContext<'_>,
         credential: &str,
@@ -481,6 +510,20 @@ impl TokenApi for TokenService {
             FernetToken::from_security_context(&sc, self.get_new_token_expiry(&ctx.expires_at())?)?;
         sc.set_token(token);
         let vsc = ValidatedSecurityContext::new_for_scope(sc, scope.clone(), state).await?;
+
+        // ADR 0031 "Tokens": `keystone_token_issued_total{driver,method}`.
+        // Only recorded when the authentication context maps to one of the
+        // fixed ADR 0031 method values (`issue_method_label`) - e.g. a Trust
+        // or Mapping-derived issuance is silently skipped rather than
+        // inventing an off-catalog label value.
+        if let Some(method) =
+            crate::token::metrics::issue_method_label(ctx.authentication_context())
+        {
+            crate::token::TOKEN_METRICS
+                .issued_total
+                .inc([&self.config.token.provider.to_string(), method]);
+        }
+
         Ok(vsc)
     }
 

@@ -113,37 +113,54 @@ impl PolicyEnforcer for HttpPolicyEnforcer {
         existing: Option<Value>,
     ) -> Result<PolicyEvaluationResult, PolicyError> {
         let start = SystemTime::now();
-        // Convert SecurityContext into Credentials object that is passed to OPA
-        let creds: Credentials = credentials.try_into()?;
-        let input = json!({
-            "credentials": creds,
-            "target": target,
-            "existing": existing.unwrap_or(Value::Null),
-        });
         let span = tracing::Span::current();
 
-        debug!("checking policy decision with OPA using http");
-        let url = self.base_url.join(policy_name.as_ref())?;
-        let res: PolicyEvaluationResult = self
-            .http_client
-            .post(url)
-            .json(&json!({"input": input}))
-            .send()
-            .await
-            .map_err(|e| PolicyError::IO(std::io::Error::other(e)))?
-            .json::<OpaResponse>()
-            .await
-            .map_err(|e| PolicyError::IO(std::io::Error::other(e)))?
-            .result;
+        // The whole decision is computed in one block so a single
+        // instrumentation point (below) can observe every exit path --
+        // including the pre-flight `Credentials` conversion, which can fail
+        // (e.g. `PolicyError::ScopeDrift`) before an OPA round-trip is even
+        // attempted -- not just the success path.
+        let result: Result<PolicyEvaluationResult, PolicyError> = async {
+            // Convert SecurityContext into Credentials object that is passed to OPA
+            let creds: Credentials = credentials.try_into()?;
+            let input = json!({
+                "credentials": creds,
+                "target": target,
+                "existing": existing.unwrap_or(Value::Null),
+            });
+
+            debug!("checking policy decision with OPA using http");
+            let url = self.base_url.join(policy_name.as_ref())?;
+            let res: PolicyEvaluationResult = self
+                .http_client
+                .post(url)
+                .json(&json!({"input": input}))
+                .send()
+                .await
+                .map_err(|e| PolicyError::IO(std::io::Error::other(e)))?
+                .json::<OpaResponse>()
+                .await
+                .map_err(|e| PolicyError::IO(std::io::Error::other(e)))?
+                .result;
+
+            span.record("result", serde_json::to_string(&res)?);
+            debug!("authorized={}", res.allow());
+            if !res.allow() {
+                return Err(PolicyError::Forbidden(res));
+            }
+            Ok(res)
+        }
+        .await;
 
         let elapsed = SystemTime::now().duration_since(start).unwrap_or_default();
-        span.record("result", serde_json::to_string(&res)?);
         span.record("duration_ms", elapsed.as_millis());
-        debug!("authorized={}", res.allow());
-        if !res.allow() {
-            return Err(PolicyError::Forbidden(res));
-        }
-        Ok(res)
+
+        // ADR 0031 "Policy (OPA)" metrics -- `transport = "http"` for this
+        // enforcer. See `openstack_keystone_core::policy_metrics` for the
+        // allow/deny/error outcome mapping.
+        openstack_keystone_core::policy_metrics::record_decision("http", &result, elapsed);
+
+        result
     }
 
     /// Performs a health check on the OPA server.

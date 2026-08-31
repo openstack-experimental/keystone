@@ -64,10 +64,65 @@ where
     #[tracing::instrument(skip(state), err)]
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let state = ServiceState::from_ref(state);
-        let (_domain_id, resource) = resolve_verified_api_client(parts, &state).await?;
+        // ADR 0031 "Authentication": `method = "api_key"`, timed/recorded
+        // around the whole extractor (format check, rate limiting, DB
+        // lookup, IP allowlist, Argon2id verification, ephemeral-context
+        // hydration) since API-Key authentication has no separate
+        // "validate an existing token" phase the way `method = "token"`
+        // does.
+        let start = std::time::Instant::now();
+        let result: Result<Self, KeystoneApiError> = async {
+            let (_domain_id, resource) = resolve_verified_api_client(parts, &state).await?;
+            // Step 4: ephemeral context hydration (anti-bleed scoping).
+            hydrate_ephemeral_context(&state, &resource).await
+        }
+        .await;
+        let reason = result.as_ref().err().map(api_key_failure_reason);
+        crate::auth_metrics::AUTH_METRICS.record_attempt(
+            "api_key",
+            start.elapsed().as_secs_f64(),
+            reason,
+        );
+        result
+    }
+}
 
-        // Step 4: ephemeral context hydration (anti-bleed scoping).
-        hydrate_ephemeral_context(&state, &resource).await
+/// Maps a [`KeystoneApiError`] to a bounded, PII-free reason string for
+/// `keystone_auth_failures_total{method="api_key",reason}`.
+///
+/// Mirrors the variant-name style (and, for every shared variant, the exact
+/// string) of `error_variant_name` (`crates/keystone/src/audit.rs`) — kept
+/// as an independent copy rather than a shared call because
+/// `openstack-keystone-core` cannot depend on the `keystone` binary crate
+/// (the dependency edge runs the other way). If `KeystoneApiError` gains a
+/// variant, update both match statements.
+fn api_key_failure_reason(error: &KeystoneApiError) -> &'static str {
+    match error {
+        KeystoneApiError::Unauthorized { source, .. }
+        | KeystoneApiError::Forbidden { source, .. } => source
+            .downcast_ref::<AuthenticationError>()
+            .map(crate::auth_metrics::auth_failure_reason)
+            .unwrap_or("Unauthorized"),
+        KeystoneApiError::UnauthorizedNoContext => "Unauthorized",
+        KeystoneApiError::NotFound { .. } => "NotFound",
+        KeystoneApiError::Conflict(_) => "Conflict",
+        KeystoneApiError::BadRequest(_) => "BadRequest",
+        KeystoneApiError::InvalidToken => "InvalidToken",
+        KeystoneApiError::InvalidHeader => "InvalidHeader",
+        KeystoneApiError::InternalError(_) => "InternalServerError",
+        KeystoneApiError::AuthMethodNotSupported => "AuthMethodNotSupported",
+        KeystoneApiError::AuthenticationRescopeForbidden => "AuthenticationRescopeForbidden",
+        KeystoneApiError::SelectedAuthenticationForbidden => "SelectedAuthenticationForbidden",
+        KeystoneApiError::SubjectTokenMissing => "SubjectTokenMissing",
+        KeystoneApiError::DomainIdOrName => "BadRequest",
+        KeystoneApiError::ProjectIdOrName => "BadRequest",
+        KeystoneApiError::ProjectDomain => "BadRequest",
+        KeystoneApiError::Base64Decode(_) => "BadRequest",
+        KeystoneApiError::Serde { .. } => "BadRequest",
+        KeystoneApiError::Other(_) => "InternalServerError",
+        KeystoneApiError::UnprocessableEntity(_) => "UnprocessableEntity",
+        KeystoneApiError::NotImplemented(_) => "NotImplemented",
+        KeystoneApiError::TooManyRequests { .. } => "TooManyRequests",
     }
 }
 

@@ -106,6 +106,11 @@ pub(super) async fn delete(
             },
         )
         .await?;
+    // ADR 0031 "Tokens": SCIM-deprovisioning a user cascades revocation of
+    // their live sessions - `"cascade"`, not a direct user request.
+    openstack_keystone_core::token::TOKEN_METRICS
+        .revoked_total
+        .inc(["cascade"]);
 
     // §6.A step 4: emit a CADF `disable` event. `update_user` above already
     // audited an `Update`; this is an additional, ADR-mandated `Disable`

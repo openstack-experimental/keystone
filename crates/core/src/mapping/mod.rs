@@ -19,6 +19,7 @@ pub mod error;
 pub mod hmac;
 pub mod hook;
 mod interpolation;
+pub mod metrics;
 mod provider_api;
 pub mod service;
 mod validation;

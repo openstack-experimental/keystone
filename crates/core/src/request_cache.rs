@@ -29,6 +29,61 @@ use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::future::Future;
+use std::sync::LazyLock;
+
+use openstack_keystone_metrics::{LabeledCounter, PrometheusText, write_metric_header};
+
+/// Per-request-cache Prometheus counters (ADR 0031).
+///
+/// `cache` is the fixed, code-defined set of `tokio::task_local!` caches
+/// ADR 0030 introduces (e.g. `role_assignments`, `catalog_endpoints`) — the
+/// `&'static str` namespace passed to [`cache_get`]/[`cache_set`], never
+/// per-request data. These counters are process-wide, aggregating hit/miss
+/// events across every request's short-lived [`RequestCache`], which is
+/// intentional: the cache itself stays request-scoped, only the counters
+/// summarizing its effectiveness are global.
+pub struct CacheMetrics {
+    /// `keystone_cache_hits_total{cache}`.
+    pub hits_total: LabeledCounter<1>,
+    /// `keystone_cache_misses_total{cache}`.
+    pub misses_total: LabeledCounter<1>,
+}
+
+impl Default for CacheMetrics {
+    fn default() -> Self {
+        Self {
+            hits_total: LabeledCounter::new(["cache"]),
+            misses_total: LabeledCounter::new(["cache"]),
+        }
+    }
+}
+
+impl PrometheusText for CacheMetrics {
+    fn format_prometheus_text(&self) -> String {
+        let mut out = String::new();
+        write_metric_header(
+            &mut out,
+            "keystone_cache_hits_total",
+            "Per-request cache hits by cache namespace.",
+            "counter",
+        );
+        self.hits_total
+            .write_lines(&mut out, "keystone_cache_hits_total");
+
+        write_metric_header(
+            &mut out,
+            "keystone_cache_misses_total",
+            "Per-request cache misses by cache namespace.",
+            "counter",
+        );
+        self.misses_total
+            .write_lines(&mut out, "keystone_cache_misses_total");
+        out
+    }
+}
+
+/// Process-wide per-request cache hit/miss metrics.
+pub static CACHE_METRICS: LazyLock<CacheMetrics> = LazyLock::new(CacheMetrics::default);
 
 tokio::task_local! {
     /// Per-request cache. Established once per incoming request; absent
@@ -80,12 +135,20 @@ impl RequestCache {
 /// Reads `id` from the current request's cache under `namespace`.
 ///
 /// Returns `None` both on a cache miss and when called outside an
-/// established request scope.
+/// established request scope. Either case increments
+/// `keystone_cache_misses_total{cache=namespace}`; a found entry increments
+/// `keystone_cache_hits_total{cache=namespace}` instead (ADR 0031).
 pub fn cache_get<T: Clone + 'static>(namespace: &'static str, id: &str) -> Option<T> {
-    REQUEST_CACHE
+    let result = REQUEST_CACHE
         .try_with(|cache| cache.get(namespace, id))
         .ok()
-        .flatten()
+        .flatten();
+    if result.is_some() {
+        CACHE_METRICS.hits_total.inc([namespace]);
+    } else {
+        CACHE_METRICS.misses_total.inc([namespace]);
+    }
+    result
 }
 
 /// Writes `value` into the current request's cache under `namespace`/`id`.
@@ -167,6 +230,77 @@ mod tests {
     #[tokio::test]
     async fn test_remove_outside_scope_is_noop() {
         cache_remove("ns", "k");
+    }
+
+    // -------------------------------------------------------------------
+    // Cache hit/miss metrics (ADR 0031). `CACHE_METRICS` is a process-wide
+    // static shared across every test in this binary, so each test below
+    // uses its own unique namespace to keep assertions independent of
+    // execution order/parallelism.
+    // -------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_cache_get_miss_increments_miss_counter() {
+        let before = CACHE_METRICS.misses_total.get(["metrics_ns_miss"]);
+        RequestCache::scope(async {
+            assert_eq!(cache_get::<String>("metrics_ns_miss", "k"), None);
+        })
+        .await;
+        assert_eq!(
+            CACHE_METRICS.misses_total.get(["metrics_ns_miss"]),
+            before + 1
+        );
+        assert_eq!(CACHE_METRICS.hits_total.get(["metrics_ns_miss"]), 0);
+    }
+
+    #[tokio::test]
+    async fn test_cache_get_hit_increments_hit_counter() {
+        let before = CACHE_METRICS.hits_total.get(["metrics_ns_hit"]);
+        RequestCache::scope(async {
+            cache_set("metrics_ns_hit", "k", "value".to_string());
+            assert_eq!(
+                cache_get::<String>("metrics_ns_hit", "k"),
+                Some("value".to_string())
+            );
+        })
+        .await;
+        assert_eq!(CACHE_METRICS.hits_total.get(["metrics_ns_hit"]), before + 1);
+    }
+
+    #[tokio::test]
+    async fn test_cache_get_outside_scope_counts_as_miss() {
+        let before = CACHE_METRICS.misses_total.get(["metrics_ns_outside"]);
+        assert_eq!(cache_get::<String>("metrics_ns_outside", "k"), None);
+        assert_eq!(
+            CACHE_METRICS.misses_total.get(["metrics_ns_outside"]),
+            before + 1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cache_metrics_isolated_per_namespace() {
+        RequestCache::scope(async {
+            cache_set("metrics_ns_a", "k", 1u64);
+            let _ = cache_get::<u64>("metrics_ns_a", "k");
+            let _ = cache_get::<u64>("metrics_ns_b", "k");
+        })
+        .await;
+        assert!(CACHE_METRICS.hits_total.get(["metrics_ns_a"]) >= 1);
+        assert!(CACHE_METRICS.misses_total.get(["metrics_ns_b"]) >= 1);
+        assert_eq!(CACHE_METRICS.hits_total.get(["metrics_ns_b"]), 0);
+    }
+
+    #[test]
+    fn test_cache_metrics_prometheus_text_contains_headers() {
+        CACHE_METRICS.hits_total.inc(["metrics_ns_text"]);
+        CACHE_METRICS.misses_total.inc(["metrics_ns_text"]);
+        let text = CACHE_METRICS.format_prometheus_text();
+        assert!(text.contains("# HELP keystone_cache_hits_total"));
+        assert!(text.contains("# TYPE keystone_cache_hits_total counter"));
+        assert!(text.contains("# HELP keystone_cache_misses_total"));
+        assert!(text.contains("# TYPE keystone_cache_misses_total counter"));
+        assert!(text.contains("keystone_cache_hits_total{cache=\"metrics_ns_text\"}"));
+        assert!(text.contains("keystone_cache_misses_total{cache=\"metrics_ns_text\"}"));
     }
 
     #[tokio::test]

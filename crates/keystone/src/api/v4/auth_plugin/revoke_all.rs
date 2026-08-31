@@ -139,6 +139,11 @@ pub(crate) async fn revoke_all(
                 },
             )
             .await?;
+        // ADR 0031 "Tokens": bulk revocation triggered by one system-admin
+        // call (ADR 0025 §4 "Bulk Revocation on Plugin Compromise").
+        openstack_keystone_core::token::TOKEN_METRICS
+            .revoked_total
+            .inc(["admin"]);
     }
 
     // Delete every remaining identity-link entry for the plugin - the batched

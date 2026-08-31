@@ -36,6 +36,7 @@ pub mod local_emergency;
 pub mod mock;
 pub mod network;
 pub mod preflight;
+pub mod prometheus_metrics;
 mod proto_impl;
 mod types;
 pub mod store {

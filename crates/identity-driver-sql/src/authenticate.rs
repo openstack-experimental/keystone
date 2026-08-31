@@ -99,6 +99,13 @@ pub async fn authenticate_by_password(
         .is_some_and(|val| val)
         && should_lock(config, db, &local_user_entry).await?
     {
+        // ADR 0031 "Authentication": `keystone_auth_lockouts_total`, the
+        // PCI-DSS account-lockout counter (ADR 0010). No labels - the user
+        // identifier stays out of the metric surface, same as everywhere
+        // else in this module's audit trail.
+        openstack_keystone_core::auth_metrics::AUTH_METRICS
+            .lockouts_total
+            .inc();
         return Err(AuthenticationError::UserLocked(local_user_entry.user_id.clone()).into());
     }
 

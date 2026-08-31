@@ -24,11 +24,13 @@ pub use openstack_keystone_core_types::token::*;
 pub mod backend;
 pub mod error;
 pub mod hook;
+pub mod metrics;
 mod provider_api;
 pub mod service;
 
 pub use error::TokenProviderError;
 pub use hook::TokenHook;
+pub use metrics::TOKEN_METRICS;
 pub use provider_api::TokenApi;
 pub use service::TokenService;
 

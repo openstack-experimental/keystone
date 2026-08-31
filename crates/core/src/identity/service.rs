@@ -85,6 +85,80 @@ impl IdentityService {
             user_id_domain_id_cache: HashMap::new().into(),
         }
     }
+
+    /// The actual password-authentication implementation, split out of the
+    /// `IdentityApi::authenticate_by_password` trait method so the latter
+    /// can wrap it with `keystone_auth_attempts_total`/
+    /// `keystone_auth_duration_seconds`/`keystone_auth_failures_total`
+    /// (ADR 0031 "Authentication", `method = "password"`) around every
+    /// return path (including the early `UserIdOrNameWithDomain`/rate-limit
+    /// returns) without duplicating the timing/recording logic at each one.
+    async fn authenticate_by_password_inner<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        auth: &UserPasswordAuthRequest,
+    ) -> Result<AuthenticationResult, IdentityProviderError> {
+        let state = ctx.state();
+        let mut auth = auth.clone();
+        if auth.id.is_none() {
+            if auth.name.is_none() {
+                return Err(IdentityProviderError::UserIdOrNameWithDomain);
+            }
+
+            if let Some(ref mut domain) = auth.domain {
+                if let Some(dname) = &domain.name {
+                    let d = state
+                        .provider
+                        .get_resource_provider()
+                        .find_domain_by_name(ctx, dname)
+                        .await?
+                        .ok_or(ResourceProviderError::DomainNotFound(dname.clone()))?;
+                    domain.id = Some(d.id);
+                } else if domain.id.is_none() {
+                    return Err(IdentityProviderError::UserIdOrNameWithDomain);
+                }
+            } else {
+                return Err(IdentityProviderError::UserIdOrNameWithDomain);
+            }
+        }
+
+        // Per-user rate limit (ADR-0022): when the bucket is enabled, resolve
+        // the caller-supplied reference to the canonical user ID with a cheap
+        // existence probe and key the limiter on that ID, before the backend
+        // performs any password verification (Invariants 4 and 8). The
+        // throttle lives here at the provider level so every backend driver
+        // shares a single implementation.
+        if state.rate_limiters.user_auth_enabled() {
+            match self
+                .backend_driver
+                .check_user_exist(
+                    state,
+                    auth.id.as_deref(),
+                    auth.name.as_deref(),
+                    auth.domain.as_ref().and_then(|d| d.id.as_deref()),
+                )
+                .await
+            {
+                Ok(user_id) => {
+                    if let Err(retry_after) = state.rate_limiters.check_user(&user_id) {
+                        return Err(IdentityProviderError::TooManyRequests {
+                            retry_after_secs: retry_after.as_secs(),
+                        });
+                    }
+                }
+                // Unknown users never touch the limiter store (Invariant 8):
+                // fall through to the backend, which burns a dummy hash and
+                // returns the uniform credentials error, preserving the
+                // timing parity of the "user not found" path.
+                Err(IdentityProviderError::UserNotFound(_)) => {}
+                Err(other) => return Err(other),
+            }
+        }
+
+        self.backend_driver
+            .authenticate_by_password(state, &auth)
+            .await
+    }
 }
 
 #[async_trait]
@@ -329,66 +403,18 @@ impl IdentityApi for IdentityService {
         ctx: &ExecutionContext<'a>,
         auth: &UserPasswordAuthRequest,
     ) -> Result<AuthenticationResult, IdentityProviderError> {
-        let state = ctx.state();
-        let mut auth = auth.clone();
-        if auth.id.is_none() {
-            if auth.name.is_none() {
-                return Err(IdentityProviderError::UserIdOrNameWithDomain);
-            }
-
-            if let Some(ref mut domain) = auth.domain {
-                if let Some(dname) = &domain.name {
-                    let d = state
-                        .provider
-                        .get_resource_provider()
-                        .find_domain_by_name(ctx, dname)
-                        .await?
-                        .ok_or(ResourceProviderError::DomainNotFound(dname.clone()))?;
-                    domain.id = Some(d.id);
-                } else if domain.id.is_none() {
-                    return Err(IdentityProviderError::UserIdOrNameWithDomain);
-                }
-            } else {
-                return Err(IdentityProviderError::UserIdOrNameWithDomain);
-            }
-        }
-
-        // Per-user rate limit (ADR-0022): when the bucket is enabled, resolve
-        // the caller-supplied reference to the canonical user ID with a cheap
-        // existence probe and key the limiter on that ID, before the backend
-        // performs any password verification (Invariants 4 and 8). The
-        // throttle lives here at the provider level so every backend driver
-        // shares a single implementation.
-        if state.rate_limiters.user_auth_enabled() {
-            match self
-                .backend_driver
-                .check_user_exist(
-                    state,
-                    auth.id.as_deref(),
-                    auth.name.as_deref(),
-                    auth.domain.as_ref().and_then(|d| d.id.as_deref()),
-                )
-                .await
-            {
-                Ok(user_id) => {
-                    if let Err(retry_after) = state.rate_limiters.check_user(&user_id) {
-                        return Err(IdentityProviderError::TooManyRequests {
-                            retry_after_secs: retry_after.as_secs(),
-                        });
-                    }
-                }
-                // Unknown users never touch the limiter store (Invariant 8):
-                // fall through to the backend, which burns a dummy hash and
-                // returns the uniform credentials error, preserving the
-                // timing parity of the "user not found" path.
-                Err(IdentityProviderError::UserNotFound(_)) => {}
-                Err(other) => return Err(other),
-            }
-        }
-
-        self.backend_driver
-            .authenticate_by_password(state, &auth)
-            .await
+        let start = std::time::Instant::now();
+        let result = self.authenticate_by_password_inner(ctx, auth).await;
+        let reason = result
+            .as_ref()
+            .err()
+            .map(crate::auth_metrics::identity_failure_reason);
+        crate::auth_metrics::AUTH_METRICS.record_attempt(
+            "password",
+            start.elapsed().as_secs_f64(),
+            reason,
+        );
+        result
     }
 
     /// Authenticate user with a TOTP passcode (ADR 0019 §3).
@@ -686,7 +712,7 @@ impl IdentityApi for IdentityService {
         user_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
         if let Some(vsc) = ctx.ctx() {
-            // Audited delete – fail‑closed on pre‑audit failure.
+            // Audited delete – fail‐closed on pre‐audit failure.
             crate::audited_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
