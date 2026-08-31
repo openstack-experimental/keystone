@@ -77,7 +77,7 @@ ignore = [
     "RUSTSEC-2026-0247",
     "RUSTSEC-2026-0250",
     "RUSTSEC-2026-0251",
-    { id = "RUSTSEC-2026-0255", reason = "waiting for deps"}
+    { id = "RUSTSEC-2026-0269", reason = "waiting for deps"}
     #{ id = "RUSTSEC-0000-0000", reason = "you can specify a reason the advisory is ignored" },
     #"a-crate-that-is-yanked@0.1.1", # you can also ignore yanked crate versions if you wish
     #{ crate = "a-crate-that-is-yanked@0.1.1", reason = "you can specify why you are ignoring the yanked crate" },
