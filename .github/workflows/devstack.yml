@@ -41,6 +41,7 @@ jobs:
               - 'crates/**'
               - 'policy/**'
               - 'devstack/**'
+              - 'tools/devstack-plugin-spire/**'
 
   build:
     needs: changes
@@ -138,6 +139,24 @@ jobs:
       - name: Clone devstack
         run: git clone https://opendev.org/openstack/devstack /opt/stack/devstack
 
+      - name: Package SPIRE plugin as a standalone devstack plugin repo
+        # devstack's enable_plugin only supports whole-repo plugins: it
+        # clones the given repo to /opt/stack/<name> and looks for the
+        # plugin under <clone>/devstack/ - there is no subdirectory support
+        # and extra arguments are silently ignored. Pointing it at this
+        # repo would clone the whole keystone tree and run the key-rs
+        # plugin that lives at its devstack/ dir instead of the SPIRE one,
+        # so the spire plugin is repackaged as its own tiny git repo with
+        # the standard <repo>/devstack/ layout.
+        run: |
+          sudo mkdir -p /opt/spire-plugin/devstack
+          sudo cp -rT tools/devstack-plugin-spire /opt/spire-plugin/devstack
+          sudo git -C /opt/spire-plugin init -q -b main
+          sudo git -C /opt/spire-plugin add -A
+          sudo git -C /opt/spire-plugin \
+            -c user.name=ci -c user.email=ci@localhost \
+            commit -qm "SPIRE devstack plugin"
+
       - name: Write local.conf
         run: |
           cat <<EOF > /opt/stack/devstack/local.conf
@@ -154,8 +173,17 @@ jobs:
           enable_service key
           enable_service key-rs
           enable_service tempest
+          enable_service spire
 
+          # spire is listed before key-rs: no ordering dependency yet in
+          # Phase 1, but Phase 3 (keystone-rs's internal SPIFFE mTLS
+          # listener) will need SPIRE's trust bundle available before
+          # key-rs starts, and devstack processes enable_plugin lines in
+          # the order they're listed here.
+          enable_plugin spire file:///opt/spire-plugin main
           enable_plugin key-rs file://${{ github.workspace }} ${{ env.KEYSTONE_RS_GIT_REF }}
+
+          SPIRE_TRUST_DOMAIN=cloud.trust.domain
 
           KEYSTONE_RS_BIN_DIR=${{ github.workspace }}/bin
 
@@ -180,6 +208,26 @@ jobs:
         run: |
           source /opt/stack/devstack/openrc admin admin
           openstack token issue
+
+      - name: Verify SPIRE server and agent are healthy
+        # $USER is the devstack user (STACK_USER): it owns the sockets the
+        # run_process units created, so no sudo hop is needed. On the
+        # GitHub runner that's "runner", not the "stack" user traditional
+        # devstack docs assume.
+        run: |
+          /usr/local/bin/spire-server healthcheck -socketPath /opt/stack/data/spire/server.sock
+          /usr/local/bin/spire-agent healthcheck -socketPath /opt/stack/data/spire/agent.sock
+
+      - name: Verify pre-registered SPIRE entries exist
+        run: |
+          /usr/local/bin/spire-server entry show -socketPath /opt/stack/data/spire/server.sock | tee /tmp/spire-entries.txt
+          grep -q "service/keystone" /tmp/spire-entries.txt
+          grep -q "service/nova-api" /tmp/spire-entries.txt
+          grep -q "service/neutron" /tmp/spire-entries.txt
+          grep -q "service/nova-compute/host/" /tmp/spire-entries.txt
+
+      - name: Verify SPIRE CA bundle was exported
+        run: test -s /etc/keystone/spiffe/ca.crt
 
       - name: Run tempest identity tests
         # Best-effort signal only: rust Keystone doesn't yet implement the
@@ -222,6 +270,14 @@ jobs:
       - name: Dump OPA service log
         if: failure()
         run: sudo journalctl -u devstack@key-rs-opa --no-pager || true
+
+      - name: Dump SPIRE server log
+        if: failure()
+        run: sudo journalctl -u devstack@spire-server --no-pager || true
+
+      - name: Dump SPIRE agent log
+        if: failure()
+        run: sudo journalctl -u devstack@spire-agent --no-pager || true
 
       - name: Dump Apache error log
         if: failure()

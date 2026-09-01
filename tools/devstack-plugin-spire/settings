@@ -1,0 +1,6 @@
+# Service group declaration for the SPIRE devstack plugin.
+# Enabled independently of "key-rs" so operators can opt in via
+# `enable_service spire` in local.conf. One toggle drives both the
+# spire-server and spire-agent run_process units (see lib/spire).
+
+enable_service spire
