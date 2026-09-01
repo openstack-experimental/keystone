@@ -85,6 +85,8 @@ pub mod catalog;
 pub mod common;
 pub mod config;
 pub mod credential;
+pub mod db_reload;
+pub mod db_spiffe;
 pub mod error;
 pub mod federation;
 pub mod identity;

@@ -75,6 +75,7 @@ openstack-keystone-token-driver-jws.workspace = true
 openstack-keystone-token-restriction-driver-sql.workspace = true
 openstack-keystone-trust-driver-sql.workspace = true
 openstack-keystone-webauthn.workspace = true
+pem = "4"
 rand.workspace = true
 reqwest = { workspace = true, features = ["json", "form", "http2", "gzip", "deflate"] }
 sha2.workspace = true

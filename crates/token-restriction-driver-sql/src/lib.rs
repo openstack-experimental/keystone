@@ -77,7 +77,7 @@ impl TokenRestrictionBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<Option<TokenRestriction>, TokenProviderError> {
-        get::get(&state.db, id).await
+        get::get(&state.db.connection(), id).await
     }
 
     /// Create new token restriction.
@@ -93,7 +93,7 @@ impl TokenRestrictionBackend for SqlBackend {
         state: &ServiceState,
         restriction: TokenRestrictionCreate,
     ) -> Result<TokenRestriction, TokenProviderError> {
-        create::create(&state.db, restriction).await
+        create::create(&state.db.connection(), restriction).await
     }
 
     /// List token restrictions.
@@ -109,7 +109,7 @@ impl TokenRestrictionBackend for SqlBackend {
         state: &ServiceState,
         params: &TokenRestrictionListParameters,
     ) -> Result<Vec<TokenRestriction>, TokenProviderError> {
-        list::list(&state.db, params).await
+        list::list(&state.db.connection(), params).await
     }
 
     /// Update token restriction by the ID.
@@ -127,7 +127,7 @@ impl TokenRestrictionBackend for SqlBackend {
         id: &'a str,
         restriction: TokenRestrictionUpdate,
     ) -> Result<TokenRestriction, TokenProviderError> {
-        update::update(&state.db, id, restriction).await
+        update::update(&state.db.connection(), id, restriction).await
     }
 
     /// Delete token restriction by the ID.
@@ -143,7 +143,7 @@ impl TokenRestrictionBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), TokenProviderError> {
-        delete::delete(&state.db, id).await
+        delete::delete(&state.db.connection(), id).await
     }
 }
 

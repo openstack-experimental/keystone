@@ -73,7 +73,7 @@ impl ApplicationCredentialBackend for SqlBackend {
         state: &ServiceState,
         rule: AccessRuleCreate,
     ) -> Result<AccessRule, ApplicationCredentialProviderError> {
-        application_credential::access_rule::create(&state.db, rule).await
+        application_credential::access_rule::create(&state.db.connection(), rule).await
     }
 
     /// Create a new application credential.
@@ -91,7 +91,7 @@ impl ApplicationCredentialBackend for SqlBackend {
         rec: ApplicationCredentialCreate,
     ) -> Result<ApplicationCredentialCreateResponse, ApplicationCredentialProviderError> {
         let config = state.config_manager.config.read().await;
-        Ok(application_credential::create(&config, &state.db, rec).await?)
+        Ok(application_credential::create(&config, &state.db.connection(), rec).await?)
     }
 
     /// Delete a user's access rule by its ID.
@@ -109,7 +109,7 @@ impl ApplicationCredentialBackend for SqlBackend {
         user_id: &'a str,
         id: &'a str,
     ) -> Result<(), ApplicationCredentialProviderError> {
-        application_credential::access_rule::delete(&state.db, user_id, id).await
+        application_credential::access_rule::delete(&state.db.connection(), user_id, id).await
     }
 
     /// Delete an application credential by ID.
@@ -126,7 +126,7 @@ impl ApplicationCredentialBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), ApplicationCredentialProviderError> {
-        application_credential::delete(&state.db, id).await
+        application_credential::delete(&state.db.connection(), id).await
     }
     /// Get a user's access rule by its ID.
     ///
@@ -144,7 +144,7 @@ impl ApplicationCredentialBackend for SqlBackend {
         user_id: &'a str,
         id: &'a str,
     ) -> Result<Option<AccessRule>, ApplicationCredentialProviderError> {
-        application_credential::access_rule::get(&state.db, user_id, id).await
+        application_credential::access_rule::get(&state.db.connection(), user_id, id).await
     }
 
     /// Get a single application credential by ID.
@@ -161,7 +161,7 @@ impl ApplicationCredentialBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<Option<ApplicationCredential>, ApplicationCredentialProviderError> {
-        Ok(application_credential::get(&state.db, id).await?)
+        Ok(application_credential::get(&state.db.connection(), id).await?)
     }
 
     /// List all access rules owned by a user.
@@ -177,7 +177,7 @@ impl ApplicationCredentialBackend for SqlBackend {
         state: &ServiceState,
         user_id: &'a str,
     ) -> Result<Vec<AccessRule>, ApplicationCredentialProviderError> {
-        application_credential::access_rule::list(&state.db, user_id).await
+        application_credential::access_rule::list(&state.db.connection(), user_id).await
     }
 
     /// List application credentials.
@@ -193,7 +193,7 @@ impl ApplicationCredentialBackend for SqlBackend {
         state: &ServiceState,
         params: &ApplicationCredentialListParameters,
     ) -> Result<Vec<ApplicationCredential>, ApplicationCredentialProviderError> {
-        Ok(application_credential::list(&state.db, params).await?)
+        Ok(application_credential::list(&state.db.connection(), params).await?)
     }
 }
 

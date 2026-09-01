@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+use crate::common::TlsConfiguration;
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 
@@ -25,6 +26,31 @@ pub struct DatabaseSection {
     /// values enable it at increasingly verbose tracing levels.
     #[serde(default)]
     pub connection_debug: u8,
+
+    /// TLS material for the DB connection: client cert/key for mTLS and the
+    /// CA used to validate the DB server's certificate. Populated either by
+    /// an external process (SPIRE Helper, cert-manager, manual ops rotating
+    /// the files in place) or by Keystone's own SPIFFE writer task
+    /// (`spiffe_managed` below) pointed at the same paths. Rotation of any
+    /// of these files is detected by `reconnect_db_on_config_change`
+    /// regardless of who wrote them - see `crates/keystone/src/db_reload.rs`.
+    /// Distinct from TLS parameters embedded in the DSN query string (e.g.
+    /// `sslrootcert=...`), which are static for the process lifetime unless
+    /// the DSN itself changes.
+    #[serde(flatten)]
+    pub tls: TlsConfiguration,
+
+    /// Run a background task that sources Keystone's own SPIFFE X.509 SVID
+    /// and the SPIRE trust bundle, writing them to `tls.tls_cert_file`/
+    /// `tls_key_file`/`tls_client_ca_file` above whenever SPIRE rotates them
+    /// (see `crates/keystone/src/db_spiffe.rs`). Requires all three paths to
+    /// be set; validated in `Config::finish_load`. This is coarser-grained
+    /// than the per-handshake SPIFFE mTLS used for Raft/HTTP listeners -
+    /// sqlx has no API to inject a live rustls config per DB handshake, so
+    /// rotation here is bounded by write + reconnect-detection latency, not
+    /// per-connection. See `db_spiffe`'s module doc for the full disclosure.
+    #[serde(default)]
+    pub spiffe_managed: bool,
 }
 
 impl DatabaseSection {

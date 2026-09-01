@@ -97,7 +97,7 @@ impl FederationBackend for SqlBackend {
     /// Delete expired authentication state records.
     #[tracing::instrument(level = "debug", skip(self, state))]
     async fn cleanup(&self, state: &ServiceState) -> Result<(), FederationProviderError> {
-        Ok(auth_state::delete_expired(&state.db).await?)
+        Ok(auth_state::delete_expired(&state.db.connection()).await?)
     }
 
     /// Persist a new authentication state record.
@@ -119,7 +119,7 @@ impl FederationBackend for SqlBackend {
         state: &ServiceState,
         auth_state: AuthState,
     ) -> Result<AuthState, FederationProviderError> {
-        Ok(auth_state::create(&state.db, auth_state).await?)
+        Ok(auth_state::create(&state.db.connection(), auth_state).await?)
     }
 
     /// Create a new identity provider.
@@ -137,7 +137,7 @@ impl FederationBackend for SqlBackend {
         state: &ServiceState,
         idp: IdentityProviderCreate,
     ) -> Result<IdentityProvider, FederationProviderError> {
-        Ok(identity_provider::create(&state.db, idp).await?)
+        Ok(identity_provider::create(&state.db.connection(), idp).await?)
     }
 
     /// Delete the authentication state record identified by `id`.
@@ -151,7 +151,7 @@ impl FederationBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), FederationProviderError> {
-        Ok(auth_state::delete(&state.db, id).await?)
+        Ok(auth_state::delete(&state.db.connection(), id).await?)
     }
 
     /// Delete the identity provider identified by `id`.
@@ -165,7 +165,7 @@ impl FederationBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), FederationProviderError> {
-        Ok(identity_provider::delete(&state.db, id).await?)
+        Ok(identity_provider::delete(&state.db.connection(), id).await?)
     }
 
     /// Retrieve the authentication state record by ID.
@@ -184,7 +184,7 @@ impl FederationBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<Option<AuthState>, FederationProviderError> {
-        Ok(auth_state::get(&state.db, id).await?)
+        Ok(auth_state::get(&state.db.connection(), id).await?)
     }
 
     /// Retrieve a single identity provider by ID.
@@ -202,7 +202,7 @@ impl FederationBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<Option<IdentityProvider>, FederationProviderError> {
-        Ok(identity_provider::get(&state.db, id).await?)
+        Ok(identity_provider::get(&state.db.connection(), id).await?)
     }
 
     /// List identity providers matching the given filter parameters.
@@ -220,7 +220,7 @@ impl FederationBackend for SqlBackend {
         state: &ServiceState,
         params: &IdentityProviderListParameters,
     ) -> Result<Vec<IdentityProvider>, FederationProviderError> {
-        Ok(identity_provider::list(&state.db, params).await?)
+        Ok(identity_provider::list(&state.db.connection(), params).await?)
     }
 
     /// Update an existing identity provider.
@@ -240,7 +240,7 @@ impl FederationBackend for SqlBackend {
         id: &'a str,
         idp: IdentityProviderUpdate,
     ) -> Result<IdentityProvider, FederationProviderError> {
-        Ok(identity_provider::update(&state.db, id, idp).await?)
+        Ok(identity_provider::update(&state.db.connection(), id, idp).await?)
     }
 }
 

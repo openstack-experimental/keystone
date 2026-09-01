@@ -90,7 +90,7 @@ async fn test_expiring_groups() -> Result<(), Report> {
             last_verified: Set(DateTime::<Utc>::default().naive_utc()),
         },
     ])
-    .exec(&ExecutionContext::internal(&state).db)
+    .exec(&ExecutionContext::internal(&state).db.connection())
     .await?;
 
     let groups = list_user_groups(&state, &user.id).await?;

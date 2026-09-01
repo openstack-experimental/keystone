@@ -48,7 +48,7 @@ inventory::submit! {
 impl WebauthnApi for SqlDriver {
     #[tracing::instrument(level = "debug", skip(self, exec))]
     async fn cleanup<'a>(&self, exec: &ExecutionContext<'a>) -> Result<(), WebauthnError> {
-        state::delete_expired(&exec.state().db).await
+        state::delete_expired(&exec.state().db.connection()).await
     }
 
     #[tracing::instrument(level = "debug", skip(self, exec))]
@@ -57,7 +57,7 @@ impl WebauthnApi for SqlDriver {
         exec: &ExecutionContext<'a>,
         credential: &WebauthnCredential,
     ) -> Result<WebauthnCredential, WebauthnError> {
-        credential::create(&exec.state().db, credential).await
+        credential::create(&exec.state().db.connection(), credential).await
     }
 
     #[tracing::instrument(level = "debug", skip(self, exec))]
@@ -67,7 +67,7 @@ impl WebauthnApi for SqlDriver {
         user_id: &str,
         credential_id: &str,
     ) -> Result<Option<WebauthnCredential>, WebauthnError> {
-        credential::find(&exec.state().db, user_id, credential_id).await
+        credential::find(&exec.state().db.connection(), user_id, credential_id).await
     }
 
     #[tracing::instrument(level = "debug", skip(self, exec))]
@@ -77,7 +77,7 @@ impl WebauthnApi for SqlDriver {
         user_id: &str,
         credential_id: &str,
     ) -> Result<(), WebauthnError> {
-        credential::delete(&exec.state().db, user_id, credential_id).await?;
+        credential::delete(&exec.state().db.connection(), user_id, credential_id).await?;
         Ok(())
     }
 
@@ -87,7 +87,7 @@ impl WebauthnApi for SqlDriver {
         exec: &ExecutionContext<'a>,
         user_id: &str,
     ) -> Result<(), WebauthnError> {
-        state::delete(&exec.state().db, user_id, StateType::Auth).await
+        state::delete(&exec.state().db.connection(), user_id, StateType::Auth).await
     }
 
     #[tracing::instrument(level = "debug", skip(self, exec))]
@@ -96,7 +96,7 @@ impl WebauthnApi for SqlDriver {
         exec: &ExecutionContext<'a>,
         user_id: &str,
     ) -> Result<(), WebauthnError> {
-        state::delete(&exec.state().db, user_id, StateType::Register).await
+        state::delete(&exec.state().db.connection(), user_id, StateType::Register).await
     }
 
     #[tracing::instrument(level = "debug", skip(self, exec))]
@@ -105,7 +105,7 @@ impl WebauthnApi for SqlDriver {
         exec: &ExecutionContext<'a>,
         user_id: &str,
     ) -> Result<Option<PasskeyAuthentication>, WebauthnError> {
-        state::get_auth(&exec.state().db, user_id).await
+        state::get_auth(&exec.state().db.connection(), user_id).await
     }
 
     #[tracing::instrument(level = "debug", skip(self, exec))]
@@ -114,7 +114,7 @@ impl WebauthnApi for SqlDriver {
         exec: &ExecutionContext<'a>,
         user_id: &str,
     ) -> Result<Option<PasskeyRegistration>, WebauthnError> {
-        state::get_register(&exec.state().db, user_id).await
+        state::get_register(&exec.state().db.connection(), user_id).await
     }
 
     #[tracing::instrument(level = "debug", skip(self, exec))]
@@ -123,7 +123,7 @@ impl WebauthnApi for SqlDriver {
         exec: &ExecutionContext<'a>,
         user_id: &str,
     ) -> Result<Vec<WebauthnCredential>, WebauthnError> {
-        credential::list(&exec.state().db, user_id).await
+        credential::list(&exec.state().db.connection(), user_id).await
     }
 
     #[tracing::instrument(level = "debug", skip(self, exec))]
@@ -133,7 +133,7 @@ impl WebauthnApi for SqlDriver {
         user_id: &str,
         auth_state: &PasskeyAuthentication,
     ) -> Result<(), WebauthnError> {
-        state::create_auth(&exec.state().db, user_id, auth_state).await
+        state::create_auth(&exec.state().db.connection(), user_id, auth_state).await
     }
 
     #[tracing::instrument(level = "debug", skip(self, exec))]
@@ -143,7 +143,7 @@ impl WebauthnApi for SqlDriver {
         user_id: &str,
         reg_state: &PasskeyRegistration,
     ) -> Result<(), WebauthnError> {
-        state::create_register(&exec.state().db, user_id, reg_state).await
+        state::create_register(&exec.state().db.connection(), user_id, reg_state).await
     }
 
     #[tracing::instrument(level = "debug", skip(self, exec))]
@@ -154,7 +154,13 @@ impl WebauthnApi for SqlDriver {
         credential_id: &str,
         credential: &WebauthnCredential,
     ) -> Result<WebauthnCredential, WebauthnError> {
-        credential::update(&exec.state().db, user_id, credential_id, credential).await
+        credential::update(
+            &exec.state().db.connection(),
+            user_id,
+            credential_id,
+            credential,
+        )
+        .await
     }
 }
 

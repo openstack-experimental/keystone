@@ -74,7 +74,10 @@ impl IdMappingBackend for SqlBackend {
         domain_id: &'a str,
         entity_type: IdMappingEntityType,
     ) -> Result<Option<IdMapping>, IdMappingProviderError> {
-        Ok(id_mapping::get_by_local_id(&state.db, local_id, domain_id, entity_type).await?)
+        Ok(
+            id_mapping::get_by_local_id(&state.db.connection(), local_id, domain_id, entity_type)
+                .await?,
+        )
     }
 
     /// Get the IdMapping by the public_id.
@@ -91,7 +94,7 @@ impl IdMappingBackend for SqlBackend {
         state: &ServiceState,
         public_id: &'a str,
     ) -> Result<Option<IdMapping>, IdMappingProviderError> {
-        Ok(id_mapping::get_by_public_id(&state.db, public_id).await?)
+        Ok(id_mapping::get_by_public_id(&state.db.connection(), public_id).await?)
     }
 }
 

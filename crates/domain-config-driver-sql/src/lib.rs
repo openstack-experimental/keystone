@@ -100,7 +100,7 @@ impl DomainConfigBackend for SqlBackend {
         domain_id: &'a str,
         config: DomainConfigCreate,
     ) -> Result<DomainConfig, DomainConfigProviderError> {
-        create::create(&state.db, domain_id, config).await
+        create::create(&state.db.connection(), domain_id, config).await
     }
 
     /// Get the whole configuration of a domain.
@@ -117,7 +117,7 @@ impl DomainConfigBackend for SqlBackend {
         state: &ServiceState,
         domain_id: &'a str,
     ) -> Result<Option<DomainConfig>, DomainConfigProviderError> {
-        get::get_config(&state.db, domain_id).await
+        get::get_config(&state.db.connection(), domain_id).await
     }
 
     /// Get a single configuration group of a domain.
@@ -136,7 +136,7 @@ impl DomainConfigBackend for SqlBackend {
         domain_id: &'a str,
         group: DomainConfigGroupName,
     ) -> Result<Option<DomainConfigGroup>, DomainConfigProviderError> {
-        get::get_group(&state.db, domain_id, group).await
+        get::get_group(&state.db.connection(), domain_id, group).await
     }
 
     /// Get a single configuration option of a domain.
@@ -157,7 +157,7 @@ impl DomainConfigBackend for SqlBackend {
         group: DomainConfigGroupName,
         option: &'a str,
     ) -> Result<Option<DomainConfigOption>, DomainConfigProviderError> {
-        get::get_option(&state.db, domain_id, group, option).await
+        get::get_option(&state.db.connection(), domain_id, group, option).await
     }
 
     /// Merge changes into the whole configuration of a domain.
@@ -175,7 +175,7 @@ impl DomainConfigBackend for SqlBackend {
         domain_id: &'a str,
         config: DomainConfigUpdate,
     ) -> Result<DomainConfig, DomainConfigProviderError> {
-        update::update_config(&state.db, domain_id, config).await
+        update::update_config(&state.db.connection(), domain_id, config).await
     }
 
     /// Merge changes into a single configuration group of a domain.
@@ -195,7 +195,7 @@ impl DomainConfigBackend for SqlBackend {
         group: DomainConfigGroupName,
         config: DomainConfigUpdate,
     ) -> Result<DomainConfigGroup, DomainConfigProviderError> {
-        update::update_group(&state.db, domain_id, group, config).await
+        update::update_group(&state.db.connection(), domain_id, group, config).await
     }
 
     /// Change a single configuration option of a domain.
@@ -213,7 +213,7 @@ impl DomainConfigBackend for SqlBackend {
         domain_id: &'a str,
         option: DomainConfigOption,
     ) -> Result<DomainConfigOption, DomainConfigProviderError> {
-        update::update_option(&state.db, domain_id, option).await
+        update::update_option(&state.db.connection(), domain_id, option).await
     }
 
     /// Delete the whole configuration of a domain.
@@ -229,7 +229,7 @@ impl DomainConfigBackend for SqlBackend {
         state: &ServiceState,
         domain_id: &'a str,
     ) -> Result<(), DomainConfigProviderError> {
-        delete::delete_config(&state.db, domain_id).await
+        delete::delete_config(&state.db.connection(), domain_id).await
     }
 
     /// Delete a single configuration group of a domain.
@@ -247,7 +247,7 @@ impl DomainConfigBackend for SqlBackend {
         domain_id: &'a str,
         group: DomainConfigGroupName,
     ) -> Result<(), DomainConfigProviderError> {
-        delete::delete_group(&state.db, domain_id, group).await
+        delete::delete_group(&state.db.connection(), domain_id, group).await
     }
 
     /// Delete a single configuration option of a domain.
@@ -267,7 +267,7 @@ impl DomainConfigBackend for SqlBackend {
         group: DomainConfigGroupName,
         option: &'a str,
     ) -> Result<(), DomainConfigProviderError> {
-        delete::delete_option(&state.db, domain_id, group, option).await
+        delete::delete_option(&state.db.connection(), domain_id, group, option).await
     }
 
     /// Try to register a domain for a configuration type.
@@ -286,7 +286,7 @@ impl DomainConfigBackend for SqlBackend {
         domain_id: &'a str,
         driver_type: &'a str,
     ) -> Result<bool, DomainConfigProviderError> {
-        registration::obtain(&state.db, domain_id, driver_type).await
+        registration::obtain(&state.db.connection(), domain_id, driver_type).await
     }
 
     /// Read which domain holds the registration of a configuration type.
@@ -303,7 +303,7 @@ impl DomainConfigBackend for SqlBackend {
         state: &ServiceState,
         driver_type: &'a str,
     ) -> Result<Option<String>, DomainConfigProviderError> {
-        registration::read(&state.db, driver_type).await
+        registration::read(&state.db.connection(), driver_type).await
     }
 
     /// Release the registrations a domain holds.
@@ -322,7 +322,7 @@ impl DomainConfigBackend for SqlBackend {
         domain_id: &'a str,
         driver_type: Option<&'a str>,
     ) -> Result<(), DomainConfigProviderError> {
-        registration::release(&state.db, domain_id, driver_type).await
+        registration::release(&state.db.connection(), domain_id, driver_type).await
     }
 }
 

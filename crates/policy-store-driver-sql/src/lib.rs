@@ -78,7 +78,7 @@ impl PolicyStoreBackend for SqlBackend {
         state: &ServiceState,
         policy: PolicyCreate,
     ) -> Result<Policy, PolicyStoreProviderError> {
-        policy::create(&state.db, policy).await
+        policy::create(&state.db.connection(), policy).await
     }
 
     /// Delete a policy by ID.
@@ -95,7 +95,7 @@ impl PolicyStoreBackend for SqlBackend {
         state: &ServiceState,
         id: &str,
     ) -> Result<(), PolicyStoreProviderError> {
-        policy::delete(&state.db, id).await
+        policy::delete(&state.db.connection(), id).await
     }
 
     /// Get a single policy by ID.
@@ -113,7 +113,7 @@ impl PolicyStoreBackend for SqlBackend {
         state: &ServiceState,
         id: &str,
     ) -> Result<Option<Policy>, PolicyStoreProviderError> {
-        policy::get(&state.db, id).await
+        policy::get(&state.db.connection(), id).await
     }
 
     /// List policies.
@@ -131,7 +131,7 @@ impl PolicyStoreBackend for SqlBackend {
         state: &ServiceState,
         params: &PolicyListParameters,
     ) -> Result<Vec<Policy>, PolicyStoreProviderError> {
-        policy::list(&state.db, params).await
+        policy::list(&state.db.connection(), params).await
     }
 
     /// Update an existing policy.
@@ -152,7 +152,7 @@ impl PolicyStoreBackend for SqlBackend {
         id: &str,
         policy: PolicyUpdate,
     ) -> Result<Policy, PolicyStoreProviderError> {
-        policy::update(&state.db, id, policy).await
+        policy::update(&state.db.connection(), id, policy).await
     }
 }
 

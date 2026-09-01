@@ -282,6 +282,7 @@ fn reject_if_ec2(user_auth: &ValidatedSecurityContext) -> Result<(), KeystoneApi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db_state::DbState;
     use crate::keystone::Service;
     use crate::mapping::MockMappingProvider;
     use crate::policy::MockPolicy;
@@ -311,7 +312,7 @@ mod tests {
         let provider = provider_builder.build().unwrap();
         let service = Service {
             config_manager,
-            db,
+            db: DbState::new(db),
             policy_enforcer,
             provider,
             event_dispatcher: crate::events::EventDispatcher::production(),
@@ -431,7 +432,7 @@ mod tests {
 
         let state = Arc::new(Service {
             config_manager,
-            db: sea_orm::DatabaseConnection::default(),
+            db: DbState::new(sea_orm::DatabaseConnection::default()),
             policy_enforcer: Arc::new(MockPolicy::default()),
             provider: Provider::mocked_builder()
                 .mock_mapping(mapping_mock)
@@ -552,7 +553,7 @@ mod tests {
             .unwrap();
         let state = Arc::new(Service {
             config_manager,
-            db,
+            db: DbState::new(db),
             policy_enforcer: Arc::new(MockPolicy::default()),
             provider,
             event_dispatcher: crate::events::EventDispatcher::production(),
@@ -630,7 +631,7 @@ mod tests {
 
         let state = Arc::new(Service {
             config_manager,
-            db: sea_orm::DatabaseConnection::default(),
+            db: DbState::new(sea_orm::DatabaseConnection::default()),
             policy_enforcer: Arc::new(MockPolicy::default()),
             provider: Provider::mocked_builder()
                 .mock_mapping(mapping_mock)
@@ -714,7 +715,7 @@ mod tests {
             .unwrap();
         let state = Arc::new(Service {
             config_manager,
-            db,
+            db: DbState::new(db),
             policy_enforcer,
             provider,
             event_dispatcher: crate::events::EventDispatcher::production(),
@@ -854,7 +855,7 @@ mod tests {
             .unwrap();
         let state = Arc::new(Service {
             config_manager,
-            db,
+            db: DbState::new(db),
             policy_enforcer,
             provider,
             event_dispatcher: crate::events::EventDispatcher::production(),
@@ -946,7 +947,7 @@ mod tests {
             .unwrap();
         let state = Arc::new(Service {
             config_manager,
-            db,
+            db: DbState::new(db),
             policy_enforcer,
             provider,
             event_dispatcher: crate::events::EventDispatcher::production(),

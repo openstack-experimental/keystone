@@ -91,7 +91,7 @@ async fn test_valid() -> Result<(), Report> {
     grant_role_to_user_on_project(&state, &user_a.id, &project.id, &role_a.id).await?;
 
     create_trust(
-        &state.db,
+        &state.db.connection(),
         "trust_a".to_string(),
         user_a.id.clone(),
         user_b.id.clone(),
@@ -209,7 +209,7 @@ async fn test_valid_redelegated() -> Result<(), Report> {
     let user_c = create_user!(state, domain.id.clone())?;
     grant_role_to_user_on_project(&state, &user_a.id, &project.id, &role_a.id).await?;
     create_trust(
-        &state.db,
+        &state.db.connection(),
         "trust_a_b".to_string(),
         user_a.id.clone(),
         user_c.id.clone(),
@@ -326,7 +326,7 @@ async fn test_fewer_roles() -> Result<(), Report> {
     grant_role_to_user_on_project(&state, &user_a.id, &project.id, &role_a.id).await?;
 
     create_trust(
-        &state.db,
+        &state.db.connection(),
         "trust_a".to_string(),
         user_a.id.clone(),
         user_b.id.clone(),
@@ -433,7 +433,7 @@ async fn test_exclude_local_roles() -> Result<(), Report> {
     grant_role_to_user_on_project(&state, &user_a.id, &project.id, &role_x.id).await?;
 
     create_trust(
-        &state.db,
+        &state.db.connection(),
         "trust_a".to_string(),
         user_a.id.clone(),
         user_b.id.clone(),
@@ -563,7 +563,7 @@ async fn test_trust_populated_in_api_token_response() -> Result<(), Report> {
     .await?;
 
     create_trust(
-        &state.db,
+        &state.db.connection(),
         "trust_a".to_string(),
         user_a.id.clone(),
         user_b.id.clone(),

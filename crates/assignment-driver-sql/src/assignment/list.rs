@@ -48,7 +48,7 @@ pub async fn list_for_multiple_actors_and_targets(
     params: &RoleAssignmentListForMultipleActorTargetParameters,
 ) -> Result<Vec<Assignment>, AssignmentProviderError> {
     // Query both assignment tables in parallel and imply rules
-    //let db = &state.db;
+    //let db = &state.db.connection();
     let db_res = tokio::try_join!(
         // Result assignments
         list_for_multiple_actors_and_targets_regular(db, params),

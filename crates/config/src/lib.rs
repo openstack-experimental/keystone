@@ -54,7 +54,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use config::{File, FileFormat};
-use eyre::{Report, WrapErr};
+use eyre::{Report, WrapErr, eyre};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Deserialize;
 use tokio::sync::{Mutex, RwLock};
@@ -453,6 +453,20 @@ impl Config {
                     .wrap_err("reading distributed storage TPM configuration")?;
             }
         }
+        cfg.database
+            .tls
+            .read_certs()
+            .wrap_err("reading database TLS configuration")?;
+        if cfg.database.spiffe_managed
+            && (cfg.database.tls.tls_cert_file.is_none()
+                || cfg.database.tls.tls_key_file.is_none()
+                || cfg.database.tls.tls_client_ca_file.is_none())
+        {
+            return Err(eyre!(
+                "[database] spiffe_managed = true requires tls_cert_file, tls_key_file, \
+                 and tls_client_ca_file to all be set"
+            ));
+        }
         // Compile password regex at load time.
         cfg.security_compliance
             .compile_regex()
@@ -483,6 +497,15 @@ impl Config {
             if let Some(ca) = &tls.tls_client_ca_file {
                 watched_paths.insert(ca.clone());
             }
+        }
+        if let Some(crt) = &self.database.tls.tls_cert_file {
+            watched_paths.insert(crt.clone());
+        }
+        if let Some(key) = &self.database.tls.tls_key_file {
+            watched_paths.insert(key.clone());
+        }
+        if let Some(ca) = &self.database.tls.tls_client_ca_file {
+            watched_paths.insert(ca.clone());
         }
         watched_paths
     }
@@ -1294,6 +1317,74 @@ mod tests {
         }
         assert!(success, "Config did not update after file change");
     }
+
+    #[tokio::test]
+    #[parallel]
+    async fn test_reload_on_db_cert_change() {
+        let config_file = NamedTempFile::with_suffix(".conf").unwrap();
+        let mut ca_file = NamedTempFile::new().unwrap();
+        write!(ca_file, "ca").unwrap();
+        let mut cert_file = NamedTempFile::new().unwrap();
+        write!(cert_file, "cert").unwrap();
+        let mut key_file = NamedTempFile::new().unwrap();
+        write!(key_file, "key").unwrap();
+        let mut f = fs::File::create(config_file.path()).unwrap();
+        f.write_all(
+            format!(
+                r#"
+    [auth]
+    methods = []
+    [database]
+    connection = "foo"
+    tls_key_file = {:?}
+    tls_cert_file = {:?}
+    tls_client_ca_file = {:?}
+                "#,
+                key_file.path(),
+                cert_file.path(),
+                ca_file.path()
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        f.sync_all().unwrap();
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        let mgr = ConfigManager::watched(config_file.path())
+            .await
+            .expect("Should initialize");
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(cert_file.path())
+            .unwrap();
+        f.write_all("another db cert".as_bytes()).unwrap();
+
+        let mut success = false;
+        for _ in 0..10 {
+            sleep(Duration::from_millis(200)).await;
+            let updated = mgr.config.read().await;
+            if updated
+                .database
+                .tls
+                .tls_cert_content
+                .as_ref()
+                .map(|x| x.expose_secret())
+                == Some("another db cert".as_bytes())
+            {
+                success = true;
+                break;
+            }
+        }
+        assert!(
+            success,
+            "Database TLS cert did not update after file change"
+        );
+    }
+
     #[tokio::test]
     #[parallel]
     async fn test_invalid_security_compliance_validation() {
@@ -1362,6 +1453,41 @@ mod tests {
         assert!(
             err_msg.contains("security_compliance.invalid_password_hash_max_chars"),
             "Error message should explicitly blame invalid_password_hash_max_chars, but got: {}",
+            err_msg
+        );
+    }
+
+    #[tokio::test]
+    #[parallel]
+    async fn test_db_spiffe_managed_requires_tls_files() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let config_file = NamedTempFile::with_suffix(".conf").unwrap();
+        let mut f = std::fs::File::create(config_file.path()).unwrap();
+        f.write_all(
+            r#"
+    [auth]
+    methods = []
+
+    [database]
+    connection = "foo"
+    spiffe_managed = true
+            "#
+            .as_bytes(),
+        )
+        .unwrap();
+        f.sync_all().unwrap();
+
+        let result = Config::load_all(config_file.path().to_path_buf()).await;
+        assert!(
+            result.is_err(),
+            "Expected spiffe_managed = true without TLS file paths to be rejected"
+        );
+        let err_msg = format!("{:?}", result.unwrap_err());
+        assert!(
+            err_msg.contains("spiffe_managed"),
+            "Expected the error to mention spiffe_managed, got: {}",
             err_msg
         );
     }

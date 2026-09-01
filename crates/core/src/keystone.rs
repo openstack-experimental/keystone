@@ -27,6 +27,7 @@ use openstack_keystone_local_emergency_store::{LeaderlessTracker, LocalEmergency
 use openstack_keystone_storage_api::StorageApi;
 
 use crate::auth_plugin::{CoreHostFunctions, PluginInvocationLimiter};
+use crate::db_state::DbState;
 use crate::error::KeystoneError;
 use crate::events::EventDispatcher;
 use crate::policy::PolicyEnforcer;
@@ -52,15 +53,19 @@ pub enum SpiffeHealthStatus {
     Error(String),
 }
 
-// Placing ServiceState behind Arc is necessary to address DatabaseConnection
-// not implementing Clone.
+// Placing ServiceState behind Arc is necessary because several fields below
+// (e.g. `local_emergency_store`, `auth_plugin_registry`) are only
+// interior-mutable, not `Clone`.
 //#[derive(Clone)]
 pub struct Service {
     /// Config file.
     pub config_manager: Arc<ConfigManager>,
 
-    /// Database connection.
-    pub db: DatabaseConnection,
+    /// Hot-swappable database connection handle (see [`DbState`]). The
+    /// active connection is rebuilt in place - without a process restart -
+    /// when `[database] connection` changes across a configuration reload,
+    /// including a Vault-backed value re-resolving to rotated credentials.
+    pub db: DbState,
 
     /// Policy enforcer.
     pub policy_enforcer: Arc<dyn PolicyEnforcer>,
@@ -238,7 +243,7 @@ impl Service {
             provider,
             event_dispatcher: EventDispatcher::production(),
             audit_dispatcher,
-            db,
+            db: DbState::new(db),
             policy_enforcer,
             storage,
             local_emergency_store: RwLock::new(None),

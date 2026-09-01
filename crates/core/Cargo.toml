@@ -67,6 +67,7 @@ openstack-keystone-audit = { workspace = true, features = ["testing"] }
 openstack-keystone-core-types = { workspace = true, features = ["mock"] }
 proptest.workspace = true
 rstest.workspace = true
+sea-orm = { workspace = true, features = ["sqlx-sqlite", "runtime-tokio"] }
 tempfile.workspace = true
 temp-env.workspace = true
 tokio = { workspace = true, features = ["process"] }

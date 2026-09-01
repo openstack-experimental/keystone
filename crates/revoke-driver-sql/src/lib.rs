@@ -102,7 +102,7 @@ impl RevokeBackend for SqlBackend {
         state: &ServiceState,
         event: RevocationEventCreate,
     ) -> Result<RevocationEvent, RevokeProviderError> {
-        Ok(create::create(&state.db, event).await?)
+        Ok(create::create(&state.db.connection(), event).await?)
     }
 
     /// Check the token for being revoked.
@@ -128,7 +128,7 @@ impl RevokeBackend for SqlBackend {
             RevocationEventListParametersBuilder::try_from(token_security_context)?;
 
         let params = params_builder.build()?;
-        if list::count(&state.db, &params).await? > 0 {
+        if list::count(&state.db.connection(), &params).await? > 0 {
             Ok(true)
         } else {
             Ok(false)
@@ -151,7 +151,7 @@ impl RevokeBackend for SqlBackend {
         state: &ServiceState,
         token: &FernetToken,
     ) -> Result<(), RevokeProviderError> {
-        Ok(create::create(&state.db, token.try_into()?)
+        Ok(create::create(&state.db.connection(), token.try_into()?)
             .await
             .map(|_| ())?)
     }

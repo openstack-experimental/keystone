@@ -78,7 +78,7 @@ impl CatalogBackend for SqlBackend {
         project_id: &'a str,
         endpoint_id: &'a str,
     ) -> Result<(), CatalogProviderError> {
-        Ok(project_endpoint::add(&state.db, project_id, endpoint_id).await?)
+        Ok(project_endpoint::add(&state.db.connection(), project_id, endpoint_id).await?)
     }
 
     /// Associate an endpoint group with a project.
@@ -89,7 +89,10 @@ impl CatalogBackend for SqlBackend {
         project_id: &'a str,
         endpoint_group_id: &'a str,
     ) -> Result<(), CatalogProviderError> {
-        Ok(project_endpoint_group::add(&state.db, project_id, endpoint_group_id).await?)
+        Ok(
+            project_endpoint_group::add(&state.db.connection(), project_id, endpoint_group_id)
+                .await?,
+        )
     }
 
     /// Check whether an endpoint is associated with a project.
@@ -100,7 +103,7 @@ impl CatalogBackend for SqlBackend {
         project_id: &'a str,
         endpoint_id: &'a str,
     ) -> Result<bool, CatalogProviderError> {
-        Ok(project_endpoint::check(&state.db, project_id, endpoint_id).await?)
+        Ok(project_endpoint::check(&state.db.connection(), project_id, endpoint_id).await?)
     }
 
     /// Check whether an endpoint group is associated with a project.
@@ -111,7 +114,10 @@ impl CatalogBackend for SqlBackend {
         project_id: &'a str,
         endpoint_group_id: &'a str,
     ) -> Result<bool, CatalogProviderError> {
-        Ok(project_endpoint_group::check(&state.db, project_id, endpoint_group_id).await?)
+        Ok(
+            project_endpoint_group::check(&state.db.connection(), project_id, endpoint_group_id)
+                .await?,
+        )
     }
 
     /// Create a new endpoint.
@@ -129,7 +135,7 @@ impl CatalogBackend for SqlBackend {
         state: &ServiceState,
         endpoint_data: EndpointCreate,
     ) -> Result<Endpoint, CatalogProviderError> {
-        Ok(endpoint::create(&state.db, endpoint_data).await?)
+        Ok(endpoint::create(&state.db.connection(), endpoint_data).await?)
     }
 
     /// Create a new endpoint group.
@@ -139,7 +145,7 @@ impl CatalogBackend for SqlBackend {
         state: &ServiceState,
         endpoint_group: EndpointGroupCreate,
     ) -> Result<EndpointGroup, CatalogProviderError> {
-        Ok(endpoint_group::create(&state.db, endpoint_group).await?)
+        Ok(endpoint_group::create(&state.db.connection(), endpoint_group).await?)
     }
 
     /// Create a new region.
@@ -156,7 +162,7 @@ impl CatalogBackend for SqlBackend {
         state: &ServiceState,
         region_data: RegionCreate,
     ) -> Result<Region, CatalogProviderError> {
-        Ok(region::create(&state.db, region_data).await?)
+        Ok(region::create(&state.db.connection(), region_data).await?)
     }
 
     /// Create a new service.
@@ -174,7 +180,7 @@ impl CatalogBackend for SqlBackend {
         state: &ServiceState,
         service_data: ServiceCreate,
     ) -> Result<Service, CatalogProviderError> {
-        Ok(service::create(&state.db, service_data).await?)
+        Ok(service::create(&state.db.connection(), service_data).await?)
     }
 
     /// Delete an endpoint by ID.
@@ -191,7 +197,7 @@ impl CatalogBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), CatalogProviderError> {
-        Ok(endpoint::delete(&state.db, id).await?)
+        Ok(endpoint::delete(&state.db.connection(), id).await?)
     }
 
     /// Delete an endpoint group by ID.
@@ -201,7 +207,7 @@ impl CatalogBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), CatalogProviderError> {
-        Ok(endpoint_group::delete(&state.db, id).await?)
+        Ok(endpoint_group::delete(&state.db.connection(), id).await?)
     }
 
     /// Delete a region by ID.
@@ -218,7 +224,7 @@ impl CatalogBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), CatalogProviderError> {
-        Ok(region::delete(&state.db, id).await?)
+        Ok(region::delete(&state.db.connection(), id).await?)
     }
 
     /// Delete a service by ID.
@@ -235,7 +241,7 @@ impl CatalogBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<(), CatalogProviderError> {
-        Ok(service::delete(&state.db, id).await?)
+        Ok(service::delete(&state.db.connection(), id).await?)
     }
 
     /// Get the catalog (services with endpoints).
@@ -253,7 +259,7 @@ impl CatalogBackend for SqlBackend {
         state: &ServiceState,
         enabled: bool,
     ) -> Result<Vec<(Service, Vec<Endpoint>)>, CatalogProviderError> {
-        Ok(get_catalog(&state.db, enabled).await?)
+        Ok(get_catalog(&state.db.connection(), enabled).await?)
     }
 
     /// Get a single endpoint by ID.
@@ -271,7 +277,7 @@ impl CatalogBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<Option<Endpoint>, CatalogProviderError> {
-        Ok(endpoint::get(&state.db, id).await?)
+        Ok(endpoint::get(&state.db.connection(), id).await?)
     }
 
     /// Get a single endpoint group by ID.
@@ -281,7 +287,7 @@ impl CatalogBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<Option<EndpointGroup>, CatalogProviderError> {
-        Ok(endpoint_group::get(&state.db, id).await?)
+        Ok(endpoint_group::get(&state.db.connection(), id).await?)
     }
 
     /// Get a single region by ID.
@@ -299,7 +305,7 @@ impl CatalogBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<Option<Region>, CatalogProviderError> {
-        Ok(region::get(&state.db, id).await?)
+        Ok(region::get(&state.db.connection(), id).await?)
     }
 
     /// Get a single service by ID.
@@ -317,7 +323,7 @@ impl CatalogBackend for SqlBackend {
         state: &ServiceState,
         id: &'a str,
     ) -> Result<Option<Service>, CatalogProviderError> {
-        Ok(service::get(&state.db, id).await?)
+        Ok(service::get(&state.db.connection(), id).await?)
     }
 
     /// List endpoints.
@@ -335,7 +341,7 @@ impl CatalogBackend for SqlBackend {
         state: &ServiceState,
         params: &EndpointListParameters,
     ) -> Result<Vec<Endpoint>, CatalogProviderError> {
-        Ok(endpoint::list(&state.db, params).await?)
+        Ok(endpoint::list(&state.db.connection(), params).await?)
     }
 
     /// List endpoint groups.
@@ -345,7 +351,7 @@ impl CatalogBackend for SqlBackend {
         state: &ServiceState,
         params: &EndpointGroupListParameters,
     ) -> Result<Vec<EndpointGroup>, CatalogProviderError> {
-        Ok(endpoint_group::list(&state.db, params).await?)
+        Ok(endpoint_group::list(&state.db.connection(), params).await?)
     }
 
     /// List the endpoints associated with a project.
@@ -355,7 +361,7 @@ impl CatalogBackend for SqlBackend {
         state: &ServiceState,
         project_id: &'a str,
     ) -> Result<Vec<Endpoint>, CatalogProviderError> {
-        Ok(project_endpoint::list_endpoints(&state.db, project_id).await?)
+        Ok(project_endpoint::list_endpoints(&state.db.connection(), project_id).await?)
     }
 
     /// List the endpoint groups associated with a project.
@@ -365,7 +371,10 @@ impl CatalogBackend for SqlBackend {
         state: &ServiceState,
         project_id: &'a str,
     ) -> Result<Vec<EndpointGroup>, CatalogProviderError> {
-        Ok(project_endpoint_group::list_endpoint_groups(&state.db, project_id).await?)
+        Ok(
+            project_endpoint_group::list_endpoint_groups(&state.db.connection(), project_id)
+                .await?,
+        )
     }
 
     /// List regions.
@@ -383,7 +392,7 @@ impl CatalogBackend for SqlBackend {
         state: &ServiceState,
         params: &RegionListParameters,
     ) -> Result<Vec<Region>, CatalogProviderError> {
-        Ok(region::list(&state.db, params).await?)
+        Ok(region::list(&state.db.connection(), params).await?)
     }
 
     /// List services.
@@ -401,7 +410,7 @@ impl CatalogBackend for SqlBackend {
         state: &ServiceState,
         params: &ServiceListParameters,
     ) -> Result<Vec<Service>, CatalogProviderError> {
-        Ok(service::list(&state.db, params).await?)
+        Ok(service::list(&state.db.connection(), params).await?)
     }
 
     /// Update an existing endpoint.
@@ -423,7 +432,7 @@ impl CatalogBackend for SqlBackend {
         project_id: &'a str,
         endpoint_id: &'a str,
     ) -> Result<(), CatalogProviderError> {
-        Ok(project_endpoint::remove(&state.db, project_id, endpoint_id).await?)
+        Ok(project_endpoint::remove(&state.db.connection(), project_id, endpoint_id).await?)
     }
 
     /// Remove the association between an endpoint group and a project.
@@ -434,7 +443,10 @@ impl CatalogBackend for SqlBackend {
         project_id: &'a str,
         endpoint_group_id: &'a str,
     ) -> Result<(), CatalogProviderError> {
-        Ok(project_endpoint_group::remove(&state.db, project_id, endpoint_group_id).await?)
+        Ok(
+            project_endpoint_group::remove(&state.db.connection(), project_id, endpoint_group_id)
+                .await?,
+        )
     }
 
     /// Update an existing endpoint.
@@ -445,7 +457,7 @@ impl CatalogBackend for SqlBackend {
         id: &'a str,
         endpoint_data: EndpointUpdate,
     ) -> Result<Endpoint, CatalogProviderError> {
-        Ok(endpoint::update(&state.db, id, endpoint_data).await?)
+        Ok(endpoint::update(&state.db.connection(), id, endpoint_data).await?)
     }
 
     /// Update an existing endpoint group.
@@ -456,7 +468,7 @@ impl CatalogBackend for SqlBackend {
         id: &'a str,
         endpoint_group: EndpointGroupUpdate,
     ) -> Result<EndpointGroup, CatalogProviderError> {
-        Ok(endpoint_group::update(&state.db, id, endpoint_group).await?)
+        Ok(endpoint_group::update(&state.db.connection(), id, endpoint_group).await?)
     }
 
     /// Update an existing region.
@@ -475,7 +487,7 @@ impl CatalogBackend for SqlBackend {
         id: &'a str,
         region_data: RegionUpdate,
     ) -> Result<Region, CatalogProviderError> {
-        Ok(region::update(&state.db, id, region_data).await?)
+        Ok(region::update(&state.db.connection(), id, region_data).await?)
     }
 
     /// Update an existing service.
@@ -495,7 +507,7 @@ impl CatalogBackend for SqlBackend {
         id: &'a str,
         service_data: ServiceUpdate,
     ) -> Result<Service, CatalogProviderError> {
-        Ok(service::update(&state.db, id, service_data).await?)
+        Ok(service::update(&state.db.connection(), id, service_data).await?)
     }
 }
 

@@ -181,7 +181,8 @@ impl SqlBackend {
         params: &RoleAssignmentListForMultipleActorTargetParameters,
     ) -> Result<Vec<Assignment>, AssignmentProviderError> {
         let assignments =
-            assignment::list_for_multiple_actors_and_targets(&state.db, params).await?;
+            assignment::list_for_multiple_actors_and_targets(&state.db.connection(), params)
+                .await?;
 
         if params.resolve_implied_roles {
             self.resolve_implied_roles(state, assignments).await
@@ -233,7 +234,7 @@ impl AssignmentBackend for SqlBackend {
         state: &ServiceState,
         grant: &Assignment,
     ) -> Result<bool, AssignmentProviderError> {
-        Ok(assignment::check(&state.db, grant).await?)
+        Ok(assignment::check(&state.db.connection(), grant).await?)
     }
 
     /// Create assignment grant.
@@ -253,7 +254,7 @@ impl AssignmentBackend for SqlBackend {
         state: &ServiceState,
         grant: AssignmentCreate,
     ) -> Result<Assignment, AssignmentProviderError> {
-        Ok(assignment::create(&state.db, grant).await?)
+        Ok(assignment::create(&state.db.connection(), grant).await?)
     }
 
     /// List role assignments.
@@ -394,7 +395,7 @@ impl AssignmentBackend for SqlBackend {
         state: &ServiceState,
         grant: &Assignment,
     ) -> Result<(), AssignmentProviderError> {
-        Ok(assignment::delete(&state.db, grant).await?)
+        Ok(assignment::delete(&state.db.connection(), grant).await?)
     }
 }
 
