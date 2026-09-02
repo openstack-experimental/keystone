@@ -297,6 +297,22 @@ the caller is a privileged lister (`admin`, or `reader` on the system scope).
 (`crates/keystone/src/api/common.rs`), which caps the same cost for the
 privileged listers whose rows legitimately do get filtered.
 
+### I8b — Documented exception: SCIM `GET /Users`/`GET /Groups`
+
+**What:** `crates/keystone/src/scim/user/list.rs` and
+`crates/keystone/src/scim/group/list.rs` run one collection-level policy
+check (`identity/scim/user|group/list`) and no per-item re-check, unlike
+I8. **Why this is still safe:** results are structurally fenced to the
+caller's own realm before policy ever runs — `ScimRealmAuth` resolves
+exactly one `(domain_id, provider_id)` coordinate from the authenticated
+API key, and the list handlers scan the `ScimResourceIndex` prefix owned
+by that coordinate alone (ADR 0024 §3.B/§3.C). There is no query shape
+where the collection-level check could pass while an individual returned
+row belongs to a caller who shouldn't see it — the realm fencing, not the
+per-item policy pass, is what I8 exists to provide here. A future SCIM
+list surface that stops being realm-scoped in this way would need to add
+the per-item re-check I8 otherwise requires.
+
 > When adding a collection endpoint, check that the value the policy is
 > gating on is the *same* value the driver filters by. If the policy approves
 > `?user_id=X` but the driver ignores `user_id`, the check is decorative: the
