@@ -150,7 +150,7 @@ async fn test_gate_rejects_when_no_realm_registered() -> Result<()> {
     let response = router
         .oneshot(probe_request(&domain.id, &token, peer))
         .await?;
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
     Ok(())
 }
 
@@ -182,7 +182,7 @@ async fn test_gate_rejects_when_realm_disabled() -> Result<()> {
     let response = router
         .oneshot(probe_request(&domain.id, &token, peer))
         .await?;
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
     Ok(())
 }
 

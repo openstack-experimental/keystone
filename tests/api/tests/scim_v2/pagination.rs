@@ -98,7 +98,7 @@ async fn test_pagination_count_and_start_index() -> Result<()> {
             provisioned
                 .client
                 .list_users(&format!(
-                    "filter={}&count={}&start_index={}",
+                    "filter={}&count={}&startIndex={}",
                     filter_escape(&format!("userName sw \"{}\"", prefix)),
                     page_size,
                     idx

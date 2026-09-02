@@ -29,6 +29,7 @@ use crate::scim::location::resource_location;
 use crate::scim::types::{LIST_RESPONSE_SCHEMA, ScimGroup, ScimGroupListResponse};
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub(super) struct ListParams {
     #[serde(default)]
     start_index: Option<usize>,
@@ -73,7 +74,7 @@ pub(super) async fn list(
         .await?;
 
     let start_index = params.start_index.unwrap_or(1).max(1);
-    let count = params.count.unwrap_or(200).min(200);
+    let count = params.count.unwrap_or(20).min(200);
 
     // As with Users (§5.D), a `filter` requires hydrating every active
     // group up front to evaluate `displayName` -- still bounded to this
@@ -239,6 +240,59 @@ mod tests {
         assert_eq!(result.resources.len(), 1);
         assert_eq!(result.resources[0].id, "group-1");
         assert_eq!(result.total_results, 1);
+    }
+
+    #[test]
+    fn test_list_params_parses_camel_case_start_index() {
+        // RFC 7644 clients send `startIndex`, not `start_index` -- must
+        // actually populate the field, not silently fall back to `None`.
+        let params: ListParams = serde_urlencoded::from_str("startIndex=5&count=10").unwrap();
+        assert_eq!(params.start_index, Some(5));
+        assert_eq!(params.count, Some(10));
+    }
+
+    #[tokio::test]
+    async fn test_list_default_count_is_20() {
+        let mut resource_mock = MockScimResourceProvider::default();
+        resource_mock.expect_list_index().returning(|_, _, _, _| {
+            Ok((0..25)
+                .map(|i| make_index(&format!("group-{i}"), false))
+                .collect())
+        });
+
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock.expect_get_group().returning(|_, id| {
+            Ok(Some(Group {
+                id: id.to_string(),
+                domain_id: "domain-1".to_string(),
+                name: id.to_string(),
+                description: None,
+                extra: Default::default(),
+            }))
+        });
+        identity_mock
+            .expect_list_users_of_group()
+            .returning(|_, _| Ok(vec![]));
+
+        let state = get_mocked_state(
+            Provider::mocked_builder()
+                .mock_identity(identity_mock)
+                .mock_scim_resource(resource_mock),
+            true,
+            None,
+        )
+        .await;
+
+        let result = list(
+            domain_scoped_auth("domain-1"),
+            State(state),
+            Query(ListParams::default()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.items_per_page, 20, "default page size must be 20");
+        assert_eq!(result.resources.len(), 20);
+        assert_eq!(result.total_results, 25);
     }
 
     #[tokio::test]

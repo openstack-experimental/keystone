@@ -603,7 +603,13 @@ impl RaftBackend {
         // Re-claim `externalId` before persisting, if it changed: release
         // the old claim (if any) and atomically claim the new one so two
         // concurrent updates can't both succeed onto the same new
-        // `externalId` within this realm.
+        // `externalId` within this realm. Both the old claim key (so it can
+        // be restored) and the new claim key (so it can be released) are
+        // tracked so the primary CAS write below can compensate if it fails
+        // -- mirroring `create_resource_impl`'s compensation for the
+        // analogous primary-write-after-claim failure.
+        let mut old_claim: Option<(String, String)> = None; // (key, keystone_id)
+        let mut new_claim_key: Option<String> = None;
         if let Some(ref new_eid) = data.external_id
             && new_eid != &curr.data.external_id
         {
@@ -615,8 +621,13 @@ impl RaftBackend {
                     old_eid,
                 );
                 storage
-                    .transaction(vec![Mutation::remove(old_claim_key, None::<&str>, None)])
+                    .transaction(vec![Mutation::remove(
+                        old_claim_key.clone(),
+                        None::<&str>,
+                        None,
+                    )])
                     .await?;
+                old_claim = Some((old_claim_key, keystone_id.to_string()));
             }
             if let Some(eid) = new_eid {
                 let claim_key =
@@ -635,6 +646,7 @@ impl RaftBackend {
                         description: "externalId already claimed within this realm".to_string(),
                     },
                 )?;
+                new_claim_key = Some(claim_key);
             }
         }
 
@@ -645,7 +657,7 @@ impl RaftBackend {
         // check, closing the race window ADR 0024 §5.E requires (this is
         // what actually decides the race; the up-front check above only
         // rejects the common, already-stale case cheaply).
-        require_no_conflict(
+        let primary_write = require_no_conflict(
             storage
                 .set_value(
                     key.clone(),
@@ -661,8 +673,38 @@ impl RaftBackend {
                 subject: key.clone(),
                 description: "ETag precondition failed: version mismatch".to_string(),
             },
-        )?;
-        Ok(new)
+        );
+
+        // The primary CAS write can fail (version conflict, or a transport
+        // error) after the claim swap above already committed. Without
+        // compensating here, a failed update would leave the old claim
+        // released and the new claim occupied while the stored index still
+        // points at the old `externalId` -- an orphan/leak on both ends.
+        // Undo the swap: release the newly-claimed `externalId` and restore
+        // the old claim.
+        match primary_write {
+            Ok(_) => Ok(new),
+            Err(e) => {
+                self.release_external_id_claim(storage, new_claim_key).await;
+                if let Some((old_claim_key, owner_keystone_id)) = old_claim
+                    && let Err(restore_err) = storage
+                        .transaction(vec![Mutation::create_if_absent(
+                            old_claim_key.clone(),
+                            owner_keystone_id,
+                            Metadata::new(),
+                            None::<&str>,
+                        )?])
+                        .await
+                {
+                    tracing::warn!(
+                        claim_key = %old_claim_key,
+                        error = %restore_err,
+                        "failed to restore externalId claim after update CAS failure"
+                    );
+                }
+                Err(e)
+            }
+        }
     }
 }
 
@@ -1502,6 +1544,186 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(fetched.keystone_id, "user-1");
+    }
+
+    /// `StorageApi` wrapper that fails every `set_value` call with a
+    /// simulated CAS conflict, delegating everything else to the inner
+    /// `MockStorage`. Used to simulate the primary CAS write failing
+    /// *after* an `externalId` claim swap already committed.
+    struct FailingSetValueStorage {
+        inner: MockStorage,
+    }
+
+    #[async_trait::async_trait]
+    impl StorageApi for FailingSetValueStorage {
+        async fn contains_key(
+            &self,
+            key: &[u8],
+            keyspace: Option<&str>,
+        ) -> Result<bool, ApiStoreError> {
+            self.inner.contains_key(key, keyspace).await
+        }
+
+        async fn get_by_key(
+            &self,
+            key: &[u8],
+            keyspace: Option<&str>,
+        ) -> Result<Option<StoreDataEnvelope<Vec<u8>>>, ApiStoreError> {
+            self.inner.get_by_key(key, keyspace).await
+        }
+
+        async fn prefix(
+            &self,
+            prefix: &[u8],
+            keyspace: Option<&str>,
+        ) -> Result<Vec<(String, StoreDataEnvelope<Vec<u8>>)>, ApiStoreError> {
+            self.inner.prefix(prefix, keyspace).await
+        }
+
+        async fn prefix_index(&self, prefix: &[u8]) -> Result<Vec<String>, ApiStoreError> {
+            self.inner.prefix_index(prefix).await
+        }
+
+        async fn remove(
+            &self,
+            key: String,
+            keyspace: Option<String>,
+        ) -> Result<openstack_keystone_distributed_storage::StoreResponse, ApiStoreError> {
+            self.inner.remove(key, keyspace).await
+        }
+
+        async fn remove_index(
+            &self,
+            key: String,
+        ) -> Result<openstack_keystone_distributed_storage::StoreResponse, ApiStoreError> {
+            self.inner.remove_index(key).await
+        }
+
+        async fn set_value(
+            &self,
+            _key: String,
+            _value: StoreDataEnvelope<Vec<u8>>,
+            _keyspace: Option<String>,
+            _expected_revision: Option<u64>,
+        ) -> Result<openstack_keystone_distributed_storage::StoreResponse, ApiStoreError> {
+            Err(ApiStoreError::Conflict {
+                subject: "simulated CAS conflict".to_string(),
+                description: "simulated CAS conflict".to_string(),
+            })
+        }
+
+        async fn set_index_key(
+            &self,
+            key: String,
+        ) -> Result<openstack_keystone_distributed_storage::StoreResponse, ApiStoreError> {
+            self.inner.set_index_key(key).await
+        }
+
+        async fn transaction(
+            &self,
+            mutations: Vec<Mutation>,
+        ) -> Result<openstack_keystone_distributed_storage::StoreResponse, ApiStoreError> {
+            self.inner.transaction(mutations).await
+        }
+
+        async fn is_initialized(&self) -> Result<bool, ApiStoreError> {
+            self.inner.is_initialized().await
+        }
+
+        async fn initialize(
+            &self,
+            nodes: std::collections::HashMap<u64, openstack_keystone_distributed_storage::Node>,
+        ) -> Result<(), ApiStoreError> {
+            self.inner.initialize(nodes).await
+        }
+
+        async fn current_leader(&self) -> Option<u64> {
+            self.inner.current_leader().await
+        }
+
+        async fn keyspace_exists(&self, keyspace: &str) -> Result<bool, ApiStoreError> {
+            self.inner.keyspace_exists(keyspace).await
+        }
+
+        async fn drop_keyspace(&self, keyspace: &str) -> Result<(), ApiStoreError> {
+            self.inner.drop_keyspace(keyspace).await
+        }
+
+        async fn node_id(&self) -> u64 {
+            self.inner.node_id().await
+        }
+    }
+
+    #[tokio::test]
+    async fn test_update_resource_restores_claim_when_cas_write_fails() {
+        let backend = RaftBackend::default();
+        let storage = FailingSetValueStorage {
+            inner: MockStorage::default(),
+        };
+
+        backend
+            .create_resource_impl(
+                &storage.inner,
+                make_resource_create("domain-1", "provider-1", "user-1", Some("ext-old")),
+            )
+            .await
+            .unwrap();
+
+        // The claim swap (release ext-old, claim ext-new) commits, but the
+        // primary CAS write is forced to fail -- must leave neither claim
+        // orphaned nor leaked.
+        let result = backend
+            .update_resource_impl(
+                &storage,
+                "domain-1",
+                "provider-1",
+                ScimResourceType::User,
+                "user-1",
+                ScimResourceIndexUpdate {
+                    external_id: Some(Some("ext-new".to_string())),
+                    deprovisioned_at: None,
+                },
+                None,
+            )
+            .await;
+        assert!(result.is_err());
+
+        // Old claim restored: still resolves to user-1.
+        let fetched = backend
+            .get_resource_by_external_id_impl(
+                &storage.inner,
+                "domain-1",
+                "provider-1",
+                ScimResourceType::User,
+                "ext-old",
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.keystone_id, "user-1");
+
+        // New claim released: a different resource can now claim ext-new.
+        backend
+            .create_resource_impl(
+                &storage.inner,
+                make_resource_create("domain-1", "provider-1", "user-2", Some("ext-new")),
+            )
+            .await
+            .unwrap();
+
+        // The stored index itself was never updated (CAS never landed).
+        let stored = backend
+            .get_resource_impl(
+                &storage.inner,
+                "domain-1",
+                "provider-1",
+                ScimResourceType::User,
+                "user-1",
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.external_id.as_deref(), Some("ext-old"));
     }
 
     #[tokio::test]

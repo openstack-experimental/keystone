@@ -179,9 +179,11 @@ where
 
         let ApiKeyAuth(ctx) = hydrate_ephemeral_context(&state, &resource).await?;
 
-        // Invariant 1: Domain-only scope (ADR 0024 §2.C).
+        // Invariant 1: Domain-only scope (ADR 0024 §2.C). Rejected as 403
+        // Forbidden per ADR §2.C/§10 -- the caller authenticated fine, it's
+        // just the wrong scope for this sub-router.
         if !is_domain_scoped(&ctx, &domain_id) {
-            return Err(AuthenticationError::Unauthorized.into());
+            return Err(AuthenticationError::Forbidden.into());
         }
 
         // Invariant 2: Realm Activation Gate (ADR 0024 §2.B). Checked before
@@ -196,9 +198,11 @@ where
                 warn!(error = %e, "scim_realm lookup failed");
                 AuthenticationError::Unauthorized
             })?;
+        // 403 Forbidden per ADR §2.B/§10: a missing or disabled realm is a
+        // policy gate, not an authentication failure.
         match realm {
             Some(realm) if realm.enabled => {}
-            _ => return Err(AuthenticationError::Unauthorized.into()),
+            _ => return Err(AuthenticationError::Forbidden.into()),
         }
 
         Ok(ScimRealmAuth {

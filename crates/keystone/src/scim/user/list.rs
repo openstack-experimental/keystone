@@ -29,6 +29,7 @@ use crate::scim::location::resource_location;
 use crate::scim::types::{LIST_RESPONSE_SCHEMA, ScimListResponse, ScimUser};
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub(super) struct ListParams {
     #[serde(default)]
     start_index: Option<usize>,
@@ -73,7 +74,7 @@ pub(super) async fn list(
         .await?;
 
     let start_index = params.start_index.unwrap_or(1).max(1);
-    let count = params.count.unwrap_or(200).min(200);
+    let count = params.count.unwrap_or(20).min(200);
 
     // A `filter` requires hydrating every active resource up front to
     // evaluate it (userName/active aren't on the index) -- still bounded to
@@ -289,6 +290,64 @@ mod tests {
         .unwrap();
         assert_eq!(result.total_results, 1);
         assert_eq!(result.resources[0].id, "user-2");
+    }
+
+    #[test]
+    fn test_list_params_parses_camel_case_start_index() {
+        // RFC 7644 clients send `startIndex`, not `start_index` -- must
+        // actually populate the field, not silently fall back to `None`.
+        let params: ListParams = serde_urlencoded::from_str("startIndex=5&count=10").unwrap();
+        assert_eq!(params.start_index, Some(5));
+        assert_eq!(params.count, Some(10));
+    }
+
+    #[test]
+    fn test_list_params_default_count_is_none() {
+        let params: ListParams = serde_urlencoded::from_str("").unwrap();
+        assert_eq!(params.count, None);
+    }
+
+    #[tokio::test]
+    async fn test_list_default_count_is_20() {
+        let mut resource_mock = MockScimResourceProvider::default();
+        resource_mock.expect_list_index().returning(|_, _, _, _| {
+            Ok((0..25)
+                .map(|i| make_index(&format!("user-{i}"), false))
+                .collect())
+        });
+
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock.expect_get_user().returning(|_, id| {
+            Ok(Some(
+                UserResponseBuilder::default()
+                    .id(id)
+                    .domain_id("domain-1")
+                    .enabled(true)
+                    .name(id)
+                    .build()
+                    .unwrap(),
+            ))
+        });
+
+        let state = get_mocked_state(
+            Provider::mocked_builder()
+                .mock_identity(identity_mock)
+                .mock_scim_resource(resource_mock),
+            true,
+            None,
+        )
+        .await;
+
+        let result = list(
+            domain_scoped_auth("domain-1"),
+            State(state),
+            Query(ListParams::default()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.items_per_page, 20, "default page size must be 20");
+        assert_eq!(result.resources.len(), 20);
+        assert_eq!(result.total_results, 25);
     }
 
     #[tokio::test]
