@@ -77,6 +77,7 @@ use openstack_keystone::k8s_auth::K8sAuthHook;
 use openstack_keystone::k8s_auth_client::KeystoneK8sHttpClient;
 use openstack_keystone::keystone::Service as KeystoneServiceState;
 use openstack_keystone::keystone::ServiceState;
+use openstack_keystone::nova_client_impl::KeystoneNovaHttpClient;
 use openstack_keystone::oauth2_key::Oauth2KeyHook;
 use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone::policy::HttpPolicyEnforcer;
@@ -245,7 +246,13 @@ async fn main() -> Result<(), Report> {
     debug!("Plugin manager initialized.");
     let k8s_http_client: Arc<dyn openstack_keystone_core::k8s_auth::K8sHttpClient> =
         Arc::new(KeystoneK8sHttpClient::new());
-    let provider = Provider::new(&cfg, &plugin_manager, k8s_http_client)?;
+    let nova_http_client: Arc<dyn openstack_keystone_core::nova_client::NovaHttpClient> =
+        Arc::new(KeystoneNovaHttpClient::new(
+            cfg.vendordata.nova_api_base_url.clone(),
+            cfg.vendordata.nova_admin_token.clone(),
+            Duration::from_secs(cfg.vendordata.nova_request_timeout_seconds),
+        )?);
+    let provider = Provider::new(&cfg, &plugin_manager, k8s_http_client, nova_http_client)?;
     debug!("Central provider manager initialized.");
     let policy = HttpPolicyEnforcer::new(cfg.api_policy.opa_base_url.clone()).await?;
     debug!("Policy enforcer started.");

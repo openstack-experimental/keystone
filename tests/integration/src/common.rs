@@ -195,7 +195,14 @@ pub async fn get_state_with_config(
     let plugin_manager = PluginManager::with_config(&cfg).await?;
     let k8s_http_client =
         Arc::new(openstack_keystone::k8s_auth_client::MockK8sHttpClient::default());
-    let provider = Provider::new(&cfg, &plugin_manager, k8s_http_client)?;
+    let nova_http_client: Arc<dyn openstack_keystone_core::nova_client::NovaHttpClient> = Arc::new(
+        openstack_keystone::nova_client_impl::KeystoneNovaHttpClient::new(
+            None,
+            None,
+            std_time::Duration::from_secs(2),
+        )?,
+    );
+    let provider = Provider::new(&cfg, &plugin_manager, k8s_http_client, nova_http_client)?;
 
     let concrete_storage: Option<Arc<openstack_keystone_distributed_storage::app::Storage>> =
         if cfg.distributed_storage.is_some() {

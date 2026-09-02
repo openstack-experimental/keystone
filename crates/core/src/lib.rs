@@ -103,6 +103,7 @@ pub mod k8s_auth;
 pub mod keystone;
 pub mod mapping;
 pub mod net;
+pub mod nova_client;
 pub mod oauth2_client;
 pub mod oauth2_key;
 pub mod oauth2_session;
@@ -119,6 +120,7 @@ pub mod revoke;
 pub mod role;
 pub mod scim_realm;
 pub mod scim_resource;
+pub mod spiffe_key;
 pub mod token;
 pub mod trust;
 

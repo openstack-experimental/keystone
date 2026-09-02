@@ -38,8 +38,10 @@ pub mod oauth2;
 pub mod role;
 pub mod role_assignment;
 pub mod scim_realm;
+pub mod spiffe;
 pub mod token;
 pub mod user;
+pub mod vendordata;
 
 use crate::api::types::*;
 
@@ -54,8 +56,10 @@ use crate::api::types::*;
       (path = "mappings", api = mapping::ApiDoc),
       (path = "oauth2", api = oauth2::ApiDoc),
       (path = "scim_realms", api = scim_realm::ApiDoc),
+      (path = "spiffe", api = spiffe::ApiDoc),
       (path = "tokens", api = token::ApiDoc),
       (path = "users", api = user::ApiDoc),
+      (path = "vendordata", api = vendordata::ApiDoc),
     ),
 )]
 pub struct ApiDoc;
@@ -72,8 +76,10 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .nest("/k8s_auth", k8s_auth::openapi_router())
         .nest("/roles", role::openapi_router())
         .nest("/scim_realms", scim_realm::openapi_router())
+        .nest("/spiffe", spiffe::openapi_router())
         .nest("/tokens", token::openapi_router())
         .nest("/users", user::openapi_router())
+        .nest("/vendordata", vendordata::openapi_router())
         // The role assignment sub-routes register absolute paths
         // (`/role_assignments`, `/projects/…`, `/system/…`), so they are
         // merged rather than nested — the same wiring as `api::v3`. Nesting

@@ -283,6 +283,65 @@ mod oauth2_key {
 }
 pub use oauth2_key::MockOauth2KeyProvider;
 
+mod spiffe_key {
+    use super::*;
+
+    use openstack_keystone_core_types::spiffe_key::SpiffeKeyProviderError;
+    use openstack_keystone_key_repository::asymmetric::KeyMaterial;
+
+    use crate::spiffe_key::SpiffeKeyApi;
+
+    mock! {
+        pub SpiffeKeyProvider {}
+
+        #[async_trait]
+        impl SpiffeKeyApi for SpiffeKeyProvider {
+            async fn ensure_domain_keys(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+            ) -> Result<KeyMaterial, SpiffeKeyProviderError>;
+
+            async fn jwks(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+            ) -> Result<jsonwebtoken::jwk::JwkSet, SpiffeKeyProviderError>;
+
+            async fn active_signing_key(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+            ) -> Result<KeyMaterial, SpiffeKeyProviderError>;
+        }
+    }
+}
+pub use spiffe_key::MockSpiffeKeyProvider;
+
+mod nova_client {
+    use super::*;
+
+    use openstack_keystone_core_types::vendordata::VendordataProviderError;
+
+    use crate::nova_client::NovaClientApi;
+
+    mock! {
+        pub NovaClientProvider {}
+
+        #[async_trait]
+        impl NovaClientApi for NovaClientProvider {
+            async fn verify_ownership(
+                &self,
+                state: &ServiceState,
+                project_id: &str,
+                instance_id: &str,
+                host: &str,
+            ) -> Result<bool, VendordataProviderError>;
+        }
+    }
+}
+pub use nova_client::MockNovaClientProvider;
+
 mod oauth2_session {
     use super::*;
 

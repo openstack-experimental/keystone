@@ -82,6 +82,15 @@ pub enum KeystoneApiError {
     #[error("selected authentication is forbidden")]
     SelectedAuthenticationForbidden,
 
+    /// The request could not be completed because a required upstream
+    /// dependency is unreachable or timed out (HTTP 503 Service
+    /// Unavailable). Used where failing closed is a deliberate security
+    /// property, not an internal bug -- e.g. `POST /v4/vendordata`'s Nova
+    /// ownership check (SPIRE integration plan, Phase 2, Fix 1): never
+    /// silently degrade to "unverified", only to "unavailable".
+    #[error("service unavailable: {0}")]
+    ServiceUnavailable(String),
+
     /// Rate limit exceeded (HTTP 429 Too Many Requests).
     ///
     /// `retry_after` is the number of seconds the client must wait before

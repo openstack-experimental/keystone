@@ -104,6 +104,7 @@ mod token;
 mod token_restriction;
 mod trust;
 mod vault;
+mod vendordata;
 mod webauthn;
 
 pub use api_key::*;
@@ -147,6 +148,7 @@ pub use token::*;
 pub use token_restriction::*;
 pub use trust::*;
 pub use vault::VaultSection;
+pub use vendordata::*;
 pub use webauthn::*;
 
 /// Keystone configuration.
@@ -345,6 +347,11 @@ pub struct Config {
     /// Direct Vault bootstrap configuration.
     #[serde(default)]
     pub vault: Option<VaultSection>,
+
+    /// Vendor data JWT provider configuration (SPIRE integration plan,
+    /// Phase 2).
+    #[serde(default)]
+    pub vendordata: VendordataProvider,
 
     /// Webauthn configuration.
     #[serde(default)]

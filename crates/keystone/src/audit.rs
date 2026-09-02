@@ -95,6 +95,7 @@ pub fn error_variant_name(error: &KeystoneApiError) -> String {
         KeystoneApiError::UnprocessableEntity(_) => "UnprocessableEntity".to_string(),
         KeystoneApiError::NotImplemented(_) => "NotImplemented".to_string(),
         KeystoneApiError::TooManyRequests { .. } => "TooManyRequests".to_string(),
+        KeystoneApiError::ServiceUnavailable(_) => "ServiceUnavailable".to_string(),
     }
 }
 
@@ -511,6 +512,7 @@ mod tests {
             KeystoneApiError::DomainIdOrName,
             KeystoneApiError::ProjectIdOrName,
             KeystoneApiError::ProjectDomain,
+            KeystoneApiError::ServiceUnavailable("x".into()),
         ];
         for e in cases {
             let name = error_variant_name(e);

@@ -43,8 +43,10 @@ pub mod revoke;
 pub mod role;
 pub mod scim;
 pub mod scope;
+pub mod spiffe_key;
 pub mod token;
 pub mod trust;
+pub mod vendordata;
 
 /// Return `true` to be used as a positive default for the serde macros.
 pub fn default_true() -> bool {

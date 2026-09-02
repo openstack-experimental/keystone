@@ -121,3 +121,4 @@
     - [Generalized Pagination](adr/0029-pagination.md)
     - [Per-Request Cache via tokio::task_local!](adr/0030-per-request-cache.md)
     - [Prometheus Metrics Catalog](adr/0031-prometheus-metrics.md)
+    - [Vendor Data JWT Attestation](adr/0032-vendor-data-jwt.md)

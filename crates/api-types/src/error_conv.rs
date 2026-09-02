@@ -41,7 +41,9 @@ use openstack_keystone_core_types::resource::ResourceProviderError;
 use openstack_keystone_core_types::revoke::RevokeProviderError;
 use openstack_keystone_core_types::role::RoleProviderError;
 use openstack_keystone_core_types::scim::{ScimRealmProviderError, ScimResourceProviderError};
+use openstack_keystone_core_types::spiffe_key::SpiffeKeyProviderError;
 use openstack_keystone_core_types::token::TokenProviderError;
+use openstack_keystone_core_types::vendordata::VendordataProviderError;
 
 use crate::error::KeystoneApiError;
 
@@ -80,6 +82,7 @@ impl IntoResponse for KeystoneApiError {
             }
             KeystoneApiError::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
             KeystoneApiError::UnprocessableEntity(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            KeystoneApiError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             _ => StatusCode::BAD_REQUEST,
         };
 
@@ -465,6 +468,35 @@ impl From<Oauth2KeyProviderError> for KeystoneApiError {
                 resource: "oauth2_signing_key".into(),
                 identifier: "no raft storage configured for OAuth2 signing keys".into(),
             },
+            other => Self::InternalError(other.to_string()),
+        }
+    }
+}
+
+impl From<SpiffeKeyProviderError> for KeystoneApiError {
+    fn from(value: SpiffeKeyProviderError) -> Self {
+        match value {
+            SpiffeKeyProviderError::NotFound(x) => Self::NotFound {
+                resource: "spiffe_attestation_signing_key".into(),
+                identifier: x,
+            },
+            other => Self::InternalError(other.to_string()),
+        }
+    }
+}
+
+impl From<VendordataProviderError> for KeystoneApiError {
+    fn from(value: VendordataProviderError) -> Self {
+        match value {
+            VendordataProviderError::OwnershipMismatch
+            | VendordataProviderError::NotAComputeHost
+            | VendordataProviderError::WrongInterface => Self::Forbidden {
+                source: Box::new(value),
+            },
+            VendordataProviderError::NovaUnavailable(x) => Self::ServiceUnavailable(x),
+            VendordataProviderError::InvalidTtl(x) => {
+                Self::BadRequest(format!("ttl_seconds must be between 60 and 600, got {x}"))
+            }
             other => Self::InternalError(other.to_string()),
         }
     }

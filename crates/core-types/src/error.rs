@@ -37,6 +37,7 @@ use crate::resource::ResourceProviderError;
 use crate::revoke::RevokeProviderError;
 use crate::role::RoleProviderError;
 use crate::scim::{ScimRealmProviderError, ScimResourceProviderError};
+use crate::spiffe_key::SpiffeKeyProviderError;
 use crate::token::TokenProviderError;
 use crate::trust::TrustProviderError;
 
@@ -217,6 +218,14 @@ pub enum KeystoneError {
     /// Policy engine is not available.
     #[error("policy enforcement is requested, but not available with the enabled features")]
     PolicyEnforcementNotAvailable,
+
+    /// SPIFFE attestation signing key provider.
+    #[error(transparent)]
+    SpiffeKeyProvider {
+        /// The source of the error.
+        #[from]
+        source: SpiffeKeyProviderError,
+    },
 
     /// Raft storage is not available.
     #[error("raft storage is not available")]

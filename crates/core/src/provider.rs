@@ -58,6 +58,9 @@ use crate::mapping::MappingApi;
 #[cfg(any(test, feature = "mock"))]
 use crate::mapping::MockMappingProvider;
 #[cfg(any(test, feature = "mock"))]
+use crate::nova_client::MockNovaClientProvider;
+use crate::nova_client::NovaClientApi;
+#[cfg(any(test, feature = "mock"))]
 use crate::oauth2_client::MockOauth2ClientProvider;
 use crate::oauth2_client::Oauth2ClientApi;
 #[cfg(any(test, feature = "mock"))]
@@ -85,6 +88,9 @@ use crate::scim_realm::ScimRealmApi;
 #[cfg(any(test, feature = "mock"))]
 use crate::scim_resource::MockScimResourceProvider;
 use crate::scim_resource::ScimResourceApi;
+#[cfg(any(test, feature = "mock"))]
+use crate::spiffe_key::MockSpiffeKeyProvider;
+use crate::spiffe_key::SpiffeKeyApi;
 #[cfg(any(test, feature = "mock"))]
 use crate::token::MockTokenProvider;
 use crate::token::TokenApi;
@@ -116,6 +122,9 @@ pub struct Provider {
     idmapping: Box<dyn IdMappingApi>,
     /// Mapping provider.
     mapping: Box<dyn MappingApi>,
+    /// Nova ownership-verification provider (SPIRE integration plan,
+    /// Phase 2, Fix 1).
+    nova_client: Box<dyn NovaClientApi>,
     /// OAuth2 client provider.
     oauth2_client: Box<dyn Oauth2ClientApi>,
     /// OAuth2 signing key provider.
@@ -136,6 +145,9 @@ pub struct Provider {
     scim_realm: Box<dyn ScimRealmApi>,
     /// SCIM resource ownership index provider.
     scim_resource: Box<dyn ScimResourceApi>,
+    /// SPIFFE attestation signing key provider (SPIRE integration plan,
+    /// Phase 2).
+    spiffe_key: Box<dyn SpiffeKeyApi>,
     /// Token provider.
     token: Box<dyn TokenApi>,
     /// Trust provider.
@@ -201,6 +213,12 @@ impl ProviderBuilder {
         new
     }
 
+    pub fn mock_nova_client(self, value: impl NovaClientApi + 'static) -> Self {
+        let mut new = self;
+        new.nova_client = Some(Box::new(value));
+        new
+    }
+
     pub fn mock_oauth2_client(self, value: impl Oauth2ClientApi + 'static) -> Self {
         let mut new = self;
         new.oauth2_client = Some(Box::new(value));
@@ -261,6 +279,12 @@ impl ProviderBuilder {
         new
     }
 
+    pub fn mock_spiffe_key(self, value: impl SpiffeKeyApi + 'static) -> Self {
+        let mut new = self;
+        new.spiffe_key = Some(Box::new(value));
+        new
+    }
+
     pub fn mock_policy_store(self, value: impl PolicyStoreApi + 'static) -> Self {
         let mut new = self;
         new.policy_store = Some(Box::new(value));
@@ -286,6 +310,7 @@ impl Provider {
         cfg: &Config,
         plugin_manager: &P,
         k8s_http_client: Arc<dyn K8sHttpClient>,
+        nova_http_client: Arc<dyn crate::nova_client::NovaHttpClient>,
     ) -> Result<Self, KeystoneError> {
         let api_key = Box::new(crate::api_key::ApiKeyService::new(cfg, plugin_manager)?);
         let application_credential = Box::new(
@@ -313,6 +338,8 @@ impl Provider {
             plugin_manager,
         )?);
         let mapping = Box::new(crate::mapping::MappingService::new(cfg, plugin_manager)?);
+        let nova_client = Box::new(crate::nova_client::NovaClientService::new(nova_http_client));
+        let spiffe_key = Box::new(crate::spiffe_key::SpiffeKeyService::new(cfg)?);
         let oauth2_key = Box::new(crate::oauth2_key::Oauth2KeyService::new(
             cfg,
             plugin_manager,
@@ -358,6 +385,7 @@ impl Provider {
             identity,
             idmapping,
             mapping,
+            nova_client,
             oauth2_client,
             oauth2_key,
             oauth2_session,
@@ -368,6 +396,7 @@ impl Provider {
             role,
             scim_realm,
             scim_resource,
+            spiffe_key,
             token,
             trust,
         })
@@ -386,6 +415,7 @@ impl Provider {
             .mock_identity(MockIdentityProvider::default())
             .mock_idmapping(MockIdMappingProvider::default())
             .mock_mapping(MockMappingProvider::default())
+            .mock_nova_client(MockNovaClientProvider::default())
             .mock_oauth2_client(MockOauth2ClientProvider::default())
             .mock_oauth2_key(MockOauth2KeyProvider::default())
             .mock_oauth2_session(MockOauth2SessionProvider::default())
@@ -397,6 +427,7 @@ impl Provider {
             .mock_role(MockRoleProvider::default())
             .mock_scim_realm(MockScimRealmProvider::default())
             .mock_scim_resource(MockScimResourceProvider::default())
+            .mock_spiffe_key(MockSpiffeKeyProvider::default())
             .mock_token(MockTokenProvider::default())
             .mock_trust(MockTrustProvider::default())
     }
@@ -444,6 +475,12 @@ impl Provider {
     /// Get the mapping provider.
     pub fn get_mapping_provider(&self) -> &dyn MappingApi {
         &*self.mapping
+    }
+
+    /// Get the Nova ownership-verification provider (SPIRE integration
+    /// plan, Phase 2, Fix 1).
+    pub fn get_nova_client_provider(&self) -> &dyn NovaClientApi {
+        &*self.nova_client
     }
 
     /// Get the OAuth2 client provider.
@@ -511,5 +548,11 @@ impl Provider {
     /// Get the trust provider.
     pub fn get_trust_provider(&self) -> &dyn TrustApi {
         &*self.trust
+    }
+
+    /// Get the SPIFFE attestation signing key provider (SPIRE integration
+    /// plan, Phase 2).
+    pub fn get_spiffe_key_provider(&self) -> &dyn SpiffeKeyApi {
+        &*self.spiffe_key
     }
 }

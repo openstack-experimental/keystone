@@ -11,25 +11,8 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # V4 API types
-pub mod api_key;
-pub mod auth;
-pub mod auth_plugin;
-pub mod mapping;
-pub mod oauth2_client;
-pub mod oauth2_key;
-pub mod scim_realm;
-pub mod token_restriction;
-pub mod user;
-pub mod vendordata;
+//! # SPIFFE attestation signing key provider (SPIRE integration plan, Phase 2)
 
-#[cfg(feature = "conv")]
-mod api_key_conv;
-#[cfg(feature = "conv")]
-mod oauth2_client_conv;
-#[cfg(feature = "conv")]
-mod scim_realm_conv;
-#[cfg(feature = "conv")]
-mod token_restriction_conv;
-#[cfg(feature = "conv")]
-mod user_conv;
+mod error;
+
+pub use error::SpiffeKeyProviderError;
