@@ -152,7 +152,12 @@ pub struct ApplicationCredentialResponse {
 }
 
 /// Wrapper for a create request body.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+///
+/// No `PartialEq`: `application_credential` may carry a plaintext `secret`
+/// (`ApplicationCredentialCreate.secret: Option<SecretString>`), and
+/// `secrecy::SecretString` deliberately does not implement `PartialEq` to
+/// discourage comparing secrets outside constant-time paths.
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct ApplicationCredentialCreateRequest {
@@ -204,7 +209,11 @@ pub struct ApplicationCredentialCreated {
 }
 
 /// Wrapper for create response body.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+///
+/// No `PartialEq`: see [`ApplicationCredentialCreateRequest`] -- this
+/// wrapper carries `ApplicationCredentialCreated.secret: SecretString`,
+/// which deliberately has no `PartialEq` impl.
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct ApplicationCredentialCreateResponse {
