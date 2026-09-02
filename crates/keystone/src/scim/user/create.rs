@@ -29,6 +29,7 @@ use crate::scim::error::ScimApiError;
 use crate::scim::etag::etag_header;
 use crate::scim::extract::ScimJson;
 use crate::scim::location::resource_location;
+use crate::scim::rate_limit::check_write_rate_limit;
 use crate::scim::types::{ScimUser, ScimUserWrite};
 
 #[allow(clippy::expect_used)]
@@ -56,6 +57,7 @@ pub(super) async fn create(
     State(state): State<ServiceState>,
     ScimJson(req): ScimJson<ScimUserWrite>,
 ) -> Result<(StatusCode, HeaderMap, Json<ScimUser>), ScimApiError> {
+    check_write_rate_limit(&state, &realm.provider_id)?;
     req.validate_schemas().map_err(ScimApiError::InvalidValue)?;
     if req.user_name.trim().is_empty() {
         return Err(KeystoneApiError::BadRequest("userName is required".to_string()).into());

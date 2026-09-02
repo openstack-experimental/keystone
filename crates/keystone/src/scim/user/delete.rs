@@ -28,6 +28,7 @@ use openstack_keystone_core_types::scim::{ScimResourceIndexUpdate, ScimResourceT
 
 use crate::keystone::ServiceState;
 use crate::scim::error::ScimApiError;
+use crate::scim::rate_limit::check_write_rate_limit;
 use crate::scim::user::show::fetch_owned;
 
 pub(super) async fn delete(
@@ -35,6 +36,7 @@ pub(super) async fn delete(
     Path((_domain_id, id)): Path<(String, String)>,
     State(state): State<ServiceState>,
 ) -> Result<StatusCode, ScimApiError> {
+    check_write_rate_limit(&state, &realm.provider_id)?;
     let exec = ExecutionContext::from_auth(&state, &ctx);
     let (existing_user, _existing_index) =
         fetch_owned(&state, &exec, &realm.domain_id, &realm.provider_id, &id).await?;

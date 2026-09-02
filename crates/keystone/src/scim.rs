@@ -44,6 +44,7 @@ pub mod filter;
 mod group;
 mod location;
 pub mod patch;
+pub mod rate_limit;
 pub mod types;
 mod user;
 

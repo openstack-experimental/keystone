@@ -29,12 +29,14 @@ use openstack_keystone_core_types::scim::{ScimResourceIndexUpdate, ScimResourceT
 use crate::keystone::ServiceState;
 use crate::scim::error::ScimApiError;
 use crate::scim::group::show::fetch_owned;
+use crate::scim::rate_limit::check_write_rate_limit;
 
 pub(super) async fn delete(
     ScimRealmAuth { ctx, realm }: ScimRealmAuth,
     Path((_domain_id, id)): Path<(String, String)>,
     State(state): State<ServiceState>,
 ) -> Result<StatusCode, ScimApiError> {
+    check_write_rate_limit(&state, &realm.provider_id)?;
     let exec = ExecutionContext::from_auth(&state, &ctx);
     let (existing_group, _existing_index) =
         fetch_owned(&state, &exec, &realm.domain_id, &realm.provider_id, &id).await?;

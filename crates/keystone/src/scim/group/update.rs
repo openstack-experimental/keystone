@@ -33,6 +33,7 @@ use crate::scim::extract::ScimJson;
 use crate::scim::group::membership::validate_members_owned_by_realm;
 use crate::scim::group::show::fetch_owned;
 use crate::scim::location::resource_location;
+use crate::scim::rate_limit::check_write_rate_limit;
 use crate::scim::types::{MAX_GROUP_MEMBERS, ScimGroup, ScimGroupWrite};
 
 pub(super) async fn update(
@@ -42,6 +43,7 @@ pub(super) async fn update(
     headers: HeaderMap,
     ScimJson(req): ScimJson<ScimGroupWrite>,
 ) -> Result<(HeaderMap, Json<ScimGroup>), ScimApiError> {
+    check_write_rate_limit(&state, &realm.provider_id)?;
     req.validate_schemas().map_err(ScimApiError::InvalidValue)?;
     if req.display_name.trim().is_empty() {
         return Err(KeystoneApiError::BadRequest("displayName is required".to_string()).into());

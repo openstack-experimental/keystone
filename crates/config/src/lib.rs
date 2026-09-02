@@ -319,6 +319,7 @@ pub struct Config {
 
     /// SCIM realm provider configuration (ADR 0024).
     #[serde(default)]
+    #[validate(nested)]
     pub scim_realm: ScimRealmProvider,
 
     /// SCIM resource ownership index provider configuration (ADR 0024 §3.A).

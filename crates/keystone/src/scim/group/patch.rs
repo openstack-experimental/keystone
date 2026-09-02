@@ -38,6 +38,7 @@ use crate::scim::group::membership::validate_members_owned_by_realm;
 use crate::scim::group::show::fetch_owned;
 use crate::scim::location::resource_location;
 use crate::scim::patch::{GROUP_PATCH_PATHS, PatchOp, ScimPatchRequest, validate_patch};
+use crate::scim::rate_limit::check_write_rate_limit;
 use crate::scim::types::{MAX_GROUP_MEMBERS, ScimGroup, ScimGroupMember};
 
 fn member_ids(value: &serde_json::Value) -> Result<Vec<String>, ScimApiError> {
@@ -57,6 +58,7 @@ pub(super) async fn patch(
     headers: HeaderMap,
     ScimJson(req): ScimJson<ScimPatchRequest>,
 ) -> Result<(HeaderMap, Json<ScimGroup>), ScimApiError> {
+    check_write_rate_limit(&state, &realm.provider_id)?;
     req.validate_schemas().map_err(ScimApiError::InvalidValue)?;
     let ops = validate_patch(&req, GROUP_PATCH_PATHS)?;
     let expected_version = parse_if_match(&headers)?;

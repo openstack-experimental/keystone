@@ -35,6 +35,7 @@ use crate::scim::etag::{etag_header, parse_if_match};
 use crate::scim::extract::ScimJson;
 use crate::scim::location::resource_location;
 use crate::scim::patch::{PatchOp, ScimPatchRequest, USER_PATCH_PATHS, validate_patch};
+use crate::scim::rate_limit::check_write_rate_limit;
 use crate::scim::types::{EXTRA_DISPLAY_NAME, EXTRA_FAMILY_NAME, EXTRA_GIVEN_NAME, ScimUser};
 use crate::scim::user::show::fetch_owned;
 
@@ -52,6 +53,7 @@ pub(super) async fn patch(
     headers: HeaderMap,
     ScimJson(req): ScimJson<ScimPatchRequest>,
 ) -> Result<(HeaderMap, Json<ScimUser>), ScimApiError> {
+    check_write_rate_limit(&state, &realm.provider_id)?;
     req.validate_schemas().map_err(ScimApiError::InvalidValue)?;
     let ops = validate_patch(&req, USER_PATCH_PATHS)?;
     let expected_version = parse_if_match(&headers)?;

@@ -111,6 +111,16 @@ pub struct Service {
     /// `api_key_rate_limiter` above, own tunable blast radius.
     pub oauth2_token_rate_limiter: Arc<DefaultKeyedRateLimiter<String>>,
 
+    /// Sliding-window rate limiter for SCIM resource writes
+    /// (`POST`/`PUT`/`PATCH`/`DELETE` on `/SCIM/v2/{domain_id}/Users|
+    /// Groups`), keyed on the realm's `provider_id` (ADR 0024 §11
+    /// `scim_realm_write_rate_limit`). A second, independent tier from
+    /// `api_key_rate_limiter` above -- that one covers every SCIM ingress
+    /// request (authentication); this one specifically bounds bulk
+    /// provisioning bursts once a request is already authenticated under a
+    /// given realm.
+    pub scim_realm_write_rate_limiter: Arc<DefaultKeyedRateLimiter<String>>,
+
     /// Loaded dynamic auth plugins (ADR 0025). Empty (an
     /// [`EmptyAuthPluginRuntime`]) until `crates/keystone`'s
     /// `load_auth_plugins` runs post-construction - `CoreHostFunctions`
@@ -231,6 +241,21 @@ impl Service {
         );
         let oauth2_token_rate_limiter = Arc::new(RateLimiter::keyed(oauth2_token_quota));
 
+        let scim_realm_cfg = cfg.config.read().await.scim_realm.clone();
+        let scim_realm_write_quota = Quota::per_minute(
+            scim_realm_cfg
+                .write_rate_limit_replenish_per_minute
+                .try_into()
+                .unwrap_or(std::num::NonZeroU32::MAX),
+        )
+        .allow_burst(
+            scim_realm_cfg
+                .write_rate_limit_burst_size
+                .try_into()
+                .unwrap_or(std::num::NonZeroU32::MAX),
+        );
+        let scim_realm_write_rate_limiter = Arc::new(RateLimiter::keyed(scim_realm_write_quota));
+
         // Build rate-limiting state from config. Fails fast (Invariant 2) if
         // any enabled bucket has zero burst or replenish rate.
         let rate_limiters = {
@@ -250,6 +275,7 @@ impl Service {
             local_emergency_leaderless_tracker: LeaderlessTracker::new(),
             api_key_rate_limiter,
             oauth2_token_rate_limiter,
+            scim_realm_write_rate_limiter,
             auth_plugin_registry: RwLock::new(Arc::new(EmptyAuthPluginRuntime)),
             core_host_functions: RwLock::new(None),
             rate_limiters,

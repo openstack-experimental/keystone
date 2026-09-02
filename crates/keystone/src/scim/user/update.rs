@@ -28,6 +28,7 @@ use crate::scim::error::ScimApiError;
 use crate::scim::etag::{etag_header, parse_if_match};
 use crate::scim::extract::ScimJson;
 use crate::scim::location::resource_location;
+use crate::scim::rate_limit::check_write_rate_limit;
 use crate::scim::types::{ScimUser, ScimUserWrite};
 use crate::scim::user::show::fetch_owned;
 
@@ -38,6 +39,7 @@ pub(super) async fn update(
     headers: HeaderMap,
     ScimJson(req): ScimJson<ScimUserWrite>,
 ) -> Result<(HeaderMap, Json<ScimUser>), ScimApiError> {
+    check_write_rate_limit(&state, &realm.provider_id)?;
     req.validate_schemas().map_err(ScimApiError::InvalidValue)?;
     if req.user_name.trim().is_empty() {
         return Err(openstack_keystone_core::api::KeystoneApiError::BadRequest(

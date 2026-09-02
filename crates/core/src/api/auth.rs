@@ -330,6 +330,9 @@ mod tests {
             oauth2_token_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
                 governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
             )),
+            scim_realm_write_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
+                governor::Quota::per_minute(std::num::NonZeroU32::new(500).unwrap()),
+            )),
             auth_plugin_registry: tokio::sync::RwLock::new(Arc::new(
                 openstack_keystone_auth_plugin_core::EmptyAuthPluginRuntime,
             )),
@@ -454,6 +457,9 @@ mod tests {
             oauth2_token_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
                 governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
             )),
+            scim_realm_write_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
+                governor::Quota::per_minute(std::num::NonZeroU32::new(500).unwrap()),
+            )),
             auth_plugin_registry: tokio::sync::RwLock::new(Arc::new(
                 openstack_keystone_auth_plugin_core::EmptyAuthPluginRuntime,
             )),
@@ -571,6 +577,9 @@ mod tests {
             oauth2_token_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
                 governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
             )),
+            scim_realm_write_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
+                governor::Quota::per_minute(std::num::NonZeroU32::new(500).unwrap()),
+            )),
             auth_plugin_registry: tokio::sync::RwLock::new(Arc::new(
                 openstack_keystone_auth_plugin_core::EmptyAuthPluginRuntime,
             )),
@@ -653,6 +662,9 @@ mod tests {
             oauth2_token_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
                 governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
             )),
+            scim_realm_write_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
+                governor::Quota::per_minute(std::num::NonZeroU32::new(500).unwrap()),
+            )),
             auth_plugin_registry: tokio::sync::RwLock::new(Arc::new(
                 openstack_keystone_auth_plugin_core::EmptyAuthPluginRuntime,
             )),
@@ -732,6 +744,9 @@ mod tests {
             )),
             oauth2_token_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
                 governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
+            )),
+            scim_realm_write_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
+                governor::Quota::per_minute(std::num::NonZeroU32::new(500).unwrap()),
             )),
             auth_plugin_registry: tokio::sync::RwLock::new(Arc::new(
                 openstack_keystone_auth_plugin_core::EmptyAuthPluginRuntime,
@@ -873,6 +888,9 @@ mod tests {
             oauth2_token_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
                 governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
             )),
+            scim_realm_write_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
+                governor::Quota::per_minute(std::num::NonZeroU32::new(500).unwrap()),
+            )),
             auth_plugin_registry: tokio::sync::RwLock::new(Arc::new(
                 openstack_keystone_auth_plugin_core::EmptyAuthPluginRuntime,
             )),
@@ -964,6 +982,9 @@ mod tests {
             )),
             oauth2_token_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
                 governor::Quota::per_minute(std::num::NonZeroU32::new(60).unwrap()),
+            )),
+            scim_realm_write_rate_limiter: std::sync::Arc::new(governor::RateLimiter::keyed(
+                governor::Quota::per_minute(std::num::NonZeroU32::new(500).unwrap()),
             )),
             auth_plugin_registry: tokio::sync::RwLock::new(Arc::new(
                 openstack_keystone_auth_plugin_runtime::WasmPluginRegistry::default(),
