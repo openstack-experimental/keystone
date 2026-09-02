@@ -163,10 +163,10 @@ pub(crate) async fn emit_wasm_plugin_audit(
         outcome.to_string(),
         outcome_reason,
         build_initiator_unknown(),
-        Target {
-            id: plugin_name.to_string(),
-            type_uri: "data/security/identity/wasm-plugin".to_string(),
-        },
+        Target::new(
+            plugin_name.to_string(),
+            "data/security/identity/wasm-plugin".to_string(),
+        ),
         Observer {
             node_id: node_id.clone(),
             id: format!("service/security/keystone/{node_id}"),

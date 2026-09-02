@@ -38,7 +38,7 @@ pub(super) async fn delete(
 ) -> Result<StatusCode, ScimApiError> {
     check_write_rate_limit(&state, &realm.provider_id)?;
     let exec = ExecutionContext::from_auth(&state, &ctx);
-    let (existing_group, _existing_index) =
+    let (existing_group, existing_index) =
         fetch_owned(&state, &exec, &realm.domain_id, &realm.provider_id, &id).await?;
 
     state
@@ -94,12 +94,19 @@ pub(super) async fn delete(
         )
         .await?;
 
-    // §9: emit a CADF `disable` event for the SCIM deprovisioning semantics.
+    // §9: emit a CADF `disable` event for the SCIM deprovisioning semantics,
+    // carrying `realm_provider_id`/`external_id` so a SIEM can correlate
+    // this disable back to the provisioning realm.
     state
         .event_dispatcher
         .emit(Event::new(
             Operation::Disable,
-            EventPayload::Group { id: id.clone() },
+            EventPayload::ScimResource {
+                resource_type: "group".to_string(),
+                keystone_id: id.clone(),
+                realm_provider_id: realm.provider_id.clone(),
+                external_id: existing_index.external_id.clone(),
+            },
         ))
         .await;
 

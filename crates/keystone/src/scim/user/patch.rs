@@ -24,6 +24,7 @@ use axum::{Json, extract::Path, extract::State, http::HeaderMap};
 use openstack_keystone_core::api::KeystoneApiError;
 use openstack_keystone_core::api::api_key_auth::ScimRealmAuth;
 use openstack_keystone_core::auth::ExecutionContext;
+use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::identity::UserUpdate;
 use openstack_keystone_core_types::scim::{
     ScimResourceIndexUpdate, ScimResourceProviderError, ScimResourceType,
@@ -201,6 +202,22 @@ pub(super) async fn patch(
             },
         )
         .await?;
+
+    // ADR 0024 §9: correlation record carrying `realm_provider_id`/
+    // `external_id`, alongside the generic `EventPayload::User` update
+    // event `update_user` above already emitted.
+    state
+        .event_dispatcher
+        .emit(Event::new(
+            Operation::Update,
+            EventPayload::ScimResource {
+                resource_type: "user".to_string(),
+                keystone_id: id.clone(),
+                realm_provider_id: realm.provider_id.clone(),
+                external_id: index.external_id.clone(),
+            },
+        ))
+        .await;
 
     let location = resource_location(&state, &realm.domain_id, "Users", &id).await;
     let mut response_headers = HeaderMap::new();

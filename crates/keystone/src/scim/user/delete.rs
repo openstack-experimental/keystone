@@ -38,7 +38,7 @@ pub(super) async fn delete(
 ) -> Result<StatusCode, ScimApiError> {
     check_write_rate_limit(&state, &realm.provider_id)?;
     let exec = ExecutionContext::from_auth(&state, &ctx);
-    let (existing_user, _existing_index) =
+    let (existing_user, existing_index) =
         fetch_owned(&state, &exec, &realm.domain_id, &realm.provider_id, &id).await?;
 
     state
@@ -119,11 +119,19 @@ pub(super) async fn delete(
     // event enriching the audit trail for the SCIM deprovisioning
     // semantics specifically (a judgment call — §9 does not otherwise
     // define a dedicated disable-audit call site for Identity users).
+    // Carries `realm_provider_id`/`external_id` (§9) so a SIEM can
+    // correlate this disable back to the realm that provisioned the user,
+    // which the generic `User` event `update_user` emits above cannot.
     state
         .event_dispatcher
         .emit(Event::new(
             Operation::Disable,
-            EventPayload::User { id: id.clone() },
+            EventPayload::ScimResource {
+                resource_type: "user".to_string(),
+                keystone_id: id.clone(),
+                realm_provider_id: realm.provider_id.clone(),
+                external_id: existing_index.external_id.clone(),
+            },
         ))
         .await;
 

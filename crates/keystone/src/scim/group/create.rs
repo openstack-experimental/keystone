@@ -19,6 +19,7 @@ use serde_json::json;
 use openstack_keystone_core::api::KeystoneApiError;
 use openstack_keystone_core::api::api_key_auth::ScimRealmAuth;
 use openstack_keystone_core::auth::ExecutionContext;
+use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::scim::{
     ScimResourceIndexCreate, ScimResourceProviderError, ScimResourceType,
 };
@@ -162,6 +163,22 @@ pub(super) async fn create(
             .add_users_to_groups(&exec, memberships)
             .await?;
     }
+
+    // ADR 0024 §9: correlation record carrying `realm_provider_id`/
+    // `external_id`, alongside the generic `EventPayload::Group` create
+    // event `create_group` above already emitted.
+    state
+        .event_dispatcher
+        .emit(Event::new(
+            Operation::Create,
+            EventPayload::ScimResource {
+                resource_type: "group".to_string(),
+                keystone_id: group.id.clone(),
+                realm_provider_id: realm.provider_id.clone(),
+                external_id: index.external_id.clone(),
+            },
+        ))
+        .await;
 
     let location = resource_location(&state, &realm.domain_id, "Groups", &group.id).await;
     let mut headers = HeaderMap::new();

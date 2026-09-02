@@ -199,10 +199,10 @@ pub fn emit_perimeter_authenticate_event(
         outcome.to_string(),
         outcome_reason,
         initiator,
-        Target {
-            id: "keystone".to_string(),
-            type_uri: "service/security/keystone/auth".to_string(),
-        },
+        Target::new(
+            "keystone".to_string(),
+            "service/security/keystone/auth".to_string(),
+        ),
         Observer {
             node_id: node_id.clone(),
             id: format!("service/security/keystone/{node_id}"),
@@ -239,10 +239,10 @@ pub fn emit_api_key_control_event(
         outcome.to_string(),
         outcome_reason,
         initiator,
-        Target {
-            id: client_id.to_string(),
-            type_uri: "data/security/keystone/api_key".to_string(),
-        },
+        Target::new(
+            client_id.to_string(),
+            "data/security/keystone/api_key".to_string(),
+        ),
         Observer {
             node_id: node_id.clone(),
             id: format!("service/security/keystone/{node_id}"),
@@ -279,10 +279,10 @@ pub fn emit_oauth2_session_event(
         outcome.to_string(),
         outcome_reason,
         initiator,
-        Target {
-            id: client_id.to_string(),
-            type_uri: "data/security/keystone/oauth2_client".to_string(),
-        },
+        Target::new(
+            client_id.to_string(),
+            "data/security/keystone/oauth2_client".to_string(),
+        ),
         Observer {
             node_id: node_id.clone(),
             id: format!("service/security/keystone/{node_id}"),
@@ -320,10 +320,10 @@ pub async fn emit_oauth2_refresh_reuse_critical_event(
             "refresh_token family {family_id} revoked: reuse detected outside grace window"
         )),
         initiator,
-        Target {
-            id: family_id.to_string(),
-            type_uri: "data/security/keystone/oauth2_refresh_family".to_string(),
-        },
+        Target::new(
+            family_id.to_string(),
+            "data/security/keystone/oauth2_refresh_family".to_string(),
+        ),
         Observer {
             node_id: node_id.clone(),
             id: format!("service/security/keystone/{node_id}"),
@@ -365,10 +365,10 @@ pub fn emit_oauth2_key_rotation_event(
             "domain {domain_id} rotated to new signing key {new_kid}"
         )),
         initiator,
-        Target {
-            id: domain_id.to_string(),
-            type_uri: "data/security/keystone/oauth2_signing_key".to_string(),
-        },
+        Target::new(
+            domain_id.to_string(),
+            "data/security/keystone/oauth2_signing_key".to_string(),
+        ),
         Observer {
             node_id: node_id.clone(),
             id: format!("service/security/keystone/{node_id}"),
@@ -407,10 +407,10 @@ pub async fn emit_oauth2_emergency_key_rotation_critical_event(
             "domain {domain_id} emergency-rotated to new signing key {new_kid}; revoked_jtis={revoked_jtis:?}"
         )),
         initiator,
-        Target {
-            id: domain_id.to_string(),
-            type_uri: "data/security/keystone/oauth2_signing_key".to_string(),
-        },
+        Target::new(
+            domain_id.to_string(),
+            "data/security/keystone/oauth2_signing_key".to_string(),
+        ),
         Observer {
             node_id: node_id.clone(),
             id: format!("service/security/keystone/{node_id}"),
@@ -463,10 +463,10 @@ pub async fn emit_oauth2_local_emergency_key_reconciled_event(
              signing key {new_kid}"
         )),
         initiator,
-        Target {
-            id: domain_id.to_string(),
-            type_uri: "data/security/keystone/oauth2_signing_key".to_string(),
-        },
+        Target::new(
+            domain_id.to_string(),
+            "data/security/keystone/oauth2_signing_key".to_string(),
+        ),
         Observer {
             node_id: node_id.clone(),
             id: format!("service/security/keystone/{node_id}"),

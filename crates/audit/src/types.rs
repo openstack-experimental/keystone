@@ -284,10 +284,42 @@ impl Initiator {
 }
 
 /// Audit target — the resource being acted upon.
+///
+/// `realm_provider_id`/`external_id` (ADR 0024 §9) are populated only for
+/// SCIM-provisioned User/Group targets; every other target type omits them
+/// entirely (not `null`) via `skip_serializing_if`, so their addition does
+/// not change the canonical serialization -- and therefore the HMAC
+/// signature -- of any pre-existing target type.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Target {
     pub id: String,
     pub type_uri: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub realm_provider_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_id: Option<String>,
+}
+
+impl Target {
+    /// Construct a target with no SCIM correlation fields (the common
+    /// case). Equivalent to the old two-field struct literal.
+    pub fn new(id: String, type_uri: String) -> Self {
+        Self {
+            id,
+            type_uri,
+            realm_provider_id: None,
+            external_id: None,
+        }
+    }
+
+    /// Attach the SCIM realm coordinate (ADR 0024 §9) a SIEM must group by
+    /// to correlate activity across API-key rotations.
+    #[must_use]
+    pub fn with_scim(mut self, realm_provider_id: String, external_id: Option<String>) -> Self {
+        self.realm_provider_id = Some(realm_provider_id);
+        self.external_id = external_id;
+        self
+    }
 }
 
 /// Audit observer — the node that recorded the event.
@@ -328,10 +360,10 @@ mod tests {
             "success".to_string(),
             None,
             Initiator::new("unknown".to_string(), None, None, None),
-            Target {
-                id: "some-user-id".to_string(),
-                type_uri: "data/security/identity/user".to_string(),
-            },
+            Target::new(
+                "some-user-id".to_string(),
+                "data/security/identity/user".to_string(),
+            ),
             Observer {
                 node_id: dispatcher.node_id().to_string(),
                 id: format!("service/security/keystone/{}", dispatcher.node_id()),

@@ -176,17 +176,23 @@ async fn purge_one(
         )
         .await?;
 
-    let payload = match idx.resource_type {
-        ScimResourceType::User => EventPayload::User {
-            id: idx.keystone_id.clone(),
-        },
-        ScimResourceType::Group => EventPayload::Group {
-            id: idx.keystone_id.clone(),
-        },
+    // ADR 0024 §9: carries `realm_provider_id`/`external_id` so a SIEM can
+    // correlate this purge back to the realm that provisioned the resource.
+    let resource_type = match idx.resource_type {
+        ScimResourceType::User => "user",
+        ScimResourceType::Group => "group",
     };
     state
         .event_dispatcher
-        .emit(Event::new(Operation::Delete, payload))
+        .emit(Event::new(
+            Operation::Delete,
+            EventPayload::ScimResource {
+                resource_type: resource_type.to_string(),
+                keystone_id: idx.keystone_id.clone(),
+                realm_provider_id: idx.provider_id.clone(),
+                external_id: idx.external_id.clone(),
+            },
+        ))
         .await;
 
     Ok(())

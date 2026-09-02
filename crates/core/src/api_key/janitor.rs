@@ -175,10 +175,10 @@ fn emit_maintenance_event(dispatcher: &Arc<AuditDispatcher>, action: &str, clien
         "success".to_string(),
         None,
         initiator,
-        Target {
-            id: client_id.to_string(),
-            type_uri: "data/security/keystone/api_key".to_string(),
-        },
+        Target::new(
+            client_id.to_string(),
+            "data/security/keystone/api_key".to_string(),
+        ),
         Observer {
             node_id: node_id.clone(),
             id: format!("service/security/keystone/{node_id}"),

@@ -61,11 +61,32 @@ pub fn map_event_to_action(event: &Event) -> String {
     }
 }
 
-/// Map an [`EventPayload`] to a CADF `(target_id, type_uri)` pair.
+/// Map an [`EventPayload`] to a CADF `Target`.
 ///
 /// `target_id` is passed through [`sanitize_audit_id`] to enforce UUID format.
+/// `ScimResource` (ADR 0024 §9) is the one variant whose `Target` carries
+/// more than `(id, type_uri)`, handled as its own arm below.
 fn build_target_from_event(event: &Event) -> Target {
+    if let EventPayload::ScimResource {
+        resource_type,
+        keystone_id,
+        realm_provider_id,
+        external_id,
+    } = &event.payload
+    {
+        let type_uri = match resource_type.as_str() {
+            "group" => "data/security/identity/group",
+            _ => "data/security/identity/user",
+        };
+        return Target::new(sanitize_audit_id(keystone_id), type_uri.to_string())
+            .with_scim(realm_provider_id.clone(), external_id.clone());
+    }
+
     let (raw_id, type_uri): (&str, &str) = match &event.payload {
+        EventPayload::ScimResource { .. } => {
+            // Unreachable: handled by the `if let` above.
+            ("", "")
+        }
         EventPayload::User { id } => (id, "data/security/identity/user"),
         EventPayload::Group { id } => (id, "data/security/identity/group"),
         EventPayload::GroupMembership { user_id: id, .. } => {
@@ -110,10 +131,7 @@ fn build_target_from_event(event: &Event) -> Target {
             (provider_id, "data/security/identity/scim-realm")
         }
     };
-    Target {
-        id: sanitize_audit_id(raw_id),
-        type_uri: type_uri.to_string(),
-    }
+    Target::new(sanitize_audit_id(raw_id), type_uri.to_string())
 }
 
 /// Build an [`Initiator`] from a fully resolved [`ValidatedSecurityContext`].
@@ -353,6 +371,48 @@ mod tests {
         let target = build_target_from_event(&e);
         assert_eq!(target.id, "unknown");
         assert_eq!(target.type_uri, "data/security/identity/user");
+    }
+
+    #[test]
+    fn build_target_from_event_carries_scim_correlation_fields() {
+        let e = Event::new(
+            Operation::Create,
+            EventPayload::ScimResource {
+                resource_type: "user".to_string(),
+                keystone_id: "d1-user-1".to_string(),
+                realm_provider_id: "okta-1".to_string(),
+                external_id: Some("ext-1".to_string()),
+            },
+        );
+        let target = build_target_from_event(&e);
+        assert_eq!(target.type_uri, "data/security/identity/user");
+        assert_eq!(target.realm_provider_id.as_deref(), Some("okta-1"));
+        assert_eq!(target.external_id.as_deref(), Some("ext-1"));
+    }
+
+    #[test]
+    fn build_target_from_event_scim_group_type_uri() {
+        let e = Event::new(
+            Operation::Delete,
+            EventPayload::ScimResource {
+                resource_type: "group".to_string(),
+                keystone_id: "d1-group-1".to_string(),
+                realm_provider_id: "okta-1".to_string(),
+                external_id: None,
+            },
+        );
+        let target = build_target_from_event(&e);
+        assert_eq!(target.type_uri, "data/security/identity/group");
+        assert_eq!(target.realm_provider_id.as_deref(), Some("okta-1"));
+        assert_eq!(target.external_id, None);
+    }
+
+    #[test]
+    fn build_target_from_event_non_scim_omits_correlation_fields() {
+        let e = Event::new(Operation::Update, EventPayload::User { id: "u1".into() });
+        let target = build_target_from_event(&e);
+        assert_eq!(target.realm_provider_id, None);
+        assert_eq!(target.external_id, None);
     }
 
     #[test]

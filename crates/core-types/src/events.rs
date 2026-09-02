@@ -168,6 +168,24 @@ pub enum EventPayload {
     ScimRealm {
         provider_id: String,
     },
+    /// SCIM-provisioned User/Group correlation record (ADR 0024 §9).
+    ///
+    /// Emitted by the SCIM handlers alongside whatever generic
+    /// `User`/`Group` event the identity/role providers already emit for
+    /// the same create/update/delete -- those generic events carry only the
+    /// resource id and know nothing about which realm or `externalId`
+    /// drove the write. `realm_provider_id` is the correlation key a SIEM
+    /// must group by across API-key rotations (ADR 0024 §9), so it needs
+    /// its own event rather than an addition to the generic `User`/`Group`
+    /// payloads, which are also emitted by non-SCIM write paths that have
+    /// no realm context to supply.
+    ScimResource {
+        /// `"user"` or `"group"`.
+        resource_type: String,
+        keystone_id: String,
+        realm_provider_id: String,
+        external_id: Option<String>,
+    },
 
     // Trusts
     Trust {

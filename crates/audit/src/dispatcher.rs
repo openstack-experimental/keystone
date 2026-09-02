@@ -306,10 +306,10 @@ mod tests {
             "success".to_string(),
             None,
             Initiator::new("unknown".to_string(), None, None, None),
-            Target {
-                id: "keystone".to_string(),
-                type_uri: "service/security/keystone/auth".to_string(),
-            },
+            Target::new(
+                "keystone".to_string(),
+                "service/security/keystone/auth".to_string(),
+            ),
             Observer {
                 node_id: dispatcher.node_id().to_string(),
                 id: format!("service/security/keystone/{}", dispatcher.node_id()),

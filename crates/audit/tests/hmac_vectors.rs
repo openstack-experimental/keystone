@@ -137,10 +137,10 @@ fn hmac_roundtrip_deterministic_payload() {
         "success".to_string(),
         None,
         Initiator::new("unknown".to_string(), None, None, None),
-        Target {
-            id: "keystone".to_string(),
-            type_uri: "service/security/keystone/auth".to_string(),
-        },
+        Target::new(
+            "keystone".to_string(),
+            "service/security/keystone/auth".to_string(),
+        ),
         Observer {
             node_id: "test-node".to_string(),
             id: "service/security/keystone/test-node".to_string(),
