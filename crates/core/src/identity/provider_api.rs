@@ -126,6 +126,24 @@ pub trait IdentityApi: Send + Sync {
         user: UserCreate,
     ) -> Result<UserResponse, IdentityProviderError>;
 
+    /// Create a new user with an atomic, commit-time domain-wide
+    /// `userName` uniqueness guarantee (ADR 0024 §3.D) -- the check and
+    /// the insert happen inside one serializable transaction, so two
+    /// concurrent creates for the same `(domain_id, name)` cannot both
+    /// succeed. Prefer this over a separate `find_user_by_name_ci` +
+    /// `create_user` pair wherever that pairing exists only to enforce
+    /// name uniqueness (as SCIM `POST /Users` does): the separate-call
+    /// version has a TOCTOU window this one closes.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user`: The user details to create.
+    async fn create_user_unique_name<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        user: UserCreate,
+    ) -> Result<UserResponse, IdentityProviderError>;
+
     /// Delete a user by ID.
     ///
     /// # Parameters

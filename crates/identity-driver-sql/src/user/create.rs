@@ -112,33 +112,25 @@ where
     )
 }
 
-/// Create a new user.
-///
-/// # Parameters
-/// - `conf`: The system configuration.
-/// - `db`: The database connection.
-/// - `user`: The user creation request.
-///
-/// # Returns
-/// A `Result` containing the `UserResponse` if successful, or an `Error`.
-#[tracing::instrument(skip(conf, db))]
-pub async fn create(
+/// Persist a user (main record, options, federation/local/nonlocal rows,
+/// password) against an already-open connection/transaction. Shared by
+/// [`create`] (default-isolation transaction) and `create_checking_name_
+/// unique` (ADR 0024 §3.D serializable transaction) so the two differ only
+/// in how the surrounding transaction is opened, never in what gets
+/// written.
+async fn create_within_txn<C>(
     conf: &Config,
-    db: &DatabaseConnection,
-    user: UserCreate,
-) -> Result<UserResponse, IdentityProviderError> {
-    // Do a lot of stuff in a transaction
-
-    let txn = db
-        .begin()
-        .await
-        .context("starting transaction for persisting user")?;
-
+    txn: &C,
+    user: &UserCreate,
+) -> Result<UserResponse, IdentityProviderError>
+where
+    C: ConnectionTrait,
+{
     let now = Utc::now();
-    let main_user = create_main(conf, &txn, &user, Some(now)).await?;
+    let main_user = create_main(conf, txn, user, Some(now)).await?;
     if let Some(opts) = &user.options {
         // Persist user options when passed
-        user_option::create(&txn, main_user.id.clone(), opts).await?;
+        user_option::create(txn, main_user.id.clone(), opts).await?;
     }
 
     let mut response_builder = UserResponseBuilder::default();
@@ -154,7 +146,7 @@ pub async fn create(
             if federated_user.protocols.is_empty() {
                 federated_entities.push(
                     federated_user::create(
-                        &txn,
+                        txn,
                         db_federated_user::ActiveModel {
                             id: NotSet,
                             user_id: Set(main_user.id.clone()),
@@ -171,7 +163,7 @@ pub async fn create(
                     //for proto in &federated_user.protocol_ids {
                     federated_entities.push(
                         federated_user::create(
-                            &txn,
+                            txn,
                             db_federated_user::ActiveModel {
                                 id: NotSet,
                                 user_id: Set(main_user.id.clone()),
@@ -193,24 +185,92 @@ pub async fn create(
                 "password cannot be set on a nonlocal (externally managed) user".to_string(),
             ));
         }
-        let nonlocal_user = nonlocal_user::create(&txn, &main_user, user.name.clone()).await?;
+        let nonlocal_user = nonlocal_user::create(txn, &main_user, user.name.clone()).await?;
         response_builder.merge_nonlocal_user_data(&nonlocal_user);
     } else {
-        let local_user = local_user::create(conf, &txn, &main_user, &user).await?;
+        let local_user = local_user::create(conf, txn, &main_user, user).await?;
         response_builder.merge_local_user_data(&local_user);
 
         if let Some(password) = &user.password {
-            password::set_new_password(&txn, conf, local_user.id, password.clone(), Vec::new())
+            password::set_new_password(txn, conf, local_user.id, password.clone(), Vec::new())
                 .await?;
-            response_builder.merge_passwords_data(password::list(&txn, local_user.id).await?);
+            response_builder.merge_passwords_data(password::list(txn, local_user.id).await?);
         }
     }
+
+    Ok(response_builder.build()?)
+}
+
+/// Create a new user.
+///
+/// # Parameters
+/// - `conf`: The system configuration.
+/// - `db`: The database connection.
+/// - `user`: The user creation request.
+///
+/// # Returns
+/// A `Result` containing the `UserResponse` if successful, or an `Error`.
+#[tracing::instrument(skip(conf, db))]
+pub async fn create(
+    conf: &Config,
+    db: &DatabaseConnection,
+    user: UserCreate,
+) -> Result<UserResponse, IdentityProviderError> {
+    let txn = db
+        .begin()
+        .await
+        .context("starting transaction for persisting user")?;
+
+    let response = create_within_txn(conf, &txn, &user).await?;
 
     txn.commit()
         .await
         .context("committing the user creation transaction")?;
 
-    Ok(response_builder.build()?)
+    Ok(response)
+}
+
+/// Create a new user, closing the ADR 0024 §3.D TOCTOU race: the
+/// domain-wide, case-insensitive `userName` collision check
+/// (`find_by_name_ci`) and the insert run inside the same `SERIALIZABLE`
+/// transaction, so a concurrent creator for the same `(domain_id, name)`
+/// cannot commit between this check and this insert -- one of the two
+/// transactions is guaranteed to abort with a serialization failure, which
+/// is surfaced here as [`IdentityProviderError::Conflict`], same as the
+/// pre-existing pre-flight check's error shape.
+#[tracing::instrument(skip(conf, db))]
+pub async fn create_checking_name_unique(
+    conf: &Config,
+    db: &DatabaseConnection,
+    user: UserCreate,
+) -> Result<UserResponse, IdentityProviderError> {
+    let domain_id = user.domain_id.clone().ok_or_else(|| {
+        IdentityProviderError::Driver("domain_id must be resolved before persisting a user".into())
+    })?;
+
+    let txn = db
+        .begin_with_config(Some(sea_orm::IsolationLevel::Serializable), None)
+        .await
+        .context("starting serializable transaction for persisting user")?;
+
+    if let Some(existing_id) = crate::user::find_by_name_ci(&txn, &domain_id, &user.name).await? {
+        return Err(IdentityProviderError::Conflict(format!(
+            "a user named `{}` already exists in this domain (id `{existing_id}`)",
+            user.name
+        )));
+    }
+
+    let response = create_within_txn(conf, &txn, &user).await?;
+
+    // A concurrent creator racing this one is caught here: Postgres detects
+    // the write-skew between the two SERIALIZABLE transactions and fails
+    // one commit with a serialization-failure error, which `.context(..)`
+    // below surfaces as a driver error (not silently as success).
+    txn.commit()
+        .await
+        .context("committing the serializable user creation transaction")?;
+
+    Ok(response)
 }
 
 #[cfg(test)]
@@ -467,5 +527,57 @@ mod tests {
             .unwrap();
         let result = create(&Config::default(), &db, req).await;
         assert!(matches!(result, Err(IdentityProviderError::Conflict(_))));
+    }
+
+    #[tokio::test]
+    async fn test_create_checking_name_unique_rejects_existing_name() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            // find_by_name_ci: local_user query matches -- short-circuits
+            // before any insert is ever attempted.
+            .append_query_results([vec![get_local_user_mock("existing-1")]])
+            .into_connection();
+        let req = UserCreateBuilder::default()
+            .domain_id("did")
+            .id("1")
+            .name("foo")
+            .enabled(true)
+            .user_type(UserType::NonLocal)
+            .build()
+            .unwrap();
+        let result = create_checking_name_unique(&Config::default(), &db, req).await;
+        assert!(matches!(result, Err(IdentityProviderError::Conflict(_))));
+        // No insert statement should appear in the log -- the check must
+        // run (and reject) before any write is attempted.
+        let log = db.into_transaction_log();
+        assert!(
+            !log.iter()
+                .flat_map(|t| t.statements())
+                .any(|s| s.sql.to_uppercase().starts_with("INSERT")),
+            "no INSERT should be issued once the name collision is found"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_checking_name_unique_succeeds_when_no_collision() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            // find_by_name_ci: local_user then nonlocal_user, both empty.
+            .append_query_results([Vec::<crate::entity::local_user::Model>::new()])
+            .append_query_results([Vec::<crate::entity::nonlocal_user::Model>::new()])
+            // create_within_txn: main user insert, then nonlocal_user insert.
+            .append_query_results([vec![get_user_mock("1")]])
+            .append_query_results([vec![get_nonlocal_user_mock("1")]])
+            .into_connection();
+        let req = UserCreateBuilder::default()
+            .domain_id("did")
+            .id("1")
+            .name("foo")
+            .enabled(true)
+            .user_type(UserType::NonLocal)
+            .build()
+            .unwrap();
+        let sot = create_checking_name_unique(&Config::default(), &db, req)
+            .await
+            .unwrap();
+        assert_eq!(sot.name, "foo");
     }
 }

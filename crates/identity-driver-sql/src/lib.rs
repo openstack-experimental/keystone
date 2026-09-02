@@ -233,6 +233,27 @@ impl IdentityBackend for SqlBackend {
         Ok(user::create(&config, &state.db.connection(), user).await?)
     }
 
+    /// Create user with an atomic, commit-time domain-wide name-uniqueness
+    /// check (ADR 0024 §3.D).
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `user`: The user creation parameters.
+    ///
+    /// # Returns
+    /// A `Result` containing the `UserResponse` if successful, or an
+    /// `Error` (including [`IdentityProviderError::Conflict`] on a name
+    /// collision).
+    #[tracing::instrument(skip(self, state))]
+    async fn create_user_unique_name(
+        &self,
+        state: &ServiceState,
+        user: UserCreate,
+    ) -> Result<UserResponse, IdentityProviderError> {
+        let config = state.config_manager.config.read().await;
+        Ok(user::create_checking_name_unique(&config, &state.db.connection(), user).await?)
+    }
+
     /// Delete group.
     ///
     /// # Parameters

@@ -216,6 +216,14 @@ impl IdentityBackend for LdapBackend {
         Err(readonly("create_user"))
     }
 
+    async fn create_user_unique_name(
+        &self,
+        _state: &ServiceState,
+        _user: UserCreate,
+    ) -> Result<UserResponse, IdentityProviderError> {
+        Err(readonly("create_user_unique_name"))
+    }
+
     async fn delete_group<'a>(
         &self,
         _state: &ServiceState,

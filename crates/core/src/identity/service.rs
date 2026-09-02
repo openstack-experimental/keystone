@@ -658,6 +658,71 @@ impl IdentityApi for IdentityService {
         Ok(user)
     }
 
+    /// Create user with the atomic, commit-time domain-wide `userName`
+    /// uniqueness guarantee (ADR 0024 §3.D). Mirrors [`Self::create_user`]'s
+    /// pre-processing (id/domain/enabled defaults, validation, password
+    /// policy) exactly -- the two differ only in which backend method they
+    /// call.
+    async fn create_user_unique_name<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        user: UserCreate,
+    ) -> Result<UserResponse, IdentityProviderError> {
+        let mut mod_user = user;
+        let user_id = if let Some(uid) = &mod_user.id {
+            uid.clone()
+        } else {
+            let uid = Uuid::new_v4().simple().to_string();
+            mod_user.id = Some(uid.clone());
+            uid
+        };
+        if mod_user.enabled.is_none() {
+            mod_user.enabled = Some(true);
+        }
+        if mod_user.domain_id.is_none() {
+            mod_user.domain_id = scope_domain_id(ctx);
+        }
+        mod_user.validate()?;
+        // Validate password against configured regex pattern.
+        if let Some(ref password) = mod_user.password {
+            let cfg = ctx.state().config_manager.config.read().await;
+            cfg.security_compliance.validate_password(password)?;
+        }
+        let user = if let Some(vsc) = ctx.ctx() {
+            let backend_driver = &self.backend_driver;
+            let state = ctx.state();
+            crate::audited_op! {
+                dispatcher: &ctx.state().event_dispatcher,
+                ctx: vsc,
+                event: Event::new(
+                    Operation::Create,
+                    EventPayload::User { id: user_id.clone() },
+                ),
+                operation: async {
+                    backend_driver.create_user_unique_name(state, mod_user).await
+                },
+                on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
+            }?
+        } else {
+            let user = self
+                .backend_driver
+                .create_user_unique_name(ctx.state(), mod_user)
+                .await?;
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Create,
+                    EventPayload::User {
+                        id: user.id.clone(),
+                    },
+                ))
+                .await;
+            user
+        };
+
+        Ok(user)
+    }
+
     /// Delete group.
     ///
     /// # Parameters

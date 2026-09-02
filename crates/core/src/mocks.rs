@@ -961,6 +961,12 @@ mod identity {
                 user: UserCreate,
             ) -> Result<UserResponse, IdentityProviderError>;
 
+            async fn create_user_unique_name<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                user: UserCreate,
+            ) -> Result<UserResponse, IdentityProviderError>;
+
             async fn delete_group<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,

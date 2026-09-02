@@ -139,6 +139,24 @@ pub trait IdentityBackend: Send + Sync {
         user: UserCreate,
     ) -> Result<UserResponse, IdentityProviderError>;
 
+    /// Create a user, atomically closing the TOCTOU race a separate
+    /// `find_user_by_name_ci` + `create_user` pair leaves open (ADR 0024
+    /// §3.D): the domain-wide, case-insensitive `userName` collision check
+    /// and the insert happen inside the same serializable transaction, so
+    /// two concurrent creates for the same `(domain_id, name)` cannot both
+    /// observe "not found" and both proceed. Returns
+    /// [`IdentityProviderError::Conflict`] when an existing user (any
+    /// realm, or none) already has this name in this domain.
+    ///
+    /// Backends that cannot offer this guarantee (e.g. read-only or
+    /// non-transactional identity sources) reject with the same error
+    /// [`IdentityBackend::create_user`] uses for an unsupported operation.
+    async fn create_user_unique_name(
+        &self,
+        state: &ServiceState,
+        user: UserCreate,
+    ) -> Result<UserResponse, IdentityProviderError>;
+
     /// Delete group by ID.
     ///
     /// # Parameters

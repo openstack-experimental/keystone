@@ -26,7 +26,7 @@
 //! query, not a transactional guarantee — see ADR 0024 §3.D for the
 //! documented TOCTOU trade-off.
 
-use sea_orm::DatabaseConnection;
+use sea_orm::ConnectionTrait;
 use sea_orm::entity::*;
 use sea_orm::query::*;
 use sea_orm::sea_query::{Expr, Func};
@@ -38,9 +38,15 @@ use crate::entity::{local_user as db_local_user, nonlocal_user as db_nonlocal_us
 
 /// Find the `user_id` of any local or nonlocal user in `domain_id` whose
 /// name matches `name`, case-insensitively.
+///
+/// Generic over `C: ConnectionTrait` (rather than a concrete
+/// `DatabaseConnection`) so callers needing the serializable, commit-time
+/// guarantee of ADR 0024 §3.D (see `user::create::create_checking_name_
+/// unique`) can run this same check against a live `DatabaseTransaction`
+/// instead of a bare connection.
 #[tracing::instrument(skip(db))]
-pub async fn find_by_name_ci(
-    db: &DatabaseConnection,
+pub async fn find_by_name_ci<C: ConnectionTrait>(
+    db: &C,
     domain_id: &str,
     name: &str,
 ) -> Result<Option<String>, IdentityProviderError> {

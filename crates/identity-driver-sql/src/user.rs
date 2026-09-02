@@ -28,7 +28,7 @@ mod list;
 mod set;
 mod update;
 
-pub use create::create;
+pub use create::{create, create_checking_name_unique};
 pub use delete::delete;
 pub use find_by_name::find_by_name_ci;
 pub(super) use get::get_main_entry;

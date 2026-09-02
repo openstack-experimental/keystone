@@ -127,10 +127,12 @@ impl RaftBackend {
     /// `keystone_id`. Written with `Mutation::create_if_absent` so a second
     /// concurrent create for the same `externalId` within the same realm
     /// fails the claim instead of racing (ADR 0024 §3.D's TOCTOU concern,
-    /// closed here for the realm-scoped dimension of the check — the
+    /// closed here for the realm-scoped dimension of the check). The
     /// domain-wide cross-realm `userName` check is a live query against
     /// core Identity, which owns a legacy SQL schema this crate does not
-    /// control, so it remains best-effort; see `find_user_by_name_ci`).
+    /// control -- that dimension is closed separately, by a serializable
+    /// transaction in `identity-driver-sql`'s `create_checking_name_unique`
+    /// (`IdentityBackend::create_user_unique_name`), not here.
     fn get_external_id_claim_key_name<D: AsRef<str>, P: AsRef<str>, E: AsRef<str>>(
         &self,
         domain_id: D,

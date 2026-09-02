@@ -19,7 +19,7 @@ use serde_json::json;
 use openstack_keystone_core::api::KeystoneApiError;
 use openstack_keystone_core::api::api_key_auth::ScimRealmAuth;
 use openstack_keystone_core::auth::ExecutionContext;
-use openstack_keystone_core::identity::generate_public_id;
+use openstack_keystone_core::identity::{IdentityProviderError, generate_public_id};
 use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::scim::{
     ScimResourceIndexCreate, ScimResourceProviderError, ScimResourceType,
@@ -79,22 +79,6 @@ pub(super) async fn create(
         )
         .await?;
 
-    // ADR 0024 §3.D: domain-wide, case-insensitive `userName` collision
-    // check — regardless of which realm (or nothing) created the existing
-    // user. Best-effort pre-flight; the realm-scoped `externalId` claim
-    // below is the atomic guarantee.
-    if state
-        .provider
-        .get_identity_provider()
-        .find_user_by_name_ci(&exec, &realm.domain_id, &req.user_name)
-        .await?
-        .is_some()
-    {
-        return Err(ScimApiError::Uniqueness(
-            "userName already exists within this domain".to_string(),
-        ));
-    }
-
     // ADR 0024 dedup fix: the user id this create would derive is
     // deterministic (`generate_public_id(domain_id, externalId, "user")`),
     // the same one a federated JIT login for the same person may already
@@ -114,11 +98,20 @@ pub(super) async fn create(
         ));
     }
 
-    let user = state
+    // ADR 0024 §3.D: `create_user_unique_name` runs the domain-wide,
+    // case-insensitive `userName` collision check and the insert inside one
+    // serializable transaction, closing the TOCTOU race a separate
+    // `find_user_by_name_ci` + `create_user` pair would leave open.
+    let user = match state
         .provider
         .get_identity_provider()
-        .create_user(&exec, req.to_user_create(&realm.domain_id, external_id))
-        .await?;
+        .create_user_unique_name(&exec, req.to_user_create(&realm.domain_id, external_id))
+        .await
+    {
+        Ok(user) => user,
+        Err(IdentityProviderError::Conflict(msg)) => return Err(ScimApiError::Uniqueness(msg)),
+        Err(e) => return Err(e.into()),
+    };
 
     let index = match state
         .provider
@@ -241,19 +234,18 @@ mod tests {
     #[tokio::test]
     async fn test_create() {
         let mut identity_mock = MockIdentityProvider::default();
-        identity_mock
-            .expect_find_user_by_name_ci()
-            .returning(|_, _, _| Ok(None));
         identity_mock.expect_get_user().returning(|_, _| Ok(None));
-        identity_mock.expect_create_user().returning(|_, req| {
-            Ok(UserResponseBuilder::default()
-                .id("user-1")
-                .domain_id(req.domain_id.clone().unwrap_or_default())
-                .enabled(true)
-                .name(req.name.clone())
-                .build()
-                .unwrap())
-        });
+        identity_mock
+            .expect_create_user_unique_name()
+            .returning(|_, req| {
+                Ok(UserResponseBuilder::default()
+                    .id("user-1")
+                    .domain_id(req.domain_id.clone().unwrap_or_default())
+                    .enabled(true)
+                    .name(req.name.clone())
+                    .build()
+                    .unwrap())
+            });
 
         let mut resource_mock = MockScimResourceProvider::default();
         resource_mock.expect_create_index().returning(|_, data| {
@@ -303,9 +295,14 @@ mod tests {
     #[tokio::test]
     async fn test_create_rejects_domain_wide_duplicate_username() {
         let mut identity_mock = MockIdentityProvider::default();
+        identity_mock.expect_get_user().returning(|_, _| Ok(None));
         identity_mock
-            .expect_find_user_by_name_ci()
-            .returning(|_, _, _| Ok(Some("other-user".to_string())));
+            .expect_create_user_unique_name()
+            .returning(|_, _| {
+                Err(IdentityProviderError::Conflict(
+                    "userName already exists within this domain".to_string(),
+                ))
+            });
 
         let state = get_mocked_state(
             Provider::mocked_builder().mock_identity(identity_mock),
@@ -331,19 +328,18 @@ mod tests {
     #[tokio::test]
     async fn test_create_rejects_realm_scoped_external_id_conflict() {
         let mut identity_mock = MockIdentityProvider::default();
-        identity_mock
-            .expect_find_user_by_name_ci()
-            .returning(|_, _, _| Ok(None));
         identity_mock.expect_get_user().returning(|_, _| Ok(None));
-        identity_mock.expect_create_user().returning(|_, req| {
-            Ok(UserResponseBuilder::default()
-                .id("user-1")
-                .domain_id(req.domain_id.clone().unwrap_or_default())
-                .enabled(true)
-                .name(req.name.clone())
-                .build()
-                .unwrap())
-        });
+        identity_mock
+            .expect_create_user_unique_name()
+            .returning(|_, req| {
+                Ok(UserResponseBuilder::default()
+                    .id("user-1")
+                    .domain_id(req.domain_id.clone().unwrap_or_default())
+                    .enabled(true)
+                    .name(req.name.clone())
+                    .build()
+                    .unwrap())
+            });
         identity_mock.expect_delete_user().returning(|_, _| Ok(()));
 
         let mut resource_mock = MockScimResourceProvider::default();
@@ -381,9 +377,6 @@ mod tests {
         // would derive. Must surface as a clean SCIM 409, not an opaque
         // driver error from a primary-key collision inside `create_user`.
         let mut identity_mock = MockIdentityProvider::default();
-        identity_mock
-            .expect_find_user_by_name_ci()
-            .returning(|_, _, _| Ok(None));
         identity_mock.expect_get_user().returning(|_, id| {
             Ok(Some(
                 UserResponseBuilder::default()
@@ -395,7 +388,7 @@ mod tests {
                     .unwrap(),
             ))
         });
-        identity_mock.expect_create_user().never();
+        identity_mock.expect_create_user_unique_name().never();
 
         let state = get_mocked_state(
             Provider::mocked_builder().mock_identity(identity_mock),
