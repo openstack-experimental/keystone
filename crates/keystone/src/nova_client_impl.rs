@@ -38,18 +38,15 @@ use openstack_keystone_core_types::vendordata::VendordataProviderError;
 pub struct KeystoneNovaHttpClient {
     client: Client,
     base_url: Option<String>,
-    admin_token: Option<SecretString>,
 }
 
 impl KeystoneNovaHttpClient {
-    /// Build a new client. `base_url`/`admin_token` are `None` when
-    /// `[vendordata]` was not configured with a Nova endpoint --
-    /// `get_server` then fails closed with
-    /// [`VendordataProviderError::NovaUnavailable`] rather than the
+    /// Build a new client. `base_url` is `None` when `[vendordata]` was not
+    /// configured with a Nova endpoint -- `get_server` then fails closed
+    /// with [`VendordataProviderError::NovaUnavailable`] rather than the
     /// constructor itself being fallible on missing config.
     pub fn new(
         base_url: Option<String>,
-        admin_token: Option<SecretString>,
         request_timeout: Duration,
     ) -> Result<Self, VendordataProviderError> {
         let client = Client::builder()
@@ -58,11 +55,7 @@ impl KeystoneNovaHttpClient {
             .pool_idle_timeout(Duration::from_secs(30))
             .build()
             .map_err(|e| VendordataProviderError::NovaUnavailable(e.to_string()))?;
-        Ok(Self {
-            client,
-            base_url,
-            admin_token,
-        })
+        Ok(Self { client, base_url })
     }
 }
 
@@ -71,15 +64,11 @@ impl NovaHttpClient for KeystoneNovaHttpClient {
     async fn get_server(
         &self,
         instance_id: &str,
+        admin_token: &SecretString,
     ) -> Result<NovaServerRecord, VendordataProviderError> {
         let base_url = self.base_url.as_ref().ok_or_else(|| {
             VendordataProviderError::NovaUnavailable(
                 "[vendordata] nova_api_base_url is not configured".to_string(),
-            )
-        })?;
-        let admin_token = self.admin_token.as_ref().ok_or_else(|| {
-            VendordataProviderError::NovaUnavailable(
-                "[vendordata] nova_admin_token is not configured".to_string(),
             )
         })?;
 
@@ -129,14 +118,15 @@ mod tests {
 
     #[test]
     fn test_new_builds_client_without_config() {
-        let client = KeystoneNovaHttpClient::new(None, None, Duration::from_secs(2)).unwrap();
+        let client = KeystoneNovaHttpClient::new(None, Duration::from_secs(2)).unwrap();
         assert!(client.base_url.is_none());
     }
 
     #[tokio::test]
     async fn test_get_server_fails_closed_without_base_url() {
-        let client = KeystoneNovaHttpClient::new(None, None, Duration::from_secs(2)).unwrap();
-        let result = client.get_server("instance-1").await;
+        let client = KeystoneNovaHttpClient::new(None, Duration::from_secs(2)).unwrap();
+        let token = SecretString::from("token".to_string());
+        let result = client.get_server("instance-1", &token).await;
         assert!(matches!(
             result,
             Err(VendordataProviderError::NovaUnavailable(_))

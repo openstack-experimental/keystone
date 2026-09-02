@@ -198,7 +198,6 @@ pub async fn get_state_with_config(
     let nova_http_client: Arc<dyn openstack_keystone_core::nova_client::NovaHttpClient> = Arc::new(
         openstack_keystone::nova_client_impl::KeystoneNovaHttpClient::new(
             None,
-            None,
             std_time::Duration::from_secs(2),
         )?,
     );

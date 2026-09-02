@@ -62,3 +62,211 @@ impl fmt::Display for SpiffeId {
         f.write_str(&self.id)
     }
 }
+
+/// Path-derived claims extracted from a SPIFFE SVID's path segments, when
+/// the path matches one of the known keystone-rs identity patterns (SPIRE
+/// integration plan, Phase 3).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SpiffePathClaims {
+    /// Hostname from `spiffe://{trust_domain}/service/nova-compute/host/{hostname}`.
+    pub host: Option<String>,
+    /// Project id from `spiffe://{trust_domain}/project/{project_id}/instance/{instance_id}`.
+    pub project_id: Option<String>,
+    /// Instance id from `spiffe://{trust_domain}/project/{project_id}/instance/{instance_id}`.
+    pub instance_id: Option<String>,
+}
+
+/// Outcome of matching a SPIFFE ID's path against the known
+/// keystone-rs identity patterns (SPIRE integration plan, Phase 3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SpiffePathMatch {
+    /// The path does not resemble any known pattern (e.g. a plain service
+    /// identity like `.../service/nova-api`). This is not an error -- the
+    /// SVID simply carries no derivable path claims beyond `spiffe.id`/
+    /// `spiffe.trust_domain`.
+    Unrecognized,
+    /// The path matches a known pattern and was parsed successfully.
+    Matched(SpiffePathClaims),
+    /// The path starts down a known pattern's literal prefix but deviates
+    /// from its exact expected shape (empty segment, trailing slash, extra
+    /// segments, undecodable percent-encoding). Callers MUST treat this as
+    /// an authentication failure, never as an empty/absent claim.
+    Malformed,
+}
+
+impl SpiffeId {
+    /// Strictly parse this SVID's path against the known keystone-rs
+    /// identity patterns (SPIRE integration plan, Phase 3):
+    ///
+    /// * `spiffe://{trust_domain}/service/nova-compute/host/{hostname}`
+    /// * `spiffe://{trust_domain}/project/{project_id}/instance/{instance_id}`
+    ///
+    /// Matching is prefix-anchored on the literal `service/nova-compute/host`
+    /// or `project`/`instance` segments, not a substring search or
+    /// unanchored regex, and every path segment is percent-decoded before
+    /// validation. See [`SpiffePathMatch`] for the three-way outcome: a
+    /// path that does not start with either known literal prefix is
+    /// [`SpiffePathMatch::Unrecognized`] (not an error), while a path that
+    /// starts down one of those prefixes but deviates from its exact shape
+    /// is [`SpiffePathMatch::Malformed`] and must be rejected by the
+    /// caller.
+    pub fn path_claims(&self) -> SpiffePathMatch {
+        let Some(path) = self.id.strip_prefix("spiffe://").and_then(|rest| {
+            // Strip the trust domain segment already captured in `self.trust_domain`.
+            rest.strip_prefix(&self.trust_domain)
+        }) else {
+            return SpiffePathMatch::Unrecognized;
+        };
+        if path.is_empty() {
+            return SpiffePathMatch::Unrecognized;
+        }
+        let Some(path) = path.strip_prefix('/') else {
+            return SpiffePathMatch::Unrecognized;
+        };
+
+        // Keep empty segments (e.g. a trailing `/`) so a truncated path is
+        // treated as malformed rather than silently dropped.
+        let raw_segments: Vec<&str> = path.split('/').collect();
+        let mut segments = Vec::with_capacity(raw_segments.len());
+        for raw in raw_segments {
+            match percent_encoding::percent_decode_str(raw).decode_utf8() {
+                Ok(decoded) => segments.push(decoded.into_owned()),
+                Err(_) => return SpiffePathMatch::Malformed,
+            }
+        }
+        let segments: Vec<&str> = segments.iter().map(String::as_str).collect();
+
+        match segments.as_slice() {
+            ["service", "nova-compute", "host", host] if !host.is_empty() => {
+                SpiffePathMatch::Matched(SpiffePathClaims {
+                    host: Some((*host).to_string()),
+                    ..Default::default()
+                })
+            }
+            ["service", "nova-compute", "host", ..] => SpiffePathMatch::Malformed,
+            ["project", project_id, "instance", instance_id]
+                if !project_id.is_empty() && !instance_id.is_empty() =>
+            {
+                SpiffePathMatch::Matched(SpiffePathClaims {
+                    project_id: Some((*project_id).to_string()),
+                    instance_id: Some((*instance_id).to_string()),
+                    ..Default::default()
+                })
+            }
+            ["project", ..] => SpiffePathMatch::Malformed,
+            _ => SpiffePathMatch::Unrecognized,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn path_claims_matches_nova_compute_host() {
+        let svid = SpiffeId::new("spiffe://cloud.trust.domain/service/nova-compute/host/compute-1")
+            .unwrap();
+        assert_eq!(
+            svid.path_claims(),
+            SpiffePathMatch::Matched(SpiffePathClaims {
+                host: Some("compute-1".to_string()),
+                ..Default::default()
+            })
+        );
+    }
+
+    #[test]
+    fn path_claims_matches_project_instance() {
+        let svid = SpiffeId::new("spiffe://cloud.trust.domain/project/p1/instance/i1").unwrap();
+        assert_eq!(
+            svid.path_claims(),
+            SpiffePathMatch::Matched(SpiffePathClaims {
+                project_id: Some("p1".to_string()),
+                instance_id: Some("i1".to_string()),
+                ..Default::default()
+            })
+        );
+    }
+
+    #[test]
+    fn path_claims_percent_decodes_segments() {
+        // "compute 1" percent-encoded.
+        let svid =
+            SpiffeId::new("spiffe://cloud.trust.domain/service/nova-compute/host/compute%201")
+                .unwrap();
+        assert_eq!(
+            svid.path_claims(),
+            SpiffePathMatch::Matched(SpiffePathClaims {
+                host: Some("compute 1".to_string()),
+                ..Default::default()
+            })
+        );
+    }
+
+    #[test]
+    fn path_claims_unrecognized_plain_service() {
+        let svid = SpiffeId::new("spiffe://cloud.trust.domain/service/nova-api").unwrap();
+        assert_eq!(svid.path_claims(), SpiffePathMatch::Unrecognized);
+    }
+
+    #[test]
+    fn path_claims_unrecognized_empty_path() {
+        let svid = SpiffeId::new("spiffe://cloud.trust.domain").unwrap();
+        assert_eq!(svid.path_claims(), SpiffePathMatch::Unrecognized);
+    }
+
+    #[test]
+    fn path_claims_unrecognized_partial_keyword_overlap() {
+        // Starts with "service" but not the "nova-compute"/"host" prefix --
+        // must not be confused with the nova-compute pattern.
+        let svid = SpiffeId::new("spiffe://cloud.trust.domain/service/neutron").unwrap();
+        assert_eq!(svid.path_claims(), SpiffePathMatch::Unrecognized);
+    }
+
+    #[test]
+    fn path_claims_case_sensitive_literals() {
+        let svid = SpiffeId::new("spiffe://cloud.trust.domain/Service/nova-compute/host/compute-1")
+            .unwrap();
+        assert_eq!(svid.path_claims(), SpiffePathMatch::Unrecognized);
+    }
+
+    #[test]
+    fn path_claims_rejects_nova_compute_host_trailing_slash() {
+        let svid = SpiffeId::new("spiffe://cloud.trust.domain/service/nova-compute/host/").unwrap();
+        assert_eq!(svid.path_claims(), SpiffePathMatch::Malformed);
+    }
+
+    #[test]
+    fn path_claims_rejects_nova_compute_host_extra_segment() {
+        let svid =
+            SpiffeId::new("spiffe://cloud.trust.domain/service/nova-compute/host/compute-1/extra")
+                .unwrap();
+        assert_eq!(svid.path_claims(), SpiffePathMatch::Malformed);
+    }
+
+    #[test]
+    fn path_claims_rejects_nova_compute_host_missing_hostname() {
+        let svid = SpiffeId::new("spiffe://cloud.trust.domain/service/nova-compute/host").unwrap();
+        assert_eq!(svid.path_claims(), SpiffePathMatch::Malformed);
+    }
+
+    #[test]
+    fn path_claims_rejects_project_missing_instance() {
+        let svid = SpiffeId::new("spiffe://cloud.trust.domain/project/p1").unwrap();
+        assert_eq!(svid.path_claims(), SpiffePathMatch::Malformed);
+    }
+
+    #[test]
+    fn path_claims_rejects_project_empty_instance_id() {
+        let svid = SpiffeId::new("spiffe://cloud.trust.domain/project/p1/instance/").unwrap();
+        assert_eq!(svid.path_claims(), SpiffePathMatch::Malformed);
+    }
+
+    #[test]
+    fn path_claims_rejects_project_extra_segment() {
+        let svid =
+            SpiffeId::new("spiffe://cloud.trust.domain/project/p1/instance/i1/extra").unwrap();
+        assert_eq!(svid.path_claims(), SpiffePathMatch::Malformed);
+    }
+}

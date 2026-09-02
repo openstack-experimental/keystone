@@ -99,14 +99,18 @@ natural next increment:
   operational need is smaller than for OAuth2 access tokens; if it grows,
   the same rotation machinery `[oauth2]` uses can be generalized to a
   second purpose.
-- **Nova ownership verification uses a static, operator-provisioned admin
-  token** (`[vendordata] nova_admin_token`), not a dynamically minted,
-  auto-refreshed system-scoped service credential as the plan doc
-  describes. keystone-rs has no existing "keystone-rs as an OpenStack API
-  caller" credential-issuance machinery to build on (this is the first
-  outbound keystone-rs -> OpenStack-service call). Treat this token with
-  the same operational rigor as a signing key; automating its issuance and
-  rotation is follow-up work.
+- **Nova ownership verification mints its own token per call** (resolved:
+  originally a static, operator-provisioned admin token). `[vendordata]
+  nova_auth_scope` (project or system) and `nova_auth_roles` (role names)
+  configure the scope and effective roles of a token keystone-rs mints for
+  itself on every ownership check, using the same "virtual identity with
+  pre-populated roles" mechanism the SPIFFE/mapping engine (ADR 0020) uses
+  for externally authenticated identities -- keystone-rs still has no real
+  user account or role assignment for this identity, so the configured
+  role names are set directly as the token's effective roles rather than
+  resolved from an assignment lookup (each name must resolve to an
+  existing role, or the check fails closed with `503`). This removes the
+  long-lived static credential; nothing left to rotate manually.
 - **The compute host is derived directly from the raw `SpiffeId` request
   extension**, not through Phase 3's generic SPIFFE claim-flattening
   (`spiffe.host` in `crates/core/src/api/auth.rs`) and the ADR 0020
@@ -144,7 +148,8 @@ narrows, but does not eliminate, that gap in a devstack deployment.
 - The filesystem-backed attestation key does not survive a single-node
   failure the way the Raft-backed OAuth2 key does; multi-node HA for this
   key is not yet implemented (see §4).
-- `nova_admin_token` is a long-lived static credential with broad
-  (cross-project) read access via `os-extended-server-attributes`,
-  operationally equivalent in sensitivity to a signing key, until
-  credential automation lands.
+- `nova_auth_roles` is configured with broad (cross-project) read access
+  via `os-extended-server-attributes` in mind; misconfiguring it with an
+  over-broad role name grants every self-minted Nova-calling token that
+  same access, so treat the role list with the same operational care as a
+  policy file, not as an inert config value.

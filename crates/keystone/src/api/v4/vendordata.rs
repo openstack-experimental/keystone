@@ -24,15 +24,15 @@
 //! "Ownership verification"), so a compromised compute host cannot
 //! request a signed attestation for an instance it does not run.
 //!
-//! Deviation from the plan doc: rather than routing the caller's compute
-//! host through Phase 3's generic SPIFFE claim-flattening
-//! (`crates/core/src/api/auth.rs`) and the mapping engine, this handler
-//! derives it directly from the raw `SpiffeId` request extension the
-//! SPIFFE mTLS listener already attaches -- a smaller, self-contained
-//! slice of Phase 3's claim-derivation work, scoped to exactly what this
-//! endpoint needs. Full `spiffe.host`/`spiffe.project_id`/
-//! `spiffe.instance_id` claim flattening for the mapping engine remains
-//! Phase 3 proper.
+//! The caller's compute host is derived directly from the raw `SpiffeId`
+//! request extension (rather than a mapping-engine claim) via
+//! [`SpiffeId::path_claims`], the shared strict path parser Phase 3 added
+//! to `crates/core/src/common/spiffe_id.rs`. `Auth`'s own SPIFFE claim
+//! flattening (`crates/core/src/api/auth.rs`) uses the same parser to
+//! derive the general `spiffe.host` mapping-engine claim; this handler
+//! only needs the raw value for its own local ownership check, decoupled
+//! from authentication, so it reads it off the extension directly rather
+//! than round-tripping through mapping-engine claims.
 
 use axum::{Extension, Json, extract::State, http::StatusCode, response::IntoResponse};
 use utoipa::OpenApi;
@@ -42,7 +42,7 @@ use openstack_keystone_api_types::v4::vendordata::{
     SpiffeJwt, VendorDataRequest, VendorDataResponse,
 };
 use openstack_keystone_config::Interface;
-use openstack_keystone_core::common::SpiffeId;
+use openstack_keystone_core::common::{SpiffeId, SpiffePathMatch};
 use openstack_keystone_core_types::vendordata::{
     OpenstackAttestationClaims, SpiffeAttestationClaims, VendordataProviderError,
 };
@@ -65,19 +65,20 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new().routes(routes!(create))
 }
 
-/// Strictly parse `spiffe://{trust_domain}/service/nova-compute/host/{hostname}`,
-/// returning `{hostname}`. Rejects malformed URIs (missing/extra path
-/// segments, trailing slash) rather than returning an empty claim.
+/// Extract `{hostname}` from
+/// `spiffe://{trust_domain}/service/nova-compute/host/{hostname}` via the
+/// shared strict path parser ([`SpiffeId::path_claims`]). Returns `None`
+/// both for an SVID that isn't a nova-compute host identity at all
+/// (`Unrecognized`) and for one that is malformed (`Malformed`) -- this
+/// handler's own ownership check already rejects a missing host with
+/// `403 Forbidden` (`VendordataProviderError::NotAComputeHost`) regardless
+/// of which of those two cases applies, so collapsing them here preserves
+/// existing behavior.
 fn nova_compute_host_from_spiffe_id(svid: &SpiffeId) -> Option<String> {
-    let prefix = format!(
-        "spiffe://{}/service/nova-compute/host/",
-        svid.trust_domain_name()
-    );
-    let rest = svid.as_str().strip_prefix(&prefix)?;
-    if rest.is_empty() || rest.contains('/') {
-        return None;
+    match svid.path_claims() {
+        SpiffePathMatch::Matched(claims) => claims.host,
+        _ => None,
     }
-    Some(rest.to_string())
 }
 
 #[utoipa::path(

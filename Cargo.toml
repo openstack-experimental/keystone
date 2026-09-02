@@ -163,6 +163,7 @@ openstack-keystone-token-driver-jws = { version = "0.1.0", path = "crates/token-
 openstack-keystone-token-restriction-driver-sql = { version = "0.1", path = "crates/token-restriction-driver-sql/" }
 openstack-keystone-trust-driver-sql = { version = "0.1", path = "crates/trust-driver-sql/" }
 openstack-keystone-webauthn = { version = "0.1", path = "crates/webauthn/"}
+percent-encoding = { version = "2.3" }
 prost = { version = "0.14" }
 proptest = { version = "1" }
 rand = { version = "0.10" }

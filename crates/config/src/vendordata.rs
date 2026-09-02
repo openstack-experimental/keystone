@@ -18,10 +18,27 @@
 //! (see `doc/src/adr/0032-vendor-data-jwt.md`, "Attestation key isolation").
 use std::path::PathBuf;
 
-use secrecy::SecretString;
 use serde::Deserialize;
 
 use crate::SigningAlgorithm;
+
+/// Scope keystone-rs requests for the token it mints for itself when
+/// calling Nova (Fix 1 ownership check). Required when `verify_placement`
+/// is `true`.
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum NovaAuthScope {
+    /// Project-scoped token.
+    Project {
+        /// The project to scope the token to.
+        project_id: String,
+    },
+    /// System-scoped token.
+    System {
+        /// The system id to scope the token to (normally `"all"`).
+        system: String,
+    },
+}
 
 /// Vendor data JWT provider.
 #[derive(Debug, Deserialize, Clone)]
@@ -59,18 +76,25 @@ pub struct VendordataProvider {
     #[serde(default)]
     pub nova_api_base_url: Option<String>,
 
-    /// Admin/system-scoped token used to authenticate to Nova for the
-    /// ownership cross-check (`server.hypervisor_hostname` is gated behind
-    /// `os-extended-server-attributes`, normally admin-only).
-    ///
-    /// This is a known simplification for Phase 2: a static, operator
-    /// provisioned token rather than a dynamically minted, auto-refreshed
-    /// system-scoped service credential. Treat it with the same operational
-    /// rigor as a signing key (see the plan's Security Considerations
-    /// table) and rotate it manually until a follow-up phase automates
-    /// credential issuance.
+    /// Scope for the token keystone-rs mints for itself to authenticate to
+    /// Nova for the ownership cross-check (`server.hypervisor_hostname` is
+    /// gated behind `os-extended-server-attributes`, normally admin-only).
+    /// Required when `verify_placement` is `true`; if unset, the ownership
+    /// check fails closed with `503`.
     #[serde(default)]
-    pub nova_admin_token: Option<SecretString>,
+    pub nova_auth_scope: Option<NovaAuthScope>,
+
+    /// Role names granted directly as the self-minted token's effective
+    /// roles -- keystone-rs has no real user account or role assignment for
+    /// this identity, so the roles below are set on the token as-is rather
+    /// than resolved from an assignment lookup (each name must resolve to
+    /// an existing role at mint time, or the check fails closed with
+    /// `503`). Must match
+    /// whatever role name(s) nova-api's policy expects for
+    /// `os_compute_api:os-extended-server-attributes` (commonly `admin`).
+    /// Required (non-empty) when `verify_placement` is `true`.
+    #[serde(default)]
+    pub nova_auth_roles: Vec<String>,
 
     /// Timeout for the Nova ownership-check HTTP call, in seconds. Kept
     /// tight (ADR default 2s) to bound the keystone-rs <-> nova-api request
@@ -104,7 +128,8 @@ impl Default for VendordataProvider {
             signing_algorithm: SigningAlgorithm::default(),
             default_ttl_seconds: default_ttl_seconds(),
             nova_api_base_url: None,
-            nova_admin_token: None,
+            nova_auth_scope: None,
+            nova_auth_roles: Vec::new(),
             nova_request_timeout_seconds: default_nova_request_timeout_seconds(),
         }
     }
@@ -126,6 +151,8 @@ mod tests {
         assert_eq!(cfg.default_ttl_seconds, 300);
         assert_eq!(cfg.nova_request_timeout_seconds, 2);
         assert!(cfg.nova_api_base_url.is_none());
+        assert!(cfg.nova_auth_scope.is_none());
+        assert!(cfg.nova_auth_roles.is_empty());
     }
 
     #[test]
@@ -140,5 +167,34 @@ mod tests {
         let cfg: VendordataProvider =
             serde_json::from_str(r#"{"verify_placement": false}"#).unwrap();
         assert!(!cfg.verify_placement);
+    }
+
+    #[test]
+    fn test_deserialize_nova_auth_scope_project() {
+        let cfg: VendordataProvider = serde_json::from_str(
+            r#"{"nova_auth_scope": {"type": "project", "project_id": "p1"}, "nova_auth_roles": ["admin"]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.nova_auth_scope,
+            Some(NovaAuthScope::Project {
+                project_id: "p1".to_string()
+            })
+        );
+        assert_eq!(cfg.nova_auth_roles, vec!["admin".to_string()]);
+    }
+
+    #[test]
+    fn test_deserialize_nova_auth_scope_system() {
+        let cfg: VendordataProvider = serde_json::from_str(
+            r#"{"nova_auth_scope": {"type": "system", "system": "all"}, "nova_auth_roles": ["admin"]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.nova_auth_scope,
+            Some(NovaAuthScope::System {
+                system: "all".to_string()
+            })
+        );
     }
 }

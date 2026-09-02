@@ -163,7 +163,7 @@ where
                 .get_mapping_provider()
                 .authenticate_by_mapping(
                     &ExecutionContext::internal(&state),
-                    &flat_spiffe_claims(svid),
+                    &flat_spiffe_claims(svid)?,
                 )
                 .await?;
             let ctx = SecurityContext::try_from(result)?;
@@ -227,8 +227,20 @@ where
 /// Flattens SPIFFE SVID claims into a
 /// [`MappingAuthRequest`](crate::mapping::auth::MappingAuthRequest).
 ///
-/// Produces flattened claims with `spiffe.id` and `spiffe.trust_domain` keys.
-fn flat_spiffe_claims(svid: &SpiffeId) -> MappingAuthRequest {
+/// Always produces `spiffe.id` and `spiffe.trust_domain`. When the SVID's
+/// path matches one of the known keystone-rs identity patterns (SPIRE
+/// integration plan, Phase 3, see [`SpiffeId::path_claims`]), also emits
+/// `spiffe.host`, or `spiffe.project_id`/`spiffe.instance_id`.
+///
+/// # Errors
+///
+/// Returns `Err(KeystoneApiError::UnauthorizedNoContext)` if the SVID's
+/// path looks like it is attempting a known pattern
+/// (`service/nova-compute/host/...` or `project/.../instance/...`) but is
+/// malformed. An SVID whose path does not resemble any known pattern is
+/// *not* an error -- it authenticates with just `spiffe.id`/
+/// `spiffe.trust_domain`, same as before this claim derivation existed.
+fn flat_spiffe_claims(svid: &SpiffeId) -> Result<MappingAuthRequest, KeystoneApiError> {
     let mut claims = HashMap::new();
     claims.insert("spiffe.id".to_string(), vec![svid.to_string()]);
     claims.insert(
@@ -236,7 +248,26 @@ fn flat_spiffe_claims(svid: &SpiffeId) -> MappingAuthRequest {
         vec![svid.trust_domain_name().to_string()],
     );
 
-    MappingAuthRequest {
+    match svid.path_claims() {
+        crate::common::SpiffePathMatch::Matched(path_claims) => {
+            if let Some(host) = path_claims.host {
+                claims.insert("spiffe.host".to_string(), vec![host]);
+            }
+            if let Some(project_id) = path_claims.project_id {
+                claims.insert("spiffe.project_id".to_string(), vec![project_id]);
+            }
+            if let Some(instance_id) = path_claims.instance_id {
+                claims.insert("spiffe.instance_id".to_string(), vec![instance_id]);
+            }
+        }
+        crate::common::SpiffePathMatch::Unrecognized => {}
+        crate::common::SpiffePathMatch::Malformed => {
+            debug!("rejecting malformed spiffe svid path: {}", svid);
+            return Err(KeystoneApiError::UnauthorizedNoContext);
+        }
+    }
+
+    Ok(MappingAuthRequest {
         domain_id: None,
         source: IdentitySource::Spiffe {
             trust_domain: svid.trust_domain_name().to_string(),
@@ -244,7 +275,7 @@ fn flat_spiffe_claims(svid: &SpiffeId) -> MappingAuthRequest {
         unique_workload_id: svid.to_string(),
         claims,
         rule_name: None,
-    }
+    })
 }
 
 /// Reject requests authenticated via an EC2 token.
@@ -401,6 +432,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_spiffe_auth_malformed_svid_path_rejected_before_mapping() {
+        let mut mapping_mock = MockMappingProvider::new();
+        // A malformed nova-compute host path must be rejected inside
+        // `flat_spiffe_claims` itself, before the mapping engine is ever
+        // consulted -- this prevents a mapping rule from silently matching
+        // on an absent/empty derived claim.
+        mapping_mock.expect_authenticate_by_mapping().never();
+
+        let state = create_test_state(mapping_mock).await;
+        let mut parts = make_parts();
+        parts
+            .extensions
+            .insert(SpiffeId::new("spiffe://test.domain/service/nova-compute/host/").unwrap());
+
+        let result = Auth::from_request_parts(&mut parts, &state).await;
+        assert!(matches!(
+            result,
+            Err(KeystoneApiError::UnauthorizedNoContext)
+        ));
+    }
+
+    #[tokio::test]
     async fn test_spiffe_admin_shortcut() {
         use crate::role::MockRoleProvider;
 
@@ -477,7 +530,7 @@ mod tests {
     #[test]
     fn test_flat_spiffe_claims_structure() {
         let svid = SpiffeId::new("spiffe://example.org/workload/test").unwrap();
-        let request = flat_spiffe_claims(&svid);
+        let request = flat_spiffe_claims(&svid).unwrap();
 
         assert_eq!(
             request.claims.get("spiffe.id").unwrap()[0],
@@ -501,7 +554,7 @@ mod tests {
     #[test]
     fn test_flat_spiffe_claims_long_path() {
         let svid = SpiffeId::new("spiffe://ns1.example.org/system/service/deployment/pod").unwrap();
-        let request = flat_spiffe_claims(&svid);
+        let request = flat_spiffe_claims(&svid).unwrap();
 
         assert_eq!(
             request.claims.get("spiffe.id").unwrap()[0],
@@ -511,6 +564,75 @@ mod tests {
             request.claims.get("spiffe.trust_domain").unwrap()[0],
             "ns1.example.org"
         );
+    }
+
+    #[test]
+    fn test_flat_spiffe_claims_derives_nova_compute_host() {
+        let svid = SpiffeId::new("spiffe://cloud.trust.domain/service/nova-compute/host/compute-1")
+            .unwrap();
+        let request = flat_spiffe_claims(&svid).unwrap();
+
+        assert_eq!(request.claims.get("spiffe.host").unwrap()[0], "compute-1");
+        assert!(request.claims.get("spiffe.project_id").is_none());
+        assert!(request.claims.get("spiffe.instance_id").is_none());
+    }
+
+    #[test]
+    fn test_flat_spiffe_claims_derives_project_instance() {
+        let svid = SpiffeId::new("spiffe://cloud.trust.domain/project/p1/instance/i1").unwrap();
+        let request = flat_spiffe_claims(&svid).unwrap();
+
+        assert_eq!(request.claims.get("spiffe.project_id").unwrap()[0], "p1");
+        assert_eq!(request.claims.get("spiffe.instance_id").unwrap()[0], "i1");
+        assert!(request.claims.get("spiffe.host").is_none());
+    }
+
+    #[test]
+    fn test_flat_spiffe_claims_unrecognized_pattern_ok() {
+        let svid = SpiffeId::new("spiffe://cloud.trust.domain/service/nova-api").unwrap();
+        let request = flat_spiffe_claims(&svid).unwrap();
+
+        assert!(request.claims.get("spiffe.host").is_none());
+        assert!(request.claims.get("spiffe.project_id").is_none());
+        assert!(request.claims.get("spiffe.instance_id").is_none());
+    }
+
+    #[test]
+    fn test_flat_spiffe_claims_rejects_malformed_host_trailing_slash() {
+        let svid = SpiffeId::new("spiffe://cloud.trust.domain/service/nova-compute/host/").unwrap();
+        assert!(matches!(
+            flat_spiffe_claims(&svid),
+            Err(KeystoneApiError::UnauthorizedNoContext)
+        ));
+    }
+
+    #[test]
+    fn test_flat_spiffe_claims_rejects_malformed_host_extra_segment() {
+        let svid =
+            SpiffeId::new("spiffe://cloud.trust.domain/service/nova-compute/host/compute-1/extra")
+                .unwrap();
+        assert!(matches!(
+            flat_spiffe_claims(&svid),
+            Err(KeystoneApiError::UnauthorizedNoContext)
+        ));
+    }
+
+    #[test]
+    fn test_flat_spiffe_claims_rejects_malformed_project_missing_instance() {
+        let svid = SpiffeId::new("spiffe://cloud.trust.domain/project/p1").unwrap();
+        assert!(matches!(
+            flat_spiffe_claims(&svid),
+            Err(KeystoneApiError::UnauthorizedNoContext)
+        ));
+    }
+
+    #[test]
+    fn test_flat_spiffe_claims_rejects_malformed_project_empty_instance_id() {
+        let svid = SpiffeId::new("spiffe://cloud.trust.domain/project/p1/instance/").unwrap();
+        assert!(matches!(
+            flat_spiffe_claims(&svid),
+            Err(KeystoneApiError::UnauthorizedNoContext)
+        ));
     }
 
     #[tokio::test]

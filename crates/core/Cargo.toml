@@ -36,6 +36,7 @@ openstack-keystone-storage-api.workspace = true
 jsonwebtoken.workspace = true
 mockall = { workspace = true, optional = true }
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
+percent-encoding.workspace = true
 rand.workspace = true
 rsa = "0.9"
 regex.workspace = true

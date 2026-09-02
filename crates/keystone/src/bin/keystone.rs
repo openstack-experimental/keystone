@@ -249,7 +249,6 @@ async fn main() -> Result<(), Report> {
     let nova_http_client: Arc<dyn openstack_keystone_core::nova_client::NovaHttpClient> =
         Arc::new(KeystoneNovaHttpClient::new(
             cfg.vendordata.nova_api_base_url.clone(),
-            cfg.vendordata.nova_admin_token.clone(),
             Duration::from_secs(cfg.vendordata.nova_request_timeout_seconds),
         )?);
     let provider = Provider::new(&cfg, &plugin_manager, k8s_http_client, nova_http_client)?;

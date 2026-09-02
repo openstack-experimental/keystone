@@ -543,3 +543,148 @@ async fn test_spiffe_all_of_strict_with_auth() -> Result<()> {
 
     Ok(())
 }
+
+/// Confirms a mapping ruleset can match on the `spiffe.host` claim derived
+/// by `crates/core/src/api/auth.rs`'s claim flattening (SPIRE integration
+/// plan, Phase 3) -- this doesn't exercise `flat_spiffe_claims` itself, but
+/// documents/locks in that the mapping engine treats the new claim key like
+/// any other once it's present in the request.
+#[tokio::test]
+async fn test_spiffe_rule_matches_on_host_claim() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let domain_id = domain.id.clone();
+
+    let mut ruleset_create = spiffe_ruleset_create(Some(domain_id.clone()));
+    ruleset_create.rules = vec![MappingRule {
+        name: "nova-compute-host-rule".into(),
+        description: None,
+        r#match: MatchCriteria::AllOf(vec![MatchCondition::Condition(ClaimCondition::Equals {
+            claim: "spiffe.host".into(),
+            value: serde_json::Value::String("compute-1".into()),
+        })]),
+        identity: IdentityBinding {
+            identity_mode: None,
+            user_name: "nova-compute-1".into(),
+            user_id: None,
+            user_domain_id: None,
+            is_system: false,
+        },
+        authorizations: Vec::new(),
+        groups: Vec::new(),
+    }];
+
+    let ruleset_guard = create_ruleset(&state, ruleset_create).await?;
+    let mapping_id = ruleset_guard.mapping_id.clone();
+
+    let mut claims = HashMap::new();
+    claims.insert(
+        "spiffe.id".to_string(),
+        vec!["spiffe://example.org/service/nova-compute/host/compute-1".to_string()],
+    );
+    claims.insert(
+        "spiffe.trust_domain".to_string(),
+        vec!["example.org".to_string()],
+    );
+    claims.insert("spiffe.host".to_string(), vec!["compute-1".to_string()]);
+
+    let request = MappingAuthRequest {
+        domain_id: Some(domain_id),
+        source: IdentitySource::Spiffe {
+            trust_domain: "example.org".into(),
+        },
+        unique_workload_id: "spiffe://example.org/service/nova-compute/host/compute-1".into(),
+        claims,
+        rule_name: None,
+    };
+
+    let result = state
+        .provider
+        .get_mapping_provider()
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
+        .await?;
+
+    if let AuthenticationContext::Mapping(ctx) = result.context {
+        assert_eq!(ctx.mapping_id, mapping_id);
+        assert_eq!(ctx.matched_rule_name, "nova-compute-host-rule");
+    } else {
+        panic!("Expected Mapping authentication context");
+    }
+
+    Ok(())
+}
+
+/// Confirms a mapping ruleset can match on and bind from the
+/// `spiffe.project_id`/`spiffe.instance_id` claims derived by Phase 3's
+/// claim flattening for the VM-workload SVID pattern.
+#[tokio::test]
+async fn test_spiffe_rule_matches_on_project_and_instance_claims() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let domain_id = domain.id.clone();
+
+    let mut ruleset_create = spiffe_ruleset_create(Some(domain_id.clone()));
+    ruleset_create.rules = vec![MappingRule {
+        name: "vm-instance-rule".into(),
+        description: None,
+        r#match: MatchCriteria::AllOf(vec![MatchCondition::Condition(ClaimCondition::Equals {
+            claim: "spiffe.project_id".into(),
+            value: serde_json::Value::String("project-1".into()),
+        })]),
+        identity: IdentityBinding {
+            identity_mode: None,
+            user_name: "${claims.spiffe.instance_id}".into(),
+            user_id: None,
+            user_domain_id: None,
+            is_system: false,
+        },
+        authorizations: Vec::new(),
+        groups: Vec::new(),
+    }];
+
+    let ruleset_guard = create_ruleset(&state, ruleset_create).await?;
+    let mapping_id = ruleset_guard.mapping_id.clone();
+
+    let mut claims = HashMap::new();
+    claims.insert(
+        "spiffe.id".to_string(),
+        vec!["spiffe://example.org/project/project-1/instance/instance-1".to_string()],
+    );
+    claims.insert(
+        "spiffe.trust_domain".to_string(),
+        vec!["example.org".to_string()],
+    );
+    claims.insert(
+        "spiffe.project_id".to_string(),
+        vec!["project-1".to_string()],
+    );
+    claims.insert(
+        "spiffe.instance_id".to_string(),
+        vec!["instance-1".to_string()],
+    );
+
+    let request = MappingAuthRequest {
+        domain_id: Some(domain_id),
+        source: IdentitySource::Spiffe {
+            trust_domain: "example.org".into(),
+        },
+        unique_workload_id: "spiffe://example.org/project/project-1/instance/instance-1".into(),
+        claims,
+        rule_name: None,
+    };
+
+    let result = state
+        .provider
+        .get_mapping_provider()
+        .authenticate_by_mapping(&ExecutionContext::internal(&state), &request)
+        .await?;
+
+    if let AuthenticationContext::Mapping(ctx) = result.context {
+        assert_eq!(ctx.mapping_id, mapping_id);
+        assert_eq!(ctx.matched_rule_name, "vm-instance-rule");
+    } else {
+        panic!("Expected Mapping authentication context");
+    }
+
+    Ok(())
+}

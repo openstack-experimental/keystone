@@ -14,4 +14,4 @@
 //! # Common functionality
 
 pub mod spiffe_id;
-pub use spiffe_id::SpiffeId;
+pub use spiffe_id::{SpiffeId, SpiffePathClaims, SpiffePathMatch};

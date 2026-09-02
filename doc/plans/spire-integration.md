@@ -480,31 +480,49 @@ identities through the ADR 0020 `SpiffeTrustResource` mapping engine.
 
 | File                                  | Purpose                                                                                        |
 | ------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `crates/keystone/src/bin/keystone.rs` | Wire internal SPIFFE listener to REST router (already exists for storage gRPC, extend to REST) |
-| `crates/config/src/interface.rs`      | `interface_internal` with `listener.type = spiffe` is already supported; no changes needed     |
-| `crates/core/src/api/auth.rs`         | SVID extraction → `SpiffeTrustResource` → mapping engine; extend claim flattening to derive path-segment claims (see below) |
+| `crates/core/src/common/spiffe_id.rs` | `SpiffeId::path_claims()` — strict path-segment parser producing `SpiffePathMatch` (done)      |
+| `crates/core/src/api/auth.rs`         | SVID extraction → `SpiffeTrustResource` → mapping engine; claim flattening derives path-segment claims via `path_claims()` (done) |
+| `crates/keystone/src/api/v4/vendordata.rs` | Refactored to delegate its own host-parsing helper to `SpiffeId::path_claims()` (done)     |
 
-**Current state:** The keystone-rs binary already supports
-`ListenerConfig::Spiffe` on the `interface_internal`
-(`crates/keystone/src/bin/keystone.rs:1420-1446`). SPIFFE TLS infrastructure for
-REST is in `spiffe_tls.rs` (`start_axum_app`), trust domain validation is in
-`spiffe_common.rs`. The `interface_internal` hard-restricts to SPIFFE-only. What
-this phase adds is:
+**Current state (updated once Phase 2's merge and this phase's own work
+landed):** The internal SPIFFE listener already serves the REST API router
+— `spawn_internal_listener` in `crates/keystone/src/bin/keystone.rs` reuses
+the same axum `Router` built for the public/admin listeners and calls
+`spiffe_tls::start_axum_app(...)` with `Interface::Internal`. This was not
+gRPC-only as an earlier draft of this plan assumed; **no listener-wiring
+work was needed for this phase**. SPIFFE TLS infrastructure for REST is in
+`spiffe_tls.rs` (`start_axum_app`), trust domain validation is in
+`spiffe_common.rs`. Config support (`crates/config/src/interface.rs`,
+`listener.rs`) for `interface_internal`'s `type = "spiffe"` /
+`trust_domains` also already existed, with a real deployment example at
+`tools/k8s/keystone/base/conf/keystone.conf` (note: that config uses port
+`8215`, not the `8444` used illustratively below and elsewhere in this
+plan — an existing inconsistency between the plan doc and the k8s overlay,
+left unreconciled since devstack's own `local.conf` wiring is Phase 6).
 
-1. Making the internal SPIFFE interface serve the REST API router (currently the
-   internal SPIFFE interface may not be wired to the REST router, only to
-   storage gRPC — verify and wire if missing)
-2. Documenting the `interface_internal` config section for service-to-service
-   mTLS
+What this phase actually delivered was the claim-derivation work: SVID
+authentication (`crates/core/src/api/auth.rs`'s `flat_spiffe_claims`)
+previously only ever produced `spiffe.id`/`spiffe.trust_domain`. It now
+additionally derives `spiffe.host` (from
+`.../service/nova-compute/host/{hostname}`) and
+`spiffe.project_id`/`spiffe.instance_id` (from
+`.../project/{pid}/instance/{iid}`) via `SpiffeId::path_claims()`
+(`crates/core/src/common/spiffe_id.rs`), rejecting a malformed instance of
+either pattern as an authentication failure (401) rather than silently
+emitting an empty claim. `crates/keystone/src/api/v4/vendordata.rs`'s
+narrower, pre-existing one-off host parser (added in Phase 2, ahead of this
+work) now delegates to the same shared parser instead of duplicating it.
 
-**Listener configuration (`[interface:internal]` section):**
+**Listener configuration (`[interface_internal]` section, actual syntax —
+this plan's illustrative `[interface:internal]`/`bind_host`/`bind_port`
+snippet below predates and doesn't match the real TOML section/field
+names):**
 
 ```ini
-[interface:internal]
-bind_host = 0.0.0.0
-bind_port = 8444
-listener.type = spiffe
-listener.trust_domains = cloud.trust.domain
+[interface_internal]
+tcp_address = 0.0.0.0:8444
+type = "spiffe"
+trust_domains = "cloud.trust.domain"
 ```
 
 The keystone-rs process itself presents a SPIFFE SVID (fetched from the local
