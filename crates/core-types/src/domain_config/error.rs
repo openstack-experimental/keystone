@@ -25,7 +25,9 @@ use crate::error::BuilderError;
 /// `api-ref/source/v3/domains-config-v3.inc`: "If you try to create or update
 /// configuration options for groups other than the `identity` or `ldap`
 /// groups, the `Forbidden (403)` response code is returned").
-/// [`Self::NotFound`] corresponds to `DomainConfigNotFound` (`404`).
+/// [`Self::Readonly`] is likewise a `403 Forbidden`: the request is well
+/// formed but the selected backend cannot honour a write (the filesystem
+/// driver). [`Self::NotFound`] corresponds to `DomainConfigNotFound` (`404`).
 #[derive(Error, Debug)]
 pub enum DomainConfigProviderError {
     /// Conflict.
@@ -87,6 +89,12 @@ pub enum DomainConfigProviderError {
     /// impossible, so it always indicates a coding error.
     #[error("option {0} found with no group specified while checking domain configuration request")]
     OptionWithoutGroup(String),
+
+    /// A write was attempted against a backend that can only be read (the
+    /// filesystem driver). Reported as `403 Forbidden`, the same class as the
+    /// `Unsupported*` variants.
+    #[error("operation not permitted: domain config backend is read-only ({0})")]
+    Readonly(String),
 
     /// (de)serialization error.
     #[error("data serialization error")]
