@@ -69,7 +69,33 @@ impl FernetToken {
     /// # Security Note
     /// This is the low-level method with no real validation whether the token
     /// can be issued.
+    ///
+    /// `issued_at` is the token's creation timestamp, matching python
+    /// keystone's fernet formatter (which reports the fernet envelope time as
+    /// `issued_at`). The caller passes it explicitly, at whole-second
+    /// precision, so it lands in the payload at mint time:
+    /// - **JWS**: written straight into the signed `iat` claim and read back
+    ///   as `issued_at` on validation — the payload is authoritative, there
+    ///   is nothing else to fall back to.
+    /// - **Fernet**: used for the authentication/rescope response body, which
+    ///   is built directly from this payload before encryption. On a later
+    ///   decode the driver overwrites it from the fernet envelope timestamp
+    ///   (also whole seconds), so the two agree.
+    ///
+    /// Leaving it unset made the API report `issued_at` as
+    /// `1970-01-01T00:00:00Z` on every fresh token.
     pub fn from_security_context(
+        ctx: &SecurityContext,
+        expires_at: DateTime<Utc>,
+        issued_at: DateTime<Utc>,
+    ) -> Result<Self, error::TokenProviderError> {
+        let mut token = Self::payload_from_security_context(ctx, expires_at)?;
+        token.set_issued_at(issued_at);
+        Ok(token)
+    }
+
+    /// Build the scope-specific payload without stamping `issued_at`.
+    fn payload_from_security_context(
         ctx: &SecurityContext,
         expires_at: DateTime<Utc>,
     ) -> Result<Self, error::TokenProviderError> {
@@ -406,7 +432,7 @@ impl Validate for FernetToken {
 
 #[cfg(test)]
 mod tests {
-    use chrono::Utc;
+    use chrono::{SubsecRound, TimeDelta, Utc};
 
     use super::*;
     use crate::resource::*;
@@ -472,7 +498,7 @@ mod tests {
     #[test]
     fn test_from_security_context_trust_on_project_scope_emits_trust_payload() {
         let ctx = make_trust_ctx("pid");
-        let token = FernetToken::from_security_context(&ctx, Utc::now()).unwrap();
+        let token = FernetToken::from_security_context(&ctx, Utc::now(), Utc::now()).unwrap();
 
         match token {
             FernetToken::Trust(payload) => {
@@ -481,5 +507,19 @@ mod tests {
             }
             other => panic!("expected FernetToken::Trust, got {other:?}"),
         }
+    }
+
+    /// A freshly minted token must carry the `issued_at` the caller passed,
+    /// not `DateTime::<Utc>::default()` -- leaving it unset made the API
+    /// report `issued_at` as `1970-01-01T00:00:00Z` on every fresh token.
+    #[test]
+    fn test_from_security_context_populates_issued_at() {
+        let issued_at = Utc::now().trunc_subsecs(0);
+        let ctx = make_trust_ctx("pid");
+        let token =
+            FernetToken::from_security_context(&ctx, issued_at + TimeDelta::hours(1), issued_at)
+                .unwrap();
+
+        assert_eq!(issued_at, *token.issued_at());
     }
 }
