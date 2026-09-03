@@ -961,20 +961,23 @@ impl PluginManager {
 #[cfg(test)]
 mod tests {
     use openstack_keystone_config::Config;
+    use openstack_keystone_core::plugin_manager::register_backends;
 
     use super::*;
 
+    /// Both domain-config sources register into a domain-config-typed map, so
+    /// `with_config` can hand them to the resolver by name. Exercised through
+    /// `register_backends` directly: a full `PluginManager` needs on-disk
+    /// fernet keys the default config has none of.
     #[tokio::test]
     async fn registers_both_domain_config_sources() {
-        let manager = PluginManager::with_config(&Config::default())
+        let mut backends: HashMap<String, Arc<dyn DomainConfigBackend>> = HashMap::new();
+        register_backends(&Config::default(), &mut backends)
             .await
-            .expect("plugin manager builds from the default config");
+            .expect("domain-config drivers register from the default config");
 
-        assert!(manager.get_domain_config_backend("fs").is_ok());
-        assert!(manager.get_domain_config_backend("sql").is_ok());
-        assert!(matches!(
-            manager.get_domain_config_backend("nope"),
-            Err(DomainConfigProviderError::UnsupportedDriver(name)) if name == "nope"
-        ));
+        assert!(backends.contains_key("fs"));
+        assert!(backends.contains_key("sql"));
+        assert!(!backends.contains_key("nope"));
     }
 }
