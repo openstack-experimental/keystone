@@ -23,7 +23,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::{DateTime, TimeDelta, Utc};
+use chrono::{DateTime, SubsecRound, TimeDelta, Utc};
 use secrecy::{ExposeSecret, SecretString};
 use tracing::trace;
 use uuid::Uuid;
@@ -506,8 +506,14 @@ impl TokenApi for TokenService {
         let mut sc = ctx.clone();
         sc.set_authorization_scope(scope.clone())?;
 
-        let token =
-            FernetToken::from_security_context(&sc, self.get_new_token_expiry(&ctx.expires_at())?)?;
+        // `issued_at` is the token's creation timestamp at whole-second
+        // precision (parity with python keystone's fernet formatter, and with
+        // the fernet envelope timestamp this same token decodes back to).
+        let token = FernetToken::from_security_context(
+            &sc,
+            self.get_new_token_expiry(&ctx.expires_at())?,
+            Utc::now().trunc_subsecs(0),
+        )?;
         sc.set_token(token);
         let vsc = ValidatedSecurityContext::new_for_scope(sc, scope.clone(), state).await?;
 
