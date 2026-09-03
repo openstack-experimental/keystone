@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use crate::common::default_sql_driver;
 use crate::pagination::ListLimitConfig;
@@ -32,6 +33,12 @@ pub struct IdentityProvider {
     /// by `keystone-manage bootstrap`.
     #[serde(default = "default_domain_id")]
     pub default_domain_id: String,
+
+    /// Directory holding per-domain `keystone.{domain_name}.conf` overrides,
+    /// read by the filesystem domain-config driver. The files are loaded once
+    /// at startup, so a change to them takes effect only after a restart.
+    #[serde(default = "default_domain_config_dir")]
+    pub domain_config_dir: PathBuf,
 
     /// Identity provider driver.
     #[serde(default = "default_sql_driver")]
@@ -63,6 +70,7 @@ impl Default for IdentityProvider {
         Self {
             caching: false,
             default_domain_id: default_domain_id(),
+            domain_config_dir: default_domain_config_dir(),
             driver: default_sql_driver(),
             max_password_length: default_max_password_length(),
             password_hashing_algorithm: PasswordHashingAlgo::Bcrypt,
@@ -112,4 +120,8 @@ fn default_max_password_length() -> usize {
 
 fn default_domain_id() -> String {
     "default".into()
+}
+
+fn default_domain_config_dir() -> PathBuf {
+    PathBuf::from("/etc/keystone/domains")
 }

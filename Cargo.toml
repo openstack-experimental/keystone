@@ -13,6 +13,7 @@ members = [
   "crates/auth-plugin-core",
   "crates/auth-plugin-identity-driver-raft",
   "crates/auth-plugin-runtime",
+  "crates/domain-config-driver-fs",
   "crates/domain-config-driver-sql",
   "crates/federation-driver-sql",
   "crates/identity-driver-ldap",
@@ -131,6 +132,7 @@ openstack-keystone-core = { version = "0.1.0", path = "crates/core" }
 openstack-keystone-core-types = { version = "0.1.0", path = "crates/core-types" }
 openstack-keystone-credential-driver-sql = { version = "0.1", path = "crates/credential-driver-sql/" }
 openstack-keystone-distributed-storage = { version = "0.1.0", path = "crates/storage"}
+openstack-keystone-domain-config-driver-fs = { version = "0.1", path = "crates/domain-config-driver-fs/" }
 openstack-keystone-domain-config-driver-sql = { version = "0.1", path = "crates/domain-config-driver-sql/" }
 openstack-keystone-auth-plugin-core = { version = "0.1.0", path = "crates/auth-plugin-core" }
 openstack-keystone-auth-plugin-identity-driver-raft = { version = "0.1.0", path = "crates/auth-plugin-identity-driver-raft" }
@@ -174,6 +176,7 @@ rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "
 rmp = { version = "0.8" }
 rstest = { version = "0.26" }
 rmp-serde = "1.3"
+rust-ini = { version = "0.21" }
 rustls = { version = "0.23" }
 schemars = { version = "1.2" }
 scopeguard = "1.2.0"
