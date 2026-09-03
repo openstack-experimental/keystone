@@ -296,6 +296,7 @@ impl From<CatalogProviderError> for KeystoneApiError {
 impl From<ApplicationCredentialProviderError> for KeystoneApiError {
     fn from(value: ApplicationCredentialProviderError) -> Self {
         match value {
+            ApplicationCredentialProviderError::AuthenticationFailed => Self::UnauthorizedNoContext,
             ApplicationCredentialProviderError::ApplicationCredentialNotFound(x) => {
                 Self::NotFound {
                     resource: "application_credential".into(),
@@ -317,7 +318,7 @@ impl From<ApplicationCredentialProviderError> for KeystoneApiError {
                 Self::BadRequest(err.to_string())
             }
             ApplicationCredentialProviderError::ApplicationCredentialExpired => {
-                Self::BadRequest("application credential has expired".into())
+                Self::UnauthorizedNoContext
             }
             ApplicationCredentialProviderError::AccessRuleInUse(_) => {
                 Self::Conflict("application credential access rule is in use".into())

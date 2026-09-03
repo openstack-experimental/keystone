@@ -30,7 +30,7 @@ services:
   keystone_rust:
     image: keystone-rust:dev
     build: .
-    command: ["bash", "-c", "keystone-db up && keystone -c /etc/keystone/keystone.conf -vv"]
+    command: ["bash", "-c", "keystone-manage db up && keystone -c /etc/keystone/keystone.conf -vv"]
     environment:
       DATABASE_URL: postgresql://keystone:password@db/keystone
     ports:

@@ -25,6 +25,10 @@ use openstack_keystone_core::auth_plugin_auth::{
     WasmPluginAuthError, WasmPluginAuthRequest, authenticate_via_wasm_mapping_plugin,
     authenticate_via_wasm_plugin, route_via_wasm_plugin,
 };
+use openstack_keystone_core_types::application_credential::{
+    ApplicationCredentialAuthById, ApplicationCredentialAuthByName, ApplicationCredentialAuthData,
+    ApplicationCredentialAuthRequest, UserAuthRef,
+};
 
 /// Authenticate the user ignoring any scope information. It is important not to
 /// expose any hints that user, project, domain, etc might exist before we have
@@ -172,6 +176,51 @@ pub(super) async fn authenticate_request(
                 token_restriction: vsc.inner().token_restriction().cloned(),
             };
             res.push(auth_res);
+        } else if method == "application_credential" {
+            if let Some(app_cred) = &req.auth.identity.application_credential {
+                let credential = if let Some(id) = &app_cred.id {
+                    ApplicationCredentialAuthData::Id(ApplicationCredentialAuthById {
+                        id: id.clone(),
+                        user: app_cred.user.as_ref().map(|u| UserAuthRef {
+                            id: u.id.clone(),
+                            name: u.name.clone(),
+                            domain: u.domain.clone().map(Into::into),
+                        }),
+                    })
+                } else if let Some(name) = &app_cred.name {
+                    let user = app_cred.user.as_ref().ok_or(KeystoneApiError::BadRequest(
+                        "application_credential.user is required when using name".into(),
+                    ))?;
+                    ApplicationCredentialAuthData::Name(ApplicationCredentialAuthByName {
+                        name: name.clone(),
+                        user: UserAuthRef {
+                            id: user.id.clone(),
+                            name: user.name.clone(),
+                            domain: user.domain.clone().map(Into::into),
+                        },
+                    })
+                } else {
+                    return Err(KeystoneApiError::BadRequest(
+                        "application_credential.id or .name is required".into(),
+                    ));
+                };
+
+                let auth_req = ApplicationCredentialAuthRequest {
+                    secret: app_cred.secret.clone(),
+                    credential,
+                };
+
+                res.push(
+                    state
+                        .provider
+                        .get_application_credential_provider()
+                        .authenticate_by_application_credential(
+                            &ExecutionContext::internal(state),
+                            &auth_req,
+                        )
+                        .await?,
+                );
+            }
         } else if let Some(payload) = effective_extra.get(method) {
             // Unrecognized method name with a matching request body block -
             // dispatch to a loaded `mode = full_auth` dynamic auth plugin
@@ -284,6 +333,7 @@ mod tests {
                             }),
                             token: None,
                             totp: None,
+                            application_credential: None,
                             extra: Default::default(),
                         },
                         scope: None,
@@ -336,6 +386,7 @@ mod tests {
                             methods: vec!["totp".to_string()],
                             password: None,
                             token: None,
+                            application_credential: None,
                             totp: Some(TotpAuth {
                                 user: TotpUserBuilder::default()
                                     .id("uid")
@@ -429,6 +480,7 @@ mod tests {
                                 id: "fake_token".into()
                             }),
                             totp: None,
+                            application_credential: None,
                             extra: Default::default(),
                         },
                         scope: None,
@@ -502,6 +554,7 @@ mod tests {
                         }),
                         totp: None,
                         extra: Default::default(),
+                        application_credential: None,
                     },
                     scope: None,
                 },
@@ -515,6 +568,199 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_authenticate_request_application_credential_by_id() {
+        let auth = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::ApplicationCredential {
+                application_credential: openstack_keystone_core_types::application_credential::ApplicationCredentialBuilder::default()
+                    .id("app_cred_id")
+                    .name("my_app_cred")
+                    .project_id("pid")
+                    .user_id("uid")
+                    .unrestricted(false)
+                    .roles(vec![])
+                    .build()
+                    .unwrap(),
+                token: None,
+            })
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id("uid")
+                        .build()
+                        .unwrap(),
+                ),
+            })
+            .build()
+            .unwrap();
+        let auth_clone = auth.clone();
+
+        let mut app_cred_mock =
+            crate::application_credential::MockApplicationCredentialProvider::default();
+        app_cred_mock
+            .expect_authenticate_by_application_credential()
+            .withf(|_, auth: &ApplicationCredentialAuthRequest| {
+    matches!(&auth.credential, ApplicationCredentialAuthData::Id(by_id) if by_id.id == "app_cred_id")
+        && auth.secret.expose_secret() == "app_cred_secret"
+})
+            .returning(move |_, _| Ok(auth_clone.clone()));
+
+        let provider = Provider::mocked_builder().mock_application_credential(app_cred_mock);
+
+        let state = get_mocked_state(provider, true, None).await;
+
+        assert_eq!(
+            vec![auth],
+            authenticate_request(
+                &state,
+                &AuthRequest {
+                    auth: AuthRequestInner {
+                        identity: Identity {
+                            methods: vec!["application_credential".to_string()],
+                            password: None,
+                            token: None,
+                            totp: None,
+                            application_credential: Some(ApplicationCredentialAuth {
+                                id: Some("app_cred_id".into()),
+                                name: None,
+                                secret: "app_cred_secret".into(),
+                                user: None,
+                            }),
+                            extra: Default::default(),
+                        },
+                        scope: None,
+                    },
+                },
+                &axum::http::HeaderMap::new(),
+                None,
+            )
+            .await
+            .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_request_application_credential_by_name() {
+        let auth = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::ApplicationCredential {
+                application_credential: openstack_keystone_core_types::application_credential::ApplicationCredentialBuilder::default()
+                    .id("app_cred_id")
+                    .name("my_app_cred")
+                    .project_id("pid")
+                    .user_id("uid")
+                    .unrestricted(false)
+                    .roles(vec![])
+                    .build()
+                    .unwrap(),
+                token: None,
+            })
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id("uid")
+                        .build()
+                        .unwrap(),
+                ),
+            })
+            .build()
+            .unwrap();
+        let auth_clone = auth.clone();
+
+        let mut app_cred_mock =
+            crate::application_credential::MockApplicationCredentialProvider::default();
+        app_cred_mock
+            .expect_authenticate_by_application_credential()
+            .withf(|_, auth: &ApplicationCredentialAuthRequest| {
+                if let ApplicationCredentialAuthData::Name(by_name) = &auth.credential {
+                    by_name.name == "my_app_cred"
+                        && auth.secret.expose_secret() == "app_cred_secret"
+                } else {
+                    false
+                }
+            })
+            .returning(move |_, _| Ok(auth_clone.clone()));
+
+        let provider = Provider::mocked_builder().mock_application_credential(app_cred_mock);
+
+        let state = get_mocked_state(provider, true, None).await;
+
+        assert_eq!(
+            vec![auth],
+            authenticate_request(
+                &state,
+                &AuthRequest {
+                    auth: AuthRequestInner {
+                        identity: Identity {
+                            methods: vec!["application_credential".to_string()],
+                            password: None,
+                            token: None,
+                            totp: None,
+                            application_credential: Some(ApplicationCredentialAuth {
+                                id: None,
+                                name: Some("my_app_cred".into()),
+                                secret: "app_cred_secret".into(),
+                                user: Some(ApplicationCredentialUser {
+                                    id: Some("uid".into()),
+                                    name: None,
+                                    domain: None,
+                                }),
+                            }),
+                            extra: Default::default(),
+                        },
+                        scope: None,
+                    },
+                },
+                &axum::http::HeaderMap::new(),
+                None,
+            )
+            .await
+            .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_request_application_credential_failed() {
+        let mut app_cred_mock =
+            crate::application_credential::MockApplicationCredentialProvider::default();
+        app_cred_mock
+            .expect_authenticate_by_application_credential()
+            .returning(|_, _| {
+                Err(
+                    openstack_keystone_core_types::application_credential::ApplicationCredentialProviderError::AuthenticationFailed,
+                )
+            });
+
+        let provider = Provider::mocked_builder().mock_application_credential(app_cred_mock);
+
+        let state = get_mocked_state(provider, true, None).await;
+
+        let rsp = authenticate_request(
+            &state,
+            &AuthRequest {
+                auth: AuthRequestInner {
+                    identity: Identity {
+                        methods: vec!["application_credential".to_string()],
+                        password: None,
+                        token: None,
+                        totp: None,
+                        application_credential: Some(ApplicationCredentialAuth {
+                            id: Some("app_cred_id".into()),
+                            name: None,
+                            secret: "wrong_secret".into(),
+                            user: None,
+                        }),
+                        extra: Default::default(),
+                    },
+                    scope: None,
+                },
+            },
+            &axum::http::HeaderMap::new(),
+            None,
+        )
+        .await;
+
+        assert!(rsp.is_err());
+    }
+    #[tokio::test]
     async fn test_authenticate_request_unsupported() {
         let state = get_mocked_state(Provider::mocked_builder(), true, None).await;
 
@@ -527,6 +773,7 @@ mod tests {
                         password: None,
                         token: None,
                         totp: None,
+                        application_credential: None,
                         extra: Default::default(),
                     },
                     scope: None,
@@ -765,6 +1012,7 @@ mod route_dispatch_tests {
                     password: None,
                     token: None,
                     totp: None,
+                    application_credential: None,
                     extra,
                 },
                 scope: None,
@@ -812,6 +1060,7 @@ mod route_dispatch_tests {
                         password: None,
                         token: None,
                         totp: None,
+                        application_credential: None,
                         extra: Default::default(),
                     },
                     scope: None,

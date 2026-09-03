@@ -15,6 +15,7 @@
 use async_trait::async_trait;
 
 use crate::application_credential::error::ApplicationCredentialProviderError;
+use crate::auth::AuthenticationResult;
 use crate::auth::ExecutionContext;
 use openstack_keystone_core_types::application_credential::*;
 
@@ -148,4 +149,28 @@ pub trait ApplicationCredentialApi: Send + Sync {
         ctx: &ExecutionContext<'a>,
         params: &ApplicationCredentialListParameters,
     ) -> Result<Vec<ApplicationCredential>, ApplicationCredentialProviderError>;
+
+    /// Authenticate using an application credential.
+    ///
+    /// Resolves the credential (by ID, or by name + owning user ID),
+    /// verifies the secret, checks that the credential has not expired
+    /// and that the owning user, bound project, and project domain are
+    /// all enabled, then returns an [`AuthenticationResult`] populated
+    /// with [`AuthenticationContext::ApplicationCredential`].
+    ///
+    /// # Parameters
+    /// - `ctx`: The execution context.
+    /// - `id`: The application credential ID (optional if `name` is given).
+    /// - `name`: The application credential name (optional if `id` is given).
+    /// - `user_id`: The owning user ID (required when resolving by `name`).
+    /// - `secret`: The application credential secret.
+    ///
+    /// # Returns
+    /// - `Result<AuthenticationResult, ApplicationCredentialProviderError>` -
+    ///   The authentication result or an error.
+    async fn authenticate_by_application_credential<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        auth: &ApplicationCredentialAuthRequest,
+    ) -> Result<AuthenticationResult, ApplicationCredentialProviderError>;
 }

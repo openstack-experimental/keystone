@@ -473,61 +473,67 @@ mod application_credential {
     };
 
     mock! {
-        pub ApplicationCredentialProvider {}
+    pub ApplicationCredentialProvider {}
 
-        #[async_trait]
-        impl ApplicationCredentialApi for ApplicationCredentialProvider {
-            async fn create_access_rule<'a>(
-                &self,
-                ctx: &ExecutionContext<'a>,
-                rule: AccessRuleCreate,
-            ) -> Result<AccessRule, ApplicationCredentialProviderError>;
+    #[async_trait]
+    impl ApplicationCredentialApi for ApplicationCredentialProvider {
+        async fn create_access_rule<'a>(
+            &self,
+            ctx: &ExecutionContext<'a>,
+            rule: AccessRuleCreate,
+        ) -> Result<AccessRule, ApplicationCredentialProviderError>;
 
-            async fn create_application_credential<'a>(
-                &self,
-                ctx: &ExecutionContext<'a>,
-                rec: ApplicationCredentialCreate,
-            ) -> Result<ApplicationCredentialCreateResponse, ApplicationCredentialProviderError>;
+        async fn create_application_credential<'a>(
+            &self,
+            ctx: &ExecutionContext<'a>,
+            rec: ApplicationCredentialCreate,
+        ) -> Result<ApplicationCredentialCreateResponse, ApplicationCredentialProviderError>;
 
-            async fn delete_access_rule<'a>(
-                &self,
-                ctx: &ExecutionContext<'a>,
-                user_id: &'a str,
-                id: &'a str,
-            ) -> Result<(), ApplicationCredentialProviderError>;
+        async fn delete_access_rule<'a>(
+            &self,
+            ctx: &ExecutionContext<'a>,
+            user_id: &'a str,
+            id: &'a str,
+        ) -> Result<(), ApplicationCredentialProviderError>;
 
-            async fn delete_application_credential<'a>(
-                &self,
-                ctx: &ExecutionContext<'a>,
-                rec: ApplicationCredential,
-            ) -> Result<(), ApplicationCredentialProviderError>;
+        async fn delete_application_credential<'a>(
+            &self,
+            ctx: &ExecutionContext<'a>,
+            rec: ApplicationCredential,
+        ) -> Result<(), ApplicationCredentialProviderError>;
 
-            async fn get_access_rule<'a>(
-                &self,
-                ctx: &ExecutionContext<'a>,
-                user_id: &'a str,
-                id: &'a str,
-            ) -> Result<Option<AccessRule>, ApplicationCredentialProviderError>;
+        async fn get_access_rule<'a>(
+            &self,
+            ctx: &ExecutionContext<'a>,
+            user_id: &'a str,
+            id: &'a str,
+        ) -> Result<Option<AccessRule>, ApplicationCredentialProviderError>;
 
-            async fn get_application_credential<'a>(
-                &self,
-                ctx: &ExecutionContext<'a>,
-                id: &'a str,
-            ) -> Result<Option<ApplicationCredential>, ApplicationCredentialProviderError>;
+        async fn get_application_credential<'a>(
+            &self,
+            ctx: &ExecutionContext<'a>,
+            id: &'a str,
+        ) -> Result<Option<ApplicationCredential>, ApplicationCredentialProviderError>;
 
-            async fn list_access_rules<'a>(
-                &self,
-                ctx: &ExecutionContext<'a>,
-                user_id: &'a str,
-            ) -> Result<Vec<AccessRule>, ApplicationCredentialProviderError>;
+        async fn list_access_rules<'a>(
+            &self,
+            ctx: &ExecutionContext<'a>,
+            user_id: &'a str,
+        ) -> Result<Vec<AccessRule>, ApplicationCredentialProviderError>;
 
-            async fn list_application_credentials<'a>(
-                &self,
-                ctx: &ExecutionContext<'a>,
-                params: &ApplicationCredentialListParameters,
-            ) -> Result<Vec<ApplicationCredential>, ApplicationCredentialProviderError>;
+        async fn list_application_credentials<'a>(
+            &self,
+            ctx: &ExecutionContext<'a>,
+            params: &ApplicationCredentialListParameters,
+        ) -> Result<Vec<ApplicationCredential>, ApplicationCredentialProviderError>;
+
+        async fn authenticate_by_application_credential<'a>(
+            &self,
+            ctx: &ExecutionContext<'a>,
+            auth: &ApplicationCredentialAuthRequest,
+        ) -> Result<AuthenticationResult, ApplicationCredentialProviderError>;
+            }
         }
-    }
 }
 pub use application_credential::MockApplicationCredentialProvider;
 

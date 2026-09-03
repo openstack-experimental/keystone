@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # OpenStack Keystone Application Credential SQL driver
 
+use secrecy::SecretString;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -194,6 +195,33 @@ impl ApplicationCredentialBackend for SqlBackend {
         params: &ApplicationCredentialListParameters,
     ) -> Result<Vec<ApplicationCredential>, ApplicationCredentialProviderError> {
         Ok(application_credential::list(&state.db.connection(), params).await?)
+    }
+
+    /// Verify an application credential's secret against the stored hash.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `credential_id`: The ID of the application credential.
+    /// - `secret`: The plaintext secret to verify.
+    ///
+    /// # Returns
+    /// - `Ok(())` if the secret matches the stored hash.
+    /// - `Err(ApplicationCredentialProviderError::AuthenticationFailed)` if
+    ///   the credential does not exist or the secret does not match.
+    async fn verify_application_credential_secret(
+        &self,
+        state: &ServiceState,
+        credential_id: &str,
+        secret: &SecretString,
+    ) -> Result<(), ApplicationCredentialProviderError> {
+        let config = state.config_manager.config.read().await;
+        application_credential::verify_secret(
+            &config,
+            &state.db.connection(),
+            credential_id,
+            secret,
+        )
+        .await
     }
 }
 
