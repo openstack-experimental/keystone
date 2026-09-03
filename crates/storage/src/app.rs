@@ -933,6 +933,17 @@ impl StorageApi for Storage {
             }
         }
 
+        let keyspace_name = keyspace.unwrap_or("data");
+        if self
+            .state_machine_store
+            .is_ephemeral_keyspace(keyspace_name)
+        {
+            return Ok(self
+                .state_machine_store
+                .ephemeral_get(keyspace_name, key)
+                .map(|(data, metadata)| StoreDataEnvelope { data, metadata }));
+        }
+
         // Leader path: local metadata + data read.
         let key_str =
             String::from_utf8(key.to_vec()).map_err(|e| StoreError::Other(eyre::eyre!("{e}")))?;
@@ -1021,6 +1032,22 @@ impl StorageApi for Storage {
                 // Retries exhausted without resolving leader status. Fall
                 // through to local read as best-effort.
             }
+        }
+
+        let ephemeral_ks_name = keyspace.unwrap_or("data");
+        if let Some(entries) = self
+            .state_machine_store
+            .ephemeral_prefix(ephemeral_ks_name, prefix)
+        {
+            return entries
+                .into_iter()
+                .map(|(key_bytes, data, metadata)| {
+                    let k = String::from_utf8(key_bytes)
+                        .map_err(|e| StoreError::Other(eyre::eyre!("{e}")))?;
+                    Ok((k, StoreDataEnvelope { data, metadata }))
+                })
+                .collect::<Result<Vec<_>, StoreError>>()
+                .map_err(ApiStoreError::from);
         }
 
         // Leader path: collect raw encrypted bytes + metadata locally,
