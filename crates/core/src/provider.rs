@@ -40,6 +40,7 @@ use crate::catalog::MockCatalogProvider;
 use crate::credential::CredentialApi;
 #[cfg(any(test, feature = "mock"))]
 use crate::credential::MockCredentialProvider;
+use crate::domain_config::DomainConfigResolver;
 use crate::error::KeystoneError;
 use crate::federation::FederationApi;
 #[cfg(any(test, feature = "mock"))]
@@ -112,6 +113,11 @@ pub struct Provider {
     catalog: Box<dyn CatalogApi>,
     /// Credential provider.
     credential: Box<dyn CredentialApi>,
+    /// Per-domain configuration resolution layer (issue #958). Merges the
+    /// file-based and database-stored domain configuration; not yet consumed
+    /// at runtime.
+    #[builder(default = "DomainConfigResolver::disabled()")]
+    domain_config_resolver: DomainConfigResolver,
     /// Dynamic plugin identity-binding index provider.
     auth_plugin_identity: Box<dyn DynamicPluginIdentityApi>,
     /// Federation provider.
@@ -325,6 +331,8 @@ impl Provider {
             cfg,
             plugin_manager,
         )?);
+        let domain_config_resolver =
+            crate::domain_config::DomainConfigResolver::new(cfg, plugin_manager)?;
         let auth_plugin_identity = Box::new(
             crate::auth_plugin_identity::DynamicPluginIdentityService::new(cfg, plugin_manager)?,
         );
@@ -380,6 +388,7 @@ impl Provider {
             assignment,
             catalog,
             credential,
+            domain_config_resolver,
             auth_plugin_identity,
             federation,
             identity,
@@ -455,6 +464,11 @@ impl Provider {
     /// Get the credential provider.
     pub fn get_credential_provider(&self) -> &dyn CredentialApi {
         &*self.credential
+    }
+
+    /// Get the domain configuration resolution layer (issue #958).
+    pub fn get_domain_config_resolver(&self) -> &DomainConfigResolver {
+        &self.domain_config_resolver
     }
 
     /// Get the federation provider.

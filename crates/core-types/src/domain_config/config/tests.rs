@@ -909,3 +909,80 @@ mod substitution {
         );
     }
 }
+
+mod overlay {
+    //! Option-by-option merge of one configuration onto another — the primitive
+    //! the resolution layer stacks the file configuration under the database
+    //! one with.
+
+    use super::*;
+
+    /// A group's option, or `None` when the group or option is unset.
+    fn option<'a>(
+        config: &'a DomainConfig,
+        group: DomainConfigGroupName,
+        name: &str,
+    ) -> Option<&'a Value> {
+        config.group(group).and_then(|group| group.get(name))
+    }
+
+    #[test]
+    fn the_overlay_wins_an_option_both_sides_set() {
+        let mut base = config_from(json!({"ldap": {"url": "ldap://file"}}));
+        base.overlay(&config_from(json!({"ldap": {"url": "ldap://db"}})));
+        assert_eq!(
+            option(&base, DomainConfigGroupName::Ldap, "url"),
+            Some(&json!("ldap://db"))
+        );
+    }
+
+    #[test]
+    fn an_option_only_the_base_set_is_kept() {
+        let base = config_from(json!({"ldap": {"url": "ldap://file", "suffix": "dc=file"}}))
+            .overlaid_with(&config_from(json!({"ldap": {"url": "ldap://db"}})));
+        assert_eq!(
+            option(&base, DomainConfigGroupName::Ldap, "url"),
+            Some(&json!("ldap://db")),
+            "the overlapping option took the overlay value"
+        );
+        assert_eq!(
+            option(&base, DomainConfigGroupName::Ldap, "suffix"),
+            Some(&json!("dc=file")),
+            "the base-only option survived"
+        );
+    }
+
+    #[test]
+    fn a_group_present_on_one_side_only_is_taken_whole() {
+        let merged = config_from(json!({"identity": {"driver": "ldap"}}))
+            .overlaid_with(&config_from(json!({"ldap": {"url": "ldap://db"}})));
+        assert_eq!(
+            option(&merged, DomainConfigGroupName::Identity, "driver"),
+            Some(&json!("ldap"))
+        );
+        assert_eq!(
+            option(&merged, DomainConfigGroupName::Ldap, "url"),
+            Some(&json!("ldap://db"))
+        );
+    }
+
+    #[test]
+    fn overlays_a_sensitive_option() {
+        let base = config_from(json!({"ldap": {"password": "file-secret"}}))
+            .overlaid_with(&config_from(json!({"ldap": {"password": PASSWORD}})));
+        assert_eq!(
+            option(&base, DomainConfigGroupName::Ldap, "password"),
+            Some(&json!(PASSWORD))
+        );
+    }
+
+    #[test]
+    fn overlaying_an_empty_configuration_changes_nothing() {
+        let base = config_from(json!({"ldap": {"url": "ldap://file"}}))
+            .overlaid_with(&DomainConfig::new());
+        assert_eq!(
+            option(&base, DomainConfigGroupName::Ldap, "url"),
+            Some(&json!("ldap://file"))
+        );
+    }
+}

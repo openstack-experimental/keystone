@@ -41,6 +41,7 @@ use crate::catalog::error::CatalogProviderError;
 use crate::credential::CredentialProviderError;
 use crate::credential::backend::CredentialBackend;
 use crate::domain_config::backend::DomainConfigBackend;
+use crate::domain_config::error::DomainConfigProviderError;
 use crate::federation::backend::FederationBackend;
 use crate::federation::error::FederationProviderError;
 use crate::identity::backend::IdentityBackend;
@@ -228,6 +229,24 @@ pub trait PluginManagerApi {
         &self,
         name: S,
     ) -> Result<&Arc<dyn CredentialBackend>, CredentialProviderError>;
+
+    /// Get registered domain config backend.
+    ///
+    /// The registry holds one entry per source — `"fs"` for the filesystem
+    /// driver, `"sql"` for the database one — and the resolution layer asks
+    /// for each by name (see
+    /// [`crate::domain_config::DomainConfigResolver`]).
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn DomainConfigBackend>)` if found, otherwise
+    ///   `Err(DomainConfigProviderError::UnsupportedDriver)`.
+    fn get_domain_config_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn DomainConfigBackend>, DomainConfigProviderError>;
 
     /// Get registered dynamic plugin identity-binding index backend.
     ///

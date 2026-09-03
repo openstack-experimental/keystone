@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::common::default_sql_driver;
+use crate::common::{default_sql_driver, default_true};
 use crate::pagination::ListLimitConfig;
 
 /// Identity provider.
@@ -39,6 +39,19 @@ pub struct IdentityProvider {
     /// at startup, so a change to them takes effect only after a restart.
     #[serde(default = "default_domain_config_dir")]
     pub domain_config_dir: PathBuf,
+
+    /// Whether per-domain identity/LDAP driver configuration is loaded from
+    /// `domain_config_dir` files. Off by default, as in python-keystone; the
+    /// resolution layer overlays file-based configuration only when this is
+    /// set.
+    #[serde(default)]
+    pub domain_specific_drivers_enabled: bool,
+
+    /// Whether per-domain configuration is taken from the database, at the
+    /// highest precedence, in addition to any file-based configuration. On by
+    /// default, matching python-keystone.
+    #[serde(default = "default_true")]
+    pub domain_configurations_from_database: bool,
 
     /// Identity provider driver.
     #[serde(default = "default_sql_driver")]
@@ -71,6 +84,8 @@ impl Default for IdentityProvider {
             caching: false,
             default_domain_id: default_domain_id(),
             domain_config_dir: default_domain_config_dir(),
+            domain_specific_drivers_enabled: false,
+            domain_configurations_from_database: default_true(),
             driver: default_sql_driver(),
             max_password_length: default_max_password_length(),
             password_hashing_algorithm: PasswordHashingAlgo::Bcrypt,
