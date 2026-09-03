@@ -20,6 +20,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
+use dashmap::DashMap;
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, PersistMode, Readable};
 use futures::Stream;
 use futures::TryStreamExt;
@@ -356,6 +357,16 @@ pub fn load_pending_rotations(
     Ok(map)
 }
 
+/// Cipher (or, for ephemeral records, plaintext) bytes plus metadata for one
+/// key inside an ephemeral keyspace.
+type EphemeralValue = (Vec<u8>, Metadata);
+
+/// The in-memory contents of one ephemeral keyspace, keyed by record key.
+type EphemeralKeyspace = DashMap<Vec<u8>, EphemeralValue>;
+
+/// One `(key, value, metadata)` entry returned from an ephemeral prefix scan.
+type EphemeralEntry = (Vec<u8>, Vec<u8>, Metadata);
+
 /// State machine backed by FjallDB for full persistence.
 ///
 /// All application data is AES-256-GCM encrypted at rest via `state_encrypt`
@@ -409,6 +420,18 @@ pub struct FjallStateMachine {
     /// silently land in an already-deregistered, soon-to-be-discarded
     /// partition — applied per Raft, invisible to every future read.
     keyspace_lifecycle: Arc<RwLock<()>>,
+    /// Ephemeral (non-Fjall-backed) keyspaces, keyed by keyspace name.
+    ///
+    /// Populated the first time `apply()` sees a `Set`/`CreateIfAbsent`
+    /// mutation whose `Metadata::is_ephemeral` is `true` for that keyspace
+    /// name; every node derives the same population independently since
+    /// `apply()` runs identically, in the same log order, everywhere — no
+    /// separate consensus needed (same principle `drop_keyspace` already
+    /// relies on for non-core keyspace lifecycle). A keyspace is either
+    /// always ephemeral or always Fjall-backed for the life of its name; an
+    /// outer entry existing (even with an empty inner map) is equivalent to
+    /// a Fjall partition existing.
+    ephemeral: DashMap<String, EphemeralKeyspace>,
     /// ADR 0031 Raft Prometheus metrics. Owned here (rather than only on
     /// `app::Storage`) because `apply_duration_seconds` must be recorded at
     /// the actual per-entry apply call site below; `app::Storage` reaches
@@ -470,6 +493,7 @@ impl FjallStateMachine {
             quarantine,
             pending_rotations,
             keyspace_lifecycle: Arc::new(RwLock::new(())),
+            ephemeral: DashMap::new(),
             raft_prometheus_metrics: Arc::new(
                 crate::prometheus_metrics::KeystoneRaftPrometheusMetrics::new(),
             ),
@@ -534,6 +558,48 @@ impl FjallStateMachine {
         Ok((snapshot, utc_epoch, dek_version))
     }
 
+    /// Returns `true` if `name` is a registered ephemeral (in-memory,
+    /// non-Fjall) keyspace.
+    pub fn is_ephemeral_keyspace<S: AsRef<str>>(&self, name: S) -> bool {
+        self.ephemeral.contains_key(name.as_ref())
+    }
+
+    /// Reads a single key from an ephemeral keyspace.
+    ///
+    /// Returns `None` both when `keyspace` is not ephemeral and when the
+    /// key is absent — callers that need to distinguish "not an ephemeral
+    /// keyspace" (fall through to Fjall) from "no such key" (return `None`
+    /// to the caller) must check [`Self::is_ephemeral_keyspace`] first.
+    pub fn ephemeral_get<S: AsRef<str>>(
+        &self,
+        keyspace: S,
+        key: &[u8],
+    ) -> Option<(Vec<u8>, Metadata)> {
+        self.ephemeral
+            .get(keyspace.as_ref())?
+            .get(key)
+            .map(|e| e.value().clone())
+    }
+
+    /// Lists all entries in an ephemeral keyspace whose key starts with
+    /// `prefix`. Returns `None` if `keyspace` is not ephemeral.
+    pub fn ephemeral_prefix<S: AsRef<str>>(
+        &self,
+        keyspace: S,
+        prefix: &[u8],
+    ) -> Option<Vec<EphemeralEntry>> {
+        let ks = self.ephemeral.get(keyspace.as_ref())?;
+        Some(
+            ks.iter()
+                .filter(|entry| entry.key().starts_with(prefix))
+                .map(|entry| {
+                    let (cipher, metadata) = entry.value().clone();
+                    (entry.key().clone(), cipher, metadata)
+                })
+                .collect(),
+        )
+    }
+
     /// Get the Fjall `keyspace` handle by name.
     pub fn keyspace<S: AsRef<str>>(&self, name: S) -> Result<Keyspace, StoreError> {
         Ok(match name.as_ref() {
@@ -552,7 +618,9 @@ impl FjallStateMachine {
     /// partition — safe to call speculatively when probing for
     /// garbage-collection candidates.
     pub fn keyspace_exists<S: AsRef<str>>(&self, name: S) -> bool {
-        matches!(name.as_ref(), "data" | "meta" | "index") || self.db.keyspace_exists(name.as_ref())
+        matches!(name.as_ref(), "data" | "meta" | "index")
+            || self.ephemeral.contains_key(name.as_ref())
+            || self.db.keyspace_exists(name.as_ref())
     }
 
     /// Permanently deletes an empty, non-core keyspace/partition.
@@ -571,6 +639,20 @@ impl FjallStateMachine {
             return Err(StoreError::Other(eyre::eyre!(
                 "refusing to drop core keyspace '{name}'"
             )));
+        }
+        // Ephemeral keyspaces live purely in memory: no on-disk emptiness
+        // check or `keyspace_lifecycle` coordination with `apply()` is
+        // needed, since `DashMap::remove` is atomic per-entry and `apply()`
+        // only ever inserts into a *different* per-keyspace inner map, not
+        // this outer registry.
+        if let Some((_, inner)) = self.ephemeral.remove(name) {
+            if !inner.is_empty() {
+                self.ephemeral.insert(name.to_string(), inner);
+                return Err(StoreError::Other(eyre::eyre!(
+                    "refusing to drop non-empty keyspace '{name}'"
+                )));
+            }
+            return Ok(());
         }
         // Excludes any concurrent `apply()` call for the whole
         // exists/is-empty/delete sequence, so a write that `apply()` is
@@ -1440,6 +1522,29 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         ));
                                     }
 
+                                    if let Some(ephemeral_ks) = self.ephemeral.get(&keyspace) {
+                                        if let Some(expected_revision) = expected_revision {
+                                            let curr_revision = ephemeral_ks
+                                                .get(&key)
+                                                .map(|entry| entry.1.revision);
+                                            if curr_revision.is_none_or(|r| r != expected_revision)
+                                            {
+                                                violations.push(Violation {
+                                                    r#type: "CONFLICT".to_string(),
+                                                    subject: String::from_utf8_lossy(&key)
+                                                        .to_string(),
+                                                    description: format!(
+                                                        "Current revision is {curr_revision:?} \
+                                                         while {expected_revision} was expected",
+                                                    ),
+                                                });
+                                                continue;
+                                            }
+                                        }
+                                        ephemeral_ks.remove(&key);
+                                        continue;
+                                    }
+
                                     if let Some(expected_revision) = expected_revision {
                                         let curr_meta = self
                                             .meta()
@@ -1485,6 +1590,31 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         return Err(io::Error::other(
                                             "not allowed to overwrite system data",
                                         ));
+                                    }
+
+                                    if metadata.is_ephemeral {
+                                        let ephemeral_ks =
+                                            self.ephemeral.entry(keyspace.clone()).or_default();
+                                        if let Some(expected_revision) = expected_revision {
+                                            let curr_revision = ephemeral_ks
+                                                .get(&key)
+                                                .map(|entry| entry.1.revision);
+                                            if curr_revision.is_none_or(|r| r != expected_revision)
+                                            {
+                                                violations.push(Violation {
+                                                    r#type: "CONFLICT".to_string(),
+                                                    subject: String::from_utf8_lossy(&key)
+                                                        .to_string(),
+                                                    description: format!(
+                                                        "Current revision is {curr_revision:?} \
+                                                         while {expected_revision} was expected",
+                                                    ),
+                                                });
+                                                continue;
+                                            }
+                                        }
+                                        ephemeral_ks.insert(key, (cipher, metadata));
+                                        continue;
                                     }
 
                                     if let Some(expected_revision) = expected_revision {
@@ -1565,6 +1695,23 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                     metadata,
                                     tier,
                                 } => {
+                                    if metadata.is_ephemeral {
+                                        let ephemeral_ks =
+                                            self.ephemeral.entry(keyspace.clone()).or_default();
+                                        if ephemeral_ks.contains_key(&key) {
+                                            violations.push(Violation {
+                                                r#type: "CONFLICT".to_string(),
+                                                subject: String::from_utf8_lossy(&key).to_string(),
+                                                description:
+                                                    "key already exists (create_if_absent)"
+                                                        .to_string(),
+                                            });
+                                            continue;
+                                        }
+                                        ephemeral_ks.insert(key, (cipher, metadata));
+                                        continue;
+                                    }
+
                                     let exists = self
                                         .meta()
                                         .get(&key)
@@ -2553,6 +2700,176 @@ mod keyspace_gc_tests {
         assert!(
             sm.keyspace_lifecycle.try_write().is_err(),
             "drop_keyspace's write lock must not be obtainable while apply() holds the read side"
+        );
+    }
+}
+
+#[cfg(test)]
+mod ephemeral_tests {
+    use openstack_keystone_storage_crypto::EnvKek;
+
+    use super::*;
+
+    fn make_sm() -> (FjallStateMachine, tempfile::TempDir) {
+        let td = tempfile::TempDir::new().expect("tempdir");
+        let db = Arc::new(Database::builder(td.path()).open().expect("open db"));
+        let kek: Arc<dyn KekProvider> = Arc::new(EnvKek::from_bytes([0x42u8; 32]));
+        let epoch =
+            Arc::new(DekEpoch::from_raw(LockedKey::from_raw([0x09; 32]), 1).expect("epoch"));
+        let (reencrypt_tx, reencrypt_rx) = tokio::sync::mpsc::channel(1);
+        drop(reencrypt_rx);
+        let (quarantine_tx, quarantine_rx) = tokio::sync::mpsc::channel(1);
+        drop(quarantine_rx);
+
+        let sm = FjallStateMachine::new(
+            db,
+            td.path().join("snapshots"),
+            1,
+            Arc::new(RwLock::new(epoch)),
+            Arc::new(Mutex::new(BTreeMap::new())),
+            Arc::new(Mutex::new(HashSet::new())),
+            kek,
+            reencrypt_tx,
+            quarantine_tx,
+            Arc::new(Mutex::new(HashMap::new())),
+        )
+        .expect("construct state machine");
+        (sm, td)
+    }
+
+    /// Directly seeds an ephemeral keyspace the way `apply()`'s `Set`/
+    /// `CreateIfAbsent` arms would, without needing to drive a full
+    /// `RaftStateMachine::apply()` entry stream — the helper methods under
+    /// test (`is_ephemeral_keyspace`, `ephemeral_get`, `ephemeral_prefix`,
+    /// `keyspace_exists`, `drop_keyspace`) are exercised the same way
+    /// regardless of what populated the map.
+    fn seed(sm: &FjallStateMachine, keyspace: &str, key: &[u8], value: &[u8], metadata: Metadata) {
+        sm.ephemeral
+            .entry(keyspace.to_string())
+            .or_default()
+            .insert(key.to_vec(), (value.to_vec(), metadata));
+    }
+
+    #[test]
+    fn ephemeral_write_never_touches_the_fjall_db() {
+        let (sm, _td) = make_sm();
+        seed(
+            &sm,
+            "webauthn_state_1",
+            b"user-1:auth",
+            b"challenge-bytes",
+            Metadata::ephemeral(),
+        );
+
+        assert!(sm.keyspace_exists("webauthn_state_1"));
+        assert!(sm.is_ephemeral_keyspace("webauthn_state_1"));
+        // The keyspace must not exist as a real Fjall partition.
+        assert!(!sm.db.keyspace_exists("webauthn_state_1"));
+    }
+
+    #[test]
+    fn ephemeral_get_round_trips_value_and_metadata() {
+        let (sm, _td) = make_sm();
+        let metadata = Metadata::ephemeral();
+        seed(
+            &sm,
+            "webauthn_state_1",
+            b"user-1:auth",
+            b"payload",
+            metadata,
+        );
+
+        let (value, got_metadata) = sm
+            .ephemeral_get("webauthn_state_1", b"user-1:auth")
+            .expect("value present");
+        assert_eq!(value, b"payload");
+        assert!(got_metadata.is_ephemeral);
+    }
+
+    #[test]
+    fn ephemeral_get_is_none_for_unknown_keyspace() {
+        let (sm, _td) = make_sm();
+        assert!(sm.ephemeral_get("never_written", b"any-key").is_none());
+        assert!(!sm.is_ephemeral_keyspace("never_written"));
+    }
+
+    #[test]
+    fn ephemeral_prefix_filters_by_prefix_and_is_none_for_non_ephemeral_keyspace() {
+        let (sm, _td) = make_sm();
+        seed(
+            &sm,
+            "webauthn_state_1",
+            b"user-1:auth",
+            b"a",
+            Metadata::ephemeral(),
+        );
+        seed(
+            &sm,
+            "webauthn_state_1",
+            b"user-1:registration",
+            b"b",
+            Metadata::ephemeral(),
+        );
+        seed(
+            &sm,
+            "webauthn_state_1",
+            b"user-2:auth",
+            b"c",
+            Metadata::ephemeral(),
+        );
+
+        let matched = sm
+            .ephemeral_prefix("webauthn_state_1", b"user-1:")
+            .expect("keyspace is ephemeral");
+        assert_eq!(matched.len(), 2);
+
+        // A Fjall-backed (non-ephemeral) keyspace name must fall through to
+        // `None` rather than an empty result, so callers know to read Fjall
+        // instead.
+        assert!(sm.ephemeral_prefix("data", b"user-1:").is_none());
+    }
+
+    #[test]
+    fn drop_keyspace_reclaims_an_empty_ephemeral_partition() {
+        let (sm, _td) = make_sm();
+        seed(
+            &sm,
+            "webauthn_state_1",
+            b"user-1:auth",
+            b"payload",
+            Metadata::ephemeral(),
+        );
+        // Drain it back out, mirroring what apply()'s Remove arm does.
+        sm.ephemeral
+            .get("webauthn_state_1")
+            .expect("keyspace present")
+            .remove(b"user-1:auth".as_slice());
+
+        sm.drop_keyspace("webauthn_state_1")
+            .expect("drop empty ephemeral keyspace");
+        assert!(!sm.keyspace_exists("webauthn_state_1"));
+    }
+
+    #[test]
+    fn drop_keyspace_refuses_non_empty_ephemeral_partition() {
+        let (sm, _td) = make_sm();
+        seed(
+            &sm,
+            "webauthn_state_1",
+            b"user-1:auth",
+            b"payload",
+            Metadata::ephemeral(),
+        );
+
+        let err = sm
+            .drop_keyspace("webauthn_state_1")
+            .expect_err("must refuse to drop a non-empty ephemeral keyspace");
+        assert!(matches!(err, StoreError::Other(_)));
+        assert!(sm.keyspace_exists("webauthn_state_1"));
+        assert!(
+            sm.ephemeral_get("webauthn_state_1", b"user-1:auth")
+                .is_some(),
+            "the failed drop must not have discarded the entry"
         );
     }
 }
