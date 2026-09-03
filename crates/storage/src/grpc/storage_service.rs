@@ -123,6 +123,30 @@ impl StorageService for StorageServiceImpl {
             Err(e) => return Err(Status::invalid_argument(format!("invalid key: {}", e))),
         };
 
+        let keyspace_name = req.keyspace.as_deref().unwrap_or("data");
+        if self
+            .state_machine_store
+            .is_ephemeral_keyspace(keyspace_name)
+        {
+            let found = self
+                .state_machine_store
+                .ephemeral_get(keyspace_name, key.as_bytes());
+            let (value, metadata_bytes) = match found {
+                Some((value, metadata)) => (
+                    Some(value),
+                    metadata
+                        .pack()
+                        .map_err(|e| Status::internal(format!("metadata pack error: {}", e)))?,
+                ),
+                None => (None, Vec::new()),
+            };
+            return Ok(Response::new(pb::api::ForwardedGetResponse {
+                not_found: value.is_none(),
+                value,
+                metadata: metadata_bytes,
+            }));
+        }
+
         // Read metadata to determine the data tier
         let metadata = self
             .state_machine_store
@@ -198,6 +222,28 @@ impl StorageService for StorageServiceImpl {
     ) -> Result<Response<pb::api::ForwardedPrefixResponse>, Status> {
         self.ensure_leader_linearizable().await?;
         let req = request.into_inner();
+
+        let keyspace_name = req.keyspace.as_deref().unwrap_or("data");
+        if let Some(entries) = self
+            .state_machine_store
+            .ephemeral_prefix(keyspace_name, &req.prefix)
+        {
+            let items = entries
+                .into_iter()
+                .filter_map(|(key_bytes, value, metadata)| {
+                    let key = String::from_utf8(key_bytes).ok()?;
+                    let metadata_bytes = metadata.pack().ok()?;
+                    Some(pb::api::PrefixEntry {
+                        key,
+                        value,
+                        metadata: metadata_bytes,
+                    })
+                })
+                .collect();
+            return Ok(Response::new(pb::api::ForwardedPrefixResponse {
+                entries: items,
+            }));
+        }
 
         let ks = match &req.keyspace {
             Some(name) => self
