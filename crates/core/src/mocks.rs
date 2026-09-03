@@ -1860,3 +1860,108 @@ mod trust {
     }
 }
 pub use trust::MockTrustProvider;
+
+mod domain_config {
+    use super::*;
+
+    use openstack_keystone_core_types::domain_config::*;
+
+    use crate::domain_config::{DomainConfigApi, DomainConfigProviderError};
+
+    mock! {
+        pub DomainConfigProvider {}
+
+        #[async_trait]
+        impl DomainConfigApi for DomainConfigProvider {
+            async fn create_domain_config<'a>(
+                &self,
+                state: &ServiceState,
+                domain_id: &'a str,
+                config: DomainConfigCreate,
+            ) -> Result<DomainConfig, DomainConfigProviderError>;
+
+            async fn get_domain_config<'a>(
+                &self,
+                state: &ServiceState,
+                domain_id: &'a str,
+            ) -> Result<Option<DomainConfig>, DomainConfigProviderError>;
+
+            async fn get_domain_config_group<'a>(
+                &self,
+                state: &ServiceState,
+                domain_id: &'a str,
+                group: DomainConfigGroupName,
+            ) -> Result<Option<DomainConfigGroup>, DomainConfigProviderError>;
+
+            async fn get_domain_config_option<'a>(
+                &self,
+                state: &ServiceState,
+                domain_id: &'a str,
+                group: DomainConfigGroupName,
+                option: &'a str,
+            ) -> Result<Option<DomainConfigOption>, DomainConfigProviderError>;
+
+            async fn update_domain_config<'a>(
+                &self,
+                state: &ServiceState,
+                domain_id: &'a str,
+                config: DomainConfigUpdate,
+            ) -> Result<DomainConfig, DomainConfigProviderError>;
+
+            async fn update_domain_config_group<'a>(
+                &self,
+                state: &ServiceState,
+                domain_id: &'a str,
+                group: DomainConfigGroupName,
+                config: DomainConfigUpdate,
+            ) -> Result<DomainConfigGroup, DomainConfigProviderError>;
+
+            async fn update_domain_config_option<'a>(
+                &self,
+                state: &ServiceState,
+                domain_id: &'a str,
+                option: DomainConfigOption,
+            ) -> Result<DomainConfigOption, DomainConfigProviderError>;
+
+            async fn delete_domain_config<'a>(
+                &self,
+                state: &ServiceState,
+                domain_id: &'a str,
+            ) -> Result<(), DomainConfigProviderError>;
+
+            async fn delete_domain_config_group<'a>(
+                &self,
+                state: &ServiceState,
+                domain_id: &'a str,
+                group: DomainConfigGroupName,
+            ) -> Result<(), DomainConfigProviderError>;
+
+            async fn delete_domain_config_option<'a>(
+                &self,
+                state: &ServiceState,
+                domain_id: &'a str,
+                group: DomainConfigGroupName,
+                option: &'a str,
+            ) -> Result<(), DomainConfigProviderError>;
+
+            async fn get_default_config(
+                &self,
+                state: &ServiceState,
+            ) -> Result<DomainConfig, DomainConfigProviderError>;
+
+            async fn get_default_group(
+                &self,
+                state: &ServiceState,
+                group: DomainConfigGroupName,
+            ) -> Result<DomainConfigGroup, DomainConfigProviderError>;
+
+            async fn get_default_option<'a>(
+                &self,
+                state: &ServiceState,
+                group: DomainConfigGroupName,
+                option: &'a str,
+            ) -> Result<Option<DomainConfigOption>, DomainConfigProviderError>;
+        }
+    }
+}
+pub use domain_config::MockDomainConfigProvider;

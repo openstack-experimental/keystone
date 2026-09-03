@@ -24,10 +24,17 @@
 //! single group, or a single option — which is why the backend trait carries a
 //! method triple for each verb.
 
+pub mod api;
 pub mod backend;
 pub mod error;
 pub mod resolver;
+pub mod service;
 
+pub use api::DomainConfigApi;
 pub use backend::DomainConfigBackend;
 pub use error::DomainConfigProviderError;
 pub use resolver::DomainConfigResolver;
+pub use service::DomainConfigService;
+
+#[cfg(any(test, feature = "mock"))]
+pub use crate::mocks::MockDomainConfigProvider;

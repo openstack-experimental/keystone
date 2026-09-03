@@ -40,7 +40,10 @@ use crate::catalog::MockCatalogProvider;
 use crate::credential::CredentialApi;
 #[cfg(any(test, feature = "mock"))]
 use crate::credential::MockCredentialProvider;
+use crate::domain_config::DomainConfigApi;
 use crate::domain_config::DomainConfigResolver;
+#[cfg(any(test, feature = "mock"))]
+use crate::domain_config::MockDomainConfigProvider;
 use crate::error::KeystoneError;
 use crate::federation::FederationApi;
 #[cfg(any(test, feature = "mock"))]
@@ -113,6 +116,9 @@ pub struct Provider {
     catalog: Box<dyn CatalogApi>,
     /// Credential provider.
     credential: Box<dyn CredentialApi>,
+    /// Domain configuration provider: the CRUD surface behind the
+    /// `/v3/domains/{domain_id}/config` API (issue #959).
+    domain_config: Box<dyn DomainConfigApi>,
     /// Per-domain configuration resolution layer (issue #958). Merges the
     /// file-based and database-stored domain configuration; not yet consumed
     /// at runtime.
@@ -255,6 +261,12 @@ impl ProviderBuilder {
         new
     }
 
+    pub fn mock_domain_config(self, value: impl DomainConfigApi + 'static) -> Self {
+        let mut new = self;
+        new.domain_config = Some(Box::new(value));
+        new
+    }
+
     pub fn mock_revoke(self, value: impl RevokeApi + 'static) -> Self {
         let mut new = self;
         new.revoke = Some(Box::new(value));
@@ -331,6 +343,10 @@ impl Provider {
             cfg,
             plugin_manager,
         )?);
+        let domain_config = Box::new(crate::domain_config::DomainConfigService::new(
+            cfg,
+            plugin_manager,
+        )?);
         let domain_config_resolver =
             crate::domain_config::DomainConfigResolver::new(cfg, plugin_manager)?;
         let auth_plugin_identity = Box::new(
@@ -388,6 +404,7 @@ impl Provider {
             assignment,
             catalog,
             credential,
+            domain_config,
             domain_config_resolver,
             auth_plugin_identity,
             federation,
@@ -420,6 +437,7 @@ impl Provider {
             .mock_assignment(MockAssignmentProvider::default())
             .mock_catalog(MockCatalogProvider::default())
             .mock_credential(MockCredentialProvider::default())
+            .mock_domain_config(MockDomainConfigProvider::default())
             .mock_auth_plugin_identity(MockDynamicPluginIdentityProvider::default())
             .mock_identity(MockIdentityProvider::default())
             .mock_idmapping(MockIdMappingProvider::default())
@@ -464,6 +482,11 @@ impl Provider {
     /// Get the credential provider.
     pub fn get_credential_provider(&self) -> &dyn CredentialApi {
         &*self.credential
+    }
+
+    /// Get the domain configuration provider (issue #959).
+    pub fn get_domain_config_provider(&self) -> &dyn DomainConfigApi {
+        &*self.domain_config
     }
 
     /// Get the domain configuration resolution layer (issue #958).

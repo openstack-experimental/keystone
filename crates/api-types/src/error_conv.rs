@@ -30,6 +30,7 @@ use openstack_keystone_core_types::auth::AuthenticationError;
 use openstack_keystone_core_types::auth_plugin_identity::AuthPluginIdentityProviderError;
 use openstack_keystone_core_types::catalog::CatalogProviderError;
 use openstack_keystone_core_types::credential::CredentialProviderError;
+use openstack_keystone_core_types::domain_config::DomainConfigProviderError;
 use openstack_keystone_core_types::error::BuilderError;
 use openstack_keystone_core_types::error::KeystoneError;
 use openstack_keystone_core_types::identity::IdentityProviderError;
@@ -384,6 +385,39 @@ impl From<ResourceProviderError> for KeystoneApiError {
     }
 }
 
+impl From<DomainConfigProviderError> for KeystoneApiError {
+    fn from(value: DomainConfigProviderError) -> Self {
+        match value {
+            DomainConfigProviderError::NotFound {
+                domain_id,
+                group_or_option,
+            } => Self::NotFound {
+                resource: group_or_option,
+                identifier: domain_id,
+            },
+            ref err @ DomainConfigProviderError::Conflict(..) => Self::Conflict(err.to_string()),
+            // A group or option that is not domain-configurable, or a write
+            // against the read-only filesystem driver, is a permissions
+            // statement rather than a malformed request.
+            err @ (DomainConfigProviderError::UnsupportedGroup(..)
+            | DomainConfigProviderError::UnsupportedOption { .. }
+            | DomainConfigProviderError::UnsupportedDriver(..)
+            | DomainConfigProviderError::Readonly(..)) => Self::forbidden(err),
+            // Everything else that is not a backend fault is a bad request:
+            // empty body, group/option shape mismatch, un-decodable value,
+            // failed validation.
+            err @ (DomainConfigProviderError::EmptyConfig
+            | DomainConfigProviderError::GroupMismatch(..)
+            | DomainConfigProviderError::GroupNotAMapping(..)
+            | DomainConfigProviderError::OptionWithoutGroup(..)
+            | DomainConfigProviderError::InvalidOptionValue { .. }
+            | DomainConfigProviderError::InvalidValue { .. }
+            | DomainConfigProviderError::Validation { .. }) => Self::BadRequest(err.to_string()),
+            other => Self::InternalError(other.to_string()),
+        }
+    }
+}
+
 impl From<RevokeProviderError> for KeystoneApiError {
     fn from(value: RevokeProviderError) -> Self {
         match value {
@@ -692,6 +726,7 @@ impl From<KeystoneError> for KeystoneApiError {
             KeystoneError::Authentication { source } => source.into(),
             KeystoneError::CatalogProvider { source } => source.into(),
             KeystoneError::CredentialProvider { source } => source.into(),
+            KeystoneError::DomainConfigProvider { source } => source.into(),
             KeystoneError::FederationProvider { source } => source.into(),
             KeystoneError::Json { source } => source.into(),
             KeystoneError::K8sAuthProvider { source } => source.into(),
