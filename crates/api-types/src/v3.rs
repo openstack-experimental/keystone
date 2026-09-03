@@ -16,6 +16,7 @@ pub mod application_credential;
 pub mod auth;
 pub mod credential;
 pub mod domain;
+pub mod domain_config;
 pub mod ec2tokens;
 pub mod endpoint;
 pub mod group;
@@ -35,6 +36,8 @@ mod application_credential_conv;
 mod auth_conv;
 #[cfg(feature = "conv")]
 mod credential_conv;
+#[cfg(feature = "conv")]
+mod domain_config_conv;
 #[cfg(feature = "conv")]
 mod domain_conv;
 #[cfg(feature = "conv")]

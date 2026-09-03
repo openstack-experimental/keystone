@@ -30,6 +30,7 @@ use crate::keystone::ServiceState;
 pub mod auth;
 pub mod credential;
 pub mod domain;
+pub mod domain_config;
 pub mod ec2tokens;
 pub mod endpoint;
 pub mod group;
@@ -58,7 +59,10 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
         .nest("/auth", auth::openapi_router())
         .nest("/credentials", credential::openapi_router())
-        .nest("/domains", domain::openapi_router())
+        .nest(
+            "/domains",
+            domain::openapi_router().merge(domain_config::openapi_router()),
+        )
         .nest("/ec2tokens", ec2tokens::openapi_router())
         .nest("/endpoints", endpoint::openapi_router())
         .nest("/groups", group::openapi_router())
