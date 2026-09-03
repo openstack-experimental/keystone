@@ -250,7 +250,7 @@ impl RaftDriver {
             .set_value(
                 self.get_user_cred_auth_state_key_name(user_id),
                 StoreDataEnvelope {
-                    metadata: Metadata::new(),
+                    metadata: Metadata::ephemeral(),
                     data: rmp_serde::to_vec(auth_state)?,
                 },
                 Some(keyspace),
@@ -304,7 +304,7 @@ impl RaftDriver {
             .set_value(
                 self.get_user_cred_registration_state_key_name(user_id),
                 StoreDataEnvelope {
-                    metadata: Metadata::new(),
+                    metadata: Metadata::ephemeral(),
                     data: rmp_serde::to_vec(reg_state)?,
                 },
                 Some(keyspace),
@@ -936,6 +936,34 @@ mod tests {
         );
         // Two independent calls agree — no persisted pointer is consulted.
         assert_eq!(driver.current_state_bucket(), driver.current_state_bucket());
+    }
+
+    #[tokio::test]
+    async fn test_auth_state_write_is_marked_ephemeral() {
+        let driver = RaftDriver::default();
+        let storage = MockStorage::default();
+        let auth_state = sample_auth_state();
+
+        driver
+            .save_user_webauthn_credential_authentication_state_impl(
+                &storage,
+                "user-1",
+                &auth_state,
+            )
+            .await
+            .unwrap();
+
+        let current_ks = driver.state_keyspace_name(driver.current_state_bucket());
+        let key = driver.get_user_cred_auth_state_key_name("user-1");
+        let env = storage
+            .get_by_key(key.as_bytes(), Some(&current_ks))
+            .await
+            .unwrap()
+            .expect("state was written");
+        assert!(
+            env.metadata.is_ephemeral,
+            "ceremony state must be written with Metadata::ephemeral()"
+        );
     }
 
     #[tokio::test]

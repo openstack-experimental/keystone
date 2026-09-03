@@ -184,6 +184,14 @@ pub struct Metadata {
     /// try-current-then-probe-retired read path for backward compatibility.
     #[serde(default)]
     pub dek_version: Option<u32>,
+    /// Marks the record as short-lived, replicated state that does not need
+    /// durable, at-rest persistence (e.g. WebAuthn ceremony challenges).
+    /// The state machine keeps such records purely in memory instead of
+    /// writing them to Fjall — they are still Raft-replicated to every
+    /// node, but skip encryption, disk persistence, and snapshot inclusion.
+    /// Defaults to `false`.
+    #[serde(default)]
+    pub is_ephemeral: bool,
 }
 
 impl Metadata {
@@ -194,6 +202,7 @@ impl Metadata {
             created_at: Utc::now().timestamp(),
             tier: DataTier::Internal,
             dek_version: None,
+            is_ephemeral: false,
         }
     }
 
@@ -204,17 +213,28 @@ impl Metadata {
             created_at: Utc::now().timestamp(),
             tier,
             dek_version: None,
+            is_ephemeral: false,
         }
     }
 
-    /// Create new metadata with an incremented revision, preserving timestamp
-    /// and tier.
+    /// Create new ephemeral metadata (see [`Self::is_ephemeral`]) with the
+    /// current timestamp.
+    pub fn ephemeral() -> Self {
+        Self {
+            is_ephemeral: true,
+            ..Self::new()
+        }
+    }
+
+    /// Create new metadata with an incremented revision, preserving timestamp,
+    /// tier, and ephemeral marker.
     pub fn new_revision(&self) -> Self {
         Self {
             revision: self.revision + 1,
             created_at: self.created_at,
             tier: self.tier,
             dek_version: self.dek_version,
+            is_ephemeral: self.is_ephemeral,
         }
     }
 

@@ -1264,6 +1264,54 @@ async fn test_cluster_inner() -> Result<()> {
         }
     }
 
+    println!("=== ephemeral data replicates across nodes without Fjall");
+    {
+        let ephemeral_env = StoreDataEnvelope {
+            data: rmp_serde::to_vec("ephemeral_value")?,
+            metadata: Metadata::ephemeral(),
+        };
+        instance1
+            .storage
+            .set_value(
+                "eph:k1".to_string(),
+                ephemeral_env,
+                Some("webauthn_state_test".to_string()),
+                None,
+            )
+            .await?;
+
+        // --- Wait for a while to let the replication get done.
+        TypeConfig::sleep(Duration::from_millis(1_000)).await;
+
+        for instance in &instances {
+            let got = instance
+                .storage
+                .get_by_key("eph:k1".as_bytes(), Some("webauthn_state_test"))
+                .await?
+                .expect("ephemeral value must be readable from every node");
+            assert!(got.metadata.is_ephemeral);
+            assert_eq!("ephemeral_value", got.try_deserialize::<String>()?.data);
+        }
+
+        // Remove on a different node than it was written from, and confirm
+        // the delete also replicates.
+        instance2
+            .storage
+            .remove(
+                "eph:k1".to_string(),
+                Some("webauthn_state_test".to_string()),
+            )
+            .await?;
+        TypeConfig::sleep(Duration::from_millis(1_000)).await;
+        for instance in &instances {
+            let got = instance
+                .storage
+                .get_by_key("eph:k1".as_bytes(), Some("webauthn_state_test"))
+                .await?;
+            assert!(got.is_none());
+        }
+    }
+
     println!("=== delete `foo=bar`");
     {
         instance3.storage.remove("foo".to_string(), None).await?;
