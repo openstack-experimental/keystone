@@ -526,6 +526,45 @@ impl DomainConfig {
             .collect()
     }
 
+    /// Overlay another configuration onto this one, option by option.
+    ///
+    /// Every option `over` sets replaces this configuration's; an option only
+    /// this configuration sets is kept; a group present on only one side is
+    /// taken whole. This is how the resolution layer stacks the file-based
+    /// configuration under the database one, which takes precedence (issue
+    /// #958).
+    ///
+    /// Both sides are expected to have come from [`Self::from_value`] or
+    /// [`Self::from_options`], so their options are already whitelist-filtered;
+    /// like [`Self::resolve`], this does not re-validate.
+    ///
+    /// # Parameters
+    /// - `over`: The configuration whose options win.
+    pub fn overlay(&mut self, over: &DomainConfig) {
+        for group in over.groups.values() {
+            let target = self
+                .groups
+                .entry(group.name)
+                .or_insert_with(|| DomainConfigGroup::new(group.name));
+            for (option, value) in &group.options {
+                target.options.insert(option.clone(), value.clone());
+            }
+        }
+    }
+
+    /// [`Self::overlay`] as a chainable, consuming call.
+    ///
+    /// # Parameters
+    /// - `over`: The configuration whose options win.
+    ///
+    /// # Returns
+    /// - `Self` - This configuration with `over` applied.
+    #[must_use]
+    pub fn overlaid_with(mut self, over: &DomainConfig) -> Self {
+        self.overlay(over);
+        self
+    }
+
     /// The domain's `[identity]` section: the global one with the domain's
     /// overrides applied.
     ///

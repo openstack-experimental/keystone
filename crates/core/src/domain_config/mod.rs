@@ -26,6 +26,8 @@
 
 pub mod backend;
 pub mod error;
+pub mod resolver;
 
 pub use backend::DomainConfigBackend;
 pub use error::DomainConfigProviderError;
+pub use resolver::DomainConfigResolver;

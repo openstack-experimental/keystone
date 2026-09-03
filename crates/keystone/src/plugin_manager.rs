@@ -37,6 +37,8 @@ use openstack_keystone_core::catalog::backend::CatalogBackend;
 use openstack_keystone_core::catalog::error::CatalogProviderError;
 use openstack_keystone_core::credential::CredentialProviderError;
 use openstack_keystone_core::credential::backend::CredentialBackend;
+use openstack_keystone_core::domain_config::backend::DomainConfigBackend;
+use openstack_keystone_core::domain_config::error::DomainConfigProviderError;
 use openstack_keystone_core::federation::backend::FederationBackend;
 use openstack_keystone_core::federation::error::FederationProviderError;
 use openstack_keystone_core::identity::backend::IdentityBackend;
@@ -86,6 +88,8 @@ pub struct PluginManager {
     catalog_backends: HashMap<String, Arc<dyn CatalogBackend>>,
     /// Credential backend plugins.
     credential_backends: HashMap<String, Arc<dyn CredentialBackend>>,
+    /// Domain config backend plugins (one per source: `"fs"`, `"sql"`).
+    domain_config_backends: HashMap<String, Arc<dyn DomainConfigBackend>>,
     /// Dynamic plugin identity-binding index backend plugins.
     auth_plugin_identity_backends: HashMap<String, Arc<dyn DynamicPluginIdentityBackend>>,
     /// Federation backend plugins.
@@ -217,6 +221,24 @@ impl PluginManagerApi for PluginManager {
     ) -> Result<&Arc<dyn CredentialBackend>, CredentialProviderError> {
         self.credential_backends.get(name.as_ref()).ok_or(
             CredentialProviderError::UnsupportedDriver(name.as_ref().to_string()),
+        )
+    }
+
+    /// Get registered domain config backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the source to retrieve (`"fs"` or `"sql"`).
+    ///
+    /// # Returns
+    /// A `Result` containing a reference to the `DomainConfigBackend` if
+    /// found, or a `DomainConfigProviderError::UnsupportedDriver`.
+    #[allow(clippy::borrowed_box)]
+    fn get_domain_config_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn DomainConfigBackend>, DomainConfigProviderError> {
+        self.domain_config_backends.get(name.as_ref()).ok_or(
+            DomainConfigProviderError::UnsupportedDriver(name.as_ref().to_string()),
         )
     }
 
@@ -888,6 +910,7 @@ impl PluginManager {
             assignment_backends: HashMap::new(),
             catalog_backends: HashMap::new(),
             credential_backends: HashMap::new(),
+            domain_config_backends: HashMap::new(),
             auth_plugin_identity_backends: HashMap::new(),
             federation_backends: HashMap::new(),
             identity_backends: HashMap::new(),
@@ -912,6 +935,7 @@ impl PluginManager {
         register_backends(config, &mut slf.assignment_backends).await?;
         register_backends(config, &mut slf.catalog_backends).await?;
         register_backends(config, &mut slf.credential_backends).await?;
+        register_backends(config, &mut slf.domain_config_backends).await?;
         register_backends(config, &mut slf.auth_plugin_identity_backends).await?;
         register_backends(config, &mut slf.federation_backends).await?;
         register_backends(config, &mut slf.identity_backends).await?;
@@ -931,5 +955,29 @@ impl PluginManager {
         register_backends(config, &mut slf.trust_backends).await?;
         register_backends(config, &mut slf.policy_store_backends).await?;
         Ok(slf)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use openstack_keystone_config::Config;
+    use openstack_keystone_core::plugin_manager::register_backends;
+
+    use super::*;
+
+    /// Both domain-config sources register into a domain-config-typed map, so
+    /// `with_config` can hand them to the resolver by name. Exercised through
+    /// `register_backends` directly: a full `PluginManager` needs on-disk
+    /// fernet keys the default config has none of.
+    #[tokio::test]
+    async fn registers_both_domain_config_sources() {
+        let mut backends: HashMap<String, Arc<dyn DomainConfigBackend>> = HashMap::new();
+        register_backends(&Config::default(), &mut backends)
+            .await
+            .expect("domain-config drivers register from the default config");
+
+        assert!(backends.contains_key("fs"));
+        assert!(backends.contains_key("sql"));
+        assert!(!backends.contains_key("nope"));
     }
 }
