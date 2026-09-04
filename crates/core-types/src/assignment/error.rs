@@ -45,6 +45,13 @@ pub enum AssignmentProviderError {
     #[error("{0}")]
     InvalidAssignmentType(String),
 
+    /// The request shape is not supported by the configured backend driver
+    /// (e.g. a query the OpenFGA driver cannot answer without a target
+    /// scope). A permanent, driver-specific limitation - not a transient
+    /// failure - so it is kept distinct from [`Self::Driver`].
+    #[error("{0}")]
+    NotImplemented(String),
+
     /// Resource provider error.
     #[error(transparent)]
     ResourceProvider {
