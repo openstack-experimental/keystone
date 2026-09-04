@@ -755,3 +755,275 @@ async fn the_non_domain_aware_guard_honours_a_custom_default_domain_id() {
         "unexpected error: {error:?}"
     );
 }
+
+/// Gap 1: creating a user on a domain dispatched to a non-default
+/// backend must record an id-mapping row, so a later
+/// `driver_for_public_id` lookup by the new id dispatches back to the
+/// same backend instead of falling through to the global driver.
+#[tokio::test]
+async fn create_user_on_a_domain_specific_backend_records_an_id_mapping() {
+    let mut idmapping = MockIdMappingProvider::default();
+    idmapping
+        .expect_create_id_mapping()
+        .withf(
+            |_,
+             local_id: &'_ str,
+             domain_id: &'_ str,
+             entity_type: &IdMappingEntityType,
+             public_id: &Option<&str>| {
+                local_id == "u"
+                    && domain_id == "d-ldap"
+                    && *entity_type == IdMappingEntityType::User
+                    && *public_id == Some("u")
+            },
+        )
+        .returning(|_, local_id, domain_id, entity_type, _| {
+            Ok(IdMapping {
+                domain_id: domain_id.to_string(),
+                entity_type,
+                local_id: local_id.to_string(),
+                public_id: local_id.to_string(),
+            })
+        });
+    let state = get_mocked_state(
+        None,
+        Some(Provider::mocked_builder().mock_idmapping(idmapping)),
+    )
+    .await;
+
+    let sql = identity_backend(0);
+    let mut ldap_mock = MockIdentityBackend::default();
+    ldap_mock.expect_is_domain_aware().return_const(true);
+    ldap_mock.expect_create_user().returning(|_, user| {
+        Ok(UserResponseBuilder::default()
+            .id(user.id.expect("id set by the service"))
+            .domain_id(user.domain_id.expect("domain_id set by the service"))
+            .enabled(true)
+            .name(user.name)
+            .build()
+            .expect("valid user"))
+    });
+    let ldap: Arc<dyn IdentityBackend> = Arc::new(ldap_mock);
+
+    let mut backends = HashMap::new();
+    backends.insert("sql".to_string(), sql.clone());
+    backends.insert("ldap".to_string(), ldap);
+    let provider =
+        IdentityService::from_backends("sql", sql, backends, Some(resolver(ldap_config_source(1))));
+
+    let user = provider
+        .create_user(
+            &ExecutionContext::internal(&state),
+            UserCreateBuilder::default()
+                .id("u".to_string())
+                .name("u-name".to_string())
+                .domain_id("d-ldap".to_string())
+                .enabled(true)
+                .build()
+                .expect("valid user create"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(user.id, "u");
+}
+
+/// The mirror of the above: creating on the (same-instance) default
+/// backend must record nothing -- a lookup miss there already falls
+/// back to the global driver, so a mapping row would be dead weight.
+/// The idmapping mock has no expectations set up at all, so an
+/// unwanted call panics the test.
+#[tokio::test]
+async fn create_user_on_the_default_backend_records_no_id_mapping() {
+    let idmapping = MockIdMappingProvider::default();
+    let state = get_mocked_state(
+        None,
+        Some(Provider::mocked_builder().mock_idmapping(idmapping)),
+    )
+    .await;
+
+    let mut backend = MockIdentityBackend::default();
+    backend.expect_is_domain_aware().return_const(true);
+    backend.expect_create_user().returning(|_, user| {
+        Ok(UserResponseBuilder::default()
+            .id(user.id.expect("id set by the service"))
+            .domain_id(user.domain_id.expect("domain_id set by the service"))
+            .enabled(true)
+            .name(user.name)
+            .build()
+            .expect("valid user"))
+    });
+    let provider = IdentityService::from_driver(backend);
+
+    let user = provider
+        .create_user(
+            &ExecutionContext::internal(&state),
+            UserCreateBuilder::default()
+                .id("u".to_string())
+                .name("u-name".to_string())
+                .domain_id("default".to_string())
+                .enabled(true)
+                .build()
+                .expect("valid user create"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(user.id, "u");
+}
+
+/// Gap 1's delete-side counterpart: deleting a user served by a
+/// non-default backend must forget its id-mapping row.
+#[tokio::test]
+async fn delete_user_on_a_domain_specific_backend_forgets_the_id_mapping() {
+    let mut idmapping = MockIdMappingProvider::default();
+    idmapping
+        .expect_get_by_public_id()
+        .withf(|_, public_id: &'_ str| public_id == "u")
+        .returning(|_, _| Ok(Some(user_mapping("d-ldap", "u"))));
+    idmapping
+        .expect_delete_id_mapping()
+        .withf(|_, public_id: &'_ str| public_id == "u")
+        .returning(|_, _| Ok(()));
+    let mut credential_mock = MockCredentialProvider::default();
+    credential_mock
+        .expect_delete_credentials_for_user()
+        .returning(|_, _| Ok(()));
+    let state = get_mocked_state(
+        None,
+        Some(
+            Provider::mocked_builder()
+                .mock_idmapping(idmapping)
+                .mock_credential(credential_mock),
+        ),
+    )
+    .await;
+
+    let sql = identity_backend(0);
+    let mut ldap_mock = MockIdentityBackend::default();
+    ldap_mock.expect_is_domain_aware().return_const(true);
+    ldap_mock.expect_delete_user().returning(|_, _| Ok(()));
+    let ldap: Arc<dyn IdentityBackend> = Arc::new(ldap_mock);
+
+    let mut backends = HashMap::new();
+    backends.insert("sql".to_string(), sql.clone());
+    backends.insert("ldap".to_string(), ldap);
+    let provider =
+        IdentityService::from_backends("sql", sql, backends, Some(resolver(ldap_config_source(1))));
+
+    provider
+        .delete_user(&ExecutionContext::internal(&state), "u")
+        .await
+        .unwrap();
+}
+
+/// python-keystone compat: `get_user` must call the resolved backend with
+/// the mapping's `local_id`, not the caller's public id, and restore the
+/// public id on the returned entity -- a non-default backend (e.g. LDAP)
+/// knows the entity only by its own local id, which need not equal the
+/// public id the mapping minted for it.
+#[tokio::test]
+async fn get_user_dispatches_by_local_id_and_restores_the_public_id() {
+    let state = state_with_idmapping(Some(IdMapping {
+        domain_id: "d-ldap".to_string(),
+        entity_type: IdMappingEntityType::User,
+        local_id: "local-1".to_string(),
+        public_id: "pub-id".to_string(),
+    }))
+    .await;
+
+    let sql = get_user_backend(0);
+    let mut ldap_mock = MockIdentityBackend::default();
+    ldap_mock.expect_is_domain_aware().return_const(false);
+    ldap_mock
+        .expect_get_user()
+        .withf(|_, user_id: &'_ str| user_id == "local-1")
+        .returning(|_, _| {
+            Ok(Some(
+                UserResponseBuilder::default()
+                    .id("local-1")
+                    .domain_id("d-ldap")
+                    .enabled(true)
+                    .name("u-name")
+                    .build()
+                    .expect("valid user"),
+            ))
+        });
+    let ldap: Arc<dyn IdentityBackend> = Arc::new(ldap_mock);
+
+    let mut backends = HashMap::new();
+    backends.insert("sql".to_string(), sql.clone());
+    backends.insert("ldap".to_string(), ldap);
+    let provider =
+        IdentityService::from_backends("sql", sql, backends, Some(resolver(ldap_config_source(1))));
+
+    let user = provider
+        .get_user(&ExecutionContext::internal(&state), "pub-id")
+        .await
+        .unwrap()
+        .expect("user should be there");
+    assert_eq!(user.id, "pub-id");
+}
+
+/// python-keystone compat: entities listed off a non-default backend must
+/// be shadowed through the id mapping (get-or-create, since this is the
+/// first time the entity is seen) so the caller sees a stable public id,
+/// never the backend's raw local id.
+#[tokio::test]
+async fn list_users_shadows_entities_from_a_non_default_backend() {
+    let mut idmapping = MockIdMappingProvider::default();
+    idmapping
+        .expect_create_id_mapping()
+        .withf(
+            |_,
+             local_id: &'_ str,
+             domain_id: &'_ str,
+             entity_type: &IdMappingEntityType,
+             public_id: &Option<&str>| {
+                local_id == "local-1"
+                    && domain_id == "d-ldap"
+                    && *entity_type == IdMappingEntityType::User
+                    && public_id.is_none()
+            },
+        )
+        .returning(|_, local_id, domain_id, entity_type, _| {
+            Ok(IdMapping {
+                domain_id: domain_id.to_string(),
+                entity_type,
+                local_id: local_id.to_string(),
+                public_id: "shadow-pub".to_string(),
+            })
+        });
+    let state = get_mocked_state(
+        None,
+        Some(Provider::mocked_builder().mock_idmapping(idmapping)),
+    )
+    .await;
+
+    let sql = identity_backend(0);
+    let mut ldap_mock = MockIdentityBackend::default();
+    ldap_mock.expect_is_domain_aware().return_const(true);
+    ldap_mock.expect_list_users().returning(|_, _| {
+        Ok(vec![
+            UserResponseBuilder::default()
+                .id("local-1")
+                .domain_id("d-ldap")
+                .enabled(true)
+                .name("u-name")
+                .build()
+                .expect("valid user"),
+        ])
+    });
+    let ldap: Arc<dyn IdentityBackend> = Arc::new(ldap_mock);
+
+    let mut backends = HashMap::new();
+    backends.insert("sql".to_string(), sql.clone());
+    backends.insert("ldap".to_string(), ldap);
+    let provider =
+        IdentityService::from_backends("sql", sql, backends, Some(resolver(ldap_config_source(1))));
+
+    let users = provider
+        .list_users(&ExecutionContext::internal(&state), &list_params("d-ldap"))
+        .await
+        .unwrap();
+    assert_eq!(users.len(), 1);
+    assert_eq!(users[0].id, "shadow-pub");
+}

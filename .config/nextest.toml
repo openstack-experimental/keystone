@@ -109,19 +109,20 @@ store-failure-output = true
 # Spins up a throwaway local `slapd` (no Docker daemon required; see
 # tools/start-ldap-test.sh), seeds it from
 # crates/identity-driver-ldap/tests/fixtures/base.ldif, and runs the
-# `live_tests` module's functional tests against it. Those tests skip
-# themselves (rather than fail) under any other profile, since
-# KEYSTONE_LDAP_TEST_URL is only set here.
+# `live_tests` module's functional tests, plus test_integration's
+# `domain_config::cross_backend` module (real SQL+LDAP per-domain identity
+# dispatch), against it. Those tests skip themselves (rather than fail)
+# under any other profile, since KEYSTONE_LDAP_TEST_URL is only set here.
 [profile.ldap]
 
 [[profile.ldap.scripts]]
-filter = "package(openstack-keystone-identity-driver-ldap)"
+filter = "package(openstack-keystone-identity-driver-ldap) + binary(integration)"
 setup = "start-ldap-test"
 
 [profile.ci-ldap]
 inherits = "ldap"
 [[profile.ci-ldap.scripts]]
-filter = "package(openstack-keystone-identity-driver-ldap)"
+filter = "package(openstack-keystone-identity-driver-ldap) + binary(integration)"
 setup = "start-ldap-test"
 [profile.ci-ldap.junit]
 path = "junit.xml"

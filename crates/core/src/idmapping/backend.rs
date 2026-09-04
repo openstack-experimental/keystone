@@ -94,4 +94,23 @@ pub trait IdMappingBackend: Send + Sync {
         state: &ServiceState,
         public_id: &'a str,
     ) -> Result<(), IdMappingProviderError>;
+
+    /// Delete every `IdMapping` row belonging to a domain.
+    ///
+    /// Called when the domain itself is deleted, so id mappings for entities
+    /// it used to own on a non-default backend don't outlive it. Idempotent:
+    /// deleting a domain with no mapping rows is not an error.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `domain_id`: The domain identifier.
+    ///
+    /// # Returns
+    /// - `Result<(), IdMappingProviderError>` - `Ok` on success (including
+    ///   when nothing was found), or an `Error`.
+    async fn delete_mappings_for_domain<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+    ) -> Result<(), IdMappingProviderError>;
 }

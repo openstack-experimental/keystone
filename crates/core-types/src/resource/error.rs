@@ -15,6 +15,7 @@
 use thiserror::Error;
 
 use crate::credential::CredentialProviderError;
+use crate::idmapping::IdMappingProviderError;
 use crate::oauth2_key::Oauth2KeyProviderError;
 
 #[derive(Error, Debug)]
@@ -29,6 +30,14 @@ pub enum ResourceProviderError {
     CredentialProvider {
         #[from]
         source: CredentialProviderError,
+    },
+
+    /// Id-mapping provider error, surfaced when cascading a domain deletion
+    /// into `delete_mappings_for_domain`.
+    #[error(transparent)]
+    IdMappingProvider {
+        #[from]
+        source: IdMappingProviderError,
     },
 
     /// Domain not found.
