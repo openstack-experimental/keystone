@@ -24,6 +24,7 @@ use uuid::Uuid;
 use validator::Validate;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::domain_config::DomainConfigGroupName;
 use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::identity::*;
 
@@ -31,8 +32,10 @@ use crate::auth::{
     AuthenticationContext, AuthenticationError, AuthenticationResult, AuthenticationResultBuilder,
     ExecutionContext, IdentityInfo, PrincipalInfo, UserIdentityInfoBuilder, scope_domain_id,
 };
+use crate::domain_config::DomainConfigResolver;
 use crate::events::AuditDispatchError;
 use crate::identity::{IdentityApi, IdentityProviderError, backend::IdentityBackend};
+use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 use crate::request_cache::{cache_get, cache_remove, cache_set};
 use crate::resource::error::ResourceProviderError;
@@ -44,7 +47,29 @@ const GROUP_CACHE_NS: &str = "identity.group";
 
 /// Identity provider.
 pub struct IdentityService {
+    /// The global identity driver, used for every domain unless per-domain
+    /// drivers are enabled and a domain's stored config selects another one.
     backend_driver: Arc<dyn IdentityBackend>,
+    /// Name of [`Self::backend_driver`] in [`Self::backends`] (the global
+    /// `[identity] driver`). Empty for [`Self::from_driver`], which has no
+    /// named registry.
+    default_driver_name: String,
+    /// `[identity] default_domain_id`. A non-domain-aware global driver is
+    /// allowed to serve this one domain even without its own stored config.
+    default_domain_id: String,
+    /// Every registered identity backend by name. Holds just the global driver
+    /// unless `[identity] domain_specific_drivers_enabled`, in which case it
+    /// also holds the backends a domain config may select (`sql` + `ldap`).
+    backends: HashMap<String, Arc<dyn IdentityBackend>>,
+    /// Resolves a domain's effective stored configuration. `Some` only when
+    /// `[identity] domain_specific_drivers_enabled`; `None` disables all
+    /// per-domain dispatch and every operation uses [`Self::backend_driver`].
+    domain_config_resolver: Option<Arc<DomainConfigResolver>>,
+    /// Cache of `domain_id` to resolved identity driver name. An empty value
+    /// means "no per-domain override, use the global driver". No invalidation:
+    /// a change to a domain's `identity/driver` through the config API is
+    /// picked up only after a restart (issue #960 follow-up).
+    resolved_driver_cache: RwLock<HashMap<String, String>>,
     /// Caching flag. When enabled certain data can be cached (i.e. `domain_id`
     /// by `user_id`).
     caching: bool,
@@ -67,8 +92,21 @@ impl IdentityService {
         let backend_driver = plugin_manager
             .get_identity_backend(config.identity.driver.clone())?
             .clone();
+        let domain_config_resolver = if config.identity.domain_specific_drivers_enabled {
+            Some(Arc::new(
+                DomainConfigResolver::new(config, plugin_manager)
+                    .map_err(|e| IdentityProviderError::Driver(e.to_string()))?,
+            ))
+        } else {
+            None
+        };
         Ok(Self {
             backend_driver,
+            default_driver_name: config.identity.driver.clone(),
+            default_domain_id: config.identity.default_domain_id.clone(),
+            backends: plugin_manager.identity_backends().clone(),
+            domain_config_resolver,
+            resolved_driver_cache: HashMap::new().into(),
             caching: config.identity.caching,
             user_id_domain_id_cache: HashMap::new().into(),
         })
@@ -76,14 +114,226 @@ impl IdentityService {
 
     /// Create an IdentityService from a backend driver.
     ///
+    /// Per-domain dispatch is off (`domain_config_resolver` is `None`), so
+    /// every operation goes to `driver`; this keeps the unit tests that build a
+    /// service from a single mock backend working unchanged.
+    ///
     /// # Parameters
     /// - `driver`: The backend driver.
     pub fn from_driver<I: IdentityBackend + 'static>(driver: I) -> Self {
         Self {
             backend_driver: Arc::new(driver),
+            default_driver_name: String::new(),
+            default_domain_id: String::new(),
+            backends: HashMap::new(),
+            domain_config_resolver: None,
+            resolved_driver_cache: HashMap::new().into(),
             caching: false,
             user_id_domain_id_cache: HashMap::new().into(),
         }
+    }
+
+    /// Build a service with an explicit backend registry and resolver.
+    /// Test-only; production code goes through [`Self::new`].
+    #[cfg(test)]
+    pub(crate) fn from_backends(
+        default_driver_name: impl Into<String>,
+        backend_driver: Arc<dyn IdentityBackend>,
+        backends: HashMap<String, Arc<dyn IdentityBackend>>,
+        domain_config_resolver: Option<Arc<DomainConfigResolver>>,
+    ) -> Self {
+        Self {
+            backend_driver,
+            default_driver_name: default_driver_name.into(),
+            default_domain_id: "default".to_string(),
+            backends,
+            domain_config_resolver,
+            resolved_driver_cache: HashMap::new().into(),
+            caching: false,
+            user_id_domain_id_cache: HashMap::new().into(),
+        }
+    }
+
+    /// Test-only override for `[identity] default_domain_id`, so a test can
+    /// prove the non-domain-aware guard keys on the configured value rather
+    /// than a literal `"default"`.
+    #[cfg(test)]
+    pub(crate) fn with_default_domain_id(mut self, domain_id: impl Into<String>) -> Self {
+        self.default_domain_id = domain_id.into();
+        self
+    }
+
+    /// The identity backend that serves `domain_id`.
+    ///
+    /// The global driver when per-domain drivers are off, `domain_id` is
+    /// `None`, the domain's stored config names no `identity/driver`, or it
+    /// names one with no registered backend. Otherwise the backend the
+    /// resolved `identity/driver` selects. The resolution is cached per domain.
+    ///
+    /// Errors with `DomainNotFound` (404) when the request would fall back to
+    /// a global driver that is not domain aware (e.g. `[identity] driver =
+    /// ldap`) for a domain other than `[identity] default_domain_id` — a
+    /// single LDAP directory cannot represent multiple domains. Mirrors
+    /// python-keystone's `Manager._select_identity_driver`.
+    async fn driver_for(
+        &self,
+        state: &ServiceState,
+        domain_id: Option<&str>,
+    ) -> Result<Arc<dyn IdentityBackend>, IdentityProviderError> {
+        let (Some(resolver), Some(domain_id)) = (&self.domain_config_resolver, domain_id) else {
+            return Ok(self.backend_driver.clone());
+        };
+
+        let name = if let Some(name) = self
+            .resolved_driver_cache
+            .read()
+            .await
+            .get(domain_id)
+            .cloned()
+        {
+            name
+        } else {
+            let name = match resolver.effective_config(state, domain_id).await {
+                Ok(config) => config
+                    .into_group(DomainConfigGroupName::Identity)
+                    .and_then(|group| {
+                        group
+                            .get("driver")
+                            .and_then(|value| value.as_str())
+                            .map(str::to_owned)
+                    })
+                    .unwrap_or_default(),
+                Err(error) => {
+                    tracing::warn!(
+                        %domain_id,
+                        %error,
+                        "domain config resolution failed; using the global identity driver"
+                    );
+                    String::new()
+                }
+            };
+            self.resolved_driver_cache
+                .write()
+                .await
+                .insert(domain_id.to_owned(), name.clone());
+            name
+        };
+
+        let backend = self.backend_by_name(&name);
+        if Arc::ptr_eq(&backend, &self.backend_driver)
+            && !backend.is_domain_aware()
+            && domain_id != self.default_domain_id
+        {
+            tracing::warn!(
+                %domain_id,
+                "the global identity driver is not domain aware; a non-default \
+                 domain cannot be mapped onto it"
+            );
+            return Err(ResourceProviderError::DomainNotFound(domain_id.to_owned()).into());
+        }
+        Ok(backend)
+    }
+
+    /// The registered backend called `name`, or the global driver when `name`
+    /// is empty (no per-domain override) or unknown.
+    fn backend_by_name(&self, name: &str) -> Arc<dyn IdentityBackend> {
+        if name.is_empty() || name == self.default_driver_name {
+            return self.backend_driver.clone();
+        }
+        self.backends
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| self.backend_driver.clone())
+    }
+
+    /// The identity backend that serves the user `user_id`.
+    ///
+    /// Mirrors python-keystone's `_get_domain_driver_and_entity_id`: the id
+    /// mapping is the authoritative record of which backend owns an entity.
+    async fn driver_for_user<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        user_id: &str,
+    ) -> Result<Arc<dyn IdentityBackend>, IdentityProviderError> {
+        self.driver_for_public_id(ctx, user_id).await
+    }
+
+    /// The identity backend that serves the group `group_id`. Same id-mapping
+    /// lookup as [`Self::driver_for_user`].
+    async fn driver_for_group<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        group_id: &str,
+    ) -> Result<Arc<dyn IdentityBackend>, IdentityProviderError> {
+        self.driver_for_public_id(ctx, group_id).await
+    }
+
+    /// Resolve the backend for a user or group public id.
+    ///
+    /// python-keystone (`_get_domain_driver_and_entity_id`): while per-domain
+    /// drivers are enabled, look the public id up in the id mapping first. A
+    /// mapping row exists for every entity a non-default backend owns; a hit
+    /// dispatches to that domain's driver. A miss means the default driver
+    /// owns the id (default-SQL entities carry no mapping row), so fall back
+    /// to the global driver rather than re-deriving a domain that would
+    /// mis-route the entity.
+    async fn driver_for_public_id<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        public_id: &str,
+    ) -> Result<Arc<dyn IdentityBackend>, IdentityProviderError> {
+        if self.domain_config_resolver.is_none() {
+            return Ok(self.backend_driver.clone());
+        }
+        let domain_id = match ctx
+            .state()
+            .provider
+            .get_idmapping_provider()
+            .get_by_public_id(ctx, public_id)
+            .await
+        {
+            Ok(Some(mapping)) => mapping.domain_id,
+            _ => return Ok(self.backend_driver.clone()),
+        };
+        self.driver_for(ctx.state(), Some(&domain_id)).await
+    }
+
+    /// Resolve the user's and the group's backends and require them to be the
+    /// same instance before a group-membership mutation.
+    ///
+    /// Mirrors python-keystone's
+    /// `Manager._assert_user_and_group_in_same_backend`: a membership that
+    /// spans two identity backends is rejected with `CrossBackendNotAllowed`
+    /// (403), after confirming both entities actually exist (a bogus id
+    /// surfaces as its own `UserNotFound`/`GroupNotFound` 404 first).
+    async fn membership_backend<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        user_id: &str,
+        group_id: &str,
+    ) -> Result<Arc<dyn IdentityBackend>, IdentityProviderError> {
+        let user_backend = self.driver_for_user(ctx, user_id).await?;
+        if self.domain_config_resolver.is_none() {
+            return Ok(user_backend);
+        }
+        let group_backend = self.driver_for_group(ctx, group_id).await?;
+        if Arc::ptr_eq(&user_backend, &group_backend) {
+            return Ok(user_backend);
+        }
+        if user_backend.get_user(ctx.state(), user_id).await?.is_none() {
+            return Err(IdentityProviderError::UserNotFound(user_id.to_owned()));
+        }
+        if group_backend
+            .get_group(ctx.state(), group_id)
+            .await?
+            .is_none()
+        {
+            return Err(IdentityProviderError::GroupNotFound(group_id.to_owned()));
+        }
+        Err(IdentityProviderError::CrossBackendNotAllowed {
+            user_id: user_id.to_owned(),
+            group_id: group_id.to_owned(),
+        })
     }
 
     /// The actual password-authentication implementation, split out of the
@@ -128,9 +378,11 @@ impl IdentityService {
         // performs any password verification (Invariants 4 and 8). The
         // throttle lives here at the provider level so every backend driver
         // shares a single implementation.
+        let driver = self
+            .driver_for(state, auth.domain.as_ref().and_then(|d| d.id.as_deref()))
+            .await?;
         if state.rate_limiters.user_auth_enabled() {
-            match self
-                .backend_driver
+            match driver
                 .check_user_exist(
                     state,
                     auth.id.as_deref(),
@@ -155,9 +407,7 @@ impl IdentityService {
             }
         }
 
-        self.backend_driver
-            .authenticate_by_password(state, &auth)
-            .await
+        driver.authenticate_by_password(state, &auth).await
     }
 }
 
@@ -175,6 +425,7 @@ impl IdentityApi for IdentityService {
         user_id: &'a str,
         group_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
+        let backend_driver = self.membership_backend(ctx, user_id, group_id).await?;
         if let Some(vsc) = ctx.ctx() {
             crate::audited_op! {
                 dispatcher: &ctx.state().event_dispatcher,
@@ -187,14 +438,14 @@ impl IdentityApi for IdentityService {
                     },
                 ),
                 operation: async {
-                    self.backend_driver
+                    backend_driver
                         .add_user_to_group(ctx.state(), user_id, group_id)
                         .await
                 },
                 on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
             }?;
         } else {
-            self.backend_driver
+            backend_driver
                 .add_user_to_group(ctx.state(), user_id, group_id)
                 .await?;
             ctx.state()
@@ -225,6 +476,7 @@ impl IdentityApi for IdentityService {
         group_id: &'a str,
         idp_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
+        let backend_driver = self.membership_backend(ctx, user_id, group_id).await?;
         if let Some(vsc) = ctx.ctx() {
             crate::audited_op! {
                 dispatcher: &ctx.state().event_dispatcher,
@@ -237,14 +489,14 @@ impl IdentityApi for IdentityService {
                     },
                 ),
                 operation: async {
-                    self.backend_driver
+                    backend_driver
                         .add_user_to_group_expiring(ctx.state(), user_id, group_id, idp_id)
                         .await
                 },
                 on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
             }?;
         } else {
-            self.backend_driver
+            backend_driver
                 .add_user_to_group_expiring(ctx.state(), user_id, group_id, idp_id)
                 .await?;
             ctx.state()
@@ -279,6 +531,10 @@ impl IdentityApi for IdentityService {
                 memberships.iter().map(|(_, g)| g.to_string()).collect(),
             )
         };
+        let backend_driver = match memberships.first() {
+            Some((user_id, _)) => self.driver_for_user(ctx, user_id).await?,
+            None => self.backend_driver.clone(),
+        };
         if let Some(vsc) = ctx.ctx() {
             let memberships_clone = memberships
                 .iter()
@@ -295,7 +551,7 @@ impl IdentityApi for IdentityService {
                     },
                 ),
                 operation: async {
-                    self.backend_driver
+                    backend_driver
                         .add_users_to_groups(
                             ctx.state(),
                             memberships_clone
@@ -308,7 +564,7 @@ impl IdentityApi for IdentityService {
                 on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
             }?;
         } else {
-            self.backend_driver
+            backend_driver
                 .add_users_to_groups(ctx.state(), memberships)
                 .await?;
             ctx.state()
@@ -345,6 +601,10 @@ impl IdentityApi for IdentityService {
                 memberships.iter().map(|(_, g)| g.to_string()).collect(),
             )
         };
+        let backend_driver = match memberships.first() {
+            Some((user_id, _)) => self.driver_for_user(ctx, user_id).await?,
+            None => self.backend_driver.clone(),
+        };
         if let Some(vsc) = ctx.ctx() {
             let memberships_clone = memberships
                 .iter()
@@ -362,7 +622,7 @@ impl IdentityApi for IdentityService {
                     },
                 ),
                 operation: async {
-                    self.backend_driver
+                    backend_driver
                         .add_users_to_groups_expiring(
                             ctx.state(),
                             memberships_clone
@@ -376,7 +636,7 @@ impl IdentityApi for IdentityService {
                 on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
             }?;
         } else {
-            self.backend_driver
+            backend_driver
                 .add_users_to_groups_expiring(ctx.state(), memberships, idp_id)
                 .await?;
             ctx.state()
@@ -462,7 +722,8 @@ impl IdentityApi for IdentityService {
         // probe shared with password authentication resolves the reference to
         // the canonical user ID and rejects disabled accounts.
         let user_id = match self
-            .backend_driver
+            .driver_for(state, auth.domain.as_ref().and_then(|d| d.id.as_deref()))
+            .await?
             .check_user_exist(
                 state,
                 auth.id.as_deref(),
@@ -559,8 +820,9 @@ impl IdentityApi for IdentityService {
             res.id = Some(gid.clone());
             gid
         };
+        let backend_driver = self.driver_for(ctx.state(), Some(&res.domain_id)).await?;
         let group = if let Some(vsc) = ctx.ctx() {
-            let backend_driver = &self.backend_driver;
+            let backend_driver = &backend_driver;
             let state = ctx.state();
             let res_clone = res.clone();
             let dispatch = crate::audited_op! {
@@ -577,7 +839,7 @@ impl IdentityApi for IdentityService {
             };
             dispatch?
         } else {
-            let group = self.backend_driver.create_group(ctx.state(), res).await?;
+            let group = backend_driver.create_group(ctx.state(), res).await?;
             ctx.state()
                 .event_dispatcher
                 .emit(Event::new(
@@ -623,8 +885,11 @@ impl IdentityApi for IdentityService {
             let cfg = ctx.state().config_manager.config.read().await;
             cfg.security_compliance.validate_password(password)?;
         }
+        let backend_driver = self
+            .driver_for(ctx.state(), mod_user.domain_id.as_deref())
+            .await?;
         let user = if let Some(vsc) = ctx.ctx() {
-            let backend_driver = &self.backend_driver;
+            let backend_driver = &backend_driver;
             let state = ctx.state();
             crate::audited_op! {
                 dispatcher: &ctx.state().event_dispatcher,
@@ -639,10 +904,7 @@ impl IdentityApi for IdentityService {
                 on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
             }?
         } else {
-            let user = self
-                .backend_driver
-                .create_user(ctx.state(), mod_user)
-                .await?;
+            let user = backend_driver.create_user(ctx.state(), mod_user).await?;
             ctx.state()
                 .event_dispatcher
                 .emit(Event::new(
@@ -668,6 +930,7 @@ impl IdentityApi for IdentityService {
         ctx: &ExecutionContext<'a>,
         group_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
+        let backend_driver = self.driver_for_group(ctx, group_id).await?;
         if let Some(vsc) = ctx.ctx() {
             crate::audited_op! {
                 dispatcher: &ctx.state().event_dispatcher,
@@ -677,15 +940,13 @@ impl IdentityApi for IdentityService {
                     EventPayload::Group { id: group_id.to_string() },
                 ),
                 operation: async {
-                    self.backend_driver.delete_group(ctx.state(), group_id).await?;
+                    backend_driver.delete_group(ctx.state(), group_id).await?;
                     Ok::<(), IdentityProviderError>(())
                 },
                 on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
             }?;
         } else {
-            self.backend_driver
-                .delete_group(ctx.state(), group_id)
-                .await?;
+            backend_driver.delete_group(ctx.state(), group_id).await?;
             ctx.state()
                 .event_dispatcher
                 .emit(Event::new(
@@ -711,6 +972,7 @@ impl IdentityApi for IdentityService {
         ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
+        let backend_driver = self.driver_for_user(ctx, user_id).await?;
         if let Some(vsc) = ctx.ctx() {
             // Audited delete – fail‐closed on pre‐audit failure.
             crate::audited_op! {
@@ -721,7 +983,7 @@ impl IdentityApi for IdentityService {
                     EventPayload::User { id: user_id.to_string() },
                 ),
                 operation: async {
-                    self.backend_driver.delete_user(ctx.state(), user_id).await?;
+                    backend_driver.delete_user(ctx.state(), user_id).await?;
                     if self.caching {
                         self.user_id_domain_id_cache
                             .write()
@@ -739,9 +1001,7 @@ impl IdentityApi for IdentityService {
             }?;
         } else {
             // No validated context – perform operation and emit on perimeter.
-            self.backend_driver
-                .delete_user(ctx.state(), user_id)
-                .await?;
+            backend_driver.delete_user(ctx.state(), user_id).await?;
             if self.caching {
                 self.user_id_domain_id_cache.write().await.remove(user_id);
             }
@@ -782,7 +1042,11 @@ impl IdentityApi for IdentityService {
         if let Some(user) = cache_get::<UserResponse>(USER_CACHE_NS, user_id) {
             return Ok(Some(user));
         }
-        let user = self.backend_driver.get_user(ctx.state(), user_id).await?;
+        let user = self
+            .driver_for_user(ctx, user_id)
+            .await?
+            .get_user(ctx.state(), user_id)
+            .await?;
         if let Some(user) = &user {
             if self.caching {
                 self.user_id_domain_id_cache
@@ -816,7 +1080,8 @@ impl IdentityApi for IdentityService {
                 return Ok(domain_id.clone());
             } else {
                 let domain_id = self
-                    .backend_driver
+                    .driver_for_user(ctx, user_id)
+                    .await?
                     .get_user_domain_id(ctx.state(), user_id)
                     .await?;
                 self.user_id_domain_id_cache
@@ -827,7 +1092,8 @@ impl IdentityApi for IdentityService {
             }
         } else {
             Ok(self
-                .backend_driver
+                .driver_for_user(ctx, user_id)
+                .await?
                 .get_user_domain_id(ctx.state(), user_id)
                 .await?)
         }
@@ -839,7 +1105,8 @@ impl IdentityApi for IdentityService {
         domain_id: &'a str,
         name: &'a str,
     ) -> Result<Option<String>, IdentityProviderError> {
-        self.backend_driver
+        self.driver_for(ctx.state(), Some(domain_id))
+            .await?
             .find_user_by_name_ci(ctx.state(), domain_id, name)
             .await
     }
@@ -875,7 +1142,10 @@ impl IdentityApi for IdentityService {
         ctx: &ExecutionContext<'a>,
         params: &UserListParameters,
     ) -> Result<Vec<UserResponse>, IdentityProviderError> {
-        self.backend_driver.list_users(ctx.state(), params).await
+        self.driver_for(ctx.state(), params.domain_id.as_deref())
+            .await?
+            .list_users(ctx.state(), params)
+            .await
     }
 
     /// List groups.
@@ -888,7 +1158,10 @@ impl IdentityApi for IdentityService {
         ctx: &ExecutionContext<'a>,
         params: &GroupListParameters,
     ) -> Result<Vec<Group>, IdentityProviderError> {
-        self.backend_driver.list_groups(ctx.state(), params).await
+        self.driver_for(ctx.state(), params.domain_id.as_deref())
+            .await?
+            .list_groups(ctx.state(), params)
+            .await
     }
 
     /// Get single group.
@@ -908,7 +1181,11 @@ impl IdentityApi for IdentityService {
         if let Some(group) = cache_get::<Group>(GROUP_CACHE_NS, group_id) {
             return Ok(Some(group));
         }
-        let group = self.backend_driver.get_group(ctx.state(), group_id).await?;
+        let group = self
+            .driver_for_group(ctx, group_id)
+            .await?
+            .get_group(ctx.state(), group_id)
+            .await?;
         if let Some(group) = &group {
             cache_set(GROUP_CACHE_NS, group_id, group.clone());
         }
@@ -925,7 +1202,8 @@ impl IdentityApi for IdentityService {
         ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<Vec<Group>, IdentityProviderError> {
-        self.backend_driver
+        self.driver_for_user(ctx, user_id)
+            .await?
             .list_groups_of_user(ctx.state(), user_id)
             .await
     }
@@ -940,7 +1218,8 @@ impl IdentityApi for IdentityService {
         ctx: &ExecutionContext<'a>,
         group_id: &'a str,
     ) -> Result<Vec<String>, IdentityProviderError> {
-        self.backend_driver
+        self.driver_for_group(ctx, group_id)
+            .await?
             .list_users_of_group(ctx.state(), group_id)
             .await
     }
@@ -958,7 +1237,8 @@ impl IdentityApi for IdentityService {
         domain_id: &'a str,
         name: &'a str,
     ) -> Result<Option<String>, IdentityProviderError> {
-        self.backend_driver
+        self.driver_for(ctx.state(), Some(domain_id))
+            .await?
             .find_group_by_name_ci(ctx.state(), domain_id, name)
             .await
     }
@@ -975,8 +1255,9 @@ impl IdentityApi for IdentityService {
         group_id: &'a str,
         group: GroupUpdate,
     ) -> Result<Group, IdentityProviderError> {
+        let backend_driver = self.driver_for_group(ctx, group_id).await?;
         let group = if let Some(vsc) = ctx.ctx() {
-            let backend_driver = &self.backend_driver;
+            let backend_driver = &backend_driver;
             let state = ctx.state();
             let group_id_clone = group_id.to_string();
             crate::audited_op! {
@@ -992,8 +1273,7 @@ impl IdentityApi for IdentityService {
                 on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
             }?
         } else {
-            let group = self
-                .backend_driver
+            let group = backend_driver
                 .update_group(ctx.state(), group_id, group)
                 .await?;
             ctx.state()
@@ -1024,6 +1304,7 @@ impl IdentityApi for IdentityService {
         user_id: &'a str,
         group_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
+        let backend_driver = self.membership_backend(ctx, user_id, group_id).await?;
         if let Some(vsc) = ctx.ctx() {
             crate::audited_op! {
                 dispatcher: &ctx.state().event_dispatcher,
@@ -1036,14 +1317,14 @@ impl IdentityApi for IdentityService {
                     },
                 ),
                 operation: async {
-                    self.backend_driver
+                    backend_driver
                         .remove_user_from_group(ctx.state(), user_id, group_id)
                         .await
                 },
                 on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
             }?;
         } else {
-            self.backend_driver
+            backend_driver
                 .remove_user_from_group(ctx.state(), user_id, group_id)
                 .await?;
             ctx.state()
@@ -1074,6 +1355,7 @@ impl IdentityApi for IdentityService {
         group_id: &'a str,
         idp_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
+        let backend_driver = self.membership_backend(ctx, user_id, group_id).await?;
         if let Some(vsc) = ctx.ctx() {
             crate::audited_op! {
                 dispatcher: &ctx.state().event_dispatcher,
@@ -1086,14 +1368,14 @@ impl IdentityApi for IdentityService {
                     },
                 ),
                 operation: async {
-                    self.backend_driver
+                    backend_driver
                         .remove_user_from_group_expiring(ctx.state(), user_id, group_id, idp_id)
                         .await
                 },
                 on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
             }?;
         } else {
-            self.backend_driver
+            backend_driver
                 .remove_user_from_group_expiring(ctx.state(), user_id, group_id, idp_id)
                 .await?;
             ctx.state()
@@ -1123,6 +1405,7 @@ impl IdentityApi for IdentityService {
         group_ids: HashSet<&'a str>,
     ) -> Result<(), IdentityProviderError> {
         let group_ids_vec: Vec<String> = group_ids.iter().copied().map(|s| s.to_string()).collect();
+        let backend_driver = self.driver_for_user(ctx, user_id).await?;
         if let Some(vsc) = ctx.ctx() {
             let group_ids_clone = group_ids_vec.clone();
             let user_id_str = user_id.to_string();
@@ -1137,14 +1420,14 @@ impl IdentityApi for IdentityService {
                     },
                 ),
                 operation: async {
-                    self.backend_driver
+                    backend_driver
                         .remove_user_from_groups(ctx.state(), &user_id_str, group_ids.iter().copied().collect())
                         .await
                 },
                 on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
             }?;
         } else {
-            self.backend_driver
+            backend_driver
                 .remove_user_from_groups(ctx.state(), user_id, group_ids)
                 .await?;
             ctx.state()
@@ -1176,6 +1459,7 @@ impl IdentityApi for IdentityService {
         idp_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
         let group_ids_vec: Vec<String> = group_ids.iter().copied().map(|s| s.to_string()).collect();
+        let backend_driver = self.driver_for_user(ctx, user_id).await?;
         if let Some(vsc) = ctx.ctx() {
             let group_ids_clone = group_ids_vec.clone();
             let user_id_str = user_id.to_string();
@@ -1191,14 +1475,14 @@ impl IdentityApi for IdentityService {
                     },
                 ),
                 operation: async {
-                    self.backend_driver
+                    backend_driver
                         .remove_user_from_groups_expiring(ctx.state(), &user_id_str, group_ids.iter().copied().collect(), &idp_id_str)
                         .await
                 },
                 on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
             }?;
         } else {
-            self.backend_driver
+            backend_driver
                 .remove_user_from_groups_expiring(ctx.state(), user_id, group_ids, idp_id)
                 .await?;
             ctx.state()
@@ -1228,6 +1512,7 @@ impl IdentityApi for IdentityService {
         group_ids: HashSet<&'a str>,
     ) -> Result<(), IdentityProviderError> {
         let group_ids_vec: Vec<String> = group_ids.iter().copied().map(|s| s.to_string()).collect();
+        let backend_driver = self.driver_for_user(ctx, user_id).await?;
         if let Some(vsc) = ctx.ctx() {
             let group_ids_clone = group_ids_vec.clone();
             let user_id_str = user_id.to_string();
@@ -1242,14 +1527,14 @@ impl IdentityApi for IdentityService {
                     },
                 ),
                 operation: async {
-                    self.backend_driver
+                    backend_driver
                         .set_user_groups(ctx.state(), &user_id_str, group_ids.iter().copied().collect())
                         .await
                 },
                 on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
             }?;
         } else {
-            self.backend_driver
+            backend_driver
                 .set_user_groups(ctx.state(), user_id, group_ids)
                 .await?;
             ctx.state()
@@ -1284,8 +1569,9 @@ impl IdentityApi for IdentityService {
             let cfg = ctx.state().config_manager.config.read().await;
             cfg.security_compliance.validate_password(password)?;
         }
+        let backend_driver = self.driver_for_user(ctx, user_id).await?;
         let user = if let Some(vsc) = ctx.ctx() {
-            let backend_driver = &self.backend_driver;
+            let backend_driver = &backend_driver;
             let state = ctx.state();
             crate::audited_op! {
                 dispatcher: &ctx.state().event_dispatcher,
@@ -1300,8 +1586,7 @@ impl IdentityApi for IdentityService {
                 on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
             }?
         } else {
-            let user = self
-                .backend_driver
+            let user = backend_driver
                 .update_user(ctx.state(), user_id, user)
                 .await?;
             ctx.state()
@@ -1336,8 +1621,9 @@ impl IdentityApi for IdentityService {
     ) -> Result<(), IdentityProviderError> {
         let cfg = ctx.state().config_manager.config.read().await;
         cfg.security_compliance.validate_password(&new_password)?;
+        let backend_driver = self.driver_for_user(ctx, user_id).await?;
         if let Some(vsc) = ctx.ctx() {
-            let backend_driver = &self.backend_driver;
+            let backend_driver = &backend_driver;
             let state = ctx.state();
             let user_id = user_id.to_string();
             let orig_pwd = original_password.clone();
@@ -1355,7 +1641,7 @@ impl IdentityApi for IdentityService {
                 on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
             }?;
         } else {
-            self.backend_driver
+            backend_driver
                 .update_user_password(ctx.state(), user_id, original_password, new_password)
                 .await?;
             ctx.state()
@@ -1389,6 +1675,7 @@ impl IdentityApi for IdentityService {
         last_verified: Option<&'a DateTime<Utc>>,
     ) -> Result<(), IdentityProviderError> {
         let group_ids_vec: Vec<String> = group_ids.iter().copied().map(|s| s.to_string()).collect();
+        let backend_driver = self.driver_for_user(ctx, user_id).await?;
         if let Some(vsc) = ctx.ctx() {
             let group_ids_clone = group_ids_vec.clone();
             let user_id_str = user_id.to_string();
@@ -1404,14 +1691,14 @@ impl IdentityApi for IdentityService {
                     },
                 ),
                 operation: async {
-                    self.backend_driver
+                    backend_driver
                         .set_user_groups_expiring(ctx.state(), &user_id_str, group_ids.iter().copied().collect(), &idp_id_str, last_verified)
                         .await
                 },
                 on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
             }?;
         } else {
-            self.backend_driver
+            backend_driver
                 .set_user_groups_expiring(ctx.state(), user_id, group_ids, idp_id, last_verified)
                 .await?;
             ctx.state()
@@ -1430,1181 +1717,5 @@ impl IdentityApi for IdentityService {
 }
 
 #[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use openstack_keystone_config::Config;
-    use openstack_keystone_core_types::credential::{Credential, CredentialBuilder};
-    use openstack_keystone_core_types::identity::{
-        UserCreateBuilder, UserResponseBuilder, UserUpdateBuilder,
-    };
-
-    use super::*;
-    use crate::auth::ValidatedSecurityContext;
-    use crate::credential::MockCredentialProvider;
-    use crate::identity::backend::MockIdentityBackend;
-    use crate::provider::Provider;
-    use crate::resource::MockResourceProvider;
-    use crate::tests::get_mocked_state;
-    use openstack_keystone_core_types::auth::{
-        AuthenticationContext, AuthzInfoBuilder, IdentityInfo, PrincipalInfo, ScopeInfo,
-        SecurityContext, UserIdentityInfoBuilder,
-    };
-    use openstack_keystone_core_types::resource::DomainBuilder as ResourceDomainBuilder;
-
-    fn make_vsc_scoped(scope: ScopeInfo) -> ValidatedSecurityContext {
-        let user = UserIdentityInfoBuilder::default()
-            .user_id("test-user-id".to_string())
-            .build()
-            .unwrap();
-        let authz = AuthzInfoBuilder::default().scope(scope).build().unwrap();
-        let sc = SecurityContext::test_build()
-            .authentication_context(AuthenticationContext::Password)
-            .principal(PrincipalInfo {
-                identity: IdentityInfo::User(user),
-            })
-            .authorization(authz)
-            .build();
-        ValidatedSecurityContext::test_new(sc)
-    }
-
-    fn make_domain(id: &str) -> openstack_keystone_core_types::resource::Domain {
-        ResourceDomainBuilder::default()
-            .id(id)
-            .name(format!("{id}-name"))
-            .enabled(true)
-            .build()
-            .unwrap()
-    }
-
-    fn get_config_with_password_regex(regex_str: &str) -> Config {
-        let mut config = Config::default();
-        config.security_compliance.password_regex = Some(regex_str.to_string());
-        // Compile the regex as Config::load_all would do.
-        config.security_compliance.compile_regex().unwrap();
-        config
-    }
-
-    #[tokio::test]
-    async fn test_create_user() {
-        let state = get_mocked_state(None, None).await;
-        let mut backend = MockIdentityBackend::default();
-        backend.expect_create_user().returning(|_, _| {
-            Ok(UserResponseBuilder::default()
-                .id("id")
-                .domain_id("domain_id")
-                .enabled(true)
-                .name("name")
-                .build()
-                .unwrap())
-        });
-        let provider = IdentityService::from_driver(backend);
-
-        assert_eq!(
-            provider
-                .create_user(
-                    &ExecutionContext::internal(&state),
-                    UserCreateBuilder::default()
-                        .name("uname")
-                        .domain_id("did")
-                        .build()
-                        .unwrap()
-                )
-                .await
-                .unwrap(),
-            UserResponseBuilder::default()
-                .domain_id("domain_id")
-                .enabled(true)
-                .id("id")
-                .name("name")
-                .build()
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn test_create_user_defaults_domain_id_from_scope() {
-        // Real clients (tempest, python-openstackclient) omit `domain_id` on
-        // user create and expect the server to infer it from the caller's
-        // token scope, matching python-keystone. Regression test for the
-        // 422 "missing field `domain_id`" compatibility gap.
-        let state = get_mocked_state(None, None).await;
-        let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_create_user()
-            .withf(|_, user| user.domain_id.as_deref() == Some("scoped-did"))
-            .returning(|_, _| {
-                Ok(UserResponseBuilder::default()
-                    .id("id")
-                    .domain_id("scoped-did")
-                    .enabled(true)
-                    .name("uname")
-                    .build()
-                    .unwrap())
-            });
-        let provider = IdentityService::from_driver(backend);
-        let vsc = make_vsc_scoped(ScopeInfo::Domain(make_domain("scoped-did")));
-        let ctx = ExecutionContext::from_auth(&state, &vsc);
-
-        let created = provider
-            .create_user(
-                &ctx,
-                UserCreateBuilder::default().name("uname").build().unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(created.domain_id, "scoped-did");
-    }
-
-    #[tokio::test]
-    async fn test_get_user() {
-        let state = get_mocked_state(None, None).await;
-        let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_get_user()
-            .withf(|_, uid: &'_ str| uid == "uid")
-            .returning(|_, _| {
-                Ok(Some(
-                    UserResponseBuilder::default()
-                        .id("id")
-                        .domain_id("domain_id")
-                        .enabled(true)
-                        .name("name")
-                        .build()
-                        .unwrap(),
-                ))
-            });
-        let provider = IdentityService::from_driver(backend);
-
-        assert_eq!(
-            provider
-                .get_user(&ExecutionContext::internal(&state), "uid")
-                .await
-                .unwrap()
-                .expect("user should be there"),
-            UserResponseBuilder::default()
-                .domain_id("domain_id")
-                .enabled(true)
-                .id("id")
-                .name("name")
-                .build()
-                .unwrap(),
-        );
-    }
-
-    #[tokio::test]
-    async fn test_get_user_domain_id() {
-        let state = get_mocked_state(None, None).await;
-        let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_get_user_domain_id()
-            .withf(|_, uid: &'_ str| uid == "uid")
-            .times(2) // only 2 times
-            .returning(|_, _| Ok("did".into()));
-        backend
-            .expect_get_user_domain_id()
-            .withf(|_, uid: &'_ str| uid == "missing")
-            .returning(|_, _| Err(IdentityProviderError::UserNotFound("missing".into())));
-        let mut provider = IdentityService::from_driver(backend);
-        provider.caching = true;
-
-        assert_eq!(
-            provider
-                .get_user_domain_id(&ExecutionContext::internal(&state), "uid")
-                .await
-                .unwrap(),
-            "did"
-        );
-        assert_eq!(
-            provider
-                .get_user_domain_id(&ExecutionContext::internal(&state), "uid")
-                .await
-                .unwrap(),
-            "did",
-            "second time data extracted from cache"
-        );
-        assert!(
-            provider
-                .get_user_domain_id(&ExecutionContext::internal(&state), "missing")
-                .await
-                .is_err()
-        );
-        provider.caching = false;
-        assert_eq!(
-            provider
-                .get_user_domain_id(&ExecutionContext::internal(&state), "uid")
-                .await
-                .unwrap(),
-            "did",
-            "third time backend is again triggered causing total of 2 invocations"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_delete_user() {
-        let mut credential_mock = MockCredentialProvider::default();
-        credential_mock
-            .expect_delete_credentials_for_user()
-            .withf(|_, uid: &'_ str| uid == "uid")
-            .returning(|_, _| Ok(()));
-        let state = get_mocked_state(
-            None,
-            Some(Provider::mocked_builder().mock_credential(credential_mock)),
-        )
-        .await;
-        let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_delete_user()
-            .withf(|_, uid: &'_ str| uid == "uid")
-            .returning(|_, _| Ok(()));
-        let provider = IdentityService::from_driver(backend);
-
-        assert!(
-            provider
-                .delete_user(&ExecutionContext::internal(&state), "uid")
-                .await
-                .is_ok()
-        );
-    }
-
-    /// RFC 6238 Appendix B seed/passcode used across the TOTP tests below,
-    /// with an oversized `period` so the resulting HOTP counter (`now /
-    /// period`) stays `0` for the foreseeable future regardless of the
-    /// wall-clock time the test actually runs at.
-    fn totp_credential(user_id: &str) -> Credential {
-        CredentialBuilder::default()
-            .id("cred_id")
-            .blob(
-                json!({
-                    "seed": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
-                    "digits": 8,
-                    "period": 10_000_000_000u64,
-                })
-                .to_string(),
-            )
-            .r#type("totp")
-            .user_id(user_id)
-            .build()
-            .unwrap()
-    }
-
-    const TOTP_PASSCODE_COUNTER_0: &str = "84755224";
-
-    fn totp_user(user_id: &str, domain_id: &str, enabled: bool) -> UserResponse {
-        UserResponseBuilder::default()
-            .id(user_id)
-            .domain_id(domain_id)
-            .enabled(enabled)
-            .name("uname")
-            .build()
-            .unwrap()
-    }
-
-    #[tokio::test]
-    async fn test_authenticate_by_totp_success_by_id() {
-        let mut credential_mock = MockCredentialProvider::default();
-        credential_mock
-            .expect_list_credentials_for_user()
-            .withf(|_, uid: &'_ str, r#type: &Option<&str>| uid == "uid" && *r#type == Some("totp"))
-            .returning(|_, _, _| Ok(vec![totp_credential("uid")]));
-        let state = get_mocked_state(
-            None,
-            Some(Provider::mocked_builder().mock_credential(credential_mock)),
-        )
-        .await;
-        let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_check_user_exist()
-            .withf(|_, id, name, domain| *id == Some("uid") && name.is_none() && domain.is_none())
-            .returning(|_, _, _, _| Ok("uid".to_string()));
-        backend
-            .expect_get_user()
-            .withf(|_, uid: &'_ str| uid == "uid")
-            .returning(|_, _| Ok(Some(totp_user("uid", "did", true))));
-        let provider = IdentityService::from_driver(backend);
-
-        let result = provider
-            .authenticate_by_totp(
-                &ExecutionContext::internal(&state),
-                &UserTotpAuthRequestBuilder::default()
-                    .id("uid")
-                    .passcode(TOTP_PASSCODE_COUNTER_0)
-                    .build()
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(result.context, AuthenticationContext::Totp);
-        assert_eq!(result.principal.get_user_id(), "uid");
-    }
-
-    /// ADR-0022 Invariants 4 and 8 on the TOTP path: the per-user bucket is
-    /// keyed on the confirmed user ID and fires before any credential is
-    /// listed or passcode verified. The bucket is exhausted directly through
-    /// `check_user` (simulating a prior authentication attempt) so timing
-    /// cannot replenish it mid-test.
-    #[tokio::test]
-    async fn test_authenticate_by_totp_rate_limited() {
-        let mut credential_mock = MockCredentialProvider::default();
-        // Rejected before verification: credentials must never be listed.
-        credential_mock.expect_list_credentials_for_user().times(0);
-        let mut config = openstack_keystone_config::Config::default();
-        config.rate_limit_user_auth = openstack_keystone_config::RateLimitSection {
-            enabled: true,
-            burst_size: 1,
-            replenish_rate_per_second: 1,
-        };
-        let state = get_mocked_state(
-            Some(config),
-            Some(Provider::mocked_builder().mock_credential(credential_mock)),
-        )
-        .await;
-        assert!(state.rate_limiters.check_user("uid").is_ok());
-
-        let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_check_user_exist()
-            .returning(|_, _, _, _| Ok("uid".to_string()));
-        // Rejected before the full user is ever loaded.
-        backend.expect_get_user().times(0);
-        let provider = IdentityService::from_driver(backend);
-
-        let result = provider
-            .authenticate_by_totp(
-                &ExecutionContext::internal(&state),
-                &UserTotpAuthRequestBuilder::default()
-                    .id("uid")
-                    .passcode(TOTP_PASSCODE_COUNTER_0)
-                    .build()
-                    .unwrap(),
-            )
-            .await;
-
-        assert!(matches!(
-            result,
-            Err(IdentityProviderError::TooManyRequests { retry_after_secs }) if retry_after_secs >= 1
-        ));
-    }
-
-    #[tokio::test]
-    async fn test_authenticate_by_totp_wrong_passcode() {
-        let mut credential_mock = MockCredentialProvider::default();
-        credential_mock
-            .expect_list_credentials_for_user()
-            .returning(|_, _, _| Ok(vec![totp_credential("uid")]));
-        let state = get_mocked_state(
-            None,
-            Some(Provider::mocked_builder().mock_credential(credential_mock)),
-        )
-        .await;
-        let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_check_user_exist()
-            .returning(|_, _, _, _| Ok("uid".to_string()));
-        backend
-            .expect_get_user()
-            .returning(|_, _| Ok(Some(totp_user("uid", "did", true))));
-        let provider = IdentityService::from_driver(backend);
-
-        let result = provider
-            .authenticate_by_totp(
-                &ExecutionContext::internal(&state),
-                &UserTotpAuthRequestBuilder::default()
-                    .id("uid")
-                    .passcode("00000000")
-                    .build()
-                    .unwrap(),
-            )
-            .await;
-
-        assert!(matches!(
-            result,
-            Err(IdentityProviderError::Authentication {
-                source: AuthenticationError::TotpPasscodeInvalid
-            })
-        ));
-    }
-
-    #[tokio::test]
-    async fn test_authenticate_by_totp_no_credentials() {
-        let mut credential_mock = MockCredentialProvider::default();
-        credential_mock
-            .expect_list_credentials_for_user()
-            .returning(|_, _, _| Ok(vec![]));
-        let state = get_mocked_state(
-            None,
-            Some(Provider::mocked_builder().mock_credential(credential_mock)),
-        )
-        .await;
-        let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_check_user_exist()
-            .returning(|_, _, _, _| Ok("uid".to_string()));
-        backend
-            .expect_get_user()
-            .returning(|_, _| Ok(Some(totp_user("uid", "did", true))));
-        let provider = IdentityService::from_driver(backend);
-
-        let result = provider
-            .authenticate_by_totp(
-                &ExecutionContext::internal(&state),
-                &UserTotpAuthRequestBuilder::default()
-                    .id("uid")
-                    .passcode(TOTP_PASSCODE_COUNTER_0)
-                    .build()
-                    .unwrap(),
-            )
-            .await;
-
-        assert!(matches!(
-            result,
-            Err(IdentityProviderError::Authentication {
-                source: AuthenticationError::TotpPasscodeInvalid
-            })
-        ));
-    }
-
-    #[tokio::test]
-    async fn test_authenticate_by_totp_user_disabled() {
-        let mut credential_mock = MockCredentialProvider::default();
-        credential_mock.expect_list_credentials_for_user().times(0);
-        let state = get_mocked_state(
-            None,
-            Some(Provider::mocked_builder().mock_credential(credential_mock)),
-        )
-        .await;
-        let mut backend = MockIdentityBackend::default();
-        // The cheap probe rejects the disabled account before any credential
-        // work; the full user is never loaded.
-        backend
-            .expect_check_user_exist()
-            .returning(|_, _, _, _| Err(AuthenticationError::UserDisabled("uid".into()).into()));
-        backend.expect_get_user().times(0);
-        let provider = IdentityService::from_driver(backend);
-
-        let result = provider
-            .authenticate_by_totp(
-                &ExecutionContext::internal(&state),
-                &UserTotpAuthRequestBuilder::default()
-                    .id("uid")
-                    .passcode(TOTP_PASSCODE_COUNTER_0)
-                    .build()
-                    .unwrap(),
-            )
-            .await;
-
-        assert!(matches!(
-            result,
-            Err(IdentityProviderError::Authentication {
-                source: AuthenticationError::UserDisabled(id)
-            }) if id == "uid"
-        ));
-    }
-
-    #[tokio::test]
-    async fn test_authenticate_by_totp_user_not_found() {
-        let state = get_mocked_state(None, None).await;
-        let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_check_user_exist()
-            .returning(|_, _, _, _| Err(IdentityProviderError::UserNotFound("uid".into())));
-        let provider = IdentityService::from_driver(backend);
-
-        let result = provider
-            .authenticate_by_totp(
-                &ExecutionContext::internal(&state),
-                &UserTotpAuthRequestBuilder::default()
-                    .id("uid")
-                    .passcode(TOTP_PASSCODE_COUNTER_0)
-                    .build()
-                    .unwrap(),
-            )
-            .await;
-
-        assert!(matches!(
-            result,
-            Err(IdentityProviderError::Authentication {
-                source: AuthenticationError::TotpPasscodeInvalid
-            })
-        ));
-    }
-
-    #[tokio::test]
-    async fn test_authenticate_by_totp_success_by_name_and_domain() {
-        let mut credential_mock = MockCredentialProvider::default();
-        credential_mock
-            .expect_list_credentials_for_user()
-            .withf(|_, uid: &'_ str, r#type: &Option<&str>| uid == "uid" && *r#type == Some("totp"))
-            .returning(|_, _, _| Ok(vec![totp_credential("uid")]));
-        let mut resource_mock = MockResourceProvider::default();
-        resource_mock
-            .expect_find_domain_by_name()
-            .withf(|_, name: &'_ str| name == "dname")
-            .returning(|_, _| {
-                Ok(Some(openstack_keystone_core_types::resource::Domain {
-                    id: "did".into(),
-                    enabled: true,
-                    ..Default::default()
-                }))
-            });
-        let state = get_mocked_state(
-            None,
-            Some(
-                Provider::mocked_builder()
-                    .mock_credential(credential_mock)
-                    .mock_resource(resource_mock),
-            ),
-        )
-        .await;
-        let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_check_user_exist()
-            .withf(|_, id, name, domain| {
-                id.is_none() && *name == Some("uname_lookup") && *domain == Some("did")
-            })
-            .returning(|_, _, _, _| Ok("uid".to_string()));
-        backend
-            .expect_get_user()
-            .withf(|_, uid: &'_ str| uid == "uid")
-            .returning(|_, _| Ok(Some(totp_user("uid", "did", true))));
-        let provider = IdentityService::from_driver(backend);
-
-        let result = provider
-            .authenticate_by_totp(
-                &ExecutionContext::internal(&state),
-                &UserTotpAuthRequestBuilder::default()
-                    .name("uname_lookup")
-                    .domain(DomainBuilder::default().name("dname").build().unwrap())
-                    .passcode(TOTP_PASSCODE_COUNTER_0)
-                    .build()
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(result.context, AuthenticationContext::Totp);
-        assert_eq!(result.principal.get_user_id(), "uid");
-    }
-
-    /// ADR-0022 Invariants 4 and 8 at the provider level: the enabled
-    /// per-user bucket is keyed on the ID resolved by the cheap probe and
-    /// fires before the backend performs any password verification. The
-    /// bucket is exhausted directly through `check_user` (simulating a prior
-    /// attempt) so timing cannot replenish it mid-test.
-    #[tokio::test]
-    async fn test_authenticate_by_password_rate_limited() {
-        let mut config = openstack_keystone_config::Config::default();
-        config.rate_limit_user_auth = openstack_keystone_config::RateLimitSection {
-            enabled: true,
-            burst_size: 1,
-            replenish_rate_per_second: 1,
-        };
-        let state = get_mocked_state(Some(config), None).await;
-        assert!(state.rate_limiters.check_user("uid").is_ok());
-
-        let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_check_user_exist()
-            .withf(|_, id, name, domain| *id == Some("uid") && name.is_none() && domain.is_none())
-            .returning(|_, _, _, _| Ok("uid".to_string()));
-        // The expensive backend authentication must never be reached.
-        backend.expect_authenticate_by_password().times(0);
-        let provider = IdentityService::from_driver(backend);
-
-        let result = provider
-            .authenticate_by_password(
-                &ExecutionContext::internal(&state),
-                &UserPasswordAuthRequest {
-                    id: Some("uid".into()),
-                    password: "pass".into(),
-                    ..Default::default()
-                },
-            )
-            .await;
-
-        assert!(matches!(
-            result,
-            Err(IdentityProviderError::TooManyRequests { retry_after_secs }) if retry_after_secs >= 1
-        ));
-    }
-
-    /// ADR-0022 Invariant 8: unknown users never touch the limiter store.
-    /// The probe misses and the request falls through to the backend, which
-    /// keeps the uniform dummy-hash credentials error — never a 429 — no
-    /// matter how often it is retried.
-    #[tokio::test]
-    async fn test_authenticate_by_password_unknown_user_uniform_error() {
-        let mut config = openstack_keystone_config::Config::default();
-        config.rate_limit_user_auth = openstack_keystone_config::RateLimitSection {
-            enabled: true,
-            burst_size: 1,
-            replenish_rate_per_second: 1,
-        };
-        let state = get_mocked_state(Some(config), None).await;
-
-        let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_check_user_exist()
-            .returning(|_, _, _, _| Err(IdentityProviderError::UserNotFound("ghost".into())));
-        backend
-            .expect_authenticate_by_password()
-            .times(2)
-            .returning(|_, _| Err(AuthenticationError::UserNameOrPasswordWrong.into()));
-        let provider = IdentityService::from_driver(backend);
-
-        for _ in 0..2 {
-            let result = provider
-                .authenticate_by_password(
-                    &ExecutionContext::internal(&state),
-                    &UserPasswordAuthRequest {
-                        id: Some("ghost".into()),
-                        password: "pass".into(),
-                        ..Default::default()
-                    },
-                )
-                .await;
-            assert!(matches!(
-                result,
-                Err(IdentityProviderError::Authentication {
-                    source: AuthenticationError::UserNameOrPasswordWrong
-                })
-            ));
-        }
-    }
-
-    /// With the bucket disabled (the default), the probe is skipped
-    /// entirely: rate limiting adds no extra query to the authentication
-    /// hot path.
-    #[tokio::test]
-    async fn test_authenticate_by_password_probe_skipped_when_disabled() {
-        let state = get_mocked_state(None, None).await;
-
-        let mut backend = MockIdentityBackend::default();
-        backend.expect_check_user_exist().times(0);
-        backend
-            .expect_authenticate_by_password()
-            .once()
-            .returning(|_, _| Err(AuthenticationError::UserNameOrPasswordWrong.into()));
-        let provider = IdentityService::from_driver(backend);
-
-        let result = provider
-            .authenticate_by_password(
-                &ExecutionContext::internal(&state),
-                &UserPasswordAuthRequest {
-                    id: Some("uid".into()),
-                    password: "pass".into(),
-                    ..Default::default()
-                },
-            )
-            .await;
-        assert!(matches!(
-            result,
-            Err(IdentityProviderError::Authentication {
-                source: AuthenticationError::UserNameOrPasswordWrong
-            })
-        ));
-    }
-
-    /// Within quota the request proceeds to the backend normally.
-    #[tokio::test]
-    async fn test_authenticate_by_password_within_quota_reaches_backend() {
-        let mut config = openstack_keystone_config::Config::default();
-        config.rate_limit_user_auth = openstack_keystone_config::RateLimitSection {
-            enabled: true,
-            burst_size: 100,
-            replenish_rate_per_second: 10,
-        };
-        let state = get_mocked_state(Some(config), None).await;
-
-        let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_check_user_exist()
-            .returning(|_, _, _, _| Ok("uid".to_string()));
-        backend
-            .expect_authenticate_by_password()
-            .once()
-            .returning(|_, _| Err(AuthenticationError::UserNameOrPasswordWrong.into()));
-        let provider = IdentityService::from_driver(backend);
-
-        let result = provider
-            .authenticate_by_password(
-                &ExecutionContext::internal(&state),
-                &UserPasswordAuthRequest {
-                    id: Some("uid".into()),
-                    password: "pass".into(),
-                    ..Default::default()
-                },
-            )
-            .await;
-        assert!(matches!(
-            result,
-            Err(IdentityProviderError::Authentication {
-                source: AuthenticationError::UserNameOrPasswordWrong
-            })
-        ));
-    }
-
-    /// Password regex rejects invalid password on user creation.
-    #[tokio::test]
-    async fn test_create_user_password_regex_rejected() {
-        let config = get_config_with_password_regex(r"^.{7,}$");
-        let state = get_mocked_state(Some(config), None).await;
-        let provider = IdentityService::from_driver(MockIdentityBackend::default());
-
-        let result = provider
-            .create_user(
-                &ExecutionContext::internal(&state),
-                UserCreateBuilder::default()
-                    .name("uname")
-                    .domain_id("did")
-                    .password("short")
-                    .build()
-                    .unwrap(),
-            )
-            .await;
-
-        assert!(
-            matches!(result, Err(IdentityProviderError::SecurityCompliance(..))),
-            "expected SecurityCompliance error for invalid password"
-        );
-    }
-
-    /// Password regex accepts valid password on user creation and backend is
-    /// invoked.
-    #[tokio::test]
-    async fn test_create_user_password_regex_accepted() {
-        let config = get_config_with_password_regex(r"^.{3,}$");
-        let state = get_mocked_state(Some(config), None).await;
-        let mut backend = MockIdentityBackend::default();
-        backend.expect_create_user().returning(|_, _| {
-            Ok(UserResponseBuilder::default()
-                .id("id")
-                .domain_id("domain_id")
-                .enabled(true)
-                .name("name")
-                .build()
-                .unwrap())
-        });
-        let provider = IdentityService::from_driver(backend);
-
-        assert!(
-            provider
-                .create_user(
-                    &ExecutionContext::internal(&state),
-                    UserCreateBuilder::default()
-                        .name("uname")
-                        .domain_id("did")
-                        .password("Abc1")
-                        .build()
-                        .unwrap(),
-                )
-                .await
-                .is_ok(),
-            "password matching regex should reach backend"
-        );
-    }
-
-    /// No password on user creation skips validation and backend is invoked.
-    #[tokio::test]
-    async fn test_create_user_no_password() {
-        let config = get_config_with_password_regex(r"^.{7,}$");
-        let state = get_mocked_state(Some(config), None).await;
-        let mut backend = MockIdentityBackend::default();
-        backend.expect_create_user().returning(|_, _| {
-            Ok(UserResponseBuilder::default()
-                .id("id")
-                .domain_id("domain_id")
-                .enabled(true)
-                .name("name")
-                .build()
-                .unwrap())
-        });
-        let provider = IdentityService::from_driver(backend);
-
-        assert!(
-            provider
-                .create_user(
-                    &ExecutionContext::internal(&state),
-                    UserCreateBuilder::default()
-                        .name("uname")
-                        .domain_id("did")
-                        .build()
-                        .unwrap(),
-                )
-                .await
-                .is_ok(),
-            "no password should skip validation"
-        );
-    }
-
-    /// Password regex rejects invalid password on user update.
-    #[tokio::test]
-    async fn test_update_user_password_regex_rejected() {
-        let config = get_config_with_password_regex(r"^.{7,}$");
-        let state = get_mocked_state(Some(config), None).await;
-        let provider = IdentityService::from_driver(MockIdentityBackend::default());
-
-        let result = provider
-            .update_user(
-                &ExecutionContext::internal(&state),
-                "uid",
-                UserUpdateBuilder::default()
-                    .password("short")
-                    .build()
-                    .unwrap(),
-            )
-            .await;
-
-        assert!(
-            matches!(result, Err(IdentityProviderError::SecurityCompliance(..))),
-            "expected SecurityCompliance error for invalid password on update"
-        );
-    }
-
-    /// Password regex accepts valid password on user update and backend is
-    /// invoked.
-    #[tokio::test]
-    async fn test_update_user_password_regex_accepted() {
-        let config = get_config_with_password_regex(r"^.{3,}$");
-        let state = get_mocked_state(Some(config), None).await;
-        let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_update_user()
-            .returning(|_, _: &'_ str, _: UserUpdate| {
-                Ok(UserResponseBuilder::default()
-                    .id("id")
-                    .domain_id("domain_id")
-                    .enabled(true)
-                    .name("name")
-                    .build()
-                    .unwrap())
-            });
-        let provider = IdentityService::from_driver(backend);
-
-        assert!(
-            provider
-                .update_user(
-                    &ExecutionContext::internal(&state),
-                    "uid",
-                    UserUpdateBuilder::default()
-                        .password("Abc1")
-                        .build()
-                        .unwrap(),
-                )
-                .await
-                .is_ok(),
-            "password matching regex on update should reach backend"
-        );
-    }
-
-    /// No password on user update skips validation and backend is invoked.
-    #[tokio::test]
-    async fn test_update_user_no_password() {
-        let config = get_config_with_password_regex(r"^.{7,}$");
-        let state = get_mocked_state(Some(config), None).await;
-        let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_update_user()
-            .returning(|_, _: &'_ str, _: UserUpdate| {
-                Ok(UserResponseBuilder::default()
-                    .id("id")
-                    .domain_id("domain_id")
-                    .enabled(true)
-                    .name("name")
-                    .build()
-                    .unwrap())
-            });
-        let provider = IdentityService::from_driver(backend);
-
-        assert!(
-            provider
-                .update_user(
-                    &ExecutionContext::internal(&state),
-                    "uid",
-                    UserUpdateBuilder::default()
-                        .name("new_name")
-                        .build()
-                        .unwrap(),
-                )
-                .await
-                .is_ok(),
-            "no password on update should skip validation"
-        );
-    }
-
-    // --- Per-request cache (ADR 0030) -------------------------------------
-
-    use openstack_keystone_core_types::identity::{GroupBuilder, GroupUpdate};
-
-    fn make_user(id: &str) -> UserResponse {
-        UserResponseBuilder::default()
-            .id(id)
-            .domain_id("did")
-            .enabled(true)
-            .name(format!("{id}-name"))
-            .build()
-            .unwrap()
-    }
-
-    fn make_group(id: &str) -> Group {
-        GroupBuilder::default()
-            .id(id)
-            .domain_id("did")
-            .name(format!("{id}-name"))
-            .build()
-            .unwrap()
-    }
-
-    #[tokio::test]
-    async fn test_get_user_hits_backend_once_across_repeated_calls() {
-        let state = get_mocked_state(None, None).await;
-        let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_get_user()
-            .times(1)
-            .withf(|_, uid: &'_ str| uid == "uid")
-            .returning(|_, _| Ok(Some(make_user("uid"))));
-        let provider = IdentityService::from_driver(backend);
-
-        crate::request_cache::RequestCache::scope(async {
-            let ctx = ExecutionContext::internal(&state);
-            let first = provider.get_user(&ctx, "uid").await.unwrap().unwrap();
-            let second = provider.get_user(&ctx, "uid").await.unwrap().unwrap();
-            assert_eq!(first, second);
-        })
-        .await;
-    }
-
-    #[tokio::test]
-    async fn test_get_user_not_cached_outside_request_scope() {
-        let state = get_mocked_state(None, None).await;
-        let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_get_user()
-            .times(2)
-            .withf(|_, uid: &'_ str| uid == "uid")
-            .returning(|_, _| Ok(Some(make_user("uid"))));
-        let provider = IdentityService::from_driver(backend);
-
-        let ctx = ExecutionContext::internal(&state);
-        provider.get_user(&ctx, "uid").await.unwrap();
-        provider.get_user(&ctx, "uid").await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_update_user_refreshes_cache_instead_of_refetching() {
-        let state = get_mocked_state(None, None).await;
-        let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_get_user()
-            .times(1)
-            .withf(|_, uid: &'_ str| uid == "uid")
-            .returning(|_, _| Ok(Some(make_user("uid"))));
-        backend
-            .expect_update_user()
-            .withf(|_, uid: &'_ str, _| uid == "uid")
-            .returning(|_, _, update| {
-                let mut u = make_user("uid");
-                if let Some(name) = update.name {
-                    u.name = name;
-                }
-                Ok(u)
-            });
-        let provider = IdentityService::from_driver(backend);
-
-        crate::request_cache::RequestCache::scope(async {
-            let ctx = ExecutionContext::internal(&state);
-            provider.get_user(&ctx, "uid").await.unwrap();
-
-            let updated = provider
-                .update_user(
-                    &ctx,
-                    "uid",
-                    UserUpdateBuilder::default()
-                        .name("renamed".to_string())
-                        .build()
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            assert_eq!(updated.name, "renamed");
-
-            let refetched = provider.get_user(&ctx, "uid").await.unwrap().unwrap();
-            assert_eq!(refetched.name, "renamed");
-        })
-        .await;
-    }
-
-    #[tokio::test]
-    async fn test_delete_user_invalidates_cache() {
-        let mut credential_mock = MockCredentialProvider::default();
-        credential_mock
-            .expect_delete_credentials_for_user()
-            .withf(|_, uid: &'_ str| uid == "uid")
-            .returning(|_, _| Ok(()));
-        let state = get_mocked_state(
-            None,
-            Some(Provider::mocked_builder().mock_credential(credential_mock)),
-        )
-        .await;
-        let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_get_user()
-            .times(2)
-            .withf(|_, uid: &'_ str| uid == "uid")
-            .returning(|_, _| Ok(Some(make_user("uid"))));
-        backend
-            .expect_delete_user()
-            .withf(|_, uid: &'_ str| uid == "uid")
-            .returning(|_, _| Ok(()));
-        let provider = IdentityService::from_driver(backend);
-
-        crate::request_cache::RequestCache::scope(async {
-            let ctx = ExecutionContext::internal(&state);
-            provider.get_user(&ctx, "uid").await.unwrap();
-            provider.delete_user(&ctx, "uid").await.unwrap();
-            provider.get_user(&ctx, "uid").await.unwrap();
-        })
-        .await;
-    }
-
-    #[tokio::test]
-    async fn test_update_user_password_invalidates_cache() {
-        let state = get_mocked_state(None, None).await;
-        let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_get_user()
-            .times(2)
-            .withf(|_, uid: &'_ str| uid == "uid")
-            .returning(|_, _| Ok(Some(make_user("uid"))));
-        backend
-            .expect_update_user_password()
-            .withf(|_, uid: &'_ str, _, _| uid == "uid")
-            .returning(|_, _, _, _| Ok(()));
-        let provider = IdentityService::from_driver(backend);
-
-        crate::request_cache::RequestCache::scope(async {
-            let ctx = ExecutionContext::internal(&state);
-            provider.get_user(&ctx, "uid").await.unwrap();
-            provider
-                .update_user_password(
-                    &ctx,
-                    "uid",
-                    SecretString::from("orig".to_string()),
-                    SecretString::from("newpassword".to_string()),
-                )
-                .await
-                .unwrap();
-            // `update_user_password` doesn't return a fresh `UserResponse`
-            // to refresh the cache with -- the cached entry must instead be
-            // invalidated so `password_expires_at` isn't served stale.
-            provider.get_user(&ctx, "uid").await.unwrap();
-        })
-        .await;
-    }
-
-    #[tokio::test]
-    async fn test_get_group_hits_backend_once_across_repeated_calls() {
-        let state = get_mocked_state(None, None).await;
-        let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_get_group()
-            .times(1)
-            .withf(|_, gid: &'_ str| gid == "gid")
-            .returning(|_, _| Ok(Some(make_group("gid"))));
-        let provider = IdentityService::from_driver(backend);
-
-        crate::request_cache::RequestCache::scope(async {
-            let ctx = ExecutionContext::internal(&state);
-            let first = provider.get_group(&ctx, "gid").await.unwrap().unwrap();
-            let second = provider.get_group(&ctx, "gid").await.unwrap().unwrap();
-            assert_eq!(first, second);
-        })
-        .await;
-    }
-
-    #[tokio::test]
-    async fn test_get_group_not_cached_outside_request_scope() {
-        let state = get_mocked_state(None, None).await;
-        let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_get_group()
-            .times(2)
-            .withf(|_, gid: &'_ str| gid == "gid")
-            .returning(|_, _| Ok(Some(make_group("gid"))));
-        let provider = IdentityService::from_driver(backend);
-
-        let ctx = ExecutionContext::internal(&state);
-        provider.get_group(&ctx, "gid").await.unwrap();
-        provider.get_group(&ctx, "gid").await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_update_group_refreshes_cache_instead_of_refetching() {
-        let state = get_mocked_state(None, None).await;
-        let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_get_group()
-            .times(1)
-            .withf(|_, gid: &'_ str| gid == "gid")
-            .returning(|_, _| Ok(Some(make_group("gid"))));
-        backend
-            .expect_update_group()
-            .withf(|_, gid: &'_ str, _| gid == "gid")
-            .returning(|_, _, update| {
-                let mut g = make_group("gid");
-                if let Some(name) = update.name {
-                    g.name = name;
-                }
-                Ok(g)
-            });
-        let provider = IdentityService::from_driver(backend);
-
-        crate::request_cache::RequestCache::scope(async {
-            let ctx = ExecutionContext::internal(&state);
-            provider.get_group(&ctx, "gid").await.unwrap();
-
-            let updated = provider
-                .update_group(
-                    &ctx,
-                    "gid",
-                    GroupUpdate {
-                        name: Some("renamed".into()),
-                        ..Default::default()
-                    },
-                )
-                .await
-                .unwrap();
-            assert_eq!(updated.name, "renamed");
-
-            let refetched = provider.get_group(&ctx, "gid").await.unwrap().unwrap();
-            assert_eq!(refetched.name, "renamed");
-        })
-        .await;
-    }
-
-    #[tokio::test]
-    async fn test_delete_group_invalidates_cache() {
-        let state = get_mocked_state(None, None).await;
-        let mut backend = MockIdentityBackend::default();
-        backend
-            .expect_get_group()
-            .times(2)
-            .withf(|_, gid: &'_ str| gid == "gid")
-            .returning(|_, _| Ok(Some(make_group("gid"))));
-        backend
-            .expect_delete_group()
-            .withf(|_, gid: &'_ str| gid == "gid")
-            .returning(|_, _| Ok(()));
-        let provider = IdentityService::from_driver(backend);
-
-        crate::request_cache::RequestCache::scope(async {
-            let ctx = ExecutionContext::internal(&state);
-            provider.get_group(&ctx, "gid").await.unwrap();
-            provider.delete_group(&ctx, "gid").await.unwrap();
-            provider.get_group(&ctx, "gid").await.unwrap();
-        })
-        .await;
-    }
-}
+#[path = "service/tests.rs"]
+mod tests;

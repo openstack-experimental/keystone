@@ -115,7 +115,12 @@ pub fn anchor() {}
 inventory::submit! {
     BackendRegistration::<dyn IdentityBackend> {
         name: "ldap",
-        selected: |cfg: &Config| cfg.identity.driver == "ldap",
+        // Registered whenever it is the global driver, or whenever per-domain
+        // drivers are on: with `domain_specific_drivers_enabled` a domain's
+        // stored config may select `ldap` even though the global driver is not.
+        selected: |cfg: &Config| {
+            cfg.identity.driver == "ldap" || cfg.identity.domain_specific_drivers_enabled
+        },
         build: |cfg: &Config| {
             let ldap_cfg = cfg.ldap.clone();
             Box::pin(async move {
@@ -127,6 +132,12 @@ inventory::submit! {
 
 #[async_trait]
 impl IdentityBackend for LdapBackend {
+    /// LDAP maps one directory to one domain (python-keystone parity: the
+    /// LDAP driver is not domain aware).
+    fn is_domain_aware(&self) -> bool {
+        false
+    }
+
     async fn add_user_to_group<'a>(
         &self,
         _state: &ServiceState,

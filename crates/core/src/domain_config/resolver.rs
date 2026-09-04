@@ -99,6 +99,16 @@ impl DomainConfigResolver {
         }
     }
 
+    /// A resolver wired directly to explicit sources, bypassing the plugin
+    /// manager. Test-only.
+    #[cfg(test)]
+    pub(crate) fn from_sources(
+        file: Option<Arc<dyn DomainConfigBackend>>,
+        database: Option<Arc<dyn DomainConfigBackend>>,
+    ) -> Self {
+        Self { file, database }
+    }
+
     /// The effective stored configuration for a domain: the file source
     /// overlaid by the database source.
     ///
