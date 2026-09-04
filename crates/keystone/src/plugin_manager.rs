@@ -299,6 +299,10 @@ impl PluginManagerApi for PluginManager {
             ))
     }
 
+    fn identity_backends(&self) -> &HashMap<String, Arc<dyn IdentityBackend>> {
+        &self.identity_backends
+    }
+
     /// Get registered idmapping backend.
     ///
     /// # Parameters

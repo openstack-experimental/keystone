@@ -361,6 +361,9 @@ impl From<IdentityProviderError> for KeystoneApiError {
             // identity driver, ADR-0027) is a permissions statement, not a
             // server fault.
             err @ IdentityProviderError::Readonly(..) => Self::forbidden(err),
+            // A membership across two identity backends is a policy statement,
+            // not a server fault (python-keystone `CrossBackendNotAllowed`).
+            err @ IdentityProviderError::CrossBackendNotAllowed { .. } => Self::forbidden(err),
             other => Self::InternalError(other.to_string()),
         }
     }

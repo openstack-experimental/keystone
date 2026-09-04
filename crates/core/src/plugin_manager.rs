@@ -287,6 +287,16 @@ pub trait PluginManagerApi {
         name: S,
     ) -> Result<&Arc<dyn IdentityBackend>, IdentityProviderError>;
 
+    /// Every registered identity backend, keyed by driver name.
+    ///
+    /// The identity provider clones this map to dispatch operations to a
+    /// per-domain driver (issue #960); with `domain_specific_drivers_enabled`
+    /// it holds both `"sql"` and `"ldap"`.
+    ///
+    /// # Returns
+    /// - `&HashMap<String, Arc<dyn IdentityBackend>>` - The registry.
+    fn identity_backends(&self) -> &HashMap<String, Arc<dyn IdentityBackend>>;
+
     /// Get registered idmapping backend.
     ///
     /// # Parameters

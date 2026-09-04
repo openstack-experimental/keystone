@@ -26,6 +26,18 @@ use crate::keystone::ServiceState;
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait IdentityBackend: Send + Sync {
+    /// Whether this backend can represent more than one domain.
+    ///
+    /// Mirrors python-keystone's `IdentityDriverBase.is_domain_aware`. A
+    /// domain-aware backend (SQL) stores `domain_id` per entity and can serve
+    /// every domain from one instance; a non-domain-aware one (LDAP) maps a
+    /// single directory to a single domain, so routing a foreign domain to it
+    /// as the global default is rejected (see
+    /// `IdentityService::driver_for`).
+    fn is_domain_aware(&self) -> bool {
+        true
+    }
+
     /// Add the user to the group.
     ///
     /// # Parameters

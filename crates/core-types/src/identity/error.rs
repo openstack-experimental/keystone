@@ -35,6 +35,19 @@ pub enum IdentityProviderError {
     #[error("conflict: {0}")]
     Conflict(String),
 
+    /// A group membership was requested between a user and a group that live
+    /// in different identity backends. Mirrors python-keystone's
+    /// `CrossBackendNotAllowed` (surfaced as 403).
+    #[error(
+        "cannot add user {user_id} to group {group_id}: they belong to different identity backends"
+    )]
+    CrossBackendNotAllowed {
+        /// The user's public id.
+        user_id: String,
+        /// The group's public id.
+        group_id: String,
+    },
+
     /// Credential provider error, surfaced when cascading a user deletion
     /// into `delete_credentials_for_user` (ADR 0019 §3).
     #[error(transparent)]
