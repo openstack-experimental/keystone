@@ -29,6 +29,8 @@ use openstack_keystone_core_types::idmapping::*;
 
 pub mod entity;
 mod id_mapping;
+#[cfg(test)]
+pub mod test_support;
 
 #[derive(Default)]
 pub struct SqlBackend {}
@@ -95,6 +97,52 @@ impl IdMappingBackend for SqlBackend {
         public_id: &'a str,
     ) -> Result<Option<IdMapping>, IdMappingProviderError> {
         Ok(id_mapping::get_by_public_id(&state.db.connection(), public_id).await?)
+    }
+
+    /// Create a new `IdMapping`.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `local_id`: The local ID.
+    /// - `domain_id`: The domain ID.
+    /// - `entity_type`: The entity type.
+    /// - `public_id`: The public ID to store the mapping under.
+    ///
+    /// # Returns
+    /// A `Result` containing the created (or already-existing, on a benign
+    /// race) `IdMapping`, or an `Error`.
+    async fn create_id_mapping<'a>(
+        &self,
+        state: &ServiceState,
+        local_id: &'a str,
+        domain_id: &'a str,
+        entity_type: IdMappingEntityType,
+        public_id: &'a str,
+    ) -> Result<IdMapping, IdMappingProviderError> {
+        id_mapping::create(
+            &state.db.connection(),
+            local_id,
+            domain_id,
+            entity_type.into(),
+            public_id,
+        )
+        .await
+    }
+
+    /// Delete the `IdMapping` by the public identifier.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `public_id`: The public ID.
+    ///
+    /// # Returns
+    /// A `Result` indicating success, or an `Error`.
+    async fn delete_id_mapping<'a>(
+        &self,
+        state: &ServiceState,
+        public_id: &'a str,
+    ) -> Result<(), IdMappingProviderError> {
+        id_mapping::delete(&state.db.connection(), public_id).await
     }
 }
 
