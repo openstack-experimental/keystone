@@ -19,6 +19,7 @@ use openstack_keystone_config::SecurityComplianceError;
 use crate::auth::AuthenticationError;
 use crate::credential::CredentialProviderError;
 use crate::error::BuilderError;
+use crate::idmapping::IdMappingProviderError;
 use crate::resource::ResourceProviderError;
 
 /// Identity provider error.
@@ -58,6 +59,14 @@ pub enum IdentityProviderError {
 
     #[error("Date calculation error")]
     DateError,
+
+    /// Id-mapping provider error, surfaced when a domain-specific-driver
+    /// create/delete cascades into `create_id_mapping`/`delete_id_mapping`.
+    #[error(transparent)]
+    IdMappingProvider {
+        #[from]
+        source: IdMappingProviderError,
+    },
 
     /// Driver error.
     #[error("backend driver error: {0}")]

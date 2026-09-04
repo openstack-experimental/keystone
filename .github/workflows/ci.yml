@@ -176,6 +176,10 @@ jobs:
         if: needs.changes.outputs.code == 'true'
         run: cargo nextest run -p openstack-keystone-identity-driver-ldap --profile ci-ldap
 
+      - name: Run cross-backend (SQL+LDAP) domain config tests
+        if: needs.changes.outputs.code == 'true'
+        run: cargo nextest run -p test_integration --profile ci-ldap --test integration -- domain_config::cross_backend
+
       # Compile-only: catches rot in the TPM sample without requiring a
       # real/virtual TPM in CI (ADR 0016-v2 §2.5.2 test/sample scope decision
       # — real/virtual TPM availability in CI runners isn't reliable enough

@@ -1207,6 +1207,12 @@ mod idmapping {
                 ctx: &ExecutionContext<'a>,
                 public_id: &'a str,
             ) -> Result<(), IdMappingProviderError>;
+
+            async fn delete_mappings_for_domain<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+            ) -> Result<(), IdMappingProviderError>;
         }
     }
 }

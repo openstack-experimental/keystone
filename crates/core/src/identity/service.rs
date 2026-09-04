@@ -27,6 +27,7 @@ use openstack_keystone_config::Config;
 use openstack_keystone_core_types::domain_config::DomainConfigGroupName;
 use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::identity::*;
+use openstack_keystone_core_types::idmapping::IdMappingEntityType;
 
 use crate::auth::{
     AuthenticationContext, AuthenticationError, AuthenticationResult, AuthenticationResultBuilder,
@@ -282,20 +283,128 @@ impl IdentityService {
         ctx: &ExecutionContext<'a>,
         public_id: &str,
     ) -> Result<Arc<dyn IdentityBackend>, IdentityProviderError> {
+        Ok(self.resolve_public_id(ctx, public_id).await?.0)
+    }
+
+    /// Resolve a public id to the backend that owns it and the local id to
+    /// use when calling into that backend.
+    ///
+    /// Mirrors python-keystone's `_get_domain_driver_and_entity_id`: a
+    /// mapping hit means a non-default backend owns the entity, under a
+    /// (possibly different) local id; a miss means the default backend
+    /// owns it and `public_id` doubles as the local id, used as-is.
+    async fn resolve_public_id<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        public_id: &str,
+    ) -> Result<(Arc<dyn IdentityBackend>, String), IdentityProviderError> {
         if self.domain_config_resolver.is_none() {
-            return Ok(self.backend_driver.clone());
+            return Ok((self.backend_driver.clone(), public_id.to_string()));
         }
-        let domain_id = match ctx
+        match ctx
             .state()
             .provider
             .get_idmapping_provider()
             .get_by_public_id(ctx, public_id)
             .await
         {
-            Ok(Some(mapping)) => mapping.domain_id,
-            _ => return Ok(self.backend_driver.clone()),
-        };
-        self.driver_for(ctx.state(), Some(&domain_id)).await
+            Ok(Some(mapping)) => {
+                let backend = self
+                    .driver_for(ctx.state(), Some(&mapping.domain_id))
+                    .await?;
+                Ok((backend, mapping.local_id))
+            }
+            _ => Ok((self.backend_driver.clone(), public_id.to_string())),
+        }
+    }
+
+    /// Record an id-mapping row for an entity just created on a non-default
+    /// backend, so a later [`Self::driver_for_public_id`] lookup by its id
+    /// dispatches back to that same backend instead of falling through to
+    /// the global driver.
+    ///
+    /// A no-op when `backend_driver` is the global driver itself: entities
+    /// there need no mapping, since a lookup miss already falls back to it.
+    /// The local id and the public id are the same value today -- the rust
+    /// implementation does not remap ids the way python-keystone's
+    /// `generates_uuids() == False` drivers do.
+    async fn record_id_mapping(
+        &self,
+        ctx: &ExecutionContext<'_>,
+        backend_driver: &Arc<dyn IdentityBackend>,
+        entity_id: &str,
+        domain_id: &str,
+        entity_type: IdMappingEntityType,
+    ) -> Result<(), IdentityProviderError> {
+        if Arc::ptr_eq(backend_driver, &self.backend_driver) {
+            return Ok(());
+        }
+        // Reborrow through a fresh, short-lived context: `create_id_mapping`
+        // ties its id/domain arguments to the context's own lifetime, which
+        // freshly created (owned) ids can't satisfy against the caller's
+        // longer-lived `ctx`.
+        let short_ctx = ExecutionContext::internal(ctx.state());
+        short_ctx
+            .state()
+            .provider
+            .get_idmapping_provider()
+            .create_id_mapping(
+                &short_ctx,
+                entity_id,
+                domain_id,
+                entity_type,
+                Some(entity_id),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Delete the id-mapping row (if any) for an entity just deleted.
+    /// Idempotent, so it's safe to call even when the entity was served by
+    /// the global driver and never had one.
+    async fn forget_id_mapping(
+        &self,
+        ctx: &ExecutionContext<'_>,
+        entity_id: &str,
+    ) -> Result<(), IdentityProviderError> {
+        let short_ctx = ExecutionContext::internal(ctx.state());
+        short_ctx
+            .state()
+            .provider
+            .get_idmapping_provider()
+            .delete_id_mapping(&short_ctx, entity_id)
+            .await?;
+        Ok(())
+    }
+
+    /// Turn a backend-native local id into the public id API consumers see.
+    ///
+    /// A no-op (returns `local_id` unchanged) when `backend` is the global
+    /// driver: default-backend entities are used and exposed under their own
+    /// id directly, mirroring python-keystone's "no mapping needed" case.
+    /// For a non-default backend, gets-or-creates the mapping row --
+    /// [`IdMappingApi::create_id_mapping`] is idempotent for a repeat local
+    /// id (same deterministic sha256 public id, matching python-keystone's
+    /// default `sha256` id generator) -- and returns the public id.
+    async fn shadow_id(
+        &self,
+        ctx: &ExecutionContext<'_>,
+        backend: &Arc<dyn IdentityBackend>,
+        domain_id: &str,
+        local_id: &str,
+        entity_type: IdMappingEntityType,
+    ) -> Result<String, IdentityProviderError> {
+        if Arc::ptr_eq(backend, &self.backend_driver) {
+            return Ok(local_id.to_string());
+        }
+        let short_ctx = ExecutionContext::internal(ctx.state());
+        let mapping = short_ctx
+            .state()
+            .provider
+            .get_idmapping_provider()
+            .create_id_mapping(&short_ctx, local_id, domain_id, entity_type, None)
+            .await?;
+        Ok(mapping.public_id)
     }
 
     /// Resolve the user's and the group's backends and require them to be the
@@ -852,6 +961,15 @@ impl IdentityApi for IdentityService {
             group
         };
 
+        self.record_id_mapping(
+            ctx,
+            &backend_driver,
+            &group.id,
+            &group.domain_id,
+            IdMappingEntityType::Group,
+        )
+        .await?;
+
         Ok(group)
     }
 
@@ -917,6 +1035,15 @@ impl IdentityApi for IdentityService {
             user
         };
 
+        self.record_id_mapping(
+            ctx,
+            &backend_driver,
+            &user.id,
+            &user.domain_id,
+            IdMappingEntityType::User,
+        )
+        .await?;
+
         Ok(user)
     }
 
@@ -930,7 +1057,7 @@ impl IdentityApi for IdentityService {
         ctx: &ExecutionContext<'a>,
         group_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
-        let backend_driver = self.driver_for_group(ctx, group_id).await?;
+        let (backend_driver, local_id) = self.resolve_public_id(ctx, group_id).await?;
         if let Some(vsc) = ctx.ctx() {
             crate::audited_op! {
                 dispatcher: &ctx.state().event_dispatcher,
@@ -940,13 +1067,13 @@ impl IdentityApi for IdentityService {
                     EventPayload::Group { id: group_id.to_string() },
                 ),
                 operation: async {
-                    backend_driver.delete_group(ctx.state(), group_id).await?;
+                    backend_driver.delete_group(ctx.state(), &local_id).await?;
                     Ok::<(), IdentityProviderError>(())
                 },
                 on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
             }?;
         } else {
-            backend_driver.delete_group(ctx.state(), group_id).await?;
+            backend_driver.delete_group(ctx.state(), &local_id).await?;
             ctx.state()
                 .event_dispatcher
                 .emit(Event::new(
@@ -958,6 +1085,9 @@ impl IdentityApi for IdentityService {
                 .await;
         }
 
+        if !Arc::ptr_eq(&backend_driver, &self.backend_driver) {
+            self.forget_id_mapping(ctx, group_id).await?;
+        }
         cache_remove(GROUP_CACHE_NS, group_id);
         Ok(())
     }
@@ -972,7 +1102,7 @@ impl IdentityApi for IdentityService {
         ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
-        let backend_driver = self.driver_for_user(ctx, user_id).await?;
+        let (backend_driver, local_id) = self.resolve_public_id(ctx, user_id).await?;
         if let Some(vsc) = ctx.ctx() {
             // Audited delete – fail‐closed on pre‐audit failure.
             crate::audited_op! {
@@ -983,7 +1113,7 @@ impl IdentityApi for IdentityService {
                     EventPayload::User { id: user_id.to_string() },
                 ),
                 operation: async {
-                    backend_driver.delete_user(ctx.state(), user_id).await?;
+                    backend_driver.delete_user(ctx.state(), &local_id).await?;
                     if self.caching {
                         self.user_id_domain_id_cache
                             .write()
@@ -1001,7 +1131,7 @@ impl IdentityApi for IdentityService {
             }?;
         } else {
             // No validated context – perform operation and emit on perimeter.
-            backend_driver.delete_user(ctx.state(), user_id).await?;
+            backend_driver.delete_user(ctx.state(), &local_id).await?;
             if self.caching {
                 self.user_id_domain_id_cache.write().await.remove(user_id);
             }
@@ -1021,6 +1151,9 @@ impl IdentityApi for IdentityService {
                 .await;
         }
 
+        if !Arc::ptr_eq(&backend_driver, &self.backend_driver) {
+            self.forget_id_mapping(ctx, user_id).await?;
+        }
         cache_remove(USER_CACHE_NS, user_id);
         Ok(())
     }
@@ -1042,11 +1175,16 @@ impl IdentityApi for IdentityService {
         if let Some(user) = cache_get::<UserResponse>(USER_CACHE_NS, user_id) {
             return Ok(Some(user));
         }
-        let user = self
-            .driver_for_user(ctx, user_id)
-            .await?
-            .get_user(ctx.state(), user_id)
-            .await?;
+        let (backend, local_id) = self.resolve_public_id(ctx, user_id).await?;
+        let mut user = backend.get_user(ctx.state(), &local_id).await?;
+        if !Arc::ptr_eq(&backend, &self.backend_driver) {
+            if let Some(user) = &mut user {
+                // Non-default backend: the driver knows the entity by
+                // `local_id`, not `user_id` -- restore the public id the
+                // caller looked it up by before it's cached/returned.
+                user.id = user_id.to_string();
+            }
+        }
         if let Some(user) = &user {
             if self.caching {
                 self.user_id_domain_id_cache
@@ -1105,10 +1243,23 @@ impl IdentityApi for IdentityService {
         domain_id: &'a str,
         name: &'a str,
     ) -> Result<Option<String>, IdentityProviderError> {
-        self.driver_for(ctx.state(), Some(domain_id))
-            .await?
+        let backend = self.driver_for(ctx.state(), Some(domain_id)).await?;
+        match backend
             .find_user_by_name_ci(ctx.state(), domain_id, name)
-            .await
+            .await?
+        {
+            Some(local_id) => Ok(Some(
+                self.shadow_id(
+                    ctx,
+                    &backend,
+                    domain_id,
+                    &local_id,
+                    IdMappingEntityType::User,
+                )
+                .await?,
+            )),
+            None => Ok(None),
+        }
     }
 
     /// Find federated user by `idp_id` and `unique_id`.
@@ -1142,10 +1293,26 @@ impl IdentityApi for IdentityService {
         ctx: &ExecutionContext<'a>,
         params: &UserListParameters,
     ) -> Result<Vec<UserResponse>, IdentityProviderError> {
-        self.driver_for(ctx.state(), params.domain_id.as_deref())
-            .await?
-            .list_users(ctx.state(), params)
-            .await
+        let backend = self
+            .driver_for(ctx.state(), params.domain_id.as_deref())
+            .await?;
+        let mut users = backend.list_users(ctx.state(), params).await?;
+        if !Arc::ptr_eq(&backend, &self.backend_driver) {
+            for user in &mut users {
+                let local_id = user.id.clone();
+                let domain_id = user.domain_id.clone();
+                user.id = self
+                    .shadow_id(
+                        ctx,
+                        &backend,
+                        &domain_id,
+                        &local_id,
+                        IdMappingEntityType::User,
+                    )
+                    .await?;
+            }
+        }
+        Ok(users)
     }
 
     /// List groups.
@@ -1158,10 +1325,26 @@ impl IdentityApi for IdentityService {
         ctx: &ExecutionContext<'a>,
         params: &GroupListParameters,
     ) -> Result<Vec<Group>, IdentityProviderError> {
-        self.driver_for(ctx.state(), params.domain_id.as_deref())
-            .await?
-            .list_groups(ctx.state(), params)
-            .await
+        let backend = self
+            .driver_for(ctx.state(), params.domain_id.as_deref())
+            .await?;
+        let mut groups = backend.list_groups(ctx.state(), params).await?;
+        if !Arc::ptr_eq(&backend, &self.backend_driver) {
+            for group in &mut groups {
+                let local_id = group.id.clone();
+                let domain_id = group.domain_id.clone();
+                group.id = self
+                    .shadow_id(
+                        ctx,
+                        &backend,
+                        &domain_id,
+                        &local_id,
+                        IdMappingEntityType::Group,
+                    )
+                    .await?;
+            }
+        }
+        Ok(groups)
     }
 
     /// Get single group.
@@ -1181,11 +1364,15 @@ impl IdentityApi for IdentityService {
         if let Some(group) = cache_get::<Group>(GROUP_CACHE_NS, group_id) {
             return Ok(Some(group));
         }
-        let group = self
-            .driver_for_group(ctx, group_id)
-            .await?
-            .get_group(ctx.state(), group_id)
-            .await?;
+        let (backend, local_id) = self.resolve_public_id(ctx, group_id).await?;
+        let mut group = backend.get_group(ctx.state(), &local_id).await?;
+        if !Arc::ptr_eq(&backend, &self.backend_driver) {
+            // See `get_user`: restore the public id the caller looked it up
+            // by, since a non-default backend knows it as `local_id`.
+            if let Some(group) = &mut group {
+                group.id = group_id.to_string();
+            }
+        }
         if let Some(group) = &group {
             cache_set(GROUP_CACHE_NS, group_id, group.clone());
         }
@@ -1237,10 +1424,23 @@ impl IdentityApi for IdentityService {
         domain_id: &'a str,
         name: &'a str,
     ) -> Result<Option<String>, IdentityProviderError> {
-        self.driver_for(ctx.state(), Some(domain_id))
-            .await?
+        let backend = self.driver_for(ctx.state(), Some(domain_id)).await?;
+        match backend
             .find_group_by_name_ci(ctx.state(), domain_id, name)
-            .await
+            .await?
+        {
+            Some(local_id) => Ok(Some(
+                self.shadow_id(
+                    ctx,
+                    &backend,
+                    domain_id,
+                    &local_id,
+                    IdMappingEntityType::Group,
+                )
+                .await?,
+            )),
+            None => Ok(None),
+        }
     }
 
     /// Update group.
@@ -1255,8 +1455,8 @@ impl IdentityApi for IdentityService {
         group_id: &'a str,
         group: GroupUpdate,
     ) -> Result<Group, IdentityProviderError> {
-        let backend_driver = self.driver_for_group(ctx, group_id).await?;
-        let group = if let Some(vsc) = ctx.ctx() {
+        let (backend_driver, local_id) = self.resolve_public_id(ctx, group_id).await?;
+        let mut group = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &backend_driver;
             let state = ctx.state();
             let group_id_clone = group_id.to_string();
@@ -1268,26 +1468,30 @@ impl IdentityApi for IdentityService {
                     EventPayload::Group { id: group_id_clone },
                 ),
                 operation: async {
-                    backend_driver.update_group(state, group_id, group).await
+                    backend_driver.update_group(state, &local_id, group).await
                 },
                 on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
             }?
         } else {
             let group = backend_driver
-                .update_group(ctx.state(), group_id, group)
+                .update_group(ctx.state(), &local_id, group)
                 .await?;
             ctx.state()
                 .event_dispatcher
                 .emit(Event::new(
                     Operation::Update,
                     EventPayload::Group {
-                        id: group.id.clone(),
+                        id: group_id.to_string(),
                     },
                 ))
                 .await;
             group
         };
 
+        if !Arc::ptr_eq(&backend_driver, &self.backend_driver) {
+            // See `get_user`: restore the public id the caller asked for.
+            group.id = group_id.to_string();
+        }
         cache_set(GROUP_CACHE_NS, group_id, group.clone());
         Ok(group)
     }
@@ -1569,8 +1773,8 @@ impl IdentityApi for IdentityService {
             let cfg = ctx.state().config_manager.config.read().await;
             cfg.security_compliance.validate_password(password)?;
         }
-        let backend_driver = self.driver_for_user(ctx, user_id).await?;
-        let user = if let Some(vsc) = ctx.ctx() {
+        let (backend_driver, local_id) = self.resolve_public_id(ctx, user_id).await?;
+        let mut user = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &backend_driver;
             let state = ctx.state();
             crate::audited_op! {
@@ -1581,13 +1785,13 @@ impl IdentityApi for IdentityService {
                     EventPayload::User { id: user_id.to_string() },
                 ),
                 operation: async {
-                    backend_driver.update_user(state, user_id, user).await
+                    backend_driver.update_user(state, &local_id, user).await
                 },
                 on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
             }?
         } else {
             let user = backend_driver
-                .update_user(ctx.state(), user_id, user)
+                .update_user(ctx.state(), &local_id, user)
                 .await?;
             ctx.state()
                 .event_dispatcher
@@ -1601,6 +1805,10 @@ impl IdentityApi for IdentityService {
             user
         };
 
+        if !Arc::ptr_eq(&backend_driver, &self.backend_driver) {
+            // See `get_user`: restore the public id the caller asked for.
+            user.id = user_id.to_string();
+        }
         cache_set(USER_CACHE_NS, user_id, user.clone());
         Ok(user)
     }
@@ -1621,11 +1829,11 @@ impl IdentityApi for IdentityService {
     ) -> Result<(), IdentityProviderError> {
         let cfg = ctx.state().config_manager.config.read().await;
         cfg.security_compliance.validate_password(&new_password)?;
-        let backend_driver = self.driver_for_user(ctx, user_id).await?;
+        let (backend_driver, local_id) = self.resolve_public_id(ctx, user_id).await?;
         if let Some(vsc) = ctx.ctx() {
             let backend_driver = &backend_driver;
             let state = ctx.state();
-            let user_id = user_id.to_string();
+            let event_user_id = user_id.to_string();
             let orig_pwd = original_password.clone();
             let new_pwd = new_password.clone();
             crate::audited_op! {
@@ -1633,16 +1841,16 @@ impl IdentityApi for IdentityService {
                 ctx: vsc,
                 event: Event::new(
                     Operation::Update,
-                    EventPayload::User { id: user_id.clone() },
+                    EventPayload::User { id: event_user_id },
                 ),
                 operation: async {
-                    backend_driver.update_user_password(state, &user_id, orig_pwd, new_pwd).await
+                    backend_driver.update_user_password(state, &local_id, orig_pwd, new_pwd).await
                 },
                 on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
             }?;
         } else {
             backend_driver
-                .update_user_password(ctx.state(), user_id, original_password, new_password)
+                .update_user_password(ctx.state(), &local_id, original_password, new_password)
                 .await?;
             ctx.state()
                 .event_dispatcher

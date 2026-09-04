@@ -18,10 +18,9 @@
 //! domain's stored `identity/driver`, and `DomainConfigService` enforces the
 //! single-domain SQL identity-driver registration lock on config writes.
 //!
-//! Both the global and the per-domain driver here are `sql`, so these do not
-//! cover cross-backend routing, the `_select_identity_driver` `DomainNotFound`
-//! guard, or `CrossBackendNotAllowed` -- those need a second, non-domain-aware
-//! backend and are a follow-up (real LDAP harness).
+//! Cross-backend coverage (a second, non-domain-aware backend: LDAP, against
+//! the same fixture harness `identity-driver-ldap`'s own `live_tests` use)
+//! lives in the `cross_backend` submodule below.
 
 use eyre::Result;
 use serde_json::json;
@@ -40,12 +39,32 @@ use crate::common::get_state_with_config;
 fn enable_domain_specific(cfg: &mut Config) {
     cfg.identity.domain_specific_drivers_enabled = true;
     cfg.identity.domain_configurations_from_database = true;
+    // Once `domain_specific_drivers_enabled` is set, the `ldap` backend's
+    // `inventory` registration selects itself regardless of whether any
+    // domain actually uses it (`crates/identity-driver-ldap/src/lib.rs`),
+    // and eagerly health-checks `cfg.ldap.url` while building `Provider`.
+    // Point it at the seeded fixture directory when one is configured for
+    // this test run, rather than leaving it on the default `ldap://localhost`
+    // (which only happens to work here because CI/this box separately
+    // installs an ambient, unseeded `slapd` on the default port for
+    // `identity-driver-ldap`'s own tests -- see `cross_backend::test_url()`).
+    if let Some(url) = cross_backend::test_url() {
+        cfg.ldap = cross_backend::test_ldap_config(&url);
+    }
 }
 
 /// A stored configuration pinning a domain to the `sql` identity driver.
 fn sql_identity_config() -> DomainConfigCreate {
     DomainConfigCreate(
         DomainConfig::from_value(json!({"identity": {"driver": "sql"}}))
+            .expect("valid domain configuration"),
+    )
+}
+
+/// A stored configuration pinning a domain to the `ldap` identity driver.
+fn ldap_identity_config() -> DomainConfigCreate {
+    DomainConfigCreate(
+        DomainConfig::from_value(json!({"identity": {"driver": "ldap"}}))
             .expect("valid domain configuration"),
     )
 }
@@ -151,3 +170,6 @@ async fn deleting_a_domain_config_frees_the_sql_registration() -> Result<()> {
         .await?;
     Ok(())
 }
+
+#[path = "domain_config/cross_backend.rs"]
+mod cross_backend;

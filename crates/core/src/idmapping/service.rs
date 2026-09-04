@@ -150,6 +150,25 @@ impl IdMappingApi for IdMappingService {
             .delete_id_mapping(ctx.state(), public_id)
             .await
     }
+
+    /// Delete every `IdMapping` row belonging to a domain.
+    ///
+    /// # Parameters
+    /// - `ctx`: The execution context.
+    /// - `domain_id`: The domain identifier.
+    ///
+    /// # Returns
+    /// - `Result<(), IdMappingProviderError>` - `Ok` on success (including
+    ///   when nothing was found), or an `Error`.
+    async fn delete_mappings_for_domain<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+    ) -> Result<(), IdMappingProviderError> {
+        self.backend_driver
+            .delete_mappings_for_domain(ctx.state(), domain_id)
+            .await
+    }
 }
 
 #[cfg(test)]
@@ -305,6 +324,22 @@ mod tests {
 
         provider
             .delete_id_mapping(&ExecutionContext::internal(&state), "pid")
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_delete_mappings_for_domain() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockIdMappingBackend::default();
+        backend
+            .expect_delete_mappings_for_domain()
+            .withf(|_, did: &'_ str| did == "did")
+            .returning(|_, _| Ok(()));
+        let provider = create_provider(backend);
+
+        provider
+            .delete_mappings_for_domain(&ExecutionContext::internal(&state), "did")
             .await
             .unwrap();
     }
