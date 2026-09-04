@@ -482,12 +482,23 @@ impl ResourceApi for ResourceService {
                 ),
                 operation: async {
                     self.backend_driver.delete_domain(ctx.state(), id).await?;
+                    ctx.state()
+                        .provider
+                        .get_idmapping_provider()
+                        .delete_mappings_for_domain(ctx, id)
+                        .await?;
                     Ok::<(), ResourceProviderError>(())
                 },
                 on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
             }?;
         } else {
             self.backend_driver.delete_domain(ctx.state(), id).await?;
+
+            ctx.state()
+                .provider
+                .get_idmapping_provider()
+                .delete_mappings_for_domain(ctx, id)
+                .await?;
 
             ctx.state()
                 .event_dispatcher
@@ -725,6 +736,7 @@ mod tests {
     use crate::auth::ValidatedSecurityContext;
     use crate::credential::MockCredentialProvider;
     use crate::events::ProviderHooks;
+    use crate::idmapping::MockIdMappingProvider;
     use crate::provider::Provider;
     use crate::resource::backend::MockResourceBackend;
     use crate::tests::get_mocked_state;
@@ -1386,7 +1398,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_domain_invalidates_cache() {
-        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut idmapping = MockIdMappingProvider::default();
+        idmapping
+            .expect_delete_mappings_for_domain()
+            .withf(|_, id: &'_ str| id == "did")
+            .returning(|_, _| Ok(()));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_idmapping(idmapping)),
+        )
+        .await;
         let mut backend = MockResourceBackend::default();
         // Populated once by the initial `get_domain`, hit from cache inside
         // `check_domain_mutable`, then re-fetched from the backend after

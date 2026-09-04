@@ -144,6 +144,22 @@ impl IdMappingBackend for SqlBackend {
     ) -> Result<(), IdMappingProviderError> {
         id_mapping::delete(&state.db.connection(), public_id).await
     }
+
+    /// Delete every `IdMapping` row belonging to a domain.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `domain_id`: The domain ID.
+    ///
+    /// # Returns
+    /// A `Result` indicating success, or an `Error`.
+    async fn delete_mappings_for_domain<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: &'a str,
+    ) -> Result<(), IdMappingProviderError> {
+        id_mapping::delete_by_domain(&state.db.connection(), domain_id).await
+    }
 }
 
 #[async_trait]

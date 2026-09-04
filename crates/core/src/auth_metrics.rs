@@ -260,6 +260,7 @@ pub fn identity_failure_reason(e: &IdentityProviderError) -> &'static str {
         IdentityProviderError::DateError => "DateError",
         IdentityProviderError::Driver(_) => "Driver",
         IdentityProviderError::GroupNotFound(_) => "GroupNotFound",
+        IdentityProviderError::IdMappingProvider { .. } => "ProviderError",
         IdentityProviderError::Join { .. } => "ProviderError",
         IdentityProviderError::LdapConnection(_) => "LdapConnection",
         IdentityProviderError::LdapFilterBuild(_) => "LdapFilterBuild",
