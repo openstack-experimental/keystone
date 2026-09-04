@@ -41,3 +41,15 @@ pub enum IdMappingEntityType {
     /// User.
     User,
 }
+
+impl IdMappingEntityType {
+    /// String representation matching python-keystone's
+    /// `keystone.identity.mapping_backends.mapping.EntityType`
+    /// (`"group"`/`"user"`).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            IdMappingEntityType::Group => "group",
+            IdMappingEntityType::User => "user",
+        }
+    }
+}

@@ -17,8 +17,12 @@ use openstack_keystone_core_types::idmapping::{IdMapping, IdMappingEntityType};
 use crate::entity::id_mapping as db_id_mapping;
 use crate::entity::sea_orm_active_enums::EntityType;
 
+mod create;
+mod delete;
 mod get;
 
+pub use create::*;
+pub use delete::*;
 pub use get::*;
 
 impl From<db_id_mapping::Model> for IdMapping {

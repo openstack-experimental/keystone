@@ -1192,6 +1192,21 @@ mod idmapping {
                 ctx: &ExecutionContext<'a>,
                 public_id: &'a str,
             ) -> Result<Option<IdMapping>, IdMappingProviderError>;
+
+            async fn create_id_mapping<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                local_id: &'a str,
+                domain_id: &'a str,
+                entity_type: IdMappingEntityType,
+                public_id: Option<&'a str>,
+            ) -> Result<IdMapping, IdMappingProviderError>;
+
+            async fn delete_id_mapping<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                public_id: &'a str,
+            ) -> Result<(), IdMappingProviderError>;
         }
     }
 }

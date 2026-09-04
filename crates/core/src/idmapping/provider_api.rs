@@ -55,4 +55,44 @@ pub trait IdMappingApi: Send + Sync {
         ctx: &ExecutionContext<'a>,
         public_id: &'a str,
     ) -> Result<Option<IdMapping>, IdMappingProviderError>;
+
+    /// Create a new `IdMapping`.
+    ///
+    /// # Parameters
+    /// - `ctx`: The execution context.
+    /// - `local_id`: The local identifier.
+    /// - `domain_id`: The domain identifier.
+    /// - `entity_type`: The entity type.
+    /// - `public_id`: The public identifier to use. If `None`, one is
+    ///   generated deterministically from `domain_id`, `entity_type` and
+    ///   `local_id`.
+    ///
+    /// # Returns
+    /// - `Result<IdMapping, IdMappingProviderError>` - The created (or
+    ///   already-existing, on a benign race) `IdMapping`, or an `Error`.
+    async fn create_id_mapping<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        local_id: &'a str,
+        domain_id: &'a str,
+        entity_type: IdMappingEntityType,
+        public_id: Option<&'a str>,
+    ) -> Result<IdMapping, IdMappingProviderError>;
+
+    /// Delete the `IdMapping` by the public identifier.
+    ///
+    /// Silent/idempotent if no mapping is found.
+    ///
+    /// # Parameters
+    /// - `ctx`: The execution context.
+    /// - `public_id`: The public identifier.
+    ///
+    /// # Returns
+    /// - `Result<(), IdMappingProviderError>` - `Ok` on success (including
+    ///   when nothing was found), or an `Error`.
+    async fn delete_id_mapping<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        public_id: &'a str,
+    ) -> Result<(), IdMappingProviderError>;
 }
