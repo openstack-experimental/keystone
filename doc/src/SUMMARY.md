@@ -123,3 +123,4 @@
     - [Prometheus Metrics Catalog](adr/0031-prometheus-metrics.md)
     - [Vendor Data JWT Attestation](adr/0032-vendor-data-jwt.md)
     - [OpenFGA Assignment Driver](adr/0033-openfga-assignment-driver.md)
+    - [Per-Domain Assignment Drivers](adr/0034-per-domain-assignment-drivers.md)
