@@ -160,6 +160,24 @@ impl DomainConfigBackend for SqlBackend {
         get::get_option(&state.db.connection(), domain_id, group, option).await
     }
 
+    /// The IDs of every domain with a readable row for `group`/`option`.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `group`: The group the option is in.
+    /// - `option`: The option that must be present.
+    ///
+    /// # Returns
+    /// A `Result` containing the distinct domain IDs, or an `Error`.
+    async fn list_domains_with_option<'a>(
+        &self,
+        state: &ServiceState,
+        group: DomainConfigGroupName,
+        option: &'a str,
+    ) -> Result<Vec<String>, DomainConfigProviderError> {
+        get::list_domains_with_option(&state.db.connection(), group, option).await
+    }
+
     /// Merge changes into the whole configuration of a domain.
     ///
     /// # Parameters

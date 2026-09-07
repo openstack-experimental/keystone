@@ -18,11 +18,16 @@
 //! `[identity] domain_config_dir` (the `fs` driver) and the database (the `sql`
 //! driver, written through the config API). python-keystone layers the file
 //! configuration first and lets the database one override it; this module does
-//! the same, gated by the two `[identity]` switches:
+//! the same, gated by two switches (ADR 0034 §2):
 //!
-//! - `domain_specific_drivers_enabled` — consult the file source at all;
-//! - `domain_configurations_from_database` — consult the database source, which
-//!   wins where both set the same option.
+//! - files — the `[domain_config] from_files` key, falling back to the
+//!   deprecated `[identity] domain_specific_drivers_enabled`;
+//! - database — the `[domain_config] from_database` key, falling back to the
+//!   deprecated `[identity] domain_configurations_from_database`; the database
+//!   source wins where both set the same option.
+//!
+//! See [`effective_domain_config_sources`] for the fallback and the conflict
+//! warning.
 //!
 //! The result is the raw, still-serializable [`DomainConfig`] the config API
 //! returns. A consumer that needs a configuration a driver can use — the
@@ -32,15 +37,74 @@
 //! not reach a response, which is why they are deliberately left to the
 //! caller.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
+use tracing::warn;
+
 use openstack_keystone_config::Config;
-use openstack_keystone_core_types::domain_config::DomainConfig;
+use openstack_keystone_core_types::domain_config::{DomainConfig, DomainConfigGroupName};
 
 use crate::domain_config::backend::DomainConfigBackend;
 use crate::domain_config::error::DomainConfigProviderError;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
+
+/// Whether the `fs` and `sql` domain-config sources are consulted, taking the
+/// `[domain_config]` keys where set and the deprecated `[identity]` switches
+/// otherwise (ADR 0034 §2).
+///
+/// A `[domain_config]` key set to a value that contradicts an `[identity]`
+/// switch the operator moved off its default logs one `WARN`; the
+/// `[domain_config]` value still wins.
+///
+/// # Parameters
+/// - `config`: The running service configuration.
+///
+/// # Returns
+/// - `(bool, bool)` - `(consult files, consult database)`.
+pub fn effective_domain_config_sources(config: &Config) -> (bool, bool) {
+    let from_files = resolve_source(
+        "from_files",
+        config.domain_config.from_files,
+        "domain_specific_drivers_enabled",
+        config.identity.domain_specific_drivers_enabled,
+        false,
+    );
+    let from_database = resolve_source(
+        "from_database",
+        config.domain_config.from_database,
+        "domain_configurations_from_database",
+        config.identity.domain_configurations_from_database,
+        true,
+    );
+    (from_files, from_database)
+}
+
+/// One source's effective value: the explicit `[domain_config]` key when set,
+/// the `[identity]` switch otherwise. Warns only when both were set to
+/// conflicting values (the `[identity]` switch differs from its own default and
+/// from the explicit key).
+fn resolve_source(
+    key: &str,
+    explicit: Option<bool>,
+    identity_key: &str,
+    identity_value: bool,
+    identity_default: bool,
+) -> bool {
+    match explicit {
+        Some(value) => {
+            if identity_value != identity_default && value != identity_value {
+                warn!(
+                    "[domain_config] {key} = {value} overrides the conflicting \
+                     [identity] {identity_key} = {identity_value}"
+                );
+            }
+            value
+        }
+        None => identity_value,
+    }
+}
 
 /// Merges a domain's file-based and database-stored configuration into one.
 ///
@@ -48,12 +112,11 @@ use crate::plugin_manager::PluginManagerApi;
 /// switched off in `[identity]` is simply `None`, and a resolver with neither
 /// resolves every domain to the empty configuration.
 pub struct DomainConfigResolver {
-    /// The `fs` driver, `Some` when
-    /// `[identity] domain_specific_drivers_enabled` is set.
+    /// The `fs` driver, `Some` when [`effective_domain_config_sources`] reports
+    /// the file source on.
     file: Option<Arc<dyn DomainConfigBackend>>,
-    /// The `sql` driver, `Some` when
-    /// `[identity] domain_configurations_from_database` is set. Overrides the
-    /// file source option by option.
+    /// The `sql` driver, `Some` when [`effective_domain_config_sources`] reports
+    /// the database source on. Overrides the file source option by option.
     database: Option<Arc<dyn DomainConfigBackend>>,
 }
 
@@ -62,8 +125,8 @@ impl DomainConfigResolver {
     /// domain-config backends.
     ///
     /// # Parameters
-    /// - `config`: The running service configuration; its `[identity]`
-    ///   switches decide which sources are consulted.
+    /// - `config`: The running service configuration; [`effective_domain_config_sources`]
+    ///   decides which sources are consulted.
     /// - `plugin_manager`: Provides the `"fs"` / `"sql"` backends by name.
     ///
     /// # Returns
@@ -74,12 +137,13 @@ impl DomainConfigResolver {
         config: &Config,
         plugin_manager: &P,
     ) -> Result<Self, DomainConfigProviderError> {
-        let file = if config.identity.domain_specific_drivers_enabled {
+        let (from_files, from_database) = effective_domain_config_sources(config);
+        let file = if from_files {
             Some(plugin_manager.get_domain_config_backend("fs")?.clone())
         } else {
             None
         };
-        let database = if config.identity.domain_configurations_from_database {
+        let database = if from_database {
             Some(plugin_manager.get_domain_config_backend("sql")?.clone())
         } else {
             None
@@ -142,6 +206,37 @@ impl DomainConfigResolver {
             resolved.overlay(&stored);
         }
         Ok(resolved)
+    }
+
+    /// Every domain that stores an `assignment/driver` binding in any active
+    /// source, deduplicated across sources (ADR 0034 §5).
+    ///
+    /// This is the fan-out set the assignment provider sizes its per-domain
+    /// backend instances against: a domain absent from it resolves to the
+    /// global driver and needs no dedicated instance.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state, handed to each backend.
+    ///
+    /// # Returns
+    /// - `Result<Vec<String>, DomainConfigProviderError>` - The bound domain
+    ///   IDs in no particular order, or the first error a source returns.
+    pub async fn bound_domains(
+        &self,
+        state: &ServiceState,
+    ) -> Result<Vec<String>, DomainConfigProviderError> {
+        let mut domains: HashSet<String> = HashSet::new();
+        for source in [self.file.as_ref(), self.database.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            domains.extend(
+                source
+                    .list_domains_with_option(state, DomainConfigGroupName::Assignment, "driver")
+                    .await?,
+            );
+        }
+        Ok(domains.into_iter().collect())
     }
 }
 

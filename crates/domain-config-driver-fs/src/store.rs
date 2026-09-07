@@ -101,6 +101,26 @@ impl DomainConfigStore {
         self.0.get(domain_name)
     }
 
+    /// The names of every domain whose file sets `group`/`option`.
+    ///
+    /// Used to size the assignment fan-out set (ADR 0034 §5); the caller maps
+    /// the names back to domain IDs.
+    pub(crate) fn domains_with_option(
+        &self,
+        group: DomainConfigGroupName,
+        option: &str,
+    ) -> Vec<&str> {
+        self.0
+            .iter()
+            .filter(|(_, config)| {
+                config
+                    .group(group)
+                    .is_some_and(|stored| stored.get(option).is_some())
+            })
+            .map(|(name, _)| name.as_str())
+            .collect()
+    }
+
     /// Build a store straight from parsed configurations. Test helper.
     #[cfg(test)]
     pub(crate) fn from_map(map: HashMap<String, DomainConfig>) -> Self {

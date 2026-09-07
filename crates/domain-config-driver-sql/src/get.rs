@@ -205,9 +205,43 @@ pub async fn get_option<C: ConnectionTrait>(
         .next())
 }
 
+/// The IDs of every domain with a `whitelisted_config` row for `group`/`option`.
+///
+/// Reads the readable table only: an `assignment/driver` binding is a
+/// whitelisted option, never a sensitive one.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `group`: The group the option is in.
+/// - `option`: The option that must be present.
+///
+/// # Returns
+/// - `Result<Vec<String>, DomainConfigProviderError>` - The distinct domain
+///   IDs, ascending.
+pub async fn list_domains_with_option<C: ConnectionTrait>(
+    db: &C,
+    group: DomainConfigGroupName,
+    option: &str,
+) -> Result<Vec<String>, DomainConfigProviderError> {
+    let rows: Vec<(String,)> = DbWhitelistedConfig::find()
+        .select_only()
+        .column(whitelisted_config::Column::DomainId)
+        .distinct()
+        .filter(whitelisted_config::Column::Group.eq(group.as_str()))
+        .filter(whitelisted_config::Column::Option.eq(option))
+        .order_by_asc(whitelisted_config::Column::DomainId)
+        .into_tuple()
+        .all(db)
+        .await
+        .context("listing domains configured with an option")?;
+    Ok(rows.into_iter().map(|(domain_id,)| domain_id).collect())
+}
+
 #[cfg(test)]
 mod tests {
-    use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
+    use std::collections::BTreeMap;
+
+    use sea_orm::{DatabaseBackend, IntoMockRow, MockDatabase, Transaction, Value};
     use serde_json::json;
 
     use super::*;
@@ -443,5 +477,43 @@ mod tests {
         );
         // Not a single statement was issued for it.
         assert_eq!(db.into_transaction_log(), []);
+    }
+
+    #[tokio::test]
+    async fn test_list_domains_with_option() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![
+                BTreeMap::from([("domain_id", Value::from("d1"))]).into_mock_row(),
+                BTreeMap::from([("domain_id", Value::from("d2"))]).into_mock_row(),
+            ]])
+            .into_connection();
+
+        let domains = list_domains_with_option(&db, DomainConfigGroupName::Assignment, "driver")
+            .await
+            .unwrap();
+        assert_eq!(domains, ["d1".to_string(), "d2".to_string()]);
+
+        assert_eq!(
+            db.into_transaction_log(),
+            [Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"SELECT DISTINCT "whitelisted_config"."domain_id" FROM "whitelisted_config" WHERE "whitelisted_config"."group" = $1 AND "whitelisted_config"."option" = $2 ORDER BY "whitelisted_config"."domain_id" ASC"#,
+                ["assignment".into(), "driver".into()]
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_domains_with_option_is_empty_when_nothing_is_bound() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([Vec::<whitelisted_config::Model>::new()])
+            .into_connection();
+
+        assert!(
+            list_domains_with_option(&db, DomainConfigGroupName::Assignment, "driver")
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 }

@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
@@ -19,7 +20,7 @@ use serde_json::json;
 use tempfile::tempdir;
 use tracing_test::traced_test;
 
-use openstack_keystone_core_types::domain_config::DomainConfigGroupName;
+use openstack_keystone_core_types::domain_config::{DomainConfig, DomainConfigGroupName};
 
 use super::*;
 
@@ -240,4 +241,32 @@ fn section_names_are_matched_case_sensitively() {
 
     assert!(store.get("Acme").is_none(), "[Identity] is not [identity]");
     assert!(logs_contain("unsupported [section]"));
+}
+
+#[test]
+fn domains_with_option_names_only_the_files_that_set_it() {
+    let bound = DomainConfig::from_value(json!({"assignment": {"driver": "openfga"}}))
+        .expect("a valid domain configuration");
+    let other = DomainConfig::from_value(json!({"identity": {"driver": "ldap"}}))
+        .expect("a valid domain configuration");
+    let store = DomainConfigStore::from_map(HashMap::from([
+        ("Bound".to_string(), bound),
+        ("Other".to_string(), other),
+    ]));
+
+    assert_eq!(
+        store.domains_with_option(DomainConfigGroupName::Assignment, "driver"),
+        ["Bound"]
+    );
+    assert!(
+        store
+            .domains_with_option(DomainConfigGroupName::Identity, "driver")
+            .contains(&"Other")
+    );
+    // A group that is set but not the queried option.
+    assert!(
+        store
+            .domains_with_option(DomainConfigGroupName::Assignment, "url")
+            .is_empty()
+    );
 }

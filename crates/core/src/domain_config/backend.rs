@@ -126,6 +126,29 @@ pub trait DomainConfigBackend: Send + Sync {
         option: &'a str,
     ) -> Result<Option<DomainConfigOption>, DomainConfigProviderError>;
 
+    /// The IDs of every domain that stores `option` in `group`.
+    ///
+    /// Backs the fan-out set of ADR 0034 §5: the assignment provider needs the
+    /// domains that have bound a non-global `assignment/driver` without reading
+    /// each domain's configuration in turn. The result order is unspecified and
+    /// may carry duplicates within a single driver; the caller deduplicates
+    /// across drivers.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `group`: The group to look in.
+    /// - `option`: The option that must be present.
+    ///
+    /// # Returns
+    /// - `Result<Vec<String>, DomainConfigProviderError>` - The matching domain
+    ///   IDs, or an error.
+    async fn list_domains_with_option<'a>(
+        &self,
+        state: &ServiceState,
+        group: DomainConfigGroupName,
+        option: &'a str,
+    ) -> Result<Vec<String>, DomainConfigProviderError>;
+
     /// Merge changes into the whole configuration of a domain.
     ///
     /// Backs `PATCH /v3/domains/{domain_id}/config`: options absent from

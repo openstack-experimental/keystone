@@ -160,3 +160,118 @@ async fn an_error_from_a_source_propagates() {
     };
     assert!(resolver.effective_config(&state, "d1").await.is_err());
 }
+
+mod effective_sources {
+    use openstack_keystone_config::Config;
+    use tracing_test::traced_test;
+
+    use super::super::effective_domain_config_sources;
+
+    /// A config with the two `[identity]` switches and the two
+    /// `[domain_config]` keys set as given.
+    fn config(
+        identity_files: bool,
+        identity_db: bool,
+        from_files: Option<bool>,
+        from_database: Option<bool>,
+    ) -> Config {
+        let mut config = Config::default();
+        config.identity.domain_specific_drivers_enabled = identity_files;
+        config.identity.domain_configurations_from_database = identity_db;
+        config.domain_config.from_files = from_files;
+        config.domain_config.from_database = from_database;
+        config
+    }
+
+    #[test]
+    fn unset_keys_inherit_the_identity_switches_including_defaults() {
+        // `[identity]` defaults: files off, database on.
+        assert_eq!(
+            effective_domain_config_sources(&config(false, true, None, None)),
+            (false, true)
+        );
+        assert_eq!(
+            effective_domain_config_sources(&config(true, false, None, None)),
+            (true, false)
+        );
+    }
+
+    #[traced_test]
+    #[test]
+    fn an_explicit_key_wins_over_the_identity_switch_at_its_default() {
+        // `domain_specific_drivers_enabled` still at its default `false`, so
+        // turning files on through `[domain_config]` is not a conflict.
+        assert_eq!(
+            effective_domain_config_sources(&config(false, true, Some(true), Some(false))),
+            (true, false)
+        );
+        assert!(!logs_contain("overrides the conflicting"));
+    }
+
+    #[traced_test]
+    #[test]
+    fn an_explicit_key_that_contradicts_a_moved_identity_switch_warns() {
+        // Operator set `domain_specific_drivers_enabled = true` and then
+        // `[domain_config] from_files = false`: the new key wins, with a warning.
+        assert_eq!(
+            effective_domain_config_sources(&config(true, false, Some(false), Some(true))),
+            (false, true)
+        );
+        assert!(logs_contain(
+            "[domain_config] from_files = false overrides the conflicting [identity] domain_specific_drivers_enabled = true"
+        ));
+        assert!(logs_contain(
+            "[domain_config] from_database = true overrides the conflicting [identity] domain_configurations_from_database = false"
+        ));
+    }
+}
+
+/// A backend whose `list_domains_with_option` always answers with `domains`.
+fn listing_source(domains: Vec<String>) -> Arc<dyn DomainConfigBackend> {
+    let mut mock = MockDomainConfigBackend::new();
+    mock.expect_list_domains_with_option()
+        .returning(move |_, _, _| Ok(domains.clone()));
+    Arc::new(mock)
+}
+
+#[tokio::test]
+async fn bound_domains_unions_and_dedups_across_sources() {
+    let state = get_mocked_state(None, None).await;
+    let resolver = DomainConfigResolver {
+        file: Some(listing_source(vec!["a".to_string(), "b".to_string()])),
+        database: Some(listing_source(vec!["b".to_string(), "c".to_string()])),
+    };
+
+    let mut domains = resolver.bound_domains(&state).await.expect("resolvable");
+    domains.sort();
+    assert_eq!(domains, ["a", "b", "c"]);
+}
+
+#[tokio::test]
+async fn bound_domains_is_empty_with_no_source() {
+    let state = get_mocked_state(None, None).await;
+    let resolver = DomainConfigResolver {
+        file: None,
+        database: None,
+    };
+    assert!(
+        resolver
+            .bound_domains(&state)
+            .await
+            .expect("resolvable")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn bound_domains_propagates_a_source_error() {
+    let state = get_mocked_state(None, None).await;
+    let mut mock = MockDomainConfigBackend::new();
+    mock.expect_list_domains_with_option()
+        .returning(|_, _, _| Err(DomainConfigProviderError::Driver("boom".to_string())));
+    let resolver = DomainConfigResolver {
+        file: Some(Arc::new(mock)),
+        database: None,
+    };
+    assert!(resolver.bound_domains(&state).await.is_err());
+}

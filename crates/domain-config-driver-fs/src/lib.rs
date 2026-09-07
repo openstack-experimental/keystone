@@ -178,6 +178,35 @@ impl DomainConfigBackend for FsBackend {
         get::get_option(&self.store, &name, group, option)
     }
 
+    /// The IDs of every domain whose file sets `group`/`option`.
+    ///
+    /// The files are keyed by domain name, so each match is resolved back to an
+    /// ID through the resource provider; a name with no live domain is skipped.
+    async fn list_domains_with_option<'a>(
+        &self,
+        state: &ServiceState,
+        group: DomainConfigGroupName,
+        option: &'a str,
+    ) -> Result<Vec<String>, DomainConfigProviderError> {
+        let names = self.store.domains_with_option(group, option);
+        if names.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ctx = ExecutionContext::internal(state);
+        let resource = state.provider.get_resource_provider();
+        let mut ids = Vec::with_capacity(names.len());
+        for name in names {
+            let found = resource
+                .find_domain_by_name(&ctx, name)
+                .await
+                .map_err(|err| DomainConfigProviderError::Driver(err.to_string()))?;
+            if let Some(domain) = found {
+                ids.push(domain.id);
+            }
+        }
+        Ok(ids)
+    }
+
     /// Read-only: always [`DomainConfigProviderError::Readonly`].
     async fn update_domain_config<'a>(
         &self,
