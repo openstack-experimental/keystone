@@ -72,7 +72,7 @@ fn ignores_an_unknown_section_with_a_warning() {
     write(
         dir.path(),
         "keystone.Acme.conf",
-        "[identity]\ndriver = ldap\n\n[assignment]\ndriver = sql\n\n[ldap]\nurl = ldap://host\n",
+        "[identity]\ndriver = ldap\n\n[quota]\ndriver = sql\n\n[ldap]\nurl = ldap://host\n",
     );
 
     let store = DomainConfigStore::load(dir.path()).unwrap();
@@ -180,7 +180,7 @@ fn files_that_configure_nothing_are_skipped_with_a_warning() {
     write(
         dir.path(),
         "keystone.Unknown.conf",
-        "[assignment]\ndriver = sql\n",
+        "[quota]\ndriver = sql\n",
     );
     write(dir.path(), "keystone.Blank.conf", "[ldap]\n");
 

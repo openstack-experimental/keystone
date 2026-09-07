@@ -76,6 +76,7 @@ mod credential;
 mod database;
 mod default;
 mod distributed_storage;
+mod domain_config;
 mod ec2;
 mod federation;
 mod fernet_token;
@@ -120,6 +121,7 @@ pub use credential::*;
 pub use database::*;
 pub use default::*;
 pub use distributed_storage::*;
+pub use domain_config::*;
 pub use ec2::*;
 pub use federation::*;
 pub use fernet_token::*;
@@ -202,6 +204,11 @@ pub struct Config {
     #[serde(default)]
     #[validate(nested)]
     pub distributed_storage: Option<DistributedStorageConfiguration>,
+
+    /// `[domain_config]` section: per-domain configuration resolver sources
+    /// (ADR 0034 §2). Unset keys inherit the deprecated `[identity]` switches.
+    #[serde(default)]
+    pub domain_config: DomainConfigSection,
 
     /// Dynamic (WebAssembly) auth plugins configuration - ADR 0025.
     #[serde(default)]

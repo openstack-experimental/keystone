@@ -34,11 +34,14 @@ pub enum DomainConfigGroupName {
     Identity,
     /// The `[ldap]` group: how that domain's LDAP directory is reached.
     Ldap,
+    /// The `[assignment]` group: which assignment driver the domain uses
+    /// (ADR 0034 §3). One option, `driver`. Cloud-admin only (§6).
+    Assignment,
 }
 
 impl DomainConfigGroupName {
     /// Every configurable group, in a stable order.
-    pub const ALL: &'static [Self] = &[Self::Identity, Self::Ldap];
+    pub const ALL: &'static [Self] = &[Self::Identity, Self::Ldap, Self::Assignment];
 
     /// Wire name of the group.
     ///
@@ -49,6 +52,7 @@ impl DomainConfigGroupName {
         match self {
             Self::Identity => "identity",
             Self::Ldap => "ldap",
+            Self::Assignment => "assignment",
         }
     }
 }
@@ -74,6 +78,7 @@ impl FromStr for DomainConfigGroupName {
         match s {
             "identity" => Ok(Self::Identity),
             "ldap" => Ok(Self::Ldap),
+            "assignment" => Ok(Self::Assignment),
             other => Err(DomainConfigProviderError::UnsupportedGroup(
                 other.to_string(),
             )),
@@ -152,6 +157,17 @@ pub const LDAP_WHITELISTED_OPTIONS: &[&str] = &[
 /// it, and are expected to live in separate storage from the whitelisted ones.
 pub const LDAP_SENSITIVE_OPTIONS: &[&str] = &["password"];
 
+/// Whitelisted (readable) options of the `assignment` group (ADR 0034 §3).
+///
+/// Deliberately just `driver`: `list_limit` is a per-provider tuning knob, and
+/// the driver *configuration* (OpenFGA store id, URL, bearer token) is kept in
+/// server config, never the API (§3/§6).
+pub const ASSIGNMENT_WHITELISTED_OPTIONS: &[&str] = &["driver"];
+
+/// Sensitive (write-only) options of the `assignment` group. None: the API
+/// never carries a driver configuration, so it never carries a secret.
+pub const ASSIGNMENT_SENSITIVE_OPTIONS: &[&str] = &[];
+
 /// Whitelisted (readable) options of a group.
 ///
 /// # Parameters
@@ -163,6 +179,7 @@ pub const fn whitelisted_options(group: DomainConfigGroupName) -> &'static [&'st
     match group {
         DomainConfigGroupName::Identity => IDENTITY_WHITELISTED_OPTIONS,
         DomainConfigGroupName::Ldap => LDAP_WHITELISTED_OPTIONS,
+        DomainConfigGroupName::Assignment => ASSIGNMENT_WHITELISTED_OPTIONS,
     }
 }
 
@@ -177,6 +194,7 @@ pub const fn sensitive_options(group: DomainConfigGroupName) -> &'static [&'stat
     match group {
         DomainConfigGroupName::Identity => IDENTITY_SENSITIVE_OPTIONS,
         DomainConfigGroupName::Ldap => LDAP_SENSITIVE_OPTIONS,
+        DomainConfigGroupName::Assignment => ASSIGNMENT_SENSITIVE_OPTIONS,
     }
 }
 
@@ -431,10 +449,10 @@ mod tests {
 
     #[test]
     fn unknown_group_is_rejected() {
-        let err = DomainConfigGroupName::from_str("assignment").unwrap_err();
+        let err = DomainConfigGroupName::from_str("quota").unwrap_err();
         assert_eq!(
             err.to_string(),
-            "group assignment is not supported for domain specific configurations"
+            "group quota is not supported for domain specific configurations"
         );
     }
 
@@ -444,7 +462,9 @@ mod tests {
         // visible in the diff of a failing test, not just in the constant.
         assert_eq!(IDENTITY_WHITELISTED_OPTIONS.len(), 2);
         assert_eq!(LDAP_WHITELISTED_OPTIONS.len(), 49);
+        assert_eq!(ASSIGNMENT_WHITELISTED_OPTIONS, &["driver"]);
         assert!(IDENTITY_SENSITIVE_OPTIONS.is_empty());
+        assert!(ASSIGNMENT_SENSITIVE_OPTIONS.is_empty());
         assert_eq!(LDAP_SENSITIVE_OPTIONS, &["password"]);
 
         // `password` is sensitive, therefore deliberately absent from the

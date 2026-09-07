@@ -258,7 +258,7 @@ mod tests {
     #[test]
     fn decoding_skips_a_group_that_is_not_configurable() {
         assert!(
-            decode("assignment", "driver".to_string(), r#""sql""#)
+            decode("quota", "driver".to_string(), r#""sql""#)
                 .unwrap()
                 .is_none()
         );

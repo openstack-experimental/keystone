@@ -249,6 +249,9 @@ impl DomainConfigGroup {
             DomainConfigGroupName::Ldap => {
                 decode_group::<LdapProvider>(self)?;
             }
+            DomainConfigGroupName::Assignment => {
+                decode_group::<AssignmentGroupValues>(self)?;
+            }
         }
         Ok(())
     }
@@ -589,6 +592,23 @@ impl DomainConfig {
             identity.list_limit.max_list_limit = config.identity.list_limit.max_list_limit;
         }
         Ok(identity)
+    }
+
+    /// The driver name the domain's `assignment` group binds, if any
+    /// (ADR 0034 §3).
+    ///
+    /// Unlike `resolve_identity` / `resolve_ldap` there is nothing to inherit
+    /// from a global section: the API only ever carries the bare driver name,
+    /// and the driver *configuration* lives in server config. Returns `None`
+    /// when the domain stores no `assignment/driver`.
+    ///
+    /// # Returns
+    /// - `Option<String>` - The bound driver name.
+    pub fn resolve_assignment_driver_name(&self) -> Option<String> {
+        self.group(DomainConfigGroupName::Assignment)
+            .and_then(|group| group.get("driver"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
     }
 
     /// The domain's `[ldap]` section: the global one with the domain's
@@ -1122,6 +1142,16 @@ fn whitelisted_only(
         .into_iter()
         .filter(|(option, _)| super::is_whitelisted(group, option))
         .collect())
+}
+
+/// The decodable shape of the `assignment` domain-config group (ADR 0034 §3):
+/// a single required `driver` string. Kept local so `AssignmentProvider` need
+/// not gain a round-trip it is not otherwise used for — the group only ever
+/// carries `driver`.
+#[derive(Deserialize)]
+struct AssignmentGroupValues {
+    #[allow(dead_code)]
+    driver: String,
 }
 
 /// Decode a group into the config section it overrides.

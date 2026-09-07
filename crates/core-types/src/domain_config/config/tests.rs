@@ -210,11 +210,11 @@ fn config_skips_unsupported_options_on_read() {
 
 #[test]
 fn config_rejects_unknown_groups() {
-    let err = DomainConfig::from_value(json!({"assignment": {"driver": "sql"}}))
+    let err = DomainConfig::from_value(json!({"quota": {"driver": "sql"}}))
         .expect_err("an unsupported group is refused");
     assert_eq!(
         err.to_string(),
-        "group assignment is not supported for domain specific configurations"
+        "group quota is not supported for domain specific configurations"
     );
 }
 
@@ -984,5 +984,44 @@ mod overlay {
             option(&base, DomainConfigGroupName::Ldap, "url"),
             Some(&json!("ldap://file"))
         );
+    }
+}
+
+mod assignment_group {
+    use super::*;
+
+    #[test]
+    fn resolve_assignment_driver_name_extracts_the_binding() {
+        let config = config_from(json!({"assignment": {"driver": "openfga"}}));
+        assert_eq!(
+            config.resolve_assignment_driver_name(),
+            Some("openfga".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_assignment_driver_name_is_none_when_unset() {
+        let config = config_from(json!({"identity": {"driver": "ldap"}}));
+        assert_eq!(config.resolve_assignment_driver_name(), None);
+    }
+
+    #[test]
+    fn validate_values_accepts_a_string_driver() {
+        let config = config_from(json!({"assignment": {"driver": "sql"}}));
+        config
+            .group(DomainConfigGroupName::Assignment)
+            .expect("group")
+            .validate_values()
+            .expect("a string driver is valid");
+    }
+
+    #[test]
+    fn validate_values_rejects_a_non_scalar_driver() {
+        let config = config_from(json!({"assignment": {"driver": ["sql", "openfga"]}}));
+        config
+            .group(DomainConfigGroupName::Assignment)
+            .expect("group")
+            .validate_values()
+            .expect_err("an array driver is rejected");
     }
 }
