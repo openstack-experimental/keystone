@@ -170,6 +170,72 @@ impl DomainConfigService {
         }
         Ok(())
     }
+
+    /// The `assignment/driver` a domain configuration sets, if any
+    /// (ADR 0034 §3). `driver` is the group's only whitelisted option, so a
+    /// `Some` here also means "this write touches the `assignment` group".
+    fn assignment_driver(config: &DomainConfig) -> Option<String> {
+        config.resolve_assignment_driver_name()
+    }
+
+    /// Reject a write that would bind a domain to an `assignment/driver` no
+    /// running backend can serve (ADR 0034 §3): the name must be `sql`, the
+    /// global `[assignment] driver`, or the `driver` of some
+    /// `[assignment.backends.*]` block. An unrecognised name would otherwise
+    /// be stored happily and then silently fall back to the global driver at
+    /// resolve time — catch it at the write instead. `None` (the write does
+    /// not set `assignment/driver`) passes.
+    async fn validate_assignment_binding(
+        &self,
+        state: &ServiceState,
+        driver: Option<&str>,
+    ) -> Result<(), DomainConfigProviderError> {
+        let Some(driver) = driver else {
+            return Ok(());
+        };
+        let bindable = state
+            .config_manager
+            .config
+            .read()
+            .await
+            .assignment
+            .bindable_driver_names();
+        if !bindable.contains(driver) {
+            let mut names: Vec<_> = bindable.into_iter().collect();
+            names.sort();
+            return Err(DomainConfigProviderError::InvalidOptionValue {
+                group: "assignment".to_owned(),
+                option: "driver".to_owned(),
+                source: serde::de::Error::custom(format!(
+                    "{driver:?} names no configured assignment backend; valid names: {names:?}"
+                )),
+            });
+        }
+        Ok(())
+    }
+
+    /// Recompute the assignment provider's domain→driver bindings and
+    /// untargeted fan-out set after a write that touched the `assignment`
+    /// group (ADR 0034 §9). Best-effort: the write has already committed, so
+    /// a failure here is logged and swallowed — the fan-out set self-heals on
+    /// the next full config reload.
+    async fn refresh_assignment_bindings(&self, state: &ServiceState, touched: bool) {
+        if !touched {
+            return;
+        }
+        if let Err(error) = state
+            .provider
+            .get_assignment_provider()
+            .refresh_bindings(state)
+            .await
+        {
+            tracing::warn!(
+                %error,
+                "assignment binding refresh after a domain-config write failed; \
+                 the fan-out set self-heals on the next reload"
+            );
+        }
+    }
 }
 
 #[async_trait]
@@ -181,6 +247,11 @@ impl DomainConfigApi for DomainConfigService {
         config: DomainConfigCreate,
     ) -> Result<DomainConfig, DomainConfigProviderError> {
         let driver = Self::identity_driver(&config.0);
+        let assignment_driver = Self::assignment_driver(&config.0);
+        // Validate before `reconcile_registration_before`: a rejected write
+        // must not leave the SQL identity-driver registration claimed.
+        self.validate_assignment_binding(state, assignment_driver.as_deref())
+            .await?;
         self.reconcile_registration_before(state, domain_id, driver.as_deref())
             .await?;
         let stored = self
@@ -189,6 +260,8 @@ impl DomainConfigApi for DomainConfigService {
             .await?;
         self.reconcile_registration_after(state, domain_id, driver.as_deref())
             .await?;
+        self.refresh_assignment_bindings(state, assignment_driver.is_some())
+            .await;
         Ok(stored)
     }
 
@@ -232,6 +305,9 @@ impl DomainConfigApi for DomainConfigService {
         config: DomainConfigUpdate,
     ) -> Result<DomainConfig, DomainConfigProviderError> {
         let driver = Self::identity_driver(&config.0);
+        let assignment_driver = Self::assignment_driver(&config.0);
+        self.validate_assignment_binding(state, assignment_driver.as_deref())
+            .await?;
         self.reconcile_registration_before(state, domain_id, driver.as_deref())
             .await?;
         let stored = self
@@ -240,6 +316,8 @@ impl DomainConfigApi for DomainConfigService {
             .await?;
         self.reconcile_registration_after(state, domain_id, driver.as_deref())
             .await?;
+        self.refresh_assignment_bindings(state, assignment_driver.is_some())
+            .await;
         Ok(stored)
     }
 
@@ -253,6 +331,11 @@ impl DomainConfigApi for DomainConfigService {
         let driver = (group == DomainConfigGroupName::Identity)
             .then(|| Self::identity_driver(&config.0))
             .flatten();
+        let assignment_driver = (group == DomainConfigGroupName::Assignment)
+            .then(|| Self::assignment_driver(&config.0))
+            .flatten();
+        self.validate_assignment_binding(state, assignment_driver.as_deref())
+            .await?;
         self.reconcile_registration_before(state, domain_id, driver.as_deref())
             .await?;
         let stored = self
@@ -261,6 +344,8 @@ impl DomainConfigApi for DomainConfigService {
             .await?;
         self.reconcile_registration_after(state, domain_id, driver.as_deref())
             .await?;
+        self.refresh_assignment_bindings(state, assignment_driver.is_some())
+            .await;
         Ok(stored)
     }
 
@@ -273,6 +358,12 @@ impl DomainConfigApi for DomainConfigService {
         let driver = (option.group == DomainConfigGroupName::Identity && option.option == "driver")
             .then(|| option.value.as_value().as_str().map(str::to_owned))
             .flatten();
+        let assignment_driver = (option.group == DomainConfigGroupName::Assignment
+            && option.option == "driver")
+            .then(|| option.value.as_value().as_str().map(str::to_owned))
+            .flatten();
+        self.validate_assignment_binding(state, assignment_driver.as_deref())
+            .await?;
         self.reconcile_registration_before(state, domain_id, driver.as_deref())
             .await?;
         let stored = self
@@ -281,6 +372,8 @@ impl DomainConfigApi for DomainConfigService {
             .await?;
         self.reconcile_registration_after(state, domain_id, driver.as_deref())
             .await?;
+        self.refresh_assignment_bindings(state, assignment_driver.is_some())
+            .await;
         Ok(stored)
     }
 
@@ -292,6 +385,9 @@ impl DomainConfigApi for DomainConfigService {
         self.backend_driver
             .delete_domain_config(state, domain_id)
             .await?;
+        // A whole-config delete may have dropped an `assignment/driver`
+        // binding; refresh unconditionally (ADR 0034 §9).
+        self.refresh_assignment_bindings(state, true).await;
         self.release_sql_registration(state, domain_id).await
     }
 
@@ -307,6 +403,8 @@ impl DomainConfigApi for DomainConfigService {
         if group == DomainConfigGroupName::Identity {
             self.release_sql_registration(state, domain_id).await?;
         }
+        self.refresh_assignment_bindings(state, group == DomainConfigGroupName::Assignment)
+            .await;
         Ok(())
     }
 
@@ -323,6 +421,11 @@ impl DomainConfigApi for DomainConfigService {
         if group == DomainConfigGroupName::Identity && option == "driver" {
             self.release_sql_registration(state, domain_id).await?;
         }
+        self.refresh_assignment_bindings(
+            state,
+            group == DomainConfigGroupName::Assignment && option == "driver",
+        )
+        .await;
         Ok(())
     }
 
@@ -521,5 +624,104 @@ mod tests {
             .delete_domain_config(&state, "d1")
             .await
             .unwrap();
+    }
+
+    /// A `Config` with one `[assignment.backends.central_fga]` block whose
+    /// driver is `openfga`.
+    fn config_with_openfga_backend() -> Config {
+        let mut config = Config::default();
+        config.assignment.backends.insert(
+            "central_fga".to_string(),
+            serde_json::from_value(json!({
+                "driver": "openfga",
+                "api_url": "http://fga.example/",
+                "store_id": "s1",
+            }))
+            .expect("a valid openfga backend block"),
+        );
+        config
+    }
+
+    #[tokio::test]
+    async fn an_unbacked_assignment_driver_is_rejected_before_the_registration_claim() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockDomainConfigBackend::new();
+        // The reorder guarantee (ADR 0034 §3): validation fails before the SQL
+        // identity-driver registration is claimed, so a rejected write leaves
+        // no dangling claim behind.
+        backend.expect_obtain_registration().never();
+        backend.expect_create_domain_config().never();
+
+        let error = service(backend, true)
+            .create_domain_config(
+                &state,
+                "d1",
+                DomainConfigCreate(config(json!({
+                    "identity": {"driver": "sql"},
+                    "assignment": {"driver": "openfga"},
+                }))),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            DomainConfigProviderError::InvalidOptionValue { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_assignment_driver_named_by_a_backend_block_is_accepted() {
+        let state = get_mocked_state(Some(config_with_openfga_backend()), None).await;
+        let mut backend = MockDomainConfigBackend::new();
+        backend
+            .expect_create_domain_config()
+            .returning(|_, _, _| Ok(config(json!({"assignment": {"driver": "openfga"}}))));
+
+        service(backend, false)
+            .create_domain_config(
+                &state,
+                "d1",
+                DomainConfigCreate(config(json!({"assignment": {"driver": "openfga"}}))),
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_sql_assignment_driver_is_always_accepted() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockDomainConfigBackend::new();
+        backend
+            .expect_create_domain_config()
+            .returning(|_, _, _| Ok(config(json!({"assignment": {"driver": "sql"}}))));
+
+        service(backend, false)
+            .create_domain_config(
+                &state,
+                "d1",
+                DomainConfigCreate(config(json!({"assignment": {"driver": "sql"}}))),
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_unbacked_assignment_driver_is_rejected_on_the_option_path() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockDomainConfigBackend::new();
+        backend.expect_update_domain_config_option().never();
+
+        let error = service(backend, true)
+            .update_domain_config_option(
+                &state,
+                "d1",
+                DomainConfigOption::new(DomainConfigGroupName::Assignment, "driver", "openfga"),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            DomainConfigProviderError::InvalidOptionValue { .. }
+        ));
     }
 }

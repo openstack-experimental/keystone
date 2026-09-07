@@ -19,7 +19,7 @@
 
 use openstack_keystone_config::{DynamicPluginConfig, PluginMode};
 use openstack_keystone_core::auth::ExecutionContext;
-use openstack_keystone_core_types::assignment::{AssignmentType, RoleAssignmentListParameters};
+use openstack_keystone_core_types::assignment::RoleAssignmentListParameters;
 
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
@@ -72,8 +72,12 @@ async fn target_holds_system_role(
     exec: &ExecutionContext<'_>,
     user_id: &str,
 ) -> Result<bool, KeystoneApiError> {
+    // Filter on the system target directly: ADR 0034 §5 routes a `system_id`
+    // listing to the global assignment driver alone, where a bare `user_id`
+    // listing would fan out across every per-domain backend and union.
     let params = RoleAssignmentListParameters {
         user_id: Some(user_id.to_string()),
+        system_id: Some("system".to_string()),
         effective: Some(true),
         ..Default::default()
     };
@@ -82,12 +86,7 @@ async fn target_holds_system_role(
         .get_assignment_provider()
         .list_role_assignments(exec, &params)
         .await?;
-    Ok(assignments.iter().any(|a| {
-        matches!(
-            a.r#type,
-            AssignmentType::UserSystem | AssignmentType::GroupSystem
-        )
-    }))
+    Ok(!assignments.is_empty())
 }
 
 #[cfg(test)]

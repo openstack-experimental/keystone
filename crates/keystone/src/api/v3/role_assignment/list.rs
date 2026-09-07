@@ -76,6 +76,10 @@ pub(super) async fn list(
         page_reverse: false,
     };
 
+    // ADR 0034 §5: a targeted query (`scope.project`/`scope.domain`/
+    // `scope.system` filter) routes to that target's driver; an untargeted or
+    // actor-/role-only query fans out over every active backend and the
+    // provider returns the deduped, re-paginated union.
     let raw_assignments = state
         .provider
         .get_assignment_provider()

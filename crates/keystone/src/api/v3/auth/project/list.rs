@@ -52,6 +52,10 @@ pub(super) async fn list(
         .await?;
 
     let exec = ExecutionContext::from_auth(&state, &user_auth);
+    // Untargeted (`user_id`-only) listing: ADR 0034 §5 routes this through the
+    // assignment provider's fan-out over every active per-domain backend, and
+    // the deduped union is returned here unchanged. Effective mode keeps it
+    // answerable on an OpenFGA-backed domain.
     let project_ids: HashSet<String> = state
         .provider
         .get_assignment_provider()

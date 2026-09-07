@@ -82,6 +82,28 @@ pub async fn spawn_all(startup: &Startup, phase_start: Instant) {
         state.clone(),
     ));
     spawn(reconnect_db_on_config_change(token.clone(), state.clone()));
+    spawn(reload_assignment_drivers_on_config_change(
+        token.clone(),
+        state.clone(),
+    ));
+
+    // ADR 0034 §9: `AssignmentService::new` runs before `ServiceState`
+    // exists, so it starts on a global-only bootstrap bundle. Prime the real
+    // bundle now — the named `[assignment.backends.*]` instances and the
+    // untargeted fan-out set — since the resolver can finally enumerate the
+    // domains bound to a per-domain driver. `reload` logs and retains the
+    // bootstrap bundle on a build failure (it never returns `Err`), and a
+    // global-only deployment just rebuilds the same bundle, so there is
+    // nothing to handle here beyond a trace when the bundle actually changed.
+    if state
+        .provider
+        .get_assignment_provider()
+        .reload(state)
+        .await
+        .unwrap_or(false)
+    {
+        debug!("Assignment dispatch bundle primed at startup");
+    }
 
     subscribe_event_hooks(state).await;
     debug_elapsed(phase_start, "subscribe_event_hooks");
@@ -258,6 +280,45 @@ async fn reload_rate_limits_on_config_change(cancel: CancellationToken, state: S
             }
             () = cancel.cancelled() => {
                 info!("Cancellation requested. Stopping rate-limit reload task.");
+                break;
+            }
+        }
+    }
+}
+
+/// Rebuild the per-domain assignment dispatch bundle when `[assignment]` or a
+/// domain's stored `assignment/driver` binding changes across a configuration
+/// reload (ADR 0034 §9): the global backend, the named
+/// `[assignment.backends.*]` instances and the untargeted fan-out set.
+///
+/// Triggered only by `ConfigManager::notify_tx`; no periodic fallback. An
+/// unresolvable new configuration is logged and the last-known-good bundle is
+/// left in service — `AssignmentApi::reload` already collapses that into
+/// `Ok(false)`, so the `Err` arm here is a belt-and-braces log only.
+async fn reload_assignment_drivers_on_config_change(
+    cancel: CancellationToken,
+    state: ServiceState,
+) {
+    let mut reload_rx = state.config_manager.notify_tx.subscribe();
+    loop {
+        tokio::select! {
+            recv = reload_rx.recv() => {
+                match recv {
+                    Ok(()) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        match state.provider.get_assignment_provider().reload(&state).await {
+                            Ok(true) => info!("Assignment dispatch bundle reloaded"),
+                            Ok(false) => {}
+                            Err(error) => error!(
+                                %error,
+                                "Assignment driver reload failed; retaining last-known-good bundle"
+                            ),
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            () = cancel.cancelled() => {
+                info!("Cancellation requested. Stopping assignment driver reload task.");
                 break;
             }
         }
