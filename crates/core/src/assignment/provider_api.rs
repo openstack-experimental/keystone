@@ -16,6 +16,7 @@ use async_trait::async_trait;
 
 use crate::assignment::AssignmentProviderError;
 use crate::auth::ExecutionContext;
+use crate::keystone::ServiceState;
 use openstack_keystone_core_types::assignment::*;
 
 /// The trait covering [`Role`](crate::role::types::Role) assignments between
@@ -72,4 +73,27 @@ pub trait AssignmentApi: Send + Sync {
         ctx: &ExecutionContext<'a>,
         params: Assignment,
     ) -> Result<(), AssignmentProviderError>;
+
+    /// Rebuild the per-domain dispatch bundle — the global backend, the named
+    /// `[assignment.backends.*]` instances and the fan-out set — from the
+    /// current configuration and the stored `assignment/driver` bindings
+    /// (ADR 0034 §9). Clears the resolved-binding cache.
+    ///
+    /// Returns `true` when the active bundle actually changed. An unresolvable
+    /// new configuration is logged and the last-known-good bundle is kept
+    /// (`Ok(false)`).
+    ///
+    /// The default is a no-op, so a provider without per-domain dispatch — and
+    /// `MockAssignmentProvider` — needs no implementation.
+    async fn reload(&self, _state: &ServiceState) -> Result<bool, AssignmentProviderError> {
+        Ok(false)
+    }
+
+    /// Recompute only the domain→driver bindings and the fan-out set after a
+    /// domain-config API write, keeping the current resolver instance
+    /// (ADR 0034 §9). Best-effort: a failure is logged and the fan-out set
+    /// self-heals on the next full [`Self::reload`].
+    async fn refresh_bindings(&self, _state: &ServiceState) -> Result<(), AssignmentProviderError> {
+        Ok(())
+    }
 }

@@ -369,25 +369,9 @@ impl AssignmentBackend for SqlBackend {
         // (regular + system assignments) plus in-memory implied-role
         // expansion, so pagination is applied post-fetch over the fully
         // materialized, expanded set - the same in-memory over-fetch pattern
-        // used by the Raft-backed domains.
-        assignments.sort_by_key(|a| a.pagination_marker());
-        if let Some(marker) = &params.pagination.marker {
-            if params.pagination.page_reverse {
-                assignments.retain(|x| x.pagination_marker().as_str() < marker.as_str());
-            } else {
-                assignments.retain(|x| x.pagination_marker().as_str() > marker.as_str());
-            }
-        }
-        if let Some(limit) = params.pagination.limit {
-            let limit = (limit + 1) as usize;
-            if params.pagination.page_reverse {
-                if assignments.len() > limit {
-                    assignments = assignments.split_off(assignments.len() - limit);
-                }
-            } else {
-                assignments.truncate(limit);
-            }
-        }
+        // used by the Raft-backed domains, and the same helper the assignment
+        // provider re-applies over its untargeted fan-out union (ADR 0034 §5).
+        paginate_in_memory(&mut assignments, &params.pagination);
 
         Ok(assignments)
     }

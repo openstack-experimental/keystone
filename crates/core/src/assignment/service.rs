@@ -11,11 +11,24 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! # Assignments provider
+//!
+//! Per ADR 0034 the assignment provider routes each operation to a backend
+//! chosen from the assignment's **target**: `system` targets and every
+//! unconfigured domain use the global `[assignment] driver`; a domain that
+//! stores an `assignment/driver` binding and is mapped by `[assignment.domains]`
+//! to a matching `[assignment.backends.<name>]` block uses that block's shared
+//! instance. Untargeted listings fan out over every active backend and union
+//! the results (§5). The routing table is an immutable [`AssignmentBundle`]
+//! swapped in whole on every config / binding change (§9).
 use async_trait::async_trait;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use openstack_keystone_config::Config;
+use arc_swap::ArcSwap;
+use tokio::sync::RwLock;
+use tracing::{error, warn};
+
+use openstack_keystone_config::{AssignmentBackendConfig, Config};
 use openstack_keystone_core_types::assignment::*;
 use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::revoke::RevocationEventCreate;
@@ -23,11 +36,101 @@ use openstack_keystone_core_types::role::{Role, RoleListParameters};
 
 use crate::assignment::{AssignmentApi, AssignmentProviderError, backend::AssignmentBackend};
 use crate::auth::ExecutionContext;
+use crate::domain_config::DomainConfigResolver;
+use crate::domain_config::resolver::effective_domain_config_sources;
 use crate::events::AuditDispatchError;
-use crate::plugin_manager::PluginManagerApi;
+use crate::keystone::ServiceState;
+use crate::plugin_manager::{
+    PluginManagerApi, build_global_assignment_backend, build_named_assignment_backend,
+};
+use crate::resource::error::ResourceProviderError;
+
+/// Which target partition an assignment falls in. The partition is closed under
+/// Keystone's assignment hierarchy, so routing on it alone is sufficient
+/// (ADR 0034 §1).
+#[derive(Clone, Copy)]
+enum TargetKind {
+    Domain,
+    Project,
+    System,
+}
+
+/// The [`TargetKind`] an [`AssignmentType`] targets.
+fn target_kind(assignment_type: &AssignmentType) -> TargetKind {
+    match assignment_type {
+        AssignmentType::UserDomain | AssignmentType::GroupDomain => TargetKind::Domain,
+        AssignmentType::UserProject | AssignmentType::GroupProject => TargetKind::Project,
+        AssignmentType::UserSystem | AssignmentType::GroupSystem => TargetKind::System,
+    }
+}
+
+/// An immutable snapshot of everything routing needs: the global backend, the
+/// per-instance named backends and the untargeted fan-out set. Rebuilt whole
+/// and swapped in behind an [`ArcSwap`] on every config / binding change
+/// (ADR 0034 §9); a read never locks.
+struct AssignmentBundle {
+    /// The global backend: `system` targets, every unconfigured domain and
+    /// every resolution fallback (ADR 0034 §4).
+    global: Arc<dyn AssignmentBackend>,
+    /// `[assignment] driver` — the name [`Self::global`] was built from.
+    global_driver_name: String,
+    /// Whether per-domain dispatch is live (`[assignment]
+    /// domain_specific_drivers_enabled` plus a wired resolver). When off, every
+    /// operation uses [`Self::global`].
+    dispatch_enabled: bool,
+    /// `[assignment.domains]`: domain id → backend block name.
+    domains: HashMap<String, String>,
+    /// `[assignment.backends.*]`: block name → driver configuration. Retained so
+    /// a later rebuild can tell a changed block from an unchanged one and reuse
+    /// the live instance in the latter case.
+    backend_blocks: HashMap<String, AssignmentBackendConfig>,
+    /// Built named instances, block name → backend. One entry per block a
+    /// currently bound domain maps to; several domains may share one.
+    instances: HashMap<String, Arc<dyn AssignmentBackend>>,
+    /// [`Self::global`] plus every distinct [`Self::instances`] value — the set
+    /// an untargeted listing fans out over (ADR 0034 §5).
+    fanout: Vec<Arc<dyn AssignmentBackend>>,
+}
+
+impl AssignmentBundle {
+    /// The backend serving `domain_id`'s assignments given its resolved
+    /// `assignment/driver` `name` (empty = no binding).
+    ///
+    /// Mirrors ADR 0034 §4 step 3: an empty or global name resolves cleanly to
+    /// the global backend; a *stale* binding — a non-empty, non-global name with
+    /// no matching live `[assignment.backends.*]` block (gone / renamed / now a
+    /// different driver) — also falls back to the global backend but returns
+    /// `true` so the caller can log it once per resolution rather than once per
+    /// request.
+    fn resolve_named(&self, domain_id: &str, name: &str) -> (Arc<dyn AssignmentBackend>, bool) {
+        if name.is_empty() || name == self.global_driver_name {
+            return (self.global.clone(), false);
+        }
+        if let Some(block_name) = self.domains.get(domain_id)
+            && let Some(block) = self.backend_blocks.get(block_name)
+            && block.driver_name() == name
+            && let Some(instance) = self.instances.get(block_name)
+        {
+            return (instance.clone(), false);
+        }
+        (self.global.clone(), true)
+    }
+}
 
 pub struct AssignmentService {
-    backend_driver: Arc<dyn AssignmentBackend>,
+    /// Resolves a domain's effective stored configuration. `Some` only when
+    /// `[assignment] domain_specific_drivers_enabled` and at least one
+    /// domain-config source is active; `None` disables per-domain dispatch
+    /// entirely. Fixed at construction — changing the source set needs a
+    /// restart (ADR 0034 risk note on cross-reload source changes).
+    resolver: Option<Arc<DomainConfigResolver>>,
+    /// The live routing table (ADR 0034 §9).
+    bundle: ArcSwap<AssignmentBundle>,
+    /// Cache of `domain_id` → resolved `assignment/driver` name (empty string =
+    /// no binding, use the global backend). Mirrors
+    /// `IdentityService::resolved_driver_cache`; cleared whole on every reload
+    /// and every `assignment`-group config write.
+    binding_cache: RwLock<HashMap<String, String>>,
 }
 
 impl AssignmentService {
@@ -36,7 +139,7 @@ impl AssignmentService {
     /// # Parameters
     /// - `config`: The system configuration.
     /// - `plugin_manager`: The plugin manager used to resolve the assignment
-    ///   backend.
+    ///   backends.
     ///
     /// # Returns
     /// - `Result<Self, AssignmentProviderError>` - The new service instance or
@@ -45,10 +148,247 @@ impl AssignmentService {
         config: &Config,
         plugin_manager: &P,
     ) -> Result<Self, AssignmentProviderError> {
-        let backend_driver = plugin_manager
+        let global = plugin_manager
             .get_assignment_backend(config.assignment.driver.clone())?
             .clone();
-        Ok(Self { backend_driver })
+
+        let (from_files, from_database) = effective_domain_config_sources(config);
+        let resolver =
+            if config.assignment.domain_specific_drivers_enabled && (from_files || from_database) {
+                Some(Arc::new(
+                    DomainConfigResolver::new(config, plugin_manager)
+                        .map_err(|e| AssignmentProviderError::Driver(e.to_string()))?,
+                ))
+            } else {
+                None
+            };
+
+        // `resolver` is built only when the dispatch switch is on and a source
+        // is active, so its presence alone is the gate here.
+        let dispatch_enabled = resolver.is_some();
+
+        // Bootstrap bundle: the global backend only. The named
+        // `[assignment.backends.*]` instances and the fan-out set are populated
+        // by the first `reload` — the startup config-reload reactor triggers
+        // one, as does every later `[assignment]` / domain-config change.
+        // Building them here would need a `ServiceState` to enumerate the bound
+        // domains, which does not exist yet at provider construction; until the
+        // first reload every operation routes to the global backend, i.e.
+        // exactly the pre-ADR-0034 behaviour.
+        let bundle = AssignmentBundle {
+            global_driver_name: config.assignment.driver.clone(),
+            fanout: vec![global.clone()],
+            global,
+            dispatch_enabled,
+            domains: config.assignment.domains.clone(),
+            backend_blocks: config.assignment.backends.clone(),
+            instances: HashMap::new(),
+        };
+
+        Ok(Self {
+            resolver,
+            bundle: ArcSwap::from_pointee(bundle),
+            binding_cache: RwLock::new(HashMap::new()),
+        })
+    }
+
+    /// Build a service that routes every operation to one backend, with
+    /// per-domain dispatch off. Keeps the in-file unit tests that drive a
+    /// single mock backend working unchanged.
+    #[cfg(test)]
+    pub(crate) fn from_backend(backend: Arc<dyn AssignmentBackend>) -> Self {
+        let bundle = AssignmentBundle {
+            global_driver_name: String::new(),
+            dispatch_enabled: false,
+            domains: HashMap::new(),
+            backend_blocks: HashMap::new(),
+            instances: HashMap::new(),
+            fanout: vec![backend.clone()],
+            global: backend,
+        };
+        Self {
+            resolver: None,
+            bundle: ArcSwap::from_pointee(bundle),
+            binding_cache: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// The backend that serves an assignment on `(kind, target_id)`.
+    ///
+    /// `system` targets and every operation while dispatch is off use the
+    /// global backend. Otherwise the dispatch domain is `target_id` for a
+    /// domain target, or the owning domain for a project target, and the
+    /// domain's resolved `assignment/driver` name selects the backend
+    /// (per-domain cached).
+    async fn driver_for_target(
+        &self,
+        ctx: &ExecutionContext<'_>,
+        bundle: &AssignmentBundle,
+        kind: TargetKind,
+        target_id: &str,
+    ) -> Result<Arc<dyn AssignmentBackend>, AssignmentProviderError> {
+        if !bundle.dispatch_enabled {
+            return Ok(bundle.global.clone());
+        }
+        let Some(resolver) = &self.resolver else {
+            return Ok(bundle.global.clone());
+        };
+
+        let domain_id = match kind {
+            // ADR 0034 §1: `system` targets are a closed set with no owning
+            // domain; they always use the global backend (which also bounds the
+            // §6 escalation blast radius).
+            TargetKind::System => return Ok(bundle.global.clone()),
+            TargetKind::Domain => target_id.to_string(),
+            TargetKind::Project => {
+                ctx.state()
+                    .provider
+                    .get_resource_provider()
+                    .get_project(ctx, target_id)
+                    .await?
+                    .ok_or_else(|| {
+                        AssignmentProviderError::from(ResourceProviderError::ProjectNotFound(
+                            target_id.to_string(),
+                        ))
+                    })?
+                    .domain_id
+            }
+        };
+
+        let (name, newly_resolved) = match self.binding_cache.read().await.get(&domain_id).cloned()
+        {
+            Some(name) => (name, false),
+            None => {
+                let name = match resolver.effective_config(ctx.state(), &domain_id).await {
+                    Ok(config) => config.resolve_assignment_driver_name().unwrap_or_default(),
+                    Err(error) => {
+                        warn!(
+                            %domain_id,
+                            %error,
+                            "assignment domain config resolution failed; using the global driver"
+                        );
+                        String::new()
+                    }
+                };
+                self.binding_cache
+                    .write()
+                    .await
+                    .insert(domain_id.clone(), name.clone());
+                (name, true)
+            }
+        };
+
+        let (backend, stale) = bundle.resolve_named(&domain_id, &name);
+        // Log a stale binding only on the resolution that populated the cache
+        // (or the first after a reload clears it), not on every request.
+        if stale && newly_resolved {
+            warn!(
+                %domain_id,
+                %name,
+                "stale assignment binding: no matching [assignment.backends.*] block; \
+                 using the global driver"
+            );
+        }
+        Ok(backend)
+    }
+
+    /// Rebuild the routing bundle from the current configuration and the stored
+    /// bindings, then clear the binding cache and swap it in (ADR 0034 §9).
+    ///
+    /// The config read guard is dropped (via an owned clone) before any async
+    /// backend build, matching `reconnect_db_on_config_change`. The bundle is
+    /// stored only once every fallible step has succeeded, so a failure leaves
+    /// the previous bundle in service.
+    ///
+    /// # Returns
+    /// - `Ok(true)` when the swapped-in bundle differs from the previous one.
+    async fn rebuild(&self, state: &ServiceState) -> Result<bool, AssignmentProviderError> {
+        let config = state.config_manager.config.read().await.clone();
+        let prev = self.bundle.load_full();
+
+        let global_driver_name = config.assignment.driver.clone();
+        let global = if global_driver_name == prev.global_driver_name {
+            prev.global.clone()
+        } else {
+            build_global_assignment_backend(&config, &global_driver_name).await?
+        };
+
+        let dispatch_enabled =
+            self.resolver.is_some() && config.assignment.domain_specific_drivers_enabled;
+
+        let domains = config.assignment.domains.clone();
+        let backend_blocks = config.assignment.backends.clone();
+
+        // The blocks a currently bound domain maps to and that actually exist.
+        let mut active: HashSet<String> = HashSet::new();
+        if dispatch_enabled && let Some(resolver) = &self.resolver {
+            let bound = resolver
+                .bound_domains(state)
+                .await
+                .map_err(|e| AssignmentProviderError::Driver(e.to_string()))?;
+            for domain_id in &bound {
+                if let Some(block_name) = domains.get(domain_id)
+                    && backend_blocks.contains_key(block_name)
+                {
+                    active.insert(block_name.clone());
+                }
+            }
+        }
+
+        // Reuse a previous instance whenever its block config is byte-for-byte
+        // unchanged; otherwise (re)build it from the named block.
+        let mut instances: HashMap<String, Arc<dyn AssignmentBackend>> = HashMap::new();
+        for block_name in &active {
+            let block_cfg = &backend_blocks[block_name];
+            let reused = prev
+                .instances
+                .get(block_name)
+                .filter(|_| prev.backend_blocks.get(block_name) == Some(block_cfg));
+            let instance = match reused {
+                Some(existing) => existing.clone(),
+                None => {
+                    build_named_assignment_backend(&config, block_cfg.driver_name(), block_name)
+                        .await?
+                }
+            };
+            instances.insert(block_name.clone(), instance);
+        }
+
+        // Fan-out set (ADR 0034 §5): the global backend plus every distinct
+        // active named instance.
+        let mut fanout: Vec<Arc<dyn AssignmentBackend>> = vec![global.clone()];
+        for instance in instances.values() {
+            if !fanout.iter().any(|b| Arc::ptr_eq(b, instance)) {
+                fanout.push(instance.clone());
+            }
+        }
+
+        let changed = !Arc::ptr_eq(&global, &prev.global)
+            || dispatch_enabled != prev.dispatch_enabled
+            || domains != prev.domains
+            || backend_blocks != prev.backend_blocks
+            || instances.len() != prev.instances.len()
+            || instances.iter().any(|(name, instance)| {
+                prev.instances
+                    .get(name)
+                    .is_none_or(|p| !Arc::ptr_eq(p, instance))
+            });
+
+        // Clear the name cache before swapping the bundle in: a request landing
+        // in the gap re-resolves against the live domain config and the new
+        // bundle, never a stale cached name against the new bundle.
+        self.binding_cache.write().await.clear();
+        self.bundle.store(Arc::new(AssignmentBundle {
+            global,
+            global_driver_name,
+            dispatch_enabled,
+            domains,
+            backend_blocks,
+            instances,
+            fanout,
+        }));
+
+        Ok(changed)
     }
 }
 
@@ -68,8 +408,13 @@ impl AssignmentApi for AssignmentService {
         ctx: &ExecutionContext<'a>,
         grant: AssignmentCreate,
     ) -> Result<Assignment, AssignmentProviderError> {
+        let bundle = self.bundle.load_full();
+        let backend_driver = self
+            .driver_for_target(ctx, &bundle, target_kind(&grant.r#type), &grant.target_id)
+            .await?;
+
         let assignment = if let Some(vsc) = ctx.ctx() {
-            let backend_driver = &self.backend_driver;
+            let backend_driver = &backend_driver;
             let grant_clone = grant.clone();
             let grant_type = grant.r#type;
             let grant_role_id = grant.role_id.clone();
@@ -120,7 +465,7 @@ impl AssignmentApi for AssignmentService {
                 on_audit_error: |_: AuditDispatchError| AssignmentProviderError::Driver("audit dispatch failed".into()),
             }?
         } else {
-            let assignment = self.backend_driver.create_grant(ctx.state(), grant).await?;
+            let assignment = backend_driver.create_grant(ctx.state(), grant).await?;
             ctx.state()
                 .event_dispatcher
                 .emit(Event::new(
@@ -168,6 +513,14 @@ impl AssignmentApi for AssignmentService {
 
     /// List role assignments.
     ///
+    /// Target precedence, narrowest first: a `system_id` filter uses the global
+    /// backend; a `project_id` filter routes on the owning domain's driver; a
+    /// `domain_id` filter routes on that domain's driver. A request carrying
+    /// both a project and a domain routes on the project's (narrower) domain.
+    /// A fully untargeted listing fans out over every active backend and unions
+    /// the results, failing the whole call on the first backend error and
+    /// paginating the deduplicated union once (ADR 0034 §5).
+    ///
     /// # Parameters
     /// - `state`: The current service state.
     /// - `params`: The parameters for listing assignments.
@@ -180,10 +533,40 @@ impl AssignmentApi for AssignmentService {
         ctx: &ExecutionContext<'a>,
         params: &RoleAssignmentListParameters,
     ) -> Result<Vec<Assignment>, AssignmentProviderError> {
-        let mut assignments = self
-            .backend_driver
-            .list_assignments(ctx.state(), params)
-            .await?;
+        let bundle = self.bundle.load_full();
+
+        let backends: Vec<Arc<dyn AssignmentBackend>> = if params.system_id.is_some() {
+            vec![bundle.global.clone()]
+        } else if let Some(project_id) = &params.project_id {
+            vec![
+                self.driver_for_target(ctx, &bundle, TargetKind::Project, project_id)
+                    .await?,
+            ]
+        } else if let Some(domain_id) = &params.domain_id {
+            vec![
+                self.driver_for_target(ctx, &bundle, TargetKind::Domain, domain_id)
+                    .await?,
+            ]
+        } else {
+            bundle.fanout.clone()
+        };
+
+        let mut assignments = if backends.len() == 1 {
+            backends[0].list_assignments(ctx.state(), params).await?
+        } else {
+            let mut seen: HashSet<Assignment> = HashSet::new();
+            let mut merged: Vec<Assignment> = Vec::new();
+            for backend in &backends {
+                for assignment in backend.list_assignments(ctx.state(), params).await? {
+                    if seen.insert(assignment.clone()) {
+                        merged.push(assignment);
+                    }
+                }
+            }
+            paginate_in_memory(&mut merged, &params.pagination);
+            merged
+        };
+
         if !assignments.is_empty() && params.include_names.is_some_and(|x| x) {
             let roles: BTreeMap<String, Role> = ctx
                 .state()
@@ -236,8 +619,13 @@ impl AssignmentApi for AssignmentService {
 
         let role_id = grant.role_id.clone();
 
+        let bundle = self.bundle.load_full();
+        let backend_driver = self
+            .driver_for_target(ctx, &bundle, target_kind(&grant.r#type), &grant.target_id)
+            .await?;
+
         if let Some(vsc) = ctx.ctx() {
-            let backend_driver = &self.backend_driver;
+            let backend_driver = &backend_driver;
             crate::audited_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
@@ -283,9 +671,7 @@ impl AssignmentApi for AssignmentService {
                 on_audit_error: |_: AuditDispatchError| AssignmentProviderError::Driver("audit dispatch failed".into()),
             }?;
         } else {
-            self.backend_driver
-                .revoke_grant(ctx.state(), &grant)
-                .await?;
+            backend_driver.revoke_grant(ctx.state(), &grant).await?;
         }
 
         let revocation_event = RevocationEventCreate {
@@ -303,6 +689,8 @@ impl AssignmentApi for AssignmentService {
             revoked_at: chrono::Utc::now(),
         };
 
+        // ADR 0034 §4: the central revocation event stays on the global revoke
+        // provider, unrouted — it is not an assignment-backend operation.
         ctx.state()
             .provider
             .get_revoke_provider()
@@ -312,6 +700,29 @@ impl AssignmentApi for AssignmentService {
         // token carrying that role - `"cascade"`, not a direct user request.
         crate::token::TOKEN_METRICS.revoked_total.inc(["cascade"]);
 
+        Ok(())
+    }
+
+    async fn reload(&self, state: &ServiceState) -> Result<bool, AssignmentProviderError> {
+        match self.rebuild(state).await {
+            Ok(changed) => Ok(changed),
+            Err(error) => {
+                error!(
+                    %error,
+                    "assignment driver reload failed; retaining last-known-good bundle"
+                );
+                Ok(false)
+            }
+        }
+    }
+
+    async fn refresh_bindings(&self, state: &ServiceState) -> Result<(), AssignmentProviderError> {
+        if let Err(error) = self.rebuild(state).await {
+            warn!(
+                %error,
+                "assignment binding refresh failed; fan-out set will self-heal on the next reload"
+            );
+        }
         Ok(())
     }
 }
@@ -328,6 +739,34 @@ mod tests {
     use crate::role::MockRoleProvider;
     use crate::tests::get_mocked_state;
 
+    #[test]
+    fn target_kind_partitions_every_assignment_type() {
+        assert!(matches!(
+            target_kind(&AssignmentType::UserDomain),
+            TargetKind::Domain
+        ));
+        assert!(matches!(
+            target_kind(&AssignmentType::GroupDomain),
+            TargetKind::Domain
+        ));
+        assert!(matches!(
+            target_kind(&AssignmentType::UserProject),
+            TargetKind::Project
+        ));
+        assert!(matches!(
+            target_kind(&AssignmentType::GroupProject),
+            TargetKind::Project
+        ));
+        assert!(matches!(
+            target_kind(&AssignmentType::UserSystem),
+            TargetKind::System
+        ));
+        assert!(matches!(
+            target_kind(&AssignmentType::GroupSystem),
+            TargetKind::System
+        ));
+    }
+
     #[tokio::test]
     async fn test_crate_grant() {
         let state = get_mocked_state(None, None).await;
@@ -342,9 +781,7 @@ mod tests {
                 .unwrap())
         });
 
-        let provider = AssignmentService {
-            backend_driver: Arc::new(backend),
-        };
+        let provider = AssignmentService::from_backend(Arc::new(backend));
 
         assert!(
             provider
@@ -365,9 +802,7 @@ mod tests {
             .expect_list_assignments()
             .returning(|_, _| Ok(vec![]));
 
-        let provider = AssignmentService {
-            backend_driver: Arc::new(backend),
-        };
+        let provider = AssignmentService::from_backend(Arc::new(backend));
 
         assert!(
             provider
@@ -421,9 +856,7 @@ mod tests {
                 ])
             });
 
-        let provider = AssignmentService {
-            backend_driver: Arc::new(backend),
-        };
+        let provider = AssignmentService::from_backend(Arc::new(backend));
 
         let res = provider
             .list_role_assignments(
@@ -474,9 +907,7 @@ mod tests {
             .withf(move |_, params: &Assignment| *params == assignment_clone)
             .returning(|_, _| Ok(()));
 
-        let provider = AssignmentService {
-            backend_driver: Arc::new(backend),
-        };
+        let provider = AssignmentService::from_backend(Arc::new(backend));
 
         assert!(
             provider

@@ -84,7 +84,7 @@ impl AssignmentProvider {
 /// driver's full configuration. Kept in server config, never in the API
 /// (ADR 0034 §3): an API-writable driver configuration is a role-minting
 /// escalation.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(tag = "driver", rename_all = "lowercase")]
 pub enum AssignmentBackendConfig {
     /// A `sql` backend. Carries no parameters beyond the global `[database]`;
@@ -153,7 +153,7 @@ pub enum OpenFGAIdTransform {
 /// (`user`, `group`, `project`, `domain`, `system`) has a list of OpenFGA
 /// type names; the first is canonical (used for writes) and every entry is
 /// consulted on reads, checks and deletes.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, PartialEq)]
 pub struct OpenFGAAssignmentDriver {
     /// Base OpenFGA API url. Must end with `/` for the relative
     /// `stores/{id}/...` paths to resolve without dropping a path prefix.

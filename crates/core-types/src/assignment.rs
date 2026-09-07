@@ -13,6 +13,8 @@
 //! # Assignments provider
 mod assignment;
 mod error;
+mod pagination;
 
 pub use assignment::*;
 pub use error::*;
+pub use pagination::*;
