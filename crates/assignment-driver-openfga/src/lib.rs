@@ -79,10 +79,12 @@ use reqwest::{Client, RequestBuilder, Response, Url};
 use serde_json::{Value, json};
 use tracing::{debug, error, warn};
 
-use openstack_keystone_config::OpenFGAAssignmentDriver;
+use openstack_keystone_config::{AssignmentBackendConfig, OpenFGAAssignmentDriver};
 use openstack_keystone_core::assignment::{AssignmentProviderError, backend::AssignmentBackend};
 use openstack_keystone_core::keystone::ServiceState;
-use openstack_keystone_core::plugin_manager::BackendRegistration;
+use openstack_keystone_core::plugin_manager::{
+    BackendRegistration, NamedAssignmentBackendRegistration,
+};
 use openstack_keystone_core_types::assignment::*;
 
 mod types;
@@ -116,38 +118,97 @@ inventory::submit! {
     }
 }
 
+inventory::submit! {
+    NamedAssignmentBackendRegistration {
+        driver: "openfga",
+        build: |cfg, name| {
+            let block = cfg.assignment.backend_block(name).cloned();
+            let name = name.to_string();
+            Box::pin(async move {
+                match block {
+                    Some(AssignmentBackendConfig::Openfga(driver_cfg)) => Ok(
+                        Arc::new(OpenFGADriver::with_config(*driver_cfg)?)
+                            as Arc<dyn AssignmentBackend>,
+                    ),
+                    Some(other) => Err(AssignmentProviderError::NamedBackendMisconfigured(
+                        format!(
+                            "[assignment.backends.{name}] has driver `{}`, not `openfga`",
+                            other.driver_name()
+                        ),
+                    )
+                    .into()),
+                    None => Err(AssignmentProviderError::NamedBackendMisconfigured(format!(
+                        "[assignment.backends.{name}] is not defined"
+                    ))
+                    .into()),
+                }
+            })
+        },
+    }
+}
+
 pub struct OpenFGADriver {
     openfga_client: Client,
+    /// An explicit `[openfga]`-shaped configuration this instance is pinned to.
+    /// `Some` for a named `[assignment.backends.<name>]` instance (ADR 0034
+    /// §4); `None` for the global instance, which reads the live `[openfga]`
+    /// section on every call. Held in an `Arc` so [`Self::config`] hands each
+    /// backend call a cheap clone rather than copying the whole struct.
+    config_override: Option<Arc<OpenFGAAssignmentDriver>>,
 }
 
 impl Default for OpenFGADriver {
     fn default() -> Self {
         Self {
             openfga_client: Client::new(),
+            config_override: None,
         }
     }
 }
 
 impl OpenFGADriver {
-    /// Initialize the OpenFGA driver.
-    ///
-    /// `timeout_secs`, when set, is applied as a total per-request timeout on
-    /// the OpenFGA HTTP client.
-    pub fn new(timeout_secs: Option<u16>) -> Result<Self, OpenFGADriverError> {
+    /// Build the OpenFGA HTTP client, applying `timeout_secs` as a total
+    /// per-request timeout when set.
+    fn client(timeout_secs: Option<u16>) -> Result<Client, OpenFGADriverError> {
         let mut builder = Client::builder();
         if let Some(secs) = timeout_secs {
             builder = builder.timeout(Duration::from_secs(secs.into()));
         }
+        Ok(builder.build()?)
+    }
+
+    /// Initialize the global OpenFGA driver: [`Self::config`] reads the live
+    /// `[openfga]` section on every call.
+    ///
+    /// `timeout_secs`, when set, is applied as a total per-request timeout on
+    /// the OpenFGA HTTP client.
+    pub fn new(timeout_secs: Option<u16>) -> Result<Self, OpenFGADriverError> {
         Ok(Self {
-            openfga_client: builder.build()?,
+            openfga_client: Self::client(timeout_secs)?,
+            config_override: None,
         })
     }
 
-    /// Snapshot the `[openfga]` config section.
+    /// Initialize a driver pinned to one explicit configuration, for a named
+    /// `[assignment.backends.<name>]` instance (ADR 0034 §4). [`Self::config`]
+    /// then ignores the global `[openfga]` section entirely. `cfg.timeout` is
+    /// applied to the HTTP client.
+    pub fn with_config(cfg: OpenFGAAssignmentDriver) -> Result<Self, OpenFGADriverError> {
+        Ok(Self {
+            openfga_client: Self::client(cfg.timeout)?,
+            config_override: Some(Arc::new(cfg)),
+        })
+    }
+
+    /// Snapshot this instance's `[openfga]` configuration: the pinned override
+    /// when set, otherwise the live global `[openfga]` section.
     async fn config(
         &self,
         state: &ServiceState,
-    ) -> Result<OpenFGAAssignmentDriver, OpenFGADriverError> {
+    ) -> Result<Arc<OpenFGAAssignmentDriver>, OpenFGADriverError> {
+        if let Some(cfg) = &self.config_override {
+            return Ok(Arc::clone(cfg));
+        }
         state
             .config_manager
             .config
@@ -155,6 +216,7 @@ impl OpenFGADriver {
             .await
             .openfga
             .clone()
+            .map(Arc::new)
             .ok_or(OpenFGADriverError::MissingConfiguration)
     }
 

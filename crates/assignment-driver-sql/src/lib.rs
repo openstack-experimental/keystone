@@ -23,7 +23,9 @@ use openstack_keystone_core::assignment::{AssignmentProviderError, backend::Assi
 use openstack_keystone_core::db::create_table;
 use openstack_keystone_core::error::DatabaseError;
 use openstack_keystone_core::keystone::ServiceState;
-use openstack_keystone_core::plugin_manager::BackendRegistration;
+use openstack_keystone_core::plugin_manager::{
+    BackendRegistration, NamedAssignmentBackendRegistration,
+};
 use openstack_keystone_core::{SqlDriver, SqlDriverRegistration};
 use openstack_keystone_core_types::assignment::*;
 
@@ -51,6 +53,17 @@ inventory::submit! {
         name: "sql",
         selected: |_| true,
         build: |_cfg| Box::pin(async {
+            Ok(Arc::new(SqlBackend::default()) as Arc<dyn AssignmentBackend>)
+        }),
+    }
+}
+
+// A named `sql` instance carries no parameters beyond the global `[database]`,
+// so every block resolves to a plain `SqlBackend` (ADR 0034 §4).
+inventory::submit! {
+    NamedAssignmentBackendRegistration {
+        driver: "sql",
+        build: |_cfg, _name| Box::pin(async {
             Ok(Arc::new(SqlBackend::default()) as Arc<dyn AssignmentBackend>)
         }),
     }

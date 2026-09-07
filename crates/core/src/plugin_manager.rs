@@ -163,6 +163,99 @@ where
     Ok(())
 }
 
+/// A driver's self-registration for building a *named* assignment backend
+/// instance from an `[assignment.backends.<name>]` block (ADR 0034 §4).
+///
+/// Distinct from [`BackendRegistration`]: the global assignment driver is
+/// selected by `[assignment] driver` and configured from its own global
+/// section, whereas a named instance is built from one config block passed by
+/// name. A driver crate submits one of these next to its
+/// [`BackendRegistration`] with `inventory::submit!`.
+pub struct NamedAssignmentBackendRegistration {
+    /// The driver discriminator this builder handles, matching an
+    /// `[assignment.backends.<name>]` block's `driver =` (e.g. `"openfga"`).
+    pub driver: &'static str,
+    /// Builds one instance from the named block. Reads `config.assignment
+    /// .backend_block(block_name)` for its parameters; fails when the block is
+    /// absent or names a different driver.
+    pub build: fn(config: &Config, block_name: &str) -> BuildFuture<dyn AssignmentBackend>,
+}
+
+inventory::collect!(NamedAssignmentBackendRegistration);
+
+/// Build the global assignment backend for `driver` without a
+/// [`PluginManager`] — the entry point a config reload uses to rebuild the
+/// global instance in place (ADR 0034 §9).
+///
+/// # Errors
+/// - [`AssignmentProviderError::UnsupportedDriver`] when no driver registered
+///   under `driver`.
+/// - [`AssignmentProviderError::Driver`] when more than one driver registered
+///   under `driver`, or wrapping any error from the driver's constructor.
+pub async fn build_global_assignment_backend(
+    config: &Config,
+    driver: &str,
+) -> Result<Arc<dyn AssignmentBackend>, AssignmentProviderError> {
+    let reg = single_registration(
+        inventory::iter::<BackendRegistration<dyn AssignmentBackend>>
+            .into_iter()
+            .filter(|reg| reg.name == driver),
+        driver,
+    )?;
+    (reg.build)(config)
+        .await
+        .map_err(|err| AssignmentProviderError::Driver(err.to_string()))
+}
+
+/// Pick the sole registration from `matches`, mirroring the duplicate-name
+/// rejection [`register_backends`] does at plugin-manager build time.
+///
+/// # Errors
+/// - [`AssignmentProviderError::UnsupportedDriver`] when `matches` is empty.
+/// - [`AssignmentProviderError::Driver`] when it yields more than one.
+fn single_registration<T>(
+    mut matches: impl Iterator<Item = T>,
+    driver: &str,
+) -> Result<T, AssignmentProviderError> {
+    let reg = matches
+        .next()
+        .ok_or_else(|| AssignmentProviderError::UnsupportedDriver(driver.to_string()))?;
+    if matches.next().is_some() {
+        return Err(AssignmentProviderError::Driver(format!(
+            "multiple assignment drivers registered under `{driver}`"
+        )));
+    }
+    Ok(reg)
+}
+
+/// Build one named assignment backend instance from the
+/// `[assignment.backends.<block_name>]` block, dispatching on `driver`
+/// (ADR 0034 §4).
+///
+/// # Errors
+/// - [`AssignmentProviderError::UnsupportedDriver`] when no driver registered
+///   a [`NamedAssignmentBackendRegistration`] for `driver`.
+/// - [`AssignmentProviderError::NamedBackendMisconfigured`] when the block is
+///   absent or names a different driver.
+/// - [`AssignmentProviderError::Driver`] when more than one driver registered
+///   under `driver`, or wrapping any other construction failure.
+pub async fn build_named_assignment_backend(
+    config: &Config,
+    driver: &str,
+    block_name: &str,
+) -> Result<Arc<dyn AssignmentBackend>, AssignmentProviderError> {
+    let reg = single_registration(
+        inventory::iter::<NamedAssignmentBackendRegistration>
+            .into_iter()
+            .filter(|reg| reg.driver == driver),
+        driver,
+    )?;
+    (reg.build)(config, block_name).await.map_err(|err| {
+        err.downcast::<AssignmentProviderError>()
+            .unwrap_or_else(|err| AssignmentProviderError::Driver(err.to_string()))
+    })
+}
+
 /// Plugin manager trait.
 pub trait PluginManagerApi {
     /// Get registered API Key backend.
@@ -203,6 +296,16 @@ pub trait PluginManagerApi {
         &self,
         name: S,
     ) -> Result<&Arc<dyn AssignmentBackend>, AssignmentProviderError>;
+
+    /// Every registered assignment backend, keyed by driver name.
+    ///
+    /// The assignment provider clones this to seed its per-domain dispatch
+    /// bundle (ADR 0034 §4); with the `openfga` driver crate linked it holds
+    /// both `"sql"` and `"openfga"`.
+    ///
+    /// # Returns
+    /// - `&HashMap<String, Arc<dyn AssignmentBackend>>` - The registry.
+    fn assignment_backends(&self) -> &HashMap<String, Arc<dyn AssignmentBackend>>;
 
     /// Get registered catalog backend.
     ///
@@ -716,4 +819,29 @@ pub trait PluginManagerApi {
         name: S,
         plugin: Arc<dyn PolicyStoreBackend>,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use openstack_keystone_config::Config;
+
+    use super::*;
+
+    /// No assignment driver crate is linked into `core`'s own test binary, so
+    /// every name is unknown — the lookup must report it rather than panic.
+    #[tokio::test]
+    async fn build_global_assignment_backend_rejects_an_unknown_driver() {
+        match build_global_assignment_backend(&Config::default(), "nope").await {
+            Err(AssignmentProviderError::UnsupportedDriver(name)) => assert_eq!(name, "nope"),
+            other => panic!("expected UnsupportedDriver, got {:?}", other.err()),
+        }
+    }
+
+    #[tokio::test]
+    async fn build_named_assignment_backend_rejects_an_unknown_driver() {
+        match build_named_assignment_backend(&Config::default(), "nope", "block").await {
+            Err(AssignmentProviderError::UnsupportedDriver(name)) => assert_eq!(name, "nope"),
+            other => panic!("expected UnsupportedDriver, got {:?}", other.err()),
+        }
+    }
 }

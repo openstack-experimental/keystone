@@ -186,6 +186,10 @@ impl PluginManagerApi for PluginManager {
         )
     }
 
+    fn assignment_backends(&self) -> &HashMap<String, Arc<dyn AssignmentBackend>> {
+        &self.assignment_backends
+    }
+
     /// Get registered catalog backend.
     ///
     /// # Parameters

@@ -1311,6 +1311,117 @@ async fn send_retries_transient_server_error() -> Result<()> {
 }
 
 #[tokio::test]
+async fn with_config_pins_each_instance_to_its_own_store() -> Result<()> {
+    // Two `with_config` instances must issue to their own `api_url`/`store_id`,
+    // never the global `[openfga]` (here absent), proving the per-instance
+    // override is consulted (ADR 0034 §4).
+    let srv_a = MockServer::start_async().await;
+    let srv_b = MockServer::start_async().await;
+    let state = get_mocked_state(Some(Config::default()), None).await;
+
+    let mut cfg_a = driver_config(&srv_a.base_url());
+    cfg_a.store_id = "store_a".into();
+    let mut cfg_b = driver_config(&srv_b.base_url());
+    cfg_b.store_id = "store_b".into();
+
+    let hit_a = srv_a
+        .mock_async(|when, then| {
+            when.method("POST").path("/stores/store_a/check");
+            then.status(200).json_body(json!({"allowed": true}));
+        })
+        .await;
+    let hit_b = srv_b
+        .mock_async(|when, then| {
+            when.method("POST").path("/stores/store_b/check");
+            then.status(200).json_body(json!({"allowed": false}));
+        })
+        .await;
+
+    let driver_a = OpenFGADriver::with_config(cfg_a).expect("client builds");
+    let driver_b = OpenFGADriver::with_config(cfg_b).expect("client builds");
+    let grant = user_project_assignment("actor_id", "role_id", "target_id");
+
+    assert!(driver_a.check_grant(&state, &grant).await?);
+    assert!(!driver_b.check_grant(&state, &grant).await?);
+    hit_a.assert_async().await;
+    hit_b.assert_async().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn build_named_assignment_backend_builds_the_openfga_block() -> Result<()> {
+    use openstack_keystone_core::plugin_manager::build_named_assignment_backend;
+
+    let srv = MockServer::start_async().await;
+    let mut block = driver_config(&srv.base_url());
+    block.store_id = "named_store".into();
+    let mut config = Config::default();
+    config.assignment.backends.insert(
+        "central_fga".to_string(),
+        AssignmentBackendConfig::Openfga(Box::new(block)),
+    );
+
+    let state = get_mocked_state(Some(Config::default()), None).await;
+    let hit = srv
+        .mock_async(|when, then| {
+            when.method("POST").path("/stores/named_store/check");
+            then.status(200).json_body(json!({"allowed": true}));
+        })
+        .await;
+
+    let backend = build_named_assignment_backend(&config, "openfga", "central_fga")
+        .await
+        .expect("the block builds");
+    assert!(
+        backend
+            .check_grant(&state, &user_project_assignment("a", "role_id", "t"))
+            .await?
+    );
+    hit.assert_async().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn build_named_assignment_backend_rejects_a_missing_block() {
+    use openstack_keystone_core::plugin_manager::build_named_assignment_backend;
+
+    match build_named_assignment_backend(&Config::default(), "openfga", "nope").await {
+        Err(AssignmentProviderError::NamedBackendMisconfigured(msg)) => {
+            assert!(
+                msg.contains("[assignment.backends.nope] is not defined"),
+                "{msg}"
+            )
+        }
+        other => panic!(
+            "expected a misconfigured-block error, got {:?}",
+            other.err()
+        ),
+    }
+}
+
+#[tokio::test]
+async fn build_named_assignment_backend_rejects_a_non_openfga_block() {
+    use openstack_keystone_core::plugin_manager::build_named_assignment_backend;
+
+    let mut config = Config::default();
+    config
+        .assignment
+        .backends
+        .insert("central".to_string(), AssignmentBackendConfig::Sql);
+
+    match build_named_assignment_backend(&config, "openfga", "central").await {
+        Err(AssignmentProviderError::NamedBackendMisconfigured(msg)) => assert!(
+            msg.contains("[assignment.backends.central] has driver `sql`, not `openfga`"),
+            "{msg}"
+        ),
+        other => panic!(
+            "expected a misconfigured-block error, got {:?}",
+            other.err()
+        ),
+    }
+}
+
+#[tokio::test]
 async fn send_does_not_retry_client_error() -> Result<()> {
     let srv = MockServer::start_async().await;
     let mut cfg = driver_config(&srv.base_url());

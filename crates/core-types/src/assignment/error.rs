@@ -45,6 +45,15 @@ pub enum AssignmentProviderError {
     #[error("{0}")]
     InvalidAssignmentType(String),
 
+    /// A named `[assignment.backends.<name>]` block referenced by
+    /// `[assignment.domains]` is absent or names a different driver
+    /// (ADR 0034 §4). A server-config mistake surfaced when a backend
+    /// instance is built, kept distinct from [`Self::Driver`] (a runtime
+    /// backend fault) so a config reload / write-time validation can tell
+    /// the two apart.
+    #[error("{0}")]
+    NamedBackendMisconfigured(String),
+
     /// The request shape is not supported by the configured backend driver
     /// (e.g. a query the OpenFGA driver cannot answer without a target
     /// scope). A permanent, driver-specific limitation - not a transient
