@@ -151,6 +151,38 @@ impl DomainConfigResolver {
         Ok(Self { file, database })
     }
 
+    /// A resolver wired directly to already-resolved backend handles, taking
+    /// only the two source switches from the configuration.
+    ///
+    /// Unlike [`Self::new`] this needs no plugin manager, so a running service
+    /// can rebuild the resolver on a config reload (ADR 0034 §9) from handles
+    /// it captured at construction. A source that its switch turns on but whose
+    /// handle is `None` (the driver was never registered) is simply skipped.
+    ///
+    /// # Parameters
+    /// - `config`: The running service configuration; [`effective_domain_config_sources`]
+    ///   decides which sources are consulted.
+    /// - `file`: The `fs` domain-config backend handle, if registered.
+    /// - `database`: The `sql` domain-config backend handle, if registered.
+    pub fn from_backends(
+        config: &Config,
+        file: Option<Arc<dyn DomainConfigBackend>>,
+        database: Option<Arc<dyn DomainConfigBackend>>,
+    ) -> Self {
+        let (from_files, from_database) = effective_domain_config_sources(config);
+        Self {
+            file: from_files.then_some(file).flatten(),
+            database: from_database.then_some(database).flatten(),
+        }
+    }
+
+    /// Whether the resolver has at least one active source. A sourceless
+    /// resolver resolves every domain to the empty configuration, so a caller
+    /// gating per-domain dispatch can treat it as "off".
+    pub fn has_source(&self) -> bool {
+        self.file.is_some() || self.database.is_some()
+    }
+
     /// A resolver with no source: every domain resolves to the empty
     /// configuration. Used by the mocked provider builder.
     ///

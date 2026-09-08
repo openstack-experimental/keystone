@@ -24,7 +24,7 @@ use async_trait::async_trait;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use arc_swap::ArcSwap;
+use arc_swap::{ArcSwap, ArcSwapOption};
 use tokio::sync::RwLock;
 use tracing::{error, warn};
 
@@ -37,6 +37,7 @@ use openstack_keystone_core_types::role::{Role, RoleListParameters};
 use crate::assignment::{AssignmentApi, AssignmentProviderError, backend::AssignmentBackend};
 use crate::auth::ExecutionContext;
 use crate::domain_config::DomainConfigResolver;
+use crate::domain_config::backend::DomainConfigBackend;
 use crate::domain_config::resolver::effective_domain_config_sources;
 use crate::events::AuditDispatchError;
 use crate::keystone::ServiceState;
@@ -121,9 +122,18 @@ pub struct AssignmentService {
     /// Resolves a domain's effective stored configuration. `Some` only when
     /// `[assignment] domain_specific_drivers_enabled` and at least one
     /// domain-config source is active; `None` disables per-domain dispatch
-    /// entirely. Fixed at construction — changing the source set needs a
-    /// restart (ADR 0034 risk note on cross-reload source changes).
-    resolver: Option<Arc<DomainConfigResolver>>,
+    /// entirely. Rebuilt from the live configuration on every reload (ADR 0034
+    /// §9) from the backend handles in [`Self::dc_file_backend`] /
+    /// [`Self::dc_sql_backend`], so flipping the dispatch switch or the source
+    /// set takes effect without a restart.
+    resolver: ArcSwapOption<DomainConfigResolver>,
+    /// The `fs` domain-config backend, captured once at construction so a
+    /// reload can re-wire the resolver without a plugin manager. `None` when no
+    /// `fs` domain-config driver is registered.
+    dc_file_backend: Option<Arc<dyn DomainConfigBackend>>,
+    /// The `sql` domain-config backend, same rationale as
+    /// [`Self::dc_file_backend`].
+    dc_sql_backend: Option<Arc<dyn DomainConfigBackend>>,
     /// The live routing table (ADR 0034 §9).
     bundle: ArcSwap<AssignmentBundle>,
     /// Cache of `domain_id` → resolved `assignment/driver` name (empty string =
@@ -151,6 +161,16 @@ impl AssignmentService {
         let global = plugin_manager
             .get_assignment_backend(config.assignment.driver.clone())?
             .clone();
+
+        // Domain-config backend handles for later resolver rebuilds. Captured
+        // unconditionally (independent of the current switches, which a reload
+        // may flip on) and best-effort — a driver that is not registered is
+        // simply unavailable as a source.
+        let dc_file_backend = plugin_manager.get_domain_config_backend("fs").ok().cloned();
+        let dc_sql_backend = plugin_manager
+            .get_domain_config_backend("sql")
+            .ok()
+            .cloned();
 
         let (from_files, from_database) = effective_domain_config_sources(config);
         let resolver =
@@ -186,7 +206,9 @@ impl AssignmentService {
         };
 
         Ok(Self {
-            resolver,
+            resolver: ArcSwapOption::new(resolver),
+            dc_file_backend,
+            dc_sql_backend,
             bundle: ArcSwap::from_pointee(bundle),
             binding_cache: RwLock::new(HashMap::new()),
         })
@@ -207,7 +229,9 @@ impl AssignmentService {
             global: backend,
         };
         Self {
-            resolver: None,
+            resolver: ArcSwapOption::empty(),
+            dc_file_backend: None,
+            dc_sql_backend: None,
             bundle: ArcSwap::from_pointee(bundle),
             binding_cache: RwLock::new(HashMap::new()),
         }
@@ -244,10 +268,21 @@ impl AssignmentService {
             fanout,
         };
         Self {
-            resolver,
+            resolver: ArcSwapOption::new(resolver),
+            dc_file_backend: None,
+            dc_sql_backend: None,
             bundle: ArcSwap::from_pointee(bundle),
             binding_cache: RwLock::new(HashMap::new()),
         }
+    }
+
+    /// Attach a `sql` domain-config backend handle so [`Self::rebuild`] treats
+    /// this service as one that can re-wire its resolver on reload (the
+    /// production path). Test-only.
+    #[cfg(test)]
+    pub(crate) fn with_dc_sql_backend(mut self, backend: Arc<dyn DomainConfigBackend>) -> Self {
+        self.dc_sql_backend = Some(backend);
+        self
     }
 
     /// The backend that serves an assignment on `(kind, target_id)`.
@@ -267,7 +302,8 @@ impl AssignmentService {
         if !bundle.dispatch_enabled {
             return Ok(bundle.global.clone());
         }
-        let Some(resolver) = &self.resolver else {
+        let resolver = self.resolver.load_full();
+        let Some(resolver) = resolver.as_deref() else {
             return Ok(bundle.global.clone());
         };
 
@@ -354,15 +390,43 @@ impl AssignmentService {
             build_global_assignment_backend(&config, &global_driver_name).await?
         };
 
-        let dispatch_enabled =
-            self.resolver.is_some() && config.assignment.domain_specific_drivers_enabled;
+        // Re-wire the resolver from the live configuration (ADR 0034 §9): the
+        // dispatch switch and the two source switches can all change across a
+        // reload, and a DB-sourced binding written on another node only becomes
+        // visible once the resolver is consulted again. The backend handles
+        // themselves are stable, captured at construction.
+        //
+        // A service with no captured handles (the test constructors, and any
+        // deployment with neither domain-config driver registered) keeps the
+        // resolver it was built with, re-gated on the dispatch switch alone.
+        let resolver = if self.dc_file_backend.is_some() || self.dc_sql_backend.is_some() {
+            config
+                .assignment
+                .domain_specific_drivers_enabled
+                .then(|| {
+                    DomainConfigResolver::from_backends(
+                        &config,
+                        self.dc_file_backend.clone(),
+                        self.dc_sql_backend.clone(),
+                    )
+                })
+                .filter(DomainConfigResolver::has_source)
+                .map(Arc::new)
+        } else {
+            self.resolver
+                .load_full()
+                .filter(|_| config.assignment.domain_specific_drivers_enabled)
+        };
+        self.resolver.store(resolver.clone());
+
+        let dispatch_enabled = resolver.is_some();
 
         let domains = config.assignment.domains.clone();
         let backend_blocks = config.assignment.backends.clone();
 
         // The blocks a currently bound domain maps to and that actually exist.
         let mut active: HashSet<String> = HashSet::new();
-        if dispatch_enabled && let Some(resolver) = &self.resolver {
+        if let Some(resolver) = &resolver {
             let bound = resolver
                 .bound_domains(state)
                 .await

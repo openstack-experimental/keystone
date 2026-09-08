@@ -192,6 +192,41 @@ async fn an_unresolvable_new_config_keeps_the_previous_bundle() {
     );
 }
 
+/// The dispatch switch flipped **on** by a config reload takes effect: the
+/// resolver is re-wired from the captured backend handle, not frozen at
+/// construction.
+#[tokio::test]
+async fn flipping_the_dispatch_switch_on_via_reload_takes_effect() {
+    // Built with the switch off — no resolver, dispatch disabled.
+    let state = get_mocked_state(Some(config(assignment_section(false, false))), None).await;
+    let mut sql_mock = MockDomainConfigBackend::new();
+    sql_mock
+        .expect_list_domains_with_option()
+        .returning(|_, _, _| Ok(Vec::new()));
+    let sql_backend: Arc<dyn DomainConfigBackend> = Arc::new(sql_mock);
+    let provider = AssignmentService::from_parts(
+        "openfga",
+        Arc::new(MockAssignmentBackend::default()),
+        HashMap::new(),
+        HashMap::new(),
+        HashMap::new(),
+        None,
+    )
+    .with_dc_sql_backend(sql_backend);
+    assert!(!provider.bundle.load_full().dispatch_enabled);
+
+    // Operator turns per-domain dispatch on; the config reloads.
+    *state.config_manager.config.write().await = config(assignment_section(true, false));
+    let changed = provider.reload(&state).await.unwrap();
+
+    assert!(changed, "the switch flip must be observable");
+    assert!(
+        provider.bundle.load_full().dispatch_enabled,
+        "dispatch is live after the reload without a restart"
+    );
+    assert!(provider.resolver.load_full().is_some());
+}
+
 #[tokio::test]
 async fn refresh_bindings_swallows_a_rebuild_error() {
     let named: Arc<dyn AssignmentBackend> = Arc::new(MockAssignmentBackend::default());
