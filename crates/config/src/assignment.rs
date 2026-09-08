@@ -153,7 +153,7 @@ pub enum OpenFGAIdTransform {
 /// (`user`, `group`, `project`, `domain`, `system`) has a list of OpenFGA
 /// type names; the first is canonical (used for writes) and every entry is
 /// consulted on reads, checks and deletes.
-#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[derive(Deserialize, Clone, PartialEq)]
 pub struct OpenFGAAssignmentDriver {
     /// Base OpenFGA API url. Must end with `/` for the relative
     /// `stores/{id}/...` paths to resolve without dropping a path prefix.
@@ -217,6 +217,30 @@ pub struct OpenFGAAssignmentDriver {
     /// Id format transform applied between Keystone and OpenFGA.
     #[serde(default)]
     pub id_transform: OpenFGAIdTransform,
+}
+
+impl std::fmt::Debug for OpenFGAAssignmentDriver {
+    /// Hand-written so `api_key` (a bearer token) never reaches a log line or a
+    /// panic message. Its presence is still shown; its value is not.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenFGAAssignmentDriver")
+            .field("api_url", &self.api_url)
+            .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
+            .field("model_id", &self.model_id)
+            .field("store_id", &self.store_id)
+            .field("timeout", &self.timeout)
+            .field("max_retries", &self.max_retries)
+            .field("retry_backoff_ms", &self.retry_backoff_ms)
+            .field("max_concurrency", &self.max_concurrency)
+            .field("role_to_relation", &self.role_to_relation)
+            .field("user_actor_types", &self.user_actor_types)
+            .field("group_actor_types", &self.group_actor_types)
+            .field("project_target_types", &self.project_target_types)
+            .field("domain_target_types", &self.domain_target_types)
+            .field("system_target_types", &self.system_target_types)
+            .field("id_transform", &self.id_transform)
+            .finish()
+    }
 }
 
 #[cfg(test)]
@@ -306,5 +330,24 @@ store_id = 01ABC
             a.backend_block("local"),
             Some(AssignmentBackendConfig::Sql)
         ));
+    }
+
+    #[test]
+    fn debug_redacts_the_api_key() {
+        let a = parse(
+            r#"
+[assignment.backends.central_fga]
+driver = openfga
+api_url = https://openfga.internal:8080/
+store_id = 01ABC
+api_key = super-secret-token
+"#,
+        );
+        let rendered = format!("{:?}", a.backend_block("central_fga").unwrap());
+        assert!(
+            !rendered.contains("super-secret-token"),
+            "api_key leaked into Debug output: {rendered}"
+        );
+        assert!(rendered.contains("<redacted>"), "{rendered}");
     }
 }
