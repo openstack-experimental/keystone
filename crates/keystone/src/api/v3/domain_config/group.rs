@@ -412,6 +412,56 @@ mod tests {
             ValidatedSecurityContext::test_new(sc)
         }
 
+        /// A `system`-scoped caller (maps to `input.credentials.system ==
+        /// "all"` in policy input). ADR 0034 §6: only such a token — a genuine
+        /// cloud administrator — may write the `assignment` group.
+        fn system_scoped_vsc(roles: &[&str]) -> ValidatedSecurityContext {
+            let authz = AuthzInfoBuilder::default()
+                .scope(ScopeInfo::System("system".to_string()))
+                .roles(
+                    roles
+                        .iter()
+                        .enumerate()
+                        .map(|(i, name)| RoleRef {
+                            domain_id: None,
+                            id: format!("role-{i}"),
+                            name: Some((*name).to_string()),
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .build()
+                .unwrap();
+
+            let sc = SecurityContext::test_build()
+                .authentication_context(AuthenticationContext::Password)
+                .principal(PrincipalInfo {
+                    identity: IdentityInfo::User(
+                        UserIdentityInfoBuilder::default()
+                            .user_id("caller")
+                            .user(
+                                UserResponseBuilder::default()
+                                    .id("caller")
+                                    .domain_id("caller")
+                                    .enabled(true)
+                                    .name("caller")
+                                    .build()
+                                    .unwrap(),
+                            )
+                            .user_domain(Domain {
+                                id: "caller".to_string(),
+                                name: "caller".to_string(),
+                                enabled: true,
+                                ..Default::default()
+                            })
+                            .build()
+                            .unwrap(),
+                    ),
+                })
+                .authorization(authz)
+                .build();
+            ValidatedSecurityContext::test_new(sc)
+        }
+
         /// `PATCH /did/config/<group>` with `{"config": body}` under `vsc`,
         /// against the real policy. The provider mock echoes the write back,
         /// so a policy `allow` yields 200 and a deny yields 403.
@@ -506,11 +556,37 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn admin_role_may_write_the_assignment_group() {
+        async fn domain_scoped_admin_is_denied_the_assignment_group() {
+            // ADR 0034 §6: binding a domain to an assignment backend is a
+            // role-minting surface reserved for cloud admins. A domain-scoped
+            // `admin` — however privileged within its own domain — must not
+            // reach it.
             let status = patch_group(
                 domain_scoped_vsc("did", &["admin"]),
                 "assignment",
                 json!({"assignment": {"driver": "sql"}}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+
+        #[tokio::test]
+        async fn system_scoped_admin_may_write_the_assignment_group() {
+            let status = patch_group(
+                system_scoped_vsc(&["admin"]),
+                "assignment",
+                json!({"assignment": {"driver": "sql"}}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn domain_scoped_admin_may_still_write_a_non_assignment_group() {
+            let status = patch_group(
+                domain_scoped_vsc("did", &["admin"]),
+                "ldap",
+                json!({"ldap": {"url": "ldap://in"}}),
             )
             .await;
             assert_eq!(status, StatusCode::OK);
@@ -529,9 +605,21 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn admin_role_may_write_the_assignment_group_on_the_option_path() {
+        async fn domain_scoped_admin_is_denied_the_assignment_group_on_the_option_path() {
             let status = patch_option(
                 domain_scoped_vsc("did", &["admin"]),
+                "assignment",
+                "driver",
+                json!({"assignment": {"driver": "sql"}}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+
+        #[tokio::test]
+        async fn system_scoped_admin_may_write_the_assignment_group_on_the_option_path() {
+            let status = patch_option(
+                system_scoped_vsc(&["admin"]),
                 "assignment",
                 "driver",
                 json!({"assignment": {"driver": "sql"}}),
@@ -578,6 +666,63 @@ mod tests {
                 .unwrap();
 
             assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        }
+
+        #[tokio::test]
+        async fn domain_scoped_admin_is_denied_deleting_the_assignment_group() {
+            let mut mock = MockDomainConfigProvider::default();
+            mock.expect_delete_domain_config_group().never();
+
+            let (state, _opa_guard) =
+                get_state_with_real_policy(Provider::mocked_builder().mock_domain_config(mock))
+                    .await;
+            let mut api = openapi_router()
+                .layer(TraceLayer::new_for_http())
+                .with_state(state);
+
+            let response = api
+                .as_service()
+                .oneshot(
+                    Request::builder()
+                        .method("DELETE")
+                        .uri("/did/config/assignment")
+                        .extension(domain_scoped_vsc("did", &["admin"]))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        }
+
+        #[tokio::test]
+        async fn system_scoped_admin_may_delete_the_assignment_group() {
+            let mut mock = MockDomainConfigProvider::default();
+            mock.expect_delete_domain_config_group()
+                .returning(|_, _, _| Ok(()));
+
+            let (state, _opa_guard) =
+                get_state_with_real_policy(Provider::mocked_builder().mock_domain_config(mock))
+                    .await;
+            let mut api = openapi_router()
+                .layer(TraceLayer::new_for_http())
+                .with_state(state);
+
+            let response = api
+                .as_service()
+                .oneshot(
+                    Request::builder()
+                        .method("DELETE")
+                        .uri("/did/config/assignment")
+                        .extension(system_scoped_vsc(&["admin"]))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
         }
     }
 }

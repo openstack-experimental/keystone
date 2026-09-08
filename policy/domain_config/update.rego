@@ -14,17 +14,29 @@ package identity.domain_config.update
 
 default allow := false
 
-allow if {
-	"admin" in input.credentials.roles
-}
-
+# The configured admin SVID (system-level operator) may write any group.
 allow if {
 	input.credentials.is_admin
 }
 
-# A domain manager may configure the domain their token is scoped to, except
-# the `assignment` group: binding a domain to an assignment backend is a
-# role-minting surface reserved for cloud admins (ADR 0034 §6).
+# A system-scoped `admin` — a cloud administrator — may write any group,
+# including `assignment` (ADR 0034 §6).
+allow if {
+	"admin" in input.credentials.roles
+	input.credentials.system == "all"
+}
+
+# An `admin` on any other scope may write any group EXCEPT `assignment`:
+# binding a domain to an assignment backend is a role-minting surface reserved
+# for cloud admins, and must not be satisfiable by a domain- or project-scoped
+# token (ADR 0034 §6).
+allow if {
+	"admin" in input.credentials.roles
+	not touches_assignment_group
+}
+
+# A domain manager may configure the domain their token is scoped to, with the
+# same `assignment` carve-out.
 allow if {
 	"manager" in input.credentials.roles
 	input.credentials.domain_id == input.target.domain_id
