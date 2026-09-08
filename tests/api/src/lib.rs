@@ -17,6 +17,7 @@ pub mod assignment;
 pub mod auth;
 pub mod common;
 pub mod credential;
+pub mod domain_config;
 pub mod endpoint;
 pub mod federation;
 pub mod fixtures;

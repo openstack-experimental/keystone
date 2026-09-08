@@ -11,7 +11,7 @@ dist = false
 
 [dependencies]
 async-trait.workspace = true
-axum = { workspace = true, features = ["http1", "tokio"] }
+axum = { workspace = true, features = ["http1", "json", "tokio"] }
 chrono.workspace = true
 eyre.workspace = true
 http-body-util.workspace = true
@@ -30,7 +30,9 @@ openstack-keystone-token-driver-fernet.workspace = true
 openstack-keystone-trust-driver-sql = { version = "0.1", path = "../../crates/trust-driver-sql/" }
 openstack-keystone-distributed-storage.workspace = true
 openstack-keystone-storage-api.workspace = true
-openstack-keystone = { version = "0.1", path = "../../crates/keystone/" }
+openstack-keystone = { version = "0.1", path = "../../crates/keystone/", features = [
+    "openfga",
+] }
 rcgen.workspace = true
 sea-orm = { workspace = true, features = ["sqlx-mysql", "sqlx-postgres", "sqlx-sqlite", "runtime-tokio", "runtime-tokio-native-tls"] }
 secrecy = { workspace = true, features = ["serde"] }
@@ -42,7 +44,7 @@ time = { version = "0.3", default-features = true }
 tempfile.workspace = true
 tower.workspace = true
 tracing.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["net"] }
 tokio-util.workspace = true
 tracing-test = { version = "0.2", features = ["no-env-filter"] }
 uuid = { workspace = true, features = ["v4"] }

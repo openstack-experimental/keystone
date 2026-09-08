@@ -18,6 +18,7 @@
 mod api_key;
 mod application_credential;
 mod assignment;
+mod assignment_per_domain;
 mod audit;
 mod catalog;
 mod common;

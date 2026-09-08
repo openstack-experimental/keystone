@@ -20,6 +20,7 @@ mod api_v3 {
     mod assignment;
     mod auth;
     mod credential;
+    mod domain_config;
     mod endpoint;
     mod identity;
     mod policy;

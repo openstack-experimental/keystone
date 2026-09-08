@@ -213,6 +213,43 @@ impl AssignmentService {
         }
     }
 
+    /// Build a service with an explicit routing bundle and resolver, bypassing
+    /// [`Self::new`]'s plugin-manager backend build. Test-only: lets a
+    /// dispatch test wire mock backends straight into the bundle. Per-domain
+    /// dispatch is on whenever `resolver` is `Some`. The fan-out set is
+    /// derived (global plus every distinct named instance), matching
+    /// [`Self::rebuild`].
+    #[cfg(test)]
+    pub(crate) fn from_parts(
+        global_driver_name: impl Into<String>,
+        global: Arc<dyn AssignmentBackend>,
+        domains: HashMap<String, String>,
+        backend_blocks: HashMap<String, AssignmentBackendConfig>,
+        instances: HashMap<String, Arc<dyn AssignmentBackend>>,
+        resolver: Option<Arc<DomainConfigResolver>>,
+    ) -> Self {
+        let mut fanout = vec![global.clone()];
+        for instance in instances.values() {
+            if !fanout.iter().any(|b| Arc::ptr_eq(b, instance)) {
+                fanout.push(instance.clone());
+            }
+        }
+        let bundle = AssignmentBundle {
+            global,
+            global_driver_name: global_driver_name.into(),
+            dispatch_enabled: resolver.is_some(),
+            domains,
+            backend_blocks,
+            instances,
+            fanout,
+        };
+        Self {
+            resolver,
+            bundle: ArcSwap::from_pointee(bundle),
+            binding_cache: RwLock::new(HashMap::new()),
+        }
+    }
+
     /// The backend that serves an assignment on `(kind, target_id)`.
     ///
     /// `system` targets and every operation while dispatch is off use the
@@ -255,8 +292,12 @@ impl AssignmentService {
             }
         };
 
-        let (name, newly_resolved) = match self.binding_cache.read().await.get(&domain_id).cloned()
-        {
+        // Read into an owned value in its own statement: a guard held as a
+        // `match` scrutinee temporary would still be live in the `None` arm and
+        // deadlock the `write().await` below (edition 2024 rescopes `if let`
+        // temporaries but not `match` ones).
+        let cached = self.binding_cache.read().await.get(&domain_id).cloned();
+        let (name, newly_resolved) = match cached {
             Some(name) => (name, false),
             None => {
                 let name = match resolver.effective_config(ctx.state(), &domain_id).await {
@@ -728,192 +769,5 @@ impl AssignmentApi for AssignmentService {
 }
 
 #[cfg(test)]
-mod tests {
-    use openstack_keystone_core_types::revoke::*;
-    use openstack_keystone_core_types::role::*;
-
-    use super::*;
-    use crate::assignment::backend::MockAssignmentBackend;
-    use crate::provider::Provider;
-    use crate::revoke::MockRevokeProvider;
-    use crate::role::MockRoleProvider;
-    use crate::tests::get_mocked_state;
-
-    #[test]
-    fn target_kind_partitions_every_assignment_type() {
-        assert!(matches!(
-            target_kind(&AssignmentType::UserDomain),
-            TargetKind::Domain
-        ));
-        assert!(matches!(
-            target_kind(&AssignmentType::GroupDomain),
-            TargetKind::Domain
-        ));
-        assert!(matches!(
-            target_kind(&AssignmentType::UserProject),
-            TargetKind::Project
-        ));
-        assert!(matches!(
-            target_kind(&AssignmentType::GroupProject),
-            TargetKind::Project
-        ));
-        assert!(matches!(
-            target_kind(&AssignmentType::UserSystem),
-            TargetKind::System
-        ));
-        assert!(matches!(
-            target_kind(&AssignmentType::GroupSystem),
-            TargetKind::System
-        ));
-    }
-
-    #[tokio::test]
-    async fn test_crate_grant() {
-        let state = get_mocked_state(None, None).await;
-        let mut backend = MockAssignmentBackend::default();
-        backend.expect_create_grant().returning(|_, _| {
-            Ok(AssignmentBuilder::default()
-                .actor_id("actor")
-                .role_id("rid1")
-                .target_id("target_id")
-                .r#type(AssignmentType::UserProject)
-                .build()
-                .unwrap())
-        });
-
-        let provider = AssignmentService::from_backend(Arc::new(backend));
-
-        assert!(
-            provider
-                .create_grant(
-                    &ExecutionContext::internal(&state),
-                    AssignmentCreate::user_project("actor_id", "target_id", "role_id", false)
-                )
-                .await
-                .is_ok()
-        );
-    }
-
-    #[tokio::test]
-    async fn test_list_assignments() {
-        let state = get_mocked_state(None, None).await;
-        let mut backend = MockAssignmentBackend::default();
-        backend
-            .expect_list_assignments()
-            .returning(|_, _| Ok(vec![]));
-
-        let provider = AssignmentService::from_backend(Arc::new(backend));
-
-        assert!(
-            provider
-                .list_role_assignments(
-                    &ExecutionContext::internal(&state),
-                    &RoleAssignmentListParameters {
-                        role_id: Some("rid".into()),
-                        resolve_implied_roles: false,
-                        ..Default::default()
-                    },
-                )
-                .await
-                .is_ok()
-        );
-    }
-
-    #[tokio::test]
-    async fn test_list_assignments_include_names() {
-        let mut role_mock = MockRoleProvider::default();
-        role_mock.expect_list_roles().returning(|_, _| {
-            Ok(vec![
-                RoleBuilder::default()
-                    .id("rid1")
-                    .name("rid1_name")
-                    .build()
-                    .unwrap(),
-                RoleBuilder::default()
-                    .id("rid2")
-                    .name("rid2_name")
-                    .build()
-                    .unwrap(),
-            ])
-        });
-        let state =
-            get_mocked_state(None, Some(Provider::mocked_builder().mock_role(role_mock))).await;
-        let mut backend = MockAssignmentBackend::default();
-        backend
-            .expect_list_assignments()
-            .withf(|_, params: &RoleAssignmentListParameters| {
-                params.role_id == Some("rid".into()) && params.include_names.is_some_and(|x| x)
-            })
-            .returning(|_, _| {
-                Ok(vec![
-                    AssignmentBuilder::default()
-                        .actor_id("actor")
-                        .role_id("rid1")
-                        .target_id("target_id")
-                        .r#type(AssignmentType::UserProject)
-                        .build()
-                        .unwrap(),
-                ])
-            });
-
-        let provider = AssignmentService::from_backend(Arc::new(backend));
-
-        let res = provider
-            .list_role_assignments(
-                &ExecutionContext::internal(&state),
-                &RoleAssignmentListParameters {
-                    role_id: Some("rid".into()),
-                    include_names: Some(true),
-                    resolve_implied_roles: false,
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap();
-        assert!(
-            res.iter()
-                .find(|x| x.role_id == "rid1" && x.role_name == Some("rid1_name".into()))
-                .is_some()
-        );
-    }
-
-    #[tokio::test]
-    async fn test_revoke_grant() {
-        let mut revoke_mock = MockRevokeProvider::default();
-        revoke_mock
-            .expect_create_revocation_event()
-            .withf(|_, params: &RevocationEventCreate| {
-                params.project_id == Some("target_id".into())
-                    && params.user_id == Some("actor".into())
-                    && params.role_id == Some("rid1".into())
-            })
-            .returning(|_, _| Ok(RevocationEvent::default()));
-        let state = get_mocked_state(
-            None,
-            Some(Provider::mocked_builder().mock_revoke(revoke_mock)),
-        )
-        .await;
-        let mut backend = MockAssignmentBackend::default();
-        let assignment = AssignmentBuilder::default()
-            .actor_id("actor")
-            .role_id("rid1")
-            .target_id("target_id")
-            .r#type(AssignmentType::UserProject)
-            .build()
-            .unwrap();
-        let assignment_clone = assignment.clone();
-        backend
-            .expect_revoke_grant()
-            .withf(move |_, params: &Assignment| *params == assignment_clone)
-            .returning(|_, _| Ok(()));
-
-        let provider = AssignmentService::from_backend(Arc::new(backend));
-
-        assert!(
-            provider
-                .revoke_grant(&ExecutionContext::internal(&state), assignment)
-                .await
-                .is_ok()
-        );
-    }
-}
+#[path = "service/tests.rs"]
+mod tests;
