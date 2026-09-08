@@ -19,7 +19,7 @@
 
 use openstack_keystone_config::{DynamicPluginConfig, PluginMode};
 use openstack_keystone_core::auth::ExecutionContext;
-use openstack_keystone_core_types::assignment::RoleAssignmentListParameters;
+use openstack_keystone_core_types::assignment::{AssignmentType, RoleAssignmentListParameters};
 
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
@@ -86,7 +86,15 @@ async fn target_holds_system_role(
         .get_assignment_provider()
         .list_role_assignments(exec, &params)
         .await?;
-    Ok(!assignments.is_empty())
+    // The `system_id` filter already narrows the query, but this gate mints an
+    // RBAC tier: re-check the assignment type so a driver that honours the
+    // filter loosely cannot widen it.
+    Ok(assignments.iter().any(|a| {
+        matches!(
+            a.r#type,
+            AssignmentType::UserSystem | AssignmentType::GroupSystem
+        )
+    }))
 }
 
 #[cfg(test)]
