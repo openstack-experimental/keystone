@@ -1261,11 +1261,53 @@ async fn list_assignments_actor_and_target_role_direct_mode_reads_tuple() -> Res
 }
 
 #[tokio::test]
-async fn list_assignments_actor_without_scope_direct_mode_errors() -> Result<()> {
+async fn list_assignments_actor_without_scope_direct_mode_reads_stored_tuples() -> Result<()> {
     let srv = MockServer::start_async().await;
-    let state = state_with(driver_config(&srv.base_url())).await;
+    let mut cfg = driver_config(&srv.base_url());
+    cfg.role_to_relation = Some(HashMap::from([("rid1".into(), "relation1".into())]));
+    let state = state_with(cfg).await;
 
-    match driver()
+    // A non-effective actor-only listing must never touch the model-resolving
+    // endpoints.
+    let list_objects = srv
+        .mock_async(|when, then| {
+            when.method("POST")
+                .path("/stores/store_id/streamed-list-objects");
+            then.status(200).body("");
+        })
+        .await;
+
+    // One type-scoped `read` per target type, filtered by the actor.
+    srv.mock_async(|when, then| {
+        when.method("POST")
+            .path("/stores/store_id/read")
+            .json_body(json!({
+                "authorization_model_id": "model_id",
+                "tuple_key": { "user": "user:user_id", "object": "project:" }
+            }));
+        then.status(200).json_body(json!({
+            "tuples": [
+                { "key": { "user": "user:user_id", "object": "project:p1", "relation": "relation1" } }
+            ]
+        }));
+    })
+    .await;
+    srv.mock_async(|when, then| {
+        when.method("POST")
+            .path("/stores/store_id/read")
+            .json_body_includes(r#"{"tuple_key":{"object":"domain:"}}"#);
+        then.status(200).json_body(json!({ "tuples": [] }));
+    })
+    .await;
+    srv.mock_async(|when, then| {
+        when.method("POST")
+            .path("/stores/store_id/read")
+            .json_body_includes(r#"{"tuple_key":{"object":"system:"}}"#);
+        then.status(200).json_body(json!({ "tuples": [] }));
+    })
+    .await;
+
+    let res = driver()
         .list_assignments(
             &state,
             &RoleAssignmentListParameters {
@@ -1273,13 +1315,56 @@ async fn list_assignments_actor_without_scope_direct_mode_errors() -> Result<()>
                 ..Default::default()
             },
         )
-        .await
-    {
-        Err(AssignmentProviderError::NotImplemented(msg)) => {
-            assert!(msg.contains("requires effective mode"), "got {msg:?}")
-        }
-        other => panic!("expected a not-implemented error, got {other:?}"),
-    }
+        .await?;
+
+    assert_eq!(res.len(), 1);
+    assert_eq!(res[0].actor_id, "user_id");
+    assert_eq!(res[0].role_id, "rid1");
+    assert_eq!(res[0].target_id, "p1");
+    assert_eq!(res[0].r#type, AssignmentType::UserProject);
+    assert_eq!(list_objects.calls_async().await, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_assignments_actor_without_scope_direct_mode_honours_role_filter() -> Result<()> {
+    let srv = MockServer::start_async().await;
+    let mut cfg = driver_config(&srv.base_url());
+    cfg.role_to_relation = Some(HashMap::from([
+        ("rid1".into(), "relation1".into()),
+        ("rid2".into(), "relation2".into()),
+    ]));
+    let state = state_with(cfg).await;
+
+    // Every read carries the filtered relation; `relation2` is never asked for.
+    srv.mock_async(|when, then| {
+        when.method("POST")
+            .path("/stores/store_id/read")
+            .json_body_includes(r#"{"tuple_key":{"relation":"relation1"}}"#);
+        then.status(200).json_body(json!({ "tuples": [] }));
+    })
+    .await;
+    let unfiltered = srv
+        .mock_async(|when, then| {
+            when.method("POST")
+                .path("/stores/store_id/read")
+                .json_body_includes(r#"{"tuple_key":{"relation":"relation2"}}"#);
+            then.status(200).json_body(json!({ "tuples": [] }));
+        })
+        .await;
+
+    driver()
+        .list_assignments(
+            &state,
+            &RoleAssignmentListParameters {
+                user_id: Some("user_id".into()),
+                role_id: Some("rid1".into()),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    assert_eq!(unfiltered.calls_async().await, 0);
     Ok(())
 }
 

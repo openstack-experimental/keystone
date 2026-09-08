@@ -51,16 +51,13 @@ pub(super) async fn delete(
 
     // §6.B step 1: clear the group's role assignments — this is the
     // security-relevant action, since a "deleted-looking" group that still
-    // grants roles would be a silent escalation path.
-    // `effective(true)` on an actor-only listing: ADR 0034 §5 — the OpenFGA
-    // driver cannot answer a non-effective actor-only query (no target scope
-    // to `read` by) and returns 501, which would fail this whole listing once
-    // any domain runs on OpenFGA. Effective mode is answerable there, and for
-    // the SQL driver a `group_id`-only listing is unaffected by the flag (it
-    // only expands a `user_id`).
+    // grants roles would be a silent escalation path. A non-effective
+    // actor-only listing: we want the group's own stored grants, not the
+    // expanded effective set. Both the SQL and OpenFGA drivers answer this
+    // directly (the OpenFGA driver issues a type-scoped `read` per target
+    // type).
     let params = RoleAssignmentListParametersBuilder::default()
         .group_id(id.clone())
-        .effective(true)
         .build()?;
     let assignments = state
         .provider
