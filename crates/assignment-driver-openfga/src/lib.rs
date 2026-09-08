@@ -157,24 +157,28 @@ pub struct OpenFGADriver {
     config_override: Option<Arc<OpenFGAAssignmentDriver>>,
 }
 
+/// Total per-request timeout applied to the OpenFGA HTTP client when the
+/// configuration leaves `timeout` unset. Without a cap a stalled OpenFGA store
+/// wedges an assignment call (and its caller's token issuance) indefinitely.
+const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 30;
+
 impl Default for OpenFGADriver {
     fn default() -> Self {
         Self {
-            openfga_client: Client::new(),
+            openfga_client: Self::client(None).unwrap_or_else(|_| Client::new()),
             config_override: None,
         }
     }
 }
 
 impl OpenFGADriver {
-    /// Build the OpenFGA HTTP client, applying `timeout_secs` as a total
-    /// per-request timeout when set.
+    /// Build the OpenFGA HTTP client with a total per-request timeout:
+    /// `timeout_secs` when set, otherwise [`DEFAULT_REQUEST_TIMEOUT_SECS`].
     fn client(timeout_secs: Option<u16>) -> Result<Client, OpenFGADriverError> {
-        let mut builder = Client::builder();
-        if let Some(secs) = timeout_secs {
-            builder = builder.timeout(Duration::from_secs(secs.into()));
-        }
-        Ok(builder.build()?)
+        let timeout = timeout_secs
+            .map(|secs| Duration::from_secs(secs.into()))
+            .unwrap_or_else(|| Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS));
+        Ok(Client::builder().timeout(timeout).build()?)
     }
 
     /// Initialize the global OpenFGA driver: [`Self::config`] reads the live
