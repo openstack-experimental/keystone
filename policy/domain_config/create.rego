@@ -21,10 +21,23 @@ allow if {
 	input.credentials.is_admin
 }
 
-# A domain manager may configure the domain their token is scoped to.
+# A domain manager may configure the domain their token is scoped to, except
+# the `assignment` group: binding a domain to an assignment backend is a
+# role-minting surface reserved for cloud admins (ADR 0034 §6).
 allow if {
 	"manager" in input.credentials.roles
 	input.credentials.domain_id == input.target.domain_id
+	not touches_assignment_group
+}
+
+# The write addresses the `assignment` group directly (group or option path).
+touches_assignment_group if {
+	input.target.group == "assignment"
+}
+
+# ...or carries an `assignment` block in a whole-config PATCH/PUT body.
+touches_assignment_group if {
+	input.target.config.assignment
 }
 
 violation contains {"field": "", "msg": "writing a domain configuration requires system admin or the `manager` role on the domain."} if {

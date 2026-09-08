@@ -340,4 +340,244 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
+
+    /// ADR 0034 §6, driven through the real `identity/domain_config/update`
+    /// and `.../delete` Rego (via `get_state_with_real_policy`'s `opa run`
+    /// subprocess + the production `HttpPolicyEnforcer`): a domain-scoped
+    /// `manager` may write every group of their own domain *except*
+    /// `assignment`, which is reserved for cloud admins. Requires `opa` on
+    /// `PATH`.
+    mod real_policy_decision {
+        use openstack_keystone_core::auth::ValidatedSecurityContext;
+        use openstack_keystone_core_types::auth::{
+            AuthenticationContext, AuthzInfoBuilder, IdentityInfo, PrincipalInfo, ScopeInfo,
+            SecurityContext, UserIdentityInfoBuilder,
+        };
+        use openstack_keystone_core_types::identity::UserResponseBuilder;
+        use openstack_keystone_core_types::resource::Domain;
+        use openstack_keystone_core_types::role::RoleRef;
+
+        use super::*;
+        use crate::api::tests::get_state_with_real_policy;
+
+        fn domain_scoped_vsc(caller_domain_id: &str, roles: &[&str]) -> ValidatedSecurityContext {
+            let authz = AuthzInfoBuilder::default()
+                .scope(ScopeInfo::Domain(Domain {
+                    id: caller_domain_id.to_string(),
+                    name: caller_domain_id.to_string(),
+                    enabled: true,
+                    ..Default::default()
+                }))
+                .roles(
+                    roles
+                        .iter()
+                        .enumerate()
+                        .map(|(i, name)| RoleRef {
+                            domain_id: None,
+                            id: format!("role-{i}"),
+                            name: Some((*name).to_string()),
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .build()
+                .unwrap();
+
+            let sc = SecurityContext::test_build()
+                .authentication_context(AuthenticationContext::Password)
+                .principal(PrincipalInfo {
+                    identity: IdentityInfo::User(
+                        UserIdentityInfoBuilder::default()
+                            .user_id("caller")
+                            .user(
+                                UserResponseBuilder::default()
+                                    .id("caller")
+                                    .domain_id(caller_domain_id)
+                                    .enabled(true)
+                                    .name("caller")
+                                    .build()
+                                    .unwrap(),
+                            )
+                            .user_domain(Domain {
+                                id: caller_domain_id.to_string(),
+                                name: caller_domain_id.to_string(),
+                                enabled: true,
+                                ..Default::default()
+                            })
+                            .build()
+                            .unwrap(),
+                    ),
+                })
+                .authorization(authz)
+                .build();
+            ValidatedSecurityContext::test_new(sc)
+        }
+
+        /// `PATCH /did/config/<group>` with `{"config": body}` under `vsc`,
+        /// against the real policy. The provider mock echoes the write back,
+        /// so a policy `allow` yields 200 and a deny yields 403.
+        async fn patch_group(
+            vsc: ValidatedSecurityContext,
+            group_name: &str,
+            body: serde_json::Value,
+        ) -> StatusCode {
+            let mut mock = MockDomainConfigProvider::default();
+            mock.expect_update_domain_config_group()
+                .returning(|_, _, group, config| Ok(config.0.into_group(group).unwrap()));
+
+            let (state, _opa_guard) =
+                get_state_with_real_policy(Provider::mocked_builder().mock_domain_config(mock))
+                    .await;
+            let mut api = openapi_router()
+                .layer(TraceLayer::new_for_http())
+                .with_state(state);
+
+            api.as_service()
+                .oneshot(
+                    Request::builder()
+                        .method("PATCH")
+                        .uri(format!("/did/config/{group_name}"))
+                        .extension(vsc)
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(json!({"config": body}).to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+        }
+
+        /// `PATCH /did/config/<group>/<option>` with `{"config": body}` under
+        /// `vsc`, against the real policy. This is a distinct handler from
+        /// `patch_group` (`option.rs`, input shape `{domain_id, group,
+        /// option}` — no `config`), so the `assignment` guard needs its own
+        /// end-to-end coverage on the option path.
+        async fn patch_option(
+            vsc: ValidatedSecurityContext,
+            group_name: &str,
+            option: &str,
+            body: serde_json::Value,
+        ) -> StatusCode {
+            let mut mock = MockDomainConfigProvider::default();
+            mock.expect_update_domain_config_option()
+                .returning(|_, _, option| Ok(option));
+
+            let (state, _opa_guard) =
+                get_state_with_real_policy(Provider::mocked_builder().mock_domain_config(mock))
+                    .await;
+            let mut api = openapi_router()
+                .layer(TraceLayer::new_for_http())
+                .with_state(state);
+
+            api.as_service()
+                .oneshot(
+                    Request::builder()
+                        .method("PATCH")
+                        .uri(format!("/did/config/{group_name}/{option}"))
+                        .extension(vsc)
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(json!({"config": body}).to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+        }
+
+        #[tokio::test]
+        async fn manager_may_write_a_non_assignment_group_of_their_domain() {
+            let status = patch_group(
+                domain_scoped_vsc("did", &["manager"]),
+                "ldap",
+                json!({"ldap": {"url": "ldap://in"}}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn manager_is_denied_the_assignment_group() {
+            let status = patch_group(
+                domain_scoped_vsc("did", &["manager"]),
+                "assignment",
+                json!({"assignment": {"driver": "sql"}}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+
+        #[tokio::test]
+        async fn admin_role_may_write_the_assignment_group() {
+            let status = patch_group(
+                domain_scoped_vsc("did", &["admin"]),
+                "assignment",
+                json!({"assignment": {"driver": "sql"}}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn manager_is_denied_the_assignment_group_on_the_option_path() {
+            let status = patch_option(
+                domain_scoped_vsc("did", &["manager"]),
+                "assignment",
+                "driver",
+                json!({"assignment": {"driver": "sql"}}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+
+        #[tokio::test]
+        async fn admin_role_may_write_the_assignment_group_on_the_option_path() {
+            let status = patch_option(
+                domain_scoped_vsc("did", &["admin"]),
+                "assignment",
+                "driver",
+                json!({"assignment": {"driver": "sql"}}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn manager_may_write_a_non_assignment_option_of_their_domain() {
+            let status = patch_option(
+                domain_scoped_vsc("did", &["manager"]),
+                "ldap",
+                "url",
+                json!({"ldap": {"url": "ldap://in"}}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn manager_is_denied_deleting_the_assignment_group() {
+            let mut mock = MockDomainConfigProvider::default();
+            mock.expect_delete_domain_config_group().never();
+
+            let (state, _opa_guard) =
+                get_state_with_real_policy(Provider::mocked_builder().mock_domain_config(mock))
+                    .await;
+            let mut api = openapi_router()
+                .layer(TraceLayer::new_for_http())
+                .with_state(state);
+
+            let response = api
+                .as_service()
+                .oneshot(
+                    Request::builder()
+                        .method("DELETE")
+                        .uri("/did/config/assignment")
+                        .extension(domain_scoped_vsc("did", &["manager"]))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        }
+    }
 }
