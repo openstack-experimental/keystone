@@ -27,11 +27,19 @@
 //! strings the file spells them with; [`DomainConfig`] and its consumers
 //! coerce them to the option's real type when they are resolved.
 //!
-//! The whole directory is read once, when the driver is built at startup, and
-//! held in memory. A change to a file therefore takes effect only after a
-//! restart. A missing directory is normal and yields an empty driver; a
-//! directory that cannot be read, or a file that cannot be parsed, fails
-//! startup.
+//! The whole directory is read when the driver is built at startup and held in
+//! memory behind an [`ArcSwap`]. A configuration reload re-scans it in place
+//! (ADR 0034 §9) — the reload watch covers `[identity] domain_config_dir` — so
+//! an edit to a per-domain file takes effect without a restart. A missing
+//! directory is normal and yields an empty driver; a directory that cannot be
+//! read, or a file that cannot be parsed, fails the startup scan (a reload that
+//! hits the same error keeps the last good scan).
+//!
+//! The re-scan is driven by [`DomainConfigBackend::reload`], whose sole
+//! in-process caller is `AssignmentService::rebuild` on the
+//! `reload_assignment_drivers_on_config_change` reactor. Because the driver is a
+//! single shared `Arc`, that one call also refreshes the store this backend
+//! serves to the identity service and the provider's own resolver.
 //!
 //! The driver is **read-only**. Every create, update, delete and registration
 //! method returns [`DomainConfigProviderError::Readonly`]; writes go to the
@@ -41,6 +49,7 @@
 
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use async_trait::async_trait;
 
 use openstack_keystone_config::Config;
@@ -64,8 +73,9 @@ fn readonly(operation: &str) -> DomainConfigProviderError {
 /// The filesystem domain configuration driver.
 pub struct FsBackend {
     /// The parsed contents of every `keystone.{domain_name}.conf` file found
-    /// in `domain_config_dir`, keyed by domain name.
-    store: Arc<store::DomainConfigStore>,
+    /// in `domain_config_dir`, keyed by domain name. Swapped wholesale by
+    /// [`Self::reload`] on a configuration reload.
+    store: ArcSwap<store::DomainConfigStore>,
 }
 
 impl FsBackend {
@@ -81,7 +91,7 @@ impl FsBackend {
     pub fn new(config: &Config) -> Result<Self, DomainConfigProviderError> {
         let store = store::DomainConfigStore::load(&config.identity.domain_config_dir)?;
         Ok(Self {
-            store: Arc::new(store),
+            store: ArcSwap::from_pointee(store),
         })
     }
 
@@ -148,7 +158,7 @@ impl DomainConfigBackend for FsBackend {
         let Some(name) = self.domain_name(state, domain_id).await? else {
             return Ok(None);
         };
-        get::get_config(&self.store, &name)
+        get::get_config(&self.store.load(), &name)
     }
 
     /// A single group, with sensitive options filtered out.
@@ -161,7 +171,7 @@ impl DomainConfigBackend for FsBackend {
         let Some(name) = self.domain_name(state, domain_id).await? else {
             return Ok(None);
         };
-        get::get_group(&self.store, &name, group)
+        get::get_group(&self.store.load(), &name, group)
     }
 
     /// A single option; `None` for a sensitive one, which is never readable.
@@ -175,7 +185,7 @@ impl DomainConfigBackend for FsBackend {
         let Some(name) = self.domain_name(state, domain_id).await? else {
             return Ok(None);
         };
-        get::get_option(&self.store, &name, group, option)
+        get::get_option(&self.store.load(), &name, group, option)
     }
 
     /// The IDs of every domain whose file sets `group`/`option`.
@@ -188,14 +198,20 @@ impl DomainConfigBackend for FsBackend {
         group: DomainConfigGroupName,
         option: &'a str,
     ) -> Result<Vec<String>, DomainConfigProviderError> {
-        let names = self.store.domains_with_option(group, option);
+        let names: Vec<String> = self
+            .store
+            .load()
+            .domains_with_option(group, option)
+            .into_iter()
+            .map(str::to_string)
+            .collect();
         if names.is_empty() {
             return Ok(Vec::new());
         }
         let ctx = ExecutionContext::internal(state);
         let resource = state.provider.get_resource_provider();
         let mut ids = Vec::with_capacity(names.len());
-        for name in names {
+        for name in &names {
             let found = resource
                 .find_domain_by_name(&ctx, name)
                 .await
@@ -205,6 +221,29 @@ impl DomainConfigBackend for FsBackend {
             }
         }
         Ok(ids)
+    }
+
+    /// Re-scan `[identity] domain_config_dir` and swap in the fresh store
+    /// (ADR 0034 §9), so an operator's edit to a `keystone.<name>.conf` takes
+    /// effect without a restart. Detects added, edited and removed files: the
+    /// swap is wholesale and a removed file's domain drops out of the fresh
+    /// scan.
+    ///
+    /// A scan error is propagated with the last good store left in place; the
+    /// reload reactor logs it and keeps serving the previous scan.
+    ///
+    /// The scan is synchronous `std::fs` walking the whole directory, so it runs
+    /// on a blocking thread rather than the reactor's worker.
+    async fn reload(&self, config: &Config) -> Result<bool, DomainConfigProviderError> {
+        let dir = config.identity.domain_config_dir.clone();
+        let fresh = tokio::task::spawn_blocking(move || store::DomainConfigStore::load(&dir))
+            .await
+            .map_err(|error| DomainConfigProviderError::Driver(error.to_string()))??;
+        if *self.store.load_full() == fresh {
+            return Ok(false);
+        }
+        self.store.store(Arc::new(fresh));
+        Ok(true)
     }
 
     /// Read-only: always [`DomainConfigProviderError::Readonly`].
@@ -300,6 +339,10 @@ impl DomainConfigBackend for FsBackend {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
+    use tempfile::tempdir;
+
     use super::*;
 
     /// The driver registers under `fs`, is always selected, and builds when
@@ -314,5 +357,67 @@ mod tests {
         let config = Config::default();
         assert!((registration.selected)(&config));
         assert!((registration.build)(&config).await.is_ok());
+    }
+
+    /// A `keystone.<name>.conf` added after startup is picked up by `reload`
+    /// and a second reload over the unchanged directory reports no change
+    /// (ADR 0034 §9).
+    #[tokio::test]
+    async fn reload_rescans_the_directory() {
+        let dir = tempdir().unwrap();
+        let mut config = Config::default();
+        config.identity.domain_config_dir = dir.path().to_path_buf();
+
+        let backend = FsBackend::new(&config).unwrap();
+        assert!(backend.store.load().get("Acme").is_none());
+
+        fs::write(
+            dir.path().join("keystone.Acme.conf"),
+            "[assignment]\ndriver = openfga\n",
+        )
+        .unwrap();
+
+        assert!(
+            backend.reload(&config).await.unwrap(),
+            "a new domain file must be reported as a change"
+        );
+        assert!(
+            backend.store.load().get("Acme").is_some(),
+            "the fresh scan must hold the added domain"
+        );
+        assert!(
+            !backend.reload(&config).await.unwrap(),
+            "a reload over an unchanged directory reports no change"
+        );
+    }
+
+    /// `reload` reports an edit to an existing file and a file removal, and a
+    /// removed file's domain drops out of the store (ADR 0034 §9).
+    #[tokio::test]
+    async fn reload_picks_up_edits_and_removals() {
+        let dir = tempdir().unwrap();
+        let mut config = Config::default();
+        config.identity.domain_config_dir = dir.path().to_path_buf();
+        let path = dir.path().join("keystone.Acme.conf");
+        fs::write(&path, "[assignment]\ndriver = sql\n").unwrap();
+
+        let backend = FsBackend::new(&config).unwrap();
+        assert!(backend.store.load().get("Acme").is_some());
+
+        fs::write(&path, "[assignment]\ndriver = openfga\n").unwrap();
+        assert!(
+            backend.reload(&config).await.unwrap(),
+            "an edit to an existing file must be reported as a change"
+        );
+
+        fs::remove_file(&path).unwrap();
+        assert!(
+            backend.reload(&config).await.unwrap(),
+            "a file removal must be reported as a change"
+        );
+        assert!(
+            backend.store.load().get("Acme").is_none(),
+            "the removed file's domain must be gone from the fresh scan"
+        );
     }
 }

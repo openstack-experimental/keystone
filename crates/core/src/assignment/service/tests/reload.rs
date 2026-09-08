@@ -227,6 +227,67 @@ async fn flipping_the_dispatch_switch_on_via_reload_takes_effect() {
     assert!(provider.resolver.load_full().is_some());
 }
 
+/// A reload re-scans the `fs` domain-config driver before it enumerates the
+/// bound domains (ADR 0034 §9), so an operator's edit to a per-domain
+/// `keystone.<name>.conf` is visible without a restart.
+#[tokio::test]
+async fn reload_rescans_the_fs_domain_config_backend() {
+    let state = get_mocked_state(Some(config(assignment_section(true, false))), None).await;
+
+    let mut fs_mock = MockDomainConfigBackend::new();
+    fs_mock.expect_reload().times(1).returning(|_| Ok(true));
+    fs_mock
+        .expect_list_domains_with_option()
+        .returning(|_, _, _| Ok(Vec::new()));
+    let fs_backend: Arc<dyn DomainConfigBackend> = Arc::new(fs_mock);
+
+    let provider = AssignmentService::from_parts(
+        "openfga",
+        Arc::new(MockAssignmentBackend::default()),
+        HashMap::new(),
+        HashMap::new(),
+        HashMap::new(),
+        None,
+    )
+    .with_dc_file_backend(fs_backend);
+
+    // One `rebuild` per `reload`, one `fs.reload` per `rebuild`: the
+    // `expect_reload().times(1)` is verified when the provider (and the Arc
+    // holding the mock) drop at end of test.
+    provider.reload(&state).await.unwrap();
+}
+
+/// A best-effort scan failure on the `fs` driver never fails the reload; the
+/// bundle rebuild carries on against the last good scan.
+#[tokio::test]
+async fn reload_survives_an_fs_rescan_error() {
+    let state = get_mocked_state(Some(config(assignment_section(true, false))), None).await;
+
+    let mut fs_mock = MockDomainConfigBackend::new();
+    fs_mock
+        .expect_reload()
+        .returning(|_| Err(DomainConfigProviderError::Driver("disk gone".into())));
+    fs_mock
+        .expect_list_domains_with_option()
+        .returning(|_, _, _| Ok(Vec::new()));
+    let fs_backend: Arc<dyn DomainConfigBackend> = Arc::new(fs_mock);
+
+    let provider = AssignmentService::from_parts(
+        "openfga",
+        Arc::new(MockAssignmentBackend::default()),
+        HashMap::new(),
+        HashMap::new(),
+        HashMap::new(),
+        None,
+    )
+    .with_dc_file_backend(fs_backend);
+
+    provider
+        .reload(&state)
+        .await
+        .expect("an fs rescan error must not fail the reload");
+}
+
 #[tokio::test]
 async fn refresh_bindings_swallows_a_rebuild_error() {
     let named: Arc<dyn AssignmentBackend> = Arc::new(MockAssignmentBackend::default());

@@ -285,6 +285,15 @@ impl AssignmentService {
         self
     }
 
+    /// Attach an `fs` domain-config backend handle so [`Self::rebuild`] re-scans
+    /// the per-domain config files before enumerating bound domains (ADR 0034
+    /// §9). Test-only.
+    #[cfg(test)]
+    pub(crate) fn with_dc_file_backend(mut self, backend: Arc<dyn DomainConfigBackend>) -> Self {
+        self.dc_file_backend = Some(backend);
+        self
+    }
+
     /// The backend that serves an assignment on `(kind, target_id)`.
     ///
     /// `system` targets and every operation while dispatch is off use the
@@ -382,6 +391,17 @@ impl AssignmentService {
     async fn rebuild(&self, state: &ServiceState) -> Result<bool, AssignmentProviderError> {
         let config = state.config_manager.config.read().await.clone();
         let prev = self.bundle.load_full();
+
+        // ADR 0034 §9: a per-domain `keystone.<name>.conf` the operator edited
+        // on disk is invisible until the `fs` domain-config driver re-scans its
+        // directory. The reload watch now covers `[identity] domain_config_dir`,
+        // so refresh the captured handle's store before the resolver enumerates
+        // the bound domains. Best-effort: a scan error keeps the last good scan.
+        if let Some(file) = &self.dc_file_backend
+            && let Err(error) = file.reload(&config).await
+        {
+            warn!(%error, "fs domain-config reload failed; using the last-scanned files");
+        }
 
         let global_driver_name = config.assignment.driver.clone();
         let global = if global_driver_name == prev.global_driver_name {

@@ -16,6 +16,7 @@
 
 use async_trait::async_trait;
 
+use openstack_keystone_config::Config;
 use openstack_keystone_core_types::domain_config::*;
 
 use crate::domain_config::DomainConfigProviderError;
@@ -148,6 +149,26 @@ pub trait DomainConfigBackend: Send + Sync {
         group: DomainConfigGroupName,
         option: &'a str,
     ) -> Result<Vec<String>, DomainConfigProviderError>;
+
+    /// Re-read any state this driver cached from disk at construction, after a
+    /// configuration reload (ADR 0034 §9).
+    ///
+    /// The default is a no-op returning `Ok(false)`: the `sql` driver holds
+    /// nothing cached, and the config API's own writes are already live. The
+    /// `fs` driver overrides it to re-scan `[identity] domain_config_dir`, so an
+    /// operator's edit to a per-domain `keystone.<name>.conf` takes effect
+    /// without a restart.
+    ///
+    /// # Parameters
+    /// - `_config`: The reloaded service configuration.
+    ///
+    /// # Returns
+    /// - `Result<bool, DomainConfigProviderError>` - `true` when the re-read
+    ///   changed the driver's view, `false` when it was identical or the driver
+    ///   caches nothing.
+    async fn reload(&self, _config: &Config) -> Result<bool, DomainConfigProviderError> {
+        Ok(false)
+    }
 
     /// Merge changes into the whole configuration of a domain.
     ///

@@ -525,6 +525,13 @@ impl Config {
         if let Some(ca) = &self.database.tls.tls_client_ca_file {
             watched_paths.insert(ca.clone());
         }
+        // Per-domain config files (ADR 0034 §9): watch the directory so an
+        // operator's edit to a `keystone.<name>.conf` triggers a reload and the
+        // `fs` domain-config driver re-scans. Only when it actually exists — the
+        // default path is rarely present and a missing watch target just logs.
+        if self.identity.domain_config_dir.is_dir() {
+            watched_paths.insert(self.identity.domain_config_dir.clone());
+        }
         watched_paths
     }
 
@@ -656,8 +663,13 @@ impl ConfigManager {
         let mut watcher: RecommendedWatcher =
             notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
                 if let Ok(event) = res {
-                    // Only trigger for data modifications or name changes (renames/symlink swaps)
-                    if event.kind.is_modify() || event.kind.is_create() {
+                    // Data modifications, name changes (renames/symlink swaps),
+                    // creations, and removals. Removal matters for the per-domain
+                    // config directory (ADR 0034 §9): deleting a
+                    // `keystone.<name>.conf` must re-scan so the domain's binding
+                    // drops. A spurious removal event on another watched file
+                    // costs one reload that lands on last-known-good.
+                    if event.kind.is_modify() || event.kind.is_create() || event.kind.is_remove() {
                         // `try_send`, not `blocking_send`: this callback runs on
                         // notify's single background event-loop thread, which
                         // also services `watch()`/`unwatch()` control requests.
@@ -820,6 +832,25 @@ mod tests {
     // marked `#[parallel]`, so a mutated variable (e.g. a `KEYSTONE_SITE_VARS_FILE`
     // pointing at a temp file that is about to be dropped) can never leak into a
     // concurrently loading test.
+    /// ADR 0034 §9: the per-domain config directory joins the reload watch set
+    /// when it exists on disk, and is left out when it does not (the common
+    /// case, where watching a missing path would only log).
+    #[test]
+    #[parallel]
+    fn domain_config_dir_is_watched_only_when_present() {
+        let dir = tempdir().unwrap();
+
+        let mut cfg = Config::default();
+        cfg.identity.domain_config_dir = dir.path().join("absent");
+        assert!(
+            !cfg.get_watch_files()
+                .contains(&cfg.identity.domain_config_dir)
+        );
+
+        cfg.identity.domain_config_dir = dir.path().to_path_buf();
+        assert!(cfg.get_watch_files().contains(&dir.path().to_path_buf()));
+    }
+
     #[test]
     #[serial]
     fn test_env() {

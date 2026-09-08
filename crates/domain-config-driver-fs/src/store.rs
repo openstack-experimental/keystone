@@ -31,7 +31,7 @@ use openstack_keystone_core_types::domain_config::{
 
 /// Every domain config file found under `domain_config_dir`, keyed by the
 /// domain name its filename spells.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub(crate) struct DomainConfigStore(HashMap<String, DomainConfig>);
 
 impl DomainConfigStore {

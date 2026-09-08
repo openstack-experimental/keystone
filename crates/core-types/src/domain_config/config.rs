@@ -60,7 +60,7 @@ use super::{
 /// Returned by the group-scoped endpoints
 /// (`/v3/domains/{domain_id}/config/{group}`), which address exactly one
 /// group.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct DomainConfigGroup {
     /// The group these options belong to.
     name: DomainConfigGroupName,
@@ -321,7 +321,7 @@ impl fmt::Debug for DomainConfigGroup {
 /// carries (`ldap.password`) are stripped on serialization and redacted in
 /// `Debug`, so the same structure serves both the internal, fully resolved
 /// configuration and the API response.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq)]
 pub struct DomainConfig {
     /// The configured groups, in a stable order.
     groups: BTreeMap<DomainConfigGroupName, DomainConfigGroup>,
