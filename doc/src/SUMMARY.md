@@ -124,3 +124,4 @@
     - [Vendor Data JWT Attestation](adr/0032-vendor-data-jwt.md)
     - [OpenFGA Assignment Driver](adr/0033-openfga-assignment-driver.md)
     - [Per-Domain Assignment Drivers](adr/0034-per-domain-assignment-drivers.md)
+    - [Relation Sync Provider](adr/0035-relation-sync-provider.md)
