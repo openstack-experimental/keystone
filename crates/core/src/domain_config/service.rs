@@ -188,18 +188,14 @@ impl DomainConfigService {
     async fn validate_assignment_binding(
         &self,
         state: &ServiceState,
+        domain_id: &str,
         driver: Option<&str>,
     ) -> Result<(), DomainConfigProviderError> {
         let Some(driver) = driver else {
             return Ok(());
         };
-        let bindable = state
-            .config_manager
-            .config
-            .read()
-            .await
-            .assignment
-            .bindable_driver_names();
+        let config = state.config_manager.config.read().await;
+        let bindable = config.assignment.bindable_driver_names();
         if !bindable.contains(driver) {
             let mut names: Vec<_> = bindable.into_iter().collect();
             names.sort();
@@ -210,6 +206,30 @@ impl DomainConfigService {
                     "{driver:?} names no configured assignment backend; valid names: {names:?}"
                 )),
             });
+        }
+        // The name is bindable, but a per-domain instance only spins up when
+        // `[assignment.domains]` maps this domain to a matching backend block
+        // (ADR 0034 §4). A non-global name with no such mapping is stored
+        // happily and then falls straight back to the global driver at resolve
+        // time -- an inert binding. Reject nothing (the operator may add the
+        // mapping next), but say so loudly.
+        let global = config.assignment.driver.as_str();
+        if driver != "sql" && driver != global {
+            let mapped = config
+                .assignment
+                .domains
+                .get(domain_id)
+                .and_then(|block| config.assignment.backends.get(block))
+                .map(|block| block.driver_name());
+            if mapped != Some(driver) {
+                tracing::warn!(
+                    domain_id,
+                    driver,
+                    "domain bound to assignment driver {driver:?} with no matching \
+                     [assignment.domains] mapping; the binding is inert and resolves \
+                     to the global {global:?} driver until the mapping is added"
+                );
+            }
         }
         Ok(())
     }
@@ -250,7 +270,7 @@ impl DomainConfigApi for DomainConfigService {
         let assignment_driver = Self::assignment_driver(&config.0);
         // Validate before `reconcile_registration_before`: a rejected write
         // must not leave the SQL identity-driver registration claimed.
-        self.validate_assignment_binding(state, assignment_driver.as_deref())
+        self.validate_assignment_binding(state, domain_id, assignment_driver.as_deref())
             .await?;
         self.reconcile_registration_before(state, domain_id, driver.as_deref())
             .await?;
@@ -306,7 +326,7 @@ impl DomainConfigApi for DomainConfigService {
     ) -> Result<DomainConfig, DomainConfigProviderError> {
         let driver = Self::identity_driver(&config.0);
         let assignment_driver = Self::assignment_driver(&config.0);
-        self.validate_assignment_binding(state, assignment_driver.as_deref())
+        self.validate_assignment_binding(state, domain_id, assignment_driver.as_deref())
             .await?;
         self.reconcile_registration_before(state, domain_id, driver.as_deref())
             .await?;
@@ -334,7 +354,7 @@ impl DomainConfigApi for DomainConfigService {
         let assignment_driver = (group == DomainConfigGroupName::Assignment)
             .then(|| Self::assignment_driver(&config.0))
             .flatten();
-        self.validate_assignment_binding(state, assignment_driver.as_deref())
+        self.validate_assignment_binding(state, domain_id, assignment_driver.as_deref())
             .await?;
         self.reconcile_registration_before(state, domain_id, driver.as_deref())
             .await?;
@@ -362,7 +382,7 @@ impl DomainConfigApi for DomainConfigService {
             && option.option == "driver")
             .then(|| option.value.as_value().as_str().map(str::to_owned))
             .flatten();
-        self.validate_assignment_binding(state, assignment_driver.as_deref())
+        self.validate_assignment_binding(state, domain_id, assignment_driver.as_deref())
             .await?;
         self.reconcile_registration_before(state, domain_id, driver.as_deref())
             .await?;
@@ -703,6 +723,53 @@ mod tests {
             )
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    #[tracing_test::traced_test]
+    async fn a_bindable_driver_with_no_domains_mapping_warns_that_the_binding_is_inert() {
+        let state = get_mocked_state(Some(config_with_openfga_backend()), None).await;
+        let mut backend = MockDomainConfigBackend::new();
+        backend
+            .expect_create_domain_config()
+            .returning(|_, _, _| Ok(config(json!({"assignment": {"driver": "openfga"}}))));
+
+        // The write is accepted (the name is bindable), but there is no
+        // `[assignment.domains]` entry for `d1`, so the stored binding will
+        // resolve straight back to the global driver.
+        service(backend, false)
+            .create_domain_config(
+                &state,
+                "d1",
+                DomainConfigCreate(config(json!({"assignment": {"driver": "openfga"}}))),
+            )
+            .await
+            .unwrap();
+        assert!(logs_contain("the binding is inert"));
+    }
+
+    #[tokio::test]
+    #[tracing_test::traced_test]
+    async fn a_bindable_driver_with_a_matching_domains_mapping_does_not_warn() {
+        let mut cfg = config_with_openfga_backend();
+        cfg.assignment
+            .domains
+            .insert("d1".to_string(), "central_fga".to_string());
+        let state = get_mocked_state(Some(cfg), None).await;
+        let mut backend = MockDomainConfigBackend::new();
+        backend
+            .expect_create_domain_config()
+            .returning(|_, _, _| Ok(config(json!({"assignment": {"driver": "openfga"}}))));
+
+        service(backend, false)
+            .create_domain_config(
+                &state,
+                "d1",
+                DomainConfigCreate(config(json!({"assignment": {"driver": "openfga"}}))),
+            )
+            .await
+            .unwrap();
+        assert!(!logs_contain("the binding is inert"));
     }
 
     #[tokio::test]
