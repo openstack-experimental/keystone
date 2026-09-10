@@ -504,8 +504,44 @@ impl TokenApi for TokenService {
         scope: &ScopeInfo,
     ) -> Result<ValidatedSecurityContext, TokenProviderError> {
         let mut sc = ctx.clone();
-        sc.set_authorization_scope(scope.clone())?;
 
+        // Application credential auth: auto-derive the project scope from
+        // the credential's bound project when no explicit scope is provided.
+        // The credential is always bound to exactly one project.
+        let effective_scope = if let (
+            AuthenticationContext::ApplicationCredential {
+                application_credential,
+                ..
+            },
+            ScopeInfo::Unscoped,
+        ) = (ctx.authentication_context(), scope)
+        {
+            let exec_ctx = ExecutionContext::internal(state);
+            let project = state
+                .provider
+                .get_resource_provider()
+                .get_project(&exec_ctx, &application_credential.project_id)
+                .await?
+                .ok_or(ResourceProviderError::ProjectNotFound(
+                    application_credential.project_id.clone(),
+                ))?;
+            let project_domain = state
+                .provider
+                .get_resource_provider()
+                .get_domain(&exec_ctx, &project.domain_id)
+                .await?
+                .ok_or(ResourceProviderError::DomainNotFound(
+                    project.domain_id.clone(),
+                ))?;
+            ScopeInfo::Project {
+                project,
+                project_domain,
+            }
+        } else {
+            scope.clone()
+        };
+
+        sc.set_authorization_scope(effective_scope.clone())?;
         // `issued_at` is the token's creation timestamp at whole-second
         // precision (parity with python keystone's fernet formatter, and with
         // the fernet envelope timestamp this same token decodes back to).
@@ -515,7 +551,7 @@ impl TokenApi for TokenService {
             Utc::now().trunc_subsecs(0),
         )?;
         sc.set_token(token);
-        let vsc = ValidatedSecurityContext::new_for_scope(sc, scope.clone(), state).await?;
+        let vsc = ValidatedSecurityContext::new_for_scope(sc, effective_scope, state).await?;
 
         // ADR 0031 "Tokens": `keystone_token_issued_total{driver,method}`.
         // Only recorded when the authentication context maps to one of the
@@ -532,7 +568,6 @@ impl TokenApi for TokenService {
 
         Ok(vsc)
     }
-
     /// Encode the token into a `String` representation.
     ///
     /// # Parameters

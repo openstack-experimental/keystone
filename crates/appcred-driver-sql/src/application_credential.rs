@@ -29,10 +29,12 @@ mod create;
 mod delete;
 mod get;
 mod list;
+mod verify;
 pub use create::create;
 pub use delete::delete;
 pub use get::get;
 pub use list::list;
+pub use verify::verify_secret;
 impl TryFrom<db_application_credential::Model> for ApplicationCredentialBuilder {
     type Error = ApplicationCredentialProviderError;
 

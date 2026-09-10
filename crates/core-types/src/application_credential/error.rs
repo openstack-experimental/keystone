@@ -53,6 +53,10 @@ pub enum ApplicationCredentialProviderError {
     #[error("application credential has expired")]
     ApplicationCredentialExpired,
 
+    /// Authentication with application credential failed.
+    #[error("authentication failed")]
+    AuthenticationFailed,
+
     /// Conflict.
     #[error("conflict: {0}")]
     Conflict(String),
@@ -103,6 +107,11 @@ pub enum ApplicationCredentialProviderError {
         #[from]
         source: BuilderError,
     },
+
+    /// Per-user rate limit exceeded (ADR-0022).
+    #[error("rate limit exceeded, retry after {retry_after_secs}s")]
+    TooManyRequests { retry_after_secs: u64 },
+
     /// Unsupported driver.
     #[error("unsupported driver `{0}` for the application credential provider")]
     UnsupportedDriver(String),

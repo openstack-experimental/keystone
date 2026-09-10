@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose};
+use chrono::Utc;
 use rand::{RngExt, rng};
 use secrecy::SecretString;
 use tracing::warn;
@@ -32,10 +33,13 @@ use crate::application_credential::{
     ApplicationCredentialApi, ApplicationCredentialProviderError,
     backend::ApplicationCredentialBackend,
 };
-use crate::auth::ExecutionContext;
+use crate::auth::{
+    AuthenticationContext, AuthenticationResult, AuthenticationResultBuilder, ExecutionContext,
+    IdentityInfo, PrincipalInfo, UserIdentityInfoBuilder,
+};
+
 use crate::events::AuditDispatchError;
 use crate::plugin_manager::PluginManagerApi;
-
 /// Application Credential Provider.
 pub struct ApplicationCredentialService {
     backend_driver: Arc<dyn ApplicationCredentialBackend>,
@@ -64,6 +68,114 @@ impl ApplicationCredentialService {
 
 #[async_trait]
 impl ApplicationCredentialApi for ApplicationCredentialService {
+    /// Authenticate using an application credential.
+    ///
+    /// Resolves the credential (by ID, or by name + owning user ID),
+    /// verifies the secret against the stored hash, checks that the
+    /// credential has not expired, and validates that the owning user,
+    /// bound project, and project domain are all enabled.
+    ///
+    /// # Parameters
+    /// - `ctx`: The execution context.
+    /// - `id`: The application credential ID (optional if `name` is given).
+    /// - `name`: The application credential name (optional if `id` is given).
+    /// - `user_id`: The owning user ID (required when resolving by `name`).
+    /// - `secret`: The application credential secret.
+    ///
+    /// # Returns
+    /// - `Result<AuthenticationResult, ApplicationCredentialProviderError>` -
+    ///   The authentication result populated with
+    ///   [`AuthenticationContext::ApplicationCredential`] on success, or an
+    ///   error.
+    async fn authenticate_by_application_credential<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        auth: &ApplicationCredentialAuthRequest,
+    ) -> Result<AuthenticationResult, ApplicationCredentialProviderError> {
+        let state = ctx.state();
+
+        // --- 1. Resolve the credential ---
+        let app_cred = match &auth.credential {
+            ApplicationCredentialAuthData::Id(by_id) => self
+                .get_application_credential(ctx, &by_id.id)
+                .await?
+                .ok_or(ApplicationCredentialProviderError::AuthenticationFailed)?,
+            ApplicationCredentialAuthData::Name(by_name) => {
+                let uid = by_name
+                    .user
+                    .id
+                    .as_deref()
+                    .ok_or(ApplicationCredentialProviderError::AuthenticationFailed)?;
+                let params = ApplicationCredentialListParameters {
+                    name: Some(by_name.name.clone()),
+                    user_id: uid.to_string(),
+                    ..Default::default()
+                };
+                self.list_application_credentials(ctx, &params)
+                    .await?
+                    .into_iter()
+                    .next()
+                    .ok_or(ApplicationCredentialProviderError::AuthenticationFailed)?
+            }
+        };
+
+        // --- 2. Rate limit (ADR-0022) ---
+        if state.rate_limiters.user_auth_enabled() {
+            if let Err(retry_after) = state.rate_limiters.check_user(&app_cred.user_id) {
+                return Err(ApplicationCredentialProviderError::TooManyRequests {
+                    retry_after_secs: retry_after.as_secs(),
+                });
+            }
+        }
+
+        // --- 3. Verify the secret ---
+        self.backend_driver
+            .verify_application_credential_secret(state, &app_cred.id, &auth.secret)
+            .await?;
+
+        // --- 4. Check credential expiration ---
+        if let Some(expires_at) = app_cred.expires_at {
+            if expires_at < Utc::now() {
+                return Err(ApplicationCredentialProviderError::ApplicationCredentialExpired);
+            }
+        }
+
+        // --- 5. Fetch user for identity info ---
+        let user = state
+            .provider
+            .get_identity_provider()
+            .get_user(ctx, &app_cred.user_id)
+            .await
+            .map_err(|_| ApplicationCredentialProviderError::AuthenticationFailed)?
+            .ok_or(ApplicationCredentialProviderError::AuthenticationFailed)?;
+
+        // --- 6. Fetch user domain for identity info ---
+        let user_domain = state
+            .provider
+            .get_resource_provider()
+            .get_domain(ctx, &user.domain_id)
+            .await
+            .map_err(|_| ApplicationCredentialProviderError::AuthenticationFailed)?
+            .ok_or(ApplicationCredentialProviderError::AuthenticationFailed)?;
+
+        // --- 7. Build the authentication result ---
+        Ok(AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::ApplicationCredential {
+                application_credential: app_cred,
+                token: None,
+            })
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id(user.id.clone())
+                        .user(user)
+                        .user_domain(user_domain)
+                        .build()?,
+                ),
+            })
+            .build()?)
+    }
+
     /// Create a standalone access rule owned by a user.
     ///
     /// # Parameters

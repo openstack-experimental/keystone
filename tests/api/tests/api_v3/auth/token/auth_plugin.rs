@@ -98,7 +98,7 @@ async fn test_application_credential_route_issues_token() -> Result<()> {
         .methods(vec!["application_credential".to_string()])
         .extra(HashMap::from([(
             "application_credential".to_string(),
-            serde_json::json!({"application_credential_id": cred_id}),
+            serde_json::json!({"id": cred_id,"secret": "dummy"}),
         )]))
         .build()?;
     let auth_result = auth_token(&test_client, identity, None).await;
@@ -136,7 +136,7 @@ async fn test_route_deny_is_rejected() -> Result<()> {
         .methods(vec!["application_credential".to_string()])
         .extra(HashMap::from([(
             "application_credential".to_string(),
-            serde_json::json!({"application_credential_id": "deny-me"}),
+            serde_json::json!({"id": "deny-me","secret": "dummy"}),
         )]))
         .build()?;
     let response = authenticate_identity(&test_client, identity, None).await?;
@@ -158,7 +158,7 @@ async fn test_application_credential_passthrough_fails_closed() -> Result<()> {
         .methods(vec!["application_credential".to_string()])
         .extra(HashMap::from([(
             "application_credential".to_string(),
-            serde_json::json!({"application_credential_id": "native-not-implemented"}),
+            serde_json::json!({"id": "native-not-implemented","secret": "dummy"}),
         )]))
         .build()?;
     let response = authenticate_identity(&test_client, identity, None).await?;
