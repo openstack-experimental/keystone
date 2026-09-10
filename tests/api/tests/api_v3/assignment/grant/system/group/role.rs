@@ -12,5 +12,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-mod group;
-mod user;
+use test_api::assignment::grant::{
+    add_system_group_grant, check_system_group_grant as check_grant, list_system_group_roles,
+    revoke_system_group_grant,
+};
+
+mod check;
+mod grant;
+mod list;
+mod revoke;

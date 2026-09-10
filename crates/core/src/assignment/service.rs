@@ -813,17 +813,37 @@ impl AssignmentApi for AssignmentService {
             audit_chain_id: None,
             revoked_at: chrono::Utc::now(),
         };
+        // Only create revocation event for group assignments if revoke_by_id is enabled.
+        // By default group revocations do not create revocation events since token
+        // validation rebuilds assignments at validation time.
+        // Reference: Python Keystone bug #1662514
+        let is_group_assignment = matches!(
+            &grant.r#type,
+            AssignmentType::GroupDomain
+                | AssignmentType::GroupProject
+                | AssignmentType::GroupSystem
+        );
 
-        // ADR 0034 §4: the central revocation event stays on the global revoke
-        // provider, unrouted — it is not an assignment-backend operation.
-        ctx.state()
-            .provider
-            .get_revoke_provider()
-            .create_revocation_event(ctx, revocation_event)
-            .await?;
-        // ADR 0031 "Tokens": revoking a grant cascades revocation of every
-        // token carrying that role - `"cascade"`, not a direct user request.
-        crate::token::TOKEN_METRICS.revoked_total.inc(["cascade"]);
+        let revoke_by_id = ctx
+            .state()
+            .config_manager
+            .config
+            .read()
+            .await
+            .token
+            .revoke_by_id;
+        if !is_group_assignment || revoke_by_id {
+            // ADR 0034 §4: the central revocation event stays on the global revoke
+            // provider, unrouted — it is not an assignment-backend operation.
+            ctx.state()
+                .provider
+                .get_revoke_provider()
+                .create_revocation_event(ctx, revocation_event)
+                .await?;
+            // ADR 0031 "Tokens": revoking a grant cascades revocation of every
+            // token carrying that role - `"cascade"`, not a direct user request.
+            crate::token::TOKEN_METRICS.revoked_total.inc(["cascade"]);
+        }
 
         Ok(())
     }
