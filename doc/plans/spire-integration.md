@@ -243,6 +243,102 @@ spire-agent healthcheck -socketPath /tmp/spire-ci-test-harness/agent.sock
 
 ---
 
+### Phase 1.5: Full DevStack Service Set (Standard Auth) + spiffe-helper Cert Sidecars
+
+**Goal:** exercise SPIRE against a realistic multi-service OpenStack control
+plane before Phase 4/5's keystonemiddleware cutover exists — bring up
+Nova/Cinder/Glance/Neutron in the devstack CI job (previously keystone-only)
+using today's standard, unmodified keystone password/token auth, and add a
+`spiffe-helper` sidecar per service so each starts getting real X.509 SVIDs
+written to disk. The certs are issued but **not consumed** by any service in
+this phase — that consumption step belongs to Phase 4/5, once the patched
+keystonemiddleware exists to actually authenticate with them.
+
+**Prerequisites:** Phase 1 (SPIRE devstack plugin).
+
+**New/changed files:**
+
+| File                                                          | Purpose                                              |
+| --------------------------------------------------------------- | --------------------------------------------------- |
+| `tools/devstack-plugin-spire/etc/spiffe-helper.conf.tpl`        | spiffe-helper config template (done)                 |
+| `tools/devstack-plugin-spire/lib/spire`                         | `install_spiffe_helper`, `_spire_start_helper`, extended `_spire_register_static_entries` (cinder/glance), wiring into `start_spire`/`stop_spire`/`cleanup_spire` (done) |
+| `tools/devstack-plugin-spire/plugin.sh`                         | `enable_service spiffe-helper-{nova,cinder,glance,neutron}` run_process units (done) |
+| `.github/workflows/devstack.yml`                                | New `devstack-full` job: Nova/Cinder/Glance/Neutron enabled, `continue-on-error: true` (non-blocking until proven stable) (done) |
+
+**Details:**
+
+`spiffe-helper` (github.com/spiffe/spiffe-helper) connects to the SPIRE
+agent's Workload API and writes an SVID/key/CA bundle to disk per workload,
+refreshing them on rotation — the same tool and config shape already used in
+the k8s deployment (`tools/k8s/keystone/base/statefulset-rs.yaml`,
+`tools/k8s/keystone/base/conf/helper.conf`), reimplemented here for devstack
+via `run_process` (one instance per service) instead of a k8s sidecar
+container. Registration entries extend Phase 1's table with Cinder and
+Glance, using the same `unix:uid:$uid` selector pattern (and the same
+single-node-shared-user caveat Phase 1 already documents for nova-compute):
+
+| Service | SPIFFE ID |
+| ------- | --------- |
+| Cinder  | `spiffe://{trust_domain}/service/cinder` |
+| Glance  | `spiffe://{trust_domain}/service/glance` |
+
+In single-user devstack every entry's `unix:uid` selector matches every
+helper (they all run as `$STACK_USER`), so the agent hands each helper ALL
+registered SVIDs. spiffe-helper without a pin writes the "default" SVID (the
+first in the list — arbitrary, e.g. the nova-compute/host entry), so each
+entry is created with a `hint` equal to its SPIFFE ID and each helper's
+config sets the matching `hint`, pinning it to its own service's SVID.
+
+**Unlike SPIRE's own releases** (which publish a `_sha256sum.txt` per
+asset), spiffe-helper's release workflow uploads only the tarballs with no
+companion checksum file — `install_spiffe_helper` pins the sha256 of the
+downloaded tarball inline instead (computed from the published release
+asset at implementation time), rather than skipping verification.
+
+The new `devstack-full` CI job is deliberately separate from the existing
+keystone-only `devstack` job (a full nova/cinder/glance/neutron stack is
+materially heavier — image download, instance boot, extra services — and
+shouldn't slow every PR's feedback loop) and runs with `continue-on-error:
+true` until proven stable across several runs. Its approach to the
+classic "does nova-compute work without `/dev/kvm` on a GitHub-hosted
+runner" question follows a validated precedent
+(`gophercloud/devstack-action`, which runs stock devstack defaults
+including `n-cpu` on plain `ubuntu-24.04`/`22.04` runners across several
+OpenStack releases with no `NOVA_USE_QEMU`/`LIBVIRT_TYPE` override) rather
+than forcing software emulation proactively — devstack's own
+compute-driver detection is expected to handle the no-KVM case itself. That
+same project's workflow is also the source of the apt-level package
+workarounds the new job applies (RabbitMQ/erlang version conflict, a
+runner-image `/etc/hosts` bug, stray postgresql/docker.io packages).
+
+**Explicitly out of scope:** changing any service's actual keystone auth
+transport to SPIFFE/mTLS (Phase 4, not started); per-instance `compute-vm`
+ephemeral SPIFFE entries or mapping rulesets (Phase 6); any wiring of the
+emitted certs into a Nova/Cinder/Glance/Neutron config file.
+
+**Verification:**
+
+```bash
+# After stack.sh completes:
+openstack compute service list
+openstack volume service list
+openstack network agent list
+
+spire-server entry show -socketPath /opt/stack/data/spire/server.sock
+# Should show service/cinder and service/glance alongside Phase 1's entries
+
+for pair in nova:nova-api cinder:cinder glance:glance neutron:neutron; do
+  svc=${pair%%:*}
+  systemctl is-active "devstack@spiffe-helper-$svc"
+  # The SPIFFE ID is in the URI SAN, not the Subject (C=US, O=SPIRE):
+  openssl x509 -in /opt/stack/data/spire/certs/$svc/tls.crt -noout -checkend 0
+  openssl x509 -in /opt/stack/data/spire/certs/$svc/tls.crt -noout -text \
+    | grep -q "URI:spiffe://{trust_domain}/service/${pair#*:}"
+done
+```
+
+---
+
 ### Phase 2: Vendor Data JWT API (keystone-rs)
 
 **Goal:** keystone-rs exposes a new endpoint that signs a JWT per VM instance.
