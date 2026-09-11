@@ -1,6 +1,7 @@
 # OpenStack Keystone
 
 [Introduction](index.md)
+[Authentication and authorization vision](vision.md)
 
 ---
 
