@@ -363,7 +363,11 @@ impl NetSnapshot<TypeConfig> for NetworkConnection {
                         .log_id()
                         .map(|log_id| log_id.into()),
                     last_membership: Some(meta.last_membership.membership().clone().into()),
-                    snapshot_id: meta.snapshot_id.to_string(),
+                    // openraft 0.10 dropped `snapshot_id` from `SnapshotMeta` (two snapshots at
+                    // the same `last_log_id` are the same state regardless of transfer id); the
+                    // receiver derives its own on-disk id from `last_log_id`, so this proto field
+                    // is unused but kept for wire-format compatibility.
+                    snapshot_id: String::new(),
                 },
             )),
         };

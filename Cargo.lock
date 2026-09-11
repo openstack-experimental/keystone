@@ -1039,18 +1039,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "byte-unit"
-version = "5.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a813de7f2bbedb7dce265b64f1cf5908ebe4d56281ece8d847e98113788b9b0"
-dependencies = [
- "rust_decimal",
- "schemars",
- "serde",
- "utf8-width",
-]
-
-[[package]]
 name = "bytecheck"
 version = "0.6.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4707,14 +4695,13 @@ dependencies = [
 
 [[package]]
 name = "openraft"
-version = "0.10.0-alpha.31"
+version = "0.10.0-alpha.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51538caa677a285eafe62ede8a366445383988c2a23344cfdb4e95174717ef38"
+checksum = "06fe14d529f8fc098fbb4b9655d5db9b7ee0594e6a9d4e220aa931618de17b1f"
 dependencies = [
  "anyerror",
  "backoff-series",
  "base2histogram",
- "byte-unit",
  "chrono",
  "clap",
  "derive_more",
@@ -4725,6 +4712,7 @@ dependencies = [
  "openraft-macros",
  "openraft-rt",
  "openraft-rt-tokio",
+ "parse-size",
  "peel-off",
  "rand 0.10.2",
  "serde",
@@ -4736,9 +4724,9 @@ dependencies = [
 
 [[package]]
 name = "openraft-macros"
-version = "0.10.0-alpha.32"
+version = "0.10.0-alpha.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1943a9ac257416e81237ded75b8650688b34ae66743d7f82204c212ca29a5bd"
+checksum = "f5c57259539e016f70d05ea7e264573cc5ddabd651a127a13374e47b165b7664"
 dependencies = [
  "chrono",
  "proc-macro2",
@@ -4749,9 +4737,9 @@ dependencies = [
 
 [[package]]
 name = "openraft-rt"
-version = "0.10.0-alpha.32"
+version = "0.10.0-alpha.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0d4147d21ae5cf0ea56fec6041b4a5d9ad193e046516f6123035d75bce371f2"
+checksum = "02379ddf29c426905a6e91c5df522003ee2a9a9811b3b8be01e90ab1106ecef6"
 dependencies = [
  "futures-channel",
  "futures-util",
@@ -4762,9 +4750,9 @@ dependencies = [
 
 [[package]]
 name = "openraft-rt-tokio"
-version = "0.10.0-alpha.32"
+version = "0.10.0-alpha.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fbb6d7da496b598d8a6b6ebc236840525487d0c45672ad9c5b9c92197b81e777"
+checksum = "cfeb8c656d8b0e01319aafc70f77b3b312cac56d07adf157d80b49677cc2fcec"
 dependencies = [
  "futures-util",
  "openraft-rt",
@@ -6372,6 +6360,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "parse-size"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "487f2ccd1e17ce8c1bfab3a65c89525af41cfad4c8659021a1e9a2aacd73b89b"
+
+[[package]]
 name = "parse-zoneinfo"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7346,26 +7340,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ref-cast"
-version = "1.0.26"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "216e8f773d7923bcba9ceb86a86c93cabb3903a11872fc3f138c49630e50b96d"
-dependencies = [
- "ref-cast-impl",
-]
-
-[[package]]
-name = "ref-cast-impl"
-version = "1.0.26"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c9283685feec7d69af75fb0e858d5e7378f33fe4fc699383b2916ab9273e03c"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.3",
-]
-
-[[package]]
 name = "regalloc2"
 version = "0.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7904,18 +7878,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91c1b7e4904c873ef0710c1f407dde2e6287de2bebc1bbbf7d430bb7cbffd939"
 dependencies = [
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "schemars"
-version = "1.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "687274d293b6cdc6e73e0fee520bf2049650090d7164f87672d212a3c530cf4a"
-dependencies = [
- "dyn-clone",
- "ref-cast",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -9961,12 +9923,6 @@ checksum = "a77b65c7a7ab8283571978ef99afd537e1485bb48a3e5341de9bbedb9ca5c57d"
 dependencies = [
  "url",
 ]
-
-[[package]]
-name = "utf8-width"
-version = "0.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "159a7cadce548703edd50d24069bc294c5415ecab0a480e0cd1ca06d112dc94a"
 
 [[package]]
 name = "utf8-zero"

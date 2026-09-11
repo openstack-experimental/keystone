@@ -534,6 +534,38 @@ impl FjallStateMachine {
         &self.snapshot_dir
     }
 
+    /// Return the path of the most recently written snapshot file, if any.
+    ///
+    /// Snapshot filenames sort lexicographically by `<leader_id>-<index>-<rand>`, so the
+    /// lexicographically greatest filename is the latest snapshot. openraft 0.10 dropped
+    /// `snapshot_id` from `SnapshotMeta`, so callers that need the on-disk path (rather than
+    /// going through `RaftStateMachine::get_current_snapshot`) must locate it this way.
+    pub(crate) fn latest_snapshot_path(&self) -> io::Result<Option<std::path::PathBuf>> {
+        let mut latest_snapshot_id: Option<String> = None;
+
+        for entry in fs::read_dir(&self.snapshot_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            if !path.is_file() {
+                continue;
+            }
+
+            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                let snapshot_id = filename.to_string();
+
+                if latest_snapshot_id
+                    .as_ref()
+                    .is_none_or(|current| snapshot_id > *current)
+                {
+                    latest_snapshot_id = Some(snapshot_id);
+                }
+            }
+        }
+
+        Ok(latest_snapshot_id.map(|id| self.snapshot_dir.join(id)))
+    }
+
     /// Validate and decrypt an operator backup blob (produced by the `Backup`
     /// gRPC RPC) and return an OpenRaft `Snapshot` ready for
     /// `Raft::install_full_snapshot`.
@@ -1242,7 +1274,6 @@ impl RaftSnapshotBuilder<TypeConfig> for Arc<FjallStateMachine> {
         let meta = SnapshotMeta {
             last_log_id: last_applied_log,
             last_membership,
-            snapshot_id: snapshot_id.clone(),
         };
 
         tracing::trace!("snapshot metadata: {:?}", meta);
@@ -1337,11 +1368,6 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn begin_receiving_snapshot(&mut self) -> Result<Vec<u8>, io::Error> {
-        Ok(Vec::new())
-    }
-
-    #[tracing::instrument(skip(self))]
     async fn install_snapshot(
         &mut self,
         meta: &SnapshotMetaOf<TypeConfig>,
@@ -1394,6 +1420,18 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
             .persist(PersistMode::SyncAll)
             .map_err(|e| io::Error::other(e.to_string()))?;
 
+        let snapshot_idx: u64 = rand::rng().random_range(0..1000);
+        let snapshot_id = if let Some(last) = meta.last_log_id.as_ref() {
+            format!(
+                "{}-{}-{}",
+                last.committed_leader_id(),
+                last.index(),
+                snapshot_idx
+            )
+        } else {
+            format!("--{}", snapshot_idx)
+        };
+
         let snapshot_file = SnapshotFile {
             meta: meta.clone(),
             data: snapshot_data_clone,
@@ -1423,7 +1461,7 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
         disk_bytes.extend_from_slice(&utc_epoch.to_be_bytes());
         disk_bytes.extend_from_slice(&encrypted);
 
-        let snapshot_path = self.snapshot_dir.join(&meta.snapshot_id);
+        let snapshot_path = self.snapshot_dir.join(&snapshot_id);
         fs::write(&snapshot_path, &disk_bytes)?;
 
         Ok(())
@@ -1433,33 +1471,9 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
     async fn get_current_snapshot(
         &mut self,
     ) -> Result<Option<SnapshotOf<TypeConfig, Vec<u8>>>, io::Error> {
-        let mut latest_snapshot_id: Option<String> = None;
-
-        for entry in fs::read_dir(&self.snapshot_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if !path.is_file() {
-                continue;
-            }
-
-            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                let snapshot_id = filename.to_string();
-
-                if latest_snapshot_id
-                    .as_ref()
-                    .is_none_or(|current| snapshot_id > *current)
-                {
-                    latest_snapshot_id = Some(snapshot_id);
-                }
-            }
-        }
-
-        let Some(snapshot_id) = latest_snapshot_id else {
+        let Some(snapshot_path) = self.latest_snapshot_path()? else {
             return Ok(None);
         };
-
-        let snapshot_path = self.snapshot_dir.join(&snapshot_id);
 
         let disk_bytes = fs::read(&snapshot_path)?;
         let (snapshot_file, _, _) =
