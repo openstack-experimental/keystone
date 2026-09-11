@@ -166,7 +166,6 @@ impl RaftService for RaftServiceImpl {
                             Status::invalid_argument(format!("invalid membership: {:?}", e))
                         })?,
                 ),
-                snapshot_id: meta.snapshot_id,
             };
         }
 

@@ -1330,12 +1330,16 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
 
         // Trigger snapshot build via the snapshot builder trait.
         let mut builder = self.sm.clone();
-        let built = builder
+        let _built = builder
             .build_snapshot()
             .await
             .map_err(|e| Status::internal(format!("snapshot build failed: {e}")))?;
 
-        let snapshot_path = self.sm.snapshot_dir().join(&built.meta.snapshot_id);
+        let snapshot_path = self
+            .sm
+            .latest_snapshot_path()
+            .map_err(|e| Status::internal(format!("cannot locate snapshot file: {e}")))?
+            .ok_or_else(|| Status::internal("snapshot build did not produce a file"))?;
         let file = tokio::fs::File::open(&snapshot_path)
             .await
             .map_err(|e| Status::internal(format!("cannot open snapshot file: {e}")))?;
