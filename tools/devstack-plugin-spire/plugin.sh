@@ -15,15 +15,20 @@ SPIRE_PLUGIN_DIR=$(dirname "${BASH_SOURCE[0]}")
 source "$SPIRE_PLUGIN_DIR/lib/spire"
 
 if is_service_enabled spire; then
-    # spire-server and spire-agent are the internal run_process units the
-    # start/stop functions target, not user-facing toggles - devstack's
-    # run_process silently no-ops for any service name that isn't enabled,
-    # so they must be enabled here (mirroring key-rs's key-rs-opa). "spire"
-    # remains the single toggle operators use in local.conf.
+    # spire-server, spire-agent, and the per-service spiffe-helper-*
+    # instances are the internal run_process units the start/stop
+    # functions target, not user-facing toggles - devstack's run_process
+    # silently no-ops for any service name that isn't enabled, so they
+    # must be enabled here (mirroring key-rs's key-rs-opa). "spire" remains
+    # the single toggle operators use in local.conf; each spiffe-helper-*
+    # instance is itself only started (lib/spire's start_spire) when its
+    # corresponding OpenStack service (n-api/c-api/g-api/q-svc) is enabled.
     enable_service spire-server spire-agent
+    enable_service spiffe-helper-nova spiffe-helper-cinder spiffe-helper-glance spiffe-helper-neutron
 
     if [[ "$1" == "stack" && "$2" == "install" ]]; then
         install_spire
+        install_spiffe_helper
     elif [[ "$1" == "stack" && "$2" == "post-config" ]]; then
         configure_spire
     elif [[ "$1" == "stack" && "$2" == "extra" ]]; then

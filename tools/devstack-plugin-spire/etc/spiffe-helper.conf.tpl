@@ -1,0 +1,7 @@
+agent_address = "@SPIRE_AGENT_SOCKET@"
+cmd = ""
+cert_dir = "@SPIFFE_HELPER_CERT_DIR@"
+hint = "@SPIFFE_HELPER_HINT@"
+svid_file_name = "tls.crt"
+svid_key_file_name = "tls.key"
+svid_bundle_file_name = "ca.crt"

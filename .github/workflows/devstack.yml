@@ -282,3 +282,254 @@ jobs:
       - name: Dump Apache error log
         if: failure()
         run: sudo cat /var/log/apache2/error.log || true
+
+  # Phase 1.5 of doc/plans/spire-integration.md: a full single-node stack
+  # with Nova/Cinder/Glance/Neutron, still using standard password/token
+  # keystone auth (no SPIFFE-based auth cutover - that needs the patched
+  # keystonemiddleware from Phase 4, not started yet). Kept as a separate,
+  # initially non-blocking job rather than folded into "devstack" above:
+  # this stack is materially heavier (image download, instance boot,
+  # extra services) and shouldn't slow every PR's feedback loop until
+  # proven stable. continue-on-error at the job level means a failure here
+  # is visible but doesn't fail the overall workflow.
+  devstack-full:
+    runs-on: ubuntu-24.04
+    needs:
+      - build
+    continue-on-error: true
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      OS_CLOUD: devstack-admin
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Materialize local branch ref for devstack's file:// plugin clone
+        run: |
+          ref="$(git symbolic-ref --short -q HEAD || true)"
+          if [[ -z "$ref" ]]; then
+            ref="${{ github.head_ref || github.ref_name }}"
+            git branch -f "$ref" HEAD
+          fi
+          echo "KEYSTONE_RS_GIT_REF=$ref" >> "$GITHUB_ENV"
+
+      - name: Download built binaries
+        uses: actions/download-artifact@abefc31eafcfbdf6c5336127c1346fdae79ff41c # v5.0.0
+        with:
+          name: keystone-devstack-bin
+          path: ${{ github.workspace }}/bin
+
+      - name: Fix binary permissions
+        run: chmod u+x ${{ github.workspace }}/bin/keystone ${{ github.workspace }}/bin/keystone-manage
+
+      - name: Remove pre-installed MySQL
+        run: |
+          sudo systemctl stop mysql.service || true
+          sudo apt-get purge -y --auto-remove 'mysql-*' 'mariadb-*' || true
+          sudo rm -rf /etc/mysql /var/lib/mysql
+
+      - name: Runner package workarounds for a full devstack (nova/cinder/glance/neutron)
+        # Same workarounds gophercloud/devstack-action uses to run a full
+        # (non-keystone-only) devstack on GitHub-hosted Ubuntu runners:
+        # - a documented runner-image /etc/hosts bug that otherwise breaks apt
+        # - the pre-installed esl-erlang package conflicts with the
+        #   rabbitmq-server package devstack's `enable_service rabbit` needs
+        # - stray postgresql/docker.io packages that collide with devstack's
+        #   own setup
+        # See https://github.com/gophercloud/devstack-action's action.yaml.
+        run: |
+          sudo sed -i 's/^-e \+//g' /etc/hosts
+          sudo apt-get update
+          sudo apt-get purge -y esl-erlang || true
+          sudo apt-get install -y erlang rabbitmq-server
+          sudo apt-get install -y runc || true
+          sudo apt-get purge -y python3-simplejson python3-pyasn1-modules postgresql* || true
+
+      - name: Clone devstack
+        run: git clone https://opendev.org/openstack/devstack /opt/stack/devstack
+
+      - name: Package SPIRE plugin as a standalone devstack plugin repo
+        run: |
+          sudo mkdir -p /opt/spire-plugin/devstack
+          sudo cp -rT tools/devstack-plugin-spire /opt/spire-plugin/devstack
+          sudo git -C /opt/spire-plugin init -q -b main
+          sudo git -C /opt/spire-plugin add -A
+          sudo git -C /opt/spire-plugin \
+            -c user.name=ci -c user.email=ci@localhost \
+            commit -qm "SPIRE devstack plugin"
+
+      - name: Write local.conf
+        run: |
+          cat <<EOF > /opt/stack/devstack/local.conf
+          [[local|localrc]]
+          ADMIN_PASSWORD=password
+          DATABASE_PASSWORD=password
+          RABBIT_PASSWORD=password
+          SERVICE_PASSWORD=password
+          SERVICE_TOKEN=service-token
+          GIT_BASE=https://github.com
+
+          disable_all_services
+          enable_service mysql
+          enable_service rabbit
+          enable_service key
+          enable_service key-rs
+          enable_service tempest
+          enable_service spire
+
+          # Nova (+ placement, a hard Nova dependency in modern devstack)
+          enable_service n-api n-cpu n-sch n-cond n-novnc n-crt n-api-meta
+          enable_service placement-api placement-client
+          # Cinder (c-vol defaults to an LVM-over-loopback backend when no
+          # CINDER_DRIVER is set - no real block device needed)
+          enable_service c-api c-sch c-vol
+          # Glance
+          enable_service g-api
+          # Neutron with OVN (devstack's default ML2 mechanism driver since
+          # 2023). The legacy agents (q-agt/q-dhcp/q-l3/q-meta) are mutually
+          # exclusive with OVN - devstack's ovn_sanity_check aborts the run
+          # if any of them is enabled. OVN's own services must be listed
+          # explicitly because disable_all_services drops stackrc's defaults.
+          enable_service q-svc q-ovn-agent
+          enable_service ovn-controller ovn-northd ovs-vswitchd ovsdb-server
+
+          enable_plugin spire file:///opt/spire-plugin main
+          enable_plugin key-rs file://${{ github.workspace }} ${{ env.KEYSTONE_RS_GIT_REF }}
+
+          SPIRE_TRUST_DOMAIN=cloud.trust.domain
+
+          KEYSTONE_RS_BIN_DIR=${{ github.workspace }}/bin
+
+          LOGFILE=\$HOME/devstack.log
+          LOG_COLOR=False
+          EOF
+          cat /opt/stack/devstack/local.conf
+
+      - name: Run stack.sh
+        working-directory: /opt/stack/devstack
+        run: FORCE=yes ./stack.sh
+
+      - name: Verify rust Keystone is serving directly
+        run: curl -sf http://127.0.0.1:8080/v3
+
+      - name: Issue a token via the openstack CLI
+        run: |
+          source /opt/stack/devstack/openrc admin admin
+          openstack token issue
+
+      - name: Verify OpenStack service health
+        run: |
+          source /opt/stack/devstack/openrc admin admin
+          openstack compute service list
+          openstack volume service list
+          openstack image list
+          openstack network agent list
+          # devstack no longer binds per-service ports (8774/8776/9292/9696):
+          # all APIs are proxied by a single Apache on port 80 via URL path
+          # prefixes. -f is omitted on purpose: unauthenticated requests get
+          # 3xx/401 back, which still proves the API is up and answering.
+          curl -s -o /dev/null http://127.0.0.1/compute/
+          curl -s -o /dev/null http://127.0.0.1/volume/v3/
+          curl -s -o /dev/null http://127.0.0.1/image/
+          curl -s -o /dev/null http://127.0.0.1/networking/
+
+      - name: Smoke test - boot and delete a cirros instance
+        run: |
+          source /opt/stack/devstack/openrc admin admin
+          image_id=$(openstack image list -f value -c ID | head -n1)
+          network_id=$(openstack network list -f value -c ID --long -c "Name" | awk '$0 !~ /public/ {print $1; exit}')
+          openstack server create --image "$image_id" \
+            --flavor cirros256 --network "$network_id" smoke-test --wait
+          openstack server delete smoke-test --wait
+
+      - name: Verify SPIRE server and agent are healthy
+        run: |
+          /usr/local/bin/spire-server healthcheck -socketPath /opt/stack/data/spire/server.sock
+          /usr/local/bin/spire-agent healthcheck -socketPath /opt/stack/data/spire/agent.sock
+
+      - name: Verify pre-registered SPIRE entries exist
+        run: |
+          /usr/local/bin/spire-server entry show -socketPath /opt/stack/data/spire/server.sock | tee /tmp/spire-entries.txt
+          grep -q "service/keystone" /tmp/spire-entries.txt
+          grep -q "service/nova-api" /tmp/spire-entries.txt
+          grep -q "service/neutron" /tmp/spire-entries.txt
+          grep -q "service/cinder" /tmp/spire-entries.txt
+          grep -q "service/glance" /tmp/spire-entries.txt
+          grep -q "service/nova-compute/host/" /tmp/spire-entries.txt
+
+      - name: Verify SPIRE CA bundle was exported
+        run: test -s /etc/keystone/spiffe/ca.crt
+
+      - name: Verify spiffe-helper processes are running
+        run: |
+          for svc in nova cinder glance neutron; do
+            sudo systemctl is-active "devstack@spiffe-helper-$svc"
+          done
+
+      - name: Verify spiffe-helper certs were issued and are valid
+        run: |
+          # SPIRE does not put the SPIFFE ID in the cert's Subject (it is
+          # C=US, O=SPIRE) - the identity lives in the URI SAN. So assert
+          # the exact per-service identity each helper is pinned to, and
+          # verify the SVID chains to the trust bundle the helper stored
+          # alongside it.
+          for pair in nova:nova-api cinder:cinder glance:glance neutron:neutron; do
+            svc=${pair%%:*}
+            dir=/opt/stack/data/spire/certs/$svc
+            openssl x509 -in $dir/tls.crt -noout -checkend 0
+            openssl verify -CAfile $dir/ca.crt $dir/tls.crt
+            openssl x509 -in $dir/tls.crt -noout -text | grep -q "URI:spiffe://cloud.trust.domain/service/${pair#*:}"
+          done
+
+      - name: Dump devstack log
+        if: failure()
+        run: cat "$HOME/devstack.log" || true
+
+      - name: Dump rust Keystone service log
+        if: failure()
+        run: sudo journalctl -u devstack@key-rs --no-pager || true
+
+      - name: Dump Nova API log
+        if: failure()
+        run: sudo journalctl -u devstack@n-api --no-pager || true
+
+      - name: Dump Nova Compute log
+        if: failure()
+        run: sudo journalctl -u devstack@n-cpu --no-pager || true
+
+      - name: Dump Cinder API log
+        if: failure()
+        run: sudo journalctl -u devstack@c-api --no-pager || true
+
+      - name: Dump Cinder Volume log
+        if: failure()
+        run: sudo journalctl -u devstack@c-vol --no-pager || true
+
+      - name: Dump Glance API log
+        if: failure()
+        run: sudo journalctl -u devstack@g-api --no-pager || true
+
+      - name: Dump Neutron server log
+        if: failure()
+        run: sudo journalctl -u devstack@q-svc --no-pager || true
+
+      - name: Dump SPIRE server log
+        if: failure()
+        run: sudo journalctl -u devstack@spire-server --no-pager || true
+
+      - name: Dump SPIRE agent log
+        if: failure()
+        run: sudo journalctl -u devstack@spire-agent --no-pager || true
+
+      - name: Dump spiffe-helper logs
+        if: failure()
+        run: |
+          for svc in nova cinder glance neutron; do
+            sudo journalctl -u "devstack@spiffe-helper-$svc" --no-pager || true
+          done
