@@ -145,15 +145,21 @@ pub async fn start_axum_app(
     app: Router,
     token: CancellationToken,
     trust_domains: Vec<String>,
+    svid_path: Option<String>,
     interface: Interface,
     peer_uid: Option<u32>,
     peer_gid: Option<u32>,
 ) -> Result<(), Report> {
-    let spiffe_server_config =
-        match spiffe_common::build_spiffe_config(token.clone(), trust_domains).await? {
-            Some(config) => config,
-            None => return Ok(()),
-        };
+    let spiffe_server_config = match spiffe_common::build_spiffe_config(
+        token.clone(),
+        trust_domains,
+        svid_path.as_deref(),
+    )
+    .await?
+    {
+        Some(config) => config,
+        None => return Ok(()),
+    };
 
     let acceptor = TlsAcceptor::from(spiffe_server_config);
 

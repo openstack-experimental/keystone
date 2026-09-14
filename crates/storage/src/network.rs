@@ -28,7 +28,8 @@ use openraft::raft::{StreamAppendError, StreamAppendResult, TransferLeaderReques
 use openraft::{AnyError, OptionalSend, RaftNetworkFactory};
 use openstack_keystone_config::RaftTlsConfiguration;
 use secrecy::ExposeSecret;
-use spiffe::X509Source;
+use spiffe::x509_source::SvidPicker;
+use spiffe::{X509Source, X509SourceBuilder, X509Svid};
 use spiffe_rustls::{authorizer, mtls_client};
 use tokio::sync::watch;
 use tonic::Status;
@@ -655,13 +656,45 @@ pub fn get_server_tls_config(config: &Config) -> Result<ServerTlsConfig, StoreEr
 // SPIFFE mTLS helpers (Spiffe variant of RaftTlsConfiguration — ADR 0016-v2)
 // ---------------------------------------------------------------------------
 
+/// Selects the SVID whose SPIFFE ID path exactly matches a configured value.
+///
+/// A storage node's process typically matches more than one SPIRE
+/// registration entry (e.g. devstack registers both `/service/keystone` and
+/// `/keystone/storage/node` under the same `unix:uid` selector). Without a
+/// picker, `X509Source` presents whichever SVID the Workload API happened to
+/// return first, so raft peer connections wouldn't reliably use the storage
+/// node's own identity. `pick_svid` returning `None` fails source
+/// initialization instead of silently presenting the wrong identity.
+#[derive(Debug)]
+struct PathSvidPicker {
+    path: String,
+}
+
+impl SvidPicker for PathSvidPicker {
+    fn pick_svid(&self, svids: &[Arc<X509Svid>]) -> Option<usize> {
+        svids
+            .iter()
+            .position(|svid| svid.spiffe_id().path() == self.path)
+    }
+}
+
 /// Initialize a SPIFFE-backed [`RaftTlsClient`] for Raft peer connections.
 ///
 /// Connects to the SPIRE Workload API and builds a `rustls::ClientConfig` via
 /// [`spiffe_rustls::mtls_client`].  SVID rotation is managed internally by
 /// `spiffe-rustls`'s `MaterialWatcher`; no separate watcher task is needed.
-async fn init_spiffe_raft_tls(trust_domains: Vec<String>) -> Result<RaftTlsClient, StoreError> {
-    let source = X509Source::new()
+/// `own_svid_path` pins the storage node's own SVID path (see
+/// [`PathSvidPicker`]) so the client always presents that identity, never
+/// another SVID the same process happens to also hold.
+async fn init_spiffe_raft_tls(
+    trust_domains: Vec<String>,
+    own_svid_path: String,
+) -> Result<RaftTlsClient, StoreError> {
+    let source = X509SourceBuilder::new()
+        .picker(PathSvidPicker {
+            path: own_svid_path,
+        })
+        .build()
         .await
         .map_err(|e| StoreError::Other(eyre::eyre!("SPIFFE X509Source init failed: {e}")))?;
 
@@ -733,11 +766,11 @@ pub async fn get_spiffe_grpc_channel(
 pub async fn init_tls_watcher(
     config_manager: &Arc<ConfigManager>,
 ) -> Result<RaftTlsClient, StoreError> {
-    let spiffe_trust_domains = {
+    let spiffe_cfg = {
         let cfg = config_manager.config.read().await;
         if let Some(ds) = &cfg.distributed_storage {
             if let RaftTlsConfiguration::Spiffe(spiffe_cfg) = &ds.tls_configuration {
-                Some(spiffe_cfg.trust_domains.clone())
+                Some(spiffe_cfg.clone())
             } else {
                 None
             }
@@ -746,8 +779,12 @@ pub async fn init_tls_watcher(
         }
     };
 
-    if let Some(trust_domains) = spiffe_trust_domains {
-        return init_spiffe_raft_tls(trust_domains).await;
+    if let Some(spiffe_cfg) = spiffe_cfg {
+        // Present this node's own storage identity (first allowed peer SVID,
+        // else the `<spiffe_path_prefix>node` convention), never some other
+        // SVID the process happens to also hold.
+        let own_svid_path = spiffe_cfg.own_svid_path();
+        return init_spiffe_raft_tls(spiffe_cfg.trust_domains, own_svid_path).await;
     }
 
     // Static TLS fallback: load certificates from config files.

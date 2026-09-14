@@ -116,6 +116,7 @@ pub fn spawn_internal(
     let rest_addr = internal_if.tcp_address;
     let rest_cancel_token = startup.token.clone();
     let rest_spiffe_trust_domains = spiffe.trust_domains.clone();
+    let rest_spiffe_svid_path = spiffe.svid_path.clone();
 
     handles.spawn(async move {
         let cancel_token = rest_cancel_token.clone();
@@ -124,6 +125,7 @@ pub fn spawn_internal(
             app,
             rest_cancel_token,
             rest_spiffe_trust_domains,
+            rest_spiffe_svid_path,
             Interface::Internal,
         )
         .await
@@ -187,6 +189,7 @@ pub fn spawn_admin(startup: &Startup, app: Router, handles: &mut JoinSet<()>) {
     let socket_path = admin_if.listener.socket_path.clone();
     let rest_cancel_token = startup.token.clone();
     let rest_spiffe_trust_domains = admin_if.listener.trust_domains.clone();
+    let rest_spiffe_svid_path = admin_if.listener.svid_path.clone();
     let peer_uid = admin_if.listener.peer_uid;
     let peer_gid = admin_if.listener.peer_gid;
 
@@ -197,6 +200,7 @@ pub fn spawn_admin(startup: &Startup, app: Router, handles: &mut JoinSet<()>) {
             app,
             rest_cancel_token,
             rest_spiffe_trust_domains,
+            rest_spiffe_svid_path,
             Interface::Admin,
             peer_uid,
             peer_gid,

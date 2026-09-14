@@ -263,6 +263,10 @@ jobs:
         if: failure()
         run: cat "$HOME/devstack.log" || true
 
+      - name: Dump keystone (python) service log
+        if: failure()
+        run: sudo journalctl -u devstack@keystone --no-pager || true
+
       - name: Dump rust Keystone service log
         if: failure()
         run: sudo journalctl -u devstack@key-rs --no-pager || true
@@ -366,7 +370,7 @@ jobs:
 
       - name: Write local.conf
         run: |
-          cat <<EOF > /opt/stack/devstack/local.conf
+          cat <<'EOF' > /opt/stack/devstack/local.conf
           [[local|localrc]]
           ADMIN_PASSWORD=password
           DATABASE_PASSWORD=password
@@ -406,7 +410,47 @@ jobs:
 
           KEYSTONE_RS_BIN_DIR=${{ github.workspace }}/bin
 
-          LOGFILE=\$HOME/devstack.log
+          # Phase 1.6 of doc/plans/spire-integration.md: pilot
+          # https://review.opendev.org/c/openstack/keystonemiddleware/+/1005601
+          # (WIP as of writing) against keystone-rs's internal SPIFFE mTLS
+          # listener, Nova only. LIBS_FROM_GIT pulls the exact WIP patchset
+          # via its Gerrit ref (refs/changes/<last 2 digits of change
+          # number>/<change number>/<patchset>) - bump KEYSTONEMIDDLEWARE_BRANCH
+          # if/when a newer patchset needs picking up.
+          KEYSTONE_RS_SPIFFE_INTERNAL=True
+          LIBS_FROM_GIT+=keystonemiddleware
+          KEYSTONEMIDDLEWARE_REPO=https://opendev.org/openstack/keystonemiddleware
+          KEYSTONEMIDDLEWARE_BRANCH=refs/changes/01/1005601/3
+          # The WIP patch's `spiffe` extra isn't selected by LIBS_FROM_GIT's
+          # editable install, and current devstack master no longer honors
+          # PYTHON_PACKAGES, so the `spiffe` package the patch imports
+          # (keystonemiddleware/auth_token/_spiffe_transport.py) plus its
+          # undeclared `protobuf` runtime dep are installed by the key-rs
+          # plugin's install_keystone_rs (devstack/lib/keystone-rs, gated
+          # on KEYSTONE_RS_SPIFFE_INTERNAL) during devstack's install
+          # phase - before n-api starts during stack.sh, where a missing
+          # package 500s every request and aborts stack.sh before any
+          # later workflow step runs.
+
+          # key-rs does not implement Keystone's unified limits API
+          # (GET /v3/limits/model), which glance's keystone-quota path
+          # (oslo.limit's Enforcer) queries on every image upload. With
+          # the Apache /identity proxy pointed at key-rs that 500s and
+          # aborts stack.sh in create_flavors, so until key-rs implements
+          # the API keep glance on its local quota tables.
+          GLANCE_ENABLE_QUOTAS=False
+
+          [[post-config|$NOVA_CONF]]
+          [keystone_authtoken]
+          # Hardcoded rather than referencing $SPIRE_AGENT_SOCKET/
+          # $KEYSTONE_RS_INTERNAL_PORT: local.conf's [[post-config]] values
+          # aren't shell-expanded by devstack, so these must match
+          # lib/spire's/lib/keystone-rs's actual defaults (also hardcoded
+          # elsewhere in this job, e.g. the SPIRE healthcheck steps below).
+          spiffe_agent_socket = unix:///opt/stack/data/spire/agent.sock
+          auth_url = https://127.0.0.1:8081
+
+          LOGFILE=$HOME/devstack.log
           LOG_COLOR=False
           EOF
           cat /opt/stack/devstack/local.conf
@@ -414,6 +458,16 @@ jobs:
       - name: Run stack.sh
         working-directory: /opt/stack/devstack
         run: FORCE=yes ./stack.sh
+
+      - name: Restart Nova API to pick up auth_token config
+        # The key-rs plugin already pip-installed `spiffe` into the venv
+        # before stack.sh started n-api, so this restart is only to pick
+        # up the
+        # [[post-config|$NOVA_CONF]] keystone_authtoken options applied
+        # above (devstack writes local.conf's post-config sections during
+        # stack.sh, but n-api may already be running by the time nova's
+        # own config gets that section merged in).
+        run: sudo systemctl restart devstack@n-api
 
       - name: Verify rust Keystone is serving directly
         run: curl -sf http://127.0.0.1:8080/v3
@@ -487,9 +541,265 @@ jobs:
             openssl x509 -in $dir/tls.crt -noout -text | grep -q "URI:spiffe://cloud.trust.domain/service/${pair#*:}"
           done
 
+      - name: Verify keystone-rs internal SPIFFE mTLS listener started
+        # Phase 1.6: confirms interface_internal actually came up in SPIFFE
+        # mode (crates/keystone/src/server/listener/spiffe_tls.rs logs this
+        # on startup), not just that the config option was written.
+        run: sudo journalctl -u devstack@key-rs --no-pager | grep -q "SPIFFE mTLS"
+
+      - name: Verify internal SPIFFE listener rejects unauthenticated clients
+        # No client cert presented - the mTLS handshake itself must fail.
+        run: |
+          if curl -sf -k --max-time 5 https://127.0.0.1:8081/v3 >/dev/null 2>&1; then
+            echo "internal SPIFFE listener accepted a connection with no client cert" >&2
+            exit 1
+          fi
+
+      - name: Verify Nova's auth_token back-channel authenticates over SPIFFE mTLS
+        # Phase 1.6 POC: nova.conf's [keystone_authtoken] points auth_url at
+        # keystone-rs's internal SPIFFE listener (see local.conf above) and
+        # sets spiffe_agent_socket, per
+        # https://review.opendev.org/c/openstack/keystonemiddleware/+/1005601
+        # (WIP). First, fetch nova-api's own SVID directly and confirm the
+        # listener accepts it (positive control, independent of nova-api's
+        # own process). Then confirm nova-api itself is actually serving
+        # requests through that path - the "Verify OpenStack service health"/
+        # smoke-test steps above already exercised nova-api's auth_token
+        # validation end-to-end, so their prior success is the real
+        # end-to-end signal; this step only adds the direct positive-control
+        # check plus an explicit re-assertion that nova-api is still healthy
+        # after the config change and restart.
+        run: |
+          # The SPIRE entries are pinned to the devstack user's uid
+          # (unix:uid selector), and this workflow runs as that user, so the
+          # fetch must NOT use sudo: the agent's "unix" workload attestor
+          # reads the caller's uid, and as root it sees uid 0, matches no
+          # entry and returns "No identity issued ... registered=false".
+          # (Same reason the spire healthchecks above don't sudo either.)
+          tmpdir=$(mktemp -d)
+          /usr/local/bin/spire-agent api fetch x509 \
+            -socketPath /opt/stack/data/spire/agent.sock -write "$tmpdir"
+          chmod 0644 "$tmpdir"/*.pem "$tmpdir"/*.key 2>/dev/null || true
+          # The agent returns the workload's entire identity set in
+          # arbitrary order (svid.0.pem can be any entry, the SPIRE CLI
+          # has no per-identity filter), so select by URI SAN, not index.
+          want="spiffe://cloud.trust.domain/service/nova-api"
+          svid=""
+          for f in "$tmpdir"/svid.*.pem; do
+            if openssl x509 -in "$f" -noout -ext subjectAltName \
+                 | grep -qE "URI:$want(,|\$)"; then
+              svid="$f"
+              break
+            fi
+          done
+          if [[ -z "$svid" ]]; then
+            echo "SVID $want not among the fetched identities" >&2
+            exit 1
+          fi
+          n=${svid##*/svid.}
+          n=${n%.pem}
+          key="$tmpdir/svid.$n.key"
+          bundle="$tmpdir/bundle.$n.pem"
+          # A SPIFFE SVID carries its identity in a URI SAN, so a
+          # hostname/IP check against 127.0.0.1 can never succeed (curl
+          # would reject the perfectly valid SVID). Verify the server
+          # chain against the trust bundle and skip only the hostname
+          # assertion, the same way the ksm SPIFFE transport does.
+          python3 -c '
+          import ssl, sys, urllib.request
+          svid, key, bundle = sys.argv[1:4]
+          ctx = ssl.create_default_context(cafile=bundle)
+          ctx.check_hostname = False
+          ctx.load_cert_chain(svid, key)
+          opener = urllib.request.build_opener(
+              urllib.request.HTTPSHandler(context=ctx))
+          sys.stdout.buffer.write(opener.open("https://127.0.0.1:8081/v3", timeout=10).read())
+          ' "$svid" "$key" "$bundle"
+
+          source /opt/stack/devstack/openrc admin admin
+          openstack compute service list
+
+      - name: Configure control-plane SPIFFE authorization mapping
+        # Gap identified in the Phase 1.6 review: an SVID authenticates at
+        # TLS on the internal listener, but until a mapping ruleset exists
+        # it carries zero authorization meaning - authenticate_by_mapping
+        # fails closed (NoMatchingRule, now correctly surfaced as 401, not
+        # 500 - see the KeystoneApiError::UnauthorizedNoContext fix in
+        # crates/api-types/src/error_conv.rs). No code change was needed
+        # for the mapping itself:
+        # ValidatedSecurityContext::new_for_scope's `AuthenticationContext::
+        # Mapping` arm (crates/core/src/auth.rs) already upgrades an
+        # is_system rule's Unscoped scope to System("all") generically, for
+        # any mapping-authenticated source. This just wires up a minimal
+        # global ruleset: nova-api's own control-plane SVID (exact
+        # spiffe.id match) maps to a virtual system-scoped principal
+        # holding the `service` role - the same least-privilege role
+        # policy/auth/token/show.rego already grants dedicated token-
+        # introspection access to, mirroring a real keystonemiddleware
+        # service account rather than granting full admin.
+        # Prerequisite: the mapping provider is raft-only, so the key-rs
+        # plugin must have brought up its single-node [distributed_storage]
+        # (it does when KEYSTONE_RS_SPIFFE_INTERNAL=True, see
+        # devstack/lib/keystone-rs) - without it this POST 501s.
+        run: |
+          source /opt/stack/devstack/openrc admin admin
+          admin_token=$(openstack token issue -f value -c id)
+          service_role_id=$(openstack role show service -f value -c id)
+
+          cat > /tmp/spiffe-control-plane-ruleset.json <<EOF
+          {
+            "mapping": {
+              "mapping_id": "ci-spiffe-control-plane",
+              "domain_id": null,
+              "source": {"type": "spiffe", "trust_domain": "cloud.trust.domain"},
+              "domain_resolution_mode": {"type": "fixed"},
+              "enabled": true,
+              "rules": [
+                {
+                  "name": "nova-api-control-plane",
+                  "match": {
+                    "all_of": [
+                      {
+                        "type": "condition",
+                        "equals": {
+                          "claim": "spiffe.id",
+                          "value": "spiffe://cloud.trust.domain/service/nova-api"
+                        }
+                      }
+                    ]
+                  },
+                  "identity": {
+                    "user_name": "svid-nova-api",
+                    "is_system": true
+                  },
+                  "authorizations": [
+                    {
+                      "type": "system",
+                      "system_id": "all",
+                      "roles": [{"id": "$service_role_id", "name": "service"}]
+                    }
+                  ],
+                  "groups": []
+                }
+              ]
+            }
+          }
+          EOF
+
+          curl -sf -X POST http://127.0.0.1:8080/v4/mappings/rulesets \
+            -H "X-Auth-Token: $admin_token" \
+            -H "Content-Type: application/json" \
+            -d @/tmp/spiffe-control-plane-ruleset.json
+
+      - name: Verify a mapped control-plane SVID performs real authz
+        # Upgrades the earlier back-channel check from "transport works"
+        # to "SVID identity works": a subject token is only ever inspected
+        # over the internal SPIFFE listener by a caller whose SVID actually
+        # matched the ruleset above and got the `service` role at system
+        # scope (policy/auth/token/show.rego's dedicated `service` check).
+        # nova-api's own SVID is fetched fresh, same as the earlier
+        # back-channel step - it isn't reused across steps since each `run:`
+        # block is a separate shell.
+        run: |
+          source /opt/stack/devstack/openrc admin admin
+          subject_token=$(openstack token issue -f value -c id)
+
+          tmpdir=$(mktemp -d)
+          /usr/local/bin/spire-agent api fetch x509 \
+            -socketPath /opt/stack/data/spire/agent.sock -write "$tmpdir"
+          chmod 0644 "$tmpdir"/*.pem "$tmpdir"/*.key 2>/dev/null || true
+          # The agent returns the workload's entire identity set in
+          # arbitrary order (svid.0.pem can be any entry, the SPIRE CLI
+          # has no per-identity filter), so select by URI SAN, not index.
+          # This MUST be nova-api's SVID: it is the exact spiffe.id the
+          # ruleset above matches, and any other entry fails closed with
+          # 401 (the negative control below pins that down).
+          want="spiffe://cloud.trust.domain/service/nova-api"
+          svid=""
+          for f in "$tmpdir"/svid.*.pem; do
+            if openssl x509 -in "$f" -noout -ext subjectAltName \
+                 | grep -qE "URI:$want(,|\$)"; then
+              svid="$f"
+              break
+            fi
+          done
+          if [[ -z "$svid" ]]; then
+            echo "SVID $want not among the fetched identities" >&2
+            exit 1
+          fi
+          n=${svid##*/svid.}
+          n=${n%.pem}
+          key="$tmpdir/svid.$n.key"
+          bundle="$tmpdir/bundle.$n.pem"
+
+          status=$(python3 -c '
+          import ssl, sys, urllib.request, urllib.error
+          svid, key, bundle, token = sys.argv[1:5]
+          ctx = ssl.create_default_context(cafile=bundle)
+          ctx.check_hostname = False
+          ctx.load_cert_chain(svid, key)
+          opener = urllib.request.build_opener(
+              urllib.request.HTTPSHandler(context=ctx))
+          req = urllib.request.Request(
+              "https://127.0.0.1:8081/v3/auth/tokens",
+              headers={"X-Subject-Token": token})
+          try:
+              resp = opener.open(req, timeout=10)
+              print(resp.status)
+          except urllib.error.HTTPError as e:
+              print(e.code)
+          ' "$svid" "$key" "$bundle" "$subject_token")
+
+          echo "mapped SVID token-validation status: $status"
+          if [[ "$status" != "200" ]]; then
+            echo "expected 200 from a ruleset-matched, service-scoped SVID" >&2
+            exit 1
+          fi
+
+      - name: Verify an unmapped SVID is rejected, not silently authorized
+        # Negative control for the check above: cinder's SVID matches no
+        # rule in the ruleset created here (only nova-api's exact spiffe.id
+        # does), so it must be denied - proving the ruleset is actually
+        # gatekeeping rather than mapping every workload to system scope.
+        # Reuses the cinder cert spiffe-helper already wrote to disk
+        # (verified readable without sudo by the "Verify spiffe-helper
+        # certs" step above) instead of fetching a second SVID by hand.
+        run: |
+          source /opt/stack/devstack/openrc admin admin
+          subject_token=$(openstack token issue -f value -c id)
+
+          dir=/opt/stack/data/spire/certs/cinder
+          status=$(python3 -c '
+          import ssl, sys, urllib.request, urllib.error
+          svid, key, bundle, token = sys.argv[1:5]
+          ctx = ssl.create_default_context(cafile=bundle)
+          ctx.check_hostname = False
+          ctx.load_cert_chain(svid, key)
+          opener = urllib.request.build_opener(
+              urllib.request.HTTPSHandler(context=ctx))
+          req = urllib.request.Request(
+              "https://127.0.0.1:8081/v3/auth/tokens",
+              headers={"X-Subject-Token": token})
+          try:
+              resp = opener.open(req, timeout=10)
+              print(resp.status)
+          except urllib.error.HTTPError as e:
+              print(e.code)
+          ' "$dir/tls.crt" "$dir/tls.key" "$dir/ca.crt" "$subject_token")
+
+          echo "unmapped SVID token-validation status: $status"
+          if [[ "$status" != "401" ]]; then
+            echo "expected 401 for an SVID absent from the ruleset, got $status" >&2
+            exit 1
+          fi
+
       - name: Dump devstack log
         if: failure()
         run: cat "$HOME/devstack.log" || true
+
+      - name: Dump keystone (python) service log
+        if: failure()
+        run: sudo journalctl -u devstack@keystone --no-pager || true
 
       - name: Dump rust Keystone service log
         if: failure()

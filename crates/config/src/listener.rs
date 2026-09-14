@@ -35,6 +35,14 @@ pub struct SpiffeListener {
     /// Trusted domains to accept SPIFFE certificates from clients.
     #[serde(deserialize_with = "csv")]
     pub trust_domains: Vec<String>,
+
+    /// SPIFFE ID path this listener presents, e.g. `/service/keystone`, when
+    /// the process holds more than one SVID. The Workload API returns every
+    /// SVID the process's selectors match; without a pin the default (first)
+    /// SVID is presented, in an order the SPIRE server does not guarantee.
+    /// When unset, that default behavior applies.
+    #[serde(default)]
+    pub svid_path: Option<String>,
 }
 
 /// Server listener listening on the Unix socket.
@@ -57,6 +65,12 @@ pub struct UnixSocketListener {
     /// value.
     #[serde(deserialize_with = "option_u32_from_str_or_int", default)]
     pub peer_gid: Option<u32>,
+
+    /// SPIFFE ID path this listener presents, e.g. `/service/keystone`, when
+    /// the process holds more than one SVID. When unset, the Workload API's
+    /// default (first) SVID is presented.
+    #[serde(default)]
+    pub svid_path: Option<String>,
 }
 
 fn default_socket_path() -> PathBuf {
@@ -114,6 +128,43 @@ trust_domains = "example.com"
         let sot: ListenerConfig = c.try_deserialize().unwrap();
         if let ListenerConfig::Spiffe(s) = sot {
             assert!(s.trust_domains.contains(&"example.com".to_string()));
+        } else {
+            panic!("should be spiffe listener");
+        }
+    }
+
+    #[test]
+    fn test_spiffe_svid_path() {
+        let c = Config::builder()
+            .add_source(File::from_str(
+                r#"
+type = spiffe
+trust_domains = "example.com"
+svid_path = "/service/keystone"
+"#,
+                FileFormat::Ini,
+            ))
+            .build()
+            .unwrap();
+        let sot: ListenerConfig = c.try_deserialize().unwrap();
+        if let ListenerConfig::Spiffe(s) = sot {
+            assert_eq!(s.svid_path.as_deref(), Some("/service/keystone"));
+        } else {
+            panic!("should be spiffe listener");
+        }
+        let c = Config::builder()
+            .add_source(File::from_str(
+                r#"
+type = spiffe
+trust_domains = "example.com"
+"#,
+                FileFormat::Ini,
+            ))
+            .build()
+            .unwrap();
+        let sot: ListenerConfig = c.try_deserialize().unwrap();
+        if let ListenerConfig::Spiffe(s) = sot {
+            assert!(s.svid_path.is_none());
         } else {
             panic!("should be spiffe listener");
         }

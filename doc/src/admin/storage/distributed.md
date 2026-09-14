@@ -330,6 +330,11 @@ trust_domains = "example.org"
   and halts — it does **not** fall back to an expired SVID (fail-closed).
 - Incoming SVIDs must match `spiffe://<trust-domain>/keystone/storage/<role>`;
   mismatches are rejected with `PERMISSION_DENIED` at the gRPC interceptor.
+- Each node pins the SVID it presents: the first `allowed_peer_svids` entry's
+  path when that list is set (the cluster's shared storage identity), else
+  `spiffe://<trust-domain><spiffe_path_prefix>node`. Register that identity in
+  SPIRE for every storage workload; if it is missing, storage initialization
+  stalls in the SVID source retry loop and the node never becomes ready.
 
 ### TLS Fallback Mode
 

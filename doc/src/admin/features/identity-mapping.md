@@ -21,6 +21,36 @@ These application safeguards do not replace policy. Operators must restrict
 mapping administration to the intended domain managers and review rules that
 can produce system-scoped authorization.
 
+An unmapped or misconfigured caller (no cluster salt, no matching ruleset,
+disabled ruleset) is denied outright — `authenticate_by_mapping` fails closed
+and the request never reaches a handler. That is not the risk to guard
+against; the real risk is a ruleset that matches *too broadly* and grants
+real access to callers it was never meant to cover:
+
+- **Match on the narrowest claim that actually identifies the workload.**
+  For SPIFFE sources, match the exact `spiffe.id` of the intended workload
+  (`spiffe://<trust-domain>/service/nova-api`), not `spiffe.trust_domain`
+  alone — a trust-domain-wide match authorizes *every* workload issued an
+  SVID in that trust domain, including ones added later for unrelated
+  purposes. The same applies to `MatchesRegex`: a pattern broader than the
+  specific workload path it was written for silently grows the set of
+  identities a rule accepts as SPIRE registration entries are added.
+- **Reserve `is_system: true` for genuine control-plane identities.** A
+  system-scoped rule bypasses domain/project boundaries entirely; grant it
+  only to the specific control-plane workload that needs it (e.g. a
+  service's own auth-token back-channel), never as a default for
+  convenience. `flat_spiffe_claims`' derived `spiffe.project_id`/
+  `spiffe.instance_id` claims exist so data-plane (per-project) workloads
+  can be mapped to project scope instead of system scope.
+- **Grant the least-privilege role the caller actually needs.** A
+  control-plane SVID that only validates tokens needs the `service` role
+  (see `policy/auth/token/show.rego`), not `admin` — `admin` at system
+  scope is authorized for every policy-checked operation in the deployment.
+- **Review every ruleset change that widens a match or adds `is_system`**
+  before it goes live, the same way a firewall-rule or IAM-policy change
+  gets reviewed — a broadened rule takes effect immediately for every
+  future request matching it, not just new registrations.
+
 The admin interface can also authorize a configured `admin_svid` without a
 mapping ruleset. Limit that SVID to administrative workloads, distribute the
 configuration consistently, and keep it separate from ordinary SPIFFE mapping

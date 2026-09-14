@@ -12,8 +12,8 @@ the feature guide for constraints and safe production values.
 | `[DEFAULT]` | `debug`, `log_dir`, `public_endpoint`, `use_stderr`, `use_journal`, `log_rotation_type`, `log_rotate_interval`, `log_rotate_interval_type`, `max_logfile_count` |
 | `[database]` | `connection`, `connection_debug` |
 | `[interface_public]` | `tcp_address`, listener `type`, and listener-specific TLS/SPIFFE fields |
-| `[interface_internal]` | `tcp_address`, listener `type`, `trust_domains`, and TLS content/file fields |
-| `[interface_admin]` | `socket_path`, `trust_domains`, `peer_uid`, `peer_gid`, `admin_svid` |
+| `[interface_internal]` | `tcp_address`, listener `type`, `trust_domains`, optional `svid_path` (SVID the listener presents), and TLS content/file fields |
+| `[interface_admin]` | `socket_path`, `trust_domains`, `peer_uid`, `peer_gid`, `admin_svid`, optional `svid_path` |
 | `[interface_metrics]` | `tcp_address` |
 | `[oslo_middleware]` | `enable_proxy_headers_parsing`, `trusted_header`, `trusted_proxies` |
 
@@ -72,7 +72,13 @@ OPA policy is enabled by default. See [API policy enforcement](../admin/policy.m
 | `[ldap]` | connection/TLS/pool/query options and user/group attribute mappings documented in the LDAP guide |
 
 See the corresponding pages under [Administrator Guides](../admin/index.md) for
-validation rules and complete operational examples.
+validation rules and complete operational examples. `[mapping].cluster_salt`
+is required before mapping-backed authentication (SPIFFE, Kubernetes,
+federation, API client) works at all; see
+[Identity Mapping Administration](../admin/features/identity-mapping.md) for
+that requirement and for rule-matching precision (narrow claim matches,
+`is_system` scoping, least-privilege roles) as a security concern distinct
+from it.
 
 ## Dynamic Plugins and Audit
 

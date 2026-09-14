@@ -593,6 +593,16 @@ impl From<MappingProviderError> for KeystoneApiError {
             MappingProviderError::RoleNotFound(x) => Self::UnprocessableEntity(format!(
                 "rule references role '{x}' which does not exist"
             )),
+            // Both mean "this identity does not authenticate here" -- a
+            // ruleset that exists but doesn't match the presented claims is
+            // indistinguishable, from the caller's perspective, from one
+            // that was never configured at all. Neither is a server bug,
+            // so both must surface as 401, not the non-exhaustive catch-all
+            // 500 below (an unmapped SPIFFE/K8s/OAuth2-client workload must
+            // fail closed with the same "unauthorized" signal every other
+            // authentication failure in this codebase uses).
+            MappingProviderError::NoMatchingRule => Self::UnauthorizedNoContext,
+            MappingProviderError::DisabledRuleset => Self::UnauthorizedNoContext,
             MappingProviderError::RaftNotAvailable => Self::NotImplemented(
                 "mapping provider requires distributed storage (raft)".to_string(),
             ),
@@ -900,6 +910,28 @@ mod tests {
             api_err,
             KeystoneApiError::BadRequest(msg) if !msg.is_empty()
         ));
+    }
+
+    #[test]
+    fn mapping_provider_no_matching_rule_is_unauthorized() {
+        let err = MappingProviderError::NoMatchingRule;
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(api_err, KeystoneApiError::UnauthorizedNoContext));
+        assert_eq!(
+            <KeystoneApiError as IntoResponse>::into_response(api_err).status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[test]
+    fn mapping_provider_disabled_ruleset_is_unauthorized() {
+        let err = MappingProviderError::DisabledRuleset;
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(api_err, KeystoneApiError::UnauthorizedNoContext));
+        assert_eq!(
+            <KeystoneApiError as IntoResponse>::into_response(api_err).status(),
+            StatusCode::UNAUTHORIZED
+        );
     }
 
     #[test]

@@ -1481,6 +1481,7 @@ mod tests {
                 trust_domains: vec!["example.org".to_string()],
                 peer_uid: None,
                 peer_gid: None,
+                svid_path: None,
             },
             admin_svid: None,
         });

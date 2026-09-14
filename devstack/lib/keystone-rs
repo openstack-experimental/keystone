@@ -24,6 +24,21 @@ KEYSTONE_RS_OPA_PORT=${KEYSTONE_RS_OPA_PORT:-8181}
 KEYSTONE_RS_OPA_VERSION=${KEYSTONE_RS_OPA_VERSION:-1.13.2}
 KEYSTONE_RS_DEV_KEK=${KEYSTONE_RS_DEV_KEK:-4242424242424242424242424242424242424242424242424242424242424242}
 
+# Phase 1.6 of doc/plans/spire-integration.md: keystone-rs's internal SPIFFE
+# mTLS listener (crates/keystone/src/server/listener/spiffe_tls.rs) already
+# exists and is merged - this just wires devstack to turn it on. Default off
+# so the plain keystone-only devstack.yml job is unaffected; devstack-full
+# opts in via KEYSTONE_RS_SPIFFE_INTERNAL=True, piloting a patched
+# keystonemiddleware (https://review.opendev.org/c/openstack/keystonemiddleware/+/1005601,
+# WIP as of writing) against it.
+KEYSTONE_RS_SPIFFE_INTERNAL=${KEYSTONE_RS_SPIFFE_INTERNAL:-False}
+KEYSTONE_RS_INTERNAL_PORT=${KEYSTONE_RS_INTERNAL_PORT:-8081}
+# Raft gRPC/peer port of the single-node [distributed_storage] the mapping
+# pilot below enables (the mapping provider is raft-only). Must not collide
+# with the service (8080), internal (8081), metrics (8099) or OPA (8181)
+# ports.
+KEYSTONE_RS_RAFT_PORT=${KEYSTONE_RS_RAFT_PORT:-8300}
+
 function install_keystone_rs {
     if [[ -n "$KEYSTONE_RS_BIN_DIR" ]]; then
         # CI passes a directory with already-built binaries so we don't pay
@@ -48,6 +63,30 @@ function install_keystone_rs {
         sudo install -m 0755 /tmp/opa /usr/local/bin/opa
         rm -f /tmp/opa
     fi
+
+    if [[ "$KEYSTONE_RS_SPIFFE_INTERNAL" == "True" ]]; then
+        # The WIP keystonemiddleware patch piloted by devstack-full
+        # (KEYSTONEMIDDLEWARE_BRANCH in .github/workflows/devstack.yml)
+        # imports the `spiffe` package - declared as keystonemiddleware's
+        # `spiffe` extra, but devstack's LIBS_FROM_GIT editable install
+        # doesn't select extras, and current devstack master no longer
+        # honors PYTHON_PACKAGES at all. Install it here, in the install
+        # phase: n-api starts during stack.sh itself (devstack's
+        # create_flavors hits the compute API) and the import is eager at
+        # WSGI app-init, so a missing package at that point 500s every
+        # request and aborts stack.sh before any later step runs.
+        # pip_install targets devstack's shared venv, the same one n-api
+        # runs from.
+        #
+        # `protobuf` is installed alongside: OpenStack's upper-constraints
+        # pin (cryptography===43.x, protobuf===7.x) makes spiffe 0.1.4 the
+        # only resolvable release, and 0.1.4 has a metadata bug - its
+        # workload_pb2 module does `from google.protobuf import ...` but
+        # protobuf is missing from its install_requires, so n-api dies
+        # with ModuleNotFoundError: No module named 'google' at WSGI
+        # app-init without it.
+        pip_install spiffe protobuf
+    fi
 }
 
 function configure_keystone_rs {
@@ -67,6 +106,14 @@ function configure_keystone_rs {
     sudo install -o "$STACK_USER" -m 0644 /dev/null "$KEYSTONE_RS_CONF"
 
     iniset "$KEYSTONE_RS_CONF" DEFAULT debug True
+    # Without an explicit sink keystone-rs logs nowhere: [DEFAULT]
+    # use_journal/use_stderr both default to false and log_dir is unset, so
+    # the tracing subscriber installs zero layers and the service runs fully
+    # silent (journalctl shows only systemd's own "Started" line). Log
+    # natively to the journal - the unit runs under systemd, the level
+    # follows `debug` above, and the devstack-full job greps
+    # `journalctl -u devstack@key-rs` for the SPIFFE listener startup line.
+    iniset "$KEYSTONE_RS_CONF" DEFAULT use_journal True
     # Don't copy python's [auth] methods verbatim: devstack's keystone.conf
     # usually never sets that key at all (python falls back to oslo.config's
     # own built-in default instead), so `iniget` returns an empty string and
@@ -92,6 +139,66 @@ function configure_keystone_rs {
     local audit_spool_dir="$DATA_DIR/keystone-rs/audit"
     sudo install -d -o "$STACK_USER" -m 0755 "$audit_spool_dir"
     iniset "$KEYSTONE_RS_CONF" audit spool_dir "$audit_spool_dir"
+
+    if [[ "$KEYSTONE_RS_SPIFFE_INTERNAL" == "True" ]]; then
+        # $SPIRE_TRUST_DOMAIN comes from tools/devstack-plugin-spire/lib/spire
+        # - already sourced by the time key-rs's plugin hooks run, since
+        # local.conf lists `enable_plugin spire` before `enable_plugin key-rs`.
+        iniset "$KEYSTONE_RS_CONF" interface_internal tcp_address "0.0.0.0:$KEYSTONE_RS_INTERNAL_PORT"
+        iniset "$KEYSTONE_RS_CONF" interface_internal type spiffe
+        iniset "$KEYSTONE_RS_CONF" interface_internal trust_domains "$SPIRE_TRUST_DOMAIN"
+        # The key-rs process also holds the raft storage SVID
+        # (spiffe://$SPIRE_TRUST_DOMAIN/keystone/storage/node); pin the API
+        # listener to the service identity so it never presents the storage
+        # one (or vice versa in the raft gRPC listener, which pins
+        # <spiffe_path_prefix>node itself).
+        iniset "$KEYSTONE_RS_CONF" interface_internal svid_path "/service/keystone"
+
+        # An SVID authenticates at TLS, but without mapping.cluster_salt
+        # `authenticate_by_mapping` fails closed (HmacDerivationFailed) for
+        # every SPIFFE caller - the mapping engine can't derive a virtual
+        # user ID without it. Per doc/src/admin/features/identity-mapping.md
+        # ("Cluster salt"), generate a fresh one for this ephemeral CI
+        # cluster rather than checking a static value into a tracked file.
+        KEYSTONE_RS_MAPPING_CLUSTER_SALT=${KEYSTONE_RS_MAPPING_CLUSTER_SALT:-$(openssl rand -hex 32)}
+        iniset "$KEYSTONE_RS_CONF" mapping cluster_salt "$KEYSTONE_RS_MAPPING_CLUSTER_SALT"
+
+        # The mapping provider is raft-only: mapping-driver-raft reads
+        # state.storage, which is None unless [distributed_storage] is
+        # configured, and every ruleset API call then 501s with "mapping
+        # provider requires distributed storage (raft)". The control-plane
+        # SVID -> virtual principal mapping the devstack-full job verifies
+        # needs it, so bring up a single-node raft store:
+        #   - node_id 0 self-bootstraps as a one-member cluster
+        #     (crates/keystone/src/server/listener/raft_grpc.rs);
+        #   - dev_mode + env KEK; the start wrapper already exports
+        #     KEYSTONE_DEV_KEK / KEYSTONE_ALLOW_ENV_KEK (see
+        #     start_keystone_rs below);
+        #   - loopback-only gRPC listener (the only peer is the node
+        #     itself).
+        # Raft gRPC has no plaintext mode - the section must select a TLS
+        # variant or startup aborts with "missing mTLS configuration"
+        # (crates/storage/src/network.rs). SPIRE is running in this job, so
+        # use its mTLS instead of static certs: the same SPIFFE_ENDPOINT_
+        # SOCKET the internal listener uses is already exported by
+        # start_keystone_rs, and the raft interceptor accepts peer SVIDs
+        # from $SPIRE_TRUST_DOMAIN whose path starts with
+        # /keystone/storage/ or /ns/ (the spire plugin registers
+        # keystone/storage/node for that). In a one-member cluster no gRPC
+        # traffic actually flows (commits are local), but this is the shape
+        # a real multi-node cluster would use.
+        # The SQL drivers (identity, catalog, ...) are untouched - the raft
+        # store only backs the raft-only domains (mapping, api keys, ...).
+        local raft_dir="$DATA_DIR/keystone-rs/raft"
+        sudo install -d -o "$STACK_USER" -m 0755 "$raft_dir"
+        iniset "$KEYSTONE_RS_CONF" distributed_storage dev_mode True
+        iniset "$KEYSTONE_RS_CONF" distributed_storage kek_provider env
+        iniset "$KEYSTONE_RS_CONF" distributed_storage node_id 0
+        iniset "$KEYSTONE_RS_CONF" distributed_storage node_cluster_addr "http://${KEYSTONE_RS_BIND_HOST}:${KEYSTONE_RS_RAFT_PORT}"
+        iniset "$KEYSTONE_RS_CONF" distributed_storage node_listener_addr "${KEYSTONE_RS_BIND_HOST}:${KEYSTONE_RS_RAFT_PORT}"
+        iniset "$KEYSTONE_RS_CONF" distributed_storage trust_domains "$SPIRE_TRUST_DOMAIN"
+        iniset "$KEYSTONE_RS_CONF" distributed_storage path "$raft_dir"
+    fi
 
     _keystone_rs_reroute_apache
 }
@@ -151,10 +258,18 @@ function start_keystone_rs {
     # export the dev-mode KEK through a small wrapper script instead of
     # trying to pass environment through run_process directly.
     local wrapper=/usr/local/bin/keystone-rs-run
+    local spiffe_env=""
+    if [[ "$KEYSTONE_RS_SPIFFE_INTERNAL" == "True" ]]; then
+        # Must be unix:///... - crates/keystone/src/server/listener/
+        # spiffe_common.rs rejects any other scheme. $SPIRE_AGENT_SOCKET is
+        # already an absolute path, hence the triple slash.
+        spiffe_env="export SPIFFE_ENDPOINT_SOCKET=unix://$SPIRE_AGENT_SOCKET"
+    fi
     sudo bash -c "cat > $wrapper" <<EOF
 #!/bin/bash
 export KEYSTONE_DEV_KEK=$KEYSTONE_RS_DEV_KEK
 export KEYSTONE_ALLOW_ENV_KEK=1
+$spiffe_env
 exec /usr/local/bin/keystone -c $KEYSTONE_RS_CONF
 EOF
     sudo chmod 0755 "$wrapper"

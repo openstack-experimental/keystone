@@ -39,6 +39,7 @@ fn validate_spiffe_id(
     peer_certs: Option<Arc<Vec<rustls::pki_types::CertificateDer<'static>>>>,
     trust_domains: &[String],
     allowed_peer_svids: &[String],
+    spiffe_path_prefix: &str,
 ) -> std::result::Result<(), tonic::Status> {
     use spiffe::cert::spiffe_id_from_der;
 
@@ -71,13 +72,14 @@ fn validate_spiffe_id(
             )));
         }
     } else {
-        // Fallback: accept paths starting with `/keystone/storage/` (custom format) or
+        // Fallback: accept paths starting with the configured storage prefix
+        // (defaults to `/keystone/storage/`, same setting cluster_admin_service
+        // uses for `spiffe://<td><spiffe_path_prefix><role>` role parsing) or
         // `/ns/<namespace>/sa/<service-account>` (standard SPIRE SpiffeID format).
         let path = spiffe_id.path();
-        if !(path.starts_with("/keystone/storage/") || path.starts_with("/ns/")) {
+        if !(path.starts_with(spiffe_path_prefix) || path.starts_with("/ns/")) {
             return Err(tonic::Status::permission_denied(format!(
-                "SPIFFE ID path {:?} does not match allowed prefix (expected `/keystone/storage/` or `/ns/<ns>/sa/<sa>`)",
-                path
+                "SPIFFE ID path {path:?} does not match allowed prefix (expected `{spiffe_path_prefix}` or `/ns/<ns>/sa/<sa>`)"
             )));
         }
     }
@@ -103,6 +105,7 @@ fn validate_spiffe_id(
 struct SpiffeIdInterceptor {
     trust_domains: Arc<Vec<String>>,
     allowed_peer_svids: Arc<Vec<String>>,
+    spiffe_path_prefix: Arc<String>,
 }
 
 impl tonic::service::Interceptor for SpiffeIdInterceptor {
@@ -114,6 +117,7 @@ impl tonic::service::Interceptor for SpiffeIdInterceptor {
             req.peer_certs(),
             &self.trust_domains,
             &self.allowed_peer_svids,
+            &self.spiffe_path_prefix,
         )?;
         Ok(req)
     }
@@ -152,10 +156,19 @@ pub async fn start_raft_app(
         RaftTlsConfiguration::Spiffe(spiffe_cfg) => {
             let trust_domains = spiffe_cfg.trust_domains.clone();
             let allowed_peer_svids = spiffe_cfg.allowed_peer_svids.clone();
+            let spiffe_path_prefix = spiffe_cfg.spiffe_path_prefix.clone();
+
+            // This node's own storage identity: the first `allowed_peer_svids`
+            // entry (the identity every peer requires of this node in a
+            // homogeneous cluster) or the `<spiffe_path_prefix>node`
+            // registration convention. Pinning it keeps the listener from
+            // presenting some other SVID the process also holds.
+            let own_svid_path = spiffe_cfg.own_svid_path();
 
             let server_config = match spiffe_common::build_spiffe_config(
                 cancel_token.clone(),
                 trust_domains.clone(),
+                Some(&own_svid_path),
             )
             .await?
             {
@@ -169,6 +182,7 @@ pub async fn start_raft_app(
             let interceptor = SpiffeIdInterceptor {
                 trust_domains: Arc::new(trust_domains),
                 allowed_peer_svids: Arc::new(allowed_peer_svids),
+                spiffe_path_prefix: Arc::new(spiffe_path_prefix),
             };
 
             let mut server =
@@ -383,7 +397,7 @@ mod tests {
         let trust_domains = vec!["example.org".to_string()];
         let cert = generate_spiffe_cert("example.org", "/keystone/storage/node-0");
         let certs = Some(Arc::new(vec![cert]));
-        assert!(validate_spiffe_id(certs, &trust_domains, &[]).is_ok());
+        assert!(validate_spiffe_id(certs, &trust_domains, &[], "/keystone/storage/").is_ok());
     }
 
     #[test]
@@ -391,9 +405,29 @@ mod tests {
         let trust_domains = vec!["example.org".to_string()];
         let cert = generate_spiffe_cert("evil.org", "/keystone/storage/node-0");
         let certs = Some(Arc::new(vec![cert]));
-        let err = validate_spiffe_id(certs, &trust_domains, &[]).unwrap_err();
+        let err = validate_spiffe_id(certs, &trust_domains, &[], "/keystone/storage/").unwrap_err();
         assert_eq!(err.code(), tonic::Code::PermissionDenied);
         assert!(err.message().contains("evil.org"));
+    }
+
+    #[test]
+    fn test_spiffe_id_custom_prefix_configured() {
+        // A cluster that sets a non-default `spiffe_path_prefix` must have it
+        // enforced here, not the `/keystone/storage/` literal.
+        let trust_domains = vec!["example.org".to_string()];
+        let cert = generate_spiffe_cert("example.org", "/custom/raft/node-0");
+        let certs = Some(Arc::new(vec![cert]));
+        assert!(validate_spiffe_id(certs, &trust_domains, &[], "/custom/raft/").is_ok());
+    }
+
+    #[test]
+    fn test_spiffe_id_default_prefix_rejected_when_custom_configured() {
+        let trust_domains = vec!["example.org".to_string()];
+        let cert = generate_spiffe_cert("example.org", "/keystone/storage/node-0");
+        let certs = Some(Arc::new(vec![cert]));
+        let err = validate_spiffe_id(certs, &trust_domains, &[], "/custom/raft/").unwrap_err();
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
+        assert!(err.message().contains("does not match allowed prefix"));
     }
 
     #[test]
@@ -401,7 +435,7 @@ mod tests {
         let trust_domains = vec!["example.org".to_string()];
         let cert = generate_spiffe_cert("example.org", "/admin/delete");
         let certs = Some(Arc::new(vec![cert]));
-        let err = validate_spiffe_id(certs, &trust_domains, &[]).unwrap_err();
+        let err = validate_spiffe_id(certs, &trust_domains, &[], "/keystone/storage/").unwrap_err();
         assert_eq!(err.code(), tonic::Code::PermissionDenied);
         assert!(err.message().contains("does not match allowed prefix"));
     }
@@ -411,13 +445,13 @@ mod tests {
         let trust_domains = vec!["example.org".to_string()];
         let cert = generate_spiffe_cert("example.org", "/ns/default/sa/keystone");
         let certs = Some(Arc::new(vec![cert]));
-        assert!(validate_spiffe_id(certs, &trust_domains, &[]).is_ok());
+        assert!(validate_spiffe_id(certs, &trust_domains, &[], "/keystone/storage/").is_ok());
     }
 
     #[test]
     fn test_spiffe_id_no_certs() {
         let trust_domains = vec!["example.org".to_string()];
-        let err = validate_spiffe_id(None, &trust_domains, &[]).unwrap_err();
+        let err = validate_spiffe_id(None, &trust_domains, &[], "/keystone/storage/").unwrap_err();
         assert_eq!(err.code(), tonic::Code::PermissionDenied);
         assert!(err.message().contains("no peer certificate"));
     }
@@ -426,7 +460,7 @@ mod tests {
     fn test_spiffe_id_empty_chain() {
         let trust_domains = vec!["example.org".to_string()];
         let certs = Some(Arc::new(vec![]));
-        let err = validate_spiffe_id(certs, &trust_domains, &[]).unwrap_err();
+        let err = validate_spiffe_id(certs, &trust_domains, &[], "/keystone/storage/").unwrap_err();
         assert_eq!(err.code(), tonic::Code::PermissionDenied);
         assert!(err.message().contains("empty certificate chain"));
     }
@@ -437,7 +471,7 @@ mod tests {
         let certs = Some(Arc::new(vec![rustls::pki_types::CertificateDer::from(
             vec![0x00, 0x01],
         )]));
-        let err = validate_spiffe_id(certs, &trust_domains, &[]).unwrap_err();
+        let err = validate_spiffe_id(certs, &trust_domains, &[], "/keystone/storage/").unwrap_err();
         assert_eq!(err.code(), tonic::Code::PermissionDenied);
         assert!(err.message().contains("Invalid SPIFFE ID"));
     }
@@ -460,7 +494,7 @@ mod tests {
         let cert = params.self_signed(&key).unwrap().der().clone();
         let certs = Some(Arc::new(vec![cert]));
         let trust_domains = vec!["example.org".to_string()];
-        let err = validate_spiffe_id(certs, &trust_domains, &[]).unwrap_err();
+        let err = validate_spiffe_id(certs, &trust_domains, &[], "/keystone/storage/").unwrap_err();
         assert_eq!(err.code(), tonic::Code::PermissionDenied);
         assert!(
             err.message().contains("expired") || err.message().contains("force-renewal"),
@@ -475,7 +509,23 @@ mod tests {
         let cert_1 = generate_spiffe_cert("example.org", "/keystone/storage/node-0");
         let cert_2 = generate_spiffe_cert("example.net", "/keystone/storage/node-1");
 
-        assert!(validate_spiffe_id(Some(Arc::new(vec![cert_1])), &trust_domains, &[]).is_ok());
-        assert!(validate_spiffe_id(Some(Arc::new(vec![cert_2])), &trust_domains, &[]).is_ok());
+        assert!(
+            validate_spiffe_id(
+                Some(Arc::new(vec![cert_1])),
+                &trust_domains,
+                &[],
+                "/keystone/storage/"
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_spiffe_id(
+                Some(Arc::new(vec![cert_2])),
+                &trust_domains,
+                &[],
+                "/keystone/storage/"
+            )
+            .is_ok()
+        );
     }
 }

@@ -339,6 +339,210 @@ done
 
 ---
 
+### Phase 1.6: Pilot keystonemiddleware's SPIFFE mTLS Transport (Gerrit 1005601, WIP)
+
+**Goal:** exercise Phase 3's already-merged keystone-rs internal SPIFFE
+listener end-to-end against a real client, ahead of Phase 4 landing for
+real. Pilots Phase 4's "Change 4.1" (SPIFFE mTLS transport for
+`auth_token`) as an explicitly WIP, unmerged Gerrit patch
+(https://review.opendev.org/c/openstack/keystonemiddleware/+/1005601,
+change 1005601 — the patch's own commit message frames it as "a POC
+demonstrating integration in devstack"), against **Nova only**, in the
+`devstack-full` CI job from Phase 1.5.
+
+**Prerequisites:** Phase 1 (SPIRE devstack plugin), Phase 1.5 (`devstack-full`
+job), Phase 3 (keystone-rs's internal SPIFFE listener — already merged, no
+`crates/` changes needed for this phase).
+
+**Changes (`devstack-full` job only — the plain keystone-only `devstack` job
+is untouched):**
+
+| File                            | Purpose                                                                                                    |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `devstack/lib/keystone-rs`       | `KEYSTONE_RS_SPIFFE_INTERNAL`/`KEYSTONE_RS_INTERNAL_PORT` tunables (default off); gated `pip_install spiffe protobuf` in `install_keystone_rs` (the WIP patch's `spiffe` extra — LIBS_FROM_GIT's editable install doesn't select extras, current devstack master no longer reads `PYTHON_PACKAGES`, and the only constraint-resolvable spiffe release, 0.1.4, omits `protobuf` from its install_requires); gated `[interface_internal]` iniset in `configure_keystone_rs`; gated `SPIFFE_ENDPOINT_SOCKET=unix://...` export in `start_keystone_rs`'s wrapper; gated `[mapping] cluster_salt` iniset, randomly generated per CI run; gated single-node `[distributed_storage]` iniset (node_id 0 self-bootstrap, loopback raft gRPC, dev_mode + env KEK, SPIFFE mTLS via `trust_domains` — raft gRPC has no plaintext mode) — the mapping provider is raft-only, so without it every `/v4/mappings` call 501s (done) |
+| `tools/devstack-plugin-spire/lib/spire` | `keystone/storage/node` entry (unix:uid selector) — the SVID the raft gRPC interceptor expects for storage peers (path prefix `/keystone/storage/`) (done) |
+| `.github/workflows/devstack.yml` | `devstack-full`: `KEYSTONE_RS_SPIFFE_INTERNAL=True`, `LIBS_FROM_GIT+=keystonemiddleware` pinned to the Gerrit patchset ref, `GLANCE_ENABLE_QUOTAS=False` (key-rs lacks the unified limits API — see "Known gaps"), `[[post-config\|$NOVA_CONF]]` block, n-api restart, mTLS verification steps, global `is_system` SPIFFE ruleset mapping nova-api's own SVID to the `service` role, positive (200) + negative (401) mapped-identity checks (done) |
+| `crates/api-types/src/error_conv.rs` | `MappingProviderError::NoMatchingRule`/`DisabledRuleset` now convert to `KeystoneApiError::UnauthorizedNoContext` (401) instead of falling into the non-exhaustive catch-all 500 — an SVID (or any mapping-authenticated caller) absent from a ruleset is an auth failure, not a server error (done) |
+
+**Why Nova only, why pinned to an exact patchset:** both sides of this wiring
+are unproven — the keystonemiddleware patch is WIP and may be reworked before
+merging. `KEYSTONEMIDDLEWARE_BRANCH=refs/changes/01/1005601/3` pins
+the exact patchset; bump it by hand if a newer patchset needs picking up.
+Keeping this to one service and one CI job (rather than a third job) limits
+blast radius while it's this unproven, and rides on `devstack-full`'s
+existing `continue-on-error: true`.
+
+**Wiring:**
+
+```ini
+# keystone-rs.conf (via KEYSTONE_RS_SPIFFE_INTERNAL=True)
+[interface_internal]
+tcp_address = 0.0.0.0:8081
+type = spiffe
+trust_domains = cloud.trust.domain
+```
+
+```ini
+# nova.conf, via local.conf's [[post-config|$NOVA_CONF]]
+[keystone_authtoken]
+spiffe_agent_socket = unix:///opt/stack/data/spire/agent.sock
+auth_url = https://127.0.0.1:8081
+```
+
+`www_authenticate_uri` is left pointing at the public `/identity` URL —
+only the back-channel `auth_url` moves to the internal mTLS listener. No
+`cafile` is set: the patch's `SpiffeHTTPAdapter` fetches the trust bundle
+from the same Workload API source as the client cert.
+
+**Authorization, not just transport.** An SVID authenticating at TLS carries
+no authorization meaning by itself — `authenticate_by_mapping` needs
+`mapping.cluster_salt` configured and a matching ruleset, or it fails closed
+(`NoMatchingRule`/`HmacDerivationFailed`). The CI job now configures both:
+
+```ini
+# keystone-rs.conf (via KEYSTONE_RS_SPIFFE_INTERNAL=True)
+[mapping]
+cluster_salt = <openssl rand -hex 32, generated fresh per CI run>
+
+# The mapping provider is raft-only (mapping-driver-raft reads
+# state.storage; without it every /v4/mappings call 501s with "mapping
+# provider requires distributed storage (raft)"), so the plugin also
+# brings up a single-node raft store: node_id 0 self-bootstraps,
+# loopback-only gRPC listener, dev_mode + env KEK. Raft gRPC has no
+# plaintext mode, so the section selects the SPIFFE mTLS variant
+# (SPIRE is running in this job, and the process already talks to the
+# agent for the internal listener): the raft interceptor accepts peer
+# SVIDs from the trust domain whose path starts with /keystone/storage/
+# or /ns/, and the spire plugin registers keystone/storage/node for
+# that. In a one-member cluster no gRPC traffic actually flows (commits
+# are local), but this is the shape a real cluster would use.
+[distributed_storage]
+dev_mode = true
+kek_provider = env
+node_id = 0
+node_cluster_addr = "http://127.0.0.1:8300"
+node_listener_addr = "127.0.0.1:8300"
+trust_domains = "cloud.trust.domain"
+path = "$DATA_DIR/keystone-rs/raft"
+```
+
+The node pins the SVID it presents for raft mTLS (`PathSvidPicker`): the
+first `allowed_peer_svids` entry's path when that list is set — a
+homogeneous cluster's nodes must each present an identity their peers
+allow, which is the cluster's shared storage identity (the k8s/skaffold
+deployment pins the shared `ns/default/sa/keystone` SVID this way) — or,
+when the list is empty, the registration convention
+`<spiffe_path_prefix>node` (what the devstack SPIRE entry above provides).
+Without the pin, a process matching several SPIRE entries would present
+whichever SVID the Workload API returned first, and a wrong pick fails
+peer validation; worse, the spiffe-rs crate retries a picker rejection
+silently forever (`NoSuitableSvid` is never logged), so an unregistered
+identity hangs storage init with no error. The SPIFFE API/admin listeners
+take the same pin via an explicit optional `svid_path` config key (devstack
+sets `/service/keystone`); when unset they present the Workload API's
+default SVID, which is what the k8s deployment relies on.
+
+```json
+// POST /v4/mappings/rulesets (admin token), after stack.sh
+{
+  "mapping": {
+    "mapping_id": "ci-spiffe-control-plane",
+    "domain_id": null,
+    "source": {"type": "spiffe", "trust_domain": "cloud.trust.domain"},
+    "domain_resolution_mode": {"type": "fixed"},
+    "enabled": true,
+    "rules": [{
+      "name": "nova-api-control-plane",
+      "match": {"all_of": [{"type": "condition", "equals": {
+        "claim": "spiffe.id",
+        "value": "spiffe://cloud.trust.domain/service/nova-api"
+      }}]},
+      "identity": {"user_name": "svid-nova-api", "is_system": true},
+      "authorizations": [{
+        "type": "system", "system_id": "all",
+        "roles": [{"id": "<service role id>", "name": "service"}]
+      }],
+      "groups": []
+    }]
+  }
+}
+```
+
+No `crates/` change was needed to make `is_system` actually take effect:
+`ValidatedSecurityContext::new_for_scope`'s `AuthenticationContext::Mapping`
+arm (`crates/core/src/auth.rs`) already upgrades an `is_system` rule's
+`Unscoped` scope to `System("all")` generically, for any mapping-authenticated
+source (SPIFFE included) — this is pre-existing, general infrastructure, not
+something added here. The role granted is `service` (least privilege — the
+same role `policy/auth/token/show.rego` already grants dedicated
+token-introspection access to), not `admin`.
+
+**Verification (devstack-full CI):**
+
+```bash
+# Internal listener actually started in SPIFFE mode:
+journalctl -u devstack@key-rs --no-pager | grep -q "SPIFFE mTLS"
+
+# Rejects unauthenticated clients:
+! curl -sf -k https://127.0.0.1:8081/v3
+
+# Accepts a real SVID (positive control). Must run as the devstack user,
+# NOT via sudo: the entries are pinned to its uid (unix:uid selector) and
+# the agent's "unix" workload attestor reads the caller's uid, so a root
+# fetch (uid 0) matches no entry and fails with "No identity issued ...
+# registered=false". A SPIFFE SVID carries its identity in a URI SAN, so
+# a hostname/IP check against 127.0.0.1 can never succeed (curl rejects a
+# perfectly valid SVID); the check verifies the server chain against the
+# trust bundle and skips only the hostname assertion, the same way the
+# ksm transport does. The fetch returns the workload's whole SVID set in
+# arbitrary order (svid.0.pem can be any entry), so select by URI SAN:
+spire-agent api fetch x509 -socketPath /opt/stack/data/spire/agent.sock -write /tmp/svid
+svid=""; for f in /tmp/svid/svid*.pem; do
+    if openssl x509 -in "$f" -noout -ext subjectAltName \
+        | grep -q "URI:spiffe://cloud.trust.domain/service/keystone"; then
+        svid="${f%.pem}"; break
+    fi
+done
+python3 -c '
+import ssl, sys, urllib.request
+ctx = ssl.create_default_context(cafile="/tmp/svid/bundle.0.pem")
+ctx.check_hostname = False
+ctx.load_cert_chain("'"$svid"'.pem", "'"$svid"'.key")
+opener = urllib.request.build_opener(
+    urllib.request.HTTPSHandler(context=ctx))
+sys.stdout.buffer.write(opener.open("https://127.0.0.1:8081/v3", timeout=10).read())
+'
+
+# nova-api's own auth_token back-channel actually uses it end-to-end:
+openstack compute service list
+
+# Mapped SVID identity actually gets real authz, not just transport:
+# nova-api's own SVID + a subject token -> 200 from the internal listener's
+# GET /v3/auth/tokens (service role, system scope, per the ruleset above).
+# cinder's SVID (unmapped) -> 401 (NoMatchingRule -> UnauthorizedNoContext),
+# proving the ruleset gatekeeps rather than mapping every workload to
+# system scope.
+```
+
+**Known gaps / workarounds (revisit in Phase 4):**
+
+- **Hostname assertion disabled in the ksm transport.** The WIP patch's
+  `SpiffeHTTPAdapter` sets `conn.assert_hostname = False` so the handshake
+  succeeds against an SVID (URI SAN only); the server chain is still
+  verified against the trust bundle fetched from the agent. Verifying the
+  *server's* SPIFFE ID (peer-cert URI SAN) against an expected value is
+  deliberate follow-up hardening, not part of the POC.
+- **Glance keystone quotas disabled in the job
+  (`GLANCE_ENABLE_QUOTAS=False`).** glance's keystone-quota path
+  (oslo.limit's `Enforcer`) queries Keystone's unified limits API
+  (`GET /v3/limits/model`) on every image upload; key-rs does not
+  implement that API yet, and with the Apache `/identity` proxy pointed
+  at key-rs the missing endpoint 500s the upload and aborts stack.sh.
+  Until key-rs implements unified limits, the job keeps glance on its
+  local quota tables.
+
+---
+
 ### Phase 2: Vendor Data JWT API (keystone-rs)
 
 **Goal:** keystone-rs exposes a new endpoint that signs a JWT per VM instance.
@@ -687,6 +891,12 @@ a back-channel call.
 **Two separate Gerrit changes.** These are orthogonal and landed independently:
 
 #### Change 4.1: SPIFFE mTLS transport (auth_token)
+
+**Piloted (WIP, unmerged) in Phase 1.6**, against Nova only, in the
+`devstack-full` CI job — see that section for the actual Gerrit ref pinned,
+the real devstack wiring, and CI verification. This subsection remains the
+aspirational/illustrative description of the change; Phase 1.6 is the
+concrete, currently-implemented CI exercise of it.
 
 | File                                      | Purpose                                 |
 | ----------------------------------------- | --------------------------------------- |

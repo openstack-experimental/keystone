@@ -11,6 +11,12 @@
   distributed storage.
 - Configure stable, cluster-wide WebAuthn decoy-key material to prevent account
   enumeration differences between nodes.
+- Match identity mapping rules (SPIFFE, Kubernetes, federation, API client) on
+  the narrowest claim that identifies the intended workload, and reserve
+  `is_system: true` for genuine control-plane identities — an overbroad match
+  or an unwarranted `is_system` grants real access, unlike an unmapped caller
+  which is denied outright. See
+  [Identity Mapping Administration](features/identity-mapping.md#security-considerations).
 
 The [contributor security model](../contributor/security-model.md) is normative
 for scope, delegation, rescope, credentials, tokens, and OPA input. Operator

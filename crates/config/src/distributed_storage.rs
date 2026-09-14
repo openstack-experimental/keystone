@@ -363,6 +363,32 @@ fn default_operator_role() -> String {
     "storage-operator".to_string()
 }
 
+/// Extract the SPIFFE ID path (e.g. `/ns/default/sa/keystone`) from a full
+/// SPIFFE ID (`spiffe://example.org/ns/default/sa/keystone`).
+fn spiffe_id_path(svid: &str) -> Option<String> {
+    let rest = svid.strip_prefix("spiffe://")?;
+    let path = rest.split_once('/')?.1;
+    Some(format!("/{path}"))
+}
+
+impl SpiffeTls {
+    /// The SPIFFE ID path this node presents for Raft peer mTLS.
+    ///
+    /// A node's process typically matches more than one SPIRE registration
+    /// entry, and Raft peers enforce `allowed_peer_svids` (or the
+    /// `spiffe_path_prefix` fallback) on the SVID each peer presents. In a
+    /// homogeneous cluster every node therefore presents one of the SVIDs its
+    /// peers allow, so when `allowed_peer_svids` is set the first entry's path
+    /// is this node's own identity. When it is empty the registration
+    /// convention `<spiffe_path_prefix>node` applies.
+    pub fn own_svid_path(&self) -> String {
+        self.allowed_peer_svids
+            .first()
+            .and_then(|svid| spiffe_id_path(svid))
+            .unwrap_or_else(|| format!("{}node", self.spiffe_path_prefix))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Write;
@@ -414,6 +440,50 @@ tls_client_ca_file = /baz
         }
     }
 
+    /// The single-node shape the devstack plugin writes for the SPIFFE
+    /// mapping pilot: loopback listener, dev_mode + env KEK, and the
+    /// SPIFFE mTLS variant selected by the presence of `trust_domains`
+    /// (the untagged enum tries `Spiffe` first; its required
+    /// `trust_domains` key is what distinguishes it from the static-Tls
+    /// shape, which has `tls_*` keys instead). Raft gRPC has no plaintext
+    /// mode, so exactly one of the two TLS shapes must be present.
+    #[test]
+    fn test_deser_ini_devstack_single_node() {
+        let c = Config::builder()
+            .add_source(File::from_str(
+                r#"
+dev_mode = True
+kek_provider = env
+node_id = 0
+node_cluster_addr = http://127.0.0.1:8300
+node_listener_addr = 127.0.0.1:8300
+trust_domains = cloud.trust.domain
+path = /opt/stack/data/keystone-rs/raft
+"#,
+                FileFormat::Ini,
+            ))
+            .build()
+            .unwrap();
+        let cfg: DistributedStorageConfiguration = c.try_deserialize().unwrap();
+        assert!(cfg.dev_mode);
+        assert_eq!(cfg.kek_provider, KekProvider::Env);
+        assert_eq!(cfg.node_id, 0);
+        assert_eq!("http://127.0.0.1:8300/", cfg.node_cluster_addr.to_string());
+        assert_eq!(cfg.node_listener_addr.to_string(), "127.0.0.1:8300");
+        assert_eq!(
+            cfg.path.to_str().unwrap(),
+            "/opt/stack/data/keystone-rs/raft"
+        );
+        if let RaftTlsConfiguration::Spiffe(spiffe) = cfg.tls_configuration {
+            assert_eq!(spiffe.trust_domains, vec!["cloud.trust.domain".to_string()]);
+            assert!(spiffe.allowed_peer_svids.is_empty());
+            assert_eq!(spiffe.operator_role, "storage-operator");
+            assert_eq!(spiffe.spiffe_path_prefix, "/keystone/storage/");
+        } else {
+            panic!("trust_domains must resolve to the Spiffe variant");
+        }
+    }
+
     #[test]
     fn test_spiffe_peer_svids_toml() {
         let c = Config::builder()
@@ -440,6 +510,41 @@ allowed_peer_svids = ["spiffe://example.org/ns/default/sa/keystone"]
         } else {
             panic!("should be spiffe");
         }
+    }
+
+    #[test]
+    fn test_spiffe_own_svid_path_from_allowed_peer_svids() {
+        // The k8s/skaffold shape: a single shared storage SVID pinned in
+        // allowed_peer_svids -- every node presents that identity to its
+        // peers, so it is also each node's own presented path.
+        let spiffe = SpiffeTls {
+            allowed_peer_svids: vec!["spiffe://example.org/ns/default/sa/keystone".to_string()],
+            operator_role: "storage-operator".to_string(),
+            spiffe_path_prefix: "/keystone/storage/".to_string(),
+            trust_domains: vec!["example.org".to_string()],
+        };
+        assert_eq!(spiffe.own_svid_path(), "/ns/default/sa/keystone");
+    }
+
+    #[test]
+    fn test_spiffe_own_svid_path_registration_convention() {
+        // The devstack shape: no allowed_peer_svids -- the node presents the
+        // registration-convention identity <spiffe_path_prefix>node.
+        let spiffe = SpiffeTls {
+            allowed_peer_svids: vec![],
+            operator_role: "storage-operator".to_string(),
+            spiffe_path_prefix: "/keystone/storage/".to_string(),
+            trust_domains: vec!["cloud.trust.domain".to_string()],
+        };
+        assert_eq!(spiffe.own_svid_path(), "/keystone/storage/node");
+
+        let custom = SpiffeTls {
+            allowed_peer_svids: vec![],
+            operator_role: "storage-operator".to_string(),
+            spiffe_path_prefix: "/custom/raft/".to_string(),
+            trust_domains: vec!["example.org".to_string()],
+        };
+        assert_eq!(custom.own_svid_path(), "/custom/raft/node");
     }
 
     #[test]
