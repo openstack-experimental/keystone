@@ -22,6 +22,7 @@ use axum::{
 use tracing::warn;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
+use crate::api::common::PeerAddr;
 use crate::api::error::KeystoneApiError;
 use crate::api::v4::auth::token::types::TokenResponse as KeystoneTokenResponse;
 use crate::audit::{CorrelationId, emit_perimeter_authenticate_event, error_variant_name};
@@ -72,9 +73,10 @@ pub async fn login(
     CorrelationId(cid): CorrelationId,
     State(state): State<ServiceState>,
     headers: HeaderMap,
+    PeerAddr(peer_addr): PeerAddr,
     Path(idp_id): Path<String>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
-    let result = login_inner(&state, headers, &idp_id).await;
+    let result = login_inner(&state, headers, peer_addr, &idp_id).await;
     // `idp_id` is a pre-auth signal known before any validation happens, so it
     // is recorded as `Initiator.host` regardless of outcome (ADR 0023 §"Perimeter
     // Auditing").
@@ -93,8 +95,21 @@ pub async fn login(
 async fn login_inner(
     state: &ServiceState,
     headers: HeaderMap,
+    peer_addr: Option<std::net::SocketAddr>,
     idp_id: &str,
 ) -> Result<axum::response::Response, KeystoneApiError> {
+    // Security review V6: this is an unauthenticated, crypto-bearing
+    // endpoint (JWKS fetch + JWT signature verification). Rate-limit before
+    // any of that work, same posture as `/v3/auth/tokens`.
+    if let Err(retry_after) = state
+        .rate_limiters
+        .check_ip(&headers, peer_addr.map(|addr| addr.ip()))
+    {
+        return Err(KeystoneApiError::TooManyRequests {
+            retry_after: retry_after.as_secs(),
+        });
+    }
+
     state
         .config_manager
         .config

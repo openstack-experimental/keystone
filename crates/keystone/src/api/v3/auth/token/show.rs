@@ -35,6 +35,7 @@ use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
 
 use openstack_keystone_core::auth::ExecutionContext;
 
+use crate::api::common::PeerAddr;
 use crate::api::v3::auth::token::types::{TokenResponse, ValidateTokenParameters};
 use crate::api::{Catalog, CatalogService, auth::Auth, error::KeystoneApiError};
 use crate::keystone::ServiceState;
@@ -66,6 +67,7 @@ pub(super) async fn show(
     Auth(user_auth): Auth,
     Query(query): Query<ValidateTokenParameters>,
     headers: HeaderMap,
+    PeerAddr(peer_addr): PeerAddr,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     let subject_token: String = headers
@@ -74,6 +76,20 @@ pub(super) async fn show(
         .to_str()
         .map_err(|_| KeystoneApiError::InvalidHeader)?
         .to_string();
+
+    // Security review V6: the subject token is caller-supplied and, unlike
+    // `user_auth`'s own token, is not required to be one this caller minted
+    // -- decoding it always pays for a Fernet/JWS decrypt + signature verify
+    // before rejection. Rate-limit before that crypto work, same posture as
+    // `/v3/auth/tokens` and `/v3/ec2tokens`.
+    if let Err(retry_after) = state
+        .rate_limiters
+        .check_ip(&headers, peer_addr.map(|addr| addr.ip()))
+    {
+        return Err(KeystoneApiError::TooManyRequests {
+            retry_after: retry_after.as_secs(),
+        });
+    }
 
     // Default behavior is to return 404 for expired tokens. It makes sense to log
     // internally the error before mapping it.

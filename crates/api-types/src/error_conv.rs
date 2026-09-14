@@ -327,6 +327,9 @@ impl From<ApplicationCredentialProviderError> for KeystoneApiError {
             err @ ApplicationCredentialProviderError::AccessRulesUnenforced => {
                 Self::BadRequest(err.to_string())
             }
+            ApplicationCredentialProviderError::AccessRuleDenied { .. } => Self::Forbidden {
+                source: Box::new(value),
+            },
             other => Self::InternalError(other.to_string()),
         }
     }

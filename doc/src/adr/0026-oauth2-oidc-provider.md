@@ -4,7 +4,14 @@
 
 ## Status
 
-Proposed
+Accepted. Implemented in `crates/keystone/src/api/v4/oauth2/` (`authorize`,
+`token`, `device`, `device_authorization`, `jwks`, `jwks_revocation`,
+`well_known`). Status was left at `Proposed` after the feature shipped;
+corrected 2026-09-14 (security review re-evaluation, V8) so a reader
+triaging by ADR status does not under-weight this live surface. The
+implementation was independently audited against OAuth2 client-enumeration
+and timing side-channel classes (security review V8a) — one gap found
+(device-flow rate limiting) and fixed 2026-07-16.
 
 ## Reference
 

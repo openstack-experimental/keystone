@@ -4,7 +4,13 @@
 
 ## Status
 
-Proposed
+Accepted. Implemented in `auth-plugin-core`, `auth-plugin-runtime`,
+`auth-plugin-identity-driver-raft`, and
+`crates/core/src/auth_plugin{,_auth,_http,_identity}.rs` /
+`auth_plugin_startup.rs` / `auth_plugin_http_client.rs`. Status was left at
+`Proposed` after the feature shipped; corrected 2026-09-14 (security review
+re-evaluation, V7) so a reader triaging by ADR status does not under-weight
+this pre-authentication, internet-facing WASM execution path.
 
 ## Reference
 

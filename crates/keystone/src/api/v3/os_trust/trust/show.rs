@@ -193,6 +193,137 @@ mod tests {
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
+    /// Gate B2 (security review V3a, issue #990): asserts the handler feeds
+    /// `enforce()` the contract `identity/trust/show.rego` expects -- the
+    /// stored trust under `existing`, no leaked secret field.
+    #[tokio::test]
+    async fn test_show_policy_input_contract() {
+        let mut trust_mock = MockTrustProvider::default();
+        trust_mock.expect_get_trust().returning(|_, _| {
+            Ok(Some(
+                TrustBuilder::default()
+                    .id("foo")
+                    .trustor_user_id("trustor")
+                    .trustee_user_id("trustee")
+                    .impersonation(false)
+                    .build()
+                    .unwrap(),
+            ))
+        });
+
+        let vsc = test_fixture_scoped();
+        let (state, policy) = crate::api::tests::get_capturing_state(
+            Provider::mocked_builder().mock_trust(trust_mock),
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/foo")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let calls = policy.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].policy_name, "identity/trust/show");
+        crate::api::tests::policy_contract::assert_existing_presence(&calls[0].existing, true);
+        crate::api::tests::policy_contract::assert_object_keys(
+            calls[0].existing.as_ref().unwrap(),
+            &["trust"],
+        );
+        crate::api::tests::policy_contract::assert_no_secrets(calls[0].existing.as_ref().unwrap());
+    }
+
+    /// Gate B3 (security review V3a, issue #990): drives this handler and
+    /// the real `identity/trust/show.rego` decision through the
+    /// trustor/trustee/stranger/admin matrix.
+    mod real_policy_decision {
+        use openstack_keystone_core::auth::ValidatedSecurityContext;
+
+        use super::*;
+        use crate::api::tests::get_state_with_real_policy;
+        use crate::api::tests::real_policy_fixtures::member_vsc;
+        use crate::provider::ProviderBuilder;
+
+        fn provider_with_trust() -> ProviderBuilder {
+            let mut trust_mock = MockTrustProvider::default();
+            trust_mock.expect_get_trust().returning(|_, _| {
+                Ok(Some(
+                    TrustBuilder::default()
+                        .id("foo")
+                        .trustor_user_id("trustor")
+                        .trustee_user_id("trustee")
+                        .impersonation(false)
+                        .build()
+                        .unwrap(),
+                ))
+            });
+            Provider::mocked_builder().mock_trust(trust_mock)
+        }
+
+        async fn show_status(vsc: ValidatedSecurityContext) -> StatusCode {
+            let (state, _opa_guard) = get_state_with_real_policy(provider_with_trust()).await;
+            let mut api = openapi_router()
+                .layer(TraceLayer::new_for_http())
+                .with_state(state);
+
+            api.as_service()
+                .oneshot(
+                    Request::builder()
+                        .uri("/foo")
+                        .extension(vsc)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+        }
+
+        #[tokio::test]
+        async fn trustor_viewing_own_trust_is_allowed() {
+            assert_eq!(
+                show_status(member_vsc("trustor", "p1", &[])).await,
+                StatusCode::OK
+            );
+        }
+
+        #[tokio::test]
+        async fn trustee_viewing_delegated_trust_is_allowed() {
+            assert_eq!(
+                show_status(member_vsc("trustee", "p1", &[])).await,
+                StatusCode::OK
+            );
+        }
+
+        #[tokio::test]
+        async fn stranger_viewing_trust_is_denied() {
+            assert_eq!(
+                show_status(member_vsc("stranger", "p1", &["member"])).await,
+                StatusCode::FORBIDDEN
+            );
+        }
+
+        #[tokio::test]
+        async fn admin_viewing_any_trust_is_allowed() {
+            assert_eq!(
+                show_status(member_vsc("admin_user", "p1", &["admin"])).await,
+                StatusCode::OK
+            );
+        }
+    }
+
     #[tokio::test]
     async fn test_show_unauthorized() {
         let state = get_mocked_state(Provider::mocked_builder(), true, None).await;

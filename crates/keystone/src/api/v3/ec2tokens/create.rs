@@ -16,7 +16,7 @@
 use axum::{
     Json,
     extract::State,
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use serde_json::{Value, json};
@@ -30,6 +30,7 @@ use openstack_keystone_core_types::credential::{
 use openstack_keystone_core_types::scope::{Project as ScopeProject, Scope as ProviderScope};
 
 use crate::api::auth::Auth;
+use crate::api::common::PeerAddr;
 use crate::api::v3::ec2tokens::types::Ec2TokenAuthRequest;
 use crate::api::{Catalog, CatalogService, error::KeystoneApiError};
 use crate::audit::{
@@ -57,6 +58,8 @@ pub(super) async fn create(
     Auth(caller_auth): Auth,
     CorrelationId(cid): CorrelationId,
     State(state): State<ServiceState>,
+    headers: HeaderMap,
+    PeerAddr(peer_addr): PeerAddr,
     TracedJson(req): TracedJson<Ec2TokenAuthRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     // CVE-2025-65073: this endpoint requires an already-authenticated caller
@@ -66,6 +69,19 @@ pub(super) async fn create(
         .policy_enforcer
         .enforce("identity/ec2tokens/validate", &caller_auth, json!({}), None)
         .await?;
+
+    // Security review V6: this is the redemption endpoint of the OSSA-2026-005
+    // crown-jewel scenario and verifies an HMAC signature on every call --
+    // pure CPU work an attacker can trigger repeatedly. Rate-limit before
+    // `create_inner` reaches `verify_signature`, mirroring `/v3/auth/tokens`.
+    if let Err(retry_after) = state
+        .rate_limiters
+        .check_ip(&headers, peer_addr.map(|addr| addr.ip()))
+    {
+        return Err(KeystoneApiError::TooManyRequests {
+            retry_after: retry_after.as_secs(),
+        });
+    }
 
     let result = create_inner(&state, req).await;
     let initiator = result
@@ -451,7 +467,14 @@ mod tests {
         state: crate::keystone::ServiceState,
         body: serde_json::Value,
     ) -> axum::response::Response {
-        let vsc = test_fixture_scoped();
+        post_as(state, test_fixture_scoped(), body).await
+    }
+
+    async fn post_as(
+        state: crate::keystone::ServiceState,
+        vsc: openstack_keystone_core::auth::ValidatedSecurityContext,
+        body: serde_json::Value,
+    ) -> axum::response::Response {
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state);
@@ -636,5 +659,166 @@ mod tests {
         let response = post(state, body).await;
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// Gate B2 (security review V3a, issue #990): asserts the handler feeds
+    /// `enforce()` the contract `identity/ec2tokens/validate.rego` expects
+    /// -- an empty `target` object (the credential referenced by the signed
+    /// request isn't known until after signature verification, so this
+    /// policy only gates who may call the endpoint at all, CVE-2025-65073)
+    /// and no `existing`.
+    #[tokio::test]
+    async fn test_create_policy_input_contract() {
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock
+            .expect_get_credential_by_ec2_access()
+            .withf(|_, access: &'_ str| access == "AKIA123")
+            .returning(|_, _| Ok(Some(ec2_credential("s3cr3t"))));
+
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock.expect_get_user().returning(|_, _| {
+            Ok(Some(
+                UserResponseBuilder::default()
+                    .id("uid")
+                    .name("uname")
+                    .domain_id("user_domain_id")
+                    .enabled(true)
+                    .build()
+                    .unwrap(),
+            ))
+        });
+
+        let mut token_mock = MockTokenProvider::default();
+        let vsc_clone = vsc_for_mock();
+        token_mock
+            .expect_issue_token_context()
+            .returning(move |_, _, _| Ok(vsc_clone.clone()));
+        token_mock
+            .expect_encode_token()
+            .returning(|_| Ok("token".to_string()));
+
+        let mut catalog_mock = crate::catalog::MockCatalogProvider::default();
+        catalog_mock
+            .expect_get_catalog()
+            .returning(|_, _| Ok(Vec::new()));
+
+        let provider = Provider::mocked_builder()
+            .mock_credential(credential_mock)
+            .mock_identity(identity_mock)
+            .mock_resource(resource_mock())
+            .mock_token(token_mock)
+            .mock_catalog(catalog_mock);
+
+        let (state, policy) = crate::api::tests::get_capturing_state(provider).await;
+        let response = post(state, signed_body("s3cr3t", None)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let calls = policy.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].policy_name, "identity/ec2tokens/validate");
+        crate::api::tests::policy_contract::assert_object_keys(&calls[0].target, &[]);
+        crate::api::tests::policy_contract::assert_existing_presence(&calls[0].existing, false);
+        crate::api::tests::policy_contract::assert_no_secrets(&calls[0].target);
+    }
+
+    /// Gate B3 (security review V3a, issue #990): drives this handler and
+    /// the real `identity/ec2tokens/validate.rego` decision through the
+    /// admin/service/member/none role matrix. This is the redemption
+    /// endpoint of the OSSA-2026-005 crown-jewel scenario and previously
+    /// carried neither B2 nor B3 coverage.
+    mod real_policy_decision {
+        use openstack_keystone_core::auth::ValidatedSecurityContext;
+
+        use super::*;
+        use crate::api::tests::get_state_with_real_policy;
+        use crate::api::tests::real_policy_fixtures::member_vsc;
+        use crate::provider::ProviderBuilder;
+
+        fn allowing_provider() -> ProviderBuilder {
+            let mut credential_mock = MockCredentialProvider::default();
+            credential_mock
+                .expect_get_credential_by_ec2_access()
+                .returning(|_, _| Ok(Some(ec2_credential("s3cr3t"))));
+
+            let mut identity_mock = MockIdentityProvider::default();
+            identity_mock.expect_get_user().returning(|_, _| {
+                Ok(Some(
+                    UserResponseBuilder::default()
+                        .id("uid")
+                        .name("uname")
+                        .domain_id("user_domain_id")
+                        .enabled(true)
+                        .build()
+                        .unwrap(),
+                ))
+            });
+
+            let mut token_mock = MockTokenProvider::default();
+            let vsc_clone = vsc_for_mock();
+            token_mock
+                .expect_issue_token_context()
+                .returning(move |_, _, _| Ok(vsc_clone.clone()));
+            token_mock
+                .expect_encode_token()
+                .returning(|_| Ok("token".to_string()));
+
+            let mut catalog_mock = crate::catalog::MockCatalogProvider::default();
+            catalog_mock
+                .expect_get_catalog()
+                .returning(|_, _| Ok(Vec::new()));
+
+            Provider::mocked_builder()
+                .mock_credential(credential_mock)
+                .mock_identity(identity_mock)
+                .mock_resource(resource_mock())
+                .mock_token(token_mock)
+                .mock_catalog(catalog_mock)
+        }
+
+        async fn create_status(
+            caller: ValidatedSecurityContext,
+            provider_builder: ProviderBuilder,
+        ) -> StatusCode {
+            let (state, _opa_guard) = get_state_with_real_policy(provider_builder).await;
+            post_as(state, caller, signed_body("s3cr3t", None))
+                .await
+                .status()
+        }
+
+        #[tokio::test]
+        async fn admin_caller_is_allowed() {
+            assert_eq!(
+                create_status(member_vsc("svc1", "p1", &["admin"]), allowing_provider()).await,
+                StatusCode::OK
+            );
+        }
+
+        #[tokio::test]
+        async fn service_scoped_caller_is_allowed() {
+            assert_eq!(
+                create_status(member_vsc("svc1", "p1", &["service"]), allowing_provider()).await,
+                StatusCode::OK
+            );
+        }
+
+        #[tokio::test]
+        async fn member_caller_is_denied() {
+            assert_eq!(
+                create_status(
+                    member_vsc("svc1", "p1", &["member"]),
+                    Provider::mocked_builder()
+                )
+                .await,
+                StatusCode::FORBIDDEN
+            );
+        }
+
+        #[tokio::test]
+        async fn no_roles_caller_is_denied() {
+            assert_eq!(
+                create_status(member_vsc("svc1", "p1", &[]), Provider::mocked_builder()).await,
+                StatusCode::FORBIDDEN
+            );
+        }
     }
 }

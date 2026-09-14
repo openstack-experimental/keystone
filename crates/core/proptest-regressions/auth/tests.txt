@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc e96d38c821578c7dacc139df69220674716d570f44429ed6128a658b3f861bea # shrinks to delegation_membership = [false, false, false, true, true], assignment_membership = [false, false, false, true, false]
+cc 2162c8f577cdc34bbce00ba7325f36bbb346fff3e8ef14ab317e4eb0d53b8f22 # shrinks to delegation_membership = [false, false, false, true, true], before_membership = [false, false, false, true, false], revoke = [false, false, false, false, false]

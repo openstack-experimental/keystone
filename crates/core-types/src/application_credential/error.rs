@@ -45,6 +45,15 @@ pub enum ApplicationCredentialProviderError {
     #[error("access rule with id: {0} not found")]
     AccessRuleNotFound(String),
 
+    /// The application credential carries a non-empty, restricting
+    /// `access_rules` list, and none of the rules permit this request's
+    /// `(method, path)` against Keystone's own service (security review V5,
+    /// `doc/src/contributor/security-model.md` §5 "Open gap"). Unlike
+    /// [`Self::AccessRulesUnenforced`] (a create-time, opt-in fail-loud
+    /// check), this is the actual request-time enforcement.
+    #[error("access_rules do not permit {method} {path}")]
+    AccessRuleDenied { method: String, path: String },
+
     /// Application Credential used in the token is not found.
     #[error("application credential with id: {0} not found")]
     ApplicationCredentialNotFound(String),
