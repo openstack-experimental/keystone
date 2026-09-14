@@ -2,6 +2,7 @@
 
 [Introduction](index.md)
 [Authentication and authorization vision](vision.md)
+[Public KMS architecture](kms-vision.md)
 
 ---
 
