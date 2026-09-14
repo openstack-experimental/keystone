@@ -133,7 +133,7 @@ jobs:
       # gated on `paths: policy/**`) so a Rust-only PR that changes which
       # policy_name a handler enforces, or reshapes the Credentials
       # projection, is also gated by the Rego test suite. See security review
-      # V3 / Gate A (doc/src/security-architecture-review.md).
+      # V3 / Gate A (doc/src/contributor/security-review.md).
       - name: Test OPA policies
         if: needs.changes.outputs.code == 'true'
         run: opa test policy
