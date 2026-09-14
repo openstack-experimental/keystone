@@ -61,7 +61,7 @@ pub struct Domain {
     /// The description of the domain.
     #[cfg_attr(feature = "builder", builder(default))]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub description: Option<String>,
 
     /// If set to true, domain is enabled. If set to false, domain is disabled.
@@ -105,7 +105,7 @@ pub struct Domain {
 pub struct DomainCreate {
     /// The description of the domain.
     #[cfg_attr(feature = "builder", builder(default))]
-    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
@@ -174,7 +174,7 @@ pub struct DomainCreateRequest {
 pub struct DomainUpdate {
     /// The description of the domain.
     #[cfg_attr(feature = "builder", builder(default))]
-    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
+    #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub description: Option<String>,
 
     /// If set to true, domain is enabled. If set to false, domain is disabled.
