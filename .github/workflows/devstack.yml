@@ -366,7 +366,7 @@ jobs:
 
       - name: Write local.conf
         run: |
-          cat <<EOF > /opt/stack/devstack/local.conf
+          cat <<'EOF' > /opt/stack/devstack/local.conf
           [[local|localrc]]
           ADMIN_PASSWORD=password
           DATABASE_PASSWORD=password
@@ -406,7 +406,39 @@ jobs:
 
           KEYSTONE_RS_BIN_DIR=${{ github.workspace }}/bin
 
-          LOGFILE=\$HOME/devstack.log
+          # Phase 1.6 of doc/plans/spire-integration.md: pilot
+          # https://review.opendev.org/c/openstack/keystonemiddleware/+/1005601
+          # (WIP as of writing) against keystone-rs's internal SPIFFE mTLS
+          # listener, Nova only. LIBS_FROM_GIT pulls the exact WIP patchset
+          # via its Gerrit ref (refs/changes/<last 2 digits of change
+          # number>/<change number>/<patchset>) - bump KEYSTONEMIDDLEWARE_BRANCH
+          # if/when a newer patchset needs picking up.
+          KEYSTONE_RS_SPIFFE_INTERNAL=True
+          LIBS_FROM_GIT+=keystonemiddleware
+          KEYSTONEMIDDLEWARE_REPO=https://opendev.org/openstack/keystonemiddleware
+          KEYSTONEMIDDLEWARE_BRANCH=refs/changes/01/1005601/2
+          # The WIP patch's `spiffe` extra isn't selected by LIBS_FROM_GIT's
+          # editable install, and current devstack master no longer honors
+          # PYTHON_PACKAGES, so the `spiffe` package the patch imports
+          # (keystonemiddleware/auth_token/_spiffe_transport.py) plus its
+          # undeclared `protobuf` runtime dep are installed by the key-rs
+          # plugin's install_keystone_rs (devstack/lib/keystone-rs, gated
+          # on KEYSTONE_RS_SPIFFE_INTERNAL) during devstack's install
+          # phase - before n-api starts during stack.sh, where a missing
+          # package 500s every request and aborts stack.sh before any
+          # later workflow step runs.
+
+          [[post-config|$NOVA_CONF]]
+          [keystone_authtoken]
+          # Hardcoded rather than referencing $SPIRE_AGENT_SOCKET/
+          # $KEYSTONE_RS_INTERNAL_PORT: local.conf's [[post-config]] values
+          # aren't shell-expanded by devstack, so these must match
+          # lib/spire's/lib/keystone-rs's actual defaults (also hardcoded
+          # elsewhere in this job, e.g. the SPIRE healthcheck steps below).
+          spiffe_agent_socket = unix:///opt/stack/data/spire/agent.sock
+          auth_url = https://127.0.0.1:8081
+
+          LOGFILE=$HOME/devstack.log
           LOG_COLOR=False
           EOF
           cat /opt/stack/devstack/local.conf
@@ -414,6 +446,16 @@ jobs:
       - name: Run stack.sh
         working-directory: /opt/stack/devstack
         run: FORCE=yes ./stack.sh
+
+      - name: Restart Nova API to pick up auth_token config
+        # The key-rs plugin already pip-installed `spiffe` into the venv
+        # before stack.sh started n-api, so this restart is only to pick
+        # up the
+        # [[post-config|$NOVA_CONF]] keystone_authtoken options applied
+        # above (devstack writes local.conf's post-config sections during
+        # stack.sh, but n-api may already be running by the time nova's
+        # own config gets that section merged in).
+        run: sudo systemctl restart devstack@n-api
 
       - name: Verify rust Keystone is serving directly
         run: curl -sf http://127.0.0.1:8080/v3
@@ -486,6 +528,48 @@ jobs:
             openssl verify -CAfile $dir/ca.crt $dir/tls.crt
             openssl x509 -in $dir/tls.crt -noout -text | grep -q "URI:spiffe://cloud.trust.domain/service/${pair#*:}"
           done
+
+      - name: Verify keystone-rs internal SPIFFE mTLS listener started
+        # Phase 1.6: confirms interface_internal actually came up in SPIFFE
+        # mode (crates/keystone/src/server/listener/spiffe_tls.rs logs this
+        # on startup), not just that the config option was written.
+        run: sudo journalctl -u devstack@key-rs --no-pager | grep -q "SPIFFE mTLS"
+
+      - name: Verify internal SPIFFE listener rejects unauthenticated clients
+        # No client cert presented - the mTLS handshake itself must fail.
+        run: |
+          if curl -sf -k --max-time 5 https://127.0.0.1:8081/v3 >/dev/null 2>&1; then
+            echo "internal SPIFFE listener accepted a connection with no client cert" >&2
+            exit 1
+          fi
+
+      - name: Verify Nova's auth_token back-channel authenticates over SPIFFE mTLS
+        # Phase 1.6 POC: nova.conf's [keystone_authtoken] points auth_url at
+        # keystone-rs's internal SPIFFE listener (see local.conf above) and
+        # sets spiffe_agent_socket, per
+        # https://review.opendev.org/c/openstack/keystonemiddleware/+/1005601
+        # (WIP). First, fetch nova-api's own SVID directly and confirm the
+        # listener accepts it (positive control, independent of nova-api's
+        # own process). Then confirm nova-api itself is actually serving
+        # requests through that path - the "Verify OpenStack service health"/
+        # smoke-test steps above already exercised nova-api's auth_token
+        # validation end-to-end, so their prior success is the real
+        # end-to-end signal; this step only adds the direct positive-control
+        # check plus an explicit re-assertion that nova-api is still healthy
+        # after the config change and restart.
+        run: |
+          tmpdir=$(mktemp -d)
+          sudo /usr/local/bin/spire-agent api fetch x509 \
+            -socketPath /opt/stack/data/spire/agent.sock -write "$tmpdir"
+          sudo chmod 0644 "$tmpdir"/*.pem "$tmpdir"/*.key 2>/dev/null || true
+          svid=$(ls "$tmpdir"/svid*.pem | head -n1)
+          key=$(ls "$tmpdir"/svid*.key | head -n1)
+          bundle=$(ls "$tmpdir"/bundle*.pem | head -n1)
+          curl -sf --cert "$svid" --key "$key" --cacert "$bundle" \
+            https://127.0.0.1:8081/v3
+
+          source /opt/stack/devstack/openrc admin admin
+          openstack compute service list
 
       - name: Dump devstack log
         if: failure()

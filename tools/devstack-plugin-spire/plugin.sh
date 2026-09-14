@@ -31,7 +31,14 @@ if is_service_enabled spire; then
         install_spiffe_helper
     elif [[ "$1" == "stack" && "$2" == "post-config" ]]; then
         configure_spire
-    elif [[ "$1" == "stack" && "$2" == "extra" ]]; then
+        # Start the SPIRE stack in post-config (before devstack starts the
+        # OpenStack services), not in the later "extra" phase: Phase 1.6's
+        # keystonemiddleware SPIFFE transport builds its session when
+        # n-api's WSGI app loads during the services-start phase, where a
+        # missing spire-agent socket fails the app init (every request
+        # 500s). stack.sh's create_flavors async wait then hits those
+        # 500s and aborts the run before "extra" is ever reached - so
+        # starting SPIRE there is a chicken-and-egg that can never win.
         init_spire
         start_spire
     fi
