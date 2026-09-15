@@ -28,7 +28,12 @@ SPIRE_TRUST_DOMAIN=${SPIRE_TRUST_DOMAIN:-cloud.trust.domain}
 SPIRE_DATA_DIR=${SPIRE_DATA_DIR:-$DATA_DIR/spire}
 SPIRE_SERVER_SOCKET=${SPIRE_SERVER_SOCKET:-$SPIRE_DATA_DIR/server.sock}
 SPIRE_AGENT_SOCKET=${SPIRE_AGENT_SOCKET:-$SPIRE_DATA_DIR/agent.sock}
-SPIRE_SERVER_BIND_PORT=${SPIRE_SERVER_BIND_PORT:-8081}
+# 8082, not 8081: keystone-rs's internal SPIFFE mTLS listener
+# (KEYSTONE_RS_INTERNAL_PORT, default 8081, devstack/lib/keystone-rs)
+# owns 8081 in the combined devstack-full job, and spire-server would
+# fail to bind its control-plane port there. Only the spire agent
+# connects to this port (server_address/server_port in agent.conf).
+SPIRE_SERVER_BIND_PORT=${SPIRE_SERVER_BIND_PORT:-8082}
 SPIRE_SERVER_CONF=$SPIRE_DATA_DIR/server.conf
 SPIRE_AGENT_CONF=$SPIRE_DATA_DIR/agent.conf
 # Public CA cert, no secrecy requirement - keystone-rs (Phase 3) and

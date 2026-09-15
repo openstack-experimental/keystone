@@ -339,6 +339,79 @@ done
 
 ---
 
+### Phase 1.6: Pilot keystonemiddleware's SPIFFE mTLS Transport (Gerrit 1005601, WIP)
+
+**Goal:** exercise Phase 3's already-merged keystone-rs internal SPIFFE
+listener end-to-end against a real client, ahead of Phase 4 landing for
+real. Pilots Phase 4's "Change 4.1" (SPIFFE mTLS transport for
+`auth_token`) as an explicitly WIP, unmerged Gerrit patch
+(https://review.opendev.org/c/openstack/keystonemiddleware/+/1005601,
+change 1005601 — the patch's own commit message frames it as "a POC
+demonstrating integration in devstack"), against **Nova only**, in the
+`devstack-full` CI job from Phase 1.5.
+
+**Prerequisites:** Phase 1 (SPIRE devstack plugin), Phase 1.5 (`devstack-full`
+job), Phase 3 (keystone-rs's internal SPIFFE listener — already merged, no
+`crates/` changes needed for this phase).
+
+**Changes (`devstack-full` job only — the plain keystone-only `devstack` job
+is untouched):**
+
+| File                            | Purpose                                                                                                    |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `devstack/lib/keystone-rs`       | `KEYSTONE_RS_SPIFFE_INTERNAL`/`KEYSTONE_RS_INTERNAL_PORT` tunables (default off); gated `pip_install spiffe protobuf` in `install_keystone_rs` (the WIP patch's `spiffe` extra — LIBS_FROM_GIT's editable install doesn't select extras, current devstack master no longer reads `PYTHON_PACKAGES`, and the only constraint-resolvable spiffe release, 0.1.4, omits `protobuf` from its install_requires); gated `[interface_internal]` iniset in `configure_keystone_rs`; gated `SPIFFE_ENDPOINT_SOCKET=unix://...` export in `start_keystone_rs`'s wrapper (done) |
+| `.github/workflows/devstack.yml` | `devstack-full`: `KEYSTONE_RS_SPIFFE_INTERNAL=True`, `LIBS_FROM_GIT+=keystonemiddleware` pinned to the Gerrit patchset ref, `[[post-config\|$NOVA_CONF]]` block, n-api restart, mTLS verification steps (done) |
+
+**Why Nova only, why pinned to an exact patchset:** both sides of this wiring
+are unproven — the keystonemiddleware patch is WIP and may be reworked before
+merging. `KEYSTONEMIDDLEWARE_BRANCH=refs/changes/01/1005601/2` pins
+the exact patchset; bump it by hand if a newer patchset needs picking up.
+Keeping this to one service and one CI job (rather than a third job) limits
+blast radius while it's this unproven, and rides on `devstack-full`'s
+existing `continue-on-error: true`.
+
+**Wiring:**
+
+```ini
+# keystone-rs.conf (via KEYSTONE_RS_SPIFFE_INTERNAL=True)
+[interface_internal]
+tcp_address = 0.0.0.0:8081
+type = spiffe
+trust_domains = cloud.trust.domain
+```
+
+```ini
+# nova.conf, via local.conf's [[post-config|$NOVA_CONF]]
+[keystone_authtoken]
+spiffe_agent_socket = unix:///opt/stack/data/spire/agent.sock
+auth_url = https://127.0.0.1:8081
+```
+
+`www_authenticate_uri` is left pointing at the public `/identity` URL —
+only the back-channel `auth_url` moves to the internal mTLS listener. No
+`cafile` is set: the patch's `SpiffeHTTPAdapter` fetches the trust bundle
+from the same Workload API source as the client cert.
+
+**Verification (devstack-full CI):**
+
+```bash
+# Internal listener actually started in SPIFFE mode:
+journalctl -u devstack@key-rs --no-pager | grep -q "SPIFFE mTLS"
+
+# Rejects unauthenticated clients:
+! curl -sf -k https://127.0.0.1:8081/v3
+
+# Accepts a real SVID (positive control):
+spire-agent api fetch x509 -socketPath /opt/stack/data/spire/agent.sock -write /tmp/svid
+curl -sf --cert /tmp/svid/svid.0.pem --key /tmp/svid/svid.0.key \
+     --cacert /tmp/svid/bundle.0.pem https://127.0.0.1:8081/v3
+
+# nova-api's own auth_token back-channel actually uses it end-to-end:
+openstack compute service list
+```
+
+---
+
 ### Phase 2: Vendor Data JWT API (keystone-rs)
 
 **Goal:** keystone-rs exposes a new endpoint that signs a JWT per VM instance.
@@ -687,6 +760,12 @@ a back-channel call.
 **Two separate Gerrit changes.** These are orthogonal and landed independently:
 
 #### Change 4.1: SPIFFE mTLS transport (auth_token)
+
+**Piloted (WIP, unmerged) in Phase 1.6**, against Nova only, in the
+`devstack-full` CI job — see that section for the actual Gerrit ref pinned,
+the real devstack wiring, and CI verification. This subsection remains the
+aspirational/illustrative description of the change; Phase 1.6 is the
+concrete, currently-implemented CI exercise of it.
 
 | File                                      | Purpose                                 |
 | ----------------------------------------- | --------------------------------------- |
