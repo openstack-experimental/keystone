@@ -15,8 +15,8 @@ Thanks for the contribution! Fill in the sections below.
 **Required if this diff touches authentication, scope, delegation, tokens,
 credentials, EC2, trusts, application credentials, or OPA policy input.**
 Delete this section entirely if it doesn't apply. See
-[`doc/src/security.md`](../doc/src/security.md) §7 for the full context
-behind each item.
+[`doc/src/contributor/security-model.md`](../doc/src/contributor/security-model.md)
+§7 for the full context behind each item.
 
 - [ ] Does any delegation/authorization decision read the **scope**
       (`project_id`, `ScopeInfo`) where it should read the **chain**

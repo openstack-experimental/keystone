@@ -1,12 +1,46 @@
 # Security Architecture Review: Preemptive Gates, Testing, and Vulnerability Vectors
 
-Status: advisory review (2026-07-09). Companion to [Security model](security-model.md)
+Status: advisory review (2026-07-09), re-evaluated against `main` on 2026-09-14
+— see §0 for what landed since and what remains. Companion to [Security model](security-model.md)
 (the normative invariant reference) and [Policy enforcement](../admin/policy.md). Where
 the two disagree, `security-model.md` wins; this document proposes _additions_, it
 does not restate or replace the invariants there.
 
 Disclaimer: This review was performed by Claude Fable model with a human
 directions.
+
+## 0. Status at a glance (re-evaluated 2026-09-14)
+
+The review's gates were largely adopted between 2026-07-09 and 2026-09-14. This
+section records what actually landed, verified by direct code read against
+`main`; the per-vector sections below carry the detail. **Landed** means the
+mechanism exists _and_ runs in CI; **partial** means the mechanism exists but
+does not yet cover what it was proposed to cover.
+
+| Gate   | Status                    | Evidence                                                                                                                                                    |
+| ------ | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **A**  | Landed                    | `ci.yml` runs `opa test policy` unconditionally in the main job, not only on `paths: policy/**`                                                              |
+| **B1** | Landed                    | `tools/check_policy_handler_coverage.py`, run unconditionally in `ci.yml`; four checks (missing policy / missing test / orphan policy / unenforced handler)  |
+| **B2** | **Harness landed, coverage partial** | `crates/core/src/api/policy_contract.rs` + `CapturingPolicy`. Applied by **14 of 155** `enforce()`-calling handler modules. No route sweep — still opt-in |
+| **B3** | **Harness landed, coverage partial** | `get_state_with_real_policy()` (`crates/keystone/src/api/mod.rs`) runs a real `opa run -s` over the actual `policy/` tree. Used by **11 of 155**  |
+| **C**  | Landed                    | `tools/check_delegated_policy_scope_drift_tests.py`                                                                                                         |
+| **D**  | Landed                    | `test_new_for_scope_delegated_roles_never_exceed_delegation_matrix`, `test_delegation_scope_kind_matrix_roles_never_exceed_delegation` (`crates/core/src/auth/tests.rs`) |
+| **E**  | Landed                    | `tools/check_rego_undefined_argument_footgun.py`                                                                                                            |
+| **F**  | Landed                    | `fuzz/` (5 targets) + `.github/workflows/fuzz.yml`; `scope_pinning_property` proptest                                                                        |
+| **G**  | Landed (scheduled)        | `.cargo/mutants.toml` scoped to `core-types/auth.rs`, `core/auth.rs`, `core/policy.rs` + `mutants.yml` — deliberately not a required per-PR gate             |
+| **H**  | **Partial**               | Publish-side cosign keyless signing **and** a verify step landed (`policy-container.yml`). **No load-time verification**; `tools/opa_config.yaml` still pulls the mutable `:latest` |
+| **I**  | Landed                    | `tools/check_event_payload_no_secret_fields.py` + `policy_contract::assert_no_secrets`                                                                       |
+| **J**  | Landed                    | `tools/check_security_checklist_sast.py`                                                                                                                    |
+
+Vector status: **V3, V8a, V9 closed**; **V1, V2 structurally backed** by Gates
+D/J; **V3a, V4, V5, V6, V10 remain open** in the ways described below. **V7 and
+V8 are no longer hypothetical** — the features shipped, so their "when
+implemented" framing is stale (§V7/§V8).
+
+What the re-evaluation changes about priority: the original top recommendation
+(A + B1 + B2) is now two-thirds done. The remaining work is no longer *building*
+the input-contract mechanism — it exists and is good — but **making it
+non-optional**, which was the point of proposing it as a route sweep (§V3a).
 
 ## 1. Purpose and scope
 
@@ -123,21 +157,30 @@ Rust type catches.
 
 **Current state.**
 
-- `opa test policy` runs, but only in `policy-container.yml`, gated on
+_Original finding (2026-07-09):_
+
+- `opa test policy` ran only in `policy-container.yml`, gated on
   `paths: policy/**`. **A Rust-only change that alters which `policy_name` a
-  handler enforces, or changes the `Credentials` projection, does not trigger
-  the policy test suite.** The two halves of the authz decision are tested in
-  separate CI jobs that never both run on a cross-cutting PR.
+  handler enforces, or changes the `Credentials` projection, did not trigger
+  the policy test suite.** The two halves of the authz decision were tested in
+  separate CI jobs that never both ran on a cross-cutting PR.
 - `opa fmt --check` runs in `linters.yml`, but formatting is not correctness.
-- There is no gate asserting **every enforced `policy_name` has a matching
+- There was no gate asserting **every enforced `policy_name` has a matching
   `.rego` rule and a `_test.rego`**, nor that **every CRUD handler calls
-  `enforce()`**. CLAUDE.md requires ">=3 tests per CRUD handler" and the ">=1
-  negative policy test" convention, but nothing enforces it mechanically (a
-  `grep -rL enforce` over `v3` today returns only `auth/token/create.rs`, which
-  is fine — but nothing keeps it that way).
+  `enforce()`**.
 - Fail-closed on OPA error looks correct (`PolicyError` → `forbidden()`), but
-  there is no explicit test that an OPA outage / malformed response / timeout
+  there was no explicit test that an OPA outage / malformed response / timeout
   yields deny, not allow.
+
+_Re-evaluated 2026-09-14: **closed.**_ Gate A runs `opa test policy`
+unconditionally in the main `ci.yml` job, so the Rego suite now gates Rust-only
+PRs. Gate B1 (`tools/check_policy_handler_coverage.py`) runs unconditionally and
+checks all four directions — a dangling `enforce()` name, a policy without a
+sibling `_test.rego`, an orphan decision policy no handler references, and a
+CRUD handler with no `enforce()` call (with a single reviewed allowlist entry,
+`v3/auth/token/create.rs`, which is pre-authn by construction). Gate E covers
+the I2 undefined-argument footgun. What remains from this vector is not
+existence but *content*, tracked as V3a.
 
 **Control.**
 
@@ -157,7 +200,7 @@ Rust type catches.
 - _Testing:_ add an explicit "OPA unreachable / returns garbage → request
   denied" integration test.
 
-### V3a — The handler→policy input-contract seam is untested (P1)
+### V3a — The handler→policy input-contract seam (P1; harnesses landed, coverage at 9%)
 
 **Attack.** This is the sharpest and most under-appreciated form of V3, and it
 is worth calling out on its own. The authorization decision is `policy(input)`,
@@ -182,7 +225,7 @@ the wrong document_. `opa test policy` cannot catch this — it tests the policy
 against **hand-authored** input that matches the intended contract, not the
 input the handler actually emits.
 
-**Current state.** Three layers exist; only two are tested.
+**Current state (2026-07-09).** Three layers exist; only two are tested.
 
 | Layer                                                                                         | Tested today                                                 |
 | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
@@ -207,6 +250,61 @@ The seam is exercised only two ways today, neither sufficient:
   actor×target authorization matrices, and it does not isolate the input
   contract, so a handler that feeds OPA a subtly-wrong document but still
   returns the expected status on the happy path passes.
+
+**Re-evaluated 2026-09-14: the mechanisms landed; the coverage did not.** Both
+proposed harnesses now exist, and both are better than what was asked for:
+
+- **Gate B2** — `crates/core/src/api/policy_contract.rs` provides
+  `assert_object_keys` (the ADR 0002 mis-key check), `assert_no_secrets` (I7
+  generalized to a recursive denylist of 11 secret-shaped field names), and
+  `assert_existing_presence` (the target/existing slotting check), applied to
+  `CapturingPolicy`'s recorded calls.
+- **Gate B3** — `get_state_with_real_policy()`
+  (`crates/keystone/src/api/mod.rs`) spawns a real `opa run -s` over the
+  repository's actual `policy/` tree on a private Unix socket and wires it to
+  the **production** `HttpPolicyEnforcer`. This is the stronger of the two
+  options the review listed (managed subprocess rather than `opa build -t
+  wasm`), and it panics rather than degrading if `opa` is missing.
+
+The gap is now **adoption, not capability**, and it is the review's one
+materially unfinished recommendation:
+
+| Coverage                                     | Handler modules calling `enforce()` |
+| -------------------------------------------- | ----------------------------------- |
+| Total                                        | 155                                 |
+| Assert the B2 input contract                 | **14 (9%)**                         |
+| Exercise the real policy via B3              | **11 (7%)**                         |
+
+Adoption was risk-prioritised, which is the right order — `credential/*` (the
+OSSA-2026-015 surface whose test module was empty when this review was written)
+now carries both B2 and B3, as do `user/os_ec2/*` and `policy/*`. But two core
+delegation surfaces are covered by **neither**:
+
+- **`v3/os_trust/trust/{create,show,list,delete}`** — trusts are one of the
+  three delegation mechanisms I1–I5 exist to bound.
+- **`v3/ec2tokens/create`** — the redemption endpoint of the crown-jewel
+  scenario in §6.1 (OSSA-2026-005 / CVE-2026-33551).
+
+`policy_contract.rs`'s own doc comment calls itself "the uniform, non-opt-in
+assertion set." At 9% adoption with no route sweep and no Gate B1 check
+requiring a contract test to exist, that is an aspiration rather than a
+description: a new handler added today is covered by B1 (it must call
+`enforce()`) but nothing requires it to prove *what it passes*. **The remaining
+work is the sweep, not the harness** — either enumerate the registered routes
+and drive each through `CapturingPolicy`, or (cheaper, and it composes with the
+existing checkers) extend `check_policy_handler_coverage.py` with a fifth check:
+every handler module containing `.enforce(` must also reference
+`policy_contract` in its test module, with an explicit reviewed allowlist for
+the exceptions.
+
+The payoff is not hypothetical. `security-model.md` §9 now records a defect
+class found in exactly this way — several policies test
+`input.credentials.system_scope`, a key nothing ever emits (`Credentials`
+serializes it as `system`), making those rules unreachable. It fails closed, so
+it is a functional bug rather than a vulnerability, but it is precisely a
+handler↔policy contract mismatch that `opa test` cannot see and that the B3
+real-`opa run` tests do. Broader B2/B3 adoption is how the rest of that class
+gets found.
 
 **Control.** Split the coverage gate (Gate B) into three graduated levels and
 make the seam a first-class, non-opt-in test target:
@@ -258,8 +356,27 @@ the bundle can be tampered with in the registry, or a stale/rolled-back `latest`
 is pulled, every authz decision is attacker-defined — without touching
 Keystone's code or the `policy/` tree.
 
-**Current state.** The bundle is pushed unsigned; there is no evidence of
-signature generation or of verification at load time. `latest` is mutable.
+**Current state (2026-07-09).** The bundle is pushed unsigned; there is no
+evidence of signature generation or of verification at load time. `latest` is
+mutable.
+
+**Re-evaluated 2026-09-14: half-closed.** The publish side landed —
+`policy-container.yml` resolves the pushed digest, signs it with cosign keyless
+(reusing the job's existing `id-token: write`), and then **verifies its own
+signature before the workflow reports success**, so a broken signing setup fails
+CI rather than silently shipping an unverifiable bundle. The design-side ask
+landed too: `security-model.md` §3 now names the bundle as a trust boundary.
+
+The **consumption** side is still open, and it is the half that actually
+defends a running deployment: nothing verifies the signature at load.
+`tools/opa_config.yaml` still pulls `…/opa-bundle:latest` — a mutable tag — and
+its own comment concedes the point ("OPA's bundle service has no native
+cosign/Sigstore verification hook, so that check cannot happen [here]"). A
+signature nobody checks stops a careless publisher, not an attacker with
+registry write access. The remaining work is a verify-then-serve step in the
+deployment path (sidecar or init container that runs `cosign verify` against a
+**pinned digest** and only then hands the bundle to OPA), plus pinning by digest
+in `opa_config.yaml` and the k8s manifests instead of `:latest`.
 
 **Control.**
 
@@ -282,7 +399,24 @@ the credential can call any endpoint. This is documented as an open gap in
 _known_ live gap, because it silently converts a control the operator believes
 is active into a no-op.
 
-**Current state.** Advisory only, by the project's own admission.
+**Current state (2026-07-09).** Advisory only, by the project's own admission.
+
+**Re-evaluated 2026-09-14: still open — and now the review's single most
+important outstanding item.** The interim control landed exactly as proposed:
+creation warns unconditionally on a non-empty `access_rules` list, and
+`application_credential.reject_unenforced_access_rules` (`crates/config/src/application_credentials.rs`,
+default `false`) makes it a hard rejection
+(`ApplicationCredentialProviderError`, `crates/core-types/src/application_credential/error.rs`).
+`security-model.md` §9 documents it.
+
+But **no request-time enforcement exists**. Every `AccessRule` reference in the
+tree is still CRUD plumbing — `provider_api.rs`, `backend.rs`, `service.rs`,
+the SQL driver, the audit projection — and there is no middleware matching an
+incoming `(service, method, path)` against the stored rules before dispatch.
+With the flag defaulting to `false` (correctly, for compatibility), the default
+deployment still accepts a restriction it will not honour. The fail-loud flag
+buys honesty for operators who opt in; it does not close the gap. The ADR and
+middleware §5 calls for are unwritten.
 
 **Control.**
 
@@ -307,9 +441,29 @@ token validation are not covered** — all perform crypto (signature/hash
 verification) and are DoS amplifiers. An attacker hits `/v3/ec2tokens` or an
 OIDC `authenticate` endpoint to burn CPU without ever authenticating.
 
-**Current state.** Global-IP limiter merged (phase 1); per-endpoint coverage is
-"follow-up ADR TBD." Also note `governor` is per-node in-memory, so effective
-limits are N× in an N-replica deployment (documented consequence).
+**Current state (2026-07-09).** Global-IP limiter merged (phase 1); per-endpoint
+coverage is "follow-up ADR TBD." Also note `governor` is per-node in-memory, so
+effective limits are N× in an N-replica deployment (documented consequence).
+
+**Re-evaluated 2026-09-14: partially closed; the original three crypto
+endpoints are still open.** `check_ip()` coverage has grown well beyond phase 1
+— it now gates `v3/auth/token/create`, the full OAuth2 surface
+(`authorize`, `token`, `device`, `device_authorization`, `jwks`,
+`jwks_revocation`, `well_known`) and `v4/spiffe`. That is the V8a work plus
+more.
+
+The endpoints this vector actually named remain unlimited, verified by direct
+read — none of them contains a `check_ip`/rate-limit call:
+
+| Endpoint                                | Expensive work reached unauthenticated |
+| --------------------------------------- | -------------------------------------- |
+| `v3/ec2tokens/create`                   | HMAC signature verification            |
+| `v3/auth/token/show` (token validation) | Fernet/JWS decrypt + verify            |
+| federation `authenticate` endpoints     | OIDC/JWT signature verification        |
+
+`ec2tokens` is the notable one: it is both an unrate-limited crypto endpoint
+(V6) and the redemption path of the V1 crown-jewel scenario, and it currently
+carries neither a rate limit nor a B2/B3 policy-contract test (V3a).
 
 **Control.**
 
@@ -323,7 +477,7 @@ limits are N× in an N-replica deployment (documented consequence).
 - _Pentest:_ resource-exhaustion probing of every unauthenticated,
   crypto-bearing endpoint.
 
-### V7 — Dynamic auth plugins: pre-auth attack surface (P1 when implemented, ADR 0025 is Proposed)
+### V7 — Dynamic auth plugins: pre-auth attack surface (P1 — now live, no longer hypothetical)
 
 **Attack.** ADR 0025 introduces WASM auth plugins invoked _pre-authentication_
 by definition — a remote, unauthenticated party triggers plugin execution and
@@ -344,9 +498,30 @@ model:
 - **Resource exhaustion**: fuel/deadline/memory caps + per-source-IP token
   bucket.
 
-**Current state.** Design-stage; `AuthenticationContext::WasmPlugin` and
-`plugin_claims` projection already exist in the tree, so partial plumbing has
-landed ahead of the full mechanism.
+**Current state (2026-07-09).** Design-stage; `AuthenticationContext::WasmPlugin`
+and `plugin_claims` projection already exist in the tree, so partial plumbing
+has landed ahead of the full mechanism.
+
+**Re-evaluated 2026-09-14: shipped.** This is no longer a design-stage vector —
+`auth-plugin-core`, `auth-plugin-runtime`, and `auth-plugin-identity-driver-raft`
+are real crates, `crates/core/src/auth_plugin{,_auth,_http,_identity}.rs` carry
+the mechanism, and `auth_plugin_startup.rs` / `auth_plugin_http_client.rs` wire
+it into the server. The named controls exist: `allowed_hosts` with connect-time
+IP validation (`auth_plugin_http.rs`, `host_functions.rs`), a reserved-header
+denylist enforced at config load (`crates/config/src/auth_plugins.rs`), and
+three of the five fuzz targets cover the host↔guest JSON boundary
+(`fuzz_auth_contract_response`, `fuzz_route_contract_response`,
+`fuzz_mapping_contract_response`).
+
+Two things follow. First, **ADR 0025 still reads `Status: Proposed`** while the
+feature is in `main` — as do ADR 0022 (rate limiting) and ADR 0026 (OAuth2
+provider), both equally shipped. That drift matters for a security review that
+uses ADR status to judge what is attack surface today: a reader triaging by ADR
+status would under-weight three live, internet-facing surfaces. Update the
+statuses. Second, this vector's priority is now unconditional — a
+pre-authentication WASM execution path reachable by any remote party deserves
+the dedicated pentest suite §6.6 describes, on the current code rather than
+"when those features ship."
 
 **Control.**
 
@@ -364,17 +539,25 @@ landed ahead of the full mechanism.
   unauthenticated endpoint — SSRF, request smuggling into `route` targets, and
   rate-limit bypass are the priority scenarios.
 
-### V8 — OAuth2/OIDC provider role (P2 when implemented, ADR 0026 is proposed)
+### V8 — OAuth2/OIDC provider role (P2 — now live, no longer hypothetical)
 
 **Attack.** Acting as an OAuth2/OIDC _provider_ adds the classic web-authz
 surface Keystone did not previously have: open-redirect via `redirect_uri`,
 authorization-code interception without PKCE, CSRF on the consent flow,
 clickjacking, refresh-token replay.
 
-**Current state.** ADR 0026 already commits to the right defaults — exact-match
-`redirect_uris` (wildcards rejected), mandatory `S256` PKCE for public clients
-enforced at CRUD time, HTTPS-only for confidential clients, refresh-token
-rotation. The controls are specified; the risk is drift during implementation.
+**Current state (2026-07-09).** ADR 0026 already commits to the right defaults —
+exact-match `redirect_uris` (wildcards rejected), mandatory `S256` PKCE for
+public clients enforced at CRUD time, HTTPS-only for confidential clients,
+refresh-token rotation. The controls are specified; the risk is drift during
+implementation.
+
+**Re-evaluated 2026-09-14: shipped, and the implementation was audited.** The
+provider is live (`crates/keystone/src/api/v4/oauth2/`: `authorize`, `token`,
+`device`, `device_authorization`, `jwks`, `jwks_revocation`, `well_known`), and
+V8a below is the record of that audit — the drift risk this vector warned about
+was checked, found in one place (device-flow rate limiting), and fixed. ADR 0026
+still reads `Status: Proposed`; see V7 on ADR status drift.
 
 **Control.**
 
@@ -439,8 +622,19 @@ brute-force short human-facing codes (device `user_code`) with no throttle.
 **Attack.** Decrypted credential blobs (EC2 secret keys, TOTP seeds) reaching
 OPA (which logs decisions) or the CADF audit trail.
 
-**Current state.** I7 strips the blob in `credential_policy_input()`; secrets
-are now wrapped with the `secrecy` crate (recent commit `b35ca42`). Good.
+**Current state (2026-07-09).** I7 strips the blob in
+`credential_policy_input()`; secrets are now wrapped with the `secrecy` crate
+(recent commit `b35ca42`). Good.
+
+**Re-evaluated 2026-09-14: closed, on both surfaces.** Gate I landed twice over:
+`policy_contract::assert_no_secrets` recursively rejects 11 secret-shaped field
+names anywhere in `target`/`existing` (and is asserted against `Credentials`
+itself in `crates/core/src/policy.rs`), and
+`tools/check_event_payload_no_secret_fields.py` runs unconditionally in `ci.yml`
+so the ADR 0023 audit projection cannot grow a secret-shaped field. The one
+residual is scope of application: `assert_no_secrets` only protects the handlers
+that opted into a B2 contract test (see V3a), so widening B2 adoption widens
+this guarantee too.
 
 **Control.**
 
@@ -459,9 +653,17 @@ removed, a trust deleted, a plugin patched to fix a bug, an identity link
 revoked. If validation trusts the token's frozen claims over live state, the
 window stays open.
 
-**Current state.** `authorize_by_token` re-expands and re-resolves roles against
-live assignments and checks revocation (ADR 0017); ADR 0025 adds `plugin_sha256`
-version-binding and bulk `revoke_all`. The design is revocation-aware.
+**Current state (2026-07-09).** `authorize_by_token` re-expands and re-resolves
+roles against live assignments and checks revocation (ADR 0017); ADR 0025 adds
+`plugin_sha256` version-binding and bulk `revoke_all`. The design is
+revocation-aware.
+
+**Re-evaluated 2026-09-14: open.** The design is unchanged and still sound, but
+the property tests this vector asked for were not written. The only `proptest`
+suite in the workspace is `scope_pinning_property`
+(`crates/core/src/policy.rs`) — the *delegation monotonicity* and *revocation*
+properties named in §5.2 remain the two open items on that list. "Authority
+removed at T is unusable after T" is still covered only by example-based tests.
 
 **Control.**
 
@@ -500,6 +702,13 @@ right document_ (V3a). Together they remove the ways an authz bypass can merge
 green; B3 then upgrades from "the input shape is right" to "the real policy
 decides right on that input," and everything else hardens an already-good
 position.
+
+> **Status (2026-09-14).** See §0 for the verified per-gate state. In short: A,
+> B1, C, D, E, F, G, I and J are landed and running in CI. B2 and B3 exist as
+> harnesses — good ones — but are applied by 14 and 11 of 155 `enforce()`-calling
+> handler modules respectively, and nothing requires a new handler to use them;
+> making them non-optional is the one substantive piece of this table still
+> outstanding. H is signed at publish but unverified at load.
 
 ### Design-time gates (not CI)
 
@@ -585,8 +794,10 @@ A pentest engagement should be handed this prioritized scenario list rather than
    endpoint; attempt `X-Forwarded-For` spoofing to defeat per-IP limits.
 5. **App-cred `access_rules` (V5).** Confirm the currently-unenforced state, and
    re-test once middleware lands.
-6. **WASM plugins (V7)** and **OAuth2 provider (V8)** — full dedicated suites
-   when those features ship; treat both as internet-facing pre-auth surfaces.
+6. **WASM plugins (V7)** and **OAuth2 provider (V8)** — full dedicated suites;
+   treat both as internet-facing pre-auth surfaces. Both features have since
+   shipped (re-evaluated 2026-09-14), so these are engagements to schedule now,
+   not contingencies. V8 has had a code-read audit (V8a); V7 has not.
 7. **Token lifecycle (V10).** Revocation-window and version-binding probing.
 8. **OAuth2 device-flow rate limiting (V8a, fixed 2026-07-16).** Password-spray
    `/device/login` from a single IP across many usernames; brute-force `/device`
@@ -596,22 +807,53 @@ A pentest engagement should be handed this prioritized scenario list rather than
 
 ## 7. Prioritized recommendation
 
-If the project adopts nothing else from this review:
+### Original list (2026-07-09), with outcomes
 
 1. **Gate A + Gate B1 + Gate B2** (§4) — close the split-CI authz blind spot
    _and_ the untested handler→policy input contract (V3a). A + B1 are low
    effort; B2 needs only a shared capturing enforcer and a route sweep, and is
    the single highest value-to-effort item because it makes "the handler feeds
    the policy the right document" a mechanical, non-opt-in test on every handler
-   — which `opa test` and the current mocks do not.
+   — which `opa test` and the current mocks do not. — **A and B1 done; B2's
+   harness done, its sweep not.**
 2. **Ship `access_rules` enforcement or fail loud** (V5) — the highest-impact
-   _known_ live gap; today a control operators trust is a no-op.
+   _known_ live gap; today a control operators trust is a no-op. — **fail-loud
+   flag shipped (opt-in, default off); enforcement not.**
 3. **Gate D matrix + Gate G mutation testing** (V1/V2) — convert the "remembered
-   checklist" defense of the delegation boundary into a structural one.
+   checklist" defense of the delegation boundary into a structural one. —
+   **done.**
 4. **Sign the policy bundle** (V4) — the running policy deserves the same
-   provenance bar as the binary.
+   provenance bar as the binary. — **signed at publish; not verified at load.**
 
-The rest (rate-limit coverage, plugin/OAuth2 test suites, secret-leak structural
-tests) should land alongside the features they protect, with the
-failure-exercising tests treated as part of the feature's definition of done,
-not a follow-up.
+### Re-prioritized (2026-09-14)
+
+Ordered by what is now actually outstanding, highest value first:
+
+1. **Make Gate B2 non-optional** (V3a). The mechanism is built and proven; 91%
+   of `enforce()`-calling handlers just don't use it. The cheapest closure is a
+   fifth check in `tools/check_policy_handler_coverage.py` — a module with
+   `.enforce(` must reference `policy_contract` in its tests, with a reviewed
+   allowlist — which reuses a script already running unconditionally in CI.
+   Backfill `os_trust/trust/*` and `ec2tokens/create` first: both are core
+   delegation surfaces with neither B2 nor B3 coverage today.
+2. **Ship `access_rules` enforcement** (V5). Unchanged from the original list
+   and now the oldest open item. The fail-loud flag made the gap honest for
+   operators who set it; the default deployment still accepts a restriction it
+   will not honour. This needs the ADR and the request-matching middleware.
+3. **Verify the policy bundle at load, and pin by digest** (V4). Half a supply
+   chain control is a signature nobody checks. Add verify-then-serve to the
+   deployment path and replace `:latest` in `tools/opa_config.yaml` and the k8s
+   manifests with a pinned digest.
+4. **Rate-limit the three remaining pre-auth crypto endpoints** (V6):
+   `ec2tokens/create`, token validation, and the federation `authenticate`
+   paths. The mechanism (`check_ip`) is already in place on eight other
+   endpoints, so this is application, not design.
+5. **Correct ADR statuses for shipped features** (V7/V8). ADRs 0022, 0025 and
+   0026 read `Proposed` while the features are in `main`. A security reader
+   triaging by ADR status will under-weight three live surfaces — including a
+   pre-authentication WASM execution path.
+6. **Write the two open property tests** (V10/§5.2): delegation monotonicity and
+   revocation-after-T. `scope_pinning_property` shows the pattern works here.
+
+The rest (plugin/OAuth2 pentest suites) should land alongside the features they
+protect — which, for V7 and V8, means now rather than later, since both shipped.
