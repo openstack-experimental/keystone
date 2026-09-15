@@ -110,9 +110,10 @@ and one rule that runs through the whole design:
 - Replacing SPIRE's own CA or Keystone's signing keys. Those have their own
   bootstrap chain and adopting the KMS for them is a later, separate decision
   (§9.6).
-- Confidential computing attestation-bound release of keys. Interesting, but it
-  is an authorization condition on top of this architecture, not a change to it
-  (§21).
+- Confidential computing attestation-bound release of keys. It is an
+  authorization condition on top of this architecture rather than a change to
+  it, and §2.6 states what the service would and would not own if it were
+  added.
 
 ### 2.3 Relationship to Barbican
 
@@ -181,6 +182,77 @@ key per cache lifetime, and §6.3 is explicit that transit's non-exportability i
 precisely why the offload cannot be built on transit alone. The dependency is
 therefore deliberately narrow, and §8.6 writes down its exact surface so that it
 stays narrow.
+
+### 2.6 Relationship to confidential computing
+
+Two different things travel under the name "key broker", and separating them is
+most of the analysis: one is functionality the service would sell, the other is
+a way the service could run.
+
+**What the end user wants.** A tenant running a confidential VM or a
+confidential container wants a key released only to a workload whose
+measurement it recognises. The shape the ecosystem has settled on is two
+components: a key broker that runs an attestation handshake with the workload
+and hands back a resource, and an attestation service that appraises the
+evidence against reference values and hardware endorsements. The KMS is the
+right holder of the _release decision_ — it already holds the key, it already
+evaluates a per-object policy in OPA (§13.3), and a broker able to release keys
+the KMS custodies without the KMS deciding would split exactly the authority
+§13 exists to consolidate. The KMS is the wrong owner of the _appraisal_:
+maintaining reference values, vendor endorsement chains and TCB levels across
+TEE generations is a distinct product with a distinct compliance lifecycle,
+which is the same reason §2.2 excludes certificate authority services.
+
+The split that follows:
+
+| Concern                                                    | Where it belongs                                                          |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Holding the key and deciding whether to release it         | The KMS, as a condition on a grant (§13.4)                                |
+| Appraising TEE evidence and issuing a result               | A verifier the operator runs, or SPIRE at SVID issuance                   |
+| Reference values and appraisal policy for a tenant's image | The tenant, as a resource the KMS stores and passes to policy             |
+| Speaking the attestation handshake to a workload           | A thin edge surface on its own hostname (§5.3), for clients that need one |
+
+**What the service itself needs: nothing.** Attestation is also a candidate
+root of trust for the KMS's own processes — a seal cluster that releases a
+shard's unseal key only to a node that has proved its measurement (§9.3), or a
+`kms-crypto` running inside a TEE so that the plaintext KEK cache of §7.3 sits
+in memory the host cannot read. Both are attractive and neither may become
+required: principle 6 makes the HSM optional, and a service that could not
+start without attested hardware would be that promise broken in the other
+direction. On the service's own path, attestation is therefore an _additional_
+Tier-0 option ranked alongside TPM and HSM sealing, never a prerequisite. The
+distinction also decides when each may be considered: a tenant-facing broker is
+a feature that can wait for demand, whereas anything the service needs in order
+to start has to be settled before Phase 1.
+
+Adding the broker is cheaper than it first looks, because each piece is already
+present in some other guise:
+
+- The release primitive exists. Fetching a brokered resource is a read of an
+  opaque secret (§5.4); releasing a key is `unwrap` or `data-key`.
+- Wrapping the released material to a public key the caller has proved it holds
+  is the BYOK import-token machinery of §5.4 run backwards, with the ephemeral
+  public key taken from the evidence instead of minted by the KMS.
+- The AAD of §6.4 already carries `caller_scope_digest`; a digest of the
+  appraised claims goes there with no format change. That buys a property worth
+  having on its own — a DEK minted for an attested workload cannot be replayed
+  into an unattested context, even by the same project.
+- Appraisal policy and KMS policy are both Rego, evaluated by the engine the
+  project already runs.
+
+What is not cheap is precisely what the recommendation above declines to own.
+Appraisal needs endorsement material fetched from a hardware vendor outside the
+region, which principle 7 does not forbid but does not welcome. A firmware
+update that moves a measurement is a fleet-wide availability event with a cause
+the KMS cannot see coming. And reference values describe the tenant's image, so
+the tenant owns them — a tenant who gets them wrong loses access to its own
+data with nothing broken to repair, which is a support burden of a kind the
+rest of this design works hard to avoid.
+
+Three consequences are carried into the rest of the document: an identity track
+that is not really a new one (§4.4), a condition on grants (§13.4), and a
+freshness rule the caches must not quietly undo (§7.3). None of them is a
+Phase 1–5 concern; §21, question 12 says what would make it one.
 
 ---
 
@@ -354,6 +426,7 @@ replication, never by a globally shared database (§11).
 | Tenant workload off the cloud       | JWT-SVID from a **federated** SPIRE trust domain                                      | Principal mapped from the federated trust domain's rules     |
 | Tenant OpenBao (auto-unseal)        | SVID (preferred) or a scoped, rotatable app credential                                | Principal bound to one transit key                           |
 | Human / CLI / Horizon               | Keystone-issued JWT (passkey or OIDC behind it)                                       | User principal, `amr` available to policy                    |
+| Confidential-computing workload     | SVID whose issuance appraised TEE evidence, or an attestation result token (§2.6)     | Principal as above, plus appraised claims in policy input    |
 | KMIP client                         | Client certificate: SVID, or a KMS-registered tenant CA                               | Principal from SPIFFE ID or certificate mapping              |
 | OpenStack service (Cinder, Glance…) | X.509 SVID at the internal interface, plus the user's JWT or an on-behalf-of exchange | Service principal **and** the user it acts for               |
 | KMS's own tiers                     | X.509 SVID                                                                            | Peer identity; no bearer token anywhere internally           |
@@ -365,6 +438,10 @@ the delegation is a fact of the authentication chain, and the KMS policy keys on
 A service that has an SVID but no delegation may not unwrap a tenant's key; this
 is precisely the invariant the [security model](contributor/security-model.md)
 already states, applied to the one service where violating it is catastrophic.
+The confidential-computing row is deliberately not a new mechanism. The
+appraisal happens before the KMS sees the caller — at SVID issuance, or in a
+verifier whose signed result the caller presents — so what reaches policy is
+the principal the KMS already understands, with claims attached (§2.6).
 
 ---
 
@@ -869,6 +946,13 @@ the design. Its rules are therefore explicit:
 6. **Isolation by shard.** Cache partitions are keyed by shard, so that a
    compromised or misbehaving shard's entries can be evicted wholesale, and so
    that cache capacity planning follows the shard model.
+7. **An attestation is never cached by proxy.** The cache holds key _material_,
+   keyed by key and shard, and never an authorization decision. That separation
+   is what lets attestation-bound release (§2.6) cost nothing on the hot path,
+   and it is also what forbids the shortcut: a cached authorization decision may
+   not outlive the attestation result it was based on, and an attestation-bound
+   operation is re-decided when that result expires, whatever the KEK entry's
+   TTL says.
 
 The degraded-mode consequence is deliberate and is the answer to §1's second
 question: if a shard becomes unavailable, `kms-crypto` keeps serving envelope
@@ -1087,18 +1171,22 @@ reason.
 
 ### 9.3 Options for the root
 
-| Option                                        | Unattended restart | Root protection         | Cost | Notes                                                                     |
-| --------------------------------------------- | :----------------: | ----------------------- | ---- | ------------------------------------------------------------------------- |
-| Shamir shares, operators present              |         No         | Human custody           | None | Acceptable only for the seal cluster, and only with a documented ceremony |
-| TPM-sealed key per seal node                  |        Yes         | Hardware-bound per node | Low  | Node replacement is a ceremony; quorum of nodes needed                    |
-| HSM partition (PKCS#11), two+ failure domains |        Yes         | FIPS 140-3 L3 possible  | High | The compliance answer                                                     |
-| Seal cluster sealed by another seal cluster   |        Yes         | Recursion               | —    | Rejected: moves the problem, does not solve it                            |
+| Option                                        | Unattended restart | Root protection               | Cost   | Notes                                                                                  |
+| --------------------------------------------- | :----------------: | ----------------------------- | ------ | -------------------------------------------------------------------------------------- |
+| Shamir shares, operators present              |         No         | Human custody                 | None   | Acceptable only for the seal cluster, and only with a documented ceremony              |
+| TPM-sealed key per seal node                  |        Yes         | Hardware-bound per node       | Low    | Node replacement is a ceremony; quorum of nodes needed                                 |
+| HSM partition (PKCS#11), two+ failure domains |        Yes         | FIPS 140-3 L3 possible        | High   | The compliance answer                                                                  |
+| Attested TEE nodes, evidence appraised        |        Yes         | Hardware-bound, host excluded | Medium | An option and never a prerequisite: the service must start on ordinary hardware (§2.6) |
+| Seal cluster sealed by another seal cluster   |        Yes         | Recursion                     | —      | Rejected: moves the problem, does not solve it                                         |
 
 **Recommendation:** TPM-sealed seal-cluster nodes as the no-HSM baseline (it
 reuses the mechanism Keystone's PKCS#11/TPM plan already builds), with an HSM
 seal as a configuration change for deployments that need it. Shamir shares
 remain as the offline recovery path, held under split custody, exercised in
-drills.
+drills. Attested nodes are listed because a deployment that already runs
+confidential compute has the mechanism to hand and may prefer it to TPM
+sealing; it competes on operational cost rather than on capability, and
+principle 6 forbids it becoming the only way to start a region.
 
 ### 9.4 Bootstrap: the chicken and the egg
 
@@ -1435,6 +1523,16 @@ is deliberately the same shape as the permission grants of
 grant, and modelling it in Keystone rather than in the KMS's own database is the
 preferred end state.
 
+The condition slot is where attestation-bound release lands (§2.6): _principal P
+may unwrap key K if it presents an attestation result satisfying appraisal
+policy A_. The KMS verifies the result's signature against a verifier it has
+been configured to trust and evaluates its claims in Rego; it does not appraise
+raw evidence. Attaching the condition to the grant rather than to the key is the
+deliberate part. A caller that cannot produce a result finds the grant unusable,
+which is the intended failure mode, while the key itself stays usable by the
+tenant's ordinary tooling — so a tenant who mis-specifies an appraisal policy
+has a broken workload, not a key it can no longer reach.
+
 Two implementation options:
 
 | Option                                   | Pros                                                 | Cons                                                      |
@@ -1723,6 +1821,7 @@ moving between the two projects finds the same structure. The five processes of
 | `kms-vault-api`  | Vault/OpenBao-compatible surface                                                                                  |
 | `kms-barbican`   | Barbican v1 compatibility surface                                                                                 |
 | `kms-pkcs11`     | PKCS#11/HSM abstraction (shared with `keystone-rs`); implements `CryptoEngine` and a low-cardinality `KeyCustody` |
+| `kms-attest`     | Attestation-result verification and claim extraction for policy input (§2.6); never on the data path              |
 | `kms-meter`      | Metering record model, durable emit queue, custody snapshot job (§15)                                             |
 | `kms-sql`        | SeaORM persistence for control-plane metadata                                                                     |
 | `kms-manage`     | Binary: operator CLI                                                                                              |
@@ -1887,6 +1986,9 @@ and audit stack, and the client side is already written by someone else.
 - Asymmetric key types and signing at scale.
 - Tenant-visible audit API.
 - Post-quantum wrapping and signing as the fleet and the ecosystem allow.
+- Attestation-bound release for confidential workloads: the grant condition of
+  §13.4, `kms-attest`, and — only if clients require it — a key-broker surface
+  that speaks the attestation handshake (§2.6).
 
 ### What could be dropped or reordered
 
@@ -1961,6 +2063,16 @@ need, so that they are not retrofitted:
     (§15.6), and a `regulated` customer whose custody requirement the barrier
     cannot satisfy at any price. Neither is a Phase 1–3 concern; both are far
     cheaper to answer if the seam of §17 is real rather than notional.
+12. **Attestation-bound release.** §2.6 recommends owning the release decision
+    and not the appraisal, which keeps the tenant-facing broker a Phase 7
+    feature rather than an architectural commitment. Two things would move it
+    forward: a confidential-computing offering on the cloud's own compute
+    plane, which gives the feature a captive first customer, and a customer who
+    would otherwise run their own broker — the same argument §2.5 makes about a
+    customer's own OpenBao. The service-side use is a separate question with a
+    separate answer: attestation as a Tier-0 root (§9.3) competes with TPM
+    sealing on operational cost, not on capability, and principle 6 already
+    forbids making it a prerequisite.
 
 ---
 
