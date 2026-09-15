@@ -292,6 +292,173 @@ pub mod grant {
         }
     }
 
+    #[derive(Builder, Clone, Debug)]
+    #[builder(setter(strip_option, into))]
+    struct SystemGroupRoleCheck<'a> {
+        group_id: Cow<'a, str>,
+        role_id: Cow<'a, str>,
+    }
+
+    impl RestEndpoint for SystemGroupRoleCheck<'_> {
+        fn method(&self) -> http::Method {
+            http::Method::HEAD
+        }
+        fn endpoint(&self) -> Cow<'static, str> {
+            format!("system/groups/{}/roles/{}", self.group_id, self.role_id).into()
+        }
+        fn service_type(&self) -> ServiceType {
+            ServiceType::Identity
+        }
+        fn api_version(&self) -> Option<ApiVersion> {
+            Some(ApiVersion::new(3, 0))
+        }
+    }
+
+    #[derive(Builder, Clone, Debug)]
+    #[builder(setter(strip_option, into))]
+    struct SystemGroupRoleGrant<'a> {
+        group_id: Cow<'a, str>,
+        role_id: Cow<'a, str>,
+    }
+
+    impl RestEndpoint for SystemGroupRoleGrant<'_> {
+        fn method(&self) -> http::Method {
+            http::Method::PUT
+        }
+        fn endpoint(&self) -> Cow<'static, str> {
+            format!("system/groups/{}/roles/{}", self.group_id, self.role_id).into()
+        }
+        fn service_type(&self) -> ServiceType {
+            ServiceType::Identity
+        }
+        fn api_version(&self) -> Option<ApiVersion> {
+            Some(ApiVersion::new(3, 0))
+        }
+    }
+
+    #[derive(Builder, Clone, Debug)]
+    #[builder(setter(strip_option, into))]
+    struct SystemGroupRoleRevoke<'a> {
+        group_id: Cow<'a, str>,
+        role_id: Cow<'a, str>,
+    }
+
+    impl RestEndpoint for SystemGroupRoleRevoke<'_> {
+        fn method(&self) -> http::Method {
+            http::Method::DELETE
+        }
+        fn endpoint(&self) -> Cow<'static, str> {
+            format!("system/groups/{}/roles/{}", self.group_id, self.role_id).into()
+        }
+        fn service_type(&self) -> ServiceType {
+            ServiceType::Identity
+        }
+        fn api_version(&self) -> Option<ApiVersion> {
+            Some(ApiVersion::new(3, 0))
+        }
+    }
+
+    #[derive(Builder, Clone, Debug)]
+    #[builder(setter(strip_option, into))]
+    struct SystemGroupRoleList<'a> {
+        group_id: Cow<'a, str>,
+    }
+
+    impl RestEndpoint for SystemGroupRoleList<'_> {
+        fn method(&self) -> http::Method {
+            http::Method::GET
+        }
+        fn endpoint(&self) -> Cow<'static, str> {
+            format!("system/groups/{}/roles", self.group_id).into()
+        }
+        fn response_key(&self) -> Option<Cow<'static, str>> {
+            Some("roles".into())
+        }
+        fn service_type(&self) -> ServiceType {
+            ServiceType::Identity
+        }
+        fn api_version(&self) -> Option<ApiVersion> {
+            Some(ApiVersion::new(3, 0))
+        }
+    }
+
+    /// Check a system group role grant.
+    pub async fn check_system_group_grant<G, R>(
+        client: &Arc<AsyncOpenStack>,
+        group_id: G,
+        role_id: R,
+    ) -> Result<()>
+    where
+        G: AsRef<str>,
+        R: AsRef<str>,
+    {
+        openstack_sdk::api::ignore(
+            SystemGroupRoleCheckBuilder::default()
+                .group_id(group_id.as_ref())
+                .role_id(role_id.as_ref())
+                .build()?,
+        )
+        .query_async(client.as_ref())
+        .await?;
+        Ok(())
+    }
+
+    /// Grant a role to a group on system scope.
+    pub async fn add_system_group_grant<G, R>(
+        client: &Arc<AsyncOpenStack>,
+        group_id: G,
+        role_id: R,
+    ) -> Result<()>
+    where
+        G: AsRef<str>,
+        R: AsRef<str>,
+    {
+        openstack_sdk::api::ignore(
+            SystemGroupRoleGrantBuilder::default()
+                .group_id(group_id.as_ref())
+                .role_id(role_id.as_ref())
+                .build()?,
+        )
+        .query_async(client.as_ref())
+        .await?;
+        Ok(())
+    }
+
+    /// Revoke a system group role grant.
+    pub async fn revoke_system_group_grant<G, R>(
+        client: &Arc<AsyncOpenStack>,
+        group_id: G,
+        role_id: R,
+    ) -> Result<()>
+    where
+        G: AsRef<str>,
+        R: AsRef<str>,
+    {
+        openstack_sdk::api::ignore(
+            SystemGroupRoleRevokeBuilder::default()
+                .group_id(group_id.as_ref())
+                .role_id(role_id.as_ref())
+                .build()?,
+        )
+        .query_async(client.as_ref())
+        .await?;
+        Ok(())
+    }
+
+    /// List roles granted to a group on the system scope.
+    pub async fn list_system_group_roles<G>(
+        client: &Arc<AsyncOpenStack>,
+        group_id: G,
+    ) -> Result<Vec<openstack_keystone_api_types::v3::role_assignment::Role>>
+    where
+        G: AsRef<str>,
+    {
+        Ok(SystemGroupRoleListBuilder::default()
+            .group_id(group_id.as_ref())
+            .build()?
+            .query_async(client.as_ref())
+            .await?)
+    }
     /// Check a project role grant, preserving HTTP errors.
     pub async fn check_project_grant<P, U, R>(
         client: &Arc<AsyncOpenStack>,
