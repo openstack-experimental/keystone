@@ -1,7 +1,9 @@
 # Security Architecture Review: Preemptive Gates, Testing, and Vulnerability Vectors
 
-Status: advisory review (2026-07-09), re-evaluated against `main` on 2026-09-14
-— see §0 for what landed since and what remains. Companion to [Security model](security-model.md)
+Status: advisory review (2026-07-09), re-evaluated against `main` on 2026-09-14,
+and followed same-day by an implementation pass closing five of the six
+re-prioritized items — see §0 for what landed since and what remains. Companion
+to [Security model](security-model.md)
 (the normative invariant reference) and [Policy enforcement](../admin/policy.md). Where
 the two disagree, `security-model.md` wins; this document proposes _additions_, it
 does not restate or replace the invariants there.
@@ -21,26 +23,43 @@ does not yet cover what it was proposed to cover.
 | ------ | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **A**  | Landed                    | `ci.yml` runs `opa test policy` unconditionally in the main job, not only on `paths: policy/**`                                                              |
 | **B1** | Landed                    | `tools/check_policy_handler_coverage.py`, run unconditionally in `ci.yml`; four checks (missing policy / missing test / orphan policy / unenforced handler)  |
-| **B2** | **Harness landed, coverage partial** | `crates/core/src/api/policy_contract.rs` + `CapturingPolicy`. Applied by **14 of 155** `enforce()`-calling handler modules. No route sweep — still opt-in |
-| **B3** | **Harness landed, coverage partial** | `get_state_with_real_policy()` (`crates/keystone/src/api/mod.rs`) runs a real `opa run -s` over the actual `policy/` tree. Used by **11 of 155**  |
+| **B2** | **Landed 2026-09-14 (§0a); coverage still partial** | `crates/core/src/api/policy_contract.rs` + `CapturingPolicy`, now with a fifth `check_policy_handler_coverage.py` check making adoption non-optional (shrink-only allowlist). Applied by **19 of 155** `enforce()`-calling handler modules |
+| **B3** | **Harness landed, coverage partial** | `get_state_with_real_policy()` (`crates/keystone/src/api/mod.rs`) runs a real `opa run -s` over the actual `policy/` tree. Used by **17 of 155**  |
 | **C**  | Landed                    | `tools/check_delegated_policy_scope_drift_tests.py`                                                                                                         |
 | **D**  | Landed                    | `test_new_for_scope_delegated_roles_never_exceed_delegation_matrix`, `test_delegation_scope_kind_matrix_roles_never_exceed_delegation` (`crates/core/src/auth/tests.rs`) |
 | **E**  | Landed                    | `tools/check_rego_undefined_argument_footgun.py`                                                                                                            |
 | **F**  | Landed                    | `fuzz/` (5 targets) + `.github/workflows/fuzz.yml`; `scope_pinning_property` proptest                                                                        |
 | **G**  | Landed (scheduled)        | `.cargo/mutants.toml` scoped to `core-types/auth.rs`, `core/auth.rs`, `core/policy.rs` + `mutants.yml` — deliberately not a required per-PR gate             |
-| **H**  | **Partial**               | Publish-side cosign keyless signing **and** a verify step landed (`policy-container.yml`). **No load-time verification**; `tools/opa_config.yaml` still pulls the mutable `:latest` |
+| **H**  | **Partial**               | Publish-side cosign keyless signing **and** a verify step landed (`policy-container.yml`). `tools/verify_and_pin_opa_bundle.sh` (2026-09-14) provides the load-side verify-and-pin step as an explicit release tool; **nothing runs it automatically**, and `tools/opa_config.yaml` still defaults to the mutable `:latest` |
 | **I**  | Landed                    | `tools/check_event_payload_no_secret_fields.py` + `policy_contract::assert_no_secrets`                                                                       |
 | **J**  | Landed                    | `tools/check_security_checklist_sast.py`                                                                                                                    |
 
-Vector status: **V3, V8a, V9 closed**; **V1, V2 structurally backed** by Gates
-D/J; **V3a, V4, V5, V6, V10 remain open** in the ways described below. **V7 and
-V8 are no longer hypothetical** — the features shipped, so their "when
-implemented" framing is stale (§V7/§V8).
+Vector status (updated after §0a): **V3, V5, V8a, V9, V10 closed**; **V1, V2
+structurally backed** by Gates D/J; **V6 closed for the three endpoints it
+named** (the design-level follow-up ADR remains open); **V3a's mechanism is
+now a non-optional CI check, coverage remains partial**; **V4's publish side
+is signed+verified, a verify-and-pin tool now exists for the load side, but
+nothing runs it automatically**. **V7 and V8 are no longer hypothetical** —
+the features shipped, so their "when implemented" framing is stale (§V7/§V8).
 
 What the re-evaluation changes about priority: the original top recommendation
 (A + B1 + B2) is now two-thirds done. The remaining work is no longer *building*
 the input-contract mechanism — it exists and is good — but **making it
 non-optional**, which was the point of proposing it as a route sweep (§V3a).
+
+### 0a. Implementation pass (2026-09-14, same day)
+
+The re-evaluation above was followed same-day by an implementation pass
+against the §7 "Re-prioritized" list. Five of the six items landed:
+
+| # | Item                                          | Outcome |
+| - | ---------------------------------------------- | ------- |
+| 1 | Make Gate B2 non-optional                      | **Done.** Fifth check added to `tools/check_policy_handler_coverage.py`: any file calling `.enforce(` must reference `policy_contract` (directly or via a sibling `#[path] tests.rs`), with an explicit, shrink-only `ALLOWLIST_NO_POLICY_CONTRACT` for the 136 pre-existing handlers not yet backfilled. `os_trust/trust/{create,show,list,delete}` and `ec2tokens/create` — the two named uncovered delegation surfaces — got full B2 *and* B3 coverage and are off the allowlist; adoption moved 14→19 of 155. |
+| 2 | Ship `access_rules` enforcement                | **Done.** ADR 0037 + `enforce_access_rules()` (`crates/core/src/api/auth.rs`), called from every return path of `Auth::from_request_parts`. Denies a request-rules-restricted application credential's call that no rule permits against Keystone's own service, before OPA policy evaluation. See §V5. |
+| 3 | Verify the policy bundle at load, pin by digest | **Partial.** `tools/verify_and_pin_opa_bundle.sh` does the `cosign verify` + digest-pin step as an explicit release-time tool (not wired into a running OPA's load path, since OPA itself still has no native hook — an init-container/admission-check integration is still a deployment-specific follow-up). See §V4. |
+| 4 | Rate-limit the three remaining crypto endpoints | **Done.** `check_ip()` added to `v3/ec2tokens/create`, `v3/auth/token/show`, and the federation `jwt::login` / `oidc::callback` handlers. See §V6. |
+| 5 | Correct ADR statuses                           | **Done.** ADRs 0022, 0025, 0026 changed from `Proposed` to `Accepted`, each naming the crates/modules that shipped it. See §V7/§V8. |
+| 6 | Write the two open property tests              | **Done.** `crates/core/src/auth/tests.rs`'s `delegation_monotonicity_property` module: `app_cred_roles_never_exceed_delegation`, `trust_roles_never_exceed_delegation`, `app_cred_revoked_role_unusable_after_removal`, `trust_revoked_role_unusable_after_removal`, all driving the real `calculate_effective_roles()` over a synthetic 5-role universe. See §V10. |
 
 ## 1. Purpose and scope
 
@@ -200,7 +219,7 @@ existence but *content*, tracked as V3a.
 - _Testing:_ add an explicit "OPA unreachable / returns garbage → request
   denied" integration test.
 
-### V3a — The handler→policy input-contract seam (P1; harnesses landed, coverage at 9%)
+### V3a — The handler→policy input-contract seam (P1; harnesses landed, Gate B2 now a CI check — 12% adoption)
 
 **Attack.** This is the sharpest and most under-appreciated form of V3, and it
 is worth calling out on its own. The authorization decision is `policy(input)`,
@@ -347,6 +366,20 @@ value-to-effort item for this specific gap and needs only a shared harness plus
 the route sweep; B3 (composition) is the strongest but carries the
 in-process-evaluator design cost and can follow.
 
+**Implemented 2026-09-14 (§0a item 1):** the route-sweep alternative this
+section proposed (`check_policy_handler_coverage.py`'s check 5) landed instead
+of an actual route sweep — cheaper, and it composes with the existing
+unconditional CI job rather than adding a new one. It requires any file
+calling `.enforce(` to reference `policy_contract` in its own or a sibling
+test module, carries a shrink-only `ALLOWLIST_NO_POLICY_CONTRACT` for the 136
+pre-existing handlers not yet backfilled, and **cannot regress**: a new
+handler with `.enforce(` and no `policy_contract` reference fails CI, full
+stop. `os_trust/trust/{create,show,list,delete}` and `ec2tokens/create` — the
+two named uncovered core delegation surfaces — were backfilled with both B2
+and B3 coverage as part of this change (adoption 14→19 of 155). The
+remaining 136 are the honest backlog this table always implied; the gate
+now guarantees that backlog only shrinks.
+
 ### V4 — OPA policy-bundle supply chain (P2)
 
 **Attack.** The authorization logic is shipped as an OCI artifact
@@ -388,7 +421,20 @@ in `opa_config.yaml` and the k8s manifests instead of `:latest`.
   `security-model.md` (today it is implicit) — the running policy is as
   security-critical as the binary, and should have the same provenance bar.
 
-### V5 — Application-credential `access_rules` unenforced at request time (P1, live gap)
+**Implemented 2026-09-14 (§0a item 3), partial:** `tools/verify_and_pin_opa_bundle.sh`
+resolves a tag's digest, runs the same `cosign verify` the publish job already
+runs on itself, and on success pins `resource` in `tools/opa_config.yaml` (or
+any given config) to the verified digest — or, with `--config /dev/null`,
+just emits the verified `image@digest` for a deployment's own init-container
+check. It is deliberately a release-time tool, not an always-on load hook:
+the digest changes on every policy merge, and OPA itself still has no native
+Sigstore verification, so "pin by digest" is a promotion action a human or
+pipeline chooses to take, not something that runs unattended on every
+`opa run`. A deployment that wants continuous rollout from `:latest` still
+needs its own init-container/admission-hook `cosign verify` before serving
+traffic — this script is exactly that check, packaged for reuse.
+
+### V5 — Application-credential `access_rules` unenforced at request time (P1; closed 2026-09-14, ADR 0037)
 
 **Attack.** An operator creates a restricted app-cred with `access_rules`
 limiting it to, say, `GET /v3/servers`. The rules are stored and CRUD'd
@@ -432,7 +478,30 @@ middleware §5 calls for are unwritten.
   path/method/service each varied) plus a rescope test (rules survive rescope,
   per V1).
 
-### V6 — Denial of service on unrate-limited cryptographic endpoints (P2)
+**Implemented 2026-09-14 (§0a item 2): closed.** ADR 0037 + `enforce_access_rules()`
+(`crates/core/src/api/auth.rs`) landed as the requested "request-matching
+middleware," though not as a separate `tower`/`axum` layer — it runs inside
+`Auth::from_request_parts`, the extractor every handler already calls, so it
+costs no extra authentication round trip and cannot be bypassed by a handler
+that forgets to call something. Scope is deliberately narrower than "any
+service": Keystone can only self-enforce rules naming its own service
+(`identity`), since it has no visibility into requests made to other
+services — that half remains `keystonemiddleware`'s job elsewhere, as
+designed, not a residual gap. `access_rules_permit()`
+(`crates/core-types/src/application_credential/access_rule.rs`) is the pure
+matcher (method/service exact match, path via the documented
+`{tag}`/`*`/`**` wildcard syntax), unit-tested directly; the enforcement
+point is tested through the actual `Auth::from_request_parts` mock-injection
+path (matching/non-matching rule, empty/absent rules, wrong-service rule,
+non-app-cred auth unaffected). Runs before OPA policy evaluation, not after —
+a call outside the rules is rejected without paying for a policy round trip.
+Positive/negative/wrong-service coverage exists; the rescope test V5 asked
+for is implicit rather than explicit (`enforce_access_rules` reads the rules
+from `AuthenticationContext::ApplicationCredential`, which reauthentication
+carries unchanged per `security-model.md` §5's table — there is no separate
+rescope code path to diverge from).
+
+### V6 — Denial of service on unrate-limited cryptographic endpoints (P2; the three named endpoints closed 2026-09-14)
 
 **Attack.** ADR 0022 phase 1 rate-limits `POST /v3/auth/tokens` by IP (and
 optionally per confirmed user). The ADR itself notes that **federation
@@ -476,6 +545,17 @@ carries neither a rate limit nor a B2/B3 policy-contract test (V3a).
   untrusted peer does not reset the bucket (ADR 0022 Invariant 9).
 - _Pentest:_ resource-exhaustion probing of every unauthenticated,
   crypto-bearing endpoint.
+
+**Implemented 2026-09-14 (§0a item 4): the three named endpoints are closed.**
+`check_ip()` now gates `v3/ec2tokens/create` (before `verify_signature`),
+`v3/auth/token/show` (before the Fernet/JWS decrypt), and the federation
+`jwt::login` / `oidc::callback` handlers (before JWKS fetch / JWT
+verification) — same posture as `/v3/auth/tokens`: checked first, before any
+expensive work. `ec2tokens/create` also closed its V3a gap in the same pass
+(§V3a), so it no longer carries neither control. The design-level follow-up
+ADR extending `check_ip` coverage more broadly, and the load/abuse and
+`X-Forwarded-For`-spoofing tests, remain open — this closes the three
+concrete endpoints the vector named, not the general design/testing asks.
 
 ### V7 — Dynamic auth plugins: pre-auth attack surface (P1 — now live, no longer hypothetical)
 
@@ -646,7 +726,7 @@ this guarantee too.
 - _Design:_ document "no secret in policy input / audit / logs / error strings"
   as a named invariant (I7 covers policy input; generalize it).
 
-### V10 — Token lifecycle: revocation and version binding (P2)
+### V10 — Token lifecycle: revocation and version binding (P2; property tests landed 2026-09-14)
 
 **Attack.** A token outliving the authority it was minted under — a role
 removed, a trust deleted, a plugin patched to fix a bug, an identity link
@@ -671,6 +751,31 @@ removed at T is unusable after T" is still covered only by example-based tests.
   cannot exercise that role after T," across each scope shape; likewise trust
   deletion and app-cred expiry mid-token-lifetime.
 - _Pentest:_ revocation-window probing.
+
+**Implemented 2026-09-14 (§0a item 6).** `crates/core/src/auth/tests.rs`'s
+`delegation_monotonicity_property` module adds both properties this section
+asked for, driven through the real `calculate_effective_roles()` (not a
+reimplementation) over a synthetic 5-role membership space:
+
+- `app_cred_roles_never_exceed_delegation` / `trust_roles_never_exceed_delegation`
+  — the delegation-monotonicity property, for any live-assignment state.
+  Trust and app-cred turned out to have genuinely different bounding
+  semantics worth pinning down: app-cred resolution is an *intersection*
+  (frozen roles ∩ current assignments), while trust resolution is
+  *all-or-nothing* (`resolve_trust_roles` denies entirely unless the
+  trustor currently holds every delegated role) — the property tests assert
+  each function's actual contract rather than a single shared shape.
+- `app_cred_revoked_role_unusable_after_removal` /
+  `trust_revoked_role_unusable_after_removal` — the revocation property:
+  resolve once against a wider "before" assignment set, then again against
+  an "after" set with roles removed, asserting the second resolution never
+  contains a removed role. This exercises the actual mechanism ("no caching
+  across calls, always a live lookup") rather than asserting the property in
+  the abstract.
+
+Trust deletion and app-cred expiry mid-token-lifetime (as opposed to role
+removal) remain covered only by example-based tests; the pentest asks are
+still open.
 
 ## 4. Preemptive security gates to add (CI + design)
 
@@ -703,12 +808,15 @@ green; B3 then upgrades from "the input shape is right" to "the real policy
 decides right on that input," and everything else hardens an already-good
 position.
 
-> **Status (2026-09-14).** See §0 for the verified per-gate state. In short: A,
-> B1, C, D, E, F, G, I and J are landed and running in CI. B2 and B3 exist as
-> harnesses — good ones — but are applied by 14 and 11 of 155 `enforce()`-calling
-> handler modules respectively, and nothing requires a new handler to use them;
-> making them non-optional is the one substantive piece of this table still
-> outstanding. H is signed at publish but unverified at load.
+> **Status (2026-09-14, updated same day per §0a).** See §0 for the verified
+> per-gate state. A, B1, C, D, E, F, G, I and J are landed and running in CI.
+> B2 is now also a non-optional CI check (`check_policy_handler_coverage.py`
+> check 5) with a shrink-only backlog allowlist; B3 remains an opt-in harness.
+> Applied by 19 and 17 of 155 `enforce()`-calling handler modules
+> respectively — the mechanism no longer regresses, but most of the backlog
+> is still unbackfilled. H is signed at publish and verified; a verify-and-pin
+> tool (`tools/verify_and_pin_opa_bundle.sh`) now exists for the load side,
+> but nothing runs it automatically on a live deployment.
 
 ### Design-time gates (not CI)
 
@@ -792,8 +900,10 @@ A pentest engagement should be handed this prioritized scenario list rather than
    bundle provenance.
 4. **Pre-auth DoS (V6).** Resource-exhaust every unauthenticated crypto
    endpoint; attempt `X-Forwarded-For` spoofing to defeat per-IP limits.
-5. **App-cred `access_rules` (V5).** Confirm the currently-unenforced state, and
-   re-test once middleware lands.
+5. **App-cred `access_rules` (V5, enforcement landed 2026-09-14).** Mint a
+   restricted credential and confirm calls outside its rules are now denied
+   (ADR 0037); confirm a rule naming a different service correctly does
+   *not* authorize a call against Keystone's own API.
 6. **WASM plugins (V7)** and **OAuth2 provider (V8)** — full dedicated suites;
    treat both as internet-facing pre-auth surfaces. Both features have since
    shipped (re-evaluated 2026-09-14), so these are engagements to schedule now,
@@ -827,7 +937,8 @@ A pentest engagement should be handed this prioritized scenario list rather than
 
 ### Re-prioritized (2026-09-14)
 
-Ordered by what is now actually outstanding, highest value first:
+Ordered by what was outstanding as of the re-evaluation, highest value first.
+See §0a for the same-day implementation pass that closed five of six.
 
 1. **Make Gate B2 non-optional** (V3a). The mechanism is built and proven; 91%
    of `enforce()`-calling handlers just don't use it. The cheapest closure is a
@@ -835,25 +946,33 @@ Ordered by what is now actually outstanding, highest value first:
    `.enforce(` must reference `policy_contract` in its tests, with a reviewed
    allowlist — which reuses a script already running unconditionally in CI.
    Backfill `os_trust/trust/*` and `ec2tokens/create` first: both are core
-   delegation surfaces with neither B2 nor B3 coverage today.
+   delegation surfaces with neither B2 nor B3 coverage today. — **done (§0a);
+   the check is now unconditional in CI and the two named surfaces are
+   backfilled. 136 of 155 remain on the allowlist — the check stops new
+   erosion, it doesn't retroactively backfill everything else.**
 2. **Ship `access_rules` enforcement** (V5). Unchanged from the original list
    and now the oldest open item. The fail-loud flag made the gap honest for
    operators who set it; the default deployment still accepts a restriction it
-   will not honour. This needs the ADR and the request-matching middleware.
+   will not honour. This needs the ADR and the request-matching middleware. —
+   **done (§0a, ADR 0037).**
 3. **Verify the policy bundle at load, and pin by digest** (V4). Half a supply
    chain control is a signature nobody checks. Add verify-then-serve to the
    deployment path and replace `:latest` in `tools/opa_config.yaml` and the k8s
-   manifests with a pinned digest.
+   manifests with a pinned digest. — **partial (§0a): the verify+pin tool
+   exists; a deployment must still choose to run it (or the equivalent
+   init-container check) since OPA itself has no load hook to automate this
+   from.**
 4. **Rate-limit the three remaining pre-auth crypto endpoints** (V6):
    `ec2tokens/create`, token validation, and the federation `authenticate`
    paths. The mechanism (`check_ip`) is already in place on eight other
-   endpoints, so this is application, not design.
+   endpoints, so this is application, not design. — **done (§0a).**
 5. **Correct ADR statuses for shipped features** (V7/V8). ADRs 0022, 0025 and
    0026 read `Proposed` while the features are in `main`. A security reader
    triaging by ADR status will under-weight three live surfaces — including a
-   pre-authentication WASM execution path.
+   pre-authentication WASM execution path. — **done (§0a).**
 6. **Write the two open property tests** (V10/§5.2): delegation monotonicity and
-   revocation-after-T. `scope_pinning_property` shows the pattern works here.
+   revocation-after-T. `scope_pinning_property` shows the pattern works here. —
+   **done (§0a).**
 
 The rest (plugin/OAuth2 pentest suites) should land alongside the features they
 protect — which, for V7 and V8, means now rather than later, since both shipped.

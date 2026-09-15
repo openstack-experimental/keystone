@@ -335,15 +335,20 @@ roles ∩ current user assignments (I4). Cannot be scoped beyond the bound proje
 (I5). May be reauthenticated token-from-token, but the new token is locked to
 the same scope (table above).
 
-> **Open gap:** application-credential `access_rules` (per-endpoint
-> restrictions) are stored and CRUD'd but **not enforced at request time** — no
-> middleware matches the incoming (service, method, path) against them. A
-> rules-restricted app-cred can currently call any endpoint. Tracked separately;
-> see §7. Interim mitigation (security review V5): `create_application_credential`
-> logs a `WARN` whenever a non-empty `access_rules` list is accepted, and
-> `application_credential.reject_unenforced_access_rules` (default `false`) lets
-> an operator fail loud — reject the create outright — instead of silently
-> accepting an unenforceable restriction. Neither replaces the middleware.
+> **Closed 2026-09-14 (ADR 0037):** application-credential `access_rules`
+> (per-endpoint restrictions) are now enforced at request time.
+> `enforce_access_rules()` (`crates/core/src/api/auth.rs`) runs inside
+> `Auth::from_request_parts`, before every return path, and denies a request
+> from a rules-restricted app-cred whose `(method, path)` no rule permits
+> against Keystone's own service (`identity`) — a rule naming a different
+> service is a restriction on that service, enforced by its own
+> keystonemiddleware, not by Keystone. See ADR 0037 for the full design and
+> why this is a check inside the existing auth extractor rather than a
+> separate middleware layer. The interim mitigation from security review V5
+> (`create_application_credential`'s `WARN` log, and
+> `application_credential.reject_unenforced_access_rules`) remains in place
+> unchanged but no longer describes an unenforced control — see the
+> updated doc-comment on that config field.
 
 ### EC2 credentials
 
@@ -425,12 +430,6 @@ carries it, ticked by the reviewer, not just this prose reference.
 
 ## 9. Known open gaps
 
-- **App-cred `access_rules` unenforced at request time** (§5). Feature-sized;
-  needs request-matching middleware and likely its own ADR. Until then, treat
-  `access_rules` as advisory, not a security control. An interim gate exists
-  (security review V5): creation warns unconditionally on a non-empty
-  `access_rules` list, and `application_credential.reject_unenforced_access_rules`
-  (default `false`) can be set to fail loud instead.
 - **`input.credentials.system_scope` is a dead key in several policies.**
   `Credentials.system` (`crates/core/src/policy.rs`) serializes the system
   scope under the field name `system`; nothing ever emits `system_scope`, so

@@ -227,6 +227,172 @@ mod tests {
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
+    /// Gate B2 (security review V3a, issue #990): asserts the handler feeds
+    /// `enforce()` the contract `identity/trust/delete.rego` expects -- the
+    /// stored trust under `existing`, no leaked secret field.
+    #[tokio::test]
+    async fn test_delete_policy_input_contract() {
+        let mut trust_mock = MockTrustProvider::default();
+        trust_mock
+            .expect_get_trust()
+            .withf(|_, id: &'_ str| id == "foo")
+            .returning(|_, _| {
+                Ok(Some(
+                    TrustBuilder::default()
+                        .id("foo")
+                        .trustor_user_id("trustor")
+                        .trustee_user_id("trustee")
+                        .impersonation(false)
+                        .build()
+                        .unwrap(),
+                ))
+            });
+        trust_mock
+            .expect_delete_trust()
+            .withf(|_, id: &'_ str| id == "foo")
+            .returning(|_, _| Ok(()));
+
+        let vsc = test_fixture_scoped();
+        let (state, policy) = crate::api::tests::get_capturing_state(
+            Provider::mocked_builder().mock_trust(trust_mock),
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/foo")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        let calls = policy.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].policy_name, "identity/trust/delete");
+        crate::api::tests::policy_contract::assert_existing_presence(&calls[0].existing, true);
+        crate::api::tests::policy_contract::assert_object_keys(
+            calls[0].existing.as_ref().unwrap(),
+            &["trust"],
+        );
+        crate::api::tests::policy_contract::assert_no_secrets(calls[0].existing.as_ref().unwrap());
+    }
+
+    /// Gate B3 (security review V3a, issue #990): drives this handler and
+    /// the real `identity/trust/delete.rego` decision through the
+    /// trustor/trustee/admin matrix. Only the trustor (or admin) may
+    /// delete -- the trustee has no authority to revoke a delegation it did
+    /// not grant.
+    mod real_policy_decision {
+        use openstack_keystone_core::auth::ValidatedSecurityContext;
+
+        use super::*;
+        use crate::api::tests::get_state_with_real_policy;
+        use crate::api::tests::real_policy_fixtures::member_vsc;
+        use crate::provider::ProviderBuilder;
+
+        fn provider_allowing_delete() -> ProviderBuilder {
+            let mut trust_mock = MockTrustProvider::default();
+            trust_mock.expect_get_trust().returning(|_, _| {
+                Ok(Some(
+                    TrustBuilder::default()
+                        .id("foo")
+                        .trustor_user_id("trustor")
+                        .trustee_user_id("trustee")
+                        .impersonation(false)
+                        .build()
+                        .unwrap(),
+                ))
+            });
+            trust_mock.expect_delete_trust().returning(|_, _| Ok(()));
+            Provider::mocked_builder().mock_trust(trust_mock)
+        }
+
+        fn provider_denying_delete() -> ProviderBuilder {
+            let mut trust_mock = MockTrustProvider::default();
+            trust_mock.expect_get_trust().returning(|_, _| {
+                Ok(Some(
+                    TrustBuilder::default()
+                        .id("foo")
+                        .trustor_user_id("trustor")
+                        .trustee_user_id("trustee")
+                        .impersonation(false)
+                        .build()
+                        .unwrap(),
+                ))
+            });
+            Provider::mocked_builder().mock_trust(trust_mock)
+        }
+
+        async fn delete_status(
+            vsc: ValidatedSecurityContext,
+            provider_builder: ProviderBuilder,
+        ) -> StatusCode {
+            let (state, _opa_guard) = get_state_with_real_policy(provider_builder).await;
+            let mut api = openapi_router()
+                .layer(TraceLayer::new_for_http())
+                .with_state(state);
+
+            api.as_service()
+                .oneshot(
+                    Request::builder()
+                        .method("DELETE")
+                        .uri("/foo")
+                        .extension(vsc)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+        }
+
+        #[tokio::test]
+        async fn trustor_deleting_own_trust_is_allowed() {
+            assert_eq!(
+                delete_status(
+                    member_vsc("trustor", "p1", &["member"]),
+                    provider_allowing_delete()
+                )
+                .await,
+                StatusCode::NO_CONTENT
+            );
+        }
+
+        #[tokio::test]
+        async fn trustee_deleting_trust_is_denied() {
+            assert_eq!(
+                delete_status(
+                    member_vsc("trustee", "p1", &["member"]),
+                    provider_denying_delete()
+                )
+                .await,
+                StatusCode::FORBIDDEN
+            );
+        }
+
+        #[tokio::test]
+        async fn admin_deleting_any_trust_is_allowed() {
+            assert_eq!(
+                delete_status(
+                    member_vsc("admin_user", "p1", &["admin"]),
+                    provider_allowing_delete()
+                )
+                .await,
+                StatusCode::NO_CONTENT
+            );
+        }
+    }
+
     #[tokio::test]
     async fn test_delete_unauthorized() {
         let state = get_mocked_state(Provider::mocked_builder(), true, None).await;

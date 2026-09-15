@@ -4,7 +4,16 @@ Date: 2026-06-15
 
 ## Status
 
-Proposed
+Accepted. Implemented in `crates/core/src/rate_limit.rs`, called from
+handler-level `check_ip()` checks across `v3/auth/token/create`, the OAuth2
+surface (`authorize`, `token`, `device`, `device_authorization`, `jwks`,
+`jwks_revocation`, `well_known`), `v4/spiffe`, `v3/ec2tokens/create`,
+`v3/auth/token/show`, and the federation JWT/OIDC login endpoints (security
+review V6, V8a). Status was left at `Proposed` after the feature shipped;
+corrected 2026-09-14 (security review re-evaluation) so a reader triaging by
+ADR status does not under-weight this live surface. Follow-up ADR extending
+coverage to any remaining unauthenticated crypto endpoints is still open —
+see the security review V6 for current coverage.
 
 ## Context
 

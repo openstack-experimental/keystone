@@ -75,6 +75,7 @@ where
         {
             if let Some(vsc) = parts.extensions.get::<ValidatedSecurityContext>() {
                 vsc.fully_resolved()?;
+                enforce_access_rules(vsc, parts)?;
                 return Ok(Auth(vsc.clone()));
             }
         }
@@ -153,6 +154,7 @@ where
                 if let Some(addr) = peer_addr {
                     vsc.set_peer_addr(addr.to_string());
                 }
+                enforce_access_rules(&vsc, parts)?;
                 return Ok(Auth(vsc));
             }
 
@@ -172,6 +174,7 @@ where
             if let Some(addr) = peer_addr {
                 vsc.set_peer_addr(addr.to_string());
             }
+            enforce_access_rules(&vsc, parts)?;
             return Ok(Auth(vsc));
         }
 
@@ -216,6 +219,7 @@ where
             if let Some(addr) = peer_addr {
                 vsc.set_peer_addr(addr.to_string());
             }
+            enforce_access_rules(&vsc, parts)?;
             return Ok(Auth(vsc));
         }
 
@@ -306,6 +310,55 @@ fn reject_if_ec2(user_auth: &ValidatedSecurityContext) -> Result<(), KeystoneApi
     ) || user_auth.inner().auth_methods().contains("ec2credential")
     {
         return Err(KeystoneApiError::SelectedAuthenticationForbidden);
+    }
+    Ok(())
+}
+
+/// Security review V5 (`doc/src/contributor/security-model.md` §5 "Open
+/// gap"): an application credential created with a non-empty, restricting
+/// `access_rules` list must not be usable outside those rules. This is the
+/// request-matching enforcement point the gap called for -- run once, here,
+/// for every request this extractor resolves (every return path in
+/// [`Auth::from_request_parts`] calls it), rather than duplicated per
+/// handler, so a new handler cannot forget it and an app-cred's rules
+/// cannot be bypassed by calling a route that doesn't happen to check.
+///
+/// Only rules naming Keystone's own service
+/// ([`openstack_keystone_core_types::application_credential::OWN_SERVICE_TYPE`])
+/// are ever checked here: a rule naming a different service (compute,
+/// image, ...) restricts calls to *that* service, which its own
+/// keystonemiddleware enforces via token introspection -- Keystone has no
+/// way to enforce a restriction on a request it never receives, and must
+/// not treat "this rule doesn't apply to me" as "this rule doesn't apply
+/// anywhere" by ignoring the credential's rules entirely.
+///
+/// A no-op for every `AuthenticationContext` other than
+/// `ApplicationCredential`, and for an `ApplicationCredential` with no
+/// `access_rules` (`None` or empty) -- the unrestricted, default case.
+fn enforce_access_rules(
+    vsc: &ValidatedSecurityContext,
+    parts: &Parts,
+) -> Result<(), KeystoneApiError> {
+    if let AuthenticationContext::ApplicationCredential {
+        application_credential,
+        ..
+    } = vsc.inner().authentication_context()
+        && let Some(rules) = application_credential.access_rules.as_ref()
+        && !rules.is_empty()
+    {
+        let method = parts.method.as_str();
+        let path = parts.uri.path();
+        if !openstack_keystone_core_types::application_credential::access_rules_permit(
+            rules, method, path,
+        ) {
+            return Err(
+                openstack_keystone_core_types::application_credential::ApplicationCredentialProviderError::AccessRuleDenied {
+                    method: method.to_string(),
+                    path: path.to_string(),
+                }
+                .into(),
+            );
+        }
     }
     Ok(())
 }
@@ -1108,5 +1161,211 @@ mod tests {
             result.unwrap_err(),
             KeystoneApiError::SelectedAuthenticationForbidden
         ));
+    }
+
+    /// Gate: security review V5 / ADR 0037. Exercises `enforce_access_rules`
+    /// through the actual `Auth::from_request_parts` mock-injection path
+    /// (the same chokepoint production requests go through via the
+    /// X-Auth-Token branch), rather than calling the private function
+    /// directly, so a regression here reflects what a real request sees.
+    mod access_rules {
+        use openstack_keystone_core_types::application_credential::{
+            AccessRule, AccessRuleBuilder, ApplicationCredential,
+        };
+        use openstack_keystone_core_types::identity::UserResponseBuilder;
+
+        use super::*;
+
+        fn access_rule(method: &str, path: &str, service: &str) -> AccessRule {
+            AccessRuleBuilder::default()
+                .id("r1")
+                .method(method.to_string())
+                .path(path.to_string())
+                .service(service.to_string())
+                .user_id("u1")
+                .build()
+                .unwrap()
+        }
+
+        fn app_cred_vsc(access_rules: Option<Vec<AccessRule>>) -> ValidatedSecurityContext {
+            let ac = ApplicationCredential {
+                id: "ac1".to_string(),
+                user_id: "u1".to_string(),
+                project_id: "p1".to_string(),
+                name: "cred".to_string(),
+                description: None,
+                roles: vec![],
+                unrestricted: false,
+                expires_at: None,
+                access_rules,
+            };
+            let mut security_context = SecurityContextTestingBuilder::default()
+                .authentication_context(AuthenticationContext::ApplicationCredential {
+                    application_credential: ac,
+                    token: None,
+                })
+                .principal(PrincipalInfo {
+                    // `AuthenticationResult.principal.identity` for an
+                    // application credential is always `IdentityInfo::User`
+                    // (CLAUDE.md's noted gotcha) -- `Principal` is for
+                    // SPIFFE/workload identities only.
+                    identity: IdentityInfo::User(
+                        UserIdentityInfoBuilder::default()
+                            .user_id("u1")
+                            .user(
+                                UserResponseBuilder::default()
+                                    .id("u1")
+                                    .domain_id("d1")
+                                    .enabled(true)
+                                    .name("u1")
+                                    .build()
+                                    .unwrap(),
+                            )
+                            .user_domain(openstack_keystone_core_types::resource::Domain {
+                                id: "d1".to_string(),
+                                enabled: true,
+                                name: "d1".to_string(),
+                                ..Default::default()
+                            })
+                            .build()
+                            .unwrap(),
+                    ),
+                })
+                .build();
+            // I5: an application credential is permanently bound to its own
+            // project -- `Unscoped` is not a legal scope for it, only its
+            // own `project_id` (`validate_scope_boundaries`'s
+            // `ApplicationCredential` arm).
+            security_context
+                .set_authorization_scope(ScopeInfo::Project {
+                    project: openstack_keystone_core_types::resource::Project {
+                        id: "p1".to_string(),
+                        domain_id: "d1".to_string(),
+                        enabled: true,
+                        name: "p1".to_string(),
+                        ..Default::default()
+                    },
+                    project_domain: openstack_keystone_core_types::resource::Domain {
+                        id: "d1".to_string(),
+                        enabled: true,
+                        name: "d1".to_string(),
+                        ..Default::default()
+                    },
+                })
+                .unwrap();
+            ValidatedSecurityContext::test_new(security_context)
+        }
+
+        fn parts_for(method: &str, uri: &str) -> Parts {
+            let (parts, _) = axum::http::Request::builder()
+                .method(method)
+                .uri(uri)
+                .body(())
+                .unwrap()
+                .into_parts();
+            parts
+        }
+
+        #[tokio::test]
+        async fn no_access_rules_is_unrestricted() {
+            let state = create_test_state(MockMappingProvider::new()).await;
+            let mut parts = parts_for("DELETE", "/v3/users/1");
+            parts.extensions.insert(app_cred_vsc(None));
+
+            let result = Auth::from_request_parts(&mut parts, &state).await;
+            assert!(result.is_ok());
+        }
+
+        #[tokio::test]
+        async fn empty_access_rules_list_is_unrestricted() {
+            let state = create_test_state(MockMappingProvider::new()).await;
+            let mut parts = parts_for("DELETE", "/v3/users/1");
+            parts.extensions.insert(app_cred_vsc(Some(vec![])));
+
+            let result = Auth::from_request_parts(&mut parts, &state).await;
+            assert!(result.is_ok());
+        }
+
+        #[tokio::test]
+        async fn matching_rule_permits_the_call() {
+            let state = create_test_state(MockMappingProvider::new()).await;
+            let mut parts = parts_for("GET", "/v3/users");
+            parts.extensions.insert(app_cred_vsc(Some(vec![access_rule(
+                "GET",
+                "/v3/users",
+                "identity",
+            )])));
+
+            let result = Auth::from_request_parts(&mut parts, &state).await;
+            assert!(result.is_ok());
+        }
+
+        #[tokio::test]
+        async fn call_outside_the_rules_is_denied() {
+            let state = create_test_state(MockMappingProvider::new()).await;
+            let mut parts = parts_for("DELETE", "/v3/users/1");
+            parts.extensions.insert(app_cred_vsc(Some(vec![access_rule(
+                "GET",
+                "/v3/users",
+                "identity",
+            )])));
+
+            let result = Auth::from_request_parts(&mut parts, &state).await;
+            let err = result.expect_err("call outside access_rules must be denied");
+            assert!(matches!(err, KeystoneApiError::Forbidden { .. }));
+        }
+
+        /// A rule scoped to a different service must never authorize a call
+        /// against Keystone's own API (ADR 0037 "Why Keystone can only
+        /// enforce its own service's rules").
+        #[tokio::test]
+        async fn rule_for_a_different_service_does_not_permit_own_api_call() {
+            let state = create_test_state(MockMappingProvider::new()).await;
+            let mut parts = parts_for("GET", "/v3/users");
+            parts.extensions.insert(app_cred_vsc(Some(vec![access_rule(
+                "GET",
+                "/v3/users",
+                "compute",
+            )])));
+
+            let result = Auth::from_request_parts(&mut parts, &state).await;
+            assert!(result.is_err());
+        }
+
+        /// Non-application-credential auth (e.g. a plain admin/system
+        /// principal) is never subject to this check at all.
+        #[tokio::test]
+        async fn non_app_cred_auth_is_unaffected() {
+            let mut mapping_mock = MockMappingProvider::new();
+            mapping_mock
+                .expect_authenticate_by_mapping()
+                .once()
+                .returning(|_, _| {
+                    Ok(AuthenticationResultBuilder::default()
+                        .context(AuthenticationContext::Password)
+                        .principal(
+                            PrincipalInfoBuilder::default()
+                                .identity(IdentityInfo::Principal(
+                                    PrincipalIdentityInfoBuilder::default()
+                                        .id("test-user")
+                                        .issuer("test.domain")
+                                        .build()
+                                        .unwrap(),
+                                ))
+                                .build()
+                                .unwrap(),
+                        )
+                        .build()
+                        .unwrap())
+                });
+            let state = create_test_state(mapping_mock).await;
+            let mut parts = parts_for("DELETE", "/v3/users/1");
+            parts
+                .extensions
+                .insert(SpiffeId::new("spiffe://test.domain/test-workload").unwrap());
+
+            let result = Auth::from_request_parts(&mut parts, &state).await;
+            assert!(result.is_ok());
+        }
     }
 }

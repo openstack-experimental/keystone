@@ -204,6 +204,155 @@ mod tests {
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
+    /// Gate B2 (security review V3a, issue #990): asserts the two-phase
+    /// enforce() calls (I8 pattern) feed `identity/trust/list.rego` and the
+    /// per-item `identity/trust/show.rego` re-check the contract each
+    /// expects, with no leaked secret field.
+    #[tokio::test]
+    async fn test_list_policy_input_contract() {
+        let mut trust_mock = MockTrustProvider::default();
+        trust_mock.expect_list_trusts().returning(|_, _| {
+            Ok(vec![
+                TrustBuilder::default()
+                    .id("1")
+                    .trustor_user_id("trustor")
+                    .trustee_user_id("trustee")
+                    .impersonation(false)
+                    .build()
+                    .unwrap(),
+            ])
+        });
+
+        let vsc = test_fixture_scoped();
+        let (state, policy) = crate::api::tests::get_capturing_state(
+            Provider::mocked_builder().mock_trust(trust_mock),
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .extension(vsc)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let calls = policy.calls();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].policy_name, "identity/trust/list");
+        crate::api::tests::policy_contract::assert_object_keys(&calls[0].target, &["trust"]);
+        crate::api::tests::policy_contract::assert_existing_presence(&calls[0].existing, false);
+        crate::api::tests::policy_contract::assert_no_secrets(&calls[0].target);
+
+        assert_eq!(calls[1].policy_name, "identity/trust/show");
+        crate::api::tests::policy_contract::assert_existing_presence(&calls[1].existing, true);
+        crate::api::tests::policy_contract::assert_object_keys(
+            calls[1].existing.as_ref().unwrap(),
+            &["trust"],
+        );
+        crate::api::tests::policy_contract::assert_no_secrets(calls[1].existing.as_ref().unwrap());
+    }
+
+    /// Gate B3 (security review V3a, issue #990): the real
+    /// `identity/trust/list.rego` + per-item `identity/trust/show.rego`
+    /// narrow the collection to trusts the caller is the trustor or trustee
+    /// of (I8/I8a, CVE-2019-19687 class) -- a stranger with `member` sees an
+    /// empty list, not a 403 (the collection-level check passes for any
+    /// member; only the per-item pass narrows).
+    mod real_policy_decision {
+        use super::*;
+        use crate::api::tests::get_state_with_real_policy;
+        use crate::api::tests::real_policy_fixtures::member_vsc;
+
+        #[tokio::test]
+        async fn stranger_sees_no_trusts_but_is_not_forbidden() {
+            let mut trust_mock = MockTrustProvider::default();
+            trust_mock.expect_list_trusts().returning(|_, _| {
+                Ok(vec![
+                    TrustBuilder::default()
+                        .id("1")
+                        .trustor_user_id("trustor")
+                        .trustee_user_id("trustee")
+                        .impersonation(false)
+                        .build()
+                        .unwrap(),
+                ])
+            });
+
+            let (state, _opa_guard) =
+                get_state_with_real_policy(Provider::mocked_builder().mock_trust(trust_mock)).await;
+            let mut api = openapi_router()
+                .layer(TraceLayer::new_for_http())
+                .with_state(state);
+
+            let response = api
+                .as_service()
+                .oneshot(
+                    Request::builder()
+                        .uri("/")
+                        .extension(member_vsc("stranger", "p1", &["member"]))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let res: TrustList = serde_json::from_slice(&body).unwrap();
+            assert!(res.trusts.is_empty());
+        }
+
+        #[tokio::test]
+        async fn trustor_sees_own_trust() {
+            let mut trust_mock = MockTrustProvider::default();
+            trust_mock.expect_list_trusts().returning(|_, _| {
+                Ok(vec![
+                    TrustBuilder::default()
+                        .id("1")
+                        .trustor_user_id("trustor")
+                        .trustee_user_id("trustee")
+                        .impersonation(false)
+                        .build()
+                        .unwrap(),
+                ])
+            });
+
+            let (state, _opa_guard) =
+                get_state_with_real_policy(Provider::mocked_builder().mock_trust(trust_mock)).await;
+            let mut api = openapi_router()
+                .layer(TraceLayer::new_for_http())
+                .with_state(state);
+
+            let response = api
+                .as_service()
+                .oneshot(
+                    Request::builder()
+                        .uri("/")
+                        .extension(member_vsc("trustor", "p1", &["member"]))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let res: TrustList = serde_json::from_slice(&body).unwrap();
+            assert_eq!(res.trusts.len(), 1);
+            assert_eq!(res.trusts[0].id, "1");
+        }
+    }
+
     #[tokio::test]
     async fn test_list_unauth() {
         let state = get_mocked_state(Provider::mocked_builder(), false, None).await;

@@ -128,12 +128,16 @@ mod tests {
     use crate::trust::MockTrustProvider;
 
     fn create_request() -> TrustCreateRequest {
+        create_request_for("trustor", None)
+    }
+
+    fn create_request_for(trustor_user_id: &str, project_id: Option<&str>) -> TrustCreateRequest {
         TrustCreateRequest {
             trust: TrustCreate {
                 id: None,
-                trustor_user_id: "trustor".into(),
+                trustor_user_id: trustor_user_id.into(),
                 trustee_user_id: "trustee".into(),
-                project_id: None,
+                project_id: project_id.map(Into::into),
                 impersonation: false,
                 expires_at: None,
                 remaining_uses: None,
@@ -143,6 +147,57 @@ mod tests {
                 extra: None,
             },
         }
+    }
+
+    /// Gate B2 (security review V3a, issue #990): asserts the handler feeds
+    /// `enforce()` the contract `identity/trust/create.rego` expects --
+    /// single `trust` key, no `existing`, and no leaked secret field.
+    #[tokio::test]
+    async fn test_create_policy_input_contract() {
+        let mut trust_mock = MockTrustProvider::default();
+        trust_mock.expect_create_trust().returning(|_, t| {
+            Ok(TrustBuilder::default()
+                .id("new_trust_id")
+                .trustor_user_id(t.trustor_user_id)
+                .trustee_user_id(t.trustee_user_id)
+                .impersonation(t.impersonation)
+                .build()
+                .unwrap())
+        });
+
+        let vsc = test_fixture_scoped();
+        let (state, policy) = crate::api::tests::get_capturing_state(
+            Provider::mocked_builder().mock_trust(trust_mock),
+        )
+        .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .extension(vsc)
+                    .header("Content-Type", "application/json")
+                    .method("POST")
+                    .body(Body::from(
+                        serde_json::to_string(&create_request()).unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let calls = policy.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].policy_name, "identity/trust/create");
+        crate::api::tests::policy_contract::assert_object_keys(&calls[0].target, &["trust"]);
+        crate::api::tests::policy_contract::assert_existing_presence(&calls[0].existing, false);
+        crate::api::tests::policy_contract::assert_no_secrets(&calls[0].target);
     }
 
     #[tokio::test]
@@ -267,5 +322,120 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// Gate B3 (security review V3a, issue #990): drives this handler and
+    /// the real `identity/trust/create.rego` decision (via
+    /// `get_state_with_real_policy`'s real `opa run` subprocess + the
+    /// production `HttpPolicyEnforcer`) through the trustor/non-trustor and
+    /// delegated-allowed/delegated-escape matrix -- trusts are one of the
+    /// three delegation mechanisms I1-I5 exist to bound, and this endpoint
+    /// had neither B2 nor B3 coverage before. Requires `opa` on `PATH`.
+    mod real_policy_decision {
+        use openstack_keystone_core::auth::ValidatedSecurityContext;
+
+        use super::*;
+        use crate::api::tests::get_state_with_real_policy;
+        use crate::api::tests::real_policy_fixtures::{member_vsc, restricted_app_cred_vsc};
+        use crate::provider::ProviderBuilder;
+
+        fn allowing_provider() -> ProviderBuilder {
+            let mut trust_mock = MockTrustProvider::default();
+            trust_mock.expect_create_trust().returning(|_, t| {
+                Ok(TrustBuilder::default()
+                    .id("new_trust_id")
+                    .trustor_user_id(t.trustor_user_id)
+                    .trustee_user_id(t.trustee_user_id)
+                    .project_id(t.project_id.unwrap_or_default())
+                    .impersonation(t.impersonation)
+                    .build()
+                    .unwrap())
+            });
+            Provider::mocked_builder().mock_trust(trust_mock)
+        }
+
+        async fn create_request_status(
+            vsc: ValidatedSecurityContext,
+            req: TrustCreateRequest,
+            provider_builder: ProviderBuilder,
+        ) -> StatusCode {
+            let (state, _opa_guard) = get_state_with_real_policy(provider_builder).await;
+            let mut api = openapi_router()
+                .layer(TraceLayer::new_for_http())
+                .with_state(state);
+
+            api.as_service()
+                .oneshot(
+                    Request::builder()
+                        .uri("/")
+                        .extension(vsc)
+                        .header("Content-Type", "application/json")
+                        .method("POST")
+                        .body(Body::from(serde_json::to_string(&req).unwrap()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+        }
+
+        /// "A trust is always self-issued": the caller creating a trust as
+        /// its own trustor is allowed, with no role requirement at the
+        /// policy layer (`policy/trust/create.rego`'s own documented
+        /// posture -- role sufficiency is checked provider-side).
+        #[tokio::test]
+        async fn trustor_creating_own_trust_is_allowed() {
+            let status = create_request_status(
+                member_vsc("trustor", "p1", &[]),
+                create_request_for("trustor", None),
+                allowing_provider(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CREATED);
+        }
+
+        /// A caller may not create a trust on someone else's behalf, even
+        /// with full member roles -- matches python keystone's
+        /// `identity:create_trust`, which has no admin bypass.
+        #[tokio::test]
+        async fn non_trustor_creating_trust_for_someone_else_is_denied() {
+            let status = create_request_status(
+                member_vsc("attacker", "p1", &["member"]),
+                create_request_for("victim", None),
+                Provider::mocked_builder(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+
+        /// OSSA-2026-015: a restricted application credential creating a
+        /// trust as its own trustor, bound to its own delegation project, is
+        /// allowed.
+        #[tokio::test]
+        async fn delegated_trustor_bound_to_own_project_is_allowed() {
+            let status = create_request_status(
+                restricted_app_cred_vsc("trustor", "p1"),
+                create_request_for("trustor", Some("p1")),
+                allowing_provider(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CREATED);
+        }
+
+        /// OSSA-2026-015: a delegated caller must not be able to create a
+        /// trust that escapes its own delegation project -- here, an
+        /// unscoped (no `project_id`) trust, which
+        /// `not_delegated_or_bound_to_own_project` must still deny for a
+        /// delegated caller.
+        #[tokio::test]
+        async fn delegated_trustor_escaping_own_project_is_denied() {
+            let status = create_request_status(
+                restricted_app_cred_vsc("trustor", "p1"),
+                create_request_for("trustor", None),
+                Provider::mocked_builder(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
     }
 }

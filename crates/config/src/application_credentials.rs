@@ -25,14 +25,17 @@ pub struct ApplicationCredentialProvider {
     /// When `true`, refuse to create an application credential carrying a
     /// non-empty `access_rules` list instead of silently accepting it.
     ///
-    /// `access_rules` (per-endpoint restrictions) are stored and CRUD'd but
-    /// **not enforced at request time** -- no middleware matches the
-    /// incoming (service, method, path) against them yet (security review
-    /// V5, `doc/src/contributor/security-model.md` §5/§9). Until that
-    /// enforcement lands, a non-empty `access_rules` list is a restriction
-    /// the operator believes is active but is actually a no-op. Defaults to
-    /// `false` to preserve existing behavior (a warning is logged either
-    /// way); set `true` to fail loud instead.
+    /// Historical note: this flag predates request-time enforcement of
+    /// `access_rules`, back when a non-empty list was a restriction the
+    /// operator believed was active but was actually a no-op (security
+    /// review V5). Enforcement now exists (ADR 0037,
+    /// `crates/core/src/api/auth.rs`'s `enforce_access_rules`, called
+    /// unconditionally from `Auth::from_request_parts` regardless of this
+    /// flag) -- `access_rules` is no longer unenforced, so this flag no
+    /// longer changes whether the restriction is honored, only whether
+    /// *creation* itself is additionally gated. Kept for backward
+    /// compatibility of the create-time API; defaults to `false` (a warning
+    /// is still logged either way).
     #[serde(default)]
     pub reject_unenforced_access_rules: bool,
 }

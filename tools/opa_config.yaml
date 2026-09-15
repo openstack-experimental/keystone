@@ -21,6 +21,17 @@ services:
 # digest before OPA starts (an init container or admission check), or pin
 # `resource` below to a specific verified digest instead of `latest` and
 # update it through a controlled release process.
+#
+# `tools/verify_and_pin_opa_bundle.sh --repo <owner>/<repo> --tag <tag>`
+# does exactly that verify-then-pin step: it resolves the tag's current
+# digest, runs the same `cosign verify` the publish job runs on itself, and
+# on success rewrites `resource` below to the verified digest. Run it as an
+# explicit, reviewed release action (a human or a controlled pipeline
+# invoking it) -- not on every push, since the digest changes on every
+# policy merge. A deployment that wants an init-container/admission-hook
+# check instead of a pinned config can call the same script with
+# `--config /dev/null` to get the verified `image@digest` reference without
+# rewriting this file.
 bundles:
   authz:
     service: ghcr

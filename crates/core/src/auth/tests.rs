@@ -3538,3 +3538,289 @@ async fn test_execution_context_has_auth_false_when_internal() {
     let exec_ctx = ExecutionContext::internal(&state);
     assert!(!exec_ctx.has_auth());
 }
+
+/// Property-based generalization of the delegation matrix test above (Gate
+/// D) for the two properties security-review.md §5.2 / V10 named as still
+/// open: *delegation monotonicity* (effective roles never exceed the
+/// delegation's own role set, for any live assignment state) and
+/// *revocation* (a role removed from live assignments is unusable on the
+/// next resolution, regardless of what an earlier resolution against the
+/// same delegation returned). Both drive the real `calculate_effective_roles`
+/// -- the function I4's bound lives in -- against a synthetic 5-role
+/// universe instead of the two hand-picked fixtures the matrix test uses,
+/// covering the 2^5 x 2^5 membership space `proptest` explores.
+mod delegation_monotonicity_property {
+    use std::collections::HashSet;
+
+    use openstack_keystone_core_types::application_credential::ApplicationCredential;
+    use proptest::prelude::*;
+    use proptest::test_runner::TestCaseError;
+
+    use super::*;
+
+    const ROLE_UNIVERSE: [&str; 5] = ["r0", "r1", "r2", "r3", "r4"];
+
+    fn role_membership_strategy() -> impl Strategy<Value = Vec<bool>> {
+        prop::collection::vec(any::<bool>(), ROLE_UNIVERSE.len())
+    }
+
+    fn ids_from_membership(membership: &[bool]) -> Vec<String> {
+        ROLE_UNIVERSE
+            .iter()
+            .zip(membership)
+            .filter(|(_, present)| **present)
+            .map(|(id, _)| (*id).to_string())
+            .collect()
+    }
+
+    fn rt() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("current-thread runtime")
+    }
+
+    async fn effective_appcred_roles(
+        delegation_role_ids: &[String],
+        assignment_role_ids: &[String],
+    ) -> Result<Vec<RoleRef>, AuthenticationError> {
+        let uid = "uid";
+        let pid = "pid";
+        let assignments: Vec<Assignment> = assignment_role_ids
+            .iter()
+            .map(|rid| assignment_with_role_actor(rid.clone(), uid))
+            .collect();
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .returning(move |_e, _q| Ok(assignments.clone()));
+        let ac = ApplicationCredential {
+            id: "ac1".to_string(),
+            user_id: uid.to_string(),
+            project_id: pid.to_string(),
+            name: "cred".to_string(),
+            description: None,
+            roles: delegation_role_ids
+                .iter()
+                .map(|rid| role_ref(rid.clone(), rid.clone()))
+                .collect(),
+            unrestricted: false,
+            expires_at: None,
+            access_rules: None,
+        };
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::ApplicationCredential {
+                application_credential: ac,
+                token: None,
+            })
+            .principal(make_user_identity(uid))
+            .build();
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
+        )
+        .await;
+        let scope = make_project_scope(pid);
+        calculate_effective_roles(&state, &ctx, &scope).await
+    }
+
+    async fn effective_trust_roles(
+        delegation_role_ids: &[String],
+        assignment_role_ids: &[String],
+    ) -> Result<Vec<RoleRef>, AuthenticationError> {
+        let trustor = "trustor";
+        let pid = "pid";
+        let assignments: Vec<Assignment> = assignment_role_ids
+            .iter()
+            .map(|rid| assignment_with_role_actor(rid.clone(), trustor))
+            .collect();
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .returning(move |_e, _q| Ok(assignments.clone()));
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_expand_implied_roles()
+            .returning(|_e, _roles| Ok(()));
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity(trustor))
+            .build();
+        let trust_roles: Vec<RoleRef> = delegation_role_ids
+            .iter()
+            .map(|rid| role_ref(rid.clone(), rid.clone()))
+            .collect();
+        let scope = make_trust_scope(trustor, "trustee", pid, Some(trust_roles));
+        let state = get_mocked_state(
+            None,
+            Some(
+                Provider::mocked_builder()
+                    .mock_assignment(assignment_mock)
+                    .mock_role(role_mock),
+            ),
+        )
+        .await;
+        calculate_effective_roles(&state, &ctx, &scope).await
+    }
+
+    /// Asserts `result` is exactly `delegation_ids ∩ assignment_ids` --
+    /// bounded by the delegation (I4) and still requiring a live assignment
+    /// -- or, when that intersection is empty, the "no roles on target"
+    /// error `calculate_effective_roles` returns instead of `Ok(vec![])`.
+    fn assert_bounded_by_intersection(
+        result: Result<Vec<RoleRef>, AuthenticationError>,
+        delegation_ids: &[String],
+        assignment_ids: &[String],
+    ) -> Result<(), TestCaseError> {
+        let delegation_set: HashSet<&String> = delegation_ids.iter().collect();
+        let assignment_set: HashSet<&String> = assignment_ids.iter().collect();
+        let expected: HashSet<&String> = delegation_set
+            .intersection(&assignment_set)
+            .copied()
+            .collect();
+        match result {
+            Ok(roles) => {
+                let got: HashSet<String> = roles.into_iter().map(|r| r.id).collect();
+                let got_ref: HashSet<&String> = got.iter().collect();
+                prop_assert_eq!(
+                    got_ref,
+                    expected,
+                    "effective roles must be exactly delegation ∩ live assignments"
+                );
+            }
+            Err(AuthenticationError::ActorHasNoRolesOnTarget) => {
+                prop_assert!(
+                    expected.is_empty(),
+                    "denied with no roles, but delegation ∩ assignments was non-empty"
+                );
+            }
+            Err(e) => return Err(TestCaseError::fail(format!("unexpected error: {e:?}"))),
+        }
+        Ok(())
+    }
+
+    /// Trust resolution is all-or-nothing, not an intersection like
+    /// app-cred's: `resolve_trust_roles` requires the trustor to currently
+    /// hold *every* role the trust declares, and denies entirely (rather
+    /// than silently narrowing) if even one is missing
+    /// (`crates/core/src/auth.rs`'s `trust_roles.iter().all(...)` check).
+    /// So a successful resolution always returns exactly the delegation's
+    /// full role set -- still bounded by the delegation (I4), just via a
+    /// stricter path than app-cred's filter.
+    fn assert_trust_bounded(
+        result: Result<Vec<RoleRef>, AuthenticationError>,
+        delegation_ids: &[String],
+        assignment_ids: &[String],
+    ) -> Result<(), TestCaseError> {
+        let delegation_set: HashSet<&String> = delegation_ids.iter().collect();
+        let assignment_set: HashSet<&String> = assignment_ids.iter().collect();
+        let all_present = !delegation_set.is_empty() && delegation_set.is_subset(&assignment_set);
+        match result {
+            Ok(roles) => {
+                let got: HashSet<String> = roles.into_iter().map(|r| r.id).collect();
+                let got_ref: HashSet<&String> = got.iter().collect();
+                prop_assert!(
+                    all_present,
+                    "trust resolution must not succeed unless the trustor currently holds every delegated role"
+                );
+                prop_assert_eq!(
+                    got_ref,
+                    delegation_set,
+                    "a successful trust resolution must return exactly the delegation's role set"
+                );
+            }
+            Err(AuthenticationError::ActorHasNoRolesOnTarget) => {
+                prop_assert!(
+                    !all_present,
+                    "trust resolution denied even though the trustor currently holds every delegated role"
+                );
+            }
+            Err(e) => return Err(TestCaseError::fail(format!("unexpected error: {e:?}"))),
+        }
+        Ok(())
+    }
+
+    proptest! {
+        /// Delegation monotonicity (V10): an application-credential's
+        /// effective roles never exceed the credential's own frozen role
+        /// set, for any live assignment state -- even one broader than the
+        /// delegation. Generalizes
+        /// `test_project_scope_appcred_filters_missing_role` above.
+        #[test]
+        fn app_cred_roles_never_exceed_delegation(
+            delegation_membership in role_membership_strategy(),
+            assignment_membership in role_membership_strategy(),
+        ) {
+            let delegation_ids = ids_from_membership(&delegation_membership);
+            let assignment_ids = ids_from_membership(&assignment_membership);
+            let result = rt().block_on(effective_appcred_roles(&delegation_ids, &assignment_ids));
+            assert_bounded_by_intersection(result, &delegation_ids, &assignment_ids)?;
+        }
+
+        /// Same property for trust delegation (OSSA-2026-015 class).
+        #[test]
+        fn trust_roles_never_exceed_delegation(
+            delegation_membership in role_membership_strategy(),
+            assignment_membership in role_membership_strategy(),
+        ) {
+            let delegation_ids = ids_from_membership(&delegation_membership);
+            let assignment_ids = ids_from_membership(&assignment_membership);
+            let result = rt().block_on(effective_trust_roles(&delegation_ids, &assignment_ids));
+            assert_trust_bounded(result, &delegation_ids, &assignment_ids)?;
+        }
+
+        /// Revocation (V10): a role removed from live assignments between
+        /// two resolutions is unusable on the second one, regardless of
+        /// what the first resolution (against the wider, pre-revocation
+        /// assignment set) returned -- there is no caching of the broader
+        /// role set across calls. `after` is constructed as a subset of
+        /// `before` by construction (`revoke` can only remove membership,
+        /// never add it), modeling "role removed at time T".
+        #[test]
+        fn app_cred_revoked_role_unusable_after_removal(
+            delegation_membership in role_membership_strategy(),
+            before_membership in role_membership_strategy(),
+            revoke in role_membership_strategy(),
+        ) {
+            let delegation_ids = ids_from_membership(&delegation_membership);
+            let before_ids = ids_from_membership(&before_membership);
+            let after_membership: Vec<bool> = before_membership
+                .iter()
+                .zip(revoke.iter())
+                .map(|(&had, &revoked)| had && !revoked)
+                .collect();
+            let after_ids = ids_from_membership(&after_membership);
+
+            let runtime = rt();
+            // T1: resolve against the pre-revocation assignment set.
+            let _ = runtime.block_on(effective_appcred_roles(&delegation_ids, &before_ids));
+            // T2: resolve again post-revocation -- must never contain a
+            // role `revoke` removed from `before`.
+            let after_result = runtime.block_on(effective_appcred_roles(&delegation_ids, &after_ids));
+            assert_bounded_by_intersection(after_result, &delegation_ids, &after_ids)?;
+        }
+
+        /// Same revocation property for trust delegation (trust deletion /
+        /// trustor-role-removal mid-token-lifetime).
+        #[test]
+        fn trust_revoked_role_unusable_after_removal(
+            delegation_membership in role_membership_strategy(),
+            before_membership in role_membership_strategy(),
+            revoke in role_membership_strategy(),
+        ) {
+            let delegation_ids = ids_from_membership(&delegation_membership);
+            let before_ids = ids_from_membership(&before_membership);
+            let after_membership: Vec<bool> = before_membership
+                .iter()
+                .zip(revoke.iter())
+                .map(|(&had, &revoked)| had && !revoked)
+                .collect();
+            let after_ids = ids_from_membership(&after_membership);
+
+            let runtime = rt();
+            let _ = runtime.block_on(effective_trust_roles(&delegation_ids, &before_ids));
+            let after_result = runtime.block_on(effective_trust_roles(&delegation_ids, &after_ids));
+            assert_trust_bounded(after_result, &delegation_ids, &after_ids)?;
+        }
+    }
+}

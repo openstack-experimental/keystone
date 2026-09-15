@@ -13,12 +13,18 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Finish OIDC login.
 
-use axum::{Json, debug_handler, extract::State, http::StatusCode, response::IntoResponse};
+use axum::{
+    Json, debug_handler,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+};
 use chrono::Utc;
 use secrecy::ExposeSecret;
 use url::Url;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
+use crate::api::common::PeerAddr;
 use crate::api::error::KeystoneApiError;
 use crate::api::v4::auth::token::types::TokenResponse as KeystoneTokenResponse;
 use crate::audit::{
@@ -69,8 +75,22 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
 pub async fn callback(
     CorrelationId(cid): CorrelationId,
     State(state): State<ServiceState>,
+    headers: HeaderMap,
+    PeerAddr(peer_addr): PeerAddr,
     Json(query): Json<AuthCallbackParameters>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
+    // Security review V6: reached without a Keystone-authenticated caller and
+    // ends in an OIDC ID-token signature verification (`verify_jwt`).
+    // Rate-limit before any lookup, same posture as `/v3/auth/tokens`.
+    if let Err(retry_after) = state
+        .rate_limiters
+        .check_ip(&headers, peer_addr.map(|addr| addr.ip()))
+    {
+        return Err(KeystoneApiError::TooManyRequests {
+            retry_after: retry_after.as_secs(),
+        });
+    }
+
     // `idp_id` is a pre-auth signal (known as soon as the auth state / idp
     // lookup resolves, before any token verification happens) so it is
     // recorded as `Initiator.host` regardless of outcome (ADR 0023 §"Perimeter
