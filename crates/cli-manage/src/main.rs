@@ -27,6 +27,7 @@ mod catalog;
 mod common;
 mod credential;
 mod db;
+mod mapping;
 mod oauth2;
 mod storage;
 mod token;
@@ -35,6 +36,7 @@ use crate::bootstrap::*;
 use crate::catalog::*;
 use crate::credential::*;
 use crate::db::*;
+use crate::mapping::*;
 use crate::oauth2::*;
 use crate::storage::*;
 use crate::token::*;
@@ -73,6 +75,9 @@ enum Command {
     /// Database management commands.
     Db(DbCommand),
 
+    /// Unified mapping engine ruleset management.
+    Mapping(MappingCommand),
+
     /// OAuth2/OIDC provider administration (ADR 0026).
     Oauth2(Oauth2Command),
 
@@ -98,6 +103,7 @@ async fn main() -> Result<(), Report> {
         Command::Catalog(x) => x.take_action(&cfg).await?,
         Command::Credential(x) => x.take_action(&cfg).await?,
         Command::Db(x) => x.take_action(&cfg).await?,
+        Command::Mapping(x) => x.take_action(&cfg).await?,
         Command::Oauth2(x) => x.take_action(&cfg).await?,
         Command::Storage(x) => x.take_action(&cfg).await?,
         Command::Token(x) => x.take_action(&cfg).await?,

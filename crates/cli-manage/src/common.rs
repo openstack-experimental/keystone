@@ -15,6 +15,7 @@
 //! the database, bypassing the running service.
 
 use std::io;
+use std::path::Path;
 
 use color_eyre::eyre::{WrapErr, eyre};
 use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL};
@@ -24,6 +25,7 @@ use sea_orm::ConnectOptions;
 use sea_orm::Database;
 use sea_orm::DatabaseConnection;
 use secrecy::ExposeSecret;
+use serde::de::DeserializeOwned;
 use spiffe_rustls::{authorizer, mtls_client};
 use tracing_subscriber::{
     filter::{LevelFilter, Targets},
@@ -102,6 +104,15 @@ pub async fn build_admin_client(config: &Config) -> Result<Client> {
         .tls_backend_preconfigured(client_config)
         .build()
         .wrap_err("Building reqwest client failed")
+}
+
+/// Read and parse a JSON file into `T`.
+pub async fn read_json_file<T: DeserializeOwned>(path: &Path) -> Result<T> {
+    let contents = tokio::fs::read_to_string(path)
+        .await
+        .wrap_err_with(|| format!("failed to read {}", path.display()))?;
+    serde_json::from_str(&contents)
+        .wrap_err_with(|| format!("failed to parse {} as JSON", path.display()))
 }
 
 /// Build a `comfy_table::Table` with the project's default styling.

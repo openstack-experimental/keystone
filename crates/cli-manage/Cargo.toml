@@ -38,6 +38,7 @@ sea-orm-migration = { workspace = true, features = ["sqlx-mysql", "sqlx-postgres
 reqwest = { workspace = true, features = ["json", "rustls"] }
 rustls = { workspace = true, features = ["aws-lc-rs"] }
 secrecy = { workspace = true, features = ["serde"] }
+serde.workspace = true
 serde_json.workspace = true
 spiffe = { workspace = true, features = ["x509-source"] }
 spiffe-rustls = { workspace = true }
