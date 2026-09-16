@@ -756,7 +756,7 @@ mod route_dispatch_tests {
         let mut extra = std::collections::HashMap::new();
         extra.insert(
             "application_credential".to_string(),
-            serde_json::json!({"application_credential_id": cred_id}),
+            serde_json::json!({"id": cred_id}),
         );
         AuthRequest {
             auth: AuthRequestInner {

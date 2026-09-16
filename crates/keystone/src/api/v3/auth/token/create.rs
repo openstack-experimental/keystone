@@ -1649,7 +1649,7 @@ mod auth_plugin_http_tests {
                 "auth": {
                     "identity": {
                         "methods": ["application_credential"],
-                        "application_credential": {"application_credential_id": "tf-alice"}
+                        "application_credential": {"id": "tf-alice"}
                     }
                 }
             }),

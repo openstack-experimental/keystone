@@ -234,7 +234,7 @@ always use built-in auth method names - it has no concept of a custom method
 name. A real-world pattern built around this constraint (and the direct
 inspiration for `route` mode below) is `keystonemiddleware`-style request
 rewriting: a component ahead of the auth logic inspects the incoming
-`application_credential_id` and, based on its shape, rewrites the request so it
+`application_credential`'s `id` and, based on its shape, rewrites the request so it
 is dispatched to a different handler entirely - the _routing decision_ and the
 _authentication decision_ are two separate concerns, made by two different
 pieces of code, neither of which is the client. Neither `full_auth` nor
@@ -992,7 +992,7 @@ max_concurrent_invocations = 16
 
 # route-mode example: Terraform's OpenStack provider always sends
 # identity.methods = [application_credential]. This plugin inspects the
-# application_credential_id shape and, for IDs matching its own convention,
+# application_credential's id shape and, for IDs matching its own convention,
 # reroutes the request to a separately-registered full_auth plugin
 # (hacked_appcred_handler, not shown) that performs the real verification;
 # every other application_credential request passes through unmodified to

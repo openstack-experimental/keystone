@@ -242,18 +242,17 @@ pub enum RouteResponse {
 
 /// `route` mode's `route` guest entry point (ADR 0025 §4). Inspects the
 /// `application_credential` payload block (the ADR's own motivating
-/// example): an `application_credential_id` of `"deny-me"` denies outright,
-/// one prefixed `tf-` is rerouted to `hacked_appcred_handler` with the rest of
-/// the id relabeled into an `external_id` field (so this fixture composes
-/// end-to-end with the `authenticate` export above in integration tests -
-/// a real router would shape its `payload` however its actual target
-/// method's contract requires), and anything else passes through
-/// unmodified - mirrors the ADR's own reference router example (§5 config
-/// example).
+/// example): an `id` of `"deny-me"` denies outright, one prefixed `tf-` is
+/// rerouted to `hacked_appcred_handler` with the rest of the id relabeled
+/// into an `external_id` field (so this fixture composes end-to-end with
+/// the `authenticate` export above in integration tests - a real router
+/// would shape its `payload` however its actual target method's contract
+/// requires), and anything else passes through unmodified - mirrors the
+/// ADR's own reference router example (§5 config example).
 #[plugin_fn]
 pub fn route(req: Json<RouteRequest>) -> FnResult<Json<RouteResponse>> {
     let payload = req.0.payloads.get("application_credential");
-    let cred_id = payload.and_then(|p| p.get("application_credential_id"));
+    let cred_id = payload.and_then(|p| p.get("id"));
 
     let Some(serde_json::Value::String(cred_id)) = cred_id else {
         return Ok(Json(RouteResponse::Passthrough));

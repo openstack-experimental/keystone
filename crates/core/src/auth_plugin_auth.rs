@@ -1974,7 +1974,7 @@ mod route_acceptance_tests {
         let mut payloads = HashMap::new();
         payloads.insert(
             "application_credential".to_string(),
-            serde_json::json!({"application_credential_id": cred_id}),
+            serde_json::json!({"id": cred_id}),
         );
         payloads
     }

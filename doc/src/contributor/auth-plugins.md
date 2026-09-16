@@ -518,7 +518,7 @@ pub fn route(req: Json<RouteRequest>) -> FnResult<Json<RouteResponse>> {
     let Some(payload) = req.0.payloads.get("application_credential") else {
         return Ok(Json(RouteResponse::Passthrough));
     };
-    let Some(cred_id) = payload.get("application_credential_id").and_then(|v| v.as_str()) else {
+    let Some(cred_id) = payload.get("id").and_then(|v| v.as_str()) else {
         return Ok(Json(RouteResponse::Passthrough));
     };
 
