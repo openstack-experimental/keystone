@@ -24,8 +24,9 @@
 //! `/token` signer), so the conversion lives here rather than in any one
 //! driver crate.
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey};
+use pkcs8::DecodePublicKey as _;
 use rsa::pkcs1::{EncodeRsaPrivateKey, EncodeRsaPublicKey};
-use rsa::pkcs8::{DecodePrivateKey as _, DecodePublicKey as _};
+use rsa::pkcs8::{DecodePrivateKey as _, DecodePublicKey as RsaDecodePublicKey};
 use secrecy::ExposeSecret;
 
 use crate::error::KeyRepositoryError;
@@ -74,7 +75,7 @@ pub fn to_decoding_key(material: &KeyMaterial) -> Result<DecodingKey, KeyReposit
             let verifying_key =
                 p256::ecdsa::VerifyingKey::from_public_key_der(&material.public_key_der)
                     .map_err(|e| KeyRepositoryError::Crypto(format!("EC public key: {e}")))?;
-            let sec1_point = verifying_key.to_encoded_point(false);
+            let sec1_point = verifying_key.to_sec1_point(false);
             Ok(DecodingKey::from_ec_der(sec1_point.as_bytes()))
         }
         // jsonwebtoken's rust_crypto RSA verifier loads via

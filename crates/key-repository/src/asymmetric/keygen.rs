@@ -14,7 +14,8 @@
 //! # Asymmetric keypair generation (ADR 0026 §3)
 use chrono::Utc;
 use p256::ecdsa::SigningKey as EcdsaSigningKey;
-use rand_core::OsRng;
+use p256::elliptic_curve::Generate as _;
+use pkcs8::{EncodePrivateKey as _, EncodePublicKey as _};
 use rsa::RsaPrivateKey;
 use rsa::pkcs8::{EncodePrivateKey as RsaEncodePrivateKey, EncodePublicKey as RsaEncodePublicKey};
 use secrecy::SecretBox;
@@ -31,7 +32,7 @@ const RSA_KEY_BITS: usize = 2048;
 pub fn generate_keypair(algorithm: SigningAlgorithm) -> Result<KeyMaterial, KeyRepositoryError> {
     let (private_key_der, public_key_der) = match algorithm {
         SigningAlgorithm::Es256 => {
-            let signing_key = EcdsaSigningKey::random(&mut OsRng);
+            let signing_key = EcdsaSigningKey::generate_from_rng(&mut rand::rng());
             let private_key_der = signing_key
                 .to_pkcs8_der()
                 .map_err(|e| KeyRepositoryError::Crypto(format!("ES256 keygen: {e}")))?
@@ -46,7 +47,7 @@ pub fn generate_keypair(algorithm: SigningAlgorithm) -> Result<KeyMaterial, KeyR
             (private_key_der, public_key_der)
         }
         SigningAlgorithm::Rs256 => {
-            let private_key = RsaPrivateKey::new(&mut OsRng, RSA_KEY_BITS)
+            let private_key = RsaPrivateKey::new(&mut rsa::rand_core::OsRng, RSA_KEY_BITS)
                 .map_err(|e| KeyRepositoryError::Crypto(format!("RS256 keygen: {e}")))?;
             let public_key = private_key.to_public_key();
             let private_key_der = RsaEncodePrivateKey::to_pkcs8_der(&private_key)

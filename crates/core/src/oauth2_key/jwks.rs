@@ -22,8 +22,9 @@ use jsonwebtoken::jwk::{
     AlgorithmParameters, CommonParameters, EllipticCurve, EllipticCurveKeyParameters,
     EllipticCurveKeyType, Jwk, JwkSet, KeyAlgorithm, PublicKeyUse, RSAKeyParameters, RSAKeyType,
 };
-use p256::elliptic_curve::sec1::ToEncodedPoint as _;
+use p256::elliptic_curve::sec1::ToSec1Point as _;
 use p256::pkcs8::DecodePublicKey as _;
+use rsa::pkcs8::DecodePublicKey as RsaDecodePublicKey;
 use rsa::traits::PublicKeyParts as _;
 
 use openstack_keystone_key_repository::asymmetric::{ActiveKeys, KeyMaterial, SigningAlgorithm};
@@ -35,7 +36,7 @@ fn key_material_to_jwk(material: &KeyMaterial) -> Result<Jwk, Oauth2KeyProviderE
         SigningAlgorithm::Es256 => {
             let public_key = p256::PublicKey::from_public_key_der(&material.public_key_der)
                 .map_err(Oauth2KeyProviderError::crypto)?;
-            let point = public_key.to_encoded_point(false);
+            let point = public_key.to_sec1_point(false);
             let x = point.x().ok_or_else(|| {
                 Oauth2KeyProviderError::Crypto("EC public key missing x coordinate".into())
             })?;
