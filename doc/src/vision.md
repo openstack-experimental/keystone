@@ -106,15 +106,21 @@ addresses the validation half of this with offline JWT verification
 frozen into the token, offline validation also freezes authorization for the
 token lifetime.
 
-This proposal does **not** remove Keystone from the data path. It moves the
-round trip from token validation to an authorization decision, and it changes
-what a cache entry is keyed on: today one entry per token, afterwards one entry
-per `(subject, target)` pair. A caller that touches many projects therefore
-trades many tokens for many cache entries. What is gained is that the cached
-thing is a live decision with an operator-chosen TTL rather than a frozen role
-list with the token's lifetime; what is not gained is independence from
-Keystone. §8 states the resulting availability posture, and it is a hard
-requirement on any deployment adopting the model.
+This proposal does **not** remove the round trip. It moves it from token
+validation to an authorization decision, and it changes what a cache entry is
+keyed on: today one entry per token, afterwards one per
+`(subject, chain, target)` triple — the chain facts belong in the key because a
+delegated or restricted call must not be answered from an entry minted for the
+same subject's full authority (§6.3). A caller that touches many projects
+therefore trades many tokens for many cache entries. What is gained is that the
+cached thing is a live decision with an operator-chosen lifetime rather than a
+frozen role list with the token's lifetime.
+
+What is not gained is independence from a running authority. What does change
+is _which_ component that authority is: decisions come from the replicated
+decision tier of §4.4, and the Keystone nodes that accept writes leave the data
+path altogether. §8 states what that is worth, what it still costs, and the
+availability posture it requires of any deployment adopting the model.
 
 ### 2.3 System scope and the Secure RBAC goal
 
@@ -164,7 +170,13 @@ call one operation (rotate a secret, signal a Heat wait condition, read one
 metric endpoint), an operator must create a role, wire the role into every
 service's policy file, and assign it. Nobody does that; instead the workload
 gets `member` or `admin`. Application-credential access rules were meant to
-address this and have never been enforced at request time.
+address this and do not, even now that they are enforced
+([ADR 0037](adr/0037-access-rule-enforcement.md) for Keystone's own API,
+`keystonemiddleware` by introspection for every other service). They match
+`(service, method, path)` on one credential type. They cannot be assigned to a
+principal, inherited, held by a human or a workload identity, or reasoned about
+by any authority other than the credential that carries them, so they are a
+restriction a credential imposes on itself rather than a unit of grant.
 
 Every hyperscaler solved this with permissions as the unit of grant and roles as
 named permission sets: AWS IAM actions and policies, GCP IAM permissions and
@@ -418,7 +430,7 @@ It asks Keystone:
 ```http
 POST /v4/authz/check
 {
-  "subject": { "sub": "...", "act": null, "delegation_context": null, "restrictions": null },
+  "subject": { "credential": "<the JWT exactly as presented>" },
   "target": { "project_id": "8e3f..." },
   "operations": ["compute:servers:delete"]
 }
@@ -440,7 +452,11 @@ POST /v4/authz/check
 
 Keystone resolves direct, group, inherited and system-level grants, intersects
 with the delegation boundary and with any self-imposed restriction, and returns
-a decision plus the classic role list for policies that still key on roles.
+a decision plus the classic role list for policies that still key on roles. The
+boundary and the restriction are derived from the credential the request
+carries, not from fields the calling service filled in — they are chain facts,
+and §6.3 sets out why a tier that takes the caller's word for them reproduces
+the defect class this proposal exists to remove.
 
 The cache lifetime is per result, not per response. One call can return an
 allow and a deny, and a deployment may not want the two held on the same terms:
@@ -450,13 +466,13 @@ signal. §6.3 sets out the freshness options, what the assignment driver does an
 does not change about them, and why the elaborate answer is refused.
 
 **The cache is part of the architecture, not an optimization.** A decision cache
-keyed on `(subject, target)` sits in front of every call to `/v4/authz/check`:
-the live call happens on a miss or on expiry. Running with the cache disabled is
-a supported posture rather than an oversight, and §6.3 says when it is the right
-one; what it costs is latency on the hot path and a hard dependency on tier
-availability. §6.3 specifies the cache contract, and the part of it that is not
-uniform: what freshness each decision input can actually be held to differs, and
-is visible in the API response.
+keyed on `(subject, chain, target)` sits in front of every call to
+`/v4/authz/check`: the live call happens on a miss or on expiry. Running with
+the cache disabled is a supported posture rather than an oversight, and §6.3
+says when it is the right one; what it costs is latency on the hot path and a
+hard dependency on tier availability. §6.3 specifies the cache contract, and
+the part of it that is not uniform: what freshness each decision input can
+actually be held to differs, and is visible in the API response.
 
 This is the Kubernetes `SubjectAccessReview` pattern, and the shape
 `oslo.policy` already supports through its `http` check type, which gives Python
@@ -476,7 +492,7 @@ sequenceDiagram
     S->>S: load server, owner = P'
     S->>P: input {credentials, target{scope:P, server{project:P'}}, operation}
     P->>P: requested scope must equal resource owner (P == P') else deny
-    P->>K: POST /v4/authz/check (sub, P, compute:servers:delete)<br/>(cached per sub+target)
+    P->>K: POST /v4/authz/check (credential, P, compute:servers:delete)<br/>(cached per subject+chain+target)
     K-->>P: allowed via role:admin@domain:inherited, ttl
     P-->>S: allow
     S-->>C: 204
@@ -839,17 +855,21 @@ replaces.) §9 splits the migration at exactly this line (Phase 2a / Phase 2b).
   intersected by `/v4/authz/check`. Token restrictions already exist in the Rust
   implementation (`TokenRestriction`, used by the Kubernetes authentication
   method); this generalizes them. They are also the feature
-  application-credential access rules promised and never enforced: a CI job or a
-  script can hold a token that can do exactly one thing. Scope-less must be the
-  default, never the only option; without restrictions the proposal trades one
-  problem (too many tokens) for another (every token is a master key).
+  application-credential access rules only ever promised for one credential type
+  (§2.5): a CI job or a script can hold a token that can do exactly one thing.
+  Scope-less must be the default, never the only option; without restrictions
+  the proposal trades one problem (too many tokens) for another (every token is
+  a master key).
 - **Short lifetime** (fifteen minutes) with refresh-token rotation and family
   breach detection (ADR 0026 §9).
 - **Fail-closed scope agreement.** The resource-derived target always wins over
   the header; a mismatch is an error, never a silent widening (§5.1).
 - **Audit.** Every decision logs subject, `act`, requested scope, resolved
   target, operation and outcome (ADR 0023), which is what makes anomaly
-  detection on a stolen token possible at all.
+  detection on a stolen token possible at all. The record is written where the
+  decision is enforced, not where it is minted: a cached decision never reaches
+  the decision tier, so the tier's own log covers cache misses and nothing else
+  (§6.3).
 
 ## 6. Authorization model
 
@@ -892,7 +912,7 @@ generator rather than code.
 Operating it needs more than that. Because `/v4/authz/check` expands roles and
 permission sets into operations at decision time (§6.3), Keystone holds a live
 catalog that spans every deployed service, including out-of-tree ones, and that
-changes on every service upgrade. Three rules make that tractable:
+changes on every service upgrade. Four rules make that tractable:
 
 - **The catalog is deployment state with a version.** Services register their
   operations (or an operator imports the generated registry). A vocabulary
@@ -909,6 +929,17 @@ changes on every service upgrade. Three rules make that tractable:
   it is registered. This is what keeps a service upgrade from silently demoting
   existing readers, and it is why the verb half of the normalized form has to be
   a closed set.
+- **Registering an operation is a privileged, audited write.** Because personas
+  are patterns over the catalog, a registration is a grant change: an operation
+  registered under a read verb is granted to every `reader` in the cloud, a
+  global reader on the system target included, without any grant being written
+  anywhere. The closed verb set constrains the name and not the behaviour, so
+  the registry needs what a policy rollout needs — a named owner, an audited
+  write path, and review that the verb matches what the operation actually
+  does. A service that registers a mutating or secret-disclosing operation as
+  `*:show` has granted it to every auditor in the deployment. §10, question 2
+  asks where the registry lives; who may write to it is the other half of the
+  same question.
 
 ### 6.2 The authorization input contract
 
@@ -966,6 +997,110 @@ a deployment can back this API with a Zanzibar-style relation store for tenants
 that already run one, with relation sync (ADR 0035) keeping group membership
 consistent, at the cost of a weaker freshness guarantee that the rest of this
 section states rather than buries.
+
+#### The chain facts are not the caller's to assert
+
+Items 3 and 4 of that list are chain facts in the sense of I1: properties of
+how the caller authenticated, never of what the caller says. The request shape
+of §4.4 does not preserve that on its own. An enforcement point parses `act`,
+`delegation_context` and `restrictions` out of the presented credential, and a
+tier that applies items 3 and 4 to the fields it was handed is applying them to
+data an enforcement point wrote. A request with `delegation_context` omitted
+asks to be decided as though the chain were not delegated, and gets what it
+asked for. That is the defect class behind OSSA-2026-005 and OSSA-2026-015 — a
+decision keyed on something the caller influences rather than on an attested
+fact — relocated from token scope into the check request, where it is harder to
+see because the field names are the right ones.
+
+SVID authentication does not close it. §4.2 is explicit that mTLS identifies the
+service and never the user it serves, and a compromised service is inside the
+threat model of §4.8: a service that may assert its own account of a user's
+chain can widen every delegation passing through it.
+
+So the chain has to reach the tier in a form the tier verifies for itself, and
+the proposal takes the direct route. The check request carries the subject's
+credential as presented, and the tier verifies it offline exactly as the
+enforcement point did, deriving `sub`, `act`, `delegation_context` and
+`restrictions` from the verified claims. Parsed fields may still be sent for
+logging and for a cheap pre-flight, but they are advisory: where they disagree
+with the credential the credential wins, and the disagreement is an audit event.
+Forwarding costs no disclosure that has not already happened — the callee holds
+the credential, and the tier is reachable on the internal interface only.
+
+Two consequences are better stated than discovered.
+
+- **A check whose chain cannot be verified cannot be decided safely.** The tier
+  cannot tell an undelegated chain from a delegated one whose context was
+  dropped, and the safe reading of that ambiguity — assume a delegation whose
+  boundary is unknown — denies everything. A deployment that cannot forward
+  credentials to the tier, because a legacy Fernet path or a service in the
+  middle will not pass one on, therefore runs a declared posture on the same
+  footing as §5.3's compatibility mode: set per caller, reported as a
+  capability, and understood as a statement that those enforcement points are
+  trusted to assert chain facts. It must not be the default, and it is the one
+  posture a deployment carrying delegated chains should refuse outright.
+- **A signed chain assertion is the fallback where forwarding is unacceptable.**
+  Keystone can mint at issuance an authenticated, opaque blob binding
+  `(sub, act, delegation_context, restrictions, jti)` that an enforcement point
+  relays without being able to alter it. It costs a claim and a key, and it is
+  strictly weaker than the credential, because it says nothing about whether
+  that credential is still live — so it is named as a fallback rather than
+  offered as a preference (§10, question 10).
+
+The cache key follows from the same argument. A cache keyed on
+`(subject, target)` alone lets an entry minted for a subject's full authority
+answer a delegated or restricted call from the same subject on the same target,
+which is the escalation above arriving one cache hit later. The key is
+`(subject, chain, target)`, where the chain component is a digest of exactly the
+facts items 3 and 4 consume; an undelegated, unrestricted chain digests to a
+constant, so the ordinary case still shares entries. The request-scoped memo
+below keys the same way, and sizing follows the key — a deployment with heavy
+delegated traffic holds more entries than the `(subject, target)` estimate of
+§2.2 implies.
+
+One input deliberately stays outside the evaluation. The tier knows which
+service is calling, because it authenticates every caller by SVID on the
+internal interface, and it uses that for traffic classes and for the fail
+posture (§8) — but it does not fold it into the grant decision. A rule such as
+"only `nova-api` may call `create_port` with `device_owner=compute:*`" (§7.4) is
+local policy at the callee, where `service_credentials` is already part of the
+input (§6.2), and not a central grant. Making the acting service a dimension of
+a grant multiplies the grant space by the service catalog, and it belongs with
+resource-level targets (§6.5) if it is taken up at all. The division is the
+point: the tier answers "may this subject do this here", never "may this service
+ask".
+
+#### Answering enough questions discloses the graph
+
+A caller that may ask about any subject, any target and any operation can
+reconstruct the grant graph a batch at a time. That is the same disclosure this
+section refuses to make in bulk when it rejects grant-graph replication, so
+refusing the bundle while serving an unmetered oracle over the same facts would
+be a distinction without a difference. Three limits come with the API:
+
+- **A caller asks about a subject presenting to it.** The ordinary case is
+  self-evident — an enforcement point checks the credential it just received —
+  and the forwarding rule above is what makes the limit enforceable rather than
+  advisory, because the credential is the caller's proof that the subject is
+  in fact presenting. Asking about a subject whose credential the caller does
+  not hold is a separate, separately granted capability.
+- **A caller's target range is bounded where its own reach is.** A core service
+  serving arbitrary projects needs no bound; a registered third-party
+  integration is registered against the domains or projects it serves, and a
+  check outside that set is refused rather than answered. Refused and denied are
+  different answers, and only one of them declines to say whether the grant
+  exists.
+- **Enumeration is measured.** Distinct-subject rate and denial rate per caller
+  class belong in the metrics the tier ships (ADR 0031), because a caller
+  walking the graph looks like nothing else on the tier: many distinct subjects
+  at a high deny rate.
+
+The separate capability is worth naming, because operators need it and it is
+exactly the oracle in administrative clothing. "Which of these operations may
+this user perform on this project" is the question an administrator asks while
+debugging a permission, and answering it is a privileged read of the grant
+graph, audited as one and granted to tooling rather than to anything on the data
+path.
 
 #### This is the new hot path; design it like one
 
@@ -1068,12 +1203,11 @@ It also delivers what no per-subject scheme can, namely near-instant
 propagation of new grants as well as revocations, and it lets the lifetime of
 Option B be much longer between changes. The costs are real and bounded: every
 assignment write empties every cache in the cloud, so the re-check herd needs
-the jitter and per-`(subject, target)` coalescing that §9 already requires of
-the check type, and in a cloud with continuous assignment
-churn the cache never warms. It cannot see writes Keystone does not mediate
-either, so it bounds nothing by itself and has to sit underneath a lifetime
-rather than replace one. The schema cost is one row, which makes it worth
-investigating on the merits.
+the jitter and per-key coalescing that §9 already requires of the check type,
+and in a cloud with continuous assignment churn the cache never warms. It
+cannot see writes Keystone does not mediate either, so it bounds nothing by
+itself and has to sit underneath a lifetime rather than replace one. The schema
+cost is one row, which makes it worth investigating on the merits.
 
 **Option E: push invalidation.** Covered in §8: Keystone has no mechanism for
 pushing anything to services today, so this is new infrastructure rather than a
@@ -1190,11 +1324,11 @@ observed write is not guaranteed current. What that leaves:
 
 | Property | All inputs Keystone-observable | Any input externally written |
 | --- | --- | --- |
-| Freshness bound | the cache lifetime | the cache lifetime |
+| Freshness bound | the cache lifetime, plus the serving tier's replication lag (§8) | the cache lifetime, plus the store's own replication lag (§8) |
 | Early drop | reachable in principle, per domain (Option D) | not reachable |
-| Revocation latency bound | the lifetime | the lifetime, plus relation-sync lag for the memberships Keystone syncs |
+| Revocation latency bound | the lifetime plus replication lag | the lifetime plus replication lag, plus relation-sync lag for the memberships Keystone syncs |
 | Local evaluation of grants | technically possible, refused (§10, question 8) | structurally impossible: a decision is a graph traversal, not a fact to copy |
-| Operator's freshness dial | the lifetime | the lifetime |
+| Operator's freshness dial | the lifetime; the lag is a deployment property, not a dial | the lifetime; the lag is a deployment property, not a dial |
 
 The columns very nearly converge, and that is the payoff of not building Option
 F: one operator-visible freshness model across every driver, instead of a SQL
@@ -1209,10 +1343,12 @@ which is Option D by another route and weaker than invalidation.
 
 So the contract is deliberately small, and the same on every driver:
 
-- A decision cache keyed on `(subject, target)` sits in front of
-  `/v4/authz/check`; the live call happens on a miss or on expiry. Running with
-  the cache disabled is supported (Option A) and is the correct posture for a
-  deployment that cannot act on a stale allow.
+- A decision cache keyed on `(subject, chain, target)` sits in front of
+  `/v4/authz/check`; the live call happens on a miss or on expiry. The chain
+  component is mandatory, not an optimization: without it an entry minted for a
+  subject's full authority answers that subject's delegated and restricted
+  calls. Running with the cache disabled is supported (Option A) and is the
+  correct posture for a deployment that cannot act on a stale allow.
 - Each result carries its own lifetime, chosen by the tier and clamped by the
   operator (Options B and C). Sixty seconds is the default; a decision derived
   from a credential or delegation that expires sooner is clamped to it.
@@ -1225,6 +1361,12 @@ So the contract is deliberately small, and the same on every driver:
 - A cloud-wide generation number (Option D) is an investigation, not a
   commitment, and would shorten revocation latency for Keystone-mediated writes
   only.
+- The authoritative audit record sits at the enforcement point, not at the tier.
+  A cached decision produces no tier-side event, so the tier's log covers misses
+  and cannot be read as the record of what the cloud decided. What §5.4 requires
+  logged — subject, `act`, requested scope, resolved target, operation, outcome
+  (ADR 0023) — is logged where the decision was enforced, together with whether
+  it was served fresh, from cache, or under grace (§8).
 
 What actually removes the bulk of the traffic is not the cross-request cache at
 all, but the request-scoped memo below — and that one has no freshness problem
@@ -1298,8 +1440,8 @@ being a per-record round trip:
   is a short-circuit in the _evaluation_, not a relaxation of I8: each item is
   still decided against its own owner, and an item owned outside the grant's
   reach still has to be decided on its own and dropped if denied.
-- **Page-scoped caching.** Decisions are cached per `(subject, target)`, so a
-  page whose rows share few owners costs few distinct decisions.
+- **Page-scoped caching.** Decisions are cached per `(subject, chain, target)`,
+  so a page whose rows share few owners costs few distinct decisions.
 
 The consequence is that cross-project listing is more expensive under this model
 than a system-scoped token that services interpreted themselves, and deployments
@@ -1506,7 +1648,7 @@ The caller holds a decision cache and re-checks on miss or expiry. This needs no
 new transport: `oslo.cache` over memcached is already the deployed pattern for
 token-validation caching, and the `keystone` check type of §9 uses it. What is
 new is capacity rather than software — entries scale with distinct
-`(subject, target)` pairs rather than with tokens (§2.2), so an existing
+`(subject, chain, target)` keys rather than with tokens (§2.2), so an existing
 token-cache deployment is not automatically sized for this.
 
 **Future, and explicitly out of scope for these phases: push invalidation.**
@@ -1532,7 +1674,7 @@ than inferred:
   API is unreachable and no cached decision applies, the request is denied, and
   the cache TTL is the length of the resulting brown-out.
 - Cache sizing is a documented number, not a default. The entry count scales
-  with distinct `(subject, target)` pairs, not with tokens (§2.2), so a
+  with distinct `(subject, chain, target)` keys, not with tokens (§2.2), so a
   multi-project workload sizes differently than today's token cache.
 - Multi-region deployments need a region-local read path for the check API —
   Raft learners or read replicas — because a cross-region round trip on every
@@ -1560,11 +1702,14 @@ declared per caller and per operation:
 Four constraints make this a safety feature rather than a hole, and each is
 load-bearing:
 
-- **The posture is a property of the grant, never of the request.** It is set on
-  the integration's registration or on the service grant (ADR 0036) and returned
-  by the decision tier with the decision. A caller that could ask to be served
-  stale could extend its own revocation window on demand, which is a revocation
-  bypass wearing an availability costume.
+- **The posture is a property of the caller's registration, never of the
+  request.** It is set when the integration is registered and returned by the
+  decision tier with the decision. A caller that could ask to be served stale
+  could extend its own revocation window on demand, which is a revocation bypass
+  wearing an availability costume. A service grant (ADR 0036) is deliberately
+  not a second place to set it: a grant creates a delegated chain, and the third
+  constraint below never grace-serves one, so a posture attached there could
+  never take effect.
 - **Grace replays an earlier allow; it never manufactures one.** Serving a
   stale deny is free, serving a stale allow is the entire risk, and no posture
   turns a deny — cached, fresh or absent — into a permit.
@@ -1609,6 +1754,18 @@ plane. A replacement replica must cold-boot and begin serving with the write
 path down. A tier that can only warm its state by calling the component it
 exists to survive is coupled to it, whatever the deployment diagram says.
 
+The requirement binds whoever owns the inputs, and that is not always the tier.
+Where Keystone owns them — the SQL and Raft drivers — the local copy is the
+tier's own, as a learner or a read replica, and static stability is the tier's
+property to hold and to test. Where a domain's assignments live in an
+externally owned store (ADR 0033), the tier is a client rather than a holder: it
+has no copy to cold-boot from, and static stability becomes a property of that
+store's own replication, to be established there instead. An operator choosing
+that driver is choosing this alongside the freshness ceiling of principle 9, and
+a tier serving both kinds of domain is statically stable for part of its traffic
+and not for the rest — which belongs in the deployment guide rather than in a
+footnote.
+
 **One failure domain per serving tier.** The federated serving layer of §4.4 is
 the definition of a supported high-availability topology, not one option among
 several: a tier per region, no cross-domain call on the read path, and a
@@ -1649,17 +1806,20 @@ same two answers, and the convergence is more useful than any single precedent:
 | --------------- | ------------------------------------------------------------------------ | ------------------------------------------------ | --------------------------------------------------------------------------------- |
 | AWS IAM         | in-region, per-service data plane over asynchronously replicated policy  | eventually consistent, documented as such        | replication only; statically stable by design                                     |
 | GCP (Zanzibar)  | replicated ACL servers per cluster over Spanner                          | snapshot-consistent per request                  | consistency tokens, plus a materialized closure index fed from a changelog        |
-| Azure Entra     | the resource provider evaluates entitlements carried in the token        | role-assignment changes propagate in minutes     | short token lifetime, plus an event channel for a few critical account events     |
+| Azure (Entra + ARM) | ARM's authorization provider, regionally, over replicated role assignments | role-assignment changes propagate in minutes, documented as such | replication plus a short assignment cache; directory- and app-role claims in the token are a separate, narrower path |
 | Kubernetes      | in-process RBAC over a watch-fed cache, or a webhook authorizer          | watch-fed: seconds; webhook: the cache lifetime  | the watch, or authorizer cache lifetimes                                          |
 
 Nobody keeps grant propagation synchronous, and everybody buys availability by
-replicating the evaluator rather than the enforcement point. Azure is the one
-exception on the second count, and it pays with precisely the frozen-scope
-problem §2.1 exists to remove — and even there the push channel carries critical
-account events, not role assignments. Kubernetes' in-process RBAC is the
-grant-graph replication §6.3 refuses, and the reasons it works there do not
-transfer: the graph is small, a cluster is a scope boundary, and there is one
-enforcement point rather than one per service.
+replicating the evaluator rather than the enforcement point. Not one of them
+answers the availability problem by handing the enforcement point the grants:
+where entitlements do ride in a token, as Entra's directory- and app-role claims
+do, it covers a narrow, slow-moving class of authority and carries precisely the
+frozen-scope problem §2.1 exists to remove, which is why it is not the shape
+anything on the resource path uses. Kubernetes is the one place the evaluator
+and the enforcement point coincide, and its in-process RBAC is therefore the
+grant-graph replication §6.3 refuses; the reasons it works there do not
+transfer, because the graph is small, a cluster is a scope boundary, and there
+is one enforcement point rather than one per service.
 
 Four shapes could reduce the coupling further. Only the first is recommended
 now.
@@ -1677,7 +1837,7 @@ now.
   cross-tenant disclosure argument of §6.3 does not apply to it. Identified, not
   committed to — nothing in Phase 2 needs it, and it is new deployment surface
   that should follow measured decision rates rather than precede them (§10,
-  question 10).
+  question 11).
 - **A materialized closure index inside the tier.** Group and hierarchy
   expansion precomputed and incrementally maintained: the Zanzibar answer to the
   same fan-out that Option F of §6.3 tried to put in a token. A scaling lever
@@ -1722,10 +1882,12 @@ trades nominal immediacy for a bound an operator chooses and can read.
 Two consequences follow for how the work is delivered rather than designed. The
 decision tier and the policy bundle both need staged rollout and canarying,
 because correctness blast radius is now as cloud-wide as availability blast
-radius — and the policy bundle is already a named trust boundary with an open
-supply-chain gap (`doc/src/contributor/security-review.md` §V4: a mutable
-`:latest` tag, verification not wired into the load path). And the bet belongs
-in front of operators at adoption time, as §10's open question on it records.
+radius — and the policy bundle is already a named trust boundary with a
+half-closed supply-chain gap (`doc/src/contributor/security-review.md` §V4: the
+publish side signs and verifies its own signature in CI, while the consuming
+side still pulls a mutable `:latest` tag with no verification wired into the
+load path). And the bet belongs in front of operators at adoption time, as
+§10's open question on it records.
 
 ## 9. Migration and coexistence
 
@@ -1769,7 +1931,12 @@ flowchart LR
   resource-owner-wins invariant (§5.1) and, where wanted, opt-in to the
   compatibility mode (§5.3); SDK header support. Tokens are still scoped, so
   this phase adds capability without weakening any credential, and each service
-  migrates on its own schedule.
+  migrates on its own schedule. The operation vocabulary is Phase 3 and unknown
+  operations fail closed from the start (§6.1), so what the check API answers
+  here is role and permission-set resolution on a target — Mode 1 of §9.1 —
+  plus checks for whatever operations a deployment has already registered. Mode
+  2 for a given service waits on the registry, which is why the two are phased
+  apart rather than shipped together.
 - **Phase 2b, scope-less JWT — gated:** may not start until the `restrictions`
   claim, service-type audience narrowing and sender-constrained presentation
   (DPoP for public clients, SPIFFE-ID binding for SVID holders) are all shipped.
@@ -1868,7 +2035,7 @@ Concrete dependencies on other projects:
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `python-keystonemiddleware`    | SPIFFE transport; JWT offline filter; `OpenStack-Target` parsing; `/v4/authz/check` client; `X-Requested-Target`/`X-Actor-*` env; per-service gate for the §5.3 compatibility mode                                                                |
 | `keystoneauth1`                | Device-flow, `v4servicegrant`, `v4onbehalfof` plugins; per-request scope instead of per-session scope                                                                                                                                             |
-| `oslo.policy`                  | A first-class **cache-aware, failure-aware** `keystone` check type wrapping `/v4/authz/check`: `oslo.cache`/memcached-backed decision cache, honouring the per-result lifetimes that let allows and denies be cached on different terms and treating an absent or unrecognised `version` member as lifetime-only (§6.3), request-scoped dedup (§6.3), a circuit breaker whose fallback is the posture delivered with the decision (deny or grace, §8) rather than retry-until-timeout, and jittered recovery with per-`(subject, target)` coalescing so a restored tier is not met by a synchronized re-check herd. Where a local fallback is offered at all it evaluates the service's existing `policy.yaml` against the last known role set (Mode 1), never a bespoke emergency ruleset. The existing `http` check works as a stopgap but provides none of these. Operation registry export |
+| `oslo.policy`                  | A first-class **cache-aware, failure-aware** `keystone` check type wrapping `/v4/authz/check`: `oslo.cache`/memcached-backed decision cache, honouring the per-result lifetimes that let allows and denies be cached on different terms and treating an absent or unrecognised `version` member as lifetime-only (§6.3), request-scoped dedup (§6.3), a circuit breaker whose fallback is the posture delivered with the decision (deny or grace, §8) rather than retry-until-timeout, and jittered recovery with per-cache-key coalescing so a restored tier is not met by a synchronized re-check herd. Where a local fallback is offered at all it evaluates the service's existing `policy.yaml` against the last known role set (Mode 1), never a bespoke emergency ruleset. It is also where the authoritative decision audit record is written, since a cache hit never reaches the tier (§6.3), and it carries the chain digest into the cache key rather than keying on the subject alone (§6.3). The existing `http` check works as a stopgap but provides none of these. Operation registry export |
 | `openstacksdk`, CLI, Terraform | Send `OpenStack-Target`; stop re-authenticating per project                                                                                                                                                                                       |
 | Nova, Neutron, Cinder, Glance  | **Enforce resource-owner-wins (§5.1) on every resource operation** before accepting per-request targets; pass resource owner as `target.scope`; charge quota to the resolved target (§6.6); drop `is_admin` shortcuts and service-token fallbacks |
 | Heat, Magnum, Mistral, Glance  | Service grants / on-behalf-of instead of trusts (ADR 0036 §10)                                                                                                                                                                                    |
@@ -1882,9 +2049,15 @@ Concrete dependencies on other projects:
    for single-resource operations once services support it, and how multi-target
    operations (server migration between projects, image sharing) name a second
    target.
-2. **Where does the operation registry live?** In `oslo.policy` as generated
-   documentation, in Keystone as a resource services register at startup, or in
-   a separate governance-owned document?
+2. **Where does the operation registry live, and who may write to it?** In
+   `oslo.policy` as generated documentation, in Keystone as a resource services
+   register at startup, or in a separate governance-owned document? The second
+   half is the sharper one: because personas are patterns over the catalog
+   (§6.1), a registration is a grant change, so an open self-registration
+   endpoint lets any deployed service widen what every reader in the cloud may
+   do. Whether the write is operator-curated, reviewed at the governance level,
+   or accepted from services with an audit trail and an alert is a decision
+   about who holds a privilege, not about where a file lives.
 3. **Cross-project listing for non-admins.** `system-scope="all"` reuses the
    existing system scope and therefore keys on a system-level grant, exactly as
    today. It leaves untouched the case of a user with roles on many projects who
@@ -1928,7 +2101,18 @@ Concrete dependencies on other projects:
    and what maximum grace window a cloud can impose over a domain's choice are
    governance questions with an API surface, and they should be answered before
    anything ships that can serve a stale allow.
-10. **Is the node-local decision agent part of the target architecture or an
+10. **Does the check API receive the credential, or a signed chain assertion?**
+    §6.3 requires the decision tier to verify the chain facts itself rather than
+    accept an enforcement point's account of them, and recommends the direct
+    route: forward the credential as presented. Forwarding is simpler and
+    strictly stronger, and it discloses nothing the callee does not already
+    hold. It also means every enforcement point hands the user's credential to a
+    second component, which some deployments will read as widening its reach
+    even though the tier is internal-only. A Keystone-minted chain assertion
+    avoids that and gives up liveness. Which is the default, and whether the
+    trusted-asserter compatibility posture is offered at all, should be settled
+    before Phase 2a freezes the request schema.
+11. **Is the node-local decision agent part of the target architecture or an
     optimization held in reserve?** §8 names it and declines to commit. It
     solves real problems — decision caches sized per process rather than per
     host, and no single place to deliver a push invalidation to — and it is the
@@ -1944,19 +2128,24 @@ Concrete dependencies on other projects:
 - [ADR 0002 — Open Policy Agent](adr/0002-open-policy-agent.md)
 - [ADR 0005 — Passkey authentication](adr/0005-auth-passkey.md)
 - [ADR 0008 — Workload federation](adr/0008-federation-workload.md)
+- [ADR 0013 — Expiring group membership](adr/0013-federation-oidc-expiring-group-membership.md)
 - [ADR 0014 — Application credentials](adr/0014-application-credentials.md)
 - [ADR 0017 — Security context](adr/0017-security-context.md)
 - [ADR 0020 — Mapping engine](adr/0020-mapping-engine.md)
 - [ADR 0021 — API-key ingress](adr/0021-api-key-scim.md)
+- [ADR 0022 — Rate limiting](adr/0022-rate-limiting.md)
 - [ADR 0023 — Auditing](adr/0023-audit.md)
+- [ADR 0024 — SCIM v2 provisioning](adr/0024-scim-v2-provisioning.md)
 - [ADR 0025 — Dynamic authentication plugins](adr/0025-dynamic-auth-plugins.md)
 - [ADR 0026 — OAuth2 / OIDC provider](adr/0026-oauth2-oidc-provider.md)
 - [ADR 0030 — Per-request cache](adr/0030-per-request-cache.md)
+- [ADR 0031 — Prometheus metrics](adr/0031-prometheus-metrics.md)
 - [ADR 0032 — Vendor data JWT attestation](adr/0032-vendor-data-jwt.md)
 - [ADR 0033 — OpenFGA assignment driver](adr/0033-openfga-assignment-driver.md)
 - [ADR 0034 — Per-domain assignment drivers](adr/0034-per-domain-assignment-drivers.md)
 - [ADR 0035 — Relation sync provider](adr/0035-relation-sync-provider.md)
 - [ADR 0036 — Service delegation](adr/0036-service-delegation.md)
+- [ADR 0037 — Access-rule enforcement](adr/0037-access-rule-enforcement.md)
 - [Security model](contributor/security-model.md)
 - SPIRE integration plan (`doc/plans/spire-integration.md`)
 - OpenStack community goal: Consistent and Secure Default RBAC
