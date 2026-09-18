@@ -90,6 +90,7 @@
   - [Authentication plugin development](contributor/auth-plugins.md)
   - [Security model](contributor/security-model.md)
   - [Security architecture review](contributor/security-review.md)
+  - [OAuth2 / OIDC provider readiness audit](contributor/oauth2-production-readiness.md)
   - [Architecture Decision Records](adr/index.md)
     - [Record architecture decisions](adr/0001-record-architecture-decisions.md)
     - [Open Policy Agent](adr/0002-open-policy-agent.md)
