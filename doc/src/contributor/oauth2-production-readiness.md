@@ -390,44 +390,45 @@ purge counts** once F-F1 lands.
 ## 3. Roadmap: concrete steps
 
 Ordered so that each step is independently mergeable and the P0 set closes
-first. Estimates are in engineer-days for one contributor familiar with the
+first. Every step is tracked as a GitHub sub-issue of its milestone issue,
+all under umbrella [#939](https://github.com/openstack-experimental/keystone/issues/939). Estimates are in engineer-days for one contributor familiar with the
 codebase.
 
-### R1. Revocation foundation (P0, ~8 days)
+### R1. Revocation foundation (P0, ~8 days) ([#1250](https://github.com/openstack-experimental/keystone/issues/1250))
 
-1. **Add secondary indexes to the session driver**: `user_idx`, `client_idx`,
+1. **[#1255](https://github.com/openstack-experimental/keystone/issues/1255)** **Add secondary indexes to the session driver**: `user_idx`, `client_idx`,
    `domain_idx` for refresh families and device grants, plus an
    `expiry_idx` keyed by `expires_at`. Extend `Oauth2SessionBackend` with
    `list_refresh_families_by_user/client/domain`, `revoke_families_by_*`,
    and `sweep_expired(before: i64)`. (F-A3, F-F1 prerequisite)
-2. **Tombstone instead of delete** on family revocation: add
+2. **[#1256](https://github.com/openstack-experimental/keystone/issues/1256)** **Tombstone instead of delete** on family revocation: add
    `revoked_at: Option<i64>` and `revocation_reason` to `RefreshToken`;
    `redeem_refresh_token` treats a tombstone as `Invalid` without re-raising
    the breach event. (F-F2)
-3. **Session janitor**: `crates/core/src/oauth2_session/janitor.rs`, same
+3. **[#1257](https://github.com/openstack-experimental/keystone/issues/1257)** **Session janitor**: `crates/core/src/oauth2_session/janitor.rs`, same
    shape as `oauth2_key::janitor` (spawn from `keystone.rs`, `run_once`
    testable, CADF maintenance event, per-domain error isolation), sweeping
    `expiry_idx`. Cover with an integration test that creates an abandoned
    pre-auth session and asserts the key is gone after one pass. (F-F1)
-4. **`POST /v4/oauth2/{domain_id}/revoke` (RFC 7009)**: accepts
+4. **[#1258](https://github.com/openstack-experimental/keystone/issues/1258)** **`POST /v4/oauth2/{domain_id}/revoke` (RFC 7009)**: accepts
    `token` + `token_type_hint`; authenticates the client with
    `authenticate_client`; for a refresh token revokes the family only if
    `record.client_id` matches (else 200 per RFC 7009 §2.2 without action,
    and audit); for an access token appends its `jti` to the existing
    `revoked_jtis` list via a new `Oauth2KeyApi::revoke_jti(domain, jti, exp)`.
    Add `revocation_endpoint` to discovery. (F-A1, F-A7)
-5. **Lifecycle hook** `crates/core/src/oauth2_session/hook.rs`: on
+5. **[#1259](https://github.com/openstack-experimental/keystone/issues/1259)** **Lifecycle hook** `crates/core/src/oauth2_session/hook.rs`: on
    `User Delete/Disable`, `Domain Disable/Delete`, and password change
    (`Operation::Update` on `User` with a `password_changed` marker, or a new
    `Operation::Other("password_change")`), call `revoke_families_by_user` /
    `by_domain`. Register next to `Oauth2KeyHook`. (F-A5)
-6. **Re-validate the user on refresh**: in `handle_refresh_token_grant`,
+6. **[#1260](https://github.com/openstack-experimental/keystone/issues/1260)** **Re-validate the user on refresh**: in `handle_refresh_token_grant`,
    fetch the user and require `enabled` and same domain before rotating;
    add `[oauth2] refresh_token_absolute_lifetime_days` (default 90) stored
    as `family_expires_at` on the root and checked on every rotation. (F-A2)
-7. **Client delete revokes families** via `revoke_families_by_client`,
+7. **[#1261](https://github.com/openstack-experimental/keystone/issues/1261)** **Client delete revokes families** via `revoke_families_by_client`,
    making the admin guide true. (F-A4, F-G2)
-8. **Fix F-D1**: move the ownership check into
+8. **[#1262](https://github.com/openstack-experimental/keystone/issues/1262)** **Fix F-D1**: move the ownership check into
    `Oauth2SessionApi::redeem_refresh_token(state, bearer, client_id,
    domain_id)`; return `Invalid` before any write. Unit test: family leaf
    remains unspent after a foreign client presents it.
@@ -437,19 +438,19 @@ Deliverable check: an operator can run `keystone-manage oauth2 revoke
 disable ends OP sessions within one access-token lifetime, and Raft key
 count stays flat under an abandoned-`/authorize` loop.
 
-### R2. Make human grants useful (P0, ~10 days)
+### R2. Make human grants useful (P0, ~10 days) ([#1251](https://github.com/openstack-experimental/keystone/issues/1251))
 
-9. **`userinfo` endpoint** (`GET/POST /{d}/userinfo`, Bearer
+9. **[#1263](https://github.com/openstack-experimental/keystone/issues/1263)** **`userinfo` endpoint** (`GET/POST /{d}/userinfo`, Bearer
    `OidcAccessTokenClaims` or `OpenStackAccessTokenClaims` with `openid`):
    verify with `verify.rs` logic + JTI list, return `sub`, and `name`,
    `preferred_username`, `email` (from the identity provider) gated by
    `profile`/`email` scope. Add `userinfo_endpoint` to discovery. (F-B2,
    F-G3)
-10. **Populate `id_token` standard claims** for `profile`/`email`, and
+10. **[#1264](https://github.com/openstack-experimental/keystone/issues/1264)** **Populate `id_token` standard claims** for `profile`/`email`, and
     **apply `claims_template`** through a small interpolator over
     `${user.id}`, `${user.domain_id}`, `${scope.*}` per ADR §4 with the
     control-character output check. (F-B2)
-11. **`openstack:api` on human grants**: extend `PreAuthSession` /
+11. **[#1265](https://github.com/openstack-experimental/keystone/issues/1265)** **`openstack:api` on human grants**: extend `PreAuthSession` /
     `DeviceCodeGrant` with `requested_authorization: Option<ScopeRequest>`;
     accept `scope=openstack:api openstack:project:<id>` (or RFC 8707
     `resource=`), render a scope picker on the consent page listing the
@@ -459,52 +460,52 @@ count stays flat under an abandoned-`/authorize` loop.
     and `handle_device_code_grant`. Store the chosen scope on the refresh
     family so refresh re-resolves roles at rotation time (closing the ADR
     §11 "Static Roles Window" for refreshed tokens). (F-B1, F-E4)
-12. **Bearer JWT extractor for Keystone's own API**: in
+12. **[#1266](https://github.com/openstack-experimental/keystone/issues/1266)** **Bearer JWT extractor for Keystone's own API**: in
     `crates/core/src/api/auth.rs`, accept `Authorization: Bearer <jwt>`
     whose `iss` matches a local domain issuer, verify with
     `verify_openstack_access_token` against the local key provider and JTI
     list, and hydrate a `ValidatedSecurityContext` from `openstack_context`.
     Must key on the authentication chain per `security-model.md`. (F-B3)
-13. **Introspection endpoint** (`POST /{d}/introspect`, client-authenticated):
+13. **[#1267](https://github.com/openstack-experimental/keystone/issues/1267)** **Introspection endpoint** (`POST /{d}/introspect`, client-authenticated):
     returns `active`, `scope`, `client_id`, `sub`, `exp`, `token_use`,
     consulting the JTI list and, for refresh tokens, family state. Add
     `introspection_endpoint` to discovery and document it as the ADR §13
     back-channel option. (F-A6)
 
-### R3. Conformance and security fixes (P1, ~4 days)
+### R3. Conformance and security fixes (P1, ~4 days) ([#1252](https://github.com/openstack-experimental/keystone/issues/1252))
 
-14. **Discovery correctness** (F-C1): fix the device grant URN, add
+14. **[#1268](https://github.com/openstack-experimental/keystone/issues/1268)** **Discovery correctness** (F-C1): fix the device grant URN, add
     token-exchange URN, `device_authorization_endpoint`,
     `code_challenge_methods_supported`, `token_endpoint_auth_methods_supported`
     (`client_secret_basic`, `client_secret_post`, `none`), full
     `claims_supported`, `revocation_endpoint`, `introspection_endpoint`,
     `userinfo_endpoint`, `authorization_response_iss_parameter_supported`.
     Update the `test_api` discovery test to assert exact values.
-15. **`Cache-Control: no-store` + `Pragma: no-cache`** on every `/token`,
+15. **[#1269](https://github.com/openstack-experimental/keystone/issues/1269)** **`Cache-Control: no-store` + `Pragma: no-cache`** on every `/token`,
     `/device_authorization`, `/userinfo`, `/introspect` response and on every
     HTML page (`security_headers`). (F-C2)
-16. **Rate-limit the device polling arm** with `check_ip` and the per-client
+16. **[#1270](https://github.com/openstack-experimental/keystone/issues/1270)** **Rate-limit the device polling arm** with `check_ip` and the per-client
     limiter, plus a per-`device_code` penalty on `InvalidGrant` (ADR §7.C
     5-minute quiet period) implemented as a governor keyed on
     `sha256(device_code)`. (F-D2)
-17. **Filter the client at device redemption** by `enabled && deleted_at
+17. **[#1271](https://github.com/openstack-experimental/keystone/issues/1271)** **Filter the client at device redemption** by `enabled && deleted_at
     is None && domain_id` (F-D3), and pass the real user as the CADF
     initiator on human-grant success events (F-D6).
-18. **RFC 9207 `iss`** in code and error redirects (F-C3); **RFC 8252
+18. **[#1272](https://github.com/openstack-experimental/keystone/issues/1272)** **RFC 9207 `iss`** in code and error redirects (F-C3); **RFC 8252
     loopback port wildcard** in `redirect_uri` matching for public clients
     (F-C4).
-19. **Require `public_endpoint` for the OP**: refuse `/authorize`,
+19. **[#1273](https://github.com/openstack-experimental/keystone/issues/1273)** **Require `public_endpoint` for the OP**: refuse `/authorize`,
     `/device_authorization`, `/token` and discovery with a logged 503 when
     `[default] public_endpoint` is unset, and derive cookie `Secure` from its
     scheme. (F-D4, F-D5)
-20. **Enforce or remove** `token_endpoint_auth_method` and `require_pkce`
+20. **[#1274](https://github.com/openstack-experimental/keystone/issues/1274)** **Enforce or remove** `token_endpoint_auth_method` and `require_pkce`
     (F-B7). Recommendation: enforce the registered auth method at `/token`,
     keep PKCE unconditional and drop `require_pkce` from the API type in v4
     with a deprecation note.
 
-### R4. Operator-configurable browser UI (P1, ~5 days)
+### R4. Operator-configurable browser UI (P1, ~5 days) ([#1253](https://github.com/openstack-experimental/keystone/issues/1253))
 
-21. **Runtime template override**: add `[oauth2] templates_dir` and
+21. **[#1275](https://github.com/openstack-experimental/keystone/issues/1275)** **Runtime template override**: add `[oauth2] templates_dir` and
     `[oauth2] static_dir`. Keep the askama-compiled templates as the
     fallback; at startup, if `templates_dir` is set, load `login.html`,
     `consent.html`, `device_entry.html`, `device_result.html`, `error.html`
@@ -513,55 +514,55 @@ count stays flat under an abandoned-`/authorize` loop.
     `Renderer` trait so handlers do not care which engine produced the body.
     Serve `static_dir` at `/v4/oauth2/static/` with `Cache-Control` and
     extend the CSP to `style-src 'self'; img-src 'self' data:`.
-22. **Branding knobs without templates**: `[oauth2] ui_product_name`,
+22. **[#1276](https://github.com/openstack-experimental/keystone/issues/1276)** **Branding knobs without templates**: `[oauth2] ui_product_name`,
     `ui_logo_url`, `ui_support_url`, `ui_privacy_url`, exposed to templates
     as a `branding` context; ship a minimal default stylesheet and viewport
     meta. (F-E1, F-E3)
-23. **Client display metadata**: add `name`, `description`, `logo_uri`,
+23. **[#1277](https://github.com/openstack-experimental/keystone/issues/1277)** **Client display metadata**: add `name`, `description`, `logo_uri`,
     `policy_uri`, `tos_uri`, `contacts` to `OAuth2ClientResource` and the
     v4 API type; render `name` (HTML-escaped) instead of `client_id` on
     consent/result pages; make `client_id_for_display` real. (F-D7)
-24. **Second-factor step**: after password success, if the user has TOTP
+24. **[#1278](https://github.com/openstack-experimental/keystone/issues/1278)** **Second-factor step**: after password success, if the user has TOTP
     credentials or a registered passkey (and/or domain policy requires MFA),
     render a second form (`/authorize/mfa`, `/device/mfa`) driving
     `authenticate_by_totp` or the WebAuthn assertion ceremony; set `amr`
     accordingly and record it on the code/grant. (F-E2)
-25. **Federated login through the OP**: on the login page, offer the
+25. **[#1279](https://github.com/openstack-experimental/keystone/issues/1279)** **Federated login through the OP**: on the login page, offer the
     domain's configured upstream IdPs (`federation` provider), redirect
     through the existing OIDC/SAML callback, and complete the pre-auth
     session with the mapped user; `amr = ["federated"]`. (F-E2, larger,
     can trail R4)
-26. **`max_age` and `prompt`**: persist an authenticated browser session
+26. **[#1280](https://github.com/openstack-experimental/keystone/issues/1280)** **`max_age` and `prompt`**: persist an authenticated browser session
     cookie (separate from the pre-auth cookie) with `auth_time`; honour
     `max_age` (ADR §8), `prompt=login|none|consent`, and `login_hint`.
     Add `end_session_endpoint` that clears it. (F-B4)
-27. **Consent memory**: `oauth2:consent:v1:<user>:<client>` with the granted
+27. **[#1281](https://github.com/openstack-experimental/keystone/issues/1281)** **Consent memory**: `oauth2:consent:v1:<user>:<client>` with the granted
     scope set; skip the consent page when the request is a subset; expose
     `GET /v4/users/{id}/oauth2/consents` + `DELETE` for self-service
     revocation (which also revokes that client's families via R1). (F-B5)
 
-### R5. Operations, tests, docs (P1/P2, ~5 days)
+### R5. Operations, tests, docs (P1/P2, ~5 days) ([#1254](https://github.com/openstack-experimental/keystone/issues/1254))
 
-28. **Automatic key rotation** per `signing_key_rotation_days` in
+28. **[#1282](https://github.com/openstack-experimental/keystone/issues/1282)** **Automatic key rotation** per `signing_key_rotation_days` in
     `oauth2_key::janitor` (rotate when `Primary.created_at + days < now`,
     leader-only, CADF event), or delete the option and the doc sentence.
     (F-G1)
-29. **Metrics**: `keystone_oauth2_tokens_issued_total{grant,outcome}`,
+29. **[#1283](https://github.com/openstack-experimental/keystone/issues/1283)** **Metrics**: `keystone_oauth2_tokens_issued_total{grant,outcome}`,
     `keystone_oauth2_refresh_reuse_total`, `keystone_oauth2_device_polls_total{outcome}`,
     `keystone_oauth2_key_rotations_total{kind}`,
     `keystone_oauth2_janitor_purged_total{kind}`; alert on reuse detections.
     (F-I1)
-30. **`keystone-manage oauth2 client create|list|show|delete|rotate-secret`
+30. **[#1284](https://github.com/openstack-experimental/keystone/issues/1284)** **`keystone-manage oauth2 client create|list|show|delete|rotate-secret`
     and `oauth2 revoke --user|--client|--domain`** over the admin UDS. (F-I2)
-31. **`[oauth2] enabled` flag and 404 on SQL-only deployments**; document
+31. **[#1285](https://github.com/openstack-experimental/keystone/issues/1285)** **`[oauth2] enabled` flag and 404 on SQL-only deployments**; document
     the raft requirement up front. (F-I3)
-32. **Live API tests** for `client_credentials`, the full browser
+32. **[#1286](https://github.com/openstack-experimental/keystone/issues/1286)** **Live API tests** for `client_credentials`, the full browser
     `authorization_code` flow via `DeviceBrowser`-style helper, refresh
     rotation and reuse, `/revoke`, `/introspect`, `/userinfo`, and client
     CRUD; regression tests for F-D1/D2/D3/C2; an `openidconnect`-crate RP
     interop test against discovery; a `/token` loadtest transaction.
     (F-H1..H4)
-33. **Docs**: remove the false statements (F-G1/G2/G3), add an
+33. **[#1287](https://github.com/openstack-experimental/keystone/issues/1287)** **Docs**: remove the false statements (F-G1/G2/G3), add an
     "Implementation status" table to ADR 0026 mirroring ADR 0028, mark §6 as
     design-only until a middleware repo exists (F-G4/G5), add the
     `[oauth2]` option table to `configuration/options.md` (F-G6), and add a
