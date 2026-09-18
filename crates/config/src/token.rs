@@ -34,10 +34,22 @@ pub struct TokenProvider {
     /// compromised token.
     #[serde(default = "default_token_expiration")]
     pub expiration: usize,
+    /// Controls whether token revocation is enabled for group role
+    /// assignments. When disabled (default), group role revocations do not
+    /// create revocation events since token validation rebuilds assignments
+    /// at validation time. Enabling this creates revocation events for group
+    /// assignments but may cause overly broad token invalidation.
+    /// Matches Python Keystone's [token] revoke_by_id option.
+    #[serde(default = "default_revoke_by_id")]
+    pub revoke_by_id: bool,
 }
 
 fn default_token_expiration() -> usize {
     3600
+}
+
+fn default_revoke_by_id() -> bool {
+    false
 }
 
 impl Default for TokenProvider {
@@ -45,6 +57,7 @@ impl Default for TokenProvider {
         Self {
             provider: TokenProviderDriver::Fernet,
             expiration: default_token_expiration(),
+            revoke_by_id: default_revoke_by_id(),
         }
     }
 }
