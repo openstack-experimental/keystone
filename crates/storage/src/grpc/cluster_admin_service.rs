@@ -656,6 +656,62 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         Ok(Response::new(result.into()))
     }
 
+    /// Returns the cluster's currently-installed DEK epoch, wrapped under
+    /// this node's own KEK, so a node joining for the first time can adopt
+    /// it instead of its own bootstrap-generated random DEK (ADR 0016-v2
+    /// §2.5.3).
+    ///
+    /// # Security
+    /// Authenticated the same way as `AddLearner` (peer trust-domain check,
+    /// not the `storage-operator` role): this is node-to-node bootstrap
+    /// traffic between cluster peers, not an operator action.
+    ///
+    /// # Consistency
+    /// `current_dek_wrapped` and `retired_deks_wrapped` are two independent
+    /// reads, not one atomic snapshot -- a `RotateDek`/`InstallDek` commit
+    /// landing between them can produce a torn view (e.g. `dek_version`
+    /// still the pre-rotation epoch while `retired` already includes it).
+    /// This is safe, not just tolerated: both fields come from state that
+    /// was itself committed atomically by `InstallDek`'s `batch.commit()`
+    /// (ADR 0016-v2 §6 step 5) before its in-memory `self.dek` swap, so a
+    /// torn read here only ever yields a *valid prior* current/retired
+    /// combination, never a nonexistent one -- the epoch the joiner adopts
+    /// as "current" is always genuinely readable, just possibly one
+    /// rotation behind. The joiner catches up to the true current epoch
+    /// through normal Raft replication once it registers as a learner.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn fetch_dek(
+        &self,
+        request: Request<()>,
+    ) -> Result<Response<pb::raft::FetchDekResponse>, Status> {
+        check_peer_trust_domain(
+            &request,
+            self.spiffe_trust_domains.as_deref(),
+            &self.allowed_peer_svids,
+        )?;
+
+        let (dek_version, wrapped_dek) = self
+            .sm
+            .current_dek_wrapped()
+            .map_err(|e| Status::internal(format!("failed to read current DEK: {e}")))?;
+        let retired = self
+            .sm
+            .retired_deks_wrapped()
+            .map_err(|e| Status::internal(format!("failed to read retired DEKs: {e}")))?
+            .into_iter()
+            .map(|(retired_version, retired_wrapped)| pb::raft::RetiredDek {
+                dek_version: retired_version,
+                wrapped_dek: retired_wrapped,
+            })
+            .collect();
+
+        Ok(Response::new(pb::raft::FetchDekResponse {
+            dek_version,
+            wrapped_dek,
+            retired,
+        }))
+    }
+
     /// Changes the membership of the Raft cluster.
     ///
     /// # Parameters

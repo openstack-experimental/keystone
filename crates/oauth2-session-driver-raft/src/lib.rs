@@ -28,7 +28,11 @@
 //!
 //! Plus secondary indexes, written atomically (`StorageApi::transaction`)
 //! alongside the primary record they describe, keeping revocation and
-//! expiry sweeps a bounded prefix scan instead of a full table scan:
+//! expiry sweeps a prefix scan over just their own index keyspace instead
+//! of a reverse scan over every oauth2 record in the store. Note this is
+//! still a scan of the whole index (`StorageApi` has no range-bounded
+//! query, only prefix), not a scan bounded by `limit`/`before` -- see
+//! `list_expired_impl`.
 //!
 //! - `oauth2:refresh_family_idx:v1:<family_id>:<token_id>` -- family-wide
 //!   fan-out (list/revoke) over a refresh token rotation family.
@@ -126,9 +130,12 @@ const EXPIRY_TS_WIDTH: usize = 20;
 const EXPIRY_IDX_PREFIX: &str = "oauth2:expiry_idx:v1:";
 
 /// Secondary index ordering every session/code/refresh/device record by
-/// `expires_at`, so expiry sweeps are a bounded prefix scan instead of a
-/// full table scan. `kind` distinguishes the record type sharing this
-/// index (`"session"`, `"code"`, `"refresh"`, `"device"`).
+/// `expires_at`, so expiry sweeps scan only this index instead of doing a
+/// reverse scan over every oauth2 record in the store. `list_expired_impl`
+/// still reads the whole index per call (`StorageApi::prefix_index` has no
+/// range-bounded query) and filters/breaks client-side on `before`/`limit`.
+/// `kind` distinguishes the record type sharing this index (`"session"`,
+/// `"code"`, `"refresh"`, `"device"`).
 fn expiry_idx_key(expires_at: i64, kind: &str, primary_key: &str) -> String {
     format!("{EXPIRY_IDX_PREFIX}{expires_at:0>EXPIRY_TS_WIDTH$}:{kind}:{primary_key}")
 }
@@ -586,6 +593,13 @@ impl RaftOauth2SessionBackend {
         before: i64,
         limit: usize,
     ) -> Result<Vec<(String, String)>, Oauth2SessionProviderError> {
+        // `StorageApi::prefix_index` has no range-bounded query, only a
+        // prefix match, so this reads the entire expiry index into memory
+        // on every call regardless of `before`/`limit` -- the loop below
+        // only bounds how many entries end up in `out`, not how many are
+        // fetched. Fine at oauth2-session scale (bounded by live
+        // sessions/codes/refresh tokens/device grants); revisit if
+        // `StorageApi` grows a real range scan.
         let keys = storage
             .prefix_index(EXPIRY_IDX_PREFIX.as_bytes())
             .await

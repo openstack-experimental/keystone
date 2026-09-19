@@ -1317,6 +1317,14 @@ impl Storage {
         self.node_id
     }
 
+    /// Direct access to the underlying state machine store, for callers
+    /// that need the lower-level `FjallStateMachine` API (e.g. `decrypt_state`,
+    /// raw keyspace access) rather than the `StorageApi` request/response
+    /// surface.
+    pub fn state_machine_store(&self) -> &Arc<StateMachineStore> {
+        &self.state_machine_store
+    }
+
     /// Return the current Raft leader node id, if elected.
     pub fn current_leader(&self) -> Option<u64> {
         self.raft.metrics().borrow_watched().current_leader
@@ -1438,6 +1446,87 @@ impl Storage {
     ) -> Result<(), StoreError> {
         let channel = self.tls_client.connect(leader_addr).await?;
         let mut client = ClusterAdminServiceClient::new(channel);
+
+        // Adopt the cluster's current DEK *before* registering as a
+        // learner, so this node never holds its own bootstrap-generated
+        // placeholder DEK once the leader can start replicating to it
+        // (ADR 0016-v2 §2.5.3; GitHub issue #1298: without this, a snapshot
+        // installed after log compaction is encrypted under the leader's
+        // DEK bytes but this node's same-version epoch has different key
+        // bytes, so every decrypt fails GCM verification and the partition
+        // gets quarantined). `add_learner` below is what causes the leader
+        // to start sending replication traffic to this node, so the DEK
+        // swap must complete first.
+        const FETCH_DEK_ATTEMPTS: u32 = 3;
+        const FETCH_DEK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+        let mut fetch_dek_err = None;
+        let mut fetch_resp = None;
+        for attempt in 1..=FETCH_DEK_ATTEMPTS {
+            match tokio::time::timeout(FETCH_DEK_TIMEOUT, client.fetch_dek(())).await {
+                Ok(Ok(resp)) => {
+                    fetch_resp = Some(resp.into_inner());
+                    break;
+                }
+                Ok(Err(status)) => {
+                    fetch_dek_err = Some(eyre!("fetch_dek gRPC call failed: {status}"));
+                }
+                Err(_) => {
+                    fetch_dek_err = Some(eyre!(
+                        "fetch_dek gRPC call timed out after {FETCH_DEK_TIMEOUT:?}"
+                    ));
+                }
+            }
+            tracing::warn!(
+                attempt,
+                max_attempts = FETCH_DEK_ATTEMPTS,
+                error = ?fetch_dek_err,
+                "fetch_dek attempt failed, retrying"
+            );
+            if attempt < FETCH_DEK_ATTEMPTS {
+                tokio::time::sleep(std::time::Duration::from_millis(200 * u64::from(attempt)))
+                    .await;
+            }
+        }
+        let fetch_resp = fetch_resp.ok_or_else(|| {
+            StoreError::Other(
+                fetch_dek_err.unwrap_or_else(|| eyre!("fetch_dek failed with no error recorded")),
+            )
+        })?;
+        self.state_machine_store
+            .install_fetched_dek(fetch_resp.dek_version, &fetch_resp.wrapped_dek)
+            .map_err(|e| {
+                StoreError::Other(eyre!(
+                    "failed to adopt cluster DEK version {}: {e}; this node's KEK material \
+                     must be identical to every other cluster node's KEK (ADR 0016-v2 §2.5)",
+                    fetch_resp.dek_version
+                ))
+            })?;
+        // Also adopt any retired-but-still-readable epochs: a DEK
+        // rotation's background re-encryption sweep is best-effort and
+        // asynchronous, so records under a retired epoch can still be live
+        // when this node joins — without these, decrypting them would fail
+        // the same way records under the current epoch would without the
+        // fetch above.
+        for retired in &fetch_resp.retired {
+            self.state_machine_store
+                .install_fetched_retired_dek(retired.dek_version, &retired.wrapped_dek)
+                .map_err(|e| {
+                    StoreError::Other(eyre!(
+                        "failed to adopt retired cluster DEK version {}: {e}",
+                        retired.dek_version
+                    ))
+                })?;
+        }
+        if !fetch_resp.retired.is_empty() {
+            self.state_machine_store
+                .db()
+                .persist(fjall::PersistMode::SyncAll)?;
+        }
+        tracing::info!(
+            dek_version = fetch_resp.dek_version,
+            retired_count = fetch_resp.retired.len(),
+            "adopted cluster DEK(s) before joining"
+        );
 
         let _resp = client
             .add_learner(tonic::Request::new(AddLearnerRequest {

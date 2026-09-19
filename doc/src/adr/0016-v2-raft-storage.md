@@ -329,6 +329,80 @@ non-duplicable, non-extractable attributes above.
   reliable enough to gate merges on. The PKCS#11 path (§2.5.1), backed by
   SoftHSM2, is the CI-gated path (§1).
 
+#### 2.5.3 Cluster-Wide DEK Distribution
+
+**All cluster nodes MUST share identical KEK material.** §2.1-§2.5 describe
+how a single node wraps/unwraps the DEK; nothing above guarantees that two
+nodes' KEKs agree. Without cluster-wide coordination, `bootstrap_dek`
+generates an independent random DEK on every node's first boot, which is
+silently wrong: log replication tolerates it (each node re-encrypts Raft log
+plaintext under its own DEK on apply), but a joining or lagging node that
+must catch up via `InstallSnapshot` receives ciphertext produced under the
+*leader's* State DEK — if its own same-version epoch has different key
+bytes, every value fails GCM tag verification and the partition is
+quarantined (§10 invariant 5) instead of catching up. The same DEK-key-bytes
+mismatch makes restoring a backup onto a freshly bootstrapped cluster fail
+outright (§7).
+
+**Distribution protocol.** A node joining the cluster for the first time
+calls `FetchDek` (§8) against the leader *before* calling `AddLearner`:
+
+```text
+join_cluster(leader_addr):
+  (dek_version, wrapped_dek, retired[]) = leader.FetchDek()
+  install_fetched_dek(dek_version, wrapped_dek)          // local only, bypasses Raft
+  for (version, wrapped) in retired:
+    install_fetched_retired_dek(version, wrapped)        // local only, bypasses Raft
+  leader.AddLearner(self)
+```
+
+`FetchDek` returns not just the current epoch but every retired-but-still-
+readable one too: a DEK rotation's background re-encryption sweep
+(§6 step 5) is best-effort and asynchronous, so records under a retired
+epoch can still be live on the leader when a node joins. Without also
+fetching those epochs, a joining node could adopt the current DEK
+correctly yet still fail to decrypt any record a rotation hasn't fully
+migrated off its predecessor — the same GCM-verification failure this
+section otherwise fixes, just for the boundary case around a rotation
+rather than the steady-state case.
+
+`install_fetched_dek`/`install_fetched_retired_dek` unwrap their argument
+with the joining node's own KEK and, only on success, write the
+corresponding `_meta:dek:current` / `_meta:dek:retired:<version>` record
+and update the in-memory epoch handle(s) — before the node is visible to
+the leader as a learner, so the leader cannot yet be replicating to it and
+there is no window where the wrong DEK could be used to (mis)encrypt real
+data. Ordering this before `AddLearner` is what makes the swap safe: the
+node's own `data` keyspace is still empty at this point, so the discarded
+bootstrap-generated placeholder DEK never protected any ciphertext. A node
+that is already an initialized cluster member (a restart, not a first join)
+never calls `join_cluster` again and so never re-runs this swap — see
+`ensure_raft_initialized`'s `is_initialized()` guard.
+
+`FetchDek` is authenticated the same way as `AddLearner` (peer trust-domain
+check, §4) — it is inter-node bootstrap traffic, not an operator action, and
+returns the wrapped bytes exactly as stored under the leader's
+`_meta:dek:current` / `_meta:dek:retired:*`, unmodified — no unwrap/rewrap
+round-trip on the leader side, so the leader's own DEK plaintext never
+leaves TPM/PKCS#11-backed protection to construct the response.
+
+**Consequence for TPM/PKCS#11:** because `FetchDek`'s caller unwraps the
+response with its *own* KEK, this protocol only succeeds when every node's
+KEK is symmetric and byte-identical — true for `env` (operators configure
+the same key material on every node) and for PKCS#11/TPM only if the
+operator provisions the *same* underlying AES key into every node's
+token/TPM (e.g. importing one externally-generated AES-256 key rather than
+using each token's own `CKM_AES_KEY_GEN`/TPM key-generation, or using a
+TPM's duplication/import path where the platform supports it). A per-node,
+independently generated PKCS#11 or TPM key — which §2.5.1/§2.5.2's
+"MAY auto-generate on first startup" describes — is cluster-incompatible: a
+joining node's `install_fetched_dek` fails closed with a
+KEK-material-mismatch error and the join aborts rather than silently
+leaving the node with its own placeholder DEK. Provisioning identical
+TPM/PKCS#11 key material across nodes is an out-of-band operator step this
+ADR does not yet automate (no leader-side rewrap-for-joining-node's-public-key
+mechanism exists); it is tracked as follow-up work under GitHub issue #1298.
+
 ---
 
 ## 3. Read Consistency and Data Tiers
