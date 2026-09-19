@@ -179,4 +179,41 @@ pub trait Oauth2SessionBackend: Send + Sync {
         state: &ServiceState,
         device_code: &str,
     ) -> Result<Option<DeviceCodeGrant>, Oauth2SessionProviderError>;
+
+    /// List the refresh token family ids for `user_id` within `domain_id`
+    /// -- backs "revoke all my sessions" without a full table scan.
+    async fn list_refresh_families_by_user(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        user_id: &str,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError>;
+
+    /// List the refresh token family ids issued to `client_id` -- backs
+    /// per-client revocation (e.g. a compromised or deregistered client).
+    async fn list_refresh_families_by_client(
+        &self,
+        state: &ServiceState,
+        client_id: &str,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError>;
+
+    /// List the refresh token family ids within `domain_id` -- backs
+    /// domain-wide revocation.
+    async fn list_refresh_families_by_domain(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError>;
+
+    /// List up to `limit` expired records with `expires_at < before`,
+    /// ordered oldest first, as `(kind, primary_key)` pairs. `kind` is one
+    /// of `"session"`, `"code"`, `"refresh"`, `"device"`. Backs a sweeper
+    /// that reclaims expired pre-auth sessions, authorization codes,
+    /// refresh tokens and device grants without a full table scan.
+    async fn list_expired(
+        &self,
+        state: &ServiceState,
+        before: i64,
+        limit: usize,
+    ) -> Result<Vec<(String, String)>, Oauth2SessionProviderError>;
 }

@@ -23,9 +23,25 @@
 //! - `oauth2:refresh_token:v1:<token_id>` -- one node in a refresh token
 //!   rotation family (`token_id` is a hash of the bearer value, never the
 //!   bearer value itself).
-//! - `oauth2:refresh_family_idx:v1:<family_id>:<token_id>` -- secondary index
-//!   enabling family-wide fan-out (list/revoke) without a reverse scan over
-//!   every refresh token in the store.
+//! - `oauth2:device_code:v1:<device_code>` / `oauth2:device_user_code:v1:<user_code>`
+//!   -- an RFC 8628 device authorization grant, addressable by either code.
+//!
+//! Plus secondary indexes, written atomically (`StorageApi::transaction`)
+//! alongside the primary record they describe, keeping revocation and
+//! expiry sweeps a bounded prefix scan instead of a full table scan:
+//!
+//! - `oauth2:refresh_family_idx:v1:<family_id>:<token_id>` -- family-wide
+//!   fan-out (list/revoke) over a refresh token rotation family.
+//! - `oauth2:refresh_user_idx:v1:<domain_id>:<user_id>:<family_id>` /
+//!   `oauth2:refresh_client_idx:v1:<client_id>:<family_id>` /
+//!   `oauth2:refresh_domain_idx:v1:<domain_id>:<family_id>` -- pure
+//!   index-keyspace keys (no value) mapping a user/client/domain to the
+//!   refresh token families it owns.
+//! - `oauth2:expiry_idx:v1:<expires_at zero-padded i64>:<kind>:<primary_key>`
+//!   -- orders every session/code/refresh/device record by `expires_at`
+//!   for expiry sweeps. Rewritten on refresh rotation: the spent token's
+//!   entry is removed (`mark_refresh_token_spent_impl`) and the rotated
+//!   child gets its own fresh entry (`create_refresh_token_impl`).
 use async_trait::async_trait;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -38,7 +54,7 @@ use openstack_keystone_core::oauth2_session::backend::Oauth2SessionBackend;
 use openstack_keystone_core::plugin_manager::BackendRegistration;
 use openstack_keystone_core_types::oauth2_session::*;
 use openstack_keystone_distributed_storage::{
-    ApiStoreError as StoreError, Metadata, StorageApi, StoreDataEnvelope,
+    ApiStoreError as StoreError, Metadata, Mutation, StorageApi, StoreDataEnvelope,
 };
 
 fn session_key(session_id: &str) -> String {
@@ -67,6 +83,64 @@ fn device_code_key(device_code: &str) -> String {
 
 fn device_user_code_key(user_code: &str) -> String {
     format!("oauth2:device_user_code:v1:{user_code}")
+}
+
+/// Secondary index keyed by (domain_id, user_id) -- lists refresh token
+/// families owned by a user without a reverse scan over every refresh
+/// token in the store. Pure index-keyspace key (no value): the family id
+/// is fully recoverable from the key itself.
+fn refresh_user_idx_key(domain_id: &str, user_id: &str, family_id: &str) -> String {
+    format!("oauth2:refresh_user_idx:v1:{domain_id}:{user_id}:{family_id}")
+}
+
+fn refresh_user_idx_prefix(domain_id: &str, user_id: &str) -> String {
+    format!("oauth2:refresh_user_idx:v1:{domain_id}:{user_id}:")
+}
+
+/// Secondary index keyed by `client_id` -- lists refresh token families
+/// issued to a client (e.g. to revoke everything on client deregistration).
+fn refresh_client_idx_key(client_id: &str, family_id: &str) -> String {
+    format!("oauth2:refresh_client_idx:v1:{client_id}:{family_id}")
+}
+
+fn refresh_client_idx_prefix(client_id: &str) -> String {
+    format!("oauth2:refresh_client_idx:v1:{client_id}:")
+}
+
+/// Secondary index keyed by `domain_id` -- lists refresh token families
+/// within a domain (domain-wide revocation), kept explicit rather than
+/// derived from the user index prefix.
+fn refresh_domain_idx_key(domain_id: &str, family_id: &str) -> String {
+    format!("oauth2:refresh_domain_idx:v1:{domain_id}:{family_id}")
+}
+
+fn refresh_domain_idx_prefix(domain_id: &str) -> String {
+    format!("oauth2:refresh_domain_idx:v1:{domain_id}:")
+}
+
+/// Fixed width of the zero-padded `expires_at` component of an expiry
+/// index key -- wide enough for any non-negative `i64` (max 19 digits),
+/// so lexicographic key order matches numeric `expires_at` order.
+const EXPIRY_TS_WIDTH: usize = 20;
+
+const EXPIRY_IDX_PREFIX: &str = "oauth2:expiry_idx:v1:";
+
+/// Secondary index ordering every session/code/refresh/device record by
+/// `expires_at`, so expiry sweeps are a bounded prefix scan instead of a
+/// full table scan. `kind` distinguishes the record type sharing this
+/// index (`"session"`, `"code"`, `"refresh"`, `"device"`).
+fn expiry_idx_key(expires_at: i64, kind: &str, primary_key: &str) -> String {
+    format!("{EXPIRY_IDX_PREFIX}{expires_at:0>EXPIRY_TS_WIDTH$}:{kind}:{primary_key}")
+}
+
+/// Parses an expiry index key back into `(expires_at, kind, primary_key)`.
+fn parse_expiry_idx_key(key: &str) -> Option<(i64, &str, &str)> {
+    let rest = key.strip_prefix(EXPIRY_IDX_PREFIX)?;
+    let (ts, rest) = rest.split_at_checked(EXPIRY_TS_WIDTH)?;
+    let rest = rest.strip_prefix(':')?;
+    let (kind, primary_key) = rest.split_once(':')?;
+    let expires_at: i64 = ts.parse().ok()?;
+    Some((expires_at, kind, primary_key))
 }
 
 async fn put<T: Serialize>(
@@ -141,9 +215,18 @@ impl RaftOauth2SessionBackend {
             created_at: data.created_at,
             expires_at: data.expires_at,
         };
-        put(storage, session_key(&data.session_id), &record)
-            .await
-            .map_err(store_err)?;
+        let mutations = vec![
+            Mutation::set(
+                session_key(&data.session_id),
+                &record,
+                Metadata::new(),
+                None::<&str>,
+                None,
+            )
+            .map_err(store_err)?,
+            Mutation::set_index(expiry_idx_key(data.expires_at, "session", &data.session_id)),
+        ];
+        storage.transaction(mutations).await.map_err(store_err)?;
         Ok(record)
     }
 
@@ -198,10 +281,22 @@ impl RaftOauth2SessionBackend {
         storage: &dyn StorageApi,
         session_id: &str,
     ) -> Result<(), Oauth2SessionProviderError> {
-        storage
-            .remove(session_key(session_id), None)
+        let existing: Option<PreAuthSession> = get(storage, &session_key(session_id))
             .await
             .map_err(store_err)?;
+        let mut mutations = vec![Mutation::remove(
+            session_key(session_id),
+            None::<&str>,
+            None,
+        )];
+        if let Some(record) = existing {
+            mutations.push(Mutation::remove_index(expiry_idx_key(
+                record.expires_at,
+                "session",
+                session_id,
+            )));
+        }
+        storage.transaction(mutations).await.map_err(store_err)?;
         Ok(())
     }
 
@@ -225,9 +320,18 @@ impl RaftOauth2SessionBackend {
             created_at: data.created_at,
             expires_at: data.expires_at,
         };
-        put(storage, code_key(&data.code), &record)
-            .await
-            .map_err(store_err)?;
+        let mutations = vec![
+            Mutation::set(
+                code_key(&data.code),
+                &record,
+                Metadata::new(),
+                None::<&str>,
+                None,
+            )
+            .map_err(store_err)?,
+            Mutation::set_index(expiry_idx_key(data.expires_at, "code", &data.code)),
+        ];
+        storage.transaction(mutations).await.map_err(store_err)?;
         Ok(record)
     }
 
@@ -246,8 +350,12 @@ impl RaftOauth2SessionBackend {
         // itself grant anything beyond what the legitimate holder of the
         // code could already do once).
         let existing: Option<AuthorizationCode> = get(storage, &key).await.map_err(store_err)?;
-        if existing.is_some() {
-            storage.remove(key, None).await.map_err(store_err)?;
+        if let Some(record) = &existing {
+            let mutations = vec![
+                Mutation::remove(key, None::<&str>, None),
+                Mutation::remove_index(expiry_idx_key(record.expires_at, "code", code)),
+            ];
+            storage.transaction(mutations).await.map_err(store_err)?;
         }
         Ok(existing)
     }
@@ -269,16 +377,37 @@ impl RaftOauth2SessionBackend {
             spent_at: None,
             expires_at: data.expires_at,
         };
-        put(storage, refresh_key(&data.token_id), &record)
-            .await
-            .map_err(store_err)?;
-        put(
-            storage,
-            family_idx_key(&data.family_id, &data.token_id),
-            &data.token_id,
-        )
-        .await
-        .map_err(store_err)?;
+        let mutations = vec![
+            Mutation::set(
+                refresh_key(&data.token_id),
+                &record,
+                Metadata::new(),
+                None::<&str>,
+                None,
+            )
+            .map_err(store_err)?,
+            Mutation::set(
+                family_idx_key(&data.family_id, &data.token_id),
+                &data.token_id,
+                Metadata::new(),
+                None::<&str>,
+                None,
+            )
+            .map_err(store_err)?,
+            Mutation::set_index(refresh_user_idx_key(
+                &record.domain_id,
+                &record.user_id,
+                &record.family_id,
+            )),
+            Mutation::set_index(refresh_client_idx_key(&record.client_id, &record.family_id)),
+            Mutation::set_index(refresh_domain_idx_key(&record.domain_id, &record.family_id)),
+            Mutation::set_index(expiry_idx_key(
+                record.expires_at,
+                "refresh",
+                &record.token_id,
+            )),
+        ];
+        storage.transaction(mutations).await.map_err(store_err)?;
         Ok(record)
     }
 
@@ -303,9 +432,21 @@ impl RaftOauth2SessionBackend {
             .map_err(store_err)?
             .ok_or_else(|| Oauth2SessionProviderError::NotFound(token_id.to_string()))?;
         record.spent_at = Some(spent_at);
-        put(storage, refresh_key(token_id), &record)
-            .await
-            .map_err(store_err)?;
+        // Rewrite the expiry entry on rotation: the spent token no longer
+        // needs to be tracked for expiry sweeps (the rotated child gets
+        // its own fresh entry via `create_refresh_token_impl`).
+        let mutations = vec![
+            Mutation::set(
+                refresh_key(token_id),
+                &record,
+                Metadata::new(),
+                None::<&str>,
+                None,
+            )
+            .map_err(store_err)?,
+            Mutation::remove_index(expiry_idx_key(record.expires_at, "refresh", token_id)),
+        ];
+        storage.transaction(mutations).await.map_err(store_err)?;
         Ok(())
     }
 
@@ -341,17 +482,132 @@ impl RaftOauth2SessionBackend {
         let members = self
             .list_refresh_token_family_impl(storage, family_id)
             .await?;
-        for member in members {
-            storage
-                .remove(refresh_key(&member.token_id), None)
-                .await
-                .map_err(store_err)?;
-            storage
-                .remove(family_idx_key(family_id, &member.token_id), None)
-                .await
-                .map_err(store_err)?;
+        if members.is_empty() {
+            return Ok(());
         }
+        let mut mutations = Vec::new();
+        for member in &members {
+            mutations.push(Mutation::remove(
+                refresh_key(&member.token_id),
+                None::<&str>,
+                None,
+            ));
+            mutations.push(Mutation::remove(
+                family_idx_key(family_id, &member.token_id),
+                None::<&str>,
+                None,
+            ));
+            // Spent members already had their expiry-index entry removed by
+            // `mark_refresh_token_spent_impl` on rotation -- only unspent
+            // members still have one to clean up.
+            if member.spent_at.is_none() {
+                mutations.push(Mutation::remove_index(expiry_idx_key(
+                    member.expires_at,
+                    "refresh",
+                    &member.token_id,
+                )));
+            }
+        }
+        // The user/client/domain indexes are keyed by family_id, not by
+        // individual token_id, so every member shares the same entry --
+        // remove it once, using any member's (constant across rotation)
+        // domain/client/user ids.
+        if let Some(first) = members.first() {
+            mutations.push(Mutation::remove_index(refresh_user_idx_key(
+                &first.domain_id,
+                &first.user_id,
+                family_id,
+            )));
+            mutations.push(Mutation::remove_index(refresh_client_idx_key(
+                &first.client_id,
+                family_id,
+            )));
+            mutations.push(Mutation::remove_index(refresh_domain_idx_key(
+                &first.domain_id,
+                family_id,
+            )));
+        }
+        storage.transaction(mutations).await.map_err(store_err)?;
         Ok(())
+    }
+
+    async fn list_refresh_families_by_user_impl(
+        &self,
+        storage: &dyn StorageApi,
+        domain_id: &str,
+        user_id: &str,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError> {
+        let prefix = refresh_user_idx_prefix(domain_id, user_id);
+        let keys = storage
+            .prefix_index(prefix.as_bytes())
+            .await
+            .map_err(store_err)?;
+        Ok(keys
+            .into_iter()
+            .map(|k| k[prefix.len()..].to_string())
+            .collect())
+    }
+
+    async fn list_refresh_families_by_client_impl(
+        &self,
+        storage: &dyn StorageApi,
+        client_id: &str,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError> {
+        let prefix = refresh_client_idx_prefix(client_id);
+        let keys = storage
+            .prefix_index(prefix.as_bytes())
+            .await
+            .map_err(store_err)?;
+        Ok(keys
+            .into_iter()
+            .map(|k| k[prefix.len()..].to_string())
+            .collect())
+    }
+
+    async fn list_refresh_families_by_domain_impl(
+        &self,
+        storage: &dyn StorageApi,
+        domain_id: &str,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError> {
+        let prefix = refresh_domain_idx_prefix(domain_id);
+        let keys = storage
+            .prefix_index(prefix.as_bytes())
+            .await
+            .map_err(store_err)?;
+        Ok(keys
+            .into_iter()
+            .map(|k| k[prefix.len()..].to_string())
+            .collect())
+    }
+
+    async fn list_expired_impl(
+        &self,
+        storage: &dyn StorageApi,
+        before: i64,
+        limit: usize,
+    ) -> Result<Vec<(String, String)>, Oauth2SessionProviderError> {
+        let keys = storage
+            .prefix_index(EXPIRY_IDX_PREFIX.as_bytes())
+            .await
+            .map_err(store_err)?;
+        let mut out = Vec::new();
+        for key in &keys {
+            if out.len() >= limit {
+                break;
+            }
+            let Some((expires_at, kind, primary_key)) = parse_expiry_idx_key(key) else {
+                continue;
+            };
+            if expires_at >= before {
+                // `prefix_index` returns keys in lexicographic order, which
+                // matches numeric `expires_at` order for the fixed-width
+                // zero-padded timestamp -- everything from here on is not
+                // yet expired.
+                break;
+            }
+            out.push((kind.to_string(), primary_key.to_string()));
+        }
+        Ok(out)
     }
 
     async fn create_device_code_grant_impl(
@@ -375,16 +631,26 @@ impl RaftOauth2SessionBackend {
             created_at: data.created_at,
             expires_at: data.expires_at,
         };
-        put(storage, device_code_key(&data.device_code), &record)
-            .await
-            .map_err(store_err)?;
-        put(
-            storage,
-            device_user_code_key(&data.user_code),
-            &data.device_code,
-        )
-        .await
-        .map_err(store_err)?;
+        let mutations = vec![
+            Mutation::set(
+                device_code_key(&data.device_code),
+                &record,
+                Metadata::new(),
+                None::<&str>,
+                None,
+            )
+            .map_err(store_err)?,
+            Mutation::set(
+                device_user_code_key(&data.user_code),
+                &data.device_code,
+                Metadata::new(),
+                None::<&str>,
+                None,
+            )
+            .map_err(store_err)?,
+            Mutation::set_index(expiry_idx_key(data.expires_at, "device", &data.device_code)),
+        ];
+        storage.transaction(mutations).await.map_err(store_err)?;
         Ok(record)
     }
 
@@ -475,14 +741,12 @@ impl RaftOauth2SessionBackend {
             .await
             .map_err(store_err)?;
         if let Some(record) = &existing {
-            storage
-                .remove(device_code_key(device_code), None)
-                .await
-                .map_err(store_err)?;
-            storage
-                .remove(device_user_code_key(&record.user_code), None)
-                .await
-                .map_err(store_err)?;
+            let mutations = vec![
+                Mutation::remove(device_code_key(device_code), None::<&str>, None),
+                Mutation::remove(device_user_code_key(&record.user_code), None::<&str>, None),
+                Mutation::remove_index(expiry_idx_key(record.expires_at, "device", device_code)),
+            ];
+            storage.transaction(mutations).await.map_err(store_err)?;
         }
         Ok(existing)
     }
@@ -678,6 +942,44 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
         device_code: &str,
     ) -> Result<Option<DeviceCodeGrant>, Oauth2SessionProviderError> {
         self.take_device_code_grant_impl(self.storage(state)?, device_code)
+            .await
+    }
+
+    async fn list_refresh_families_by_user(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        user_id: &str,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError> {
+        self.list_refresh_families_by_user_impl(self.storage(state)?, domain_id, user_id)
+            .await
+    }
+
+    async fn list_refresh_families_by_client(
+        &self,
+        state: &ServiceState,
+        client_id: &str,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError> {
+        self.list_refresh_families_by_client_impl(self.storage(state)?, client_id)
+            .await
+    }
+
+    async fn list_refresh_families_by_domain(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError> {
+        self.list_refresh_families_by_domain_impl(self.storage(state)?, domain_id)
+            .await
+    }
+
+    async fn list_expired(
+        &self,
+        state: &ServiceState,
+        before: i64,
+        limit: usize,
+    ) -> Result<Vec<(String, String)>, Oauth2SessionProviderError> {
+        self.list_expired_impl(self.storage(state)?, before, limit)
             .await
     }
 }
@@ -1029,6 +1331,296 @@ mod tests {
                 .await
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_refresh_family_indexes_round_trip() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_refresh_token_impl(&storage, sample_refresh_create("token-1", "family-1"))
+            .await
+            .unwrap();
+        let mut other_family = sample_refresh_create("token-2", "family-2");
+        other_family.client_id = "client-2".to_string();
+        other_family.user_id = "user-2".to_string();
+        other_family.domain_id = "domain-2".to_string();
+        backend
+            .create_refresh_token_impl(&storage, other_family)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            backend
+                .list_refresh_families_by_user_impl(&storage, "domain-1", "user-1")
+                .await
+                .unwrap(),
+            vec!["family-1".to_string()]
+        );
+        assert_eq!(
+            backend
+                .list_refresh_families_by_client_impl(&storage, "client-1")
+                .await
+                .unwrap(),
+            vec!["family-1".to_string()]
+        );
+        assert_eq!(
+            backend
+                .list_refresh_families_by_domain_impl(&storage, "domain-1")
+                .await
+                .unwrap(),
+            vec!["family-1".to_string()]
+        );
+        // The second family must not show up under the first family's keys.
+        assert!(
+            backend
+                .list_refresh_families_by_user_impl(&storage, "domain-1", "user-2")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_refresh_family_indexes_share_entry_across_rotation() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_refresh_token_impl(&storage, sample_refresh_create("token-1", "family-1"))
+            .await
+            .unwrap();
+        let mut child = sample_refresh_create("token-2", "family-1");
+        child.parent_token_id = Some("token-1".to_string());
+        backend
+            .create_refresh_token_impl(&storage, child)
+            .await
+            .unwrap();
+
+        // Rotation within the same family must not duplicate the index
+        // entry (it is keyed by family_id, not token_id).
+        assert_eq!(
+            backend
+                .list_refresh_families_by_user_impl(&storage, "domain-1", "user-1")
+                .await
+                .unwrap(),
+            vec!["family-1".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_revoke_refresh_token_family_clears_all_indexes() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_refresh_token_impl(&storage, sample_refresh_create("token-1", "family-1"))
+            .await
+            .unwrap();
+
+        backend
+            .revoke_refresh_token_family_impl(&storage, "family-1")
+            .await
+            .unwrap();
+
+        assert!(
+            backend
+                .list_refresh_families_by_user_impl(&storage, "domain-1", "user-1")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            backend
+                .list_refresh_families_by_client_impl(&storage, "client-1")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            backend
+                .list_refresh_families_by_domain_impl(&storage, "domain-1")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            backend
+                .list_expired_impl(&storage, i64::MAX, 100)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_expired_honours_before_and_limit_and_ordering() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_pre_auth_session_impl(&storage, sample_session_create())
+            .await
+            .unwrap();
+        let mut code = sample_code_create();
+        code.code = "code-early".to_string();
+        code.expires_at = 500;
+        backend
+            .create_authorization_code_impl(&storage, code)
+            .await
+            .unwrap();
+        backend
+            .create_refresh_token_impl(&storage, sample_refresh_create("token-1", "family-1"))
+            .await
+            .unwrap();
+        backend
+            .create_device_code_grant_impl(&storage, sample_device_grant_create())
+            .await
+            .unwrap();
+
+        // Only the two records with the lowest expires_at (500, 1600 --
+        // the auth code and the device grant) precede `before = 2000`;
+        // the pre-auth session (2000) and refresh token (~2.6M) don't.
+        let expired = backend
+            .list_expired_impl(&storage, 2000, 100)
+            .await
+            .unwrap();
+        assert_eq!(
+            expired,
+            vec![
+                ("code".to_string(), "code-early".to_string()),
+                ("device".to_string(), "device-code-1".to_string()),
+            ]
+        );
+
+        // `limit` caps the result even when more entries are expired.
+        let limited = backend.list_expired_impl(&storage, 2000, 1).await.unwrap();
+        assert_eq!(
+            limited,
+            vec![("code".to_string(), "code-early".to_string())]
+        );
+
+        // A generous `before` picks up everything, in expiry order.
+        let all = backend
+            .list_expired_impl(&storage, i64::MAX, 100)
+            .await
+            .unwrap();
+        assert_eq!(
+            all,
+            vec![
+                ("code".to_string(), "code-early".to_string()),
+                ("device".to_string(), "device-code-1".to_string()),
+                ("session".to_string(), "session-1".to_string()),
+                ("refresh".to_string(), "token-1".to_string()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_take_authorization_code_removes_expiry_entry() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_authorization_code_impl(&storage, sample_code_create())
+            .await
+            .unwrap();
+
+        backend
+            .take_authorization_code_impl(&storage, "code-1")
+            .await
+            .unwrap();
+
+        assert!(
+            backend
+                .list_expired_impl(&storage, i64::MAX, 100)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_pre_auth_session_removes_expiry_entry() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_pre_auth_session_impl(&storage, sample_session_create())
+            .await
+            .unwrap();
+
+        backend
+            .delete_pre_auth_session_impl(&storage, "session-1")
+            .await
+            .unwrap();
+
+        assert!(
+            backend
+                .list_expired_impl(&storage, i64::MAX, 100)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_take_device_code_grant_removes_expiry_entry() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_device_code_grant_impl(&storage, sample_device_grant_create())
+            .await
+            .unwrap();
+
+        backend
+            .take_device_code_grant_impl(&storage, "device-code-1")
+            .await
+            .unwrap();
+
+        assert!(
+            backend
+                .list_expired_impl(&storage, i64::MAX, 100)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mark_refresh_token_spent_rewrites_expiry_entry() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_refresh_token_impl(&storage, sample_refresh_create("token-1", "family-1"))
+            .await
+            .unwrap();
+        assert_eq!(
+            backend
+                .list_expired_impl(&storage, i64::MAX, 100)
+                .await
+                .unwrap(),
+            vec![("refresh".to_string(), "token-1".to_string())]
+        );
+
+        backend
+            .mark_refresh_token_spent_impl(&storage, "token-1", 2000)
+            .await
+            .unwrap();
+
+        // Spent tokens drop out of the expiry sweep; the primary record is
+        // untouched (still readable, `spent_at` set).
+        assert!(
+            backend
+                .list_expired_impl(&storage, i64::MAX, 100)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            backend
+                .get_refresh_token_impl(&storage, "token-1")
+                .await
+                .unwrap()
+                .unwrap()
+                .spent_at
+                .is_some()
         );
     }
 }
