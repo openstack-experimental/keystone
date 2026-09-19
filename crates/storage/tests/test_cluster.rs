@@ -23,7 +23,9 @@ use std::thread;
 use std::time::Duration;
 
 use eyre::Result;
+use openraft::LogIdOptionExt;
 use openraft::async_runtime::AsyncRuntime;
+use openraft::async_runtime::WatchReceiver;
 use openraft::type_config::TypeConfigExt;
 use openraft::type_config::alias::AsyncRuntimeOf;
 use rcgen::{
@@ -1847,12 +1849,15 @@ async fn test_replication_race_delete_stale_inner() -> Result<()> {
 /// issue #1293) -- so a snapshot-caught-up learner's `get_by_key` would
 /// return `None` for reasons unrelated to this fix. Reproducing the
 /// specific "learner catch-up via InstallSnapshot after log compaction"
-/// scenario from the issue turned out to hit a further, pre-existing gap
-/// in this test harness (a purged-log leader never resumes replicating to
-/// a newly added learner at all, independent of `join_cluster`/DEKs --
-/// confirmed by bisecting to a raw `add_learner` call), so this test joins
-/// before any compaction, which already exercises the DEK-adoption logic
-/// this issue is about.
+/// scenario from the issue originally hit a further, separate bug (GitHub
+/// issue #1329: a purged-log leader never resumed replicating to a newly
+/// added learner, independent of `join_cluster`/DEKs -- confirmed by
+/// bisecting to a raw `add_learner` call). That bug is now fixed and has
+/// its own regression test,
+/// `test_purge_then_join_learner_catches_up_via_snapshot`; this test still
+/// joins before any compaction, since post-compaction catch-up is that
+/// other test's concern and joining early is sufficient to exercise the
+/// DEK-adoption logic this issue is about.
 const JOIN_DEK_PORT_BASE: u16 = 400;
 
 #[test]
@@ -2015,6 +2020,161 @@ async fn test_join_adopts_cluster_dek_inner() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// GitHub issue #1329 regression test: after the leader's log is
+/// snapshotted and purged, a learner added afterward must still catch up
+/// (via `InstallSnapshot`, since the log entries it would need are gone).
+///
+/// Before the fix, `NetworkConnection::full_snapshot` (`network.rs`) awaited
+/// the client-streaming `Snapshot` RPC's response *before* sending anything
+/// into the channel backing its request stream. Since the server (see
+/// `RaftServiceImpl::snapshot`) does not reply until it has read the whole
+/// request stream, and nothing else drives that channel, the leader's
+/// snapshot-transmitter task deadlocked against itself on every attempt to
+/// install a snapshot -- silently, since the surrounding retry loop only
+/// logs on `Err`, and a hung `.await` produces neither an `Err` nor any
+/// further tracing. The purged learner then never left `RaftMetrics.snapshot
+/// = None`, regardless of how long the leader kept retrying.
+const PURGE_JOIN_PORT_BASE: u16 = 600;
+
+#[serial_test::serial]
+#[tracing_test::traced_test]
+#[test]
+fn test_purge_then_join_learner_catches_up_via_snapshot() {
+    TypeConfig::run(async {
+        test_purge_then_join_learner_catches_up_via_snapshot_inner()
+            .await
+            .unwrap();
+    });
+}
+
+async fn test_purge_then_join_learner_catches_up_via_snapshot_inner() -> Result<()> {
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+
+    let tls_configuration = make_certificates()?;
+
+    let instance1 = Arc::new(
+        InstanceHolder::new_with_port(1, PURGE_JOIN_PORT_BASE, tls_configuration.clone()).await?,
+    );
+    let inst1 = instance1.clone();
+    let _h1 = thread::spawn(move || {
+        let mut rt = AsyncRuntimeOf::<TypeConfig>::new(1);
+        let x = rt.block_on(start_raft_app(&inst1.config, &inst1.storage));
+        println!("node 1 raft app exit result: {:?}", x);
+    });
+    TypeConfig::sleep(Duration::from_millis(200)).await;
+
+    let tls_client_config = get_client_tls_config(&instance1.config)?;
+    let mut admin_client1 = new_admin_client(
+        instance1
+            .config
+            .distributed_storage
+            .as_ref()
+            .unwrap()
+            .node_cluster_addr
+            .clone(),
+        &tls_client_config,
+    )
+    .await?;
+
+    admin_client1
+        .init(pb::raft::InitRequest {
+            nodes: vec![new_node_with_port(1, PURGE_JOIN_PORT_BASE)],
+        })
+        .await?;
+    wait_for_leader(&mut admin_client1, 1).await;
+
+    const NUM_KEYS: usize = 20;
+    for i in 0..NUM_KEYS {
+        instance1
+            .storage
+            .set_value(format!("k{i}"), make_env(&format!("v{i}"))?, None, None)
+            .await?;
+    }
+    TypeConfig::sleep(Duration::from_millis(200)).await;
+
+    let upto = instance1
+        .storage
+        .last_log_index()
+        .ok_or_else(|| eyre::eyre!("node 1 must have a non-empty log after writes"))?;
+    println!("=== triggering snapshot at last_log_index={upto}");
+    instance1.storage.raft.trigger().snapshot().await?;
+    poll_until(Duration::from_millis(100), 100, || {
+        instance1
+            .storage
+            .raft
+            .metrics()
+            .borrow_watched()
+            .snapshot
+            .is_some()
+    })
+    .await;
+    let snapshot_log_id = instance1.storage.raft.metrics().borrow_watched().snapshot;
+    println!("=== snapshot built: {:?}", snapshot_log_id);
+    assert!(snapshot_log_id.is_some(), "snapshot never completed");
+
+    println!("=== triggering purge_log upto={upto}");
+    instance1.storage.raft.trigger().purge_log(upto).await?;
+    poll_until(Duration::from_millis(100), 100, || {
+        instance1
+            .storage
+            .raft
+            .metrics()
+            .borrow_watched()
+            .purged
+            .index()
+            >= Some(upto)
+    })
+    .await;
+    let purged = instance1.storage.raft.metrics().borrow_watched().purged;
+    println!("=== purged: {:?}", purged);
+    assert!(purged.index() >= Some(upto), "purge never completed");
+
+    // --- Bring up node 2 fresh, after the leader's log is already purged.
+    let instance2 = Arc::new(
+        InstanceHolder::new_with_port(2, PURGE_JOIN_PORT_BASE, tls_configuration.clone()).await?,
+    );
+    let inst2 = instance2.clone();
+    let _h2 = thread::spawn(move || {
+        let mut rt = AsyncRuntimeOf::<TypeConfig>::new(1);
+        let x = rt.block_on(start_raft_app(&inst2.config, &inst2.storage));
+        println!("node 2 raft app exit result: {:?}", x);
+    });
+    TypeConfig::sleep(Duration::from_millis(200)).await;
+
+    println!("=== add-learner 2 (post-purge)");
+    admin_client1
+        .add_learner(pb::raft::AddLearnerRequest {
+            node: Some(new_node_with_port(2, PURGE_JOIN_PORT_BASE)),
+        })
+        .await?;
+
+    let caught_up = poll_until(Duration::from_millis(100), 100, || {
+        instance2.storage.last_log_index() >= Some(upto)
+    })
+    .await;
+    assert!(
+        caught_up,
+        "node 2 did not catch up to leader's log index {upto} within 10s \
+         (node 2's last_log_index: {:?})",
+        instance2.storage.last_log_index()
+    );
+
+    Ok(())
+}
+
+/// Polls `cond` every `interval` up to `attempts` times, returning `true` as
+/// soon as it reports done, or `false` if it never does.
+async fn poll_until(interval: Duration, attempts: u32, mut cond: impl FnMut() -> bool) -> bool {
+    for _ in 0..attempts {
+        if cond() {
+            return true;
+        }
+        TypeConfig::sleep(interval).await;
+    }
+    false
 }
 
 async fn new_admin_client(
