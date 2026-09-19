@@ -1826,6 +1826,197 @@ async fn test_replication_race_delete_stale_inner() -> Result<()> {
     Ok(())
 }
 
+/// GitHub issue #1298 regression test: a node joining a cluster that
+/// already has data must adopt the leader's actual DEK instead of its own
+/// first-boot, randomly generated one, so it can decrypt data it receives
+/// via Raft.
+///
+/// Before the fix, `crate::new()` unconditionally bootstraps a fresh,
+/// random per-node DEK at first boot; nothing distributed the cluster's
+/// real DEK to a joining node, so its own epoch-1 key differs from the
+/// leader's epoch-1 key. `Storage::join_cluster` now fetches the leader's
+/// current DEK (`FetchDek`) and installs it locally before registering as
+/// a learner, so the joining node's epoch matches the leader's exactly.
+///
+/// This test exercises `join_cluster` end to end (not a raw `add_learner`
+/// call against an admin client, which every other test in this file
+/// uses and which bypasses the fix entirely) and verifies decryption
+/// directly against the leader's `Metadata`, rather than through
+/// `StorageApi::get_by_key`, because `build_snapshot` does not carry the
+/// per-key `Metadata` keyspace (a separate, already tracked gap: GitHub
+/// issue #1293) -- so a snapshot-caught-up learner's `get_by_key` would
+/// return `None` for reasons unrelated to this fix. Reproducing the
+/// specific "learner catch-up via InstallSnapshot after log compaction"
+/// scenario from the issue turned out to hit a further, pre-existing gap
+/// in this test harness (a purged-log leader never resumes replicating to
+/// a newly added learner at all, independent of `join_cluster`/DEKs --
+/// confirmed by bisecting to a raw `add_learner` call), so this test joins
+/// before any compaction, which already exercises the DEK-adoption logic
+/// this issue is about.
+const JOIN_DEK_PORT_BASE: u16 = 400;
+
+#[test]
+fn test_join_adopts_cluster_dek() {
+    TypeConfig::run(async {
+        test_join_adopts_cluster_dek_inner().await.unwrap();
+    });
+}
+
+async fn test_join_adopts_cluster_dek_inner() -> Result<()> {
+    // Crypto provider may already be installed by a parallel test.
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+
+    let tls_configuration = make_certificates()?;
+
+    // --- Start node 1 alone and bootstrap a single-node cluster.
+    let instance1 = Arc::new(
+        InstanceHolder::new_with_port(1, JOIN_DEK_PORT_BASE, tls_configuration.clone()).await?,
+    );
+    let inst1 = instance1.clone();
+    let _h1 = thread::spawn(move || {
+        let mut rt = AsyncRuntimeOf::<TypeConfig>::new(1);
+        let x = rt.block_on(start_raft_app(&inst1.config, &inst1.storage));
+        println!("raft app exit result: {:?}", x);
+    });
+    TypeConfig::sleep(Duration::from_millis(200)).await;
+
+    let tls_client_config = get_client_tls_config(&instance1.config)?;
+    let mut admin_client1 = new_admin_client(
+        instance1
+            .config
+            .distributed_storage
+            .as_ref()
+            .unwrap()
+            .node_cluster_addr
+            .clone(),
+        &tls_client_config,
+    )
+    .await?;
+
+    admin_client1
+        .init(pb::raft::InitRequest {
+            nodes: vec![new_node_with_port(1, JOIN_DEK_PORT_BASE)],
+        })
+        .await?;
+    wait_for_leader(&mut admin_client1, 1).await;
+
+    // --- Write some keys before node 2 ever exists, so node 2's join has
+    //     to catch up on data encrypted before it was around.
+    const NUM_KEYS: usize = 20;
+    for i in 0..NUM_KEYS {
+        instance1
+            .storage
+            .set_value(format!("k{i}"), make_env(&format!("v{i}"))?, None, None)
+            .await?;
+    }
+    TypeConfig::sleep(Duration::from_millis(500)).await;
+
+    // --- Bring up node 2 completely fresh. By the time `InstanceHolder::new`
+    //     returns, `crate::new()` has already bootstrapped node 2's own
+    //     random, node-local placeholder DEK (lib.rs `bootstrap_dek`'s
+    //     first-boot branch) -- before the fix, this is the DEK node 2 would
+    //     keep forever, regardless of what the leader is using.
+    let instance2 = Arc::new(
+        InstanceHolder::new_with_port(2, JOIN_DEK_PORT_BASE, tls_configuration.clone()).await?,
+    );
+    let inst2 = instance2.clone();
+    let _h2 = thread::spawn(move || {
+        let mut rt = AsyncRuntimeOf::<TypeConfig>::new(1);
+        let x = rt.block_on(start_raft_app(&inst2.config, &inst2.storage));
+        println!("raft app exit result: {:?}", x);
+    });
+    // Wait for node 2's own listener to bind before it registers as a
+    // learner, mirroring `ensure_raft_initialized`'s `listener_bound` wait.
+    TypeConfig::sleep(Duration::from_millis(200)).await;
+
+    // Bare "host:port", matching `new_node()`'s convention (no scheme, no
+    // trailing slash) -- this is the exact string that gets stored as this
+    // node's `Node.rpc_addr` in the Raft membership config and later used
+    // by the leader to dial back for replication, so it must match the
+    // format every other node in this file registers under.
+    let leader_addr = get_addr_with_port(1, JOIN_DEK_PORT_BASE).to_string();
+    let my_addr = get_addr_with_port(2, JOIN_DEK_PORT_BASE).to_string();
+
+    // This is the method under test: it calls `FetchDek` and installs the
+    // returned DEK locally *before* calling `add_learner`, so node 2 never
+    // holds its own bootstrap-generated placeholder DEK once the leader
+    // starts replicating to it.
+    instance2
+        .storage
+        .join_cluster(&leader_addr, &my_addr)
+        .await?;
+
+    // `add_learner`'s blocking wait only guarantees the leader has *some*
+    // replication state for node 2 within its (generous, absolute)
+    // replication-lag threshold -- not that node 2's log has actually
+    // caught up (that threshold trivially passes for logs this short) --
+    // so poll for real catch-up explicitly.
+    let leader_index = instance1
+        .storage
+        .last_log_index()
+        .expect("node 1 must have a non-empty log by now");
+    let mut caught_up = false;
+    for _ in 0..100 {
+        if instance2.storage.last_log_index() >= Some(leader_index) {
+            caught_up = true;
+            break;
+        }
+        TypeConfig::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(
+        caught_up,
+        "node 2 did not catch up to leader's log index {leader_index} within 10s \
+         (node 2's last_log_index: {:?})",
+        instance2.storage.last_log_index()
+    );
+
+    // --- The key assertion: node 2 must decrypt every ciphertext value it
+    //     received, using its own (now leader-adopted) DEK. Node 1 (the
+    //     leader) still has the `Metadata` for tier/dek_version from its own
+    //     write path; reading it from there and decrypting node 2's
+    //     replicated ciphertext with it isolates exactly what issue #1298 is
+    //     about: does node 2's own DEK epoch produce the same key bytes as
+    //     the leader's.
+    for i in 0..NUM_KEYS {
+        let key = format!("k{i}");
+        let metadata = instance1
+            .storage
+            .state_machine_store()
+            .meta()
+            .get(&key)?
+            .map(|raw| Metadata::unpack(raw.as_ref()))
+            .transpose()?
+            .unwrap_or_else(|| panic!("node 1 must have Metadata for {key}"));
+        let ciphertext = instance2
+            .storage
+            .state_machine_store()
+            .data()
+            .get(key.as_bytes())?
+            .unwrap_or_else(|| panic!("node 2 must have ciphertext for {key} after replication"));
+        let plaintext = instance2
+            .storage
+            .state_machine_store()
+            .decrypt_state(
+                ciphertext.as_ref(),
+                metadata.tier as u8,
+                b"data",
+                key.as_bytes(),
+                metadata.dek_version,
+            )
+            .unwrap_or_else(|e| {
+                panic!(
+                    "node 2 must decrypt {key} with its own DEK epoch, matching the leader's \
+                     (GitHub issue #1298): {e}"
+                )
+            });
+        let value: String = rmp_serde::from_slice(&plaintext)?;
+        assert_eq!(format!("v{i}"), value);
+    }
+
+    Ok(())
+}
+
 async fn new_admin_client(
     addr: Uri,
     client_tls_config: &ClientTlsConfig,

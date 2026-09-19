@@ -1317,6 +1317,14 @@ impl Storage {
         self.node_id
     }
 
+    /// Direct access to the underlying state machine store, for callers
+    /// that need the lower-level `FjallStateMachine` API (e.g. `decrypt_state`,
+    /// raw keyspace access) rather than the `StorageApi` request/response
+    /// surface.
+    pub fn state_machine_store(&self) -> &Arc<StateMachineStore> {
+        &self.state_machine_store
+    }
+
     /// Return the current Raft leader node id, if elected.
     pub fn current_leader(&self) -> Option<u64> {
         self.raft.metrics().borrow_watched().current_leader
@@ -1438,6 +1446,36 @@ impl Storage {
     ) -> Result<(), StoreError> {
         let channel = self.tls_client.connect(leader_addr).await?;
         let mut client = ClusterAdminServiceClient::new(channel);
+
+        // Adopt the cluster's current DEK *before* registering as a
+        // learner, so this node never holds its own bootstrap-generated
+        // placeholder DEK once the leader can start replicating to it
+        // (ADR 0016-v2 §2.5.3; GitHub issue #1298: without this, a snapshot
+        // installed after log compaction is encrypted under the leader's
+        // DEK bytes but this node's same-version epoch has different key
+        // bytes, so every decrypt fails GCM verification and the partition
+        // gets quarantined). `add_learner` below is what causes the leader
+        // to start sending replication traffic to this node, so the DEK
+        // swap must complete first.
+        let fetch_resp =
+            tokio::time::timeout(std::time::Duration::from_secs(10), client.fetch_dek(()))
+                .await
+                .map_err(|_| StoreError::Other(eyre!("fetch_dek gRPC call timed out after 10s")))?
+                .map_err(|s| StoreError::Other(eyre!("fetch_dek gRPC call failed: {s}")))?
+                .into_inner();
+        self.state_machine_store
+            .install_fetched_dek(fetch_resp.dek_version, &fetch_resp.wrapped_dek)
+            .map_err(|e| {
+                StoreError::Other(eyre!(
+                    "failed to adopt cluster DEK version {}: {e}; this node's KEK material \
+                     must be identical to every other cluster node's KEK (ADR 0016-v2 §2.5)",
+                    fetch_resp.dek_version
+                ))
+            })?;
+        tracing::info!(
+            dek_version = fetch_resp.dek_version,
+            "adopted cluster DEK before joining"
+        );
 
         let _resp = client
             .add_learner(tonic::Request::new(AddLearnerRequest {

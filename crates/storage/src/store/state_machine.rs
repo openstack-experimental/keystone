@@ -529,6 +529,70 @@ impl FjallStateMachine {
         &self.meta
     }
 
+    /// Returns this node's currently-installed DEK epoch in its on-disk
+    /// wrapped form: `(version, wrapped_bytes)`, as stored under
+    /// `_meta:dek:current`.
+    ///
+    /// Used by the `FetchDek` gRPC handler to hand the cluster's current DEK
+    /// to a node joining for the first time (ADR 0016-v2 §2.5.3) — the
+    /// wrapped bytes are already in the exact format `install_fetched_dek`
+    /// expects, so no unwrap/rewrap round-trip is needed on this (leader)
+    /// side. By the time this node is reachable via gRPC its own startup
+    /// has already run `bootstrap_dek`, which migrates any legacy
+    /// (unversioned) on-disk format in place — so only the current,
+    /// versioned format is ever observed here.
+    pub fn current_dek_wrapped(&self) -> Result<(u32, Vec<u8>), StoreError> {
+        let stored = self.meta.get(META_DEK_CURRENT)?.ok_or_else(|| {
+            crate::StoreError::Other(eyre::eyre!("no DEK installed on this node yet"))
+        })?;
+        let stored = stored.as_ref();
+        if stored.len() < 64 {
+            return Err(crate::StoreError::Other(eyre::eyre!(
+                "invalid DEK stored size: {} bytes",
+                stored.len()
+            )));
+        }
+        let version =
+            u32::from_be_bytes(stored[..4].try_into().map_err(|_| {
+                crate::StoreError::Other(eyre::eyre!("invalid DEK version prefix"))
+            })?);
+        Ok((version, stored[4..].to_vec()))
+    }
+
+    /// Installs a DEK epoch fetched from the cluster leader via `FetchDek`,
+    /// bypassing Raft entirely.
+    ///
+    /// Must only be called once, before this node registers as a learner
+    /// (see `Storage::join_cluster`) — at that point `data` is still empty,
+    /// so overwriting the node's own bootstrap-generated placeholder DEK
+    /// loses no ciphertext. Calling this after the node holds real data
+    /// would strand it under the discarded epoch, since (unlike a
+    /// Raft-replicated `InstallDek`) no `old_deks` retirement entry is
+    /// written here.
+    ///
+    /// Fails closed, without persisting anything, if `wrapped_dek` cannot be
+    /// unwrapped with this node's own KEK — which signals the KEK material
+    /// differs from the leader's (ADR 0016-v2 §2.5), a misconfiguration that
+    /// must abort the join rather than silently fall back to a private DEK.
+    pub fn install_fetched_dek(
+        &self,
+        dek_version: u32,
+        wrapped_dek: &[u8],
+    ) -> Result<(), StoreError> {
+        let raw = self.kek.unwrap_dek(wrapped_dek)?;
+        let locked = LockedKey::from_raw(*raw);
+        let epoch = Arc::new(DekEpoch::from_raw(locked, dek_version)?);
+
+        let mut persisted = dek_version.to_be_bytes().to_vec();
+        persisted.extend_from_slice(wrapped_dek);
+        self.meta.insert(META_DEK_CURRENT, &persisted)?;
+        self.db.persist(PersistMode::SyncAll)?;
+
+        let mut guard = self.dek.write().unwrap_or_else(|p| p.into_inner());
+        *guard = epoch;
+        Ok(())
+    }
+
     /// Return the path to the snapshot directory.
     pub(crate) fn snapshot_dir(&self) -> &std::path::Path {
         &self.snapshot_dir

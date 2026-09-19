@@ -656,6 +656,37 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         Ok(Response::new(result.into()))
     }
 
+    /// Returns the cluster's currently-installed DEK epoch, wrapped under
+    /// this node's own KEK, so a node joining for the first time can adopt
+    /// it instead of its own bootstrap-generated random DEK (ADR 0016-v2
+    /// §2.5.3).
+    ///
+    /// # Security
+    /// Authenticated the same way as `AddLearner` (peer trust-domain check,
+    /// not the `storage-operator` role): this is node-to-node bootstrap
+    /// traffic between cluster peers, not an operator action.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn fetch_dek(
+        &self,
+        request: Request<()>,
+    ) -> Result<Response<pb::raft::FetchDekResponse>, Status> {
+        check_peer_trust_domain(
+            &request,
+            self.spiffe_trust_domains.as_deref(),
+            &self.allowed_peer_svids,
+        )?;
+
+        let (dek_version, wrapped_dek) = self
+            .sm
+            .current_dek_wrapped()
+            .map_err(|e| Status::internal(format!("failed to read current DEK: {e}")))?;
+
+        Ok(Response::new(pb::raft::FetchDekResponse {
+            dek_version,
+            wrapped_dek,
+        }))
+    }
+
     /// Changes the membership of the Raft cluster.
     ///
     /// # Parameters

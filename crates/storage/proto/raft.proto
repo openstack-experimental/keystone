@@ -286,12 +286,28 @@ service ClusterAdminService {
   // state machine. Only invoke against a freshly-bootstrapped single-node
   // cluster before adding learners (see ADR 0016-v2 §7).
   rpc Restore(stream RestoreChunk) returns (AdminResponse) {}
+
+  // FetchDek returns the cluster's currently-installed DEK epoch, wrapped
+  // under the responding node's own KEK. Called by a node joining the
+  // cluster for the first time, before it registers as a learner, so it
+  // adopts the cluster's DEK instead of the random DEK its own first-boot
+  // bootstrap would otherwise generate (ADR 0016-v2 §2.5.3). The caller
+  // must be able to unwrap the returned bytes with its own KEK, which
+  // requires all cluster nodes to share identical KEK material.
+  rpc FetchDek(google.protobuf.Empty) returns (FetchDekResponse) {}
 }
 
 message ClearQuarantineRequest {
   // The keyspace partition to un-quarantine (e.g. "data").
   // Must be non-empty; to clear all partitions issue one request per partition.
   string partition = 1;
+}
+
+message FetchDekResponse {
+  // The current DEK epoch version.
+  uint32 dek_version = 1;
+  // The current DEK, wrapped under the responding node's KEK.
+  bytes wrapped_dek = 2;
 }
 
 message RotateDekRequest {
