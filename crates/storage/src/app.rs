@@ -1472,9 +1472,26 @@ impl Storage {
                     fetch_resp.dek_version
                 ))
             })?;
+        // Also adopt any retired-but-still-readable epochs: a DEK
+        // rotation's background re-encryption sweep is best-effort and
+        // asynchronous, so records under a retired epoch can still be live
+        // when this node joins — without these, decrypting them would fail
+        // the same way records under the current epoch would without the
+        // fetch above.
+        for retired in &fetch_resp.retired {
+            self.state_machine_store
+                .install_fetched_retired_dek(retired.dek_version, &retired.wrapped_dek)
+                .map_err(|e| {
+                    StoreError::Other(eyre!(
+                        "failed to adopt retired cluster DEK version {}: {e}",
+                        retired.dek_version
+                    ))
+                })?;
+        }
         tracing::info!(
             dek_version = fetch_resp.dek_version,
-            "adopted cluster DEK before joining"
+            retired_count = fetch_resp.retired.len(),
+            "adopted cluster DEK(s) before joining"
         );
 
         let _resp = client

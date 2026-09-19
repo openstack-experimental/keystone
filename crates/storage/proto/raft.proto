@@ -287,13 +287,17 @@ service ClusterAdminService {
   // cluster before adding learners (see ADR 0016-v2 §7).
   rpc Restore(stream RestoreChunk) returns (AdminResponse) {}
 
-  // FetchDek returns the cluster's currently-installed DEK epoch, wrapped
-  // under the responding node's own KEK. Called by a node joining the
-  // cluster for the first time, before it registers as a learner, so it
-  // adopts the cluster's DEK instead of the random DEK its own first-boot
-  // bootstrap would otherwise generate (ADR 0016-v2 §2.5.3). The caller
-  // must be able to unwrap the returned bytes with its own KEK, which
-  // requires all cluster nodes to share identical KEK material.
+  // FetchDek returns the cluster's currently-installed DEK epoch plus any
+  // retired-but-still-readable epochs, each wrapped under the responding
+  // node's own KEK. Called by a node joining the cluster for the first
+  // time, before it registers as a learner, so it adopts the cluster's
+  // DEKs instead of the random DEK its own first-boot bootstrap would
+  // otherwise generate (ADR 0016-v2 §2.5.3). Retired epochs matter because
+  // a DEK rotation's background re-encryption sweep is best-effort and
+  // asynchronous, so records under a retired epoch can still be live when
+  // a node joins. The caller must be able to unwrap the returned bytes
+  // with its own KEK, which requires all cluster nodes to share identical
+  // KEK material.
   rpc FetchDek(google.protobuf.Empty) returns (FetchDekResponse) {}
 }
 
@@ -307,6 +311,17 @@ message FetchDekResponse {
   // The current DEK epoch version.
   uint32 dek_version = 1;
   // The current DEK, wrapped under the responding node's KEK.
+  bytes wrapped_dek = 2;
+  // Retired-but-still-readable DEK epochs (records under a retired epoch
+  // may not have finished background re-encryption to the current epoch
+  // yet), each wrapped under the responding node's KEK.
+  repeated RetiredDek retired = 3;
+}
+
+message RetiredDek {
+  // The retired DEK epoch version.
+  uint32 dek_version = 1;
+  // The retired DEK, wrapped under the responding node's KEK.
   bytes wrapped_dek = 2;
 }
 

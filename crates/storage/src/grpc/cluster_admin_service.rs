@@ -680,10 +680,21 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
             .sm
             .current_dek_wrapped()
             .map_err(|e| Status::internal(format!("failed to read current DEK: {e}")))?;
+        let retired = self
+            .sm
+            .retired_deks_wrapped()
+            .map_err(|e| Status::internal(format!("failed to read retired DEKs: {e}")))?
+            .into_iter()
+            .map(|(dek_version, wrapped_dek)| pb::raft::RetiredDek {
+                dek_version,
+                wrapped_dek,
+            })
+            .collect();
 
         Ok(Response::new(pb::raft::FetchDekResponse {
             dek_version,
             wrapped_dek,
+            retired,
         }))
     }
 

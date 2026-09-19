@@ -349,18 +349,31 @@ calls `FetchDek` (§8) against the leader *before* calling `AddLearner`:
 
 ```text
 join_cluster(leader_addr):
-  (dek_version, wrapped_dek) = leader.FetchDek()
-  install_fetched_dek(dek_version, wrapped_dek)  // local only, bypasses Raft
+  (dek_version, wrapped_dek, retired[]) = leader.FetchDek()
+  install_fetched_dek(dek_version, wrapped_dek)          // local only, bypasses Raft
+  for (version, wrapped) in retired:
+    install_fetched_retired_dek(version, wrapped)        // local only, bypasses Raft
   leader.AddLearner(self)
 ```
 
-`install_fetched_dek` unwraps `wrapped_dek` with the joining node's own KEK
-and, only on success, overwrites `_meta:dek:current` and swaps the in-memory
-current-epoch handle — before the node is visible to the leader as a
-learner, so the leader cannot yet be replicating to it and there is no
-window where the wrong DEK could be used to (mis)encrypt real data. Ordering
-this before `AddLearner` is what makes the swap safe: the node's own
-`data` keyspace is still empty at this point, so the discarded
+`FetchDek` returns not just the current epoch but every retired-but-still-
+readable one too: a DEK rotation's background re-encryption sweep
+(§6 step 5) is best-effort and asynchronous, so records under a retired
+epoch can still be live on the leader when a node joins. Without also
+fetching those epochs, a joining node could adopt the current DEK
+correctly yet still fail to decrypt any record a rotation hasn't fully
+migrated off its predecessor — the same GCM-verification failure this
+section otherwise fixes, just for the boundary case around a rotation
+rather than the steady-state case.
+
+`install_fetched_dek`/`install_fetched_retired_dek` unwrap their argument
+with the joining node's own KEK and, only on success, write the
+corresponding `_meta:dek:current` / `_meta:dek:retired:<version>` record
+and update the in-memory epoch handle(s) — before the node is visible to
+the leader as a learner, so the leader cannot yet be replicating to it and
+there is no window where the wrong DEK could be used to (mis)encrypt real
+data. Ordering this before `AddLearner` is what makes the swap safe: the
+node's own `data` keyspace is still empty at this point, so the discarded
 bootstrap-generated placeholder DEK never protected any ciphertext. A node
 that is already an initialized cluster member (a restart, not a first join)
 never calls `join_cluster` again and so never re-runs this swap — see
@@ -369,9 +382,9 @@ never calls `join_cluster` again and so never re-runs this swap — see
 `FetchDek` is authenticated the same way as `AddLearner` (peer trust-domain
 check, §4) — it is inter-node bootstrap traffic, not an operator action, and
 returns the wrapped bytes exactly as stored under the leader's
-`_meta:dek:current`, unmodified — no unwrap/rewrap round-trip on the leader
-side, so the leader's own DEK plaintext never leaves TPM/PKCS#11-backed
-protection to construct the response.
+`_meta:dek:current` / `_meta:dek:retired:*`, unmodified — no unwrap/rewrap
+round-trip on the leader side, so the leader's own DEK plaintext never
+leaves TPM/PKCS#11-backed protection to construct the response.
 
 **Consequence for TPM/PKCS#11:** because `FetchDek`'s caller unwraps the
 response with its *own* KEK, this protocol only succeeds when every node's
