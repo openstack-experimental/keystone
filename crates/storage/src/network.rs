@@ -15,10 +15,8 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures::SinkExt;
 use futures::Stream;
 use futures::StreamExt;
-use futures::channel::mpsc;
 use openraft::base::{BoxFuture, BoxStream};
 use openraft::error::{NetworkError, ReplicationClosed, Unreachable};
 use openraft::network::{
@@ -260,22 +258,6 @@ impl NetworkConnection {
 
         Ok(Ok(resp.last_log_id.map(Into::into)))
     }
-
-    async fn send_snapshot_chunks(
-        tx: &mut mpsc::Sender<pb::raft::SnapshotRequest>,
-        snapshot_data: &[u8],
-    ) -> Result<(), NetworkError<TypeConfig>> {
-        let chunk_size = 1024 * 1024;
-        for chunk in snapshot_data.chunks(chunk_size) {
-            let request = pb::raft::SnapshotRequest {
-                payload: Some(pb::raft::snapshot_request::Payload::Chunk(chunk.to_vec())),
-            };
-            tx.send(request)
-                .await
-                .map_err(|e| NetworkError::<TypeConfig>::new(&e))?;
-        }
-        Ok(())
-    }
 }
 
 impl NetStreamAppend<TypeConfig> for NetworkConnection {
@@ -345,16 +327,9 @@ impl NetSnapshot<TypeConfig> for NetworkConnection {
     ) -> Result<SnapshotResponse, StreamingError> {
         let mut client = self.make_client().await?;
 
-        let (mut tx, rx) = mpsc::channel(1024);
-        let response = client
-            .snapshot(rx)
-            .await
-            .map_err(|e| NetworkError::<TypeConfig>::new(&e))?;
-
-        // 1. Send meta chunk
+        // 1. Meta chunk
         let meta = &snapshot.meta;
-
-        let request = pb::raft::SnapshotRequest {
+        let meta_request = pb::raft::SnapshotRequest {
             payload: Some(pb::raft::snapshot_request::Payload::Meta(
                 pb::raft::SnapshotRequestMeta {
                     vote: Some(vote),
@@ -373,14 +348,31 @@ impl NetSnapshot<TypeConfig> for NetworkConnection {
             )),
         };
 
-        tx.send(request)
+        // 2. Data chunks. `Snapshot(stream SnapshotRequest) returns
+        // (SnapshotResponse)` is client-streaming: the server only replies
+        // once it has read the entire request stream (see
+        // `RaftServiceImpl::snapshot`'s `while let Some(chunk) =
+        // stream.next().await` loop), so the request stream must be
+        // produced independently of awaiting the response. The whole
+        // snapshot already lives in memory here, so the simplest way to
+        // satisfy that is to build every chunk eagerly into a `Vec` up
+        // front and hand it to `stream::iter` — no channel, no separate
+        // feeder task, and thus no chance of the response await starving
+        // the very code that would produce the stream it's waiting on.
+        let chunk_size = 1024 * 1024;
+        let mut requests = Vec::with_capacity(1 + snapshot.snapshot.len().div_ceil(chunk_size));
+        requests.push(meta_request);
+        requests.extend(snapshot.snapshot.chunks(chunk_size).map(|chunk| {
+            pb::raft::SnapshotRequest {
+                payload: Some(pb::raft::snapshot_request::Payload::Chunk(chunk.to_vec())),
+            }
+        }));
+
+        let response = client
+            .snapshot(futures::stream::iter(requests))
             .await
             .map_err(|e| NetworkError::<TypeConfig>::new(&e))?;
 
-        // 2. Send data chunks
-        Self::send_snapshot_chunks(&mut tx, &snapshot.snapshot).await?;
-
-        // 3. Receive response
         let message = response.into_inner();
 
         Ok(SnapshotResponse {
