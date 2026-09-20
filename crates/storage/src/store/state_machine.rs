@@ -788,7 +788,17 @@ impl FjallStateMachine {
     /// Uses a single cross-keyspace Fjall `snapshot()` so every keyspace is
     /// captured at the same point in the LSM sequence, not just internally
     /// consistent per-keyspace.
+    ///
+    /// Holds `keyspace_lifecycle`'s read side for the whole capture — same
+    /// lock `apply()` holds — so a concurrent `drop_keyspace`/`install_snapshot`
+    /// (both write-side) can't create or remove a keyspace between the
+    /// `db.snapshot()` call and the `list_keyspace_names()` walk, and can't
+    /// tear one down mid-iteration either.
     fn snapshot_payload(&self) -> Result<SnapshotPayload, io::Error> {
+        let _lifecycle_guard = self
+            .keyspace_lifecycle
+            .read()
+            .unwrap_or_else(|p| p.into_inner());
         let db_snapshot = self.db.snapshot();
         let mut keyspaces = Vec::new();
         for name in self.db.list_keyspace_names() {
@@ -1421,6 +1431,19 @@ fn deserialize<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, StorageE
     rmp_serde::from_slice(bytes).map_err(|e| StorageError::read(TypeConfig::err_from_error(&e)))
 }
 
+/// Checks a decoded snapshot payload's format version against
+/// [`SNAPSHOT_FORMAT_VERSION`], returning the mismatch message shared by
+/// every call site so a future version-check change (e.g. a min-supported
+/// range) only needs to be made once.
+fn check_snapshot_format_version(version: u32) -> Result<(), String> {
+    if version != SNAPSHOT_FORMAT_VERSION {
+        return Err(format!(
+            "unsupported snapshot format version {version} (this node expects {SNAPSHOT_FORMAT_VERSION})"
+        ));
+    }
+    Ok(())
+}
+
 /// Decrypt and deserialize a snapshot file from disk.
 ///
 /// On-disk format:
@@ -1480,12 +1503,8 @@ fn decrypt_snapshot_file(
 
     let file: SnapshotFile = rmp_serde::from_slice(&file_bytes)
         .map_err(|e| crate::StoreError::Other(eyre::eyre!("snapshot deserialize: {e}")))?;
-    if file.payload.version != SNAPSHOT_FORMAT_VERSION {
-        return Err(crate::StoreError::Other(eyre::eyre!(
-            "unsupported snapshot format version {} (this node expects {SNAPSHOT_FORMAT_VERSION})",
-            file.payload.version
-        )));
-    }
+    check_snapshot_format_version(file.payload.version)
+        .map_err(|e| crate::StoreError::Other(eyre::eyre!(e)))?;
     Ok((file, dek_version, utc_epoch))
 }
 
@@ -1611,15 +1630,8 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
         let payload: SnapshotPayload = deserialize(snapshot.as_ref())
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
-        if payload.version != SNAPSHOT_FORMAT_VERSION {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "unsupported snapshot format version {} (this node expects {SNAPSHOT_FORMAT_VERSION})",
-                    payload.version
-                ),
-            ));
-        }
+        check_snapshot_format_version(payload.version)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
         let payload_clone = payload.clone();
 
