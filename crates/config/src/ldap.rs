@@ -742,6 +742,80 @@ suffix = dc=example,dc=com
     }
 
     #[test]
+    fn test_default_user_and_password_are_none() {
+        let cfg = LdapProvider::default();
+        assert!(cfg.user.is_none());
+        assert!(cfg.password.is_none());
+    }
+
+    #[test]
+    fn test_default_suffix() {
+        let cfg = LdapProvider::default();
+        assert_eq!(cfg.suffix, "cn=example,cn=com");
+    }
+
+    #[test]
+    fn test_default_tree_dns_are_empty() {
+        let cfg = LdapProvider::default();
+        assert_eq!(cfg.user_tree_dn, "");
+        assert_eq!(cfg.group_tree_dn, "");
+    }
+
+    #[test]
+    fn test_default_user_attribute_names() {
+        let cfg = LdapProvider::default();
+        assert_eq!(cfg.user_mail_attribute, "mail");
+        assert_eq!(cfg.user_description_attribute, "description");
+        assert_eq!(cfg.user_pass_attribute, "userPassword");
+        assert_eq!(cfg.user_enabled_attribute, "enabled");
+    }
+
+    #[test]
+    fn test_default_group_attribute_names() {
+        let cfg = LdapProvider::default();
+        assert_eq!(cfg.group_id_attribute, "cn");
+        assert_eq!(cfg.group_name_attribute, "ou");
+        assert_eq!(cfg.group_member_attribute, "member");
+    }
+
+    #[test]
+    fn test_default_pool_sizes_and_timeouts() {
+        let cfg = LdapProvider::default();
+        assert_eq!(cfg.pool_size, 10);
+        assert_eq!(cfg.pool_retry_max, 3);
+        assert!((cfg.pool_retry_delay - 0.1).abs() < f64::EPSILON);
+        assert_eq!(cfg.pool_connection_timeout, -1.0);
+        assert_eq!(cfg.pool_connection_lifetime, 600.0);
+        assert_eq!(cfg.auth_pool_size, 100);
+        assert_eq!(cfg.auth_pool_connection_lifetime, 60.0);
+    }
+
+    #[test]
+    fn test_default_page_size() {
+        let cfg = LdapProvider::default();
+        assert_eq!(cfg.page_size, 0);
+    }
+
+    #[test]
+    fn test_default_chase_referrals_is_none() {
+        let cfg = LdapProvider::default();
+        assert!(cfg.chase_referrals.is_none());
+    }
+
+    #[test]
+    fn test_default_user_filter_and_group_filter_are_none() {
+        let cfg = LdapProvider::default();
+        assert!(cfg.user_filter.is_none());
+        assert!(cfg.group_filter.is_none());
+    }
+
+    #[test]
+    fn test_default_user_attribute_ignore_contains_default_project_id() {
+        let cfg = LdapProvider::default();
+        assert!(cfg.user_attribute_ignore.contains("default_project_id"));
+    }
+
+    #[test]
     fn test_env_override() {
         temp_env::with_var("OS_LDAP__PASSWORD", Some("envsecret"), || {
             let c = Config::builder()
