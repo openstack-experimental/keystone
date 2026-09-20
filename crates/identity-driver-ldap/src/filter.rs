@@ -285,4 +285,35 @@ mod tests {
             ListDecision::EmptyResult
         );
     }
+
+    #[test]
+    fn test_group_list_filter_includes_configured_group_filter() {
+        let mut c = cfg();
+        c.group_filter = Some("(description=*admin*)".into());
+        let params = GroupListParametersBuilder::default().build().unwrap();
+        match group_list_filter(&c, "default", &params) {
+            ListDecision::Query(f) => {
+                assert_eq!(
+                    f,
+                    "(&(objectClass=groupOfNames)(cn=*)(description=*admin*))"
+                )
+            }
+            ListDecision::EmptyResult => panic!("expected a query"),
+        }
+    }
+
+    #[test]
+    fn test_user_list_filter_name_with_injection_chars_is_escaped() {
+        let params = UserListParametersBuilder::default()
+            .name(Some("a*(b)\\".to_string()))
+            .build()
+            .unwrap();
+        match user_list_filter(&cfg(), "default", &params) {
+            ListDecision::Query(f) => assert_eq!(
+                f, "(&(objectClass=inetOrgPerson)(cn=*)(sn=a\\2a\\28b\\29\\5c))",
+                "injection characters must be escaped in filter"
+            ),
+            ListDecision::EmptyResult => panic!("expected a query"),
+        }
+    }
 }
