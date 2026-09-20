@@ -245,11 +245,57 @@ impl QuarantineTracker {
     }
 }
 
-/// Snapshot file format: metadata + data stored together.
+/// Snapshot wire/on-disk payload format version.
+///
+/// Bump whenever `SnapshotPayload`'s layout changes, so a snapshot written
+/// by an incompatible version is rejected by `install_snapshot` with a
+/// clear error instead of being silently misinterpreted (GitHub #1293).
+const SNAPSHOT_FORMAT_VERSION: u32 = 2;
+
+/// Keyspaces that are node-local and must never travel inside a snapshot:
+/// `logs` is the Raft log itself (compaction/log truncation handle it
+/// separately) and `local_emergency` is deliberately node-local by design
+/// (ADR 0028).
+const SNAPSHOT_SKIP_KEYSPACES: &[&str] = &["logs", "local_emergency"];
+
+/// One keyspace's full contents inside a [`SnapshotPayload`]: `(key, value)`
+/// pairs exactly as stored in Fjall.
+type SnapshotKeyspaceEntries = Vec<(Vec<u8>, Vec<u8>)>;
+
+/// Full contents of every replicated Fjall keyspace, plus the ephemeral
+/// keyspace name registry.
+///
+/// This is the payload streamed between nodes during
+/// `build_snapshot`/`install_snapshot` (`RaftSnapshotBuilder`/
+/// `RaftStateMachine`) and the payload embedded in the on-disk/operator
+/// backup `SnapshotFile`. Prior to GitHub #1293 only the `data` keyspace
+/// was captured here, silently dropping `meta` (per-record `Metadata`),
+/// `index`, and every other application keyspace on snapshot install.
+#[derive(Serialize, Deserialize, Clone, Default)]
+struct SnapshotPayload {
+    version: u32,
+    /// `(keyspace name, entries)` for every non-skipped Fjall keyspace --
+    /// `meta`, `data`, `index`, and every dynamic application keyspace
+    /// (`domain`, `project_id`, time-bucketed OAuth2 sessions, SCIM
+    /// realms, ...).
+    keyspaces: Vec<(String, SnapshotKeyspaceEntries)>,
+    /// Names of keyspaces that are ephemeral (in-memory-only, non-Fjall) on
+    /// the snapshotting node.
+    ///
+    /// Values are intentionally not included: ephemeral keyspaces hold
+    /// inherently short-lived data (WebAuthn/OAuth2 challenge state), so
+    /// losing in-flight entries across a snapshot install is acceptable.
+    /// The *names* must still survive so a node installing this snapshot
+    /// keeps classifying future writes to them as ephemeral rather than
+    /// Fjall-backed (see [`FjallStateMachine::ephemeral`]).
+    ephemeral_keyspaces: Vec<String>,
+}
+
+/// Snapshot file format: Raft metadata + versioned payload, stored together.
 #[derive(Serialize, Deserialize)]
 struct SnapshotFile {
     meta: SnapshotMetaOf<TypeConfig>,
-    data: Vec<(Vec<u8>, Vec<u8>)>,
+    payload: SnapshotPayload,
 }
 
 /// Fjall meta key prefix for retired DEK epochs.
@@ -580,7 +626,7 @@ impl FjallStateMachine {
         let (snapshot_file, dek_version, utc_epoch) =
             decrypt_snapshot_file(bytes, &self.dek, &self.old_deks)?;
 
-        let data_bytes = rmp_serde::to_vec(&snapshot_file.data)
+        let data_bytes = rmp_serde::to_vec(&snapshot_file.payload)
             .map_err(|e| crate::StoreError::Other(eyre::eyre!("snapshot re-serialize: {e}")))?;
 
         let snapshot = openraft::storage::Snapshot {
@@ -588,6 +634,48 @@ impl FjallStateMachine {
             snapshot: data_bytes,
         };
         Ok((snapshot, utc_epoch, dek_version))
+    }
+
+    /// Collects a consistent, point-in-time snapshot payload: every
+    /// replicated Fjall keyspace's full contents (everything except
+    /// [`SNAPSHOT_SKIP_KEYSPACES`]) plus the ephemeral keyspace name
+    /// registry.
+    ///
+    /// Uses a single cross-keyspace Fjall `snapshot()` so every keyspace is
+    /// captured at the same point in the LSM sequence, not just internally
+    /// consistent per-keyspace.
+    fn snapshot_payload(&self) -> Result<SnapshotPayload, io::Error> {
+        let db_snapshot = self.db.snapshot();
+        let mut keyspaces = Vec::new();
+        for name in self.db.list_keyspace_names() {
+            let name = name.to_string();
+            if SNAPSHOT_SKIP_KEYSPACES.contains(&name.as_str()) {
+                continue;
+            }
+            let ks = self
+                .keyspace(&name)
+                .map_err(|e| io::Error::other(e.to_string()))?;
+            let mut entries = Vec::new();
+            for item in db_snapshot.iter(&ks) {
+                let (key, value) = item
+                    .into_inner()
+                    .map_err(|e| io::Error::other(e.to_string()))?;
+                entries.push((key.to_vec(), value.to_vec()));
+            }
+            keyspaces.push((name, entries));
+        }
+
+        let ephemeral_keyspaces = self
+            .ephemeral
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect();
+
+        Ok(SnapshotPayload {
+            version: SNAPSHOT_FORMAT_VERSION,
+            keyspaces,
+            ephemeral_keyspaces,
+        })
     }
 
     /// Returns `true` if `name` is a registered ephemeral (in-memory,
@@ -1246,8 +1334,14 @@ fn decrypt_snapshot_file(
         ))
     })?;
 
-    let file = rmp_serde::from_slice(&file_bytes)
+    let file: SnapshotFile = rmp_serde::from_slice(&file_bytes)
         .map_err(|e| crate::StoreError::Other(eyre::eyre!("snapshot deserialize: {e}")))?;
+    if file.payload.version != SNAPSHOT_FORMAT_VERSION {
+        return Err(crate::StoreError::Other(eyre::eyre!(
+            "unsupported snapshot format version {} (this node expects {SNAPSHOT_FORMAT_VERSION})",
+            file.payload.version
+        )));
+    }
     Ok((file, dek_version, utc_epoch))
 }
 
@@ -1278,19 +1372,11 @@ impl RaftSnapshotBuilder<TypeConfig> for Arc<FjallStateMachine> {
 
         tracing::trace!("snapshot metadata: {:?}", meta);
 
-        let snapshot = self.db.snapshot();
-
-        let mut data_buffer = Vec::new();
-        for item in snapshot.iter(&self.data) {
-            let (key, value) = item
-                .into_inner()
-                .map_err(|e| io::Error::other(e.to_string()))?;
-            data_buffer.push((key.to_vec(), value.to_vec()));
-        }
+        let payload = self.snapshot_payload()?;
 
         let snapshot_file = SnapshotFile {
             meta: meta.clone(),
-            data: data_buffer.clone(),
+            payload: payload.clone(),
         };
 
         let file_bytes = serialize(&snapshot_file).map_err(|e| {
@@ -1336,7 +1422,7 @@ impl RaftSnapshotBuilder<TypeConfig> for Arc<FjallStateMachine> {
             )
         })?;
 
-        let data_bytes = serialize(&data_buffer).map_err(|e| {
+        let data_bytes = serialize(&payload).map_err(|e| {
             StorageError::<TypeConfig>::write_snapshot(
                 Some(meta.signature()),
                 TypeConfig::err_from_error(&e),
@@ -1378,10 +1464,20 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
             "decoding snapshot for installation"
         );
 
-        let snapshot_data: Vec<(Vec<u8>, Vec<u8>)> = deserialize(snapshot.as_ref())
+        let payload: SnapshotPayload = deserialize(snapshot.as_ref())
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
-        let snapshot_data_clone = snapshot_data.clone();
+        if payload.version != SNAPSHOT_FORMAT_VERSION {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "unsupported snapshot format version {} (this node expects {SNAPSHOT_FORMAT_VERSION})",
+                    payload.version
+                ),
+            ));
+        }
+
+        let payload_clone = payload.clone();
 
         let last_applied_bytes = meta
             .last_log_id
@@ -1395,16 +1491,57 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
         let last_membership_bytes = serialize(&meta.last_membership)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
-        let mut batch = self.db.batch();
+        // Guards the whole clear-and-repopulate sweep below against a
+        // concurrent `apply()`/`drop_keyspace` — same rationale as
+        // `drop_keyspace`'s use of this lock: without it, a keyspace we're
+        // mid-clearing here could be concurrently written to or deleted out
+        // from under this install.
+        let _lifecycle_guard = self
+            .keyspace_lifecycle
+            .write()
+            .unwrap_or_else(|p| p.into_inner());
 
-        for current in self.data.iter() {
-            if let Ok(k) = current.key() {
-                batch.remove(&self.data, k);
+        // Every replicated keyspace that currently exists on this node, plus
+        // every keyspace named in the incoming snapshot: the union is what
+        // must be cleared, so a keyspace this node still has but the
+        // snapshot no longer carries ends up empty rather than stale
+        // (GitHub #1293 point 3).
+        let mut touched: HashSet<String> = self
+            .db
+            .list_keyspace_names()
+            .into_iter()
+            .map(|name| name.to_string())
+            .filter(|name| !SNAPSHOT_SKIP_KEYSPACES.contains(&name.as_str()))
+            .collect();
+        for (name, _) in &payload.keyspaces {
+            if !SNAPSHOT_SKIP_KEYSPACES.contains(&name.as_str()) {
+                touched.insert(name.clone());
             }
         }
 
-        for (key, value) in snapshot_data {
-            batch.insert(&self.data, key, value);
+        let mut batch = self.db.batch();
+
+        for name in &touched {
+            let ks = self
+                .keyspace(name)
+                .map_err(|e| io::Error::other(e.to_string()))?;
+            for current in ks.iter() {
+                if let Ok(k) = current.key() {
+                    batch.remove(&ks, k);
+                }
+            }
+        }
+
+        for (name, entries) in payload.keyspaces {
+            if SNAPSHOT_SKIP_KEYSPACES.contains(&name.as_str()) {
+                continue;
+            }
+            let ks = self
+                .keyspace(&name)
+                .map_err(|e| io::Error::other(e.to_string()))?;
+            for (key, value) in entries {
+                batch.insert(&ks, key, value);
+            }
         }
 
         if let Some(bytes) = last_applied_bytes {
@@ -1420,6 +1557,17 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
             .persist(PersistMode::SyncAll)
             .map_err(|e| io::Error::other(e.to_string()))?;
 
+        // Reset the in-memory ephemeral keyspace registry to the snapshot's
+        // ground truth: stale names from before this install are dropped,
+        // and every name the snapshot lists is restored so future writes to
+        // it keep being classified as ephemeral rather than Fjall-backed.
+        self.ephemeral.clear();
+        for name in &payload_clone.ephemeral_keyspaces {
+            self.ephemeral.entry(name.clone()).or_default();
+        }
+
+        drop(_lifecycle_guard);
+
         let snapshot_idx: u64 = rand::rng().random_range(0..1000);
         let snapshot_id = if let Some(last) = meta.last_log_id.as_ref() {
             format!(
@@ -1434,7 +1582,7 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
 
         let snapshot_file = SnapshotFile {
             meta: meta.clone(),
-            data: snapshot_data_clone,
+            payload: payload_clone,
         };
         let file_bytes = serialize(&snapshot_file)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
@@ -1480,7 +1628,7 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
             decrypt_snapshot_file(&disk_bytes, &self.dek, &self.old_deks)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
-        let data_bytes = rmp_serde::to_vec(&snapshot_file.data)
+        let data_bytes = rmp_serde::to_vec(&snapshot_file.payload)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
         Ok(Some(Snapshot {
@@ -2884,6 +3032,241 @@ mod ephemeral_tests {
             sm.ephemeral_get("webauthn_state_1", b"user-1:auth")
                 .is_some(),
             "the failed drop must not have discarded the entry"
+        );
+    }
+}
+
+/// Regression coverage for GitHub #1293: `build_snapshot`/`install_snapshot`
+/// must carry every replicated Fjall keyspace (`meta`, `index`, dynamic
+/// application keyspaces), not just `data`, and `install_snapshot` must
+/// clear keyspaces the incoming snapshot no longer carries rather than
+/// leaving them stale. These tests drive `build_snapshot`/`install_snapshot`
+/// directly against `FjallStateMachine` instances, without a live Raft
+/// cluster -- reproducing the full "leader snapshots, a node installs it"
+/// scenario is blocked on GitHub #1329 (see issue #1293's discussion).
+#[cfg(test)]
+mod snapshot_tests {
+    use openstack_keystone_storage_crypto::EnvKek;
+
+    use super::*;
+
+    fn make_sm() -> (Arc<FjallStateMachine>, tempfile::TempDir) {
+        let td = tempfile::TempDir::new().expect("tempdir");
+        let db = Arc::new(Database::builder(td.path()).open().expect("open db"));
+        let kek: Arc<dyn KekProvider> = Arc::new(EnvKek::from_bytes([0x42u8; 32]));
+        let epoch =
+            Arc::new(DekEpoch::from_raw(LockedKey::from_raw([0x21; 32]), 1).expect("epoch"));
+        let (reencrypt_tx, reencrypt_rx) = tokio::sync::mpsc::channel(1);
+        drop(reencrypt_rx);
+        let (quarantine_tx, quarantine_rx) = tokio::sync::mpsc::channel(1);
+        drop(quarantine_rx);
+
+        let sm = FjallStateMachine::new(
+            db,
+            td.path().join("snapshots"),
+            1,
+            Arc::new(RwLock::new(epoch)),
+            Arc::new(Mutex::new(BTreeMap::new())),
+            Arc::new(Mutex::new(HashSet::new())),
+            kek,
+            reencrypt_tx,
+            quarantine_tx,
+            Arc::new(Mutex::new(HashMap::new())),
+        )
+        .expect("construct state machine");
+        (Arc::new(sm), td)
+    }
+
+    /// Seeds an ephemeral keyspace directly, mirroring `apply()`'s
+    /// `Set`/`CreateIfAbsent` arms (see `ephemeral_tests::seed`).
+    fn seed_ephemeral(sm: &FjallStateMachine, keyspace: &str, key: &[u8]) {
+        sm.ephemeral
+            .entry(keyspace.to_string())
+            .or_default()
+            .insert(key.to_vec(), (b"challenge".to_vec(), Metadata::ephemeral()));
+    }
+
+    /// Dumps every entry currently in Fjall keyspace `name`, sorted for
+    /// deterministic comparison.
+    fn dump(sm: &FjallStateMachine, name: &str) -> Vec<(Vec<u8>, Vec<u8>)> {
+        let ks = sm.keyspace(name).expect("keyspace handle");
+        let mut out: Vec<_> = ks
+            .iter()
+            .filter_map(|item| item.into_inner().ok())
+            .map(|(k, v)| (k.to_vec(), v.to_vec()))
+            .collect();
+        out.sort();
+        out
+    }
+
+    #[tokio::test]
+    async fn build_snapshot_captures_every_keyspace_and_ephemeral_registry() {
+        let (mut sm, _td) = make_sm();
+
+        sm.data()
+            .insert(b"rec1", b"ciphertext")
+            .expect("write data");
+        let meta_bytes = Metadata::with_tier(DataTier::Internal)
+            .pack()
+            .expect("pack metadata");
+        sm.meta()
+            .insert(b"rec1", meta_bytes.clone())
+            .expect("write meta");
+        sm.index().insert(b"idx1", b"").expect("write index");
+        let domain_ks = sm.keyspace("domain").expect("create domain keyspace");
+        domain_ks
+            .insert(b"dom1", b"domain-payload")
+            .expect("write domain");
+        seed_ephemeral(&sm, "webauthn_state_1", b"user-1:auth");
+
+        let snapshot = sm.build_snapshot().await.expect("build snapshot");
+        let payload: SnapshotPayload =
+            rmp_serde::from_slice(&snapshot.snapshot).expect("decode payload");
+
+        assert_eq!(payload.version, SNAPSHOT_FORMAT_VERSION);
+
+        let by_name: HashMap<String, Vec<(Vec<u8>, Vec<u8>)>> =
+            payload.keyspaces.into_iter().collect();
+        assert_eq!(
+            by_name.get("data"),
+            Some(&vec![(b"rec1".to_vec(), b"ciphertext".to_vec())])
+        );
+        assert_eq!(
+            by_name.get("meta"),
+            Some(&vec![(b"rec1".to_vec(), meta_bytes)])
+        );
+        assert_eq!(
+            by_name.get("index"),
+            Some(&vec![(b"idx1".to_vec(), b"".to_vec())])
+        );
+        assert_eq!(
+            by_name.get("domain"),
+            Some(&vec![(b"dom1".to_vec(), b"domain-payload".to_vec())])
+        );
+        assert!(
+            !by_name.contains_key("logs"),
+            "the node-local Raft log keyspace must never travel in a snapshot"
+        );
+        assert!(
+            !by_name.contains_key("local_emergency"),
+            "the node-local emergency keyspace (ADR 0028) must never travel in a snapshot"
+        );
+
+        assert_eq!(
+            payload.ephemeral_keyspaces,
+            vec!["webauthn_state_1".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn install_snapshot_replaces_all_keyspaces_and_clears_stale_ones() {
+        // "Leader": populate several keyspaces plus an ephemeral
+        // registration, then build a snapshot from it.
+        let (mut leader, _td1) = make_sm();
+        leader
+            .data()
+            .insert(b"rec1", b"new-cipher")
+            .expect("write data");
+        let meta_bytes = Metadata::with_tier(DataTier::Internal)
+            .pack()
+            .expect("pack metadata");
+        leader
+            .meta()
+            .insert(b"rec1", meta_bytes.clone())
+            .expect("write meta");
+        leader
+            .keyspace("domain")
+            .expect("create domain keyspace")
+            .insert(b"dom1", b"fresh")
+            .expect("write domain");
+        seed_ephemeral(&leader, "webauthn_state_1", b"user-1:auth");
+
+        let snapshot = leader.build_snapshot().await.expect("build snapshot");
+
+        // "Follower": stale/different data in the same keyspaces, an extra
+        // keyspace the leader's snapshot no longer carries, and a stray
+        // ephemeral registration -- everything `install_snapshot` must
+        // clear (GitHub #1293 point 3).
+        let (mut follower, _td2) = make_sm();
+        follower
+            .data()
+            .insert(b"rec1", b"stale-cipher")
+            .expect("seed stale data");
+        follower
+            .data()
+            .insert(b"rec-gone", b"should-be-cleared")
+            .expect("seed stale-only data key");
+        follower
+            .meta()
+            .insert(b"rec1", b"stale-meta")
+            .expect("seed stale meta");
+        follower
+            .keyspace("project_id")
+            .expect("create stale keyspace")
+            .insert(b"proj1", b"stale")
+            .expect("seed stale project data");
+        seed_ephemeral(&follower, "stray_ephemeral", b"leftover");
+
+        follower
+            .install_snapshot(&snapshot.meta, snapshot.snapshot.clone())
+            .await
+            .expect("install snapshot");
+
+        assert_eq!(
+            dump(&follower, "data"),
+            vec![(b"rec1".to_vec(), b"new-cipher".to_vec())],
+            "the stale-only key must be gone and the stale value replaced"
+        );
+        assert!(
+            dump(&follower, "meta").contains(&(b"rec1".to_vec(), meta_bytes)),
+            "meta (per-record Metadata) must now travel in the snapshot too"
+        );
+        assert_eq!(
+            dump(&follower, "domain"),
+            vec![(b"dom1".to_vec(), b"fresh".to_vec())]
+        );
+        assert!(
+            dump(&follower, "project_id").is_empty(),
+            "a keyspace no longer present in the snapshot must end up empty, not stale"
+        );
+
+        assert!(follower.is_ephemeral_keyspace("webauthn_state_1"));
+        assert!(
+            !follower.is_ephemeral_keyspace("stray_ephemeral"),
+            "the follower's stale ephemeral registration must not survive install"
+        );
+    }
+
+    #[tokio::test]
+    async fn install_snapshot_rejects_unsupported_format_version() {
+        let (mut sm, _td) = make_sm();
+        sm.data().insert(b"rec1", b"original").expect("seed data");
+
+        let bogus = SnapshotPayload {
+            version: SNAPSHOT_FORMAT_VERSION + 1,
+            keyspaces: vec![(
+                "data".to_string(),
+                vec![(b"rec1".to_vec(), b"attacker-controlled".to_vec())],
+            )],
+            ephemeral_keyspaces: vec![],
+        };
+        let bytes = rmp_serde::to_vec(&bogus).expect("encode bogus payload");
+
+        let meta = SnapshotMeta {
+            last_log_id: None,
+            last_membership: Default::default(),
+        };
+        let err = sm
+            .install_snapshot(&meta, bytes)
+            .await
+            .expect_err("must reject a snapshot format version it doesn't understand");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("version"));
+
+        // The rejected install must not have touched existing state.
+        assert_eq!(
+            dump(&sm, "data"),
+            vec![(b"rec1".to_vec(), b"original".to_vec())]
         );
     }
 }
