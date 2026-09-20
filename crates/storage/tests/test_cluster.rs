@@ -367,6 +367,259 @@ async fn test_abort_pending_rotation_via_raft_inner() -> Result<()> {
     Ok(())
 }
 
+/// Regression test for GitHub #1299: an emergency (compromised-key) DEK
+/// rotation must not make pre-rotation records permanently unreadable.
+///
+/// Drives the real Raft `apply()` path for the dual-control emergency
+/// rotation flow (`CreatePendingRotation` + `ConfirmPendingRotation`, ADR
+/// 0016-v2 §6.2), then restarts the node *before* the background
+/// re-encryption sweep has had any chance to run -- the worst case, and
+/// exactly what the pre-fix code lost forever, since it dropped the
+/// revoked key in the same `apply()` call that revoked it. Asserts the
+/// record survives both the rotation itself and the restart, and that the
+/// revoked key material is eventually discarded once (and only once) the
+/// sweep confirms the epoch is fully migrated.
+#[serial_test::serial]
+#[tracing_test::traced_test]
+#[test]
+fn test_emergency_dek_rotation_preserves_data_across_restart() {
+    TypeConfig::run(test_emergency_dek_rotation_preserves_data_across_restart_inner()).unwrap();
+}
+
+#[allow(unsafe_code)]
+async fn test_emergency_dek_rotation_preserves_data_across_restart_inner() -> Result<()> {
+    use openstack_keystone_storage_crypto::{EnvKek, KekProvider, generate_dek};
+
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+
+    let storage_dir = tempfile::TempDir::new().unwrap();
+    let tls_configuration = make_certificates()?;
+    let ds_config = get_ds_config(105, storage_dir.path().to_path_buf(), tls_configuration);
+
+    let config = Config {
+        distributed_storage: Some(ds_config),
+        ..Default::default()
+    };
+
+    // SAFETY: no concurrent env readers; test is `#[serial_test::serial]`.
+    unsafe {
+        std::env::set_var("KEYSTONE_DEV_KEK", TEST_KEK_HEX);
+        std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
+    }
+
+    let storage = init_storage(&ConfigManager::not_watched(config.clone())).await?;
+    storage
+        .initialize(
+            [(
+                105u64,
+                openstack_keystone_storage_api::Node {
+                    node_id: 105,
+                    rpc_addr: get_addr(105).to_string(),
+                },
+            )]
+            .into_iter()
+            .collect(),
+        )
+        .await?;
+    for _ in 0..50 {
+        if storage.current_leader() == Some(105) {
+            break;
+        }
+        TypeConfig::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(storage.current_leader(), Some(105));
+
+    // Write a record under the bootstrap DEK epoch, before any rotation.
+    storage
+        .set_value(
+            "k1".to_string(),
+            make_env("secret-before-rotation")?,
+            None,
+            None,
+        )
+        .await?;
+    let before = storage
+        .get_by_key("k1".as_bytes(), None)
+        .await?
+        .expect("value present before rotation");
+    assert_eq!(
+        "secret-before-rotation",
+        before.try_deserialize::<String>()?.data
+    );
+
+    let (old_version, _) = storage.state_machine_store().current_dek_wrapped()?;
+
+    // Stage + confirm an emergency rotation exactly as the gRPC handlers do
+    // (`rotate_dek`/`confirm_rotate_dek`), driving the real Raft `apply()`
+    // path for `CreatePendingRotation`/`ConfirmPendingRotation`.
+    let kek = EnvKek::from_bytes([0u8; 32]); // matches TEST_KEK_HEX
+    let new_raw = generate_dek();
+    let wrapped_dek = kek.wrap_dek(new_raw.as_bytes())?;
+    let new_version = old_version + 1;
+    let rotation_id = "test-emergency-rotation".to_string();
+    let expires_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 300;
+
+    let create_cmd = StoreCommand::Transaction(vec![MutationInner::CreatePendingRotation {
+        rotation_id: rotation_id.clone(),
+        wrapped_dek,
+        dek_version: new_version,
+        expires_at,
+        initiator: "spiffe://example.org/keystone/storage/operator-a".to_string(),
+    }]);
+    storage
+        .raft
+        .client_write(pb::api::CommandRequest::try_from(create_cmd)?)
+        .await?;
+
+    let confirm_cmd = StoreCommand::Transaction(vec![MutationInner::ConfirmPendingRotation {
+        rotation_id: rotation_id.clone(),
+        confirmer: "spiffe://example.org/keystone/storage/operator-b".to_string(),
+    }]);
+    storage
+        .raft
+        .client_write(pb::api::CommandRequest::try_from(confirm_cmd)?)
+        .await?;
+
+    // The rotation is now live.
+    let (current_version, _) = storage.state_machine_store().current_dek_wrapped()?;
+    assert_eq!(current_version, new_version);
+
+    // The pre-rotation record must remain immediately readable. This is the
+    // core regression: pre-fix, the old key was dropped and zeroized in the
+    // very same `apply()` call that revoked it, before anything could be
+    // re-encrypted (#1299) -- this read would have failed (and quarantined
+    // the partition) rather than succeeding.
+    let still_readable = storage
+        .get_by_key("k1".as_bytes(), None)
+        .await?
+        .expect("value must survive an emergency rotation before the sweep runs");
+    assert_eq!(
+        "secret-before-rotation",
+        still_readable.try_deserialize::<String>()?.data
+    );
+
+    // The revoked epoch's key material must be staged on disk so a restart
+    // before the sweep completes does not lose it forever.
+    let revoked_pending_key = format!("_meta:dek:revoked_pending:{old_version}");
+    assert!(
+        storage
+            .state_machine_store()
+            .meta()
+            .get(revoked_pending_key.as_bytes())?
+            .is_some(),
+        "the revoked epoch's key material must be staged for the re-encryption sweep"
+    );
+
+    // --- Restart the node *before* giving the background sweep a chance to
+    //     run, simulating a crash immediately after the emergency rotation
+    //     commits -- the worst case from the issue.
+    storage.raft.shutdown().await.ok();
+    drop(storage);
+
+    // SAFETY: no concurrent env readers; test is `#[serial_test::serial]`.
+    // `EnvKek::from_env()` removes the variable after reading it once, so
+    // it must be re-set before the restarted node reads it again.
+    unsafe {
+        std::env::set_var("KEYSTONE_DEV_KEK", TEST_KEK_HEX);
+        std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
+    }
+
+    let storage2 = init_storage(&ConfigManager::not_watched(config.clone())).await?;
+    for _ in 0..50 {
+        if storage2.current_leader() == Some(105) {
+            break;
+        }
+        TypeConfig::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(storage2.current_leader(), Some(105));
+
+    // The record, still encrypted on disk under the revoked epoch, must
+    // still decrypt after restart: the staged key material survived and
+    // was reloaded (`load_revoked_pending_deks`).
+    let after_restart = storage2
+        .get_by_key("k1".as_bytes(), None)
+        .await?
+        .expect("value must survive a restart before the sweep completed");
+    assert_eq!(
+        "secret-before-rotation",
+        after_restart.try_deserialize::<String>()?.data
+    );
+
+    // Force a snapshot + log purge, exactly as normal Raft operation would
+    // eventually do on its own: `finalize_if_revoked` also requires no Raft
+    // log entry still reference the revoked epoch before it will discard
+    // the key (ADR 0016-v2 §6.2 step 4's other half — the log, not just
+    // state records).
+    let upto = storage2
+        .last_log_index()
+        .ok_or_else(|| eyre::eyre!("node must have a non-empty log"))?;
+    storage2.raft.trigger().snapshot().await?;
+    poll_until(Duration::from_millis(50), 100, || {
+        storage2.raft.metrics().borrow_watched().snapshot.is_some()
+    })
+    .await;
+    storage2.raft.trigger().purge_log(upto).await?;
+    poll_until(Duration::from_millis(50), 100, || {
+        storage2.raft.metrics().borrow_watched().purged.index() >= Some(upto)
+    })
+    .await;
+
+    // Re-run the sweep now that the log is purged: in production this
+    // happens either on the next DEK rotation or via the periodic
+    // safety-net retry, but driving it directly here keeps the test fast
+    // and deterministic rather than waiting on that timer.
+    let mut finalized = false;
+    for _ in 0..20 {
+        storage2.state_machine_store().reencrypt_pending().await;
+        if storage2
+            .state_machine_store()
+            .meta()
+            .get(revoked_pending_key.as_bytes())?
+            .is_none()
+        {
+            finalized = true;
+            break;
+        }
+        TypeConfig::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        finalized,
+        "the revoked epoch's staged key material must be discarded once the \
+         re-encryption sweep confirms completion"
+    );
+
+    // The record remains readable after the revoked epoch is finalized --
+    // it was migrated to the current epoch by the sweep.
+    let after_sweep = storage2
+        .get_by_key("k1".as_bytes(), None)
+        .await?
+        .expect("value must remain readable after the revoked epoch is finalized");
+    assert_eq!(
+        "secret-before-rotation",
+        after_sweep.try_deserialize::<String>()?.data
+    );
+
+    // The permanent, timestamp-only revocation marker is never removed.
+    let revoked_key = format!("_meta:dek:revoked:{old_version}");
+    assert!(
+        storage2
+            .state_machine_store()
+            .meta()
+            .get(revoked_key.as_bytes())?
+            .is_some(),
+        "the permanent revocation marker must remain after finalization"
+    );
+
+    storage2.raft.shutdown().await.ok();
+    drop(storage2);
+    Ok(())
+}
+
 /// A node whose `node_id` is already live on a reachable peer under a
 /// different address must refuse to start, even though its own local
 /// (empty) Raft state has no record of the conflict — exercising
