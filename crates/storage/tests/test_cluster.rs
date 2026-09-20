@@ -2113,6 +2113,7 @@ async fn test_replication_race_delete_stale_inner() -> Result<()> {
 /// DEK-adoption logic this issue is about.
 const JOIN_DEK_PORT_BASE: u16 = 400;
 
+#[serial_test::serial]
 #[test]
 fn test_join_adopts_cluster_dek() {
     TypeConfig::run(async {
