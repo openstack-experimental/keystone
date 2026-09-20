@@ -193,24 +193,36 @@ where
             let plaintext = log_decrypt(guard.log_dek(), payload, term, index)?;
             Ok(plaintext.to_vec())
         } else {
-            // Check if this DEK version has been revoked (emergency rotation).
-            {
-                let revoked = self.revoked_deks.lock().unwrap_or_else(|p| p.into_inner());
-                if revoked.contains(&dek_version) {
-                    return Err(CryptoError::RevokedDek {
-                        version: dek_version,
-                    }
-                    .into());
-                }
-            }
+            // Check `old_deks` *first*: an emergency-revoked epoch stays
+            // there, still fully readable, for as long as its re-encryption
+            // sweep is in progress (ADR 0016-v2 §6.2 step 4) -- only once
+            // the sweep confirms completion is it removed. Checking
+            // `revoked_deks` first would treat every entry under a
+            // still-being-migrated epoch as unreadable, crashing Raft log
+            // replication/replay for the entire sweep window instead of
+            // just after the key is genuinely gone (GitHub #1299).
             let old_map = self.old_deks.lock().unwrap_or_else(|p| p.into_inner());
-            let old = old_map.get(&dek_version).ok_or_else(|| {
-                StoreError::Other(eyre::eyre!(
-                    "no DEK epoch for version {dek_version} — log entry unreadable"
-                ))
-            })?;
-            let plaintext = log_decrypt(old.log_dek(), payload, term, index)?;
-            Ok(plaintext.to_vec())
+            if let Some(old) = old_map.get(&dek_version) {
+                let plaintext = log_decrypt(old.log_dek(), payload, term, index)?;
+                return Ok(plaintext.to_vec());
+            }
+            drop(old_map);
+
+            // Not in `old_deks`: either this epoch was never known here, or
+            // it *was* revoked and its key has since been discarded because
+            // the re-encryption sweep confirmed nothing still needs it.
+            let revoked = self.revoked_deks.lock().unwrap_or_else(|p| p.into_inner());
+            if revoked.contains(&dek_version) {
+                return Err(CryptoError::RevokedDek {
+                    version: dek_version,
+                }
+                .into());
+            }
+            drop(revoked);
+
+            Err(StoreError::Other(eyre::eyre!(
+                "no DEK epoch for version {dek_version} — log entry unreadable"
+            )))
         }
     }
 
@@ -405,5 +417,102 @@ where
             .persist(PersistMode::SyncAll)
             .map_err(|e| io::Error::other(e.to_string()))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use openstack_keystone_storage_crypto::LockedKey;
+
+    use super::*;
+
+    fn make_store() -> (FjallLogStore<crate::TypeConfig>, tempfile::TempDir) {
+        let td = tempfile::TempDir::new().expect("tempdir");
+        let db = Arc::new(Database::builder(td.path()).open().expect("open db"));
+        let current =
+            Arc::new(DekEpoch::from_raw(LockedKey::from_raw([0x30u8; 32]), 2).expect("epoch"));
+        let store = FjallLogStore::new(
+            db,
+            1,
+            Arc::new(RwLock::new(current)),
+            Arc::new(Mutex::new(BTreeMap::new())),
+            Arc::new(Mutex::new(HashSet::new())),
+        )
+        .expect("construct log store");
+        (store, td)
+    }
+
+    /// An entry tagged with an old `dek_version` still present in
+    /// `old_deks` must decrypt via that epoch even if the same version is
+    /// *also* listed in `revoked_deks` -- an emergency-revoked epoch stays
+    /// fully readable there for as long as its re-encryption sweep is in
+    /// progress (ADR 0016-v2 §6.2 step 4). Checking `revoked_deks` first
+    /// would crash Raft log replication/replay for the entire sweep
+    /// window instead of only after the key is genuinely gone (GitHub
+    /// #1299).
+    #[test]
+    fn decrypt_entry_prefers_old_deks_over_revoked_marker() {
+        let (store, _td) = make_store();
+
+        let old_epoch =
+            Arc::new(DekEpoch::from_raw(LockedKey::from_raw([0x31u8; 32]), 1).expect("old epoch"));
+        store
+            .old_deks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(1, old_epoch.clone());
+        // Also mark version 1 revoked -- exactly the state during an
+        // in-progress emergency-rotation sweep.
+        store
+            .revoked_deks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(1);
+
+        // Build a fake stored entry encrypted under the old epoch directly
+        // (bypassing `encrypt_entry`, which always uses the *current*
+        // epoch).
+        let ciphertext =
+            log_encrypt(old_epoch.log_dek(), b"payload", 7, 5, &[0u8; 12]).expect("encrypt");
+        let mut stored = 1u32.to_be_bytes().to_vec();
+        stored.extend_from_slice(&7u64.to_be_bytes());
+        stored.extend_from_slice(&ciphertext);
+
+        let plaintext = store
+            .decrypt_entry(5, &stored)
+            .expect("must decrypt via old_deks, not error out as revoked");
+        assert_eq!(plaintext, b"payload");
+    }
+
+    /// Once an epoch is gone from `old_deks` (its sweep confirmed complete
+    /// and the key finalized/discarded), an entry still tagged with it
+    /// must fail with a clean `RevokedDek` error rather than a generic
+    /// "unknown epoch" one -- distinguishing a legitimate security
+    /// containment outcome from actual corruption.
+    #[test]
+    fn decrypt_entry_returns_revoked_error_once_key_is_gone() {
+        let (store, _td) = make_store();
+        store
+            .revoked_deks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(1);
+
+        let mut stored = 1u32.to_be_bytes().to_vec();
+        stored.extend_from_slice(&7u64.to_be_bytes());
+        stored.extend_from_slice(&[0u8; 28]); // nonce(12) + tag(16); never reached.
+
+        let err = store
+            .decrypt_entry(5, &stored)
+            .expect_err("must fail once the key is truly gone");
+        assert!(
+            matches!(
+                err,
+                StoreError::Crypto {
+                    source: CryptoError::RevokedDek { version: 1 }
+                }
+            ),
+            "expected a clean RevokedDek error, got: {err:?}"
+        );
     }
 }

@@ -305,6 +305,22 @@ const DEK_RETIRED_PREFIX: &str = "_meta:dek:retired:";
 /// key bytes — so the compromised DEK material remains genuinely discarded
 /// (ADR 0016-v2 §6.2 step 5).
 pub(crate) const DEK_REVOKED_PREFIX: &str = "_meta:dek:revoked:";
+/// Fjall meta key prefix for the *staged* wrapped key material of an
+/// emergency-revoked DEK epoch.
+///
+/// Unlike `DEK_REVOKED_PREFIX` (a permanent, timestamp-only marker), this
+/// entry holds the actual wrapped bytes and exists only until
+/// `reencrypt_pending` confirms the epoch has been fully re-encrypted under
+/// the new DEK *and* no Raft log entry still references it (ADR 0016-v2
+/// §6.2 step 4, "the standard CAS-on-version flow"). Only then does
+/// `FjallStateMachine::finalize_if_revoked` delete this entry and drop the
+/// in-memory key, which is the actual "discard" the ADR's step 5 describes —
+/// deliberately sequenced *after* step 4 completes, not before it, unlike
+/// the pre-fix behaviour that revoked and discarded in the same instant
+/// `InstallDek`/`ConfirmPendingRotation` applied (GitHub #1299). Without
+/// this staging entry, a restart mid-sweep would lose the key forever and
+/// permanently strand every not-yet-migrated record under it.
+pub(crate) const DEK_REVOKED_PENDING_PREFIX: &str = "_meta:dek:revoked_pending:";
 /// Fjall meta key for the current wrapped DEK.
 const META_DEK_CURRENT: &[u8] = b"_meta:dek:current";
 /// Fjall meta key prefix for pending emergency rotations.
@@ -1009,6 +1025,25 @@ impl FjallStateMachine {
             let old_map = self.old_deks.lock().unwrap_or_else(|p| p.into_inner());
             let Some(epoch) = old_map.get(&hint).cloned() else {
                 drop(old_map);
+                // Distinguish "legitimately revoked and now fully discarded"
+                // (ADR 0016-v2 §6.2) from "genuinely unknown/corrupt": by
+                // the time a revoked epoch's key is actually gone from
+                // `old_deks`, `finalize_if_revoked` has already confirmed
+                // every record was re-encrypted away from it, so hitting
+                // this for a real record should not happen — but if it
+                // ever does, it is a clean security outcome, not data
+                // corruption, and must not trip the quarantine threshold.
+                if self
+                    .revoked_deks
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .contains(&hint)
+                {
+                    return Err(openstack_keystone_storage_crypto::CryptoError::RevokedDek {
+                        version: hint,
+                    }
+                    .into());
+                }
                 self.record_quarantine_failure(partition);
                 return Err(crate::StoreError::Other(eyre::eyre!(
                     "record references unknown DEK epoch {hint}; treated as corrupt \
@@ -1208,6 +1243,14 @@ impl FjallStateMachine {
         for epoch in epochs {
             let done_key = format!("{DEK_REENCRYPT_DONE_PREFIX}{}", epoch.version);
             if matches!(self.meta.get(done_key.as_bytes()), Ok(Some(_))) {
+                // Already fully migrated: for a normal retired epoch there
+                // is nothing left to do. But an emergency-revoked epoch may
+                // still be sitting in `old_deks` waiting on
+                // `finalize_if_revoked`'s log-purge condition to become
+                // true -- give it another chance every sweep rather than
+                // skipping it (and thus its only remaining finalize
+                // opportunity) forever.
+                self.finalize_if_revoked(&epoch).await;
                 continue;
             }
 
@@ -1238,6 +1281,7 @@ impl FjallStateMachine {
                         "DEK rotation: epoch fully re-encrypted; retired DEK retained for \
                          backup decryption only (ADR 0016-v2 §7)"
                     );
+                    self.finalize_if_revoked(&epoch).await;
                 }
             } else {
                 tracing::warn!(
@@ -1248,6 +1292,98 @@ impl FjallStateMachine {
                 );
             }
         }
+    }
+
+    /// If `epoch` was revoked by an emergency rotation (ADR 0016-v2 §6.2)
+    /// and its re-encryption sweep just completed cleanly, permanently
+    /// discard the key material: this is the ADR's step 5 "discard",
+    /// deliberately performed only *after* step 4's re-encryption has
+    /// actually finished, rather than racing ahead of it the way the
+    /// pre-fix code did (GitHub #1299). A no-op for a normal (non-revoked)
+    /// retired epoch, which is kept forever for backup decryption (§7).
+    ///
+    /// Also requires that no Raft log entry still carries this epoch's
+    /// `dek_version` tag — otherwise a lagging follower replicating an
+    /// old entry, or this node replaying its own log after a restart,
+    /// would hit an unreadable entry the moment the key is gone. If any
+    /// remain, finalization is deferred to the next sweep; they are
+    /// eventually compacted away by ordinary Raft snapshot/log-purge
+    /// activity.
+    async fn finalize_if_revoked(&self, epoch: &Arc<DekEpoch>) {
+        let version = epoch.version;
+        if !self
+            .revoked_deks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains(&version)
+        {
+            return;
+        }
+
+        let remaining_log_entries = self.count_log_entries_under_version(version);
+        if remaining_log_entries > 0 {
+            tracing::warn!(
+                version,
+                remaining_log_entries,
+                "DEK rotation: emergency-revoked epoch fully re-encrypted in state but \
+                 still referenced by un-compacted Raft log entries; deferring key discard \
+                 until they are purged"
+            );
+            return;
+        }
+
+        // Force a fresh snapshot under the current epoch before dropping the
+        // revoked key, so no on-disk snapshot is ever left depending on a
+        // key that is about to become permanently unrecoverable (a
+        // restart, or a new node joining via `install_snapshot`, would
+        // otherwise be unable to decrypt it).
+        let mut snapshot_sm = Arc::new(self.clone());
+        if let Err(e) = snapshot_sm.build_snapshot().await {
+            tracing::error!(
+                version,
+                error = %e,
+                "DEK rotation: failed to build a fresh snapshot before discarding revoked \
+                 epoch; deferring key discard"
+            );
+            return;
+        }
+
+        self.old_deks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&version);
+
+        let revoked_pending_key = format!("{DEK_REVOKED_PENDING_PREFIX}{version}");
+        if let Err(e) = self.meta.remove(revoked_pending_key.as_bytes()) {
+            tracing::warn!(
+                version,
+                error = %e,
+                "failed to remove staged emergency-rotation key material marker; it will \
+                 be harmlessly reloaded and re-finalized on next restart"
+            );
+        }
+
+        tracing::warn!(
+            version,
+            "SECURITY: emergency-revoked DEK version fully re-encrypted, compacted, and \
+             now permanently discarded (ADR 0016-v2 §6.2 step 5)"
+        );
+    }
+
+    /// Best-effort count of Raft log entries still tagged with `version` in
+    /// their on-disk `dek_version` prefix (see `log_store.rs`'s entry
+    /// layout). Returns `0` if the `logs` keyspace could not even be
+    /// opened — finalization is simply deferred to the next sweep rather
+    /// than blocked on an error here.
+    fn count_log_entries_under_version(&self, version: u32) -> usize {
+        let Ok(logs) = self.db.keyspace("logs", KeyspaceCreateOptions::default) else {
+            return 0;
+        };
+        let version_prefix = version.to_be_bytes();
+        logs.iter()
+            .filter_map(|item| item.into_inner().ok())
+            .filter(|(_, value)| value.len() >= 4 && value[..4] == version_prefix)
+            .count()
     }
 
     /// Re-encrypt every record still under `old_epoch` to the current epoch,
@@ -2177,10 +2313,9 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                     } else {
                                         // Emergency rotation: durably record the revoked
                                         // marker in the same atomic batch as the DEK swap,
-                                        // so revocation survives a restart (ADR 0016-v2
-                                        // §6.2 step 5). Only the revocation timestamp is
-                                        // stored — never the wrapped key bytes — so the
-                                        // compromised DEK material remains discarded.
+                                        // so containment survives a restart (ADR 0016-v2
+                                        // §6.2 step 2). This timestamp-only marker is
+                                        // permanent and is never removed.
                                         let revoked_key =
                                             format!("{DEK_REVOKED_PREFIX}{old_version}");
                                         let now = std::time::SystemTime::now()
@@ -2192,6 +2327,35 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                             revoked_key.as_bytes(),
                                             now.to_be_bytes(),
                                         );
+
+                                        // Also stage the old epoch's wrapped bytes under a
+                                        // *separate*, temporary prefix so the re-encryption
+                                        // sweep this rotation still requires (ADR §6.2 step
+                                        // 4) survives a restart before it completes.
+                                        // `reencrypt_pending` deletes this entry the moment
+                                        // the sweep confirms every record has migrated and
+                                        // no log entry still references it — only then is
+                                        // the compromised key genuinely discarded (step 5).
+                                        let revoked_pending_key =
+                                            format!("{DEK_REVOKED_PENDING_PREFIX}{old_version}");
+                                        match self.meta.get(META_DEK_CURRENT) {
+                                            Ok(Some(cur)) if cur.len() > 4 => {
+                                                batch.insert(
+                                                    &self.meta,
+                                                    revoked_pending_key.as_bytes(),
+                                                    &cur[4..],
+                                                );
+                                            }
+                                            _ => {
+                                                tracing::error!(
+                                                    old_version,
+                                                    "SECURITY: could not read current DEK \
+                                                     bytes to stage emergency re-encryption; \
+                                                     records under the revoked epoch may \
+                                                     become permanently unreadable"
+                                                );
+                                            }
+                                        }
                                     }
                                     pending_dek_swap = Some((new_epoch, is_emergency));
                                     tracing::info!(
@@ -2330,6 +2494,50 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                                     .unwrap_or_else(|p| p.into_inner());
                                                 g.version
                                             };
+
+                                            // Dual-control-confirmed emergency rotation:
+                                            // same containment + staged-re-encryption
+                                            // bookkeeping as `InstallDek`'s emergency
+                                            // branch (ADR 0016-v2 §6.2 steps 2, 4) — this
+                                            // path used to skip both durable writes
+                                            // entirely, silently losing revocation status
+                                            // and the re-encryption key on restart
+                                            // (GitHub #1299).
+                                            let revoked_key =
+                                                format!("{DEK_REVOKED_PREFIX}{old_version}");
+                                            let now = std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .unwrap_or_default()
+                                                .as_secs();
+                                            batch.insert(
+                                                &self.meta,
+                                                revoked_key.as_bytes(),
+                                                now.to_be_bytes(),
+                                            );
+                                            let revoked_pending_key = format!(
+                                                "{DEK_REVOKED_PENDING_PREFIX}{old_version}"
+                                            );
+                                            match self.meta.get(META_DEK_CURRENT) {
+                                                Ok(Some(cur)) if cur.len() > 4 => {
+                                                    batch.insert(
+                                                        &self.meta,
+                                                        revoked_pending_key.as_bytes(),
+                                                        &cur[4..],
+                                                    );
+                                                }
+                                                _ => {
+                                                    tracing::error!(
+                                                        old_version,
+                                                        rotation_id,
+                                                        "SECURITY: could not read current \
+                                                         DEK bytes to stage emergency \
+                                                         re-encryption; records under the \
+                                                         revoked epoch may become \
+                                                         permanently unreadable"
+                                                    );
+                                                }
+                                            }
+
                                             pending_dek_swap = Some((new_epoch, true));
                                             tracing::warn!(
                                                 rotation_id,
@@ -2405,15 +2613,20 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                         std::mem::replace(&mut *guard, new_epoch)
                     };
                     if is_emergency_rotation {
-                        // Emergency: old DEK is revoked, not retired, and —
-                        // unlike a normal rotation — is never forwarded to
-                        // the re-encryption channel below. The point of
-                        // revocation is that this key material must not be
-                        // used again for anything, including internal
-                        // re-encryption of other records (ADR 0016-v2 §6.2
-                        // step 5); `old_epoch` is simply dropped (and
-                        // zeroized by `LockedKey`'s `Drop`) at the end of
-                        // this block.
+                        // Emergency: old DEK is revoked, not retired — but it
+                        // must still go through the standard re-encryption
+                        // sweep before its key material is discarded (ADR
+                        // 0016-v2 §6.2 step 4 runs *before* step 5). Dropping
+                        // it here immediately, as this used to do, silently
+                        // and permanently loses every record, in-flight log
+                        // entry, and local snapshot still under this epoch
+                        // (GitHub #1299). `revoked_deks` still marks the
+                        // version as compromised so it is never handed to a
+                        // joining node (`FetchDek`) or reused for anything
+                        // new; `finalize_if_revoked` (called from
+                        // `reencrypt_pending`) removes it from `old_deks` —
+                        // the actual, final discard — only once the sweep
+                        // confirms nothing needs the key anymore.
                         let mut revoked =
                             self.revoked_deks.lock().unwrap_or_else(|p| p.into_inner());
                         if revoked.len() >= MAX_REVOKED_DEKS {
@@ -2427,17 +2640,21 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                         drop(revoked);
                         tracing::warn!(
                             version = old_epoch.version,
-                            "SECURITY: emergency DEK rotation — old DEK version revoked"
+                            "SECURITY: emergency DEK rotation — old DEK version revoked; \
+                             re-encryption sweep starting before the key is discarded \
+                             (ADR 0016-v2 §6.2 step 4)"
                         );
-                    } else {
-                        // Register old epoch for state/log read fallback during re-encryption.
-                        self.old_deks
-                            .lock()
-                            .unwrap_or_else(|p| p.into_inner())
-                            .insert(old_epoch.version, old_epoch.clone());
-                        // Signal background re-encryption task (non-fatal on channel full).
-                        let _ = self.reencrypt_tx.try_send(old_epoch);
                     }
+                    // Register old epoch for state/log read fallback during
+                    // re-encryption -- for an emergency rotation this is
+                    // temporary (see comment above); for a normal rotation
+                    // it is kept forever for backup decryption (ADR §7).
+                    self.old_deks
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .insert(old_epoch.version, old_epoch.clone());
+                    // Signal background re-encryption task (non-fatal on channel full).
+                    let _ = self.reencrypt_tx.try_send(old_epoch);
                     tracing::info!("DEK epoch swapped");
                 }
             }
@@ -2794,6 +3011,41 @@ mod dek_version_tests {
             .expect("legacy probe path should still find the retired epoch");
         assert_eq!(plaintext, b"hello");
     }
+
+    /// A hint naming an epoch that is genuinely gone (not in `old_deks`)
+    /// *and* known to have been emergency-revoked (ADR 0016-v2 §6.2) must
+    /// fail with a clean `RevokedDek` error, not be miscategorized as
+    /// corruption and trip the quarantine threshold (GitHub #1299). By the
+    /// time this can happen for a real record, `finalize_if_revoked` has
+    /// already confirmed nothing needs the key anymore.
+    #[test]
+    fn decrypt_with_revoked_and_discarded_epoch_returns_clean_error_not_quarantine() {
+        let epoch = test_epoch(0x08, 2);
+        let (sm, _td) = make_sm(epoch);
+
+        sm.revoked_deks.lock().unwrap().insert(1);
+
+        let err = sm
+            .decrypt_state(
+                b"irrelevant-ciphertext",
+                DataTier::Internal as u8,
+                b"data",
+                b"k1",
+                Some(1),
+            )
+            .expect_err("a revoked, fully-discarded epoch must not decrypt");
+        assert!(
+            matches!(
+                err,
+                StoreError::Crypto {
+                    source: openstack_keystone_storage_crypto::CryptoError::RevokedDek {
+                        version: 1
+                    }
+                }
+            ),
+            "expected a clean RevokedDek error, got: {err:?}"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -2939,6 +3191,134 @@ mod reencrypt_tests {
             .expect("still present")
             .to_vec();
         assert_eq!(before, after, "no retired epoch to migrate from");
+    }
+
+    /// End-to-end exercise of the fix for GitHub #1299: an emergency-revoked
+    /// epoch's key material is genuinely discarded only after its
+    /// re-encryption sweep confirms completion *and* no Raft log entry
+    /// still references it -- not synchronously at rotation time, the way
+    /// the pre-fix code did.
+    #[test]
+    fn finalize_if_revoked_discards_key_once_swept_and_log_is_clear() {
+        let old_epoch = test_epoch(0x20, 1);
+        let (sm, _td) = make_sm(old_epoch.clone());
+
+        let old_version = write_record(&sm, b"k1", b"hello");
+        assert_eq!(old_version, old_epoch.version);
+
+        // Simulate what the post-commit swap block now does for an
+        // emergency rotation: register the old epoch in *both* `old_deks`
+        // (still readable during the sweep) and `revoked_deks`
+        // (containment), and stage its wrapped bytes on disk the way
+        // `InstallDek`'s emergency branch does.
+        let new_epoch = test_epoch(0x21, 2);
+        *sm.dek.write().unwrap_or_else(|p| p.into_inner()) = new_epoch.clone();
+        sm.old_deks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(old_epoch.version, old_epoch.clone());
+        sm.revoked_deks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(old_epoch.version);
+        let revoked_pending_key = format!("{DEK_REVOKED_PENDING_PREFIX}{}", old_epoch.version);
+        sm.meta()
+            .insert(revoked_pending_key.as_bytes(), b"fake-wrapped-bytes")
+            .expect("stage revoked-pending key material");
+
+        TypeConfig::run(async {
+            sm.reencrypt_pending().await;
+        });
+
+        // The record has been migrated and the revoked epoch's key
+        // material is genuinely gone -- both in memory and on disk.
+        assert!(
+            !sm.old_deks
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .contains_key(&old_epoch.version),
+            "finalized revoked epoch must be dropped from old_deks"
+        );
+        assert!(
+            sm.meta()
+                .get(revoked_pending_key.as_bytes())
+                .expect("get marker")
+                .is_none(),
+            "staged key material must be deleted once finalized"
+        );
+
+        let stored = sm
+            .data()
+            .get(b"k1")
+            .expect("get data")
+            .expect("data present");
+        let plaintext = sm
+            .decrypt_state(
+                stored.as_ref(),
+                DataTier::Internal as u8,
+                b"data",
+                b"k1",
+                Some(new_epoch.version),
+            )
+            .expect("record remains readable after finalization");
+        assert_eq!(plaintext, b"hello");
+    }
+
+    /// A revoked epoch whose re-encryption swept cleanly but which is still
+    /// referenced by an un-compacted Raft log entry must not be finalized
+    /// yet -- discarding the key while a log entry still needs it would
+    /// make that entry permanently unreadable (GitHub #1299).
+    #[test]
+    fn finalize_if_revoked_defers_while_log_entries_remain() {
+        let old_epoch = test_epoch(0x22, 1);
+        let (sm, _td) = make_sm(old_epoch.clone());
+
+        write_record(&sm, b"k2", b"hello");
+
+        let new_epoch = test_epoch(0x23, 2);
+        *sm.dek.write().unwrap_or_else(|p| p.into_inner()) = new_epoch;
+        sm.old_deks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(old_epoch.version, old_epoch.clone());
+        sm.revoked_deks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(old_epoch.version);
+        let revoked_pending_key = format!("{DEK_REVOKED_PENDING_PREFIX}{}", old_epoch.version);
+        sm.meta()
+            .insert(revoked_pending_key.as_bytes(), b"fake-wrapped-bytes")
+            .expect("stage revoked-pending key material");
+
+        // Simulate a still-un-compacted Raft log entry tagged with the
+        // revoked version (layout: [dek_version_u32_BE; 4] ++ ...).
+        let logs = sm
+            .db()
+            .keyspace("logs", KeyspaceCreateOptions::default)
+            .expect("logs keyspace");
+        let mut fake_entry = old_epoch.version.to_be_bytes().to_vec();
+        fake_entry.extend_from_slice(&[0u8; 40]);
+        logs.insert(1u64.to_be_bytes(), fake_entry)
+            .expect("insert fake log entry");
+
+        TypeConfig::run(async {
+            sm.reencrypt_pending().await;
+        });
+
+        assert!(
+            sm.old_deks
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .contains_key(&old_epoch.version),
+            "must not finalize while a log entry still references the revoked epoch"
+        );
+        assert!(
+            sm.meta()
+                .get(revoked_pending_key.as_bytes())
+                .expect("get marker")
+                .is_some(),
+            "staged key material must survive while finalization is deferred"
+        );
     }
 }
 
