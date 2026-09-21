@@ -78,6 +78,49 @@ fn quarantine_meta_key(partition: &str, node_id: u64) -> String {
     format!("{QUARANTINE_META_PREFIX}{partition}:{node_id}")
 }
 
+/// Keyspace names reserved for the state machine's own storage.
+///
+/// A `StorageApi` caller must never be able to write into these directly
+/// (GitHub #1294): `"meta"` backs per-record [`Metadata`], DEK material and
+/// other engine bookkeeping; `"logs"` backs the Raft log store;
+/// `"index"` backs the secondary index; `"local_emergency"` is a
+/// node-local, non-Raft keyspace. `apply()` rejects any mutation whose
+/// caller-supplied keyspace is one of these before it touches storage.
+const RESERVED_KEYSPACES: &[&str] = &["meta", "logs", "index", "local_emergency"];
+
+/// Returns an error if `keyspace` names a keyspace reserved for internal
+/// state machine storage (see [`RESERVED_KEYSPACES`]).
+fn check_keyspace_allowed(keyspace: &str) -> Result<(), io::Error> {
+    if RESERVED_KEYSPACES.contains(&keyspace) {
+        return Err(io::Error::other(format!(
+            "keyspace '{keyspace}' is reserved for internal state machine storage"
+        )));
+    }
+    Ok(())
+}
+
+/// Builds the namespaced key under which a user record's [`Metadata`] is
+/// stored in the `meta` keyspace: `<keyspace>\0<key>`.
+///
+/// Per-record metadata used to be stored under the bare record key, with no
+/// keyspace component, so two records with the same key in different
+/// keyspaces shared one `Metadata` entry (GitHub #1294) — a `Remove` of key
+/// `K` in keyspace `A` deleted the metadata of key `K` in keyspace `B` too,
+/// after which reads of `B`'s record found ciphertext with no matching
+/// `dek_version` hint and treated it as corruption. The `\0` separator can
+/// never collide with the engine's own bare system keys (`_meta:*`,
+/// `last_applied_log`, `last_membership`), none of which contain a NUL
+/// byte, and `keyspace` itself can never be `"meta"` here since
+/// [`check_keyspace_allowed`] rejects that before any caller-supplied
+/// keyspace reaches this function.
+pub(crate) fn meta_key(keyspace: &str, key: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(keyspace.len() + 1 + key.len());
+    out.extend_from_slice(keyspace.as_bytes());
+    out.push(0);
+    out.extend_from_slice(key);
+    out
+}
+
 /// Per-partition GCM decryption failure tracker with automatic quarantine.
 ///
 /// A partition accumulates failure `Instant`s in a 60-second sliding window.
@@ -1219,7 +1262,7 @@ impl FjallStateMachine {
         let next_version = if let Some(existing) = ks.get(key)? {
             let dek_version_hint = self
                 .meta
-                .get(key)?
+                .get(meta_key(&partition, key))?
                 .map(|m| Metadata::unpack(m.as_ref()))
                 .transpose()?
                 .and_then(|m| m.dek_version);
@@ -1545,7 +1588,7 @@ impl FjallStateMachine {
             let Ok(Some(before)) = ks.get(key) else {
                 return ReencryptOutcome::AlreadyCurrent; // deleted concurrently
             };
-            let Ok(Some(meta_bytes)) = self.meta.get(key) else {
+            let Ok(Some(meta_bytes)) = self.meta.get(meta_key(keyspace_name, key)) else {
                 return ReencryptOutcome::AlreadyCurrent; // metadata gone
             };
             let Ok(metadata) = Metadata::unpack(meta_bytes.as_ref()) else {
@@ -1602,7 +1645,7 @@ impl FjallStateMachine {
             // changed underneath us.
             let mut batch = self.db.batch();
             batch.insert(ks, key.to_vec(), encrypted);
-            batch.insert(&self.meta, key.to_vec(), new_meta_bytes);
+            batch.insert(&self.meta, meta_key(keyspace_name, key), new_meta_bytes);
             if batch.commit().is_err() {
                 continue;
             }
@@ -2040,13 +2083,7 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                     keyspace,
                                     expected_revision,
                                 } => {
-                                    if keyspace == "meta" && key == KEY_LAST_MEMBERSHIP
-                                        || key == KEY_LAST_APPLIED_LOG
-                                    {
-                                        return Err(io::Error::other(
-                                            "not allowed to delete system data",
-                                        ));
-                                    }
+                                    check_keyspace_allowed(&keyspace)?;
 
                                     if let Some(ephemeral_ks) = self.ephemeral.get(&keyspace) {
                                         if let Some(expected_revision) = expected_revision {
@@ -2074,7 +2111,7 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                     if let Some(expected_revision) = expected_revision {
                                         let curr_meta = self
                                             .meta()
-                                            .get(&key)
+                                            .get(meta_key(&keyspace, &key))
                                             .map_err(|e| io::Error::other(e.to_string()))?
                                             .map(|x| Metadata::unpack(x.as_ref()))
                                             .transpose()
@@ -2095,9 +2132,9 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         }
                                     }
 
-                                    let ks = &self.keyspace(keyspace)?;
+                                    let ks = &self.keyspace(&keyspace)?;
                                     batch.remove(ks, key.clone());
-                                    batch.remove(&self.meta, key.clone());
+                                    batch.remove(&self.meta, meta_key(&keyspace, &key));
                                 }
                                 MutationInner::RemoveIndex { key } => {
                                     batch.remove(&self.index, key.clone());
@@ -2110,13 +2147,7 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                     tier,
                                     expected_revision,
                                 } => {
-                                    if keyspace == "meta" && key == KEY_LAST_MEMBERSHIP
-                                        || key == KEY_LAST_APPLIED_LOG
-                                    {
-                                        return Err(io::Error::other(
-                                            "not allowed to overwrite system data",
-                                        ));
-                                    }
+                                    check_keyspace_allowed(&keyspace)?;
 
                                     if metadata.is_ephemeral {
                                         let ephemeral_ks =
@@ -2146,7 +2177,7 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                     if let Some(expected_revision) = expected_revision {
                                         let curr_meta = self
                                             .meta()
-                                            .get(&key)
+                                            .get(meta_key(&keyspace, &key))
                                             .map_err(|e| io::Error::other(e.to_string()))?
                                             .map(|x| Metadata::unpack(x.as_ref()))
                                             .transpose()
@@ -2184,7 +2215,7 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                             meta_with_tier.dek_version = Some(dek_version);
                                             batch.insert(
                                                 &self.meta,
-                                                key.clone(),
+                                                meta_key(&keyspace, &key),
                                                 meta_with_tier
                                                     .pack()
                                                     .map_err(|e| io::Error::other(e.to_string()))?,
@@ -2221,6 +2252,8 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                     metadata,
                                     tier,
                                 } => {
+                                    check_keyspace_allowed(&keyspace)?;
+
                                     if metadata.is_ephemeral {
                                         let ephemeral_ks =
                                             self.ephemeral.entry(keyspace.clone()).or_default();
@@ -2240,7 +2273,7 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
 
                                     let exists = self
                                         .meta()
-                                        .get(&key)
+                                        .get(meta_key(&keyspace, &key))
                                         .map_err(|e| io::Error::other(e.to_string()))?
                                         .is_some();
                                     if exists {
@@ -2269,7 +2302,7 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                             meta_with_tier.dek_version = Some(dek_version);
                                             batch.insert(
                                                 &self.meta,
-                                                key.clone(),
+                                                meta_key(&keyspace, &key),
                                                 meta_with_tier
                                                     .pack()
                                                     .map_err(|e| io::Error::other(e.to_string()))?,
@@ -3116,7 +3149,10 @@ mod dek_version_tests {
         let mut metadata = Metadata::new();
         metadata.dek_version = Some(dek_version1);
         sm.meta()
-            .insert(b"k1", metadata.pack().expect("pack metadata"))
+            .insert(
+                meta_key("data", b"k1"),
+                metadata.pack().expect("pack metadata"),
+            )
             .expect("insert metadata");
 
         // Rotate: k1's record is now under a retired epoch, exactly as it
@@ -3175,7 +3211,10 @@ mod dek_version_tests {
         let mut metadata = Metadata::new();
         metadata.dek_version = Some(dek_version);
         sm.meta()
-            .insert(b"k1", metadata.pack().expect("pack metadata"))
+            .insert(
+                meta_key("data", b"k1"),
+                metadata.pack().expect("pack metadata"),
+            )
             .expect("insert metadata");
 
         // QUARANTINE_THRESHOLD (3) identical failures within the sliding
@@ -3245,6 +3284,145 @@ mod dek_version_tests {
     }
 }
 
+/// Regression tests for GitHub #1294: per-record `Metadata` must be
+/// namespaced by keyspace, and callers must never be able to write
+/// directly into a keyspace reserved for the state machine's own storage.
+#[cfg(test)]
+mod keyspace_isolation_tests {
+    use openstack_keystone_storage_crypto::EnvKek;
+
+    use super::*;
+
+    fn test_epoch(seed: u8, version: u32) -> Arc<DekEpoch> {
+        Arc::new(DekEpoch::from_raw(LockedKey::from_raw([seed; 32]), version).expect("epoch"))
+    }
+
+    fn make_sm(current: Arc<DekEpoch>) -> (FjallStateMachine, tempfile::TempDir) {
+        let td = tempfile::TempDir::new().expect("tempdir");
+        let db = Arc::new(Database::builder(td.path()).open().expect("open db"));
+        let kek: Arc<dyn KekProvider> = Arc::new(EnvKek::from_bytes([0x42u8; 32]));
+        let (reencrypt_tx, reencrypt_rx) = tokio::sync::mpsc::channel(1);
+        drop(reencrypt_rx);
+        let (quarantine_tx, quarantine_rx) = tokio::sync::mpsc::channel(1);
+        drop(quarantine_rx);
+
+        let sm = FjallStateMachine::new(
+            db,
+            td.path().join("snapshots"),
+            1,
+            Arc::new(RwLock::new(current)),
+            Arc::new(Mutex::new(BTreeMap::new())),
+            Arc::new(Mutex::new(HashSet::new())),
+            kek,
+            reencrypt_tx,
+            quarantine_tx,
+            Arc::new(Mutex::new(HashMap::new())),
+        )
+        .expect("construct state machine");
+        (sm, td)
+    }
+
+    #[test]
+    fn meta_key_never_collides_across_keyspaces_or_with_bare_system_keys() {
+        // Two different keyspaces, same record key -> different meta keys.
+        assert_ne!(meta_key("data", b"shared"), meta_key("other", b"shared"));
+        // The `\0` separator can never be produced by a bare system key
+        // (none of them contain a NUL byte), so a namespaced meta key can
+        // never collide with one.
+        assert_ne!(meta_key("data", b"shared"), META_DEK_CURRENT.to_vec());
+        assert!(meta_key("data", b"shared").contains(&0u8));
+        assert!(!META_DEK_CURRENT.contains(&0u8));
+        assert!(!KEY_LAST_APPLIED_LOG.contains(&0u8));
+        assert!(!KEY_LAST_MEMBERSHIP.contains(&0u8));
+    }
+
+    #[test]
+    fn check_keyspace_allowed_rejects_only_reserved_names() {
+        for reserved in RESERVED_KEYSPACES {
+            assert!(
+                check_keyspace_allowed(reserved).is_err(),
+                "'{reserved}' must be rejected as a caller-supplied keyspace"
+            );
+        }
+        for ok in ["data", "identity_users", "oauth2_tokens"] {
+            assert!(
+                check_keyspace_allowed(ok).is_ok(),
+                "'{ok}' must be a valid caller-supplied keyspace"
+            );
+        }
+    }
+
+    /// Two records with the same key in different keyspaces must have
+    /// independent `Metadata`: writing/removing one must never affect the
+    /// other's revision, tier or `dek_version` (GitHub #1294 consequence
+    /// 1). This mirrors what `apply()`'s `Set`/`Remove` handlers now do via
+    /// `meta_key`.
+    #[test]
+    fn metadata_is_isolated_per_keyspace_for_the_same_record_key() {
+        let epoch = test_epoch(0x50, 1);
+        let (sm, _td) = make_sm(epoch);
+
+        let ks_a = sm.keyspace("keyspace_a").expect("keyspace a");
+        let ks_b = sm.keyspace("keyspace_b").expect("keyspace b");
+
+        let (cipher_a, dek_version_a) = sm
+            .encrypt_and_store(
+                &ks_a,
+                b"shared",
+                b"keyspace_a",
+                DataTier::Internal as u8,
+                b"a",
+            )
+            .expect("encrypt in keyspace_a");
+        ks_a.insert(b"shared", cipher_a).expect("insert a");
+        let mut meta_a = Metadata::new();
+        meta_a.revision = 7;
+        meta_a.dek_version = Some(dek_version_a);
+        sm.meta()
+            .insert(meta_key("keyspace_a", b"shared"), meta_a.pack().unwrap())
+            .expect("insert meta a");
+
+        let (cipher_b, dek_version_b) = sm
+            .encrypt_and_store(
+                &ks_b,
+                b"shared",
+                b"keyspace_b",
+                DataTier::Internal as u8,
+                b"b",
+            )
+            .expect("encrypt in keyspace_b");
+        ks_b.insert(b"shared", cipher_b).expect("insert b");
+        let mut meta_b = Metadata::new();
+        meta_b.revision = 3;
+        meta_b.dek_version = Some(dek_version_b);
+        sm.meta()
+            .insert(meta_key("keyspace_b", b"shared"), meta_b.pack().unwrap())
+            .expect("insert meta b");
+
+        // Removing keyspace_a's record (as apply()'s Remove handler does)
+        // must not touch keyspace_b's metadata.
+        sm.meta()
+            .remove(meta_key("keyspace_a", b"shared"))
+            .expect("remove meta a");
+
+        assert!(
+            sm.meta()
+                .get(meta_key("keyspace_a", b"shared"))
+                .expect("get a")
+                .is_none(),
+            "keyspace_a's metadata must be gone"
+        );
+        let meta_b_after = sm
+            .meta()
+            .get(meta_key("keyspace_b", b"shared"))
+            .expect("get b")
+            .expect("keyspace_b's metadata must survive keyspace_a's removal");
+        let unpacked_b = Metadata::unpack(meta_b_after.as_ref()).expect("unpack b");
+        assert_eq!(unpacked_b.revision, 3);
+        assert_eq!(unpacked_b.dek_version, Some(dek_version_b));
+    }
+}
+
 #[cfg(test)]
 mod reencrypt_tests {
     use openstack_keystone_storage_crypto::EnvKek;
@@ -3292,7 +3470,10 @@ mod reencrypt_tests {
         let mut metadata = Metadata::new();
         metadata.dek_version = Some(dek_version);
         sm.meta()
-            .insert(key, metadata.pack().expect("pack metadata"))
+            .insert(
+                meta_key("data", key),
+                metadata.pack().expect("pack metadata"),
+            )
             .expect("insert metadata");
         dek_version
     }
@@ -3326,7 +3507,7 @@ mod reencrypt_tests {
         // Metadata now names the new epoch.
         let meta_bytes = sm
             .meta()
-            .get(b"k1")
+            .get(meta_key("data", b"k1"))
             .expect("get meta")
             .expect("meta present");
         let metadata = Metadata::unpack(meta_bytes.as_ref()).expect("unpack metadata");
@@ -3574,7 +3755,11 @@ mod reencrypt_tests {
         );
         assert!(matches!(outcome, ReencryptOutcome::Migrated));
 
-        let meta_bytes = sm.meta().get(b"k1").expect("get meta").expect("present");
+        let meta_bytes = sm
+            .meta()
+            .get(meta_key("data", b"k1"))
+            .expect("get meta")
+            .expect("present");
         let metadata = Metadata::unpack(meta_bytes.as_ref()).expect("unpack metadata");
         assert_eq!(metadata.dek_version, Some(new_epoch.version));
     }
@@ -3631,7 +3816,7 @@ mod reencrypt_tests {
                 batch.insert(&ks, b"k1".to_vec(), ciphertext);
                 batch.insert(
                     sm_writer.meta(),
-                    b"k1".to_vec(),
+                    meta_key("data", b"k1"),
                     metadata.pack().expect("pack"),
                 );
                 batch.commit().expect("commit");
@@ -3650,7 +3835,11 @@ mod reencrypt_tests {
         writer.join().expect("writer thread must not panic");
         reencryptor.join().expect("reencrypt thread must not panic");
 
-        let meta_bytes = sm.meta().get(b"k1").expect("get meta").expect("present");
+        let meta_bytes = sm
+            .meta()
+            .get(meta_key("data", b"k1"))
+            .expect("get meta")
+            .expect("present");
         let metadata = Metadata::unpack(meta_bytes.as_ref()).expect("unpack metadata");
         assert_eq!(
             metadata.dek_version,
