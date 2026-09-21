@@ -82,6 +82,7 @@ impl From<StoreError> for ApiStoreError {
                     "write rate exceeded at version {version}; DEK rotation required"
                 ),
             },
+            StoreError::Unavailable(msg) => Self::Unavailable(msg),
             _ => Self::Other(Box::new(e)),
         }
     }

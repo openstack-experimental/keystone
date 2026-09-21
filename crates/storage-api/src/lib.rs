@@ -117,6 +117,15 @@ pub enum StoreError {
     #[error("invalid utf-8")]
     Utf8(#[from] std::string::FromUtf8Error),
 
+    /// The operation could not be completed with a linearizability guarantee
+    /// (Raft `ReadIndex`/forwarding failed or was exhausted). Callers MUST
+    /// treat this as a transient failure — e.g. answer with HTTP 503 and let
+    /// the client retry — and MUST NOT substitute a non-linearizable local
+    /// read, since that could return revoked credentials, deleted users, or
+    /// other stale sensitive data (security invariant 4).
+    #[error("storage temporarily unavailable: {0}")]
+    Unavailable(String),
+
     /// Generic error for implementation-specific failures.
     #[error("{0}")]
     Other(Box<dyn std::error::Error + Send + Sync + 'static>),

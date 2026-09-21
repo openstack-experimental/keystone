@@ -47,7 +47,9 @@ use openstack_keystone_distributed_storage::network::{
 use openstack_keystone_distributed_storage::protobuf as pb;
 use openstack_keystone_distributed_storage::protobuf::raft::cluster_admin_service_client::ClusterAdminServiceClient;
 use openstack_keystone_distributed_storage::store_command::*;
-use openstack_keystone_distributed_storage::{DataTier, Metadata, StoreDataEnvelope, StoreError};
+use openstack_keystone_distributed_storage::{
+    ApiStoreError, DataTier, Metadata, StoreDataEnvelope, StoreError,
+};
 use openstack_keystone_distributed_storage::{StorageApi, TypeConfig};
 
 fn make_env<T: serde::Serialize + ?Sized>(
@@ -814,6 +816,8 @@ async fn test_node_restart_inner() -> Result<()> {
         kek_provider: KekProvider::Env,
         pkcs11: None,
         tpm: None,
+        ensure_linearizable_retries: 80,
+        ensure_linearizable_retry_delay_ms: 50,
     };
     let config = Config {
         distributed_storage: Some(ds_config),
@@ -907,6 +911,8 @@ async fn test_node_restart_inner() -> Result<()> {
         kek_provider: KekProvider::Env,
         pkcs11: None,
         tpm: None,
+        ensure_linearizable_retries: 80,
+        ensure_linearizable_retry_delay_ms: 50,
     };
     let config_restart = Config {
         distributed_storage: Some(ds_config_restart),
@@ -1701,18 +1707,20 @@ async fn test_cluster_inner() -> Result<()> {
             .expect("leader node 3 must have the sensitive data");
         assert_eq!("sensitive_value", got.try_deserialize::<String>()?.data);
 
-        // Also verify old-follower nodes (1, 2) can still read locally.
-        // These nodes are no longer part of the cluster but their FjallDB
-        // still contains the committed state.
+        // Regression for issue #1302 part 1: nodes removed from the cluster
+        // (1, 2) must NOT be able to serve reads from their local FjallDB
+        // copy any more, even though it still physically contains the
+        // committed state. They can no longer reach quorum to confirm
+        // linearizability (ADR 0016-v2 §3 / security invariant 4 — no stale
+        // reads for sensitive data), so `get_by_key` must fail rather than
+        // silently return that possibly-stale copy.
         for instance in &[instance1, instance2] {
+            let result = instance.storage.get_by_key("sec:k1".as_bytes(), None).await;
             assert!(
-                instance
-                    .storage
-                    .get_by_key("sec:k1".as_bytes(), None)
-                    .await?
-                    .is_some(),
-                "old-follower node {} should still be able to read locally",
-                instance.node_id
+                matches!(result, Err(ApiStoreError::Unavailable(_))),
+                "removed node {} must refuse a non-linearizable local read, got {:?}",
+                instance.node_id,
+                result
             );
         }
     }
@@ -2571,5 +2579,7 @@ fn get_ds_config_with_port(
         kek_provider: KekProvider::Env,
         pkcs11: None,
         tpm: None,
+        ensure_linearizable_retries: 80,
+        ensure_linearizable_retry_delay_ms: 50,
     }
 }

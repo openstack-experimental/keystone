@@ -530,6 +530,8 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
         allowed_peer_svids,
         local_emergency_store,
         local_emergency_config,
+        ensure_linearizable_retries: ds_config.ensure_linearizable_retries,
+        ensure_linearizable_retry_delay_ms: ds_config.ensure_linearizable_retry_delay_ms,
     });
 
     // Best-effort background forwarding of Raft-committed quarantine events
@@ -778,18 +780,14 @@ pub struct Storage {
     /// must be restarted to flip `enabled`, same as other security-critical
     /// distributed-storage settings.
     pub(crate) local_emergency_config: openstack_keystone_config::LocalEmergencyProvider,
+    /// Number of attempts for the `ensure_linearizable` retry loop, from
+    /// `[distributed_storage] ensure_linearizable_retries`. See
+    /// [`ensure_linearizable_with_retry`](Storage::ensure_linearizable_with_retry).
+    pub(crate) ensure_linearizable_retries: u32,
+    /// Delay (ms) between `ensure_linearizable` retry attempts, from
+    /// `[distributed_storage] ensure_linearizable_retry_delay_ms`.
+    pub(crate) ensure_linearizable_retry_delay_ms: u64,
 }
-
-/// Total number of retry attempts for `ensure_linearizable` when transient
-/// errors occur. `ForwardToLeader` without leader info can appear during an
-/// election while the leader cache refreshes; `QuorumNotEnough` can appear when
-/// multiple in-flight `ReadIndex` or `client_write` calls compete for quorum.
-/// Subsequent calls should succeed once the transient condition clears.
-const ENSURE_LINEARIZABLE_RETRIES: u32 = 6;
-
-/// Delay between retries (ms) — short enough to complete before caller-timeout,
-/// long enough for the follower's leader cache to refresh.
-const ENSURE_LINEARIZABLE_RETRY_DELAY_MS: u64 = 8;
 
 /// Outcome of the `ensure_linearizable` retry loop.
 enum EnsureLinearizableOutcome {
@@ -797,8 +795,6 @@ enum EnsureLinearizableOutcome {
     Leader,
     /// Forward the read to the given leader.
     Forward(NodeId, String),
-    /// All retries exhausted without resolving; fall back to local read.
-    Fallback,
 }
 
 impl Storage {
@@ -808,11 +804,20 @@ impl Storage {
     ///
     /// Returns `Ok(EnsureLinearizableOutcome::Leader)` when this node is
     /// leader, `Ok(EnsureLinearizableOutcome::Forward(addr))` when a leader
-    /// should handle the read, or `Err` for an unrecoverable failure.
+    /// should handle the read.
+    ///
+    /// Returns `Err(ApiStoreError::Unavailable)` when the retry budget is
+    /// exhausted without resolving leader status (e.g. during a prolonged
+    /// election or `QuorumNotEnough` storm), or for an unrecoverable Raft
+    /// error. Per ADR 0016-v2 §3 / security invariant 4 ("no stale reads for
+    /// sensitive data"), callers MUST propagate this as a failure — e.g. HTTP
+    /// 503 — and MUST NOT substitute a non-linearizable local read: this node
+    /// cannot tell whether its local state machine has applied the latest
+    /// committed entries.
     async fn ensure_linearizable_with_retry(
         &self,
     ) -> Result<EnsureLinearizableOutcome, ApiStoreError> {
-        for attempt in 0..ENSURE_LINEARIZABLE_RETRIES {
+        for attempt in 0..self.ensure_linearizable_retries {
             match self.raft.ensure_linearizable(ReadPolicy::ReadIndex).await {
                 Ok(_) => {
                     return Ok(EnsureLinearizableOutcome::Leader);
@@ -847,14 +852,24 @@ impl Storage {
                 }
             }
 
-            if attempt + 1 < ENSURE_LINEARIZABLE_RETRIES {
-                TypeConfig::sleep(Duration::from_millis(ENSURE_LINEARIZABLE_RETRY_DELAY_MS)).await;
+            if attempt + 1 < self.ensure_linearizable_retries {
+                TypeConfig::sleep(Duration::from_millis(
+                    self.ensure_linearizable_retry_delay_ms,
+                ))
+                .await;
             }
         }
 
-        // All retries exhausted without getting leader status or a valid leader
-        // address. Fall through to local read as best-effort.
-        Ok(EnsureLinearizableOutcome::Fallback)
+        // Retry budget exhausted without resolving leader status. Per
+        // security invariant 4, refuse the read rather than serve a
+        // possibly-stale local copy — the caller must retry/fail the
+        // request, not silently read local (possibly unreplicated) state.
+        Err(ApiStoreError::Unavailable(format!(
+            "ensure_linearizable (ReadIndex) did not resolve after {} attempts \
+             ({} ms budget); refusing non-linearizable local read",
+            self.ensure_linearizable_retries,
+            self.ensure_linearizable_retries as u64 * self.ensure_linearizable_retry_delay_ms,
+        )))
     }
 }
 
@@ -902,34 +917,22 @@ impl StorageApi for Storage {
         match self.ensure_linearizable_with_retry().await? {
             EnsureLinearizableOutcome::Leader => {}
             EnsureLinearizableOutcome::Forward(lead_id, leader_addr) => {
-                {
-                    debug!(
-                        leader_id = lead_id,
-                        leader_addr = %leader_addr,
-                        "ensure_linearizable (ReadIndex) returned ForwardToLeader; \
-                         forwarding get_by_key to leader"
-                    );
+                debug!(
+                    leader_id = lead_id,
+                    leader_addr = %leader_addr,
+                    "ensure_linearizable (ReadIndex) returned ForwardToLeader; \
+                     forwarding get_by_key to leader"
+                );
 
-                    if let Ok(result) = self
-                        .forwarded_get_by_key(lead_id, leader_addr.clone(), key, keyspace)
-                        .await
-                    {
-                        return Ok(result);
-                    }
-
-                    // Forward failed: the leader we found is unreachable (e.g., a removed node
-                    // with stale leader cache pointing to an old leader). Fall through to local
-                    // read as the best-effort fallback.
-                    debug!(
-                        leader_id = lead_id,
-                        leader_addr = %leader_addr,
-                        "forwarded_get_by_key to leader failed, falling back to local read"
-                    );
-                }
-            }
-            EnsureLinearizableOutcome::Fallback => {
-                // Retries exhausted without resolving leader status. Fall
-                // through to local read as best-effort.
+                // The leader has already confirmed linearizability for us;
+                // its response is authoritative. If forwarding itself fails
+                // (leader unreachable, TLS error, timeout), propagate the
+                // error rather than falling back to a non-linearizable local
+                // read (security invariant 4 — no stale reads for sensitive
+                // data).
+                return self
+                    .forwarded_get_by_key(lead_id, leader_addr, key, keyspace)
+                    .await;
             }
         }
 
@@ -1015,22 +1018,11 @@ impl StorageApi for Storage {
                      forwarding prefix to leader"
                 );
 
-                if let Ok(result) = self
-                    .forwarded_prefix_read(lead_id, leader_addr.clone(), prefix, keyspace)
-                    .await
-                {
-                    return Ok(result);
-                }
-
-                debug!(
-                    leader_id = lead_id,
-                    leader_addr = %leader_addr,
-                    "forwarded_prefix_read to leader failed, falling back to local read"
-                );
-            }
-            EnsureLinearizableOutcome::Fallback => {
-                // Retries exhausted without resolving leader status. Fall
-                // through to local read as best-effort.
+                // See get_by_key: propagate forward failures rather than
+                // falling back to a non-linearizable local read.
+                return self
+                    .forwarded_prefix_read(lead_id, leader_addr, prefix, keyspace)
+                    .await;
             }
         }
 
@@ -1119,22 +1111,11 @@ impl StorageApi for Storage {
                      for prefix_index; forwarding to leader"
                 );
 
-                if let Ok(result) = self
-                    .forwarded_prefix_index(lead_id, leader_addr.clone(), prefix)
-                    .await
-                {
-                    return Ok(result);
-                }
-
-                debug!(
-                    leader_id = lead_id,
-                    leader_addr = %leader_addr,
-                    "forwarded_prefix_index to leader failed, falling back to local read"
-                );
-            }
-            EnsureLinearizableOutcome::Fallback => {
-                // Retries exhausted without resolving leader status. Fall
-                // through to local read as best-effort.
+                // See get_by_key: propagate forward failures rather than
+                // falling back to a non-linearizable local read.
+                return self
+                    .forwarded_prefix_index(lead_id, leader_addr, prefix)
+                    .await;
             }
         }
 
@@ -1607,7 +1588,11 @@ impl Storage {
         let metadata = if inner.metadata.is_empty() {
             Metadata::new()
         } else {
-            Metadata::unpack(&inner.metadata).unwrap_or_else(|_| Metadata::new())
+            Metadata::unpack(&inner.metadata).map_err(|e| {
+                ApiStoreError::Other(Box::new(StoreError::Other(eyre::eyre!(
+                    "forwarded get: leader returned unparsable metadata: {e}"
+                ))))
+            })?
         };
 
         match inner.value {
@@ -1644,7 +1629,12 @@ impl Storage {
             let metadata = if entry.metadata.is_empty() {
                 Metadata::new()
             } else {
-                Metadata::unpack(&entry.metadata).unwrap_or_else(|_| Metadata::new())
+                Metadata::unpack(&entry.metadata).map_err(|e| {
+                    ApiStoreError::Other(Box::new(StoreError::Other(eyre::eyre!(
+                        "forwarded prefix: leader returned unparsable metadata for key {:?}: {e}",
+                        entry.key
+                    ))))
+                })?
             };
 
             result.push((

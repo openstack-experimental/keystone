@@ -227,6 +227,8 @@ fn pkcs11_ds_config(
             pkcs11_slot_label: Some(TOKEN_LABEL.to_string()),
         }),
         tpm: None,
+        ensure_linearizable_retries: 80,
+        ensure_linearizable_retry_delay_ms: 50,
     }
 }
 
