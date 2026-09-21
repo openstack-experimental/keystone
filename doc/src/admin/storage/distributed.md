@@ -255,10 +255,10 @@ prevents nonce-space exhaustion within a DEK epoch for pathologically hot keys.
 ### Backup Encryption
 
 **Function:**
-`backup_encrypt(bdek, snapshot_bytes, dek_version, utc_epoch) → Vec<u8>`
+`backup_encrypt(bdek, snapshot_bytes, dek_version, utc_epoch, nonce_salt) → Vec<u8>`
 
 **On-disk layout:**
-`[dek_version_u32_BE; 4] ++ [utc_epoch_u64_BE; 8] ++ [nonce_12b][ciphertext][tag_16b]`
+`[dek_version_u32_BE; 4] ++ [utc_epoch_u64_BE; 8] ++ [nonce_salt_u64_BE; 8] ++ [nonce_12b][ciphertext][tag_16b]`
 
 | Field           | Value                                                          |
 | --------------- | -------------------------------------------------------------- |
@@ -266,9 +266,15 @@ prevents nonce-space exhaustion within a DEK epoch for pathologically hot keys.
 
 The `dek_version` and `utc_epoch` in the AD bind the snapshot to a specific
 point in time and DEK epoch, preventing time-travel and replay attacks across
-backup archives. A separate DEK manifest (itself AES-256-GCM encrypted with AD
-bound to the manifest label, epoch, and DEK version) is included in the backup
-bundle alongside the encrypted snapshot.
+backup archives. `nonce_salt` is a fresh random 64-bit value generated per
+snapshot and mixed into the nonce derivation alongside `utc_epoch`, so two
+snapshots written within the same wall-clock second (including across a
+process restart, when a sequential in-memory counter would otherwise reset to
+0) still get distinct nonces; it is stored directly in the header, so
+decryption reads it rather than searching for it. A separate DEK manifest
+(itself AES-256-GCM encrypted with AD bound to the manifest label, epoch, and
+DEK version) is included in the backup bundle alongside the encrypted
+snapshot.
 
 ### Nonce Management
 
