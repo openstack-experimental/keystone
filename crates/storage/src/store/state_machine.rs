@@ -1020,6 +1020,30 @@ impl FjallStateMachine {
         partition: &str,
         hint: u32,
     ) -> Result<Vec<u8>, StoreError> {
+        self.decrypt_state_by_version_raw(stored, tier, keyspace, pk, partition, hint)
+            .map(|(plaintext, _next_version)| plaintext)
+    }
+
+    /// Same deterministic-epoch selection as [`Self::decrypt_state_by_version`],
+    /// but also returns the record's next nonce version (`stored_version + 1`,
+    /// per [`state_decrypt`]'s contract).
+    ///
+    /// Shared with [`Self::encrypt_and_store`], which needs that version to
+    /// continue the per-record nonce counter across a DEK rotation instead
+    /// of guessing at it by decrypting with the wrong (current) epoch and
+    /// falling back to `0` on the resulting GCM failure (GitHub #1295) —
+    /// which both broke the documented "monotonic per-record version"
+    /// invariant and let a write silently overwrite a genuinely tampered
+    /// record instead of counting it toward quarantine.
+    fn decrypt_state_by_version_raw(
+        &self,
+        stored: &[u8],
+        tier: u8,
+        keyspace: &[u8],
+        pk: &[u8],
+        partition: &str,
+        hint: u32,
+    ) -> Result<(Vec<u8>, u32), StoreError> {
         // Single read of `self.dek`, reused for both the version comparison
         // and the decrypt call. Reading `.version` and then re-acquiring the
         // lock in a second `self.dek.read()` would be a TOCTOU race: a DEK
@@ -1066,7 +1090,7 @@ impl FjallStateMachine {
         };
 
         match result {
-            Ok((plaintext, _next_version)) => Ok(plaintext.to_vec()),
+            Ok((plaintext, next_version)) => Ok((plaintext.to_vec(), next_version)),
             Err(openstack_keystone_storage_crypto::CryptoError::AesDecrypt) => {
                 self.record_quarantine_failure(partition);
                 Err(StoreError::Crypto {
@@ -1182,12 +1206,49 @@ impl FjallStateMachine {
             return Err(StoreError::Quarantined(partition));
         }
 
-        // Read existing version (0 for new keys).
+        // Read existing version (0 for new keys), decrypting with the exact
+        // DEK epoch the existing record was written under (its recorded
+        // `Metadata::dek_version`, ADR 0016-v2 §6 step 6) rather than always
+        // trying the *current* epoch. A record still pending re-encryption
+        // under a retired epoch would otherwise always fail GCM
+        // verification against the current DEK; falling back to
+        // `unwrap_or(0)` on that failure reset the documented "monotonic
+        // per-record version" and, worse, made it indistinguishable from a
+        // genuinely tampered record silently being overwritten instead of
+        // counted toward quarantine (GitHub #1295).
         let next_version = if let Some(existing) = ks.get(key)? {
-            let guard = self.dek.read().unwrap_or_else(|p| p.into_inner());
-            state_decrypt(guard.state_dek(), existing.as_ref(), tier, keyspace, key)
-                .map(|(_, v)| v)
-                .unwrap_or(0)
+            let dek_version_hint = self
+                .meta
+                .get(key)?
+                .map(|m| Metadata::unpack(m.as_ref()))
+                .transpose()?
+                .and_then(|m| m.dek_version);
+
+            match dek_version_hint {
+                Some(hint) => {
+                    self.decrypt_state_by_version_raw(
+                        existing.as_ref(),
+                        tier,
+                        keyspace,
+                        key,
+                        &partition,
+                        hint,
+                    )?
+                    .1
+                }
+                None => {
+                    // Legacy record predating per-record DEK-version
+                    // tracking: there is no recorded epoch to target
+                    // deterministically, so fall back to the current DEK
+                    // only, same as before this fix (backward-compatible
+                    // best effort for pre-migration data only — every
+                    // write now populates `dek_version`).
+                    let guard = self.dek.read().unwrap_or_else(|p| p.into_inner());
+                    state_decrypt(guard.state_dek(), existing.as_ref(), tier, keyspace, key)
+                        .map(|(_, v)| v)
+                        .unwrap_or(0)
+                }
+            }
         } else {
             0
         };
@@ -1448,17 +1509,26 @@ impl FjallStateMachine {
 
     /// Attempt to migrate a single record from `old_epoch` to the current
     /// DEK epoch, retrying up to `REENCRYPT_MAX_CAS_ATTEMPTS` times if it
-    /// races a concurrent Raft write (ADR 0016-v2 §6 step 5: "optimistic
-    /// concurrency control (CAS on version)").
+    /// finds the record already advanced past `old_epoch` by the time it
+    /// gets a chance to run (ADR 0016-v2 §6 step 5: "optimistic concurrency
+    /// control (CAS on version)").
     ///
     /// The Fjall `Keyspace`/`Batch` API this crate uses has no built-in
-    /// compare-and-swap, so the CAS is approximated: read the ciphertext and
-    /// metadata, compute the re-encrypted record, then immediately before
-    /// committing re-read both and only write if neither changed. This
-    /// narrows but does not eliminate the race window against a concurrent
-    /// `apply()` write to the same key; a loss is simply retried (and, after
-    /// the retry budget, left for the next rotation cycle), so the residual
-    /// race never corrupts data — at worst it costs a retry.
+    /// compare-and-swap, so each attempt takes `keyspace_lifecycle`'s write
+    /// side for its whole read-decrypt-recompute-commit sequence.
+    /// `apply()` holds that lock's read side for an entry's whole
+    /// processing+commit (see its use in `apply()` below), so this
+    /// guarantees no `apply()` write to this key can land between the read
+    /// this function bases its computation on and the `batch.commit()`
+    /// that lands it — closing the gap a prior "read -> compute -> re-read
+    /// -> commit" CAS left open, where a write landing between the re-read
+    /// and the commit was silently reverted (GitHub #1295: the old
+    /// comment's claim that this "never corrupts data" was wrong — it
+    /// could revert an already Raft-committed write on this node only,
+    /// diverging it from the rest of the cluster with no Raft-visible
+    /// signal). The retry loop now only exists for the ordinary case where
+    /// the record was migrated (or deleted) by an earlier pass before this
+    /// one got the lock.
     fn reencrypt_one(
         &self,
         ks: &Keyspace,
@@ -1467,6 +1537,11 @@ impl FjallStateMachine {
         old_epoch: &DekEpoch,
     ) -> ReencryptOutcome {
         for _ in 0..REENCRYPT_MAX_CAS_ATTEMPTS {
+            let _lifecycle_guard = self
+                .keyspace_lifecycle
+                .write()
+                .unwrap_or_else(|p| p.into_inner());
+
             let Ok(Some(before)) = ks.get(key) else {
                 return ReencryptOutcome::AlreadyCurrent; // deleted concurrently
             };
@@ -1477,8 +1552,11 @@ impl FjallStateMachine {
                 return ReencryptOutcome::Skipped;
             };
             if metadata.dek_version != Some(old_epoch.version) {
-                // Already advanced by a concurrent Raft write (or a
-                // previous re-encryption pass), or never under this epoch.
+                // Already advanced by a previous re-encryption pass (or
+                // never under this epoch to begin with) — an `apply()`
+                // write can't be the cause while we hold the lock above,
+                // and couldn't have raced this check before we took it
+                // either, since `apply()` needs the same lock's read side.
                 return ReencryptOutcome::AlreadyCurrent;
             }
 
@@ -1518,16 +1596,10 @@ impl FjallStateMachine {
                 return ReencryptOutcome::Skipped;
             };
 
-            // Re-check immediately before committing: only write if neither
-            // the ciphertext nor the metadata changed since we read them.
-            let data_unchanged =
-                matches!(ks.get(key), Ok(Some(now)) if now.as_ref() == before.as_ref());
-            let meta_unchanged =
-                matches!(self.meta.get(key), Ok(Some(now)) if now.as_ref() == meta_bytes.as_ref());
-            if !data_unchanged || !meta_unchanged {
-                continue; // lost the race — retry
-            }
-
+            // No re-read-before-commit CAS needed here: `_lifecycle_guard`
+            // above has excluded every `apply()` write to this key since
+            // before `before`/`meta_bytes` were read, so neither can have
+            // changed underneath us.
             let mut batch = self.db.batch();
             batch.insert(ks, key.to_vec(), encrypted);
             batch.insert(&self.meta, key.to_vec(), new_meta_bytes);
@@ -3024,6 +3096,119 @@ mod dek_version_tests {
         assert_eq!(plaintext, b"hello");
     }
 
+    /// Regression test for GitHub #1295 (second defect): a record still
+    /// pending re-encryption under a retired epoch must have its per-record
+    /// nonce version continued from where it actually was, not reset to 0
+    /// by blindly decrypting the existing ciphertext with the *current*
+    /// epoch (which always fails GCM verification for such a record) and
+    /// falling back to `unwrap_or(0)`.
+    #[test]
+    fn encrypt_and_store_continues_version_across_retired_epoch_instead_of_resetting() {
+        let old_epoch = test_epoch(0x30, 1);
+        let (sm, _td) = make_sm(old_epoch.clone());
+
+        let ks = sm.data().clone();
+        let (ciphertext1, dek_version1) = sm
+            .encrypt_and_store(&ks, b"k1", b"data", DataTier::Internal as u8, b"hello")
+            .expect("first write under epoch 1");
+        assert_eq!(dek_version1, 1);
+        ks.insert(b"k1", ciphertext1).expect("insert ciphertext");
+        let mut metadata = Metadata::new();
+        metadata.dek_version = Some(dek_version1);
+        sm.meta()
+            .insert(b"k1", metadata.pack().expect("pack metadata"))
+            .expect("insert metadata");
+
+        // Rotate: k1's record is now under a retired epoch, exactly as it
+        // would be before a background re-encryption sweep reaches it.
+        let new_epoch = test_epoch(0x31, 2);
+        *sm.dek.write().unwrap_or_else(|p| p.into_inner()) = new_epoch.clone();
+        sm.old_deks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(old_epoch.version, old_epoch.clone());
+
+        // A second write to the same still-pending key must look up its
+        // real epoch (1) via `Metadata::dek_version` rather than guessing
+        // with the new current epoch (2).
+        let (ciphertext2, dek_version2) = sm
+            .encrypt_and_store(&ks, b"k1", b"data", DataTier::Internal as u8, b"world")
+            .expect("second write must not error out");
+        assert_eq!(dek_version2, 2);
+
+        let (plaintext2, next_version) = state_decrypt(
+            new_epoch.state_dek(),
+            &ciphertext2,
+            DataTier::Internal as u8,
+            b"data",
+            b"k1",
+        )
+        .expect("decrypt second write under the new current epoch");
+        assert_eq!(&*plaintext2, b"world");
+        assert_eq!(
+            next_version, 2,
+            "nonce version must continue from the record's real prior version (0 -> 1), \
+             not reset to 0 by decrypting with the wrong (current) epoch"
+        );
+    }
+
+    /// Regression test for GitHub #1295 (second defect): a genuinely
+    /// tampered/corrupted existing record must fail the write with a
+    /// `StoreError::Crypto` and count toward quarantine, not be silently
+    /// overwritten as if it were merely pending re-encryption under an
+    /// older epoch.
+    #[test]
+    fn encrypt_and_store_quarantines_instead_of_silently_overwriting_tampered_record() {
+        let epoch = test_epoch(0x34, 1);
+        let (sm, _td) = make_sm(epoch.clone());
+
+        let ks = sm.data().clone();
+        let (mut ciphertext, dek_version) = sm
+            .encrypt_and_store(&ks, b"k1", b"data", DataTier::Internal as u8, b"hello")
+            .expect("initial encrypt");
+        // Flip a ciphertext byte (right after the 12-byte nonce prefix) so
+        // the GCM tag no longer verifies -- simulates tampering, as
+        // opposed to the record merely being under a different epoch.
+        ciphertext[12] ^= 0xFF;
+        ks.insert(b"k1", ciphertext.clone())
+            .expect("insert tampered ciphertext");
+        let mut metadata = Metadata::new();
+        metadata.dek_version = Some(dek_version);
+        sm.meta()
+            .insert(b"k1", metadata.pack().expect("pack metadata"))
+            .expect("insert metadata");
+
+        // QUARANTINE_THRESHOLD (3) identical failures within the sliding
+        // window trip quarantine; each one must reject the write instead of
+        // silently overwriting the tampered record.
+        for attempt in 1..=QUARANTINE_THRESHOLD {
+            let err = sm
+                .encrypt_and_store(&ks, b"k1", b"data", DataTier::Internal as u8, b"new-value")
+                .expect_err(
+                    "a corrupted existing record must not be silently overwritten with version 0",
+                );
+            assert!(
+                matches!(
+                    err,
+                    StoreError::Crypto {
+                        source: openstack_keystone_storage_crypto::CryptoError::AesDecrypt
+                    }
+                ),
+                "attempt {attempt}: expected a GCM tag-verification failure, got: {err:?}"
+            );
+        }
+
+        // The ciphertext on disk must be untouched -- every write must have
+        // been rejected before ever reaching the batch commit.
+        let still_stored = ks.get(b"k1").expect("get data").expect("present");
+        assert_eq!(still_stored.as_ref(), ciphertext.as_slice());
+
+        assert!(
+            sm.is_quarantined("data"),
+            "repeated GCM failures against the same partition must quarantine it"
+        );
+    }
+
     /// A hint naming an epoch that is genuinely gone (not in `old_deks`)
     /// *and* known to have been emergency-revoked (ADR 0016-v2 §6.2) must
     /// fail with a clean `RevokedDek` error, not be miscategorized as
@@ -3331,6 +3516,164 @@ mod reencrypt_tests {
                 .is_some(),
             "staged key material must survive while finalization is deferred"
         );
+    }
+
+    /// Regression test for GitHub #1295 (main defect): `reencrypt_one` must
+    /// hold `keyspace_lifecycle`'s write side for its whole
+    /// read-decrypt-recompute-commit sequence, so it cannot interleave with
+    /// a concurrent `apply()` write that, per the fixed doc comment, holds
+    /// the read side for the same key. Proven the same way as
+    /// `keyspace_lifecycle_lock_excludes_concurrent_readers_and_writer`
+    /// proves it for `drop_keyspace`: while a simulated in-flight `apply()`
+    /// read guard is held on a background thread, a call to `reencrypt_one`
+    /// on the main thread must block until that guard is released, rather
+    /// than racing ahead and (as the pre-fix code could) overwriting a
+    /// write that lands in the gap.
+    #[test]
+    fn reencrypt_one_blocks_until_concurrent_apply_guard_is_released() {
+        let old_epoch = test_epoch(0x40, 1);
+        let (sm, _td) = make_sm(old_epoch.clone());
+        let sm = Arc::new(sm);
+
+        write_record(&sm, b"k1", b"hello");
+
+        let new_epoch = test_epoch(0x41, 2);
+        *sm.dek.write().unwrap_or_else(|p| p.into_inner()) = new_epoch.clone();
+        sm.old_deks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(old_epoch.version, old_epoch.clone());
+
+        let hold_for = Duration::from_millis(200);
+        let sm_bg = sm.clone();
+        let apply_thread = std::thread::spawn(move || {
+            // Simulates `apply()` holding the read side of
+            // `keyspace_lifecycle` for an entry's whole processing+commit.
+            let _guard = sm_bg
+                .keyspace_lifecycle
+                .read()
+                .unwrap_or_else(|p| p.into_inner());
+            std::thread::sleep(hold_for);
+        });
+
+        // Give the background thread a head start so it reliably acquires
+        // the read guard first.
+        std::thread::sleep(Duration::from_millis(30));
+
+        let ks = sm.data().clone();
+        let start = Instant::now();
+        let outcome = sm.reencrypt_one(&ks, "data", b"k1", &old_epoch);
+        let elapsed = start.elapsed();
+
+        apply_thread.join().expect("apply thread must not panic");
+
+        assert!(
+            elapsed >= hold_for - Duration::from_millis(30),
+            "reencrypt_one must block until the concurrent apply()'s read guard is \
+             released instead of racing ahead of it, elapsed={elapsed:?}"
+        );
+        assert!(matches!(outcome, ReencryptOutcome::Migrated));
+
+        let meta_bytes = sm.meta().get(b"k1").expect("get meta").expect("present");
+        let metadata = Metadata::unpack(meta_bytes.as_ref()).expect("unpack metadata");
+        assert_eq!(metadata.dek_version, Some(new_epoch.version));
+    }
+
+    /// Stress-test counterpart to the above: many concurrent `apply()`-style
+    /// writes racing a re-encryption sweep for the same key must never lose
+    /// a write. This is the scenario GitHub #1295 describes directly: the
+    /// old code could commit a re-encryption batch that overwrote both the
+    /// ciphertext and the `Metadata` (including `revision`) of a write
+    /// `apply()` had already committed, reverting it with no Raft-visible
+    /// signal. With the fix, `reencrypt_one`'s write-locked critical
+    /// section and `apply()`'s read-locked one can never interleave, so the
+    /// final record must always reflect whichever wrote last.
+    #[test]
+    fn reencrypt_pending_never_loses_a_concurrent_apply_write() {
+        let old_epoch = test_epoch(0x42, 1);
+        let (sm, _td) = make_sm(old_epoch.clone());
+        let sm = Arc::new(sm);
+
+        write_record(&sm, b"k1", b"v0");
+
+        let new_epoch = test_epoch(0x43, 2);
+        *sm.dek.write().unwrap_or_else(|p| p.into_inner()) = new_epoch.clone();
+        sm.old_deks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(old_epoch.version, old_epoch.clone());
+
+        const WRITES: u64 = 50;
+        let sm_writer = sm.clone();
+        let writer = std::thread::spawn(move || {
+            let ks = sm_writer.data().clone();
+            for revision in 1..=WRITES {
+                let plaintext = format!("v{revision}");
+                // Mirrors apply()'s write path: hold the read side of
+                // `keyspace_lifecycle` for the whole encrypt+commit.
+                let _lifecycle_guard = sm_writer
+                    .keyspace_lifecycle
+                    .read()
+                    .unwrap_or_else(|p| p.into_inner());
+                let (ciphertext, dek_version) = sm_writer
+                    .encrypt_and_store(
+                        &ks,
+                        b"k1",
+                        b"data",
+                        DataTier::Internal as u8,
+                        plaintext.as_bytes(),
+                    )
+                    .expect("encrypt");
+                let mut metadata = Metadata::new();
+                metadata.revision = revision;
+                metadata.dek_version = Some(dek_version);
+                let mut batch = sm_writer.db().batch();
+                batch.insert(&ks, b"k1".to_vec(), ciphertext);
+                batch.insert(
+                    sm_writer.meta(),
+                    b"k1".to_vec(),
+                    metadata.pack().expect("pack"),
+                );
+                batch.commit().expect("commit");
+            }
+        });
+
+        let sm_reencrypt = sm.clone();
+        let reencryptor = std::thread::spawn(move || {
+            let ks = sm_reencrypt.data().clone();
+            for _ in 0..WRITES {
+                sm_reencrypt.reencrypt_one(&ks, "data", b"k1", &old_epoch);
+                std::thread::yield_now();
+            }
+        });
+
+        writer.join().expect("writer thread must not panic");
+        reencryptor.join().expect("reencrypt thread must not panic");
+
+        let meta_bytes = sm.meta().get(b"k1").expect("get meta").expect("present");
+        let metadata = Metadata::unpack(meta_bytes.as_ref()).expect("unpack metadata");
+        assert_eq!(
+            metadata.dek_version,
+            Some(new_epoch.version),
+            "record must end up under the current epoch"
+        );
+        assert_eq!(
+            metadata.revision, WRITES,
+            "the latest committed apply() write's revision must never be reverted \
+             by a concurrent re-encryption batch"
+        );
+
+        let stored = sm.data().get(b"k1").expect("get data").expect("present");
+        let plaintext = sm
+            .decrypt_state(
+                stored.as_ref(),
+                DataTier::Internal as u8,
+                b"data",
+                b"k1",
+                Some(new_epoch.version),
+            )
+            .expect("decrypt final record");
+        assert_eq!(plaintext, format!("v{WRITES}").into_bytes());
     }
 }
 
