@@ -416,7 +416,16 @@ fn load_retired_deks(
                 }
             }
             Err(e) => {
-                tracing::warn!(version, error = %e, "failed to unwrap retired DEK — skipping");
+                // Every read of a record still under this epoch will now
+                // count toward quarantine, since it's unreadable here
+                // (GitHub #1297 item 4) — this is not routine, hence ERROR
+                // rather than WARN, so it isn't lost among startup noise.
+                tracing::error!(
+                    version,
+                    error = %e,
+                    "failed to unwrap retired DEK — records under this epoch will be \
+                     unreadable and count toward quarantine on this node"
+                );
             }
         }
     }

@@ -46,6 +46,7 @@ use openstack_keystone_distributed_storage::network::{
 };
 use openstack_keystone_distributed_storage::protobuf as pb;
 use openstack_keystone_distributed_storage::protobuf::raft::cluster_admin_service_client::ClusterAdminServiceClient;
+use openstack_keystone_distributed_storage::store::state_machine::meta_key;
 use openstack_keystone_distributed_storage::store_command::*;
 use openstack_keystone_distributed_storage::{
     ApiStoreError, DataTier, Metadata, StoreDataEnvelope, StoreError,
@@ -2251,7 +2252,7 @@ async fn test_join_adopts_cluster_dek_inner() -> Result<()> {
             .storage
             .state_machine_store()
             .meta()
-            .get(&key)?
+            .get(meta_key("data", key.as_bytes()))?
             .map(|raw| Metadata::unpack(raw.as_ref()))
             .transpose()?
             .unwrap_or_else(|| panic!("node 1 must have Metadata for {key}"));
