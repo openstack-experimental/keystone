@@ -151,7 +151,10 @@ impl StorageService for StorageServiceImpl {
         let metadata = self
             .state_machine_store
             .meta()
-            .get(&key)
+            .get(crate::store::state_machine::meta_key(
+                keyspace_name,
+                key.as_bytes(),
+            ))
             .map_err(|e| Status::internal(format!("metadata read error: {}", e)))?
             .map(|raw| Metadata::unpack(raw.as_ref()))
             .transpose()
@@ -270,7 +273,9 @@ impl StorageService for StorageServiceImpl {
                 };
 
                 // Read metadata to determine tier and DEK epoch
-                let (tier, dek_version, meta_bytes) = match meta.get(k.as_bytes()) {
+                let record_meta_key =
+                    crate::store::state_machine::meta_key(keyspace_name, k.as_bytes());
+                let (tier, dek_version, meta_bytes) = match meta.get(&record_meta_key) {
                     Ok(Some(raw)) => {
                         let parsed = Metadata::unpack(raw.as_ref()).ok();
                         (

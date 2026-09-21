@@ -948,13 +948,11 @@ impl StorageApi for Storage {
         }
 
         // Leader path: local metadata + data read.
-        let key_str =
-            String::from_utf8(key.to_vec()).map_err(|e| StoreError::Other(eyre::eyre!("{e}")))?;
         let metadata: Option<Metadata> = (|| -> Result<_, StoreError> {
             Ok(self
                 .state_machine_store
                 .meta()
-                .get(&key_str)?
+                .get(crate::store::state_machine::meta_key(keyspace_name, key))?
                 .map(|raw| Metadata::unpack(raw.as_ref()))
                 .transpose()?)
         })()
@@ -1052,17 +1050,20 @@ impl StorageApi for Storage {
                 None => self.state_machine_store.data(),
                 Some(k) => k,
             };
+            let effective_keyspace = keyspace.unwrap_or("data");
             ks.prefix(prefix)
                 .map(|item| {
                     let (key_bytes, val) = item.into_inner()?;
                     let k = String::from_utf8(key_bytes.to_vec())?;
-                    let meta = if let Some(meta) = self.state_machine_store.meta().get(&k)? {
+                    let meta_key =
+                        crate::store::state_machine::meta_key(effective_keyspace, k.as_bytes());
+                    let meta = if let Some(meta) = self.state_machine_store.meta().get(&meta_key)? {
                         Metadata::unpack(&meta)?
                     } else {
                         let res = Metadata::new();
                         self.state_machine_store
                             .meta()
-                            .insert(k.clone(), res.pack()?)?;
+                            .insert(meta_key, res.pack()?)?;
                         res
                     };
                     Ok((k, val.to_vec(), meta))
