@@ -85,6 +85,12 @@ pub enum StoreError {
     #[error("missing mTLS configuration")]
     TlsConfigMissing,
 
+    /// The operation could not be completed with a linearizability guarantee
+    /// (Raft `ReadIndex`/forwarding failed or was exhausted). Callers MUST
+    /// NOT substitute a non-linearizable local read (security invariant 4).
+    #[error("storage temporarily unavailable: {0}")]
+    Unavailable(String),
+
     /// Raft config error.
     #[error(transparent)]
     RaftConfig {

@@ -228,9 +228,11 @@ impl MutationInner {
     /// Convert a public [`Mutation`] into the internal [`MutationInner`]
     /// representation.
     ///
-    /// All `Set` and `CreateIfAbsent` mutations default to
-    /// `DataTier::Internal` (tier byte = 1).  Callers that need a different
-    /// tier must construct `MutationInner` directly.
+    /// The tier byte carried by `Set`/`CreateIfAbsent` (used both as the
+    /// AES-GCM Associated Data binding and as the stored `Metadata::tier`)
+    /// is taken from `metadata.tier`, i.e. whatever tier the caller set via
+    /// `Metadata::with_tier`/`Metadata::new` — it defaults to
+    /// `DataTier::Internal` because that is `Metadata`'s own default.
     pub fn convert(value: Mutation) -> Result<MutationInner, StoreError> {
         Ok(match value {
             Mutation::Remove {
@@ -252,9 +254,9 @@ impl MutationInner {
             } => MutationInner::Set {
                 key,
                 keyspace,
+                tier: metadata.tier as u8,
                 metadata,
                 cipher: value,
-                tier: openstack_keystone_storage_api::DataTier::Internal as u8,
                 expected_revision,
             },
             Mutation::CreateIfAbsent {
@@ -265,9 +267,9 @@ impl MutationInner {
             } => MutationInner::CreateIfAbsent {
                 key,
                 keyspace,
+                tier: metadata.tier as u8,
                 metadata,
                 cipher: value,
-                tier: openstack_keystone_storage_api::DataTier::Internal as u8,
             },
             Mutation::SetIndex { key } => MutationInner::SetIndex { key },
         })
@@ -360,6 +362,40 @@ mod tests {
         } else {
             panic!("should be the set command");
         }
+    }
+
+    #[test]
+    fn test_set_command_carries_non_default_tier() {
+        // Regression for issue #1302 part 2: `convert` used to hard-code
+        // `DataTier::Internal` regardless of `metadata.tier`, silently
+        // downgrading e.g. `Metadata::with_tier(DataTier::Secret)` on every
+        // write.
+        let metadata = Metadata::with_tier(openstack_keystone_storage_api::DataTier::Secret);
+        let mutation = Mutation::set("foo", "value", metadata, Some("bar"), None).unwrap();
+        let converted = MutationInner::convert(mutation).unwrap();
+        let MutationInner::Set { tier, metadata, .. } = &converted else {
+            panic!("should be the set command");
+        };
+        assert_eq!(*tier, 3u8); // DataTier::Secret
+        assert_eq!(
+            metadata.tier,
+            openstack_keystone_storage_api::DataTier::Secret
+        );
+    }
+
+    #[test]
+    fn test_create_if_absent_command_carries_non_default_tier() {
+        let metadata = Metadata::with_tier(openstack_keystone_storage_api::DataTier::Sensitive);
+        let mutation = Mutation::create_if_absent("foo", "value", metadata, Some("bar")).unwrap();
+        let converted = MutationInner::convert(mutation).unwrap();
+        let MutationInner::CreateIfAbsent { tier, metadata, .. } = &converted else {
+            panic!("should be the create_if_absent command");
+        };
+        assert_eq!(*tier, 2u8); // DataTier::Sensitive
+        assert_eq!(
+            metadata.tier,
+            openstack_keystone_storage_api::DataTier::Sensitive
+        );
     }
 
     #[test]

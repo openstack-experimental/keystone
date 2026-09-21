@@ -61,6 +61,8 @@ impl InstanceHolder {
             kek_provider: KekProvider::Env,
             pkcs11: None,
             tpm: None,
+            ensure_linearizable_retries: 80,
+            ensure_linearizable_retry_delay_ms: 50,
         }
     }
 

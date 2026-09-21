@@ -64,6 +64,24 @@ pub struct DistributedStorageConfiguration {
     /// Path to the storage.
     pub path: PathBuf,
 
+    /// Number of attempts the `ensure_linearizable` (Raft `ReadIndex`) retry
+    /// loop makes for a read before giving up and returning `Unavailable`
+    /// (ADR 0016-v2 §3 invariant 4: no stale reads for sensitive data — a
+    /// node that cannot confirm linearizability must refuse the read rather
+    /// than serve a possibly-stale local copy).
+    ///
+    /// The retry budget (`ensure_linearizable_retries` *
+    /// `ensure_linearizable_retry_delay_ms`) should comfortably exceed the
+    /// Raft election timeout (`election_timeout_min`/`_max`, currently
+    /// 1.5-3s) so a leader election in progress does not routinely exhaust
+    /// the budget.
+    #[serde(default = "default_ensure_linearizable_retries")]
+    pub ensure_linearizable_retries: u32,
+
+    /// Delay in milliseconds between `ensure_linearizable` retry attempts.
+    #[serde(default = "default_ensure_linearizable_retry_delay_ms")]
+    pub ensure_linearizable_retry_delay_ms: u64,
+
     /// PKCS#11 KEK configuration (ADR 0016-v2 §2.5.1). Required when
     /// `kek_provider = "pkcs11"`.
     #[serde(default)]
@@ -301,6 +319,19 @@ where
 
 fn default_tcp_address() -> SocketAddr {
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8081)
+}
+
+/// Default retry count for `ensure_linearizable`: 80 attempts * the default
+/// 50ms delay = 4s, comfortably above the 1.5-3s `election_timeout_min`/
+/// `_max` configured in `app.rs`, so a routine leader election does not
+/// exhaust the budget and turn every in-flight read into an `Unavailable`.
+fn default_ensure_linearizable_retries() -> u32 {
+    80
+}
+
+/// See [`default_ensure_linearizable_retries`].
+fn default_ensure_linearizable_retry_delay_ms() -> u64 {
+    50
 }
 
 ///// Raft cluster node.

@@ -433,6 +433,16 @@ _Configuration:_ Operators enable local reads via
 ReadIndex protocol, ensuring revoked credentials are never exposed via a stale
 follower.
 
+> **Implementation status (as of #1302):** `local_reads_mode` and the
+> Tier 0/1 local-read fast path described above are not implemented.
+> Every read — regardless of tier — currently goes through the
+> `ensure_linearizable` (ReadIndex) path; the tier byte is stored and
+> cryptographically bound into the AES-GCM AD (so tampering with it is
+> detected), but it does not yet change how a read is served. If the
+> ReadIndex/forwarding path cannot confirm linearizability, the read fails
+> (`Unavailable`) rather than falling back to a non-linearizable local read,
+> for every tier — see invariant 4 below.
+
 ### 3.1 Audit Log Architecture
 
 Audit events referenced in this ADR (DEK rotation, skipped re-encryption keys,
