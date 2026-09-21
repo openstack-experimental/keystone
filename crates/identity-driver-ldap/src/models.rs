@@ -102,11 +102,9 @@ pub fn to_user_response(
     let name = single_value(&lower_attrs, &cfg.user_name_attribute).unwrap_or_else(|| id.clone());
     let enabled_raw = single_value(&lower_attrs, &cfg.user_enabled_attribute);
     let enabled = enabled_from_attribute(cfg, enabled_raw.as_deref());
-    let extra = build_extra(
-        &lower_attrs,
-        &cfg.user_additional_attribute_mapping,
-        &cfg.user_pass_attribute,
-    );
+    let mut mapping = HashMap::from([(cfg.user_mail_attribute.clone(), "email".to_string())]);
+    mapping.extend(cfg.user_additional_attribute_mapping.clone());
+    let extra = build_extra(&lower_attrs, &mapping, &cfg.user_pass_attribute);
 
     Ok(UserResponse {
         default_project_id: None,
@@ -220,6 +218,40 @@ mod tests {
         );
         let user = to_user_response(&cfg, "default", &e).unwrap();
         assert_eq!(user.id, "cn=jdoe,ou=Users,dc=example,dc=com");
+    }
+
+    #[test]
+    fn test_to_user_response_mail_attribute_mapped_to_email_by_default() {
+        let mut cfg = LdapProvider::default();
+        cfg.user_mail_attribute = "mail".to_string();
+        let e = entry(
+            "cn=jdoe,ou=Users,dc=example,dc=com",
+            &[("cn", &["jdoe"]), ("mail", &["jdoe@example.com"])],
+        );
+        let user = to_user_response(&cfg, "default", &e).unwrap();
+        assert_eq!(
+            user.extra.get("email"),
+            Some(&Value::String("jdoe@example.com".into()))
+        );
+    }
+
+    #[test]
+    fn test_to_user_response_additional_mapping_overrides_mail_default() {
+        let mut cfg = LdapProvider::default();
+        cfg.user_mail_attribute = "mail".to_string();
+        // operator remaps mail → "contact_email" instead of the default "email"
+        cfg.user_additional_attribute_mapping
+            .insert("mail".into(), "contact_email".into());
+        let e = entry(
+            "cn=jdoe,ou=Users,dc=example,dc=com",
+            &[("cn", &["jdoe"]), ("mail", &["jdoe@example.com"])],
+        );
+        let user = to_user_response(&cfg, "default", &e).unwrap();
+        assert_eq!(
+            user.extra.get("contact_email"),
+            Some(&Value::String("jdoe@example.com".into()))
+        );
+        assert!(!user.extra.contains_key("email"));
     }
 
     #[test]
