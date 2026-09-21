@@ -384,13 +384,24 @@ where
             None => 0,
         };
 
-        for entry in self.logs.range(start_index.to_be_bytes()..) {
-            if let Ok(key) = entry.key() {
-                self.logs
-                    .remove(key)
-                    .map_err(|e| io::Error::other(e.to_string()))?;
-            }
+        // Collect keys first and remove them all in one `Batch` commit
+        // (GitHub #1297 item 1): removing entries one at a time left a
+        // crash mid-loop with a partially truncated suffix, and silently
+        // skipping a key read error (the old `if let Ok(key) = ...`) could
+        // leave a stale entry behind unnoticed.
+        let keys: Vec<_> = self
+            .logs
+            .range(start_index.to_be_bytes()..)
+            .map(|entry| entry.key().map_err(|e| io::Error::other(e.to_string())))
+            .collect::<Result<_, _>>()?;
+
+        let mut batch = self.db.batch();
+        for key in keys {
+            batch.remove(&self.logs, key);
         }
+        batch
+            .commit()
+            .map_err(|e| io::Error::other(e.to_string()))?;
 
         self.db
             .persist(PersistMode::SyncAll)
@@ -401,17 +412,29 @@ where
     #[tracing::instrument(skip(self))]
     async fn purge(&mut self, log_id: LogIdOf<C>) -> Result<(), io::Error> {
         tracing::debug!("delete_log: [0, {:?}]", log_id);
-        self.set_meta(KEY_PURGED, &log_id)
-            .map_err(|e| io::Error::other(e.to_string()))?;
 
+        // `KEY_PURGED` and every removed entry commit in one `Batch`
+        // (GitHub #1297 item 1): the old code wrote `KEY_PURGED` first,
+        // then removed entries one by one, so a crash mid-way left
+        // `last_purged_log_id` ahead of entries that still physically
+        // existed on disk.
+        let purged_bytes =
+            serde_json::to_vec(&log_id).map_err(|e| io::Error::other(e.to_string()))?;
         let end = log_id.index().to_be_bytes();
-        for entry in self.logs.range(..=end) {
-            if let Ok(key) = entry.key() {
-                self.logs
-                    .remove(key)
-                    .map_err(|e| io::Error::other(e.to_string()))?;
-            }
+        let keys: Vec<_> = self
+            .logs
+            .range(..=end)
+            .map(|entry| entry.key().map_err(|e| io::Error::other(e.to_string())))
+            .collect::<Result<_, _>>()?;
+
+        let mut batch = self.db.batch();
+        batch.insert(&self.meta, KEY_PURGED, purged_bytes);
+        for key in keys {
+            batch.remove(&self.logs, key);
         }
+        batch
+            .commit()
+            .map_err(|e| io::Error::other(e.to_string()))?;
 
         self.db
             .persist(PersistMode::SyncAll)
@@ -514,5 +537,88 @@ mod tests {
             ),
             "expected a clean RevokedDek error, got: {err:?}"
         );
+    }
+
+    /// Dumps every log index currently stored, sorted ascending.
+    fn indices(store: &FjallLogStore<crate::TypeConfig>) -> Vec<u64> {
+        let mut out: Vec<u64> = store
+            .logs
+            .iter()
+            .filter_map(|item| item.into_inner().ok())
+            .map(|(k, _)| u64::from_be_bytes(k.as_ref().try_into().expect("8-byte key")))
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
+    /// Regression test for GitHub #1297 item 1: `purge` used to write
+    /// `KEY_PURGED` first and then remove entries one by one, so a crash
+    /// mid-way could leave `last_purged_log_id` ahead of entries that
+    /// still physically existed. Both must now land in one `Batch` commit.
+    #[tokio::test]
+    async fn purge_removes_entries_up_to_and_including_the_log_id() {
+        let (mut store, _td) = make_store();
+        for i in 1u64..=5 {
+            store
+                .logs
+                .insert(i.to_be_bytes(), vec![0u8; LOG_ENTRY_MIN_LEN])
+                .expect("seed log entry");
+        }
+
+        let log_id = crate::types::LogId::new(1u64, 3u64);
+        store.purge(log_id).await.expect("purge");
+
+        assert_eq!(
+            indices(&store),
+            vec![4, 5],
+            "entries up to and including the purge index must be gone"
+        );
+        let purged: crate::types::LogId = store
+            .get_meta(KEY_PURGED)
+            .expect("get meta")
+            .expect("purged marker recorded in the same batch as the removals");
+        assert_eq!(purged, log_id);
+    }
+
+    /// Regression test for GitHub #1297 item 1: `truncate_after` removed
+    /// entries one at a time and silently skipped any whose key read
+    /// failed; it must now remove the whole suffix in one `Batch` commit.
+    #[tokio::test]
+    async fn truncate_after_removes_the_correct_suffix() {
+        let (mut store, _td) = make_store();
+        for i in 1u64..=5 {
+            store
+                .logs
+                .insert(i.to_be_bytes(), vec![0u8; LOG_ENTRY_MIN_LEN])
+                .expect("seed log entry");
+        }
+
+        let log_id = crate::types::LogId::new(1u64, 2u64);
+        store
+            .truncate_after(Some(log_id))
+            .await
+            .expect("truncate_after");
+
+        assert_eq!(
+            indices(&store),
+            vec![1, 2],
+            "only entries up to and including last_log_id must survive"
+        );
+    }
+
+    /// `truncate_after(None)` must remove every entry (starts at index 0).
+    #[tokio::test]
+    async fn truncate_after_none_removes_every_entry() {
+        let (mut store, _td) = make_store();
+        for i in 1u64..=3 {
+            store
+                .logs
+                .insert(i.to_be_bytes(), vec![0u8; LOG_ENTRY_MIN_LEN])
+                .expect("seed log entry");
+        }
+
+        store.truncate_after(None).await.expect("truncate_after");
+
+        assert!(indices(&store).is_empty());
     }
 }

@@ -430,6 +430,20 @@ enum ReencryptOutcome {
     Skipped,
 }
 
+/// A deferred in-memory mutation to `pending_rotations`, applied only once
+/// the transaction's `batch` has actually committed (GitHub #1297 item 4).
+///
+/// `CreatePendingRotation`/`ConfirmPendingRotation` used to mutate
+/// `pending_rotations` directly while processing their own mutation, even
+/// though a *different* mutation later in the same `Transaction` could
+/// still produce a violation and leave the whole `batch` uncommitted —
+/// leaving the in-memory map and the Fjall `meta` entry disagreeing until
+/// restart.
+enum PendingRotationMutation {
+    Insert(String, PendingRotation),
+    Remove(String),
+}
+
 /// Summary of one background re-encryption pass over a single retired DEK
 /// epoch (ADR 0016-v2 §6 step 5 / §6.2 step 4).
 #[derive(Debug, Default, Clone, Copy)]
@@ -2129,13 +2143,30 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
     {
         let mut last_membership = None;
         let mut entries = entries;
+        // Responders are collected here and only notified once the whole
+        // stream is durable (see the single `persist(SyncAll)` at the end
+        // of this function) — GitHub #1297 item 2: `apply()` used to call
+        // `persist(SyncAll)` after every single entry, i.e. at least one
+        // full-database fsync per committed write on every node; openraft
+        // only requires the state machine to be durable relative to
+        // `last_applied` once `apply()` returns, not after each entry
+        // within the batch it was given, so a single fsync at the end
+        // (after the log's own per-batch fsync in `append`) is sufficient.
+        // Sending a responder before its entry's write is actually fsynced
+        // would tell the caller "committed" ahead of durability, so every
+        // responder must wait for that final persist too.
+        let mut pending_responses: Vec<(
+            openraft::storage::ApplyResponder<TypeConfig>,
+            crate::ZeroizingResponse,
+        )> = Vec::new();
 
         while let Some((entry, responder)) = entries.try_next().await? {
             // ADR 0031 `keystone_raft_apply_duration_seconds`: measures one
-            // committed log entry's full apply — write/encrypt, commit, and
-            // the fsync-equivalent `persist(SyncAll)` below — a real
-            // per-operation latency, unlike the read-through snapshot gauges
-            // in `prometheus_metrics`.
+            // committed log entry's write/encrypt/commit latency, unlike
+            // the read-through snapshot gauges in `prometheus_metrics`.
+            // Excludes the batched `persist(SyncAll)` at the end of this
+            // function, which now covers the whole stream rather than one
+            // entry.
             let apply_start = Instant::now();
             // Held for this entry's whole processing+commit (there is no
             // further `.await` in this loop body until the next iteration),
@@ -2149,6 +2180,9 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
             let mut batch = self.db.batch();
             let mut has_violations = false;
             let mut pending_dek_swap: Option<(Arc<DekEpoch>, bool)> = None;
+            // See `PendingRotationMutation`: deferred the same way as
+            // `pending_dek_swap` above.
+            let mut pending_rotation_mutation: Option<PendingRotationMutation> = None;
 
             let response = if let Some(store_req) = entry.app_data {
                 match StoreCommand::unpack(&store_req)? {
@@ -2599,7 +2633,15 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         let meta_key =
                                             format!("{PENDING_ROTATION_PREFIX}{rotation_id}");
                                         batch.insert(&self.meta, meta_key.as_bytes(), serialised);
-                                        pending.insert(rotation_id.clone(), entry);
+                                        // Not inserted into `pending` yet — deferred
+                                        // until the whole transaction's `batch`
+                                        // actually commits (see
+                                        // `pending_rotation_mutation` above).
+                                        pending_rotation_mutation =
+                                            Some(PendingRotationMutation::Insert(
+                                                rotation_id.clone(),
+                                                entry,
+                                            ));
                                         tracing::info!(
                                             rotation_id,
                                             dek_version,
@@ -2617,13 +2659,22 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         .duration_since(std::time::UNIX_EPOCH)
                                         .unwrap_or_default()
                                         .as_secs();
-                                    let entry = {
-                                        let mut pending = self
-                                            .pending_rotations
-                                            .lock()
-                                            .unwrap_or_else(|p| p.into_inner());
-                                        pending.remove(&rotation_id)
-                                    };
+                                    // Peek rather than remove (GitHub #1297 item 4):
+                                    // the old code removed the entry from the
+                                    // in-memory map up front, but on the
+                                    // NOT_FOUND/EXPIRED violation branches below
+                                    // the surrounding `batch` is never committed
+                                    // (nothing here ever put it back for those
+                                    // two cases), leaving the in-memory map and
+                                    // the Fjall `meta` entry disagreeing until
+                                    // restart. Only the genuine success arm below
+                                    // now removes it.
+                                    let entry = self
+                                        .pending_rotations
+                                        .lock()
+                                        .unwrap_or_else(|p| p.into_inner())
+                                        .get(&rotation_id)
+                                        .cloned();
                                     match entry {
                                         None => {
                                             violations.push(Violation {
@@ -2648,12 +2699,6 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                             });
                                         }
                                         Some(ref e) if e.initiator == confirmer => {
-                                            // Re-insert so it can still be confirmed by someone
-                                            // else within the window.
-                                            self.pending_rotations
-                                                .lock()
-                                                .unwrap_or_else(|p| p.into_inner())
-                                                .insert(rotation_id.clone(), e.clone());
                                             violations.push(Violation {
                                                 r#type: "UNAUTHORIZED".to_string(),
                                                 subject: rotation_id.clone(),
@@ -2665,6 +2710,13 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         }
                                         Some(entry) => {
                                             // Dual-control satisfied — execute DEK install.
+                                            // Removal from `pending` is deferred
+                                            // until the batch actually commits
+                                            // (see `pending_rotation_mutation`).
+                                            pending_rotation_mutation =
+                                                Some(PendingRotationMutation::Remove(
+                                                    rotation_id.clone(),
+                                                ));
                                             let meta_key =
                                                 format!("{PENDING_ROTATION_PREFIX}{rotation_id}");
                                             batch.remove(&self.meta, meta_key.as_bytes());
@@ -2801,6 +2853,22 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                     .commit()
                     .map_err(|e| io::Error::other(e.to_string()))?;
 
+                match pending_rotation_mutation {
+                    Some(PendingRotationMutation::Insert(id, entry)) => {
+                        self.pending_rotations
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .insert(id, entry);
+                    }
+                    Some(PendingRotationMutation::Remove(id)) => {
+                        self.pending_rotations
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .remove(&id);
+                    }
+                    None => {}
+                }
+
                 // Swap the active DEK epoch after a successful InstallDek commit.
                 if let Some((new_epoch, is_emergency_rotation)) = pending_dek_swap {
                     let old_epoch = {
@@ -2854,6 +2922,9 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                 }
             }
 
+            // Not fsynced here (see the comment on `pending_responses`
+            // above) — folded into the single `persist(SyncAll)` below,
+            // covering every entry in this apply() call.
             self.meta
                 .insert(
                     KEY_LAST_APPLIED_LOG,
@@ -2862,19 +2933,18 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                 )
                 .map_err(|e| io::Error::other(e.to_string()))?;
 
-            self.db
-                .persist(PersistMode::SyncAll)
-                .map_err(|e| io::Error::other(e.to_string()))?;
-
             self.raft_prometheus_metrics
                 .apply_duration_seconds
                 .record(apply_start.elapsed().as_secs_f64());
 
             if let Some(responder) = responder {
-                responder.send(crate::ZeroizingResponse {
-                    value: response.0.map(zeroize::Zeroizing::new),
-                    violations: response.1,
-                });
+                pending_responses.push((
+                    responder,
+                    crate::ZeroizingResponse {
+                        value: response.0.map(zeroize::Zeroizing::new),
+                        violations: response.1,
+                    },
+                ));
             }
         }
 
@@ -2893,6 +2963,12 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
         self.db
             .persist(PersistMode::SyncAll)
             .map_err(|e| io::Error::other(e.to_string()))?;
+
+        // Every entry in this apply() call is now durable — safe to
+        // notify callers.
+        for (responder, response) in pending_responses {
+            responder.send(response);
+        }
         Ok(())
     }
 }

@@ -1057,14 +1057,19 @@ impl StorageApi for Storage {
                     let k = String::from_utf8(key_bytes.to_vec())?;
                     let meta_key =
                         crate::store::state_machine::meta_key(effective_keyspace, k.as_bytes());
-                    let meta = if let Some(meta) = self.state_machine_store.meta().get(&meta_key)? {
-                        Metadata::unpack(&meta)?
-                    } else {
-                        let res = Metadata::new();
-                        self.state_machine_store
-                            .meta()
-                            .insert(meta_key, res.pack()?)?;
-                        res
+                    // A record lacking metadata (legacy/edge case) gets a
+                    // synthesized default *in memory only* — this is a
+                    // read path and must never write. Persisting it here
+                    // was a non-Raft write reachable only on the leader
+                    // (GitHub #1297 item 3): it diverged the leader from
+                    // followers, discarded the legacy-probe fallback a
+                    // real `dek_version` hint would have carried, and gave
+                    // a later CAS write's `revision` starting point a
+                    // value that depended on whether this read happened
+                    // to run first.
+                    let meta = match self.state_machine_store.meta().get(&meta_key)? {
+                        Some(meta) => Metadata::unpack(&meta)?,
+                        None => Metadata::new(),
                     };
                     Ok((k, val.to_vec(), meta))
                 })
