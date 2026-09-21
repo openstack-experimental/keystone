@@ -29,8 +29,6 @@
 //! cryptographically uniform random (generated with a CSPRNG), so the
 //! Extract step adds no security and Extract is omitted as per ADR §2.1.
 
-use std::sync::atomic::{AtomicU64, Ordering};
-
 use crate::audit::AuditHmacKey;
 use crate::error::CryptoError;
 use crate::mlock::LockedKey;
@@ -108,8 +106,6 @@ pub struct DekEpoch {
     log_dek: LogDek,
     state_dek: StateDek,
     backup_dek: BackupDek,
-    /// Monotonic counter for backup snapshot nonce uniqueness (ADR §2.2).
-    backup_counter: AtomicU64,
 }
 
 impl DekEpoch {
@@ -144,7 +140,6 @@ impl DekEpoch {
             log_dek: LogDek(log_locked),
             state_dek: StateDek(state_locked),
             backup_dek: BackupDek(backup_locked),
-            backup_counter: AtomicU64::new(0),
         })
     }
 
@@ -161,14 +156,6 @@ impl DekEpoch {
     /// Returns the backup (snapshot) sub-key for this epoch.
     pub fn backup_dek(&self) -> &BackupDek {
         &self.backup_dek
-    }
-
-    /// Fetch and increment the backup nonce counter.
-    ///
-    /// Returns the counter value *before* increment, suitable for use as
-    /// the deterministic nonce input in `backup_nonce`.
-    pub fn next_backup_counter(&self) -> u64 {
-        self.backup_counter.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Derive the per-epoch audit HMAC key from the root DEK (ADR §3.1).
@@ -237,15 +224,6 @@ mod tests {
     fn test_generate_dek_non_zero() {
         let dek = generate_dek();
         assert_ne!(dek.as_bytes(), &[0u8; 32]);
-    }
-
-    #[test]
-    fn test_backup_counter_increments() {
-        let mut raw = test_locked_dek();
-        raw.as_mut().copy_from_slice(&[0xAAu8; 32]);
-        let epoch = DekEpoch::from_raw(raw, 1).expect("epoch");
-        assert_eq!(epoch.next_backup_counter(), 0);
-        assert_eq!(epoch.next_backup_counter(), 1);
     }
 
     #[test]

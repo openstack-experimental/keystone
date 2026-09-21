@@ -1405,11 +1405,14 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
             .map_err(|e| Status::internal(format!("cannot stat snapshot file: {e}")))?
             .len() as usize;
 
-        if file_size < 12 {
+        // Full on-disk header is 20 bytes (dek_version + utc_epoch +
+        // nonce_salt); only the first 12 are parsed here for audit/chunk
+        // metadata, the rest streams through verbatim as part of the body.
+        if file_size < 20 {
             return Err(Status::internal("snapshot file too short"));
         }
 
-        // Read and parse the 12-byte header: [dek_version: u32_be][utc_epoch: u64_be].
+        // Read and parse the first 12 bytes of the header: [dek_version: u32_be][utc_epoch: u64_be].
         let (file, header_bytes, dek_version, utc_epoch) = {
             let mut file = file;
             let mut header = [0u8; 12];

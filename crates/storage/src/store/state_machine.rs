@@ -301,6 +301,28 @@ const SNAPSHOT_FORMAT_VERSION: u32 = 2;
 /// (ADR 0028).
 const SNAPSHOT_SKIP_KEYSPACES: &[&str] = &["logs", "local_emergency"];
 
+/// Fjall meta key recording the filenames of the most recently written
+/// local snapshot files, newest first, as a msgpack-encoded `Vec<String>`
+/// (GitHub #1296 item 1).
+///
+/// `latest_snapshot_path`/`get_current_snapshot` used to pick the
+/// "latest" snapshot as the lexicographically greatest filename among
+/// `<leader_id>-<index>-<rand>`, which picks a *stale* snapshot once the
+/// applied index crosses a digit boundary (`"1-9-123" > "1-10-456"` as
+/// strings) — openraft then ships a snapshot below the purged log to a
+/// lagging follower, which can never catch up, and the `Backup` RPC
+/// silently backs up stale state. Recording the actual write order here
+/// sidesteps filename parsing entirely.
+const SNAPSHOT_HISTORY_META_KEY: &[u8] = b"_meta:snapshot:history";
+
+/// Number of local snapshot files retained on disk.
+///
+/// Kept greater than 1 so `get_current_snapshot` has an older,
+/// previously-valid file to fall back to if the newest one turns out
+/// corrupt or undecryptable at startup (GitHub #1296 item 3), instead of
+/// refusing to start with no operator recourse.
+const SNAPSHOT_KEEP: usize = 2;
+
 /// One keyspace's full contents inside a [`SnapshotPayload`]: `(key, value)`
 /// pairs exactly as stored in Fjall.
 type SnapshotKeyspaceEntries = Vec<(Vec<u8>, Vec<u8>)>;
@@ -783,36 +805,119 @@ impl FjallStateMachine {
         &self.snapshot_dir
     }
 
-    /// Return the path of the most recently written snapshot file, if any.
+    /// Return the path of the most recently written snapshot file that
+    /// still exists on disk, if any.
     ///
-    /// Snapshot filenames sort lexicographically by `<leader_id>-<index>-<rand>`, so the
-    /// lexicographically greatest filename is the latest snapshot. openraft 0.10 dropped
-    /// `snapshot_id` from `SnapshotMeta`, so callers that need the on-disk path (rather than
-    /// going through `RaftStateMachine::get_current_snapshot`) must locate it this way.
+    /// Uses the persisted history recorded by [`Self::record_snapshot_and_gc`]
+    /// rather than lexicographic filename order (GitHub #1296 item 1 — see
+    /// [`SNAPSHOT_HISTORY_META_KEY`]). openraft 0.10 dropped `snapshot_id`
+    /// from `SnapshotMeta`, so callers that need the on-disk path (rather
+    /// than going through `RaftStateMachine::get_current_snapshot`) must
+    /// locate it this way.
     pub(crate) fn latest_snapshot_path(&self) -> io::Result<Option<std::path::PathBuf>> {
-        let mut latest_snapshot_id: Option<String> = None;
+        for snapshot_id in self.snapshot_history()? {
+            let path = self.snapshot_dir.join(&snapshot_id);
+            if path.is_file() {
+                return Ok(Some(path));
+            }
+        }
+        Ok(None)
+    }
 
+    /// Returns the persisted snapshot history, newest first (see
+    /// [`Self::record_snapshot_and_gc`]).
+    fn snapshot_history(&self) -> io::Result<Vec<String>> {
+        let history: Option<Vec<String>> = self
+            .meta
+            .get(SNAPSHOT_HISTORY_META_KEY)
+            .map_err(|e| io::Error::other(e.to_string()))?
+            .map(|bytes| deserialize(&bytes))
+            .transpose()
+            .map_err(|e| io::Error::other(e.to_string()))?;
+        Ok(history.unwrap_or_default())
+    }
+
+    /// Encrypts `file_bytes` (a serialized [`SnapshotFile`]) with the
+    /// current `BackupDek` and writes it to
+    /// `<snapshot_dir>/<snapshot_id>`, then records `snapshot_id` as the
+    /// newest local snapshot and garbage-collects every on-disk file that
+    /// has fallen out of the retained history (GitHub #1296 items 1-2).
+    ///
+    /// On-disk format: `[dek_version_u32_BE; 4] ++ [utc_epoch_u64_BE; 8] ++
+    /// [nonce_salt_u64_BE; 8] ++ AES-256-GCM(file_bytes)`. `nonce_salt` is
+    /// a fresh random value per snapshot rather than a per-process counter
+    /// (GitHub #1296 item 4): a counter reset to 0 on every process
+    /// restart could reuse a nonce if a snapshot were written again within
+    /// the same wall-clock second, and a missing durable counter forced
+    /// `decrypt_snapshot_file` to brute-force it (capping snapshots at
+    /// 1024 per process lifetime). A random 64-bit salt makes reuse
+    /// astronomically unlikely without any durable counter state, and is
+    /// stored directly in the header so decryption never has to guess it.
+    fn persist_snapshot_file(&self, snapshot_id: &str, file_bytes: &[u8]) -> io::Result<()> {
+        let (dek_version, backup_dek_ref) = {
+            let guard = self.dek.read().unwrap_or_else(|p| p.into_inner());
+            (guard.version, guard.backup_dek().as_bytes().to_owned())
+        };
+        use openstack_keystone_storage_crypto::dek::BackupDek;
+        let bdek = BackupDek::from_raw(backup_dek_ref);
+        let utc_epoch = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let nonce_salt: u64 = rand::rng().random();
+        let encrypted = backup_encrypt(&bdek, file_bytes, dek_version, utc_epoch, nonce_salt)
+            .map_err(|e| io::Error::other(e.to_string()))?;
+
+        let mut disk_bytes = Vec::with_capacity(20 + encrypted.len());
+        disk_bytes.extend_from_slice(&dek_version.to_be_bytes());
+        disk_bytes.extend_from_slice(&utc_epoch.to_be_bytes());
+        disk_bytes.extend_from_slice(&nonce_salt.to_be_bytes());
+        disk_bytes.extend_from_slice(&encrypted);
+
+        let snapshot_path = self.snapshot_dir.join(snapshot_id);
+        fs::write(&snapshot_path, &disk_bytes)?;
+
+        self.record_snapshot_and_gc(snapshot_id)
+    }
+
+    /// Prepends `snapshot_id` to the persisted snapshot history, keeps
+    /// only the newest [`SNAPSHOT_KEEP`] entries, and deletes every
+    /// on-disk snapshot file that isn't one of them (GitHub #1296 item 2:
+    /// snapshot files were previously never garbage-collected, so every
+    /// `build_snapshot`/`install_snapshot` left behind a full copy of the
+    /// dataset forever).
+    fn record_snapshot_and_gc(&self, snapshot_id: &str) -> io::Result<()> {
+        let mut history = self.snapshot_history()?;
+        history.retain(|id| id != snapshot_id);
+        history.insert(0, snapshot_id.to_string());
+        history.truncate(SNAPSHOT_KEEP);
+
+        let packed = serialize(&history).map_err(|e| io::Error::other(e.to_string()))?;
+        self.meta
+            .insert(SNAPSHOT_HISTORY_META_KEY, packed)
+            .map_err(|e| io::Error::other(e.to_string()))?;
+
+        let keep: HashSet<&str> = history.iter().map(String::as_str).collect();
         for entry in fs::read_dir(&self.snapshot_dir)? {
             let entry = entry?;
             let path = entry.path();
-
             if !path.is_file() {
                 continue;
             }
-
-            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                let snapshot_id = filename.to_string();
-
-                if latest_snapshot_id
-                    .as_ref()
-                    .is_none_or(|current| snapshot_id > *current)
-                {
-                    latest_snapshot_id = Some(snapshot_id);
-                }
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if !keep.contains(name)
+                && let Err(e) = fs::remove_file(&path)
+            {
+                tracing::warn!(
+                    file = name,
+                    error = %e,
+                    "failed to garbage-collect stale snapshot file"
+                );
             }
         }
-
-        Ok(latest_snapshot_id.map(|id| self.snapshot_dir.join(id)))
+        Ok(())
     }
 
     /// Validate and decrypt an operator backup blob (produced by the `Backup`
@@ -1698,8 +1803,11 @@ fn check_snapshot_format_version(version: u32) -> Result<(), String> {
 /// Decrypt and deserialize a snapshot file from disk.
 ///
 /// On-disk format:
-/// `[dek_version_u32_BE; 4] ++ [utc_epoch_u64_BE; 8] ++
-/// backup_encrypt(rmp_serde(SnapshotFile))`.
+/// `[dek_version_u32_BE; 4] ++ [utc_epoch_u64_BE; 8] ++ [nonce_salt_u64_BE; 8] ++
+/// backup_encrypt(rmp_serde(SnapshotFile))`. `nonce_salt` is generated fresh
+/// per snapshot and stored directly in the header (GitHub #1296 item 4), so
+/// decryption needs exactly one attempt per candidate DEK epoch instead of
+/// brute-forcing a missing counter over `0..1024`.
 fn decrypt_snapshot_file(
     disk_bytes: &[u8],
     current_dek: &std::sync::Arc<std::sync::RwLock<std::sync::Arc<DekEpoch>>>,
@@ -1707,7 +1815,7 @@ fn decrypt_snapshot_file(
 ) -> Result<(SnapshotFile, u32, u64), crate::StoreError> {
     use openstack_keystone_storage_crypto::dek::BackupDek;
 
-    const HEADER_LEN: usize = 4 + 8; // version + epoch
+    const HEADER_LEN: usize = 4 + 8 + 8; // version + epoch + nonce_salt
     if disk_bytes.len() < HEADER_LEN {
         return Err(crate::StoreError::Other(eyre::eyre!(
             "snapshot file too short: {} bytes",
@@ -1724,27 +1832,30 @@ fn decrypt_snapshot_file(
             .try_into()
             .map_err(|_| crate::StoreError::Other(eyre::eyre!("invalid snapshot epoch")))?,
     );
+    let nonce_salt = u64::from_be_bytes(
+        disk_bytes[12..20]
+            .try_into()
+            .map_err(|_| crate::StoreError::Other(eyre::eyre!("invalid snapshot nonce salt")))?,
+    );
     let encrypted = &disk_bytes[HEADER_LEN..];
 
-    let try_decrypt = |epoch: &DekEpoch, counter: u64| -> Option<Vec<u8>> {
+    let try_decrypt = |epoch: &DekEpoch| -> Option<Vec<u8>> {
         if epoch.version != dek_version {
             return None;
         }
         let bdek = BackupDek::from_raw(*epoch.backup_dek().as_bytes());
-        backup_decrypt(&bdek, encrypted, dek_version, utc_epoch, counter)
+        backup_decrypt(&bdek, encrypted, dek_version, utc_epoch, nonce_salt)
             .ok()
             .map(|z| z.to_vec())
     };
 
     let file_bytes = {
         let guard = current_dek.read().unwrap_or_else(|p| p.into_inner());
-        (0u64..1024).find_map(|c| try_decrypt(&guard, c))
+        try_decrypt(&guard)
     }
     .or_else(|| {
         let old = old_deks.lock().unwrap_or_else(|p| p.into_inner());
-        old.values()
-            .flat_map(|epoch| (0u64..1024).filter_map(move |c| try_decrypt(epoch, c)))
-            .next()
+        old.values().find_map(|epoch| try_decrypt(epoch))
     })
     .ok_or_else(|| {
         crate::StoreError::Other(eyre::eyre!(
@@ -1800,41 +1911,15 @@ impl RaftSnapshotBuilder<TypeConfig> for Arc<FjallStateMachine> {
             )
         })?;
 
-        // Encrypt snapshot file at rest with BackupDek (ADR §7).
-        let (dek_version, backup_dek_ref, counter) = {
-            let guard = self.dek.read().unwrap_or_else(|p| p.into_inner());
-            (
-                guard.version,
-                guard.backup_dek().as_bytes().to_owned(),
-                guard.next_backup_counter(),
-            )
-        };
-        use openstack_keystone_storage_crypto::dek::BackupDek;
-        let bdek = BackupDek::from_raw(backup_dek_ref);
-        let utc_epoch = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let encrypted = backup_encrypt(&bdek, &file_bytes, dek_version, utc_epoch, counter)
+        // Encrypt snapshot file at rest with BackupDek (ADR §7), persist it,
+        // record it as the newest snapshot and GC stale files.
+        self.persist_snapshot_file(&snapshot_id, &file_bytes)
             .map_err(|e| {
                 StorageError::<TypeConfig>::write_snapshot(
                     Some(meta.signature()),
                     TypeConfig::err_from_error(&e),
                 )
             })?;
-        // On-disk: [dek_version_u32_BE; 4] ++ [utc_epoch_u64_BE; 8] ++ encrypted_blob
-        let mut disk_bytes = Vec::with_capacity(12 + encrypted.len());
-        disk_bytes.extend_from_slice(&dek_version.to_be_bytes());
-        disk_bytes.extend_from_slice(&utc_epoch.to_be_bytes());
-        disk_bytes.extend_from_slice(&encrypted);
-
-        let snapshot_path = self.snapshot_dir.join(&snapshot_id);
-        fs::write(&snapshot_path, &disk_bytes).map_err(|e| {
-            StorageError::<TypeConfig>::write_snapshot(
-                Some(meta.signature()),
-                TypeConfig::err_from_error(&e),
-            )
-        })?;
 
         let data_bytes = serialize(&payload).map_err(|e| {
             StorageError::<TypeConfig>::write_snapshot(
@@ -1842,7 +1927,7 @@ impl RaftSnapshotBuilder<TypeConfig> for Arc<FjallStateMachine> {
                 TypeConfig::err_from_error(&e),
             )
         })?;
-        tracing::trace!("snapshot written to {:?}", snapshot_path);
+        tracing::trace!(snapshot_id, "snapshot written");
 
         Ok(Snapshot {
             meta,
@@ -1994,30 +2079,9 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
         let file_bytes = serialize(&snapshot_file)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
-        // Encrypt the snapshot file at rest with the current BackupDek.
-        let (dek_version, backup_dek_ref, counter) = {
-            let guard = self.dek.read().unwrap_or_else(|p| p.into_inner());
-            (
-                guard.version,
-                guard.backup_dek().as_bytes().to_owned(),
-                guard.next_backup_counter(),
-            )
-        };
-        use openstack_keystone_storage_crypto::dek::BackupDek;
-        let bdek = BackupDek::from_raw(backup_dek_ref);
-        let utc_epoch = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let encrypted = backup_encrypt(&bdek, &file_bytes, dek_version, utc_epoch, counter)
-            .map_err(|e| io::Error::other(e.to_string()))?;
-        let mut disk_bytes = Vec::with_capacity(12 + encrypted.len());
-        disk_bytes.extend_from_slice(&dek_version.to_be_bytes());
-        disk_bytes.extend_from_slice(&utc_epoch.to_be_bytes());
-        disk_bytes.extend_from_slice(&encrypted);
-
-        let snapshot_path = self.snapshot_dir.join(&snapshot_id);
-        fs::write(&snapshot_path, &disk_bytes)?;
+        // Encrypt the snapshot file at rest with the current BackupDek,
+        // persist it, record it as the newest snapshot and GC stale files.
+        self.persist_snapshot_file(&snapshot_id, &file_bytes)?;
 
         Ok(())
     }
@@ -2026,22 +2090,36 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
     async fn get_current_snapshot(
         &mut self,
     ) -> Result<Option<SnapshotOf<TypeConfig, Vec<u8>>>, io::Error> {
-        let Some(snapshot_path) = self.latest_snapshot_path()? else {
-            return Ok(None);
-        };
-
-        let disk_bytes = fs::read(&snapshot_path)?;
-        let (snapshot_file, _, _) =
-            decrypt_snapshot_file(&disk_bytes, &self.dek, &self.old_deks)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-
-        let data_bytes = rmp_serde::to_vec(&snapshot_file.payload)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-
-        Ok(Some(Snapshot {
-            meta: snapshot_file.meta,
-            snapshot: data_bytes,
-        }))
+        // Try every retained snapshot file, newest first, falling back to
+        // an older one if the newest turns out corrupt or undecryptable
+        // (GitHub #1296 item 3) rather than refusing to start.
+        for snapshot_id in self.snapshot_history()? {
+            let snapshot_path = self.snapshot_dir.join(&snapshot_id);
+            let disk_bytes = match fs::read(&snapshot_path) {
+                Ok(bytes) => bytes,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(e),
+            };
+            match decrypt_snapshot_file(&disk_bytes, &self.dek, &self.old_deks) {
+                Ok((snapshot_file, _, _)) => {
+                    let data_bytes = rmp_serde::to_vec(&snapshot_file.payload)
+                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+                    return Ok(Some(Snapshot {
+                        meta: snapshot_file.meta,
+                        snapshot: data_bytes,
+                    }));
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        snapshot_id,
+                        error = %e,
+                        "local snapshot file failed to decode; trying an older one"
+                    );
+                }
+            }
+        }
+        tracing::warn!("no usable local snapshot file found on startup; starting without one");
+        Ok(None)
     }
 
     #[tracing::instrument(skip(self, entries))]
@@ -4396,6 +4474,95 @@ mod snapshot_tests {
         assert_eq!(
             dump(&sm, "data"),
             vec![(b"rec1".to_vec(), b"original".to_vec())]
+        );
+    }
+
+    /// Regression test for GitHub #1296 item 1: filenames are
+    /// `<leader_id>-<index>-<rand>`, and `"1-9-..." > "1-10-..."` as
+    /// strings, so picking the "latest" snapshot by lexicographically
+    /// greatest filename picks a stale one once the applied index crosses
+    /// a digit boundary. `latest_snapshot_path` must instead follow the
+    /// persisted write-order history, independent of filename content.
+    #[tokio::test]
+    async fn latest_snapshot_path_follows_write_order_not_filename_sort() {
+        let (sm, _td) = make_sm();
+
+        // Write a snapshot whose filename would lexicographically outrank
+        // one written after it, if selection were string-based.
+        sm.persist_snapshot_file("9-fake-later", b"first-payload")
+            .expect("write first snapshot file");
+        let first_path = sm.latest_snapshot_path().expect("lookup").expect("some");
+        assert_eq!(first_path.file_name().unwrap(), "9-fake-later");
+
+        sm.persist_snapshot_file("10-fake-newer", b"second-payload")
+            .expect("write second snapshot file");
+        let second_path = sm.latest_snapshot_path().expect("lookup").expect("some");
+        assert_eq!(
+            second_path.file_name().unwrap(),
+            "10-fake-newer",
+            "the more recently written snapshot must be picked even though its \
+             filename lexicographically sorts before the older one"
+        );
+    }
+
+    /// Regression test for GitHub #1296 item 2: snapshot files were never
+    /// garbage-collected, so every `build_snapshot` left a full copy of
+    /// the dataset on disk forever.
+    #[tokio::test]
+    async fn old_snapshot_files_are_garbage_collected_beyond_the_retained_history() {
+        let (sm, _td) = make_sm();
+
+        for i in 0..(SNAPSHOT_KEEP + 3) {
+            sm.persist_snapshot_file(&format!("snap-{i}"), b"payload")
+                .expect("write snapshot file");
+        }
+
+        let remaining: usize = fs::read_dir(sm.snapshot_dir())
+            .expect("read snapshot dir")
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_file())
+            .count();
+        assert_eq!(
+            remaining, SNAPSHOT_KEEP,
+            "only the newest {SNAPSHOT_KEEP} snapshot files must survive on disk"
+        );
+    }
+
+    /// Regression test for GitHub #1296 item 3: a corrupt or undecryptable
+    /// newest snapshot file must not prevent startup outright —
+    /// `get_current_snapshot` must fall back to an older, still-valid
+    /// retained file.
+    #[tokio::test]
+    async fn get_current_snapshot_falls_back_to_an_older_file_if_newest_is_corrupt() {
+        let (mut sm, _td) = make_sm();
+        sm.data().insert(b"rec1", b"good-data").expect("seed data");
+
+        // First (older, still valid) snapshot.
+        let _ = sm.build_snapshot().await.expect("build first snapshot");
+
+        // Second (newest) snapshot, then corrupt it on disk in place.
+        let _ = sm.build_snapshot().await.expect("build second snapshot");
+        let newest_path = sm
+            .latest_snapshot_path()
+            .expect("lookup")
+            .expect("newest snapshot exists");
+        let mut bytes = fs::read(&newest_path).expect("read newest snapshot");
+        let tail = bytes.len() - 1;
+        bytes[tail] ^= 0xFF; // flip a ciphertext byte -> GCM tag no longer verifies
+        fs::write(&newest_path, &bytes).expect("corrupt newest snapshot");
+
+        let snapshot = sm
+            .get_current_snapshot()
+            .await
+            .expect("must not error out")
+            .expect("must fall back to the older, still-valid snapshot");
+        let payload: SnapshotPayload =
+            rmp_serde::from_slice(&snapshot.snapshot).expect("decode payload");
+        let by_name: HashMap<String, Vec<(Vec<u8>, Vec<u8>)>> =
+            payload.keyspaces.into_iter().collect();
+        assert_eq!(
+            by_name.get("data"),
+            Some(&vec![(b"rec1".to_vec(), b"good-data".to_vec())])
         );
     }
 }
