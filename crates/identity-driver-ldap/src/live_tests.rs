@@ -279,7 +279,7 @@ async fn test_list_groups_of_user() -> Result<(), IdentityProviderError> {
     .await?;
     let mut ids: Vec<&str> = groups.iter().map(|g| g.id.as_str()).collect();
     ids.sort_unstable();
-    assert_eq!(ids, vec!["admins", "users"]);
+    assert_eq!(ids, vec!["admins", "nested-child", "users"]);
     Ok(())
 }
 
@@ -422,5 +422,361 @@ async fn test_query_scope_one_still_finds_flat_entries() -> Result<(), IdentityP
     )
     .await?;
     assert!(found.is_some());
+    Ok(())
+}
+
+/// `group_members_are_ids=true` (posixGroup/memberUid path): member value is
+/// the user ID directly, with no DN round-trip.
+#[tokio::test]
+async fn test_list_groups_of_user_by_id_posixgroup_path() -> Result<(), IdentityProviderError> {
+    let url = skip_unless_configured!();
+    let mut cfg = test_config(&url);
+    cfg.group_objectclass = "posixGroup".into();
+    cfg.group_member_attribute = "memberUid".into();
+    cfg.group_members_are_ids = true;
+    let backend = LdapBackend::new(&cfg)
+        .await
+        .map_err(|e| IdentityProviderError::LdapConnection(e.to_string()))?;
+    let groups = group::list_groups_of_user_dn(
+        &backend.service_pool,
+        &backend.config,
+        DEFAULT_DOMAIN_ID,
+        "bsmith",
+    )
+    .await?;
+    assert!(
+        groups.iter().any(|g| g.id == "posixadmins"),
+        "bsmith must appear in posixadmins via memberUid"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_pagination_transparent_with_page_size_one() -> Result<(), IdentityProviderError> {
+    let url = skip_unless_configured!();
+    let mut cfg = test_config(&url);
+    cfg.page_size = 1;
+    let backend = LdapBackend::new(&cfg)
+        .await
+        .map_err(|e| IdentityProviderError::LdapConnection(e.to_string()))?;
+    let params = UserListParametersBuilder::default()
+        .build()
+        .expect("valid params");
+    let users = user::list(
+        &backend.service_pool,
+        &backend.config,
+        DEFAULT_DOMAIN_ID,
+        &params,
+    )
+    .await?;
+    let ids: Vec<&str> = users.iter().map(|u| u.id.as_str()).collect();
+    assert!(
+        ids.contains(&"jdoe"),
+        "jdoe must be returned with page_size=1"
+    );
+    assert!(
+        ids.contains(&"bsmith"),
+        "bsmith must be returned with page_size=1"
+    );
+    assert!(
+        ids.contains(&"disableduser"),
+        "disableduser must be returned with page_size=1"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_find_group_by_name_ci() -> Result<(), IdentityProviderError> {
+    let url = skip_unless_configured!();
+    let cfg = test_config(&url);
+    let backend = LdapBackend::new(&cfg)
+        .await
+        .map_err(|e| IdentityProviderError::LdapConnection(e.to_string()))?;
+    let id = group::find_by_name_ci(
+        &backend.service_pool,
+        &backend.config,
+        DEFAULT_DOMAIN_ID,
+        DEFAULT_DOMAIN_ID,
+        "ADMINS",
+    )
+    .await?;
+    assert_eq!(id, Some("admins".to_string()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_check_user_exist_by_name() -> Result<(), IdentityProviderError> {
+    let url = skip_unless_configured!();
+    let cfg = test_config(&url);
+    let backend = LdapBackend::new(&cfg)
+        .await
+        .map_err(|e| IdentityProviderError::LdapConnection(e.to_string()))?;
+    let id = user::check_user_exist(
+        &backend.service_pool,
+        &backend.config,
+        DEFAULT_DOMAIN_ID,
+        None,
+        Some("Doe"),
+        Some(DEFAULT_DOMAIN_ID),
+    )
+    .await?;
+    assert_eq!(id, "jdoe");
+    Ok(())
+}
+
+/// Ten concurrent `user::get` calls for the same user must all succeed and
+/// return the correct result; validates that the service pool does not
+/// deadlock under mild concurrency.
+#[tokio::test]
+async fn test_service_pool_under_concurrent_load() -> Result<(), IdentityProviderError> {
+    let url = skip_unless_configured!();
+    let cfg = test_config(&url);
+    let backend = LdapBackend::new(&cfg)
+        .await
+        .map_err(|e| IdentityProviderError::LdapConnection(e.to_string()))?;
+    let (r0, r1, r2, r3, r4, r5, r6, r7, r8, r9) = tokio::join!(
+        user::get(
+            &backend.service_pool,
+            &backend.config,
+            DEFAULT_DOMAIN_ID,
+            "jdoe"
+        ),
+        user::get(
+            &backend.service_pool,
+            &backend.config,
+            DEFAULT_DOMAIN_ID,
+            "jdoe"
+        ),
+        user::get(
+            &backend.service_pool,
+            &backend.config,
+            DEFAULT_DOMAIN_ID,
+            "jdoe"
+        ),
+        user::get(
+            &backend.service_pool,
+            &backend.config,
+            DEFAULT_DOMAIN_ID,
+            "jdoe"
+        ),
+        user::get(
+            &backend.service_pool,
+            &backend.config,
+            DEFAULT_DOMAIN_ID,
+            "jdoe"
+        ),
+        user::get(
+            &backend.service_pool,
+            &backend.config,
+            DEFAULT_DOMAIN_ID,
+            "jdoe"
+        ),
+        user::get(
+            &backend.service_pool,
+            &backend.config,
+            DEFAULT_DOMAIN_ID,
+            "jdoe"
+        ),
+        user::get(
+            &backend.service_pool,
+            &backend.config,
+            DEFAULT_DOMAIN_ID,
+            "jdoe"
+        ),
+        user::get(
+            &backend.service_pool,
+            &backend.config,
+            DEFAULT_DOMAIN_ID,
+            "jdoe"
+        ),
+        user::get(
+            &backend.service_pool,
+            &backend.config,
+            DEFAULT_DOMAIN_ID,
+            "jdoe"
+        ),
+    );
+    for result in [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9] {
+        let found = result?.expect("jdoe must be found in every concurrent call");
+        assert_eq!(found.id, "jdoe");
+    }
+    Ok(())
+}
+
+/// Five concurrent `authenticate_by_password` calls must all succeed;
+/// validates that the auth pool does not deadlock under mild concurrency.
+#[tokio::test]
+async fn test_auth_pool_under_concurrent_load() -> Result<(), IdentityProviderError> {
+    let url = skip_unless_configured!();
+    let cfg = test_config(&url);
+    let backend = LdapBackend::new(&cfg)
+        .await
+        .map_err(|e| IdentityProviderError::LdapConnection(e.to_string()))?;
+    let req = UserPasswordAuthRequestBuilder::default()
+        .id("jdoe")
+        .password(SecretString::from("jdoepass"))
+        .build()
+        .expect("valid auth request");
+    let (r0, r1, r2, r3, r4) = tokio::join!(
+        authenticate::authenticate_by_password(
+            &backend.service_pool,
+            &backend.auth_pool,
+            &backend.config,
+            DEFAULT_DOMAIN_ID,
+            &req
+        ),
+        authenticate::authenticate_by_password(
+            &backend.service_pool,
+            &backend.auth_pool,
+            &backend.config,
+            DEFAULT_DOMAIN_ID,
+            &req
+        ),
+        authenticate::authenticate_by_password(
+            &backend.service_pool,
+            &backend.auth_pool,
+            &backend.config,
+            DEFAULT_DOMAIN_ID,
+            &req
+        ),
+        authenticate::authenticate_by_password(
+            &backend.service_pool,
+            &backend.auth_pool,
+            &backend.config,
+            DEFAULT_DOMAIN_ID,
+            &req
+        ),
+        authenticate::authenticate_by_password(
+            &backend.service_pool,
+            &backend.auth_pool,
+            &backend.config,
+            DEFAULT_DOMAIN_ID,
+            &req
+        ),
+    );
+    for result in [r0, r1, r2, r3, r4] {
+        let auth = result.expect("concurrent auth must succeed");
+        match auth.principal.identity {
+            openstack_keystone_core::auth::IdentityInfo::User(u) => {
+                assert_eq!(u.user_id, "jdoe");
+            }
+            other => panic!("expected IdentityInfo::User, got {other:?}"),
+        }
+    }
+    Ok(())
+}
+
+/// The LDAP driver does not resolve nested group membership: jdoe is a
+/// member of nested-child, and nested-child is a member of nested-parent,
+/// but `list_users_of_group("nested-parent")` must NOT return jdoe.
+/// `dn_to_id` on the group DN returns "nested-child" as an artefact — not a
+/// real user ID. This test documents a known limitation, not a bug to fix.
+#[tokio::test]
+async fn test_nested_group_membership_is_not_resolved() -> Result<(), IdentityProviderError> {
+    let url = skip_unless_configured!();
+    let cfg = test_config(&url);
+    let backend = LdapBackend::new(&cfg)
+        .await
+        .map_err(|e| IdentityProviderError::LdapConnection(e.to_string()))?;
+    let members =
+        group::list_users_of_group(&backend.service_pool, &backend.config, "nested-parent").await?;
+    assert!(
+        !members.contains(&"jdoe".to_string()),
+        "nested membership must not be resolved without group_ad_nesting"
+    );
+    assert!(
+        members.iter().all(|m| m == "nested-child"),
+        "only the group-DN artefact must appear, no real user IDs: {members:?}"
+    );
+    Ok(())
+}
+
+// Side-by-side (sbs_) tests use the standard ldap profile with an explicit
+// inetOrgPerson/cn/mail config matching Python Keystone's LDAP defaults.
+
+/// Python Keystone-compatible config; page_size=1 forces pagination.
+fn sbs_config(url: &str) -> LdapProvider {
+    LdapProvider {
+        url: url.to_string(),
+        user: Some(admin_dn()),
+        password: Some(SecretString::from(admin_pw())),
+        suffix: base_dn(),
+        user_tree_dn: format!("ou=Users,{}", base_dn()),
+        user_objectclass: "inetOrgPerson".to_string(),
+        user_id_attribute: "cn".to_string(),
+        user_name_attribute: "cn".to_string(),
+        user_mail_attribute: "mail".to_string(),
+        page_size: 1,
+        ..Default::default()
+    }
+}
+
+/// All fixture users returned despite page_size=1 (pagination transparent).
+#[tokio::test]
+async fn sbs_list_all_users_returns_full_seeded_set() -> Result<(), IdentityProviderError> {
+    let url = skip_unless_configured!();
+    let cfg = sbs_config(&url);
+    let backend = LdapBackend::new(&cfg)
+        .await
+        .map_err(|e| IdentityProviderError::LdapConnection(format!("failed to connect: {e}")))?;
+    let params = UserListParametersBuilder::default().build().unwrap();
+    let users = user::list(
+        &backend.service_pool,
+        &backend.config,
+        DEFAULT_DOMAIN_ID,
+        &params,
+    )
+    .await?;
+    let ids: Vec<&str> = users.iter().map(|u| u.id.as_str()).collect();
+    assert!(ids.contains(&"jdoe"));
+    assert!(ids.contains(&"bsmith"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn sbs_filter_by_name_finds_exact_user() -> Result<(), IdentityProviderError> {
+    let url = skip_unless_configured!();
+    let cfg = sbs_config(&url);
+    let backend = LdapBackend::new(&cfg)
+        .await
+        .map_err(|e| IdentityProviderError::LdapConnection(format!("failed to connect: {e}")))?;
+    let params = UserListParametersBuilder::default()
+        .name(Some("jdoe".to_string()))
+        .build()
+        .unwrap();
+    let users = user::list(
+        &backend.service_pool,
+        &backend.config,
+        DEFAULT_DOMAIN_ID,
+        &params,
+    )
+    .await?;
+    assert_eq!(users.len(), 1);
+    assert_eq!(users[0].id, "jdoe");
+    Ok(())
+}
+
+/// `cn` -> id/name, `mail` -> email: must match Python Keystone's attribute mapping.
+#[tokio::test]
+async fn sbs_user_attributes_match_python_keystone_mapping() -> Result<(), IdentityProviderError> {
+    let url = skip_unless_configured!();
+    let cfg = sbs_config(&url);
+    let backend = LdapBackend::new(&cfg)
+        .await
+        .map_err(|e| IdentityProviderError::LdapConnection(format!("failed to connect: {e}")))?;
+    let user = user::get(
+        &backend.service_pool,
+        &backend.config,
+        DEFAULT_DOMAIN_ID,
+        "jdoe",
+    )
+    .await?
+    .expect("jdoe must exist in the seeded fixture");
+    assert_eq!(user.id, "jdoe");
+    assert_eq!(user.name, "jdoe");
+    assert_eq!(
+        user.extra.get("email").and_then(|v| v.as_str()),
+        Some("jdoe@example.com")
+    );
     Ok(())
 }

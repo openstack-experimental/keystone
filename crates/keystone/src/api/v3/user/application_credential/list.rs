@@ -76,7 +76,7 @@ pub(super) async fn list(
         core_type_application_credential::ApplicationCredentialListParametersBuilder::from(payload)
             .user_id(user_id.clone())
             .build()
-            .unwrap();
+            .map_err(KeystoneApiError::internal)?;
     let application_credentials = state
         .provider
         .get_application_credential_provider()
