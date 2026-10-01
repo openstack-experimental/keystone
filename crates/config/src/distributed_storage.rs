@@ -110,6 +110,19 @@ pub struct DistributedStorageConfiguration {
     #[serde(default, deserialize_with = "deserialize_retry_join_nodes")]
     pub retry_join_nodes: Vec<(u64, String)>,
 
+    /// Whether a node sets up its Raft membership on first start: the
+    /// bootstrap node (``node_id == 0``) initializes itself as a single-node
+    /// cluster and the other nodes auto-join through `retry_join_nodes`.
+    /// Defaults to `true`.
+    ///
+    /// Set to `false` on the node(s) that are about to receive a disaster
+    /// recovery ``storage restore``: the restore installs the backup's Raft
+    /// state, which only works while the node's Raft is still
+    /// uninitialized. Initialize manually (``storage init``) when this is
+    /// off and no restore is intended.
+    #[serde(default = "default_auto_bootstrap")]
+    pub auto_bootstrap: bool,
+
     /// TLS configuration for the Raft cluster communication.
     #[serde(flatten)]
     pub tls_configuration: RaftTlsConfiguration,
@@ -291,6 +304,10 @@ impl TpmKekConfiguration {
     }
 }
 
+fn default_auto_bootstrap() -> bool {
+    true
+}
+
 /// Deserialize ``id=address`` pairs from a CSV string.
 ///
 /// Format: ``"0=https://node0:8300,1=https://node1:8300"``.  Entries without
@@ -351,6 +368,29 @@ pub enum RaftTlsConfiguration {
     Spiffe(SpiffeTls),
     /// Basic (manual) TLS.
     Tls(TlsConfiguration),
+}
+
+impl Default for DistributedStorageConfiguration {
+    /// Defaults mirror the serde defaults used when deserializing. Fields
+    /// without a serde default (`node_cluster_addr`, `node_id`, `path`,
+    /// TLS) get placeholders that callers are expected to override.
+    fn default() -> Self {
+        Self {
+            dev_mode: false,
+            kek_provider: KekProvider::default(),
+            node_cluster_addr: Uri::from_static("http://127.0.0.1:8081"),
+            node_id: 0,
+            node_listener_addr: default_tcp_address(),
+            path: PathBuf::new(),
+            ensure_linearizable_retries: default_ensure_linearizable_retries(),
+            ensure_linearizable_retry_delay_ms: default_ensure_linearizable_retry_delay_ms(),
+            pkcs11: None,
+            retry_join_nodes: Vec::new(),
+            auto_bootstrap: default_auto_bootstrap(),
+            tls_configuration: RaftTlsConfiguration::Tls(TlsConfiguration::default()),
+            tpm: None,
+        }
+    }
 }
 
 /// Spiffe backed mTLS for the Raft.

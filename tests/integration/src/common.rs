@@ -184,12 +184,8 @@ pub async fn get_state_with_config(
             path: tmp_db_dir.to_path_buf(),
             tls_configuration,
             dev_mode: true,
-            retry_join_nodes: vec![],
             kek_provider: KekProvider::Env,
-            pkcs11: None,
-            tpm: None,
-            ensure_linearizable_retries: 80,
-            ensure_linearizable_retry_delay_ms: 50,
+            ..Default::default()
         });
         cfg.k8s_auth.driver = "raft".to_string();
     }

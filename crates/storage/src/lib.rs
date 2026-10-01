@@ -57,6 +57,11 @@ pub use error::StoreError;
 pub use store::log_store::FjallLogStore;
 pub use store::state_machine::FjallStateMachine;
 
+/// Largest Raft RPC message a node accepts. openraft ships up to 300 log
+/// entries per AppendEntries call; this fits a full batch of live-restore
+/// chunks (300 x 256 KiB), well above tonic's 4 MiB default.
+pub(crate) const RAFT_MAX_MESSAGE_SIZE: usize = 128 * 1024 * 1024;
+
 /// DEK meta key used to persist the wrapped DEK in Fjall.
 const META_DEK_CURRENT: &[u8] = b"_meta:dek:current";
 
@@ -307,6 +312,7 @@ where
         pending_rotations.clone(),
     )
     .map_err(|e| io::Error::other(e.to_string()))?;
+    let log_store = log_store.with_shadow_deks(sm.shadow_deks());
     let sm = Arc::new(sm);
 
     // Background re-encryption task (ADR 0016-v2 §6 step 5 / §6.2 step 4):

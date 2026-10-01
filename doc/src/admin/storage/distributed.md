@@ -2,11 +2,11 @@
 
 This guide covers the architecture, cryptographic design, and operational
 procedures for the Keystone-RS distributed storage engine. The design is
-specified in [ADR 0016-v2](../../adr/0016-v2-raft-storage.md) and implemented across
-four crates: `openstack-keystone-distributed-storage` (consensus, state
+specified in [ADR 0016-v2](../../adr/0016-v2-raft-storage.md) and implemented
+across four crates: `openstack-keystone-distributed-storage` (consensus, state
 machine, gRPC), `openstack-keystone-storage-crypto` (shared cryptographic
-primitives and the `KekProvider` trait), and the two production KEK
-providers, `openstack-keystone-storage-crypto-pkcs11` and
+primitives and the `KekProvider` trait), and the two production KEK providers,
+`openstack-keystone-storage-crypto-pkcs11` and
 `openstack-keystone-storage-crypto-tpm`.
 
 ## Table of Contents
@@ -268,13 +268,12 @@ The `dek_version` and `utc_epoch` in the AD bind the snapshot to a specific
 point in time and DEK epoch, preventing time-travel and replay attacks across
 backup archives. `nonce_salt` is a fresh random 64-bit value generated per
 snapshot and mixed into the nonce derivation alongside `utc_epoch`, so two
-snapshots written within the same wall-clock second (including across a
-process restart, when a sequential in-memory counter would otherwise reset to
-0) still get distinct nonces; it is stored directly in the header, so
-decryption reads it rather than searching for it. A separate DEK manifest
-(itself AES-256-GCM encrypted with AD bound to the manifest label, epoch, and
-DEK version) is included in the backup bundle alongside the encrypted
-snapshot.
+snapshots written within the same wall-clock second (including across a process
+restart, when a sequential in-memory counter would otherwise reset to 0) still
+get distinct nonces; it is stored directly in the header, so decryption reads it
+rather than searching for it. A separate DEK manifest (itself AES-256-GCM
+encrypted with AD bound to the manifest label, epoch, and DEK version) is
+included in the backup bundle alongside the encrypted snapshot.
 
 ### Nonce Management
 
@@ -537,8 +536,8 @@ trust_domains = "example.org"
 
 Production deployments select one of the two hardware-backed `KekProvider`
 implementations (ADR 0016-v2 §2.5). Both wrap/unwrap the DEK with
-`CKM_AES_GCM`/TPM2 AES-GCM directly against a non-extractable AES-256 key
-object — the key material never leaves the token or chip.
+`CKM_AES_GCM`/TPM2 AES-GCM directly against a non-extractable AES-256 key object
+— the key material never leaves the token or chip.
 
 #### PKCS#11 (HSM or token)
 
@@ -621,8 +620,8 @@ cargo run -p openstack-keystone-storage-crypto-tpm --example tpm_kek_demo
 ```
 
 This example is compiled in CI on every run to catch rot, but is not executed
-there — real/virtual TPM availability isn't reliable enough on shared CI
-runners to gate merges on (ADR 0016-v2 §2.5.2).
+there — real/virtual TPM availability isn't reliable enough on shared CI runners
+to gate merges on (ADR 0016-v2 §2.5.2).
 
 ### First-Time Cluster Bootstrap
 
@@ -796,22 +795,61 @@ The snapshot is wrapped in a backup-specific AES-256-GCM envelope with the
 Backup DEK and a DEK manifest. Both are bound to the snapshot timestamp and
 current DEK epoch.
 
-**Restore:**
+**Restore into a running cluster** (the usual case):
 
 ```sh
-# 1. Bootstrap a fresh single-node cluster (Step 1–2 from bootstrap guide).
-# 2. Restore the snapshot to the leader:
 keystone-manage storage restore \
   --cluster-addr https://10.0.0.1:8310 \
   --snapshot /mnt/backups/keystone-20260101.snap
-# 3. Add remaining nodes as learners (Steps 3–4 from bootstrap guide).
 ```
 
-The restore command validates the AES-256-GCM backup envelope (AD binding: epoch
+Send the backup to the **leader**; a follower rejects it with
+`FailedPrecondition` and names the leader. The backup is committed through the
+Raft log, in 256 KiB chunks followed by a single apply entry, so every node
+replaces its data at the same log index. The cluster membership (node list) and
+each node's Raft state are unchanged. Everything else, including all data
+keyspaces and the DEKs, is replaced by the backup's contents, so anything
+written after the backup was taken is gone. The DEKs recorded in the backup's
+DEK manifest replace the cluster's current DEK on every node, so the restored
+data stays readable. The cluster must use the same KEK material as the cluster
+that produced the backup; a backup that cannot be unwrapped is rejected by the
+apply entry and leaves the data untouched. The upload is streamed into the Raft
+log as it arrives, so the receiving node never buffers it; the client's declared
+size (sent with the first chunk) lets an oversized backup be refused before any
+of it is read. A stalled upload is dropped after two minutes. The DEKs the
+restore replaces are kept on every node so that the node's own Raft log and
+older snapshot files stay readable. Backups larger than 1 GiB are refused on
+this path (every node holds the reassembled and decrypted backup in memory while
+applying it); use the disaster recovery procedure for those. That procedure
+buffers the backup on each node (up to 4 GiB) and also needs it to be decrypted
+in full. A restore that fails part-way discards its staged chunks.
 
-- dek_version), decrypts it using the Backup DEK from the KMS, and installs the
-  snapshot into the Raft state machine via `install_full_snapshot`. The KMS must
-  hold the `backup_dek` role key for the DEK epoch encoded in the snapshot.
+**Disaster recovery** (the cluster is gone, no leader exists):
+
+```sh
+# 1. Start every node with `auto_bootstrap = false` so it stays uninitialized.
+# 2. Restore the same backup on each node; pass --elect on exactly one of them:
+keystone-manage storage restore \
+  --cluster-addr https://10.0.0.1:8310 \
+  --snapshot /mnt/backups/keystone-20260101.snap --elect
+keystone-manage storage restore \
+  --cluster-addr https://10.0.0.2:8310 \
+  --snapshot /mnt/backups/keystone-20260101.snap
+```
+
+This follows OpenRaft's "restore from snapshot" procedure: the backup is
+installed as a Raft snapshot on each node and the backup's Raft state,
+**including its membership**, is restored. The original node ids and addresses
+must therefore be reachable again. The elected node leads the next term. A node
+that is not part of the backup's membership stays a learner and can be joined
+afterwards. A node that is already initialized always takes the live path
+instead, so a node that auto-initialized before the restore arrives restores
+into its own single-node cluster and keeps that membership. `--elect` on an
+initialized node is rejected with `FailedPrecondition`.
+
+The restore command validates the AES-256-GCM backup envelope (AD binding: epoch
+and dek_version), and decrypts it using the Backup DEK from the KMS. The KMS
+must hold the `backup_dek` role key for the DEK epoch encoded in the snapshot.
 
 **Retired DEK retention:** Retired DEKs must be retained in the KMS for at least
 365 days to allow offline decryption of archived backups. Use a separate

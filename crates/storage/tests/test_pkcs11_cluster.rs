@@ -212,7 +212,6 @@ fn pkcs11_ds_config(
         path: db_path,
         tls_configuration: RaftTlsConfiguration::Tls(tls_config),
         dev_mode: false,
-        retry_join_nodes: vec![],
         kek_provider: KekProvider::Pkcs11,
         pkcs11: Some(Pkcs11KekConfiguration {
             pkcs11_key_label: KEY_LABEL.to_string(),
@@ -226,9 +225,7 @@ fn pkcs11_ds_config(
             pkcs11_slot_id: None,
             pkcs11_slot_label: Some(TOKEN_LABEL.to_string()),
         }),
-        tpm: None,
-        ensure_linearizable_retries: 80,
-        ensure_linearizable_retry_delay_ms: 50,
+        ..Default::default()
     }
 }
 

@@ -740,7 +740,10 @@ pub async fn get_app_server(storage: &Storage) -> Result<Routes, StoreError> {
 
     let mut router = Routes::builder();
     router
-        .add_service(RaftServiceServer::new(raft_svc_impl))
+        .add_service(
+            RaftServiceServer::new(raft_svc_impl)
+                .max_decoding_message_size(crate::RAFT_MAX_MESSAGE_SIZE),
+        )
         .add_service(ClusterAdminServiceServer::new(cluster_admin_svc_impl))
         .add_service(StorageServiceServer::new(storage_svc_impl));
 

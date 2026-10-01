@@ -280,7 +280,9 @@ pub async fn ensure_raft_initialized(
 
     // Bootstrap node (node_id == 0): self-bootstrap as a single-node cluster.
     // Known peers join later via [add_learner] (non-bootstrap path below).
-    if !storage.is_initialized().await? && node_id == 0 {
+    // Skipped with `auto_bootstrap = false` so a disaster-recovery restore
+    // can still install the backup's Raft state into this node.
+    if ds.auto_bootstrap && !storage.is_initialized().await? && node_id == 0 {
         let self_node = openstack_keystone_storage_api::Node {
             node_id,
             rpc_addr: my_cluster_addr.clone(),
@@ -290,6 +292,17 @@ pub async fn ensure_raft_initialized(
         storage
             .initialize([(node_id, self_node)].into_iter().collect())
             .await?;
+        return Ok(());
+    }
+
+    // `auto_bootstrap = false`: stay uninitialized and wait for an operator
+    // `storage restore` (disaster recovery) or `storage init`/`join`.
+    if !ds.auto_bootstrap && !storage.is_initialized().await? {
+        tracing::info!(
+            node_id,
+            "auto_bootstrap is disabled — Raft storage left uninitialized, \
+             waiting for `storage restore`, `storage init` or `storage join`"
+        );
         return Ok(());
     }
 

@@ -32,8 +32,8 @@ use openstack_keystone_storage_crypto::{
 use crate::StoreError;
 use crate::types::FjallNoncePersistence;
 
-const KEY_VOTE: &[u8] = b"vote";
-const KEY_PURGED: &[u8] = b"purged";
+pub(crate) const KEY_VOTE: &[u8] = b"vote";
+pub(crate) const KEY_PURGED: &[u8] = b"purged";
 
 /// Log entry on-disk layout (all fields big-endian):
 /// `[dek_version_u32; 4] ++ [term_u64; 8] ++ log_encrypt([nonce_12 ++
@@ -62,6 +62,11 @@ where
     old_deks: Arc<Mutex<BTreeMap<u32, Arc<DekEpoch>>>>,
     /// Revoked DEK versions — immediately rejected on decrypt (ADR §6.2).
     revoked_deks: Arc<Mutex<HashSet<u32>>>,
+    /// Epochs displaced by a live restore: log entries written before it
+    /// are still encrypted under them, and their version numbers may be
+    /// reused by the restored DEKs, so they are tried by version when the
+    /// regular lookup fails.
+    shadow_deks: Arc<Mutex<Vec<Arc<DekEpoch>>>>,
     nonce_mgr: Arc<Mutex<NonceManager>>,
     _p: PhantomData<C>,
 }
@@ -104,9 +109,16 @@ where
             dek,
             old_deks,
             revoked_deks,
+            shadow_deks: Arc::default(),
             nonce_mgr: Arc::new(Mutex::new(nonce_mgr)),
             _p: Default::default(),
         })
+    }
+
+    /// Shares the state machine's displaced-DEK list with this store.
+    pub fn with_shadow_deks(mut self, shadow_deks: Arc<Mutex<Vec<Arc<DekEpoch>>>>) -> Self {
+        self.shadow_deks = shadow_deks;
+        self
     }
 
     #[allow(clippy::result_large_err)]
@@ -166,7 +178,37 @@ where
     }
 
     /// Decrypt a stored log entry, selecting the correct DEK epoch by version.
+    ///
+    /// Falls back to the epochs a live restore displaced when the regular
+    /// lookup fails: the restored DEKs may reuse a version number that the
+    /// entry was written under.
     fn decrypt_entry(&self, index: u64, stored: &[u8]) -> Result<Vec<u8>, StoreError> {
+        let err = match self.decrypt_entry_by_version(index, stored) {
+            Ok(plaintext) => return Ok(plaintext),
+            Err(e) => e,
+        };
+        let header_len = DEK_VERSION_PREFIX_LEN + TERM_PREFIX_LEN;
+        if stored.len() >= LOG_ENTRY_MIN_LEN
+            && let (Ok(version), Ok(term)) = (
+                <[u8; DEK_VERSION_PREFIX_LEN]>::try_from(&stored[..DEK_VERSION_PREFIX_LEN]),
+                <[u8; TERM_PREFIX_LEN]>::try_from(&stored[DEK_VERSION_PREFIX_LEN..header_len]),
+            )
+        {
+            let version = u32::from_be_bytes(version);
+            let term = u64::from_be_bytes(term);
+            let shadow = self.shadow_deks.lock().unwrap_or_else(|p| p.into_inner());
+            for epoch in shadow.iter().filter(|e| e.version == version) {
+                if let Ok(plaintext) =
+                    log_decrypt(epoch.log_dek(), &stored[header_len..], term, index)
+                {
+                    return Ok(plaintext.to_vec());
+                }
+            }
+        }
+        Err(err)
+    }
+
+    fn decrypt_entry_by_version(&self, index: u64, stored: &[u8]) -> Result<Vec<u8>, StoreError> {
         if stored.len() < LOG_ENTRY_MIN_LEN {
             return Err(StoreError::Other(eyre::eyre!(
                 "stored log entry too short: {} bytes",
@@ -505,6 +547,34 @@ mod tests {
             .decrypt_entry(5, &stored)
             .expect("must decrypt via old_deks, not error out as revoked");
         assert_eq!(plaintext, b"payload");
+    }
+
+    /// A live restore can install a DEK that reuses the version of the one
+    /// the log entries were written under. Those entries must stay readable
+    /// through the displaced epoch.
+    #[test]
+    fn decrypt_entry_falls_back_to_displaced_epoch_on_version_reuse() {
+        let (store, _td) = make_store();
+        // Current epoch is version 2 (key 0x30); the entry was written under
+        // a *different* key that also carried version 2.
+        let displaced =
+            Arc::new(DekEpoch::from_raw(LockedKey::from_raw([0x55u8; 32]), 2).expect("epoch"));
+        let ciphertext =
+            log_encrypt(displaced.log_dek(), b"payload", 7, 5, &[0u8; 12]).expect("encrypt");
+        let mut stored = 2u32.to_be_bytes().to_vec();
+        stored.extend_from_slice(&7u64.to_be_bytes());
+        stored.extend_from_slice(&ciphertext);
+
+        assert!(store.decrypt_entry(5, &stored).is_err());
+        store
+            .shadow_deks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(displaced);
+        assert_eq!(
+            store.decrypt_entry(5, &stored).expect("shadow fallback"),
+            b"payload"
+        );
     }
 
     /// Once an epoch is gone from `old_deks` (its sweep confirmed complete

@@ -766,6 +766,24 @@ Restoring a snapshot to a new cluster strictly requires:
 3. Unwrapping the backup envelope, loading it into Fjall, and immediately
    re-wrapping the restored DEK under the new cluster's runtime KEK.
 
+Two restore paths exist, chosen by whether the target node's Raft is
+initialized:
+
+- **Initialized cluster (live restore, OpenBao-style).** The leader validates
+  the backup, then commits it through the Raft log as chunked `RestoreChunk`
+  entries and one `RestoreApply` entry. Every node applies `RestoreApply` at
+  the same index: it replaces all replicated state and DEKs with the backup's
+  and keeps its own Raft bookkeeping (applied log, membership, snapshot
+  history). Membership is therefore unchanged. `Raft::install_full_snapshot` is
+  deliberately not used here: openraft only accepts it on a follower and panics
+  when given a snapshot a leader cannot own.
+- **Uninitialized node (disaster recovery).** Follows OpenRaft's documented
+  restore-from-snapshot procedure: the vote is derived from the snapshot's last
+  log id, the snapshot (membership included) is installed with
+  `install_full_snapshot`, and one node is told to elect. The same backup is
+  replayed on every node; nodes are started with `auto_bootstrap = false` so
+  they do not self-initialize first.
+
 _Retired DEKs must be retained in the KMS for the organization's audit retention
 period (minimum 365 days) to allow offline decryption of archived backups. When
 a GDPR data erasure request arrives, the ability to decrypt that subject's data

@@ -813,12 +813,8 @@ async fn test_node_restart_inner() -> Result<()> {
             tls_configuration.clone(),
         ),
         dev_mode: true,
-        retry_join_nodes: vec![],
         kek_provider: KekProvider::Env,
-        pkcs11: None,
-        tpm: None,
-        ensure_linearizable_retries: 80,
-        ensure_linearizable_retry_delay_ms: 50,
+        ..Default::default()
     };
     let config = Config {
         distributed_storage: Some(ds_config),
@@ -908,12 +904,8 @@ async fn test_node_restart_inner() -> Result<()> {
             tls_configuration.clone(),
         ),
         dev_mode: true,
-        retry_join_nodes: vec![],
         kek_provider: KekProvider::Env,
-        pkcs11: None,
-        tpm: None,
-        ensure_linearizable_retries: 80,
-        ensure_linearizable_retry_delay_ms: 50,
+        ..Default::default()
     };
     let config_restart = Config {
         distributed_storage: Some(ds_config_restart),
@@ -2576,11 +2568,1129 @@ fn get_ds_config_with_port(
         path: db_path,
         tls_configuration: openstack_keystone_config::RaftTlsConfiguration::Tls(tls_config.clone()),
         dev_mode: true,
-        retry_join_nodes: vec![],
         kek_provider: KekProvider::Env,
-        pkcs11: None,
-        tpm: None,
-        ensure_linearizable_retries: 80,
-        ensure_linearizable_retry_delay_ms: 50,
+        ..Default::default()
     }
+}
+
+/// Spawns the node's gRPC server on its own runtime thread and gives its
+/// listener a moment to bind.
+async fn spawn_raft_app(instance: &Arc<InstanceHolder>) {
+    let inst = instance.clone();
+    let node_id = inst.node_id;
+    let _handle = thread::spawn(move || {
+        let mut rt = AsyncRuntimeOf::<TypeConfig>::new(1);
+        let x = rt.block_on(start_raft_app(&inst.config, &inst.storage));
+        println!("node {node_id} raft app exit result: {:?}", x);
+    });
+    TypeConfig::sleep(Duration::from_millis(200)).await;
+}
+
+/// Like [`spawn_raft_app`], but the returned sender stops the gRPC server and
+/// frees its port, so another node can later take over the same address.
+async fn spawn_stoppable_raft_app(
+    instance: &Arc<InstanceHolder>,
+) -> tokio::sync::oneshot::Sender<()> {
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let inst = instance.clone();
+    let _handle = thread::spawn(move || {
+        let mut rt = AsyncRuntimeOf::<TypeConfig>::new(1);
+        let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = rt.block_on(async {
+            let ds_config = inst
+                .config
+                .distributed_storage
+                .as_ref()
+                .expect("ds config must be present");
+            let tls_config = get_server_tls_config(&inst.config)?;
+            let mut server = tonic::transport::Server::builder().tls_config(tls_config)?;
+            server
+                .add_routes(get_app_server(&inst.storage).await?)
+                .serve_with_shutdown(ds_config.node_listener_addr, async {
+                    stop_rx.await.ok();
+                })
+                .await?;
+            Ok(())
+        });
+        println!("stoppable raft app exit result: {:?}", result);
+    });
+    TypeConfig::sleep(Duration::from_millis(200)).await;
+    stop_tx
+}
+
+/// Starts node 1 as a single-node cluster and waits for it to lead.
+async fn start_single_node_cluster(
+    port_base: u16,
+    tls_configuration: &TlsConfiguration,
+) -> Result<(Arc<InstanceHolder>, ClusterAdminServiceClient<Channel>)> {
+    let instance =
+        Arc::new(InstanceHolder::new_with_port(1, port_base, tls_configuration.clone()).await?);
+    spawn_raft_app(&instance).await;
+
+    let tls_client_config = get_client_tls_config(&instance.config)?;
+    let mut admin_client = new_admin_client(
+        instance
+            .config
+            .distributed_storage
+            .as_ref()
+            .unwrap()
+            .node_cluster_addr
+            .clone(),
+        &tls_client_config,
+    )
+    .await?;
+    admin_client
+        .init(pb::raft::InitRequest {
+            nodes: vec![new_node_with_port(1, port_base)],
+        })
+        .await?;
+    wait_for_leader(&mut admin_client, 1).await;
+    Ok((instance, admin_client))
+}
+
+/// Brings up node 2 fresh, joins it through `join_cluster` (which adopts the
+/// leader's DEK first) and promotes it to a voting member.
+async fn join_node2_as_voter(
+    port_base: u16,
+    tls_configuration: &TlsConfiguration,
+    admin_client1: &mut ClusterAdminServiceClient<Channel>,
+) -> Result<Arc<InstanceHolder>> {
+    let instance2 =
+        Arc::new(InstanceHolder::new_with_port(2, port_base, tls_configuration.clone()).await?);
+    spawn_raft_app(&instance2).await;
+    instance2
+        .storage
+        .join_cluster(
+            &get_addr_with_port(1, port_base).to_string(),
+            &get_addr_with_port(2, port_base).to_string(),
+        )
+        .await?;
+    admin_client1
+        .change_membership(pb::raft::ChangeMembershipRequest {
+            members: vec![1, 2],
+            retain: false,
+        })
+        .await?;
+    Ok(instance2)
+}
+
+/// Keyspace for the `i`-th test record: the default `data` keyspace plus two
+/// custom ones, so every kind of keyspace has to survive the scenario.
+fn test_keyspace(i: usize) -> Option<String> {
+    match i % 3 {
+        0 => None,
+        1 => Some("ks_alpha".to_string()),
+        _ => Some("ks_beta".to_string()),
+    }
+}
+
+/// Writes `num` records (`k{i}` = `v{i}`, spread over [`test_keyspace`]) with
+/// 32 concurrent writers so that many Raft log entries are produced quickly.
+async fn write_records_concurrently(storage: &Arc<Storage>, num: usize) -> Result<()> {
+    const WRITERS: usize = 32;
+    let mut handles = Vec::new();
+    for w in 0..WRITERS {
+        let storage = storage.clone();
+        handles.push(tokio::spawn(async move {
+            for i in (w..num).step_by(WRITERS) {
+                storage
+                    .set_value(
+                        format!("k{i}"),
+                        make_env(&format!("v{i}"))?,
+                        test_keyspace(i),
+                        None,
+                    )
+                    .await?;
+            }
+            Ok::<_, eyre::Report>(())
+        }));
+    }
+    for h in handles {
+        h.await??;
+    }
+    Ok(())
+}
+
+/// `get_by_key` that retries transient errors (a follower read needs the
+/// leader's ReadIndex quorum, which a 2-voter cluster can briefly miss);
+/// the content of the answer is what callers assert on.
+async fn get_by_key_retrying(
+    storage: &Arc<Storage>,
+    key: &[u8],
+    keyspace: Option<&str>,
+) -> Result<Option<StoreDataEnvelope<Vec<u8>>>> {
+    let mut last_err = None;
+    for _ in 0..50 {
+        match storage.get_by_key(key, keyspace).await {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                last_err = Some(e);
+                TypeConfig::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+    Err(last_err.expect("at least one attempt").into())
+}
+
+/// Asserts that `storage` serves exactly the records written by
+/// [`write_records_concurrently`] plus the fixed index/sensitive records of
+/// the scenarios, in every keyspace.
+async fn assert_serves_all_records(storage: &Arc<Storage>, num: usize, label: &str) -> Result<()> {
+    // Exhaustive: one prefix listing per keyspace returns every record, so
+    // every value is checked without paying one (forwarded, linearizable)
+    // read per key -- thousands of those dominated the test's runtime.
+    for ks in [None, Some("ks_alpha"), Some("ks_beta")] {
+        let listed: BTreeMap<String, String> = storage
+            .prefix("k".as_bytes(), ks)
+            .await?
+            .into_iter()
+            .map(|(k, env)| Ok((k, env.try_deserialize::<String>()?.data)))
+            .collect::<Result<_>>()?;
+        let expected: BTreeMap<String, String> = (0..num)
+            .filter(|i| test_keyspace(*i).as_deref() == ks)
+            .map(|i| (format!("k{i}"), format!("v{i}")))
+            .collect();
+        assert_eq!(
+            expected, listed,
+            "{label}: contents of keyspace {ks:?} differ"
+        );
+    }
+    // Point reads on a sample, to cover the `get_by_key` path as well.
+    for i in (0..num).step_by(97) {
+        let got = get_by_key_retrying(
+            storage,
+            format!("k{i}").as_bytes(),
+            test_keyspace(i).as_deref(),
+        )
+        .await?
+        .unwrap_or_else(|| panic!("{label}: k{i} missing in {:?}", test_keyspace(i)));
+        assert_eq!(
+            format!("v{i}"),
+            got.try_deserialize::<String>()?.data,
+            "{label}: wrong value for k{i}"
+        );
+    }
+    let indexes = storage.prefix_index("idx:".as_bytes()).await?;
+    assert_eq!(20, indexes.len(), "{label}: index entries differ");
+    let sensitive = storage
+        .get_by_key("sec:k1".as_bytes(), None)
+        .await?
+        .unwrap_or_else(|| panic!("{label}: sensitive record missing"));
+    assert_eq!("secret", sensitive.try_deserialize::<String>()?.data);
+    Ok(())
+}
+
+/// Writes the index entries and the sensitive record that
+/// [`assert_serves_all_records`] expects.
+async fn write_index_and_sensitive_records(storage: &Arc<Storage>) -> Result<()> {
+    for i in 0..20 {
+        storage.set_index_key(format!("idx:{i}")).await?;
+    }
+    storage
+        .set_value(
+            "sec:k1".to_string(),
+            make_sensitive_env("secret")?,
+            None,
+            None,
+        )
+        .await?;
+    Ok(())
+}
+
+/// M1 exit criterion (#1289): a node added via `join` after the log was
+/// compacted by openraft's *default* snapshot policy
+/// (`LogsSinceLast(5000)`, no manual trigger) must serve the same reads as
+/// the leader for every keyspace.
+const AUTO_SNAPSHOT_JOIN_PORT_BASE: u16 = 700;
+
+#[serial_test::serial]
+#[tracing_test::traced_test]
+#[test]
+fn test_join_after_automatic_compaction_serves_all_keyspaces() {
+    TypeConfig::run(async {
+        test_join_after_automatic_compaction_serves_all_keyspaces_inner()
+            .await
+            .unwrap();
+    });
+}
+
+async fn test_join_after_automatic_compaction_serves_all_keyspaces_inner() -> Result<()> {
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+    let tls_configuration = make_certificates()?;
+
+    let (instance1, mut admin_client1) =
+        start_single_node_cluster(AUTO_SNAPSHOT_JOIN_PORT_BASE, &tls_configuration).await?;
+
+    // Comfortably more than the 5000-entry default snapshot threshold.
+    const NUM_RECORDS: usize = 5400;
+    write_index_and_sensitive_records(&instance1.storage).await?;
+    write_records_concurrently(&instance1.storage, NUM_RECORDS).await?;
+
+    // The leader must have compacted on its own: no `trigger().snapshot()`
+    // / `purge_log` anywhere in this test.
+    let compacted = poll_until(Duration::from_millis(200), 150, || {
+        let m = instance1.storage.raft.metrics();
+        let m = m.borrow_watched();
+        m.snapshot.index() >= Some(5000) && m.purged.index() > Some(0)
+    })
+    .await;
+    let m = instance1.storage.raft.metrics().borrow_watched().clone();
+    assert!(
+        compacted,
+        "leader never snapshotted and purged on its own (snapshot: {:?}, purged: {:?})",
+        m.snapshot, m.purged
+    );
+    println!(
+        "=== leader compacted: snapshot={:?} purged={:?}",
+        m.snapshot, m.purged
+    );
+
+    assert_serves_all_records(&instance1.storage, NUM_RECORDS, "leader").await?;
+
+    // --- The joiner's missing log prefix is gone: it can only catch up via
+    //     InstallSnapshot.
+    let instance2 = join_node2_as_voter(
+        AUTO_SNAPSHOT_JOIN_PORT_BASE,
+        &tls_configuration,
+        &mut admin_client1,
+    )
+    .await?;
+    let leader_index = instance1
+        .storage
+        .last_log_index()
+        .ok_or_else(|| eyre::eyre!("leader must have a log"))?;
+    let caught_up = poll_until(Duration::from_millis(200), 150, || {
+        instance2.storage.last_log_index() >= Some(leader_index)
+    })
+    .await;
+    assert!(
+        caught_up,
+        "node 2 did not catch up to {leader_index} (at {:?})",
+        instance2.storage.last_log_index()
+    );
+    assert!(
+        instance2
+            .storage
+            .raft
+            .metrics()
+            .borrow_watched()
+            .snapshot
+            .is_some(),
+        "node 2 must have received a snapshot"
+    );
+
+    // Reads on a follower go through the leader's ReadIndex, which needs
+    // node 2 to have acknowledged a heartbeat as a voter; wait until it has
+    // also applied everything instead of racing that.
+    let applied = poll_until(Duration::from_millis(200), 150, || {
+        instance2
+            .storage
+            .raft
+            .metrics()
+            .borrow_watched()
+            .last_applied
+            .index()
+            >= Some(leader_index)
+    })
+    .await;
+    assert!(applied, "node 2 did not apply the leader's log");
+    // The first linearizable read through node 2 can still fail briefly
+    // while the leader has not yet seen node 2's heartbeat ack as a voter;
+    // wait for readiness, then assert exact contents strictly.
+    let mut ready = false;
+    for _ in 0..100 {
+        if instance2
+            .storage
+            .get_by_key("k0".as_bytes(), None)
+            .await
+            .is_ok()
+        {
+            ready = true;
+            break;
+        }
+        TypeConfig::sleep(Duration::from_millis(200)).await;
+    }
+    assert!(
+        ready,
+        "node 2 never became able to serve linearizable reads"
+    );
+
+    assert_serves_all_records(&instance2.storage, NUM_RECORDS, "joined node").await?;
+    Ok(())
+}
+
+/// M1 exit criterion (#1289): a `backup` / `restore` round trip into a fresh
+/// (uninitialized) node -- disaster recovery -- yields identical reads for
+/// every keyspace and brings back the backup's Raft membership.
+const BACKUP_RESTORE_SRC_PORT_BASE: u16 = 800;
+const BACKUP_RESTORE_DST_PORT_BASE: u16 = 850;
+
+#[serial_test::serial]
+#[tracing_test::traced_test]
+#[test]
+fn test_backup_restore_round_trip_on_fresh_cluster() {
+    TypeConfig::run(async {
+        test_backup_restore_round_trip_on_fresh_cluster_inner()
+            .await
+            .unwrap();
+    });
+}
+
+async fn test_backup_restore_round_trip_on_fresh_cluster_inner() -> Result<()> {
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+    let tls_configuration = make_certificates()?;
+
+    // --- Source cluster with data in every keyspace.
+    let (src, mut src_admin) =
+        start_single_node_cluster(BACKUP_RESTORE_SRC_PORT_BASE, &tls_configuration).await?;
+    const NUM_RECORDS: usize = 300;
+    write_index_and_sensitive_records(&src.storage).await?;
+    write_records_concurrently(&src.storage, NUM_RECORDS).await?;
+    assert_serves_all_records(&src.storage, NUM_RECORDS, "source").await?;
+
+    let mut stream = src_admin
+        .backup(pb::raft::BackupRequest {})
+        .await?
+        .into_inner();
+    let mut chunks = Vec::new();
+    while let Some(chunk) = stream.message().await? {
+        chunks.push(pb::raft::RestoreChunk {
+            data: chunk.data,
+            elect: false,
+            total_len: 0,
+        });
+    }
+    assert!(!chunks.is_empty(), "backup stream was empty");
+
+    // --- Fresh node with its own bootstrap DEK, never initialized: restore
+    // installs the backup's Raft state, `elect` starts the election.
+    let dst = Arc::new(
+        InstanceHolder::new_with_port(1, BACKUP_RESTORE_DST_PORT_BASE, tls_configuration.clone())
+            .await?,
+    );
+    spawn_raft_app(&dst).await;
+    let dst_tls_client_config = get_client_tls_config(&dst.config)?;
+    let mut dst_admin = new_admin_client(
+        dst.config
+            .distributed_storage
+            .as_ref()
+            .unwrap()
+            .node_cluster_addr
+            .clone(),
+        &dst_tls_client_config,
+    )
+    .await?;
+
+    chunks[0].elect = true;
+    dst_admin.restore(futures::stream::iter(chunks)).await?;
+    wait_for_leader(&mut dst_admin, 1).await;
+    let voters: Vec<u64> = dst
+        .storage
+        .raft
+        .metrics()
+        .borrow_watched()
+        .membership_config
+        .membership()
+        .voter_ids()
+        .collect();
+    assert_eq!(vec![1], voters, "the backup's membership must be restored");
+
+    assert_serves_all_records(&dst.storage, NUM_RECORDS, "restored").await?;
+    // The restored cluster keeps working: new writes are readable and old
+    // records can be overwritten.
+    dst.storage
+        .set_value("after".to_string(), make_env("restore")?, None, None)
+        .await?;
+    dst.storage
+        .set_value(
+            "k1".to_string(),
+            make_env("overwritten")?,
+            test_keyspace(1),
+            None,
+        )
+        .await?;
+    assert_eq!(
+        "restore",
+        dst.storage
+            .get_by_key("after".as_bytes(), None)
+            .await?
+            .expect("post-restore write must be readable")
+            .try_deserialize::<String>()?
+            .data
+    );
+    assert_eq!(
+        "overwritten",
+        dst.storage
+            .get_by_key("k1".as_bytes(), test_keyspace(1).as_deref())
+            .await?
+            .expect("overwritten record must be readable")
+            .try_deserialize::<String>()?
+            .data
+    );
+    Ok(())
+}
+
+/// Restore into a running two-node cluster (OpenBao style): the backup of
+/// another cluster -- with a different DEK -- goes through the Raft log, both
+/// nodes end up with the backup's contents and DEKs, and the membership is
+/// untouched.
+const LIVE_RESTORE_SRC_PORT_BASE: u16 = 950;
+const LIVE_RESTORE_DST_PORT_BASE: u16 = 1000;
+
+#[serial_test::serial]
+#[tracing_test::traced_test]
+#[test]
+fn test_restore_into_running_cluster() {
+    TypeConfig::run(async {
+        test_restore_into_running_cluster_inner().await.unwrap();
+    });
+}
+
+async fn test_restore_into_running_cluster_inner() -> Result<()> {
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+    let tls_configuration = make_certificates()?;
+
+    // --- Source cluster: data in every keyspace, then a backup.
+    let (src, mut src_admin) =
+        start_single_node_cluster(LIVE_RESTORE_SRC_PORT_BASE, &tls_configuration).await?;
+    const NUM_RECORDS: usize = 300;
+    write_index_and_sensitive_records(&src.storage).await?;
+    write_records_concurrently(&src.storage, NUM_RECORDS).await?;
+    let mut stream = src_admin
+        .backup(pb::raft::BackupRequest {})
+        .await?
+        .into_inner();
+    let mut chunks = Vec::new();
+    while let Some(chunk) = stream.message().await? {
+        chunks.push(pb::raft::RestoreChunk {
+            data: chunk.data,
+            elect: false,
+            total_len: 0,
+        });
+    }
+    assert!(!chunks.is_empty(), "backup stream was empty");
+
+    // --- Running destination cluster with its own DEK and different data.
+    let (dst1, mut dst_admin) =
+        start_single_node_cluster(LIVE_RESTORE_DST_PORT_BASE, &tls_configuration).await?;
+    let dst2 = join_node2_as_voter(
+        LIVE_RESTORE_DST_PORT_BASE,
+        &tls_configuration,
+        &mut dst_admin,
+    )
+    .await?;
+    dst1.storage
+        .set_value("stale".to_string(), make_env("stale")?, None, None)
+        .await?;
+    dst1.storage
+        .set_value(
+            "k1".to_string(),
+            make_env("stale-overwritten")?,
+            test_keyspace(1),
+            None,
+        )
+        .await?;
+
+    // A declared size over the live limit is rejected before anything is
+    // proposed: the stale data stays.
+    let mut oversized = chunks.clone();
+    oversized[0].total_len = 2 * 1024 * 1024 * 1024;
+    let err = dst_admin
+        .restore(futures::stream::iter(oversized))
+        .await
+        .expect_err("oversized restore must be rejected");
+    assert_eq!(err.code(), tonic::Code::ResourceExhausted, "{err}");
+    assert!(
+        get_by_key_retrying(&dst1.storage, "stale".as_bytes(), None)
+            .await?
+            .is_some(),
+        "a rejected upload must leave the existing data alone"
+    );
+
+    // An upload shorter than it declared is rejected and cleaned up.
+    let mut short = chunks.clone();
+    short[0].total_len += 1;
+    let err = dst_admin
+        .restore(futures::stream::iter(short))
+        .await
+        .expect_err("a short upload must be rejected");
+    assert_eq!(err.code(), tonic::Code::InvalidArgument, "{err}");
+    assert!(
+        get_by_key_retrying(&dst1.storage, "stale".as_bytes(), None)
+            .await?
+            .is_some(),
+        "a rejected upload must leave the existing data alone"
+    );
+
+    dst_admin.restore(futures::stream::iter(chunks)).await?;
+
+    // Both nodes serve the backup, the stale data is gone.
+    for (storage, label) in [(&dst1.storage, "leader"), (&dst2.storage, "follower")] {
+        let ok = poll_until(Duration::from_millis(100), 100, || {
+            // Replication of the restore entry to the follower is async.
+            storage.raft.metrics().borrow_watched().last_applied
+                >= dst1.storage.raft.metrics().borrow_watched().last_applied
+        })
+        .await;
+        assert!(ok, "{label} did not apply the restore entry");
+        assert_serves_all_records(storage, NUM_RECORDS, label).await?;
+        assert!(
+            get_by_key_retrying(storage, "stale".as_bytes(), None)
+                .await?
+                .is_none(),
+            "{label}: data written after the backup must be gone"
+        );
+    }
+
+    // Membership is the destination's own, not the backup's.
+    for storage in [&dst1.storage, &dst2.storage] {
+        let mut voters: Vec<u64> = storage
+            .raft
+            .metrics()
+            .borrow_watched()
+            .membership_config
+            .membership()
+            .voter_ids()
+            .collect();
+        voters.sort_unstable();
+        assert_eq!(vec![1, 2], voters, "membership must be unchanged");
+    }
+
+    // The cluster keeps replicating on top of the restored state.
+    dst1.storage
+        .set_value("after".to_string(), make_env("restore")?, None, None)
+        .await?;
+    let replicated = get_by_key_retrying(&dst2.storage, "after".as_bytes(), None)
+        .await?
+        .expect("post-restore write must replicate");
+    assert_eq!("restore", replicated.try_deserialize::<String>()?.data);
+    Ok(())
+}
+
+/// Disaster recovery of a two-node cluster: the same backup is installed on
+/// two fresh nodes and only one is told to elect. After the election exactly
+/// one leader exists, both nodes agree on it, and only it takes writes.
+const DR_UNIQUE_PORT_BASE: u16 = 1050;
+
+#[serial_test::serial]
+#[tracing_test::traced_test]
+#[test]
+fn test_disaster_recovery_elects_exactly_one_leader() {
+    TypeConfig::run(async {
+        test_disaster_recovery_elects_exactly_one_leader_inner()
+            .await
+            .unwrap();
+    });
+}
+
+async fn test_disaster_recovery_elects_exactly_one_leader_inner() -> Result<()> {
+    use openraft::ServerState;
+
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+    let tls_configuration = make_certificates()?;
+
+    // --- Source: a two-node cluster, then a backup of it. Its servers are
+    // stopped afterwards: the restored membership carries the source's node
+    // addresses, so the destination nodes must take over the same ones.
+    let base = DR_UNIQUE_PORT_BASE;
+    let src1 = Arc::new(InstanceHolder::new_with_port(1, base, tls_configuration.clone()).await?);
+    let stop1 = spawn_stoppable_raft_app(&src1).await;
+    let mut src_admin = new_admin_client(
+        src1.config
+            .distributed_storage
+            .as_ref()
+            .unwrap()
+            .node_cluster_addr
+            .clone(),
+        &get_client_tls_config(&src1.config)?,
+    )
+    .await?;
+    src_admin
+        .init(pb::raft::InitRequest {
+            nodes: vec![new_node_with_port(1, base)],
+        })
+        .await?;
+    wait_for_leader(&mut src_admin, 1).await;
+    let src2 = Arc::new(InstanceHolder::new_with_port(2, base, tls_configuration.clone()).await?);
+    let stop2 = spawn_stoppable_raft_app(&src2).await;
+    src2.storage
+        .join_cluster(
+            &get_addr_with_port(1, base).to_string(),
+            &get_addr_with_port(2, base).to_string(),
+        )
+        .await?;
+    src_admin
+        .change_membership(pb::raft::ChangeMembershipRequest {
+            members: vec![1, 2],
+            retain: false,
+        })
+        .await?;
+    const NUM_RECORDS: usize = 50;
+    write_index_and_sensitive_records(&src1.storage).await?;
+    write_records_concurrently(&src1.storage, NUM_RECORDS).await?;
+    let mut stream = src_admin
+        .backup(pb::raft::BackupRequest {})
+        .await?
+        .into_inner();
+    let mut chunks = Vec::new();
+    while let Some(chunk) = stream.message().await? {
+        chunks.push(pb::raft::RestoreChunk {
+            data: chunk.data,
+            elect: false,
+            total_len: 0,
+        });
+    }
+    assert!(!chunks.is_empty(), "backup stream was empty");
+    drop(stream);
+    drop(src_admin);
+    src1.storage.raft.shutdown().await.ok();
+    src2.storage.raft.shutdown().await.ok();
+    stop1.send(()).ok();
+    stop2.send(()).ok();
+    TypeConfig::sleep(Duration::from_secs(1)).await;
+
+    // --- Two fresh, uninitialized nodes with the source's node ids.
+    let mut dst = Vec::new();
+    let mut admins = Vec::new();
+    for node_id in [1u64, 2] {
+        let instance = Arc::new(
+            InstanceHolder::new_with_port(node_id, DR_UNIQUE_PORT_BASE, tls_configuration.clone())
+                .await?,
+        );
+        spawn_raft_app(&instance).await;
+        let tls_client_config = get_client_tls_config(&instance.config)?;
+        admins.push(
+            new_admin_client(
+                instance
+                    .config
+                    .distributed_storage
+                    .as_ref()
+                    .unwrap()
+                    .node_cluster_addr
+                    .clone(),
+                &tls_client_config,
+            )
+            .await?,
+        );
+        dst.push(instance);
+    }
+    let state_of = |i: usize| dst[i].storage.raft.metrics().borrow_watched().state;
+
+    // Restore node 2 first, without `elect`. Installing the snapshot commits
+    // a vote for the node itself at the backup's term (OpenRaft's documented
+    // recipe), so until the election the node reports itself as leader of a
+    // term it cannot commit in: node 1 is not restored yet and the
+    // membership needs both. That window must not commit anything.
+    admins[1]
+        .restore(futures::stream::iter(chunks.clone()))
+        .await?;
+    let applied_before = dst[1].storage.raft.metrics().borrow_watched().last_applied;
+    TypeConfig::sleep(Duration::from_secs(2)).await;
+    assert_eq!(
+        dst[1].storage.raft.metrics().borrow_watched().last_applied,
+        applied_before,
+        "nothing may commit before the election"
+    );
+
+    // Restore node 1 with `elect`.
+    let mut with_elect = chunks;
+    with_elect[0].elect = true;
+    admins[0].restore(futures::stream::iter(with_elect)).await?;
+    let elected = poll_until(Duration::from_millis(250), 120, || {
+        dst[0].storage.current_leader() == Some(1)
+    })
+    .await;
+    assert!(elected, "node 1 must win the election");
+    let converged = poll_until(Duration::from_millis(100), 100, || {
+        dst[1].storage.current_leader() == Some(1)
+    })
+    .await;
+    assert!(converged, "node 2 must follow node 1");
+
+    // Exactly one leader, and the same term on both nodes.
+    assert_eq!(state_of(0), ServerState::Leader);
+    assert_ne!(state_of(1), ServerState::Leader);
+    let term = |i: usize| dst[i].storage.raft.metrics().borrow_watched().current_term;
+    assert_eq!(term(0), term(1), "both nodes must agree on the term");
+
+    // Only the leader takes writes, and they replicate.
+    dst[0]
+        .storage
+        .set_value("after".to_string(), make_env("dr")?, None, None)
+        .await?;
+    let replicated = get_by_key_retrying(&dst[1].storage, "after".as_bytes(), None)
+        .await?
+        .expect("write must replicate to the follower");
+    assert_eq!("dr", replicated.try_deserialize::<String>()?.data);
+    // A write sent to the follower is forwarded to the leader.
+    dst[1]
+        .storage
+        .set_value("forwarded".to_string(), make_env("dr")?, None, None)
+        .await?;
+    assert!(
+        get_by_key_retrying(&dst[0].storage, "forwarded".as_bytes(), None)
+            .await?
+            .is_some()
+    );
+    assert_serves_all_records(&dst[1].storage, NUM_RECORDS, "follower").await?;
+    Ok(())
+}
+
+/// A live restore displaces the node's DEKs; its Raft log is still encrypted
+/// under them, and the backup may reuse the same version number for a
+/// different key. After a restart the node must reload the displaced epochs
+/// to read its own log, and keep serving the restored data.
+#[serial_test::serial]
+#[tracing_test::traced_test]
+#[test]
+fn test_restart_after_live_restore_keeps_displaced_deks() {
+    TypeConfig::run(async {
+        test_restart_after_live_restore_keeps_displaced_deks_inner()
+            .await
+            .unwrap();
+    });
+}
+
+#[allow(unsafe_code)]
+async fn test_restart_after_live_restore_keeps_displaced_deks_inner() -> Result<()> {
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+    let tls_configuration = make_certificates()?;
+
+    let set_kek_env = || {
+        // SAFETY: no concurrent env readers; test is `#[serial_test::serial]`.
+        // `EnvKek::from_env()` removes the variable after reading it, so it
+        // is re-set before every `init_storage`.
+        unsafe {
+            std::env::set_var("KEYSTONE_DEV_KEK", TEST_KEK_HEX);
+            std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
+        }
+    };
+    let start = |node_id: u64, config: &Config| {
+        let config = config.clone();
+        async move {
+            let storage = init_storage(&ConfigManager::not_watched(config)).await?;
+            for _ in 0..50 {
+                if storage.current_leader() == Some(node_id) {
+                    break;
+                }
+                TypeConfig::sleep(Duration::from_millis(50)).await;
+            }
+            assert_eq!(storage.current_leader(), Some(node_id));
+            Result::<_>::Ok(storage)
+        }
+    };
+    let node = |node_id: u64| {
+        [(
+            node_id,
+            openstack_keystone_storage_api::Node {
+                node_id,
+                rpc_addr: get_addr(node_id).to_string(),
+            },
+        )]
+        .into_iter()
+        .collect()
+    };
+
+    // --- Source: a backup under its own (version 1) DEK.
+    let src_dir = tempfile::TempDir::new()?;
+    let src_config = Config {
+        distributed_storage: Some(get_ds_config(
+            107,
+            src_dir.path().to_path_buf(),
+            tls_configuration.clone(),
+        )),
+        ..Default::default()
+    };
+    set_kek_env();
+    let src = init_storage(&ConfigManager::not_watched(src_config)).await?;
+    src.initialize(node(107)).await?;
+    for _ in 0..50 {
+        if src.current_leader() == Some(107) {
+            break;
+        }
+        TypeConfig::sleep(Duration::from_millis(50)).await;
+    }
+    src.set_value("k1".to_string(), make_env("from-backup")?, None, None)
+        .await?;
+    src.raft.trigger().snapshot().await?;
+    poll_until(Duration::from_millis(50), 100, || {
+        src.raft.metrics().borrow_watched().snapshot.is_some()
+    })
+    .await;
+    let backup = std::fs::read(
+        src.state_machine_store()
+            .latest_snapshot_path()?
+            .ok_or_else(|| eyre::eyre!("source produced no snapshot"))?,
+    )?;
+    src.raft.shutdown().await.ok();
+    drop(src);
+
+    // --- Destination: a different version 1 DEK and some local history.
+    let dst_dir = tempfile::TempDir::new()?;
+    let dst_config = Config {
+        distributed_storage: Some(get_ds_config(
+            108,
+            dst_dir.path().to_path_buf(),
+            tls_configuration.clone(),
+        )),
+        ..Default::default()
+    };
+    set_kek_env();
+    let dst = init_storage(&ConfigManager::not_watched(dst_config.clone())).await?;
+    dst.initialize(node(108)).await?;
+    for _ in 0..50 {
+        if dst.current_leader() == Some(108) {
+            break;
+        }
+        TypeConfig::sleep(Duration::from_millis(50)).await;
+    }
+    dst.set_value("stale".to_string(), make_env("stale")?, None, None)
+        .await?;
+    let (dst_version, dst_wrapped) = dst.state_machine_store().current_dek_wrapped()?;
+
+    // Restore through the Raft log, as the admin service does.
+    let restore_id = "restart-test".to_string();
+    let mut chunks = 0u32;
+    for (seq, data) in backup.chunks(4096).enumerate() {
+        dst.raft
+            .client_write(pb::api::CommandRequest::try_from(
+                StoreCommand::RestoreChunk {
+                    restore_id: restore_id.clone(),
+                    seq: seq as u32,
+                    data: data.to_vec(),
+                },
+            )?)
+            .await?;
+        chunks = seq as u32 + 1;
+    }
+    let response = dst
+        .raft
+        .client_write(pb::api::CommandRequest::try_from(
+            StoreCommand::RestoreApply {
+                restore_id,
+                chunks,
+                total_len: backup.len() as u64,
+            },
+        )?)
+        .await?;
+    assert!(
+        response.data.violations.is_empty(),
+        "restore rejected: {:?}",
+        response.data.violations
+    );
+
+    // The restore replaced the DEK but kept the one it displaced.
+    let (restored_version, restored_wrapped) = dst.state_machine_store().current_dek_wrapped()?;
+    assert_eq!(restored_version, dst_version, "versions are meant to clash");
+    assert_ne!(
+        restored_wrapped, dst_wrapped,
+        "the restore must swap the key"
+    );
+    assert_eq!(
+        dst.state_machine_store()
+            .shadow_deks()
+            .lock()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    // --- Restart: the node reads its pre-restore log through the displaced
+    //     epoch and serves the restored data.
+    dst.raft.shutdown().await.ok();
+    drop(dst);
+    set_kek_env();
+    let dst = start(108, &dst_config).await?;
+
+    assert_eq!(
+        dst.state_machine_store()
+            .shadow_deks()
+            .lock()
+            .unwrap()
+            .len(),
+        1,
+        "the displaced DEK must be reloaded from disk"
+    );
+    let restored = dst
+        .get_by_key("k1".as_bytes(), None)
+        .await?
+        .expect("restored record must survive the restart");
+    assert_eq!("from-backup", restored.try_deserialize::<String>()?.data);
+    assert!(dst.get_by_key("stale".as_bytes(), None).await?.is_none());
+
+    // The restarted node still takes writes, and a second restart keeps
+    // working (log entries written after the restore use the restored DEK).
+    dst.set_value("after".to_string(), make_env("restart")?, None, None)
+        .await?;
+    dst.raft.shutdown().await.ok();
+    drop(dst);
+    set_kek_env();
+    let dst = start(108, &dst_config).await?;
+    let after = dst
+        .get_by_key("after".as_bytes(), None)
+        .await?
+        .expect("post-restore write must survive a second restart");
+    assert_eq!("restart", after.try_deserialize::<String>()?.data);
+
+    dst.raft.shutdown().await.ok();
+    drop(dst);
+    Ok(())
+}
+
+/// M1 exit criterion (#1289): DEK rotations racing concurrent writes (and
+/// the background re-encryption sweep, on every node) never revert a
+/// committed write (#1295).
+const ROTATION_RACE_PORT_BASE: u16 = 900;
+
+#[serial_test::serial]
+#[tracing_test::traced_test]
+#[test]
+fn test_rotation_under_concurrent_writes_never_reverts_a_write() {
+    TypeConfig::run(async {
+        test_rotation_under_concurrent_writes_never_reverts_a_write_inner()
+            .await
+            .unwrap();
+    });
+}
+
+async fn test_rotation_under_concurrent_writes_never_reverts_a_write_inner() -> Result<()> {
+    use openstack_keystone_storage_crypto::{EnvKek, KekProvider, generate_dek};
+
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+    let tls_configuration = make_certificates()?;
+
+    let (instance1, mut admin_client1) =
+        start_single_node_cluster(ROTATION_RACE_PORT_BASE, &tls_configuration).await?;
+    let instance2 = join_node2_as_voter(
+        ROTATION_RACE_PORT_BASE,
+        &tls_configuration,
+        &mut admin_client1,
+    )
+    .await?;
+
+    const NUM_KEYS: usize = 240;
+    const WRITERS: usize = 8;
+    const ROUNDS: usize = 30;
+    const ROTATIONS: u32 = 3;
+
+    for i in 0..NUM_KEYS {
+        instance1
+            .storage
+            .set_value(format!("k{i}"), make_env("seed")?, None, None)
+            .await?;
+    }
+    let (start_version, _) = instance1
+        .storage
+        .state_machine_store()
+        .current_dek_wrapped()?;
+
+    // Each writer exclusively owns the keys `i % WRITERS == w`, so the value
+    // it wrote last (and had acknowledged) is the only acceptable final one.
+    let writers_done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut writer_handles = Vec::new();
+    for w in 0..WRITERS {
+        let storage = instance1.storage.clone();
+        writer_handles.push(tokio::spawn(async move {
+            let mut last = BTreeMap::new();
+            for round in 1..=ROUNDS {
+                for i in (w..NUM_KEYS).step_by(WRITERS) {
+                    let value = format!("w{w}r{round}");
+                    storage
+                        .set_value(format!("k{i}"), make_env(&value)?, None, None)
+                        .await?;
+                    last.insert(i, value);
+                }
+            }
+            Ok::<_, eyre::Report>(last)
+        }));
+    }
+
+    // Hammer the local re-encryption sweep on both nodes for as long as the
+    // writers run, to maximise overlap with `apply()`.
+    let mut sweepers = Vec::new();
+    for inst in [instance1.clone(), instance2.clone()] {
+        let done = writers_done.clone();
+        sweepers.push(tokio::spawn(async move {
+            while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                inst.storage.state_machine_store().reencrypt_pending().await;
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }));
+    }
+
+    // Rotate the DEK repeatedly in the middle of the write storm.
+    let kek = EnvKek::from_bytes([0u8; 32]); // matches TEST_KEK_HEX
+    for n in 1..=ROTATIONS {
+        TypeConfig::sleep(Duration::from_millis(150)).await;
+        let cmd = StoreCommand::Transaction(vec![MutationInner::InstallDek {
+            wrapped_dek: kek.wrap_dek(generate_dek().as_bytes())?,
+            dek_version: start_version + n,
+            is_emergency: false,
+        }]);
+        instance1
+            .storage
+            .raft
+            .client_write(pb::api::CommandRequest::try_from(cmd)?)
+            .await?;
+    }
+
+    let mut expected = BTreeMap::new();
+    for h in writer_handles {
+        expected.extend(h.await??);
+    }
+    writers_done.store(true, std::sync::atomic::Ordering::Relaxed);
+    for s in sweepers {
+        s.await?;
+    }
+    assert_eq!(NUM_KEYS, expected.len());
+
+    // Let node 2 apply everything, then finish the sweep on both nodes.
+    let leader_index = instance1.storage.last_log_index().expect("non-empty log");
+    assert!(
+        poll_until(Duration::from_millis(100), 200, || {
+            instance2.storage.last_log_index() >= Some(leader_index)
+        })
+        .await,
+        "node 2 did not catch up"
+    );
+    TypeConfig::sleep(Duration::from_millis(300)).await;
+    for inst in [&instance1, &instance2] {
+        for _ in 0..5 {
+            inst.storage.state_machine_store().reencrypt_pending().await;
+        }
+    }
+
+    // No committed write may have been reverted, on either node, and every
+    // record must have been migrated to the newest DEK epoch.
+    for inst in [&instance1, &instance2] {
+        assert_eq!(
+            start_version + ROTATIONS,
+            inst.storage.state_machine_store().current_dek_wrapped()?.0
+        );
+        for (i, want) in &expected {
+            let got = inst
+                .storage
+                .get_by_key(format!("k{i}").as_bytes(), None)
+                .await?
+                .unwrap_or_else(|| panic!("node {}: k{i} missing", inst.node_id));
+            assert_eq!(
+                want,
+                &got.try_deserialize::<String>()?.data,
+                "node {}: committed write to k{i} was reverted",
+                inst.node_id
+            );
+            assert_eq!(
+                Some(start_version + ROTATIONS),
+                got.metadata.dek_version,
+                "node {}: k{i} was not migrated to the newest DEK epoch",
+                inst.node_id
+            );
+        }
+    }
+    Ok(())
 }

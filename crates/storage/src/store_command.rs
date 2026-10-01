@@ -30,6 +30,53 @@ pub use openstack_keystone_storage_api::Mutation;
 pub enum StoreCommand {
     /// Store mutation transaction.
     Transaction(Vec<MutationInner>),
+
+    /// One chunk of an operator backup being restored into a live cluster.
+    ///
+    /// Staged on every node (in `meta`, under a per-restore prefix) until the
+    /// matching [`StoreCommand::RestoreApply`] commits. The bytes are slices
+    /// of the *encrypted* backup blob, so the plaintext never crosses the
+    /// log. `seq` fixes the reassembly order. Committing chunk `0` discards the
+    /// staged chunks of any other restore, so an abandoned restore does not
+    /// outlive the next one.
+    RestoreChunk {
+        /// Identifier shared by every chunk and the final apply of one
+        /// restore.
+        restore_id: String,
+        /// Zero-based position of this chunk in the blob.
+        seq: u32,
+        /// The chunk bytes.
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+    },
+
+    /// Reassemble the staged chunks of `restore_id` and replace the
+    /// replicated state with the backup (OpenBao-style restore into a live
+    /// cluster).
+    ///
+    /// Every node applies this at the same log index. Each node's own Raft
+    /// bookkeeping (applied log, membership, snapshot history) is kept, so
+    /// the cluster membership is unchanged; everything else is replaced by
+    /// the backup's contents.
+    RestoreApply {
+        /// Identifier shared with the staged [`StoreCommand::RestoreChunk`]s.
+        restore_id: String,
+        /// Number of chunks that make up the blob.
+        chunks: u32,
+        /// Total blob length, to detect a missing or truncated chunk. The
+        /// blob itself is AES-GCM authenticated, so corruption fails the
+        /// decrypt on apply.
+        total_len: u64,
+    },
+
+    /// Discard the staged chunks of an abandoned restore.
+    ///
+    /// Proposed on a best-effort basis when a restore fails after some of its
+    /// chunks have already committed.
+    RestoreAbort {
+        /// Identifier of the restore to discard.
+        restore_id: String,
+    },
 }
 
 /// A pending emergency DEK rotation waiting for dual-control confirmation.

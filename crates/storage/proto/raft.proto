@@ -414,4 +414,15 @@ message BackupChunk {
 // RestoreChunk is one chunk of the client-to-server encrypted snapshot upload.
 message RestoreChunk {
   bytes data = 1;
+  // Disaster recovery only (the target node's Raft is not initialized yet):
+  // after installing the backup, start an election on this node. Set it on
+  // exactly one of the restored nodes. Ignored when restoring into an
+  // initialized cluster. Only honored on the first chunk: an upload into an
+  // initialized cluster is streamed into the Raft log as it arrives, so the
+  // mode must be known up front.
+  bool elect = 2;
+  // Size in bytes of the whole upload. Only read from the first chunk; 0
+  // means unknown. Lets the server reject an oversized backup before
+  // buffering any of it.
+  uint64 total_len = 3;
 }
