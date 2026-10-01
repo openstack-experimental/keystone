@@ -78,10 +78,12 @@ impl From<api_types_application_credential::ApplicationCredentialCreate>
         if let Some(v) = value.access_rules {
             builder.access_rules(
                 v.into_iter()
-                    .map(|r| {
-                        provider_types::AccessRuleCreateBuilder::from(r)
-                            .build()
-                            .unwrap()
+                    .map(|r| provider_types::AccessRuleCreate {
+                        id: r.id,
+                        method: r.method,
+                        path: r.path,
+                        service: r.service,
+                        user_id: String::new(),
                     })
                     .collect::<Vec<_>>(),
             );

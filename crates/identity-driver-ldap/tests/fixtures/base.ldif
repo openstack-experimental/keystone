@@ -57,3 +57,17 @@ cn: posixadmins
 gidNumber: 5000
 memberUid: jdoe
 memberUid: bsmith
+
+dn: cn=nested-child,ou=Groups,dc=example,dc=com
+objectClass: groupOfNames
+objectClass: extensibleObject
+cn: nested-child
+ou: nested-child
+member: cn=jdoe,ou=Users,dc=example,dc=com
+
+dn: cn=nested-parent,ou=Groups,dc=example,dc=com
+objectClass: groupOfNames
+objectClass: extensibleObject
+cn: nested-parent
+ou: nested-parent
+member: cn=nested-child,ou=Groups,dc=example,dc=com
