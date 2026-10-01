@@ -28,12 +28,14 @@ use tracing_test::traced_test;
 use uuid::Uuid;
 
 use openstack_keystone_core::auth::ExecutionContext;
+use openstack_keystone_core::oauth2_session::backend::Oauth2SessionBackend;
 use openstack_keystone_core::oauth2_session::{
     IssueAuthorizationCodeRequest, IssueRefreshTokenRequest, RefreshTokenRedemption,
     StartPreAuthSessionRequest,
 };
 use openstack_keystone_core_types::identity::UserCreateBuilder;
 use openstack_keystone_core_types::identity::UserPasswordAuthRequestBuilder;
+use openstack_keystone_oauth2_session_driver_raft::RaftOauth2SessionBackend;
 
 use crate::common::get_state_with_config;
 use crate::create_domain;
@@ -187,6 +189,7 @@ async fn test_authorization_code_flow_and_refresh_reuse_collapses_family() -> Re
     match reuse {
         RefreshTokenRedemption::ReuseDetected {
             family_id: reused_family,
+            ..
         } => assert_eq!(reused_family, family_id),
         other => panic!("expected ReuseDetected, got {other:?}"),
     }
@@ -197,6 +200,26 @@ async fn test_authorization_code_flow_and_refresh_reuse_collapses_family() -> Re
         .redeem_refresh_token(&state, &bearer_1)
         .await?;
     assert!(matches!(after_collapse, RefreshTokenRedemption::Invalid));
+
+    // Replaying the spent root again must hit the tombstone and stay
+    // `Invalid` -- not re-trigger the breach cascade (`ReuseDetected`) and
+    // a second critical audit event.
+    let replay = session_provider
+        .redeem_refresh_token(&state, &bearer_0)
+        .await?;
+    assert!(matches!(replay, RefreshTokenRedemption::Invalid));
+
+    // The family is tombstoned, not deleted. The provider API has no
+    // family listing, so read the raft backend directly: both members
+    // must survive with `revoked_at` and the reason stamped.
+    let members = RaftOauth2SessionBackend::default()
+        .list_refresh_token_family(&state, &family_id)
+        .await?;
+    assert_eq!(members.len(), 2);
+    for member in &members {
+        assert!(member.revoked_at.is_some());
+        assert_eq!(member.revocation_reason.as_deref(), Some("reuse_detected"));
+    }
 
     Ok(())
 }

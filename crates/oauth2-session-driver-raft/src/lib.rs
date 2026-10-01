@@ -383,6 +383,8 @@ impl RaftOauth2SessionBackend {
             issued_at: data.issued_at,
             spent_at: None,
             expires_at: data.expires_at,
+            revoked_at: None,
+            revocation_reason: None,
         };
         let mutations = vec![
             Mutation::set(
@@ -438,6 +440,11 @@ impl RaftOauth2SessionBackend {
             .await
             .map_err(store_err)?
             .ok_or_else(|| Oauth2SessionProviderError::NotFound(token_id.to_string()))?;
+        // Never write over a tombstone: a rotation racing a family
+        // revocation must not clear the revocation stamp.
+        if record.revoked_at.is_some() {
+            return Err(Oauth2SessionProviderError::NotFound(token_id.to_string()));
+        }
         record.spent_at = Some(spent_at);
         // Rewrite the expiry entry on rotation: the spent token no longer
         // needs to be tracked for expiry sweeps (the rotated child gets
@@ -485,55 +492,62 @@ impl RaftOauth2SessionBackend {
         &self,
         storage: &dyn StorageApi,
         family_id: &str,
+        reason: RefreshTokenRevocationReason,
+        revoked_at: i64,
     ) -> Result<(), Oauth2SessionProviderError> {
         let members = self
             .list_refresh_token_family_impl(storage, family_id)
             .await?;
-        if members.is_empty() {
+        let Some(first) = members.first() else {
             return Ok(());
-        }
+        };
         let mut mutations = Vec::new();
+        // Tombstone, don't delete: the token records and the family index
+        // stay so forensics can correlate them with the critical audit
+        // event, and the janitor can purge them after
+        // `expires_at + retention`. Every member gets an expiry index entry
+        // (spent members lost theirs on rotation) so the janitor can find
+        // them. Members that are already revoked keep their original stamp
+        // (idempotent).
         for member in &members {
-            mutations.push(Mutation::remove(
-                refresh_key(&member.token_id),
-                None::<&str>,
-                None,
-            ));
-            mutations.push(Mutation::remove(
-                family_idx_key(family_id, &member.token_id),
-                None::<&str>,
-                None,
-            ));
-            // Spent members already had their expiry-index entry removed by
-            // `mark_refresh_token_spent_impl` on rotation -- only unspent
-            // members still have one to clean up.
-            if member.spent_at.is_none() {
-                mutations.push(Mutation::remove_index(expiry_idx_key(
-                    member.expires_at,
-                    "refresh",
-                    &member.token_id,
-                )));
-            }
+            mutations.push(Mutation::set_index(expiry_idx_key(
+                member.expires_at,
+                "refresh",
+                &member.token_id,
+            )));
+        }
+        for member in members.iter().filter(|m| m.revoked_at.is_none()) {
+            let mut tombstone = member.clone();
+            tombstone.revoked_at = Some(revoked_at);
+            tombstone.revocation_reason = Some(reason.as_str().to_string());
+            mutations.push(
+                Mutation::set(
+                    refresh_key(&member.token_id),
+                    &tombstone,
+                    Metadata::new(),
+                    None::<&str>,
+                    None,
+                )
+                .map_err(store_err)?,
+            );
         }
         // The user/client/domain indexes are keyed by family_id, not by
         // individual token_id, so every member shares the same entry --
-        // remove it once, using any member's (constant across rotation)
-        // domain/client/user ids.
-        if let Some(first) = members.first() {
-            mutations.push(Mutation::remove_index(refresh_user_idx_key(
-                &first.domain_id,
-                &first.user_id,
-                family_id,
-            )));
-            mutations.push(Mutation::remove_index(refresh_client_idx_key(
-                &first.client_id,
-                family_id,
-            )));
-            mutations.push(Mutation::remove_index(refresh_domain_idx_key(
-                &first.domain_id,
-                family_id,
-            )));
-        }
+        // remove it once so the family no longer shows up as live, using
+        // any member's (constant across rotation) domain/client/user ids.
+        mutations.push(Mutation::remove_index(refresh_user_idx_key(
+            &first.domain_id,
+            &first.user_id,
+            family_id,
+        )));
+        mutations.push(Mutation::remove_index(refresh_client_idx_key(
+            &first.client_id,
+            family_id,
+        )));
+        mutations.push(Mutation::remove_index(refresh_domain_idx_key(
+            &first.domain_id,
+            family_id,
+        )));
         storage.transaction(mutations).await.map_err(store_err)?;
         Ok(())
     }
@@ -880,8 +894,10 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
         &self,
         state: &ServiceState,
         family_id: &str,
+        reason: RefreshTokenRevocationReason,
+        revoked_at: i64,
     ) -> Result<(), Oauth2SessionProviderError> {
-        self.revoke_refresh_token_family_impl(self.storage(state)?, family_id)
+        self.revoke_refresh_token_family_impl(self.storage(state)?, family_id, reason, revoked_at)
             .await
     }
 
@@ -1207,22 +1223,34 @@ mod tests {
         assert_eq!(family[1].token_id, "token-2");
 
         backend
-            .revoke_refresh_token_family_impl(&storage, "family-1")
+            .revoke_refresh_token_family_impl(
+                &storage,
+                "family-1",
+                RefreshTokenRevocationReason::ReuseDetected,
+                5000,
+            )
             .await
             .unwrap();
-        assert!(
-            backend
-                .get_refresh_token_impl(&storage, "token-1")
+        for id in ["token-1", "token-2"] {
+            let tombstone = backend
+                .get_refresh_token_impl(&storage, id)
                 .await
                 .unwrap()
-                .is_none()
-        );
-        assert!(
+                .expect("tombstone kept");
+            assert!(tombstone.revoked_at.is_some());
+            assert_eq!(
+                tombstone.revocation_reason.as_deref(),
+                Some("reuse_detected")
+            );
+        }
+        // Family index kept for the janitor.
+        assert_eq!(
             backend
-                .get_refresh_token_impl(&storage, "token-2")
+                .list_refresh_token_family_impl(&storage, "family-1")
                 .await
                 .unwrap()
-                .is_none()
+                .len(),
+            2
         );
         assert!(
             backend
@@ -1423,7 +1451,93 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_revoke_refresh_token_family_clears_all_indexes() {
+    async fn test_revoke_refresh_token_family_reindexes_spent_members_for_expiry() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_refresh_token_impl(&storage, sample_refresh_create("token-1", "family-1"))
+            .await
+            .unwrap();
+        backend
+            .mark_refresh_token_spent_impl(&storage, "token-1", 2000)
+            .await
+            .unwrap();
+        // Rotation dropped the spent token's expiry entry.
+        assert!(
+            backend
+                .list_expired_impl(&storage, i64::MAX, 100)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        backend
+            .revoke_refresh_token_family_impl(
+                &storage,
+                "family-1",
+                RefreshTokenRevocationReason::Operator,
+                5000,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            backend
+                .list_expired_impl(&storage, i64::MAX, 100)
+                .await
+                .unwrap(),
+            vec![("refresh".to_string(), "token-1".to_string())]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mark_spent_refuses_tombstone_and_revoke_is_idempotent() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_refresh_token_impl(&storage, sample_refresh_create("token-1", "family-1"))
+            .await
+            .unwrap();
+        backend
+            .revoke_refresh_token_family_impl(
+                &storage,
+                "family-1",
+                RefreshTokenRevocationReason::ClientRevoked,
+                5000,
+            )
+            .await
+            .unwrap();
+
+        let err = backend
+            .mark_refresh_token_spent_impl(&storage, "token-1", 3000)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Oauth2SessionProviderError::NotFound(_)));
+
+        // A second revoke with another reason keeps the original stamp.
+        backend
+            .revoke_refresh_token_family_impl(
+                &storage,
+                "family-1",
+                RefreshTokenRevocationReason::Operator,
+                5000,
+            )
+            .await
+            .unwrap();
+        let tombstone = backend
+            .get_refresh_token_impl(&storage, "token-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(tombstone.spent_at, None);
+        assert_eq!(
+            tombstone.revocation_reason.as_deref(),
+            Some("client_revoked")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_revoke_refresh_token_family_clears_live_indexes() {
         let backend = RaftOauth2SessionBackend::default();
         let storage = MockStorage::default();
         backend
@@ -1432,7 +1546,12 @@ mod tests {
             .unwrap();
 
         backend
-            .revoke_refresh_token_family_impl(&storage, "family-1")
+            .revoke_refresh_token_family_impl(
+                &storage,
+                "family-1",
+                RefreshTokenRevocationReason::ReuseDetected,
+                5000,
+            )
             .await
             .unwrap();
 
@@ -1457,12 +1576,14 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        assert!(
+        // Expiry entry kept so the janitor can purge the tombstone.
+        assert_eq!(
             backend
                 .list_expired_impl(&storage, i64::MAX, 100)
                 .await
                 .unwrap()
-                .is_empty()
+                .len(),
+            1
         );
     }
 

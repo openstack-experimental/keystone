@@ -16,7 +16,7 @@
 use async_trait::async_trait;
 
 use openstack_keystone_core_types::oauth2_session::{
-    AuthorizationCode, DeviceCodeGrant, PreAuthSession, RefreshToken,
+    AuthorizationCode, DeviceCodeGrant, PreAuthSession, RefreshToken, RefreshTokenRevocationReason,
 };
 
 use crate::keystone::ServiceState;
@@ -105,9 +105,12 @@ pub enum RefreshTokenRedemption {
     ReuseDetected {
         /// The family that was just revoked.
         family_id: String,
+        /// Why it was revoked (always `reuse_detected` today); carried so
+        /// the audit event can attach it.
+        reason: RefreshTokenRevocationReason,
     },
     /// The presented token does not resolve to any known, unexpired
-    /// record (unknown, already-revoked-family, or past
+    /// record (unknown, already-revoked-family (tombstoned), or past
     /// `refresh_token_lifetime_days`).
     Invalid,
 }

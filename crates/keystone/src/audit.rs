@@ -306,6 +306,7 @@ pub async fn emit_oauth2_refresh_reuse_critical_event(
     correlation_id: &str,
     initiator: Initiator,
     family_id: &str,
+    reason: &str,
 ) {
     let node_id = dispatcher.node_id().to_string();
     let event_id = format!("{}:{}", node_id, Uuid::new_v4());
@@ -318,7 +319,7 @@ pub async fn emit_oauth2_refresh_reuse_critical_event(
         "OAUTH2_REFRESH_REUSE_DETECTED".to_string(),
         "failure".to_string(),
         Some(format!(
-            "refresh_token family {family_id} revoked: reuse detected outside grace window"
+            "refresh_token family {family_id} revoked ({reason}): reuse detected outside grace window"
         )),
         initiator,
         Target {
@@ -583,6 +584,7 @@ mod tests {
             "req-1",
             build_initiator_unknown(),
             "family-1",
+            "reuse_detected",
         )
         .await;
         assert_eq!(dispatcher.postaudit_dropped_count(), before + 1);

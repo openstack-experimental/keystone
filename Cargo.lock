@@ -9243,6 +9243,7 @@ dependencies = [
  "openstack-keystone-distributed-storage",
  "openstack-keystone-identity-driver-sql",
  "openstack-keystone-key-repository",
+ "openstack-keystone-oauth2-session-driver-raft",
  "openstack-keystone-storage-api",
  "openstack-keystone-token-driver-fernet",
  "openstack-keystone-trust-driver-sql",

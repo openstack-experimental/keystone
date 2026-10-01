@@ -112,12 +112,17 @@ pub trait Oauth2SessionBackend: Send + Sync {
         family_id: &str,
     ) -> Result<Vec<RefreshToken>, Oauth2SessionProviderError>;
 
-    /// Delete every token in a rotation family (breach containment, ADR
-    /// 0026 §9).
+    /// Revoke a rotation family (breach containment, ADR 0026 §9) by
+    /// stamping every member with `revoked_at` (UTC epoch seconds) and
+    /// `reason`. Members are
+    /// kept as tombstones; already-revoked members keep their original
+    /// stamp.
     async fn revoke_refresh_token_family(
         &self,
         state: &ServiceState,
         family_id: &str,
+        reason: RefreshTokenRevocationReason,
+        revoked_at: i64,
     ) -> Result<(), Oauth2SessionProviderError>;
 
     /// Persist a new RFC 8628 Device Authorization Grant (ADR 0026 §7.C).

@@ -289,12 +289,30 @@ impl Oauth2SessionApi for Oauth2SessionService {
         if record.expires_at < now {
             return Ok(RefreshTokenRedemption::Invalid);
         }
+        // Tombstoned (revoked) family: checked before the `spent_at`
+        // branch so presenting a token from an already-revoked family does
+        // not re-trigger the breach cascade or a second critical audit
+        // event.
+        if record.revoked_at.is_some() {
+            return Ok(RefreshTokenRedemption::Invalid);
+        }
 
         match record.spent_at {
             None => {
-                self.backend_driver
+                // `NotFound` here means the family was revoked between the
+                // read above and this write (the backend refuses to
+                // overwrite a tombstone).
+                match self
+                    .backend_driver
                     .mark_refresh_token_spent(state, &token_id, now)
-                    .await?;
+                    .await
+                {
+                    Ok(()) => {}
+                    Err(Oauth2SessionProviderError::NotFound(_)) => {
+                        return Ok(RefreshTokenRedemption::Invalid);
+                    }
+                    Err(e) => return Err(e),
+                }
                 let bearer = generate_entropy();
                 let expires_at =
                     now + i64::from(self.oauth2_config.refresh_token_lifetime_days) * 86400;
@@ -315,6 +333,18 @@ impl Oauth2SessionApi for Oauth2SessionService {
                         },
                     )
                     .await?;
+                // Close the race with a concurrent family revocation: if
+                // the parent got tombstoned while the child was being
+                // minted, the child is not stamped. Never hand out its
+                // bearer, so the stray record is unusable.
+                let parent_revoked = self
+                    .backend_driver
+                    .get_refresh_token(state, &record.token_id)
+                    .await?
+                    .is_none_or(|p| p.revoked_at.is_some());
+                if parent_revoked {
+                    return Ok(RefreshTokenRedemption::Invalid);
+                }
                 Ok(RefreshTokenRedemption::Rotated {
                     record: child,
                     bearer,
@@ -336,10 +366,16 @@ impl Oauth2SessionApi for Oauth2SessionService {
                     Ok(RefreshTokenRedemption::Invalid)
                 } else {
                     self.backend_driver
-                        .revoke_refresh_token_family(state, &record.family_id)
+                        .revoke_refresh_token_family(
+                            state,
+                            &record.family_id,
+                            RefreshTokenRevocationReason::ReuseDetected,
+                            now,
+                        )
                         .await?;
                     Ok(RefreshTokenRedemption::ReuseDetected {
                         family_id: record.family_id,
+                        reason: RefreshTokenRevocationReason::ReuseDetected,
                     })
                 }
             }
@@ -526,6 +562,8 @@ mod tests {
             scope: vec!["openid".to_string()],
             issued_at: now() - 100,
             spent_at,
+            revoked_at: None,
+            revocation_reason: None,
             expires_at: now() + 1_000_000,
         }
     }
@@ -610,6 +648,8 @@ mod tests {
                 issued_at: data.issued_at,
                 spent_at: None,
                 expires_at: data.expires_at,
+                revoked_at: None,
+                revocation_reason: None,
             })
         });
         let service = service_with(mock);
@@ -629,8 +669,12 @@ mod tests {
         mock.expect_get_refresh_token()
             .returning(move |_, _| Ok(Some(sample_refresh_token(Some(spent_at)))));
         mock.expect_revoke_refresh_token_family()
-            .withf(|_, family_id| family_id == "family-1")
-            .returning(|_, _| Ok(()));
+            .withf(|_, family_id, reason, revoked_at| {
+                family_id == "family-1"
+                    && *reason == RefreshTokenRevocationReason::ReuseDetected
+                    && *revoked_at > 0
+            })
+            .returning(|_, _, _, _| Ok(()));
         let service = service_with(mock);
         let state = get_mocked_state(None, None).await;
 
@@ -640,8 +684,94 @@ mod tests {
             .unwrap();
         assert!(matches!(
             result,
-            RefreshTokenRedemption::ReuseDetected { family_id } if family_id == "family-1"
+            RefreshTokenRedemption::ReuseDetected { family_id, reason }
+                if family_id == "family-1"
+                    && reason == RefreshTokenRevocationReason::ReuseDetected
         ));
+    }
+
+    #[tokio::test]
+    async fn test_redeem_refresh_token_revoked_during_rotation_is_invalid() {
+        // Backend refuses to spend a tombstoned token.
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_get_refresh_token()
+            .returning(|_, _| Ok(Some(sample_refresh_token(None))));
+        mock.expect_mark_refresh_token_spent()
+            .returning(|_, id, _| Err(Oauth2SessionProviderError::NotFound(id.to_string())));
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let result = service
+            .redeem_refresh_token(&state, "presented-bearer")
+            .await
+            .unwrap();
+        assert!(matches!(result, RefreshTokenRedemption::Invalid));
+    }
+
+    #[tokio::test]
+    async fn test_redeem_refresh_token_parent_revoked_after_child_minted_withholds_bearer() {
+        let mut mock = MockOauth2SessionBackend::new();
+        let mut reads = 0;
+        mock.expect_get_refresh_token().returning(move |_, _| {
+            reads += 1;
+            let mut record = sample_refresh_token(None);
+            // Second read (post-rotation re-check) sees the tombstone.
+            if reads > 1 {
+                record.revoked_at = Some(now());
+                record.revocation_reason = Some("client_revoked".to_string());
+            }
+            Ok(Some(record))
+        });
+        mock.expect_mark_refresh_token_spent()
+            .returning(|_, _, _| Ok(()));
+        mock.expect_create_refresh_token().returning(|_, data| {
+            Ok(RefreshToken {
+                token_id: data.token_id,
+                family_id: data.family_id,
+                parent_token_id: data.parent_token_id,
+                domain_id: data.domain_id,
+                client_id: data.client_id,
+                user_id: data.user_id,
+                scope: data.scope,
+                issued_at: data.issued_at,
+                spent_at: None,
+                expires_at: data.expires_at,
+                revoked_at: None,
+                revocation_reason: None,
+            })
+        });
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let result = service
+            .redeem_refresh_token(&state, "presented-bearer")
+            .await
+            .unwrap();
+        assert!(matches!(result, RefreshTokenRedemption::Invalid));
+    }
+
+    #[tokio::test]
+    async fn test_redeem_refresh_token_revoked_family_is_invalid_not_recascaded() {
+        let mut mock = MockOauth2SessionBackend::new();
+        // Spent long ago (outside grace) AND tombstoned: the revoked check
+        // must win over the `spent_at` branch.
+        let spent_at = now() - 3600;
+        mock.expect_get_refresh_token().returning(move |_, _| {
+            let mut record = sample_refresh_token(Some(spent_at));
+            record.revoked_at = Some(now() - 10);
+            record.revocation_reason = Some("reuse_detected".to_string());
+            Ok(Some(record))
+        });
+        // `revoke_refresh_token_family` deliberately not configured:
+        // mockall panics if it's called again.
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let result = service
+            .redeem_refresh_token(&state, "presented-bearer")
+            .await
+            .unwrap();
+        assert!(matches!(result, RefreshTokenRedemption::Invalid));
     }
 
     #[tokio::test]

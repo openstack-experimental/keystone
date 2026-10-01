@@ -186,6 +186,53 @@ pub struct RefreshToken {
     /// UTC epoch seconds after which this token, and thus the family (idle
     /// lifetime), is no longer valid (`[oauth2] refresh_token_lifetime_days`).
     pub expires_at: i64,
+    /// UTC epoch seconds the owning family was revoked. `None` while the
+    /// family is live. Revoked members are kept as tombstones (not
+    /// deleted) so post-incident forensics can correlate them against the
+    /// critical audit event; the janitor purges them after
+    /// `expires_at + retention`.
+    #[serde(default)]
+    pub revoked_at: Option<i64>,
+    /// Why the family was revoked; see [`RefreshTokenRevocationReason`].
+    /// Stored as its `snake_case` string form. `None` while live.
+    #[serde(default)]
+    pub revocation_reason: Option<String>,
+}
+
+/// Reason a refresh token family was revoked (stored in
+/// [`RefreshToken::revocation_reason`]).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RefreshTokenRevocationReason {
+    /// A spent token was replayed outside the reuse grace window.
+    ReuseDetected,
+    /// The OAuth2 client was revoked.
+    ClientRevoked,
+    /// The owning user was disabled.
+    UserDisabled,
+    /// The owning user was deleted.
+    UserDeleted,
+    /// The owning domain was disabled.
+    DomainDisabled,
+    /// Revoked manually by an operator.
+    Operator,
+    /// Revoked by the relying party (RFC 7009 revocation).
+    RpRevoke,
+}
+
+impl RefreshTokenRevocationReason {
+    /// The stable `snake_case` string form persisted and audited.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ReuseDetected => "reuse_detected",
+            Self::ClientRevoked => "client_revoked",
+            Self::UserDisabled => "user_disabled",
+            Self::UserDeleted => "user_deleted",
+            Self::DomainDisabled => "domain_disabled",
+            Self::Operator => "operator",
+            Self::RpRevoke => "rp_revoke",
+        }
+    }
 }
 
 /// Status of an RFC 8628 Device Authorization Grant (ADR 0026 §7.C).

@@ -890,12 +890,13 @@ async fn handle_refresh_token_grant(
                 "refresh_token is invalid, expired, or already used",
             ));
         }
-        RefreshTokenRedemption::ReuseDetected { family_id } => {
+        RefreshTokenRedemption::ReuseDetected { family_id, reason } => {
             emit_oauth2_refresh_reuse_critical_event(
                 &state.audit_dispatcher,
                 correlation_id,
                 build_initiator_unknown(),
                 &family_id,
+                reason.as_str(),
             )
             .await;
             return Err(Oauth2TokenError::invalid_grant(
@@ -1871,6 +1872,8 @@ mod tests {
             scope: vec!["openid".to_string()],
             issued_at: 1000,
             spent_at,
+            revoked_at: None,
+            revocation_reason: None,
             expires_at: 1000 + 2_592_000,
         }
     }
@@ -1910,6 +1913,7 @@ mod tests {
             .returning(|_, _| {
                 Ok(RefreshTokenRedemption::ReuseDetected {
                     family_id: "family-1".to_string(),
+                    reason: openstack_keystone_core_types::oauth2_session::RefreshTokenRevocationReason::ReuseDetected,
                 })
             });
 
