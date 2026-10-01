@@ -18,16 +18,21 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use color_eyre::eyre::{Report, Result, WrapErr};
 use secrecy::{ExposeSecret, SecretBox};
 use tokio::spawn;
-use tracing::info;
+use tokio::task::{JoinHandle, spawn_blocking};
+use tokio_util::sync::CancellationToken;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::config::Config;
-use openstack_keystone_audit::spool::{replay_spool, run_spool_writer, spool_path};
-use openstack_keystone_audit::{AuditDispatcher, HmacKeyStore, derive_audit_hmac_key};
+use openstack_keystone_audit::spool::{
+    SpoolLock, run_spool_writer, seal_previous_spool, verify_sealed_spool,
+};
+use openstack_keystone_audit::{AuditDispatcher, HmacKeyStore, SpoolConfig, derive_audit_hmac_key};
 
 /// Version tag stamped on audit HMAC keys (ADR 0023 / ADR 0016-v2 §3.1).
 const AUDIT_HMAC_KEY_VERSION: u64 = 1;
@@ -35,7 +40,7 @@ const AUDIT_HMAC_KEY_VERSION: u64 = 1;
 /// `MultiKeyStore` holds every key version seen during this process lifetime.
 ///
 /// Currently only one version exists; the map is pre-populated with the
-/// current key so `replay_spool` can verify events signed by it. When key
+/// current key so `verify_sealed_spool` can verify events signed by it. When key
 /// rotation is implemented, callers MUST insert the new version before
 /// calling `refresh_hmac_key` on the dispatcher — spool events written
 /// before the rotation still carry the old version number and must remain
@@ -101,14 +106,31 @@ fn load_or_generate_kek(kek_file: &Path) -> Result<SecretBox<Vec<u8>>, Report> {
 }
 
 /// Load or generate the persisted audit HMAC key-encryption-key (KEK),
-/// derive the per-node signing key, build the `AuditDispatcher`, replay any
-/// events spooled by a previous run (at-least-once delivery), and spawn the
-/// background spool writers for both QoS channels. See ADR 0023 / ADR
-/// 0016-v2 §3.1.
-pub async fn init(cfg: &Config) -> Result<Arc<AuditDispatcher>, Report> {
+/// derive the per-node signing key, build the `AuditDispatcher`, seal the
+/// spool left by the previous run, spawn the single spool writer, and verify
+/// the sealed spool in the background. See ADR 0023 / ADR 0016-v2 §3.1.
+///
+/// Cancelling `token` makes the writer drain already-queued events (bounded
+/// by `[audit] spool_drain_timeout_secs`) and exit; the returned handle
+/// resolves once it has, and the spool lock is released.
+pub async fn init(
+    cfg: &Config,
+    token: &CancellationToken,
+) -> Result<(Arc<AuditDispatcher>, JoinHandle<()>), Report> {
     let audit_cfg = cfg.audit.clone();
     let spool_dir = audit_cfg.spool_dir.clone();
+    let node_id = audit_cfg.node_id.clone();
     std::fs::create_dir_all(&spool_dir).wrap_err("failed to create audit spool directory")?;
+
+    // Exclusive per-node spool lock for the process lifetime; fails fast if
+    // another Keystone already owns this spool_dir/node_id.
+    let spool_lock = SpoolLock::acquire(&spool_dir, node_id.as_str())
+        .wrap_err("failed to lock the audit spool")?;
+
+    // Seal the previous run's live spool BEFORE the writer starts, so the
+    // writer begins on a fresh file and nothing reads a file being appended.
+    let sealed = seal_previous_spool(&spool_dir, node_id.as_str())
+        .wrap_err("failed to seal the previous audit spool")?;
 
     let audit_kek = load_or_generate_kek(&spool_dir.join("hmac-key.bin"))?;
 
@@ -116,48 +138,61 @@ pub async fn init(cfg: &Config) -> Result<Arc<AuditDispatcher>, Report> {
     //   HKDF-Expand(KEK, info="keystone-audit-hmac-v1:{node_id}", L=32)
     // Per ADR 0023 / ADR 0016-v2 §3.1: per-node derivation ensures a
     // compromised node cannot forge records attributed to other nodes.
-    let audit_hmac_key: Arc<[u8]> = Arc::from(
-        derive_audit_hmac_key(audit_kek.expose_secret(), audit_cfg.node_id.as_str()).as_slice(),
-    );
+    let audit_hmac_key: Arc<[u8]> =
+        Arc::from(derive_audit_hmac_key(audit_kek.expose_secret(), node_id.as_str()).as_slice());
 
     let (audit_dispatcher, audit_receivers) = AuditDispatcher::new(
-        audit_cfg.node_id.as_str(),
+        node_id.as_str(),
         Uuid::new_v4().to_string(),
         Arc::clone(&audit_hmac_key),
         AUDIT_HMAC_KEY_VERSION,
     );
 
-    // Start background spool writers for both QoS channels BEFORE replay so
-    // the critical channel (capacity 256) is drained as events are
-    // dispatched. Without this, replay blocks indefinitely when the spool
-    // has >256 events because no consumer is running.
-    spawn(run_spool_writer(
-        audit_receivers.perimeter,
-        spool_dir.clone(),
-        audit_cfg.node_id.clone(),
-    ));
-    spawn(run_spool_writer(
-        audit_receivers.critical,
-        spool_dir.clone(),
-        audit_cfg.node_id.clone(),
-    ));
+    // One writer drains both QoS channels. It owns the spool lock: it runs
+    // until shutdown is requested or the dispatcher is dropped, so the lock
+    // lives as long as the spool is in use.
+    let spool_cfg = SpoolConfig {
+        max_segment_bytes: audit_cfg.spool_max_segment_bytes,
+        max_segment_age: Duration::from_secs(audit_cfg.spool_max_segment_age_secs),
+        max_segments: audit_cfg.spool_max_segments,
+        drain_timeout: Duration::from_secs(audit_cfg.spool_drain_timeout_secs),
+    };
+    let spool_bytes = audit_dispatcher.spool_bytes_handle();
+    let writer_dir = spool_dir.clone();
+    let writer_node_id = node_id.clone();
+    let shutdown = token.clone().cancelled_owned();
+    let writer = spawn(async move {
+        let _spool_lock = spool_lock;
+        run_spool_writer(
+            audit_receivers.perimeter,
+            audit_receivers.critical,
+            writer_dir,
+            writer_node_id,
+            spool_cfg,
+            spool_bytes,
+            shutdown,
+        )
+        .await;
+    });
 
-    // Replay the spool file left by the previous run (at-least-once delivery).
-    let mut key_store = MultiKeyStore(HashMap::new());
-    key_store
-        .0
-        .insert(AUDIT_HMAC_KEY_VERSION, Arc::clone(&audit_hmac_key));
-    let spool_file = spool_path(&spool_dir, audit_cfg.node_id.as_str());
-    replay_spool(
-        &spool_file,
-        audit_cfg.node_id.as_str(),
-        &audit_dispatcher,
-        &key_store,
-    )
-    .await
-    .wrap_err("audit spool replay failed")?;
+    // Verify the sealed segment at rest in the background: it can be large
+    // and must not delay startup. Nothing is re-dispatched.
+    if let Some(segment) = sealed {
+        let mut key_store = MultiKeyStore(HashMap::new());
+        key_store
+            .0
+            .insert(AUDIT_HMAC_KEY_VERSION, Arc::clone(&audit_hmac_key));
+        let dispatcher = Arc::clone(&audit_dispatcher);
+        spawn_blocking(move || {
+            if let Err(error) =
+                verify_sealed_spool(&segment, node_id.as_str(), &dispatcher, &key_store)
+            {
+                warn!(%error, segment = %segment.display(), "audit spool verification failed");
+            }
+        });
+    }
 
-    Ok(audit_dispatcher)
+    Ok((audit_dispatcher, writer))
 }
 
 #[cfg(test)]
@@ -177,15 +212,31 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let cfg = test_config(tmp.path().to_path_buf());
 
-        init(&cfg).await.expect("first init generates a KEK");
+        let token = CancellationToken::new();
+        let (dispatcher, writer) = init(&cfg, &token)
+            .await
+            .expect("first init generates a KEK");
         let kek_file = tmp.path().join("hmac-key.bin");
         let generated = std::fs::read(&kek_file).expect("KEK file was written");
         assert_eq!(generated.len(), 32);
 
-        // A second init on the same spool_dir must reuse the persisted KEK
-        // rather than silently regenerating it (which would invalidate any
-        // spooled events signed with the old key).
-        init(&cfg).await.expect("second init reuses the KEK");
+        // The first init's writer holds the spool lock for as long as the
+        // dispatcher lives, so a concurrent second init must be refused.
+        let Err(err) = init(&cfg, &CancellationToken::new()).await else {
+            panic!("spool is locked; second init must fail");
+        };
+        assert!(format!("{err:#}").contains("locked"), "got: {err:#}");
+
+        // Once the first instance is shut down, a restart on the same
+        // spool_dir must reuse the persisted KEK rather than silently
+        // regenerating it (which would invalidate any spooled events signed
+        // with the old key).
+        token.cancel();
+        writer.await.expect("writer exits on shutdown");
+        drop(dispatcher);
+        init(&cfg, &CancellationToken::new())
+            .await
+            .expect("restart after shutdown reuses the KEK");
         let reused = std::fs::read(&kek_file).unwrap();
         assert_eq!(generated, reused);
     }
@@ -197,7 +248,7 @@ mod tests {
         std::fs::create_dir_all(&cfg.audit.spool_dir).unwrap();
         std::fs::write(cfg.audit.spool_dir.join("hmac-key.bin"), b"too-short").unwrap();
 
-        match init(&cfg).await {
+        match init(&cfg, &CancellationToken::new()).await {
             Ok(_) => panic!("expected init_audit to reject a wrong-length KEK"),
             Err(e) => assert!(e.to_string().contains("expected 32")),
         }

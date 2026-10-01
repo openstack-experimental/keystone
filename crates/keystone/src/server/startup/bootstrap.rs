@@ -69,7 +69,7 @@ pub async fn run(
         .map(Arc::clone)
         .map(|s| s as Arc<dyn StorageApi>);
 
-    let audit_dispatcher = audit::init(&cfg).await?;
+    let (audit_dispatcher, audit_writer) = audit::init(&cfg, &token).await?;
     debug_elapsed(startup_timer, "init_audit");
 
     let state = Arc::new(
@@ -94,6 +94,7 @@ pub async fn run(
         token,
         state,
         concrete_storage,
+        audit_writer: Some(audit_writer),
     })
 }
 

@@ -33,5 +33,5 @@ pub mod types;
 
 pub use dispatcher::{AuditChannelDead, AuditChannelReceivers, AuditDispatcher};
 pub use kdf::derive_audit_hmac_key;
-pub use spool::{HmacKeyStore, SpoolError};
+pub use spool::{HmacKeyStore, SpoolConfig, SpoolError};
 pub use types::{CadfEvent, CadfEventPayload, Host, Initiator, Observer, Target};

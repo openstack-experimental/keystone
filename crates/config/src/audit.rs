@@ -29,6 +29,18 @@ fn default_node_id() -> String {
     std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown-node".to_string())
 }
 
+fn default_spool_drain_timeout_secs() -> u64 {
+    10
+}
+
+fn default_spool_max_segment_bytes() -> u64 {
+    256 * 1024 * 1024
+}
+
+fn default_spool_max_segment_age_secs() -> u64 {
+    24 * 60 * 60
+}
+
 /// Configuration for the CADF audit framework (ADR 0023).
 #[derive(Debug, Deserialize, Clone)]
 pub struct AuditConfig {
@@ -40,6 +52,29 @@ pub struct AuditConfig {
     /// Defaults to the system hostname.
     #[serde(default = "default_node_id")]
     pub node_id: String,
+
+    /// Rotate the live spool into a sealed segment once it reaches this many
+    /// bytes. Defaults to 256 MiB.
+    #[serde(default = "default_spool_max_segment_bytes")]
+    pub spool_max_segment_bytes: u64,
+
+    /// Rotate the live spool into a sealed segment once it is this many
+    /// seconds old, even if it is small. Defaults to 24 hours.
+    #[serde(default = "default_spool_max_segment_age_secs")]
+    pub spool_max_segment_age_secs: u64,
+
+    /// Maximum number of sealed segments to keep; the oldest are deleted
+    /// beyond this. Unset (the default) keeps every segment: audit records are
+    /// never deleted unless the operator opts in, since no downstream sink
+    /// has acknowledged them yet. Deletion is logged at `ERROR`.
+    #[serde(default)]
+    pub spool_max_segments: Option<usize>,
+
+    /// Seconds the spool writer may spend writing out already-queued events
+    /// after shutdown is requested. Events still queued at the deadline are
+    /// dropped and logged at `ERROR`. Defaults to 10.
+    #[serde(default = "default_spool_drain_timeout_secs")]
+    pub spool_drain_timeout_secs: u64,
 }
 
 impl Default for AuditConfig {
@@ -47,6 +82,10 @@ impl Default for AuditConfig {
         Self {
             spool_dir: default_spool_dir(),
             node_id: default_node_id(),
+            spool_max_segment_bytes: default_spool_max_segment_bytes(),
+            spool_max_segment_age_secs: default_spool_max_segment_age_secs(),
+            spool_max_segments: None,
+            spool_drain_timeout_secs: default_spool_drain_timeout_secs(),
         }
     }
 }

@@ -59,6 +59,7 @@ pub struct AuditDispatcher {
     log_baseline: std::time::Instant,
     pub(crate) postaudit_dropped_count: Arc<AtomicU64>,
     pub(crate) events_total: Arc<AtomicU64>,
+    pub(crate) spool_bytes: Arc<AtomicU64>,
 }
 
 impl AuditDispatcher {
@@ -96,6 +97,7 @@ impl AuditDispatcher {
             log_baseline: std::time::Instant::now(),
             postaudit_dropped_count: Arc::new(AtomicU64::new(0)),
             events_total: Arc::new(AtomicU64::new(0)),
+            spool_bytes: Arc::new(AtomicU64::new(0)),
         });
         let receivers = AuditChannelReceivers {
             perimeter: perimeter_rx,
@@ -168,7 +170,7 @@ impl AuditDispatcher {
     /// This method atomically swaps the **active** signing key but does NOT
     /// retain the previous key version. Any spool events that were signed with
     /// the old key version and have not yet been drained will fail HMAC
-    /// verification during the next `replay_spool` call unless the caller
+    /// verification during the next `verify_sealed_spool` call unless the caller
     /// separately persists old key versions in its `HmacKeyStore`.
     ///
     /// Callers performing key rotation MUST:
@@ -201,6 +203,17 @@ impl AuditDispatcher {
     /// critical channel is dead).
     pub fn record_postaudit_drop(&self) {
         self.postaudit_dropped_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Total bytes in the live spool and sealed segments, maintained by the
+    /// spool writer.
+    pub fn spool_bytes(&self) -> u64 {
+        self.spool_bytes.load(Ordering::Relaxed)
+    }
+
+    /// Shared handle the spool writer keeps up to date.
+    pub fn spool_bytes_handle(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.spool_bytes)
     }
 
     pub fn events_total(&self) -> u64 {

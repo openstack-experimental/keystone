@@ -13,7 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Prometheus text-format scrape endpoint helpers (ADR 0023 Phase 4).
 //!
-//! [`format_prometheus_text`] serialises the three audit counters into the
+//! [`format_prometheus_text`] serialises the audit counters and spool gauge into the
 //! Prometheus text exposition format (version 0.0.4) so they can be scraped
 //! by any Prometheus-compatible collector without pulling in the full
 //! `prometheus` client library.
@@ -22,12 +22,13 @@
 
 use crate::AuditDispatcher;
 
-/// Serialise the three audit counters as Prometheus text exposition format.
+/// Serialise the audit counters and spool gauge as Prometheus text format.
 ///
 /// Output is valid for Prometheus text format version 0.0.4 and contains:
 /// - `keystone_audit_dropped_total`
 /// - `keystone_audit_postaudit_dropped_total`
 /// - `keystone_audit_events_total`
+/// - `keystone_audit_spool_bytes` (gauge)
 pub fn format_prometheus_text(dispatcher: &AuditDispatcher) -> String {
     format!(
         "# HELP keystone_audit_dropped_total \
@@ -42,10 +43,15 @@ keystone_audit_postaudit_dropped_total {postaudit}\n\
 # HELP keystone_audit_events_total \
 Total audit events dispatched across both the perimeter and critical channels.\n\
 # TYPE keystone_audit_events_total counter\n\
-keystone_audit_events_total {total}\n",
+keystone_audit_events_total {total}\n\
+# HELP keystone_audit_spool_bytes \
+Bytes held on disk by the audit spool (live file plus sealed segments).\n\
+# TYPE keystone_audit_spool_bytes gauge\n\
+keystone_audit_spool_bytes {spool_bytes}\n",
         dropped = dispatcher.dropped_count(),
         postaudit = dispatcher.postaudit_dropped_count(),
         total = dispatcher.events_total(),
+        spool_bytes = dispatcher.spool_bytes(),
     )
 }
 
@@ -61,9 +67,11 @@ mod tests {
         assert!(text.contains("keystone_audit_postaudit_dropped_total"));
         assert!(text.contains("keystone_audit_events_total"));
         // Each metric has HELP and TYPE headers.
-        assert_eq!(text.matches("# HELP").count(), 3);
-        assert_eq!(text.matches("# TYPE").count(), 3);
+        assert!(text.contains("keystone_audit_spool_bytes"));
+        assert_eq!(text.matches("# HELP").count(), 4);
+        assert_eq!(text.matches("# TYPE").count(), 4);
         assert_eq!(text.matches("counter").count(), 3);
+        assert_eq!(text.matches("gauge").count(), 1);
     }
 
     #[test]
@@ -73,5 +81,6 @@ mod tests {
         assert!(text.contains("keystone_audit_dropped_total 0"));
         assert!(text.contains("keystone_audit_postaudit_dropped_total 0"));
         assert!(text.contains("keystone_audit_events_total 0"));
+        assert!(text.contains("keystone_audit_spool_bytes 0"));
     }
 }

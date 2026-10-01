@@ -14,13 +14,14 @@
 
 //! Shutdown signal handling and the listener-task join loop.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use tokio::signal;
-use tokio::task::JoinSet;
+use tokio::task::{JoinHandle, JoinSet};
 use tracing::{error, info};
 
 use super::Startup;
+use crate::config::Config;
 use openstack_keystone_core::keystone::ServiceState;
 
 /// Spawn the task that watches for `SIGINT`/`SIGTERM` and, on receipt,
@@ -66,6 +67,25 @@ pub async fn await_listeners(mut handles: JoinSet<()>) {
         ),
     }
     handles.join_all().await;
+}
+
+/// Wait for the audit spool writer to flush after the shutdown token was
+/// cancelled. The writer bounds its own drain by
+/// `[audit] spool_drain_timeout_secs`; this adds a small grace period for the
+/// final fsync so a stuck writer can never hang process exit.
+pub async fn await_audit_writer(writer: Option<JoinHandle<()>>, cfg: &Config) {
+    let Some(writer) = writer else {
+        return;
+    };
+    let limit = Duration::from_secs(cfg.audit.spool_drain_timeout_secs) + Duration::from_secs(5);
+    match tokio::time::timeout(limit, writer).await {
+        Ok(Ok(())) => info!("Audit spool writer stopped"),
+        Ok(Err(e)) => error!("Audit spool writer task failed: {e}"),
+        Err(_) => error!(
+            "Audit spool writer did not stop within {:?}; queued audit events may be lost",
+            limit
+        ),
+    }
 }
 
 /// Resolve once `SIGINT` (Ctrl+C) or `SIGTERM` is received, terminating the

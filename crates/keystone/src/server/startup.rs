@@ -26,7 +26,7 @@ use std::time::Instant;
 
 use clap::Parser;
 use color_eyre::eyre::{Report, Result};
-use tokio::task::JoinSet;
+use tokio::task::{JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -62,6 +62,9 @@ pub struct Startup {
     /// is configured. Needed by the Raft listener and the node-local
     /// emergency store wiring.
     pub concrete_storage: Option<Arc<Storage>>,
+    /// The audit spool writer task. Awaited (bounded) after `token` is
+    /// cancelled so queued audit events are flushed before the process exits.
+    pub audit_writer: Option<JoinHandle<()>>,
 }
 
 /// Parse CLI arguments, initialize logging, build the service, spawn the
@@ -92,7 +95,7 @@ pub async fn run() -> Result<(), Report> {
     info!("Starting Keystone...");
     let startup_timer = Instant::now();
 
-    let startup = bootstrap::run(cfg_mgr, cfg, startup_timer).await?;
+    let mut startup = bootstrap::run(cfg_mgr, cfg, startup_timer).await?;
 
     // Phase timings from here on are measured relative to the start of the
     // listen phase (matching the original `main`), not process start.
@@ -119,6 +122,7 @@ pub async fn run() -> Result<(), Report> {
 
     shutdown::await_listeners(handles).await;
     startup.token.cancel();
+    shutdown::await_audit_writer(startup.audit_writer.take(), &startup.cfg).await;
     Ok(())
 }
 
@@ -176,6 +180,7 @@ pub(crate) mod test_support {
             token: CancellationToken::new(),
             state,
             concrete_storage: None,
+            audit_writer: None,
         }
     }
 }
