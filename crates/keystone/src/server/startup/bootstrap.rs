@@ -37,7 +37,9 @@ use crate::provider::Provider;
 use openstack_keystone_core::error::KeystoneError;
 use openstack_keystone_core::keystone::{ServiceState, SpiffeHealthStatus};
 use openstack_keystone_credential_driver_sql::fernet::FernetKeyRepository;
-use openstack_keystone_distributed_storage::{StorageApi, app::Storage};
+use openstack_keystone_distributed_storage::{
+    StorageApi, app::Storage, spiffe_wait::wait_for_spiffe_source,
+};
 use openstack_keystone_token_driver_fernet::utils::FernetUtils;
 
 /// Build everything up to and including a wired [`ServiceState`].
@@ -46,11 +48,14 @@ pub async fn run(
     cfg: Config,
     startup_timer: Instant,
 ) -> Result<Startup, Report> {
+    debug!("Checking Fernet key repositories...");
     check_fernet_repositories(&cfg).await?;
+    debug_elapsed(startup_timer, "check_fernet_repositories");
 
     let token = CancellationToken::new();
 
     let conn = connect_database(&cfg).await?;
+    debug_elapsed(startup_timer, "connect_database");
     let (k8s_http_client, nova_http_client) = init_http_clients(&cfg)?;
 
     let plugin_manager = crate::plugin_manager::PluginManager::with_config(&cfg)
@@ -62,16 +67,22 @@ pub async fn run(
     debug!("Central provider manager initialized.");
     let policy = HttpPolicyEnforcer::new(cfg.api_policy.opa_base_url.clone()).await?;
     debug!("Policy enforcer started.");
+    debug_elapsed(startup_timer, "policy_enforcer");
 
+    debug!("Initializing distributed storage...");
     let concrete_storage = init_storage(&cfg_mgr, &cfg).await?;
+    debug_elapsed(startup_timer, "init_storage");
+
     let storage_for_service: Option<Arc<dyn StorageApi>> = concrete_storage
         .as_ref()
         .map(Arc::clone)
         .map(|s| s as Arc<dyn StorageApi>);
 
+    debug!("Initializing audit dispatcher (KEK, spool seal)...");
     let (audit_dispatcher, audit_writer) = audit::init(&cfg, &token).await?;
     debug_elapsed(startup_timer, "init_audit");
 
+    debug!("Creating service state...");
     let state = Arc::new(
         KeystoneServiceState::new(
             cfg_mgr,
@@ -86,8 +97,9 @@ pub async fn run(
     debug_elapsed(startup_timer, "ServiceState creation");
 
     wire_local_emergency_store(&state, &concrete_storage).await;
-    wire_spiffe_health(&state, &cfg).await;
+    spawn_spiffe_health(&state, &cfg, &token);
     spawn_db_spiffe_writer(&cfg, &token);
+    debug_elapsed(startup_timer, "bootstrap");
 
     Ok(Startup {
         cfg,
@@ -188,40 +200,50 @@ async fn wire_local_emergency_store(state: &ServiceState, storage: &Option<Arc<S
 /// deployment has SPIFFE mTLS configured on any interface, so the `/ready`
 /// probe's `SpiffeStatus` check can observe SVID freshness.
 ///
-/// Best-effort: a failure here only disables the health signal, it must not
-/// block startup — the real mTLS listeners perform their own independent
-/// SPIFFE initialization. The `spiffe` crate stays out of
-/// `openstack-keystone-core`, so a closure capturing the `X509Source` is
-/// handed over, mapped down to `core`'s spiffe-crate-free
-/// [`SpiffeHealthStatus`].
-async fn wire_spiffe_health(state: &ServiceState, cfg: &Config) {
+/// Best-effort and non-blocking: runs in a spawned task because the initial
+/// SVID sync can wait on an unreachable Workload API; a failure there only
+/// disables the health signal and must not block startup — the real mTLS
+/// listeners perform their own independent SPIFFE initialization. The
+/// `spiffe` crate stays out of `openstack-keystone-core`, so a closure
+/// capturing the `X509Source` is handed over, mapped down to `core`'s
+/// spiffe-crate-free [`SpiffeHealthStatus`].
+fn spawn_spiffe_health(state: &ServiceState, cfg: &Config, token: &CancellationToken) {
     if !spiffe_mtls_configured(cfg) {
         return;
     }
-    match spiffe::X509Source::new().await {
-        Ok(source) => {
-            let source = Arc::new(source);
-            let check: Arc<dyn Fn() -> SpiffeHealthStatus + Send + Sync> =
-                Arc::new(move || match source.svid() {
-                    Err(err) => SpiffeHealthStatus::Error(err.to_string()),
-                    Ok(_svid) => {
-                        if source.is_healthy() {
-                            SpiffeHealthStatus::Ok
-                        } else {
-                            SpiffeHealthStatus::Warn(
-                                "SPIFFE X509Source SVID is stale or expired; peer mTLS \
-                                 handshakes may be failing silently"
-                                    .to_string(),
-                            )
+    let state = Arc::clone(state);
+    let token = token.clone();
+    spawn(async move {
+        let source = tokio::select! {
+            res = wait_for_spiffe_source("health check", spiffe::X509Source::new()) => res,
+            () = token.cancelled() => return,
+        };
+        match source {
+            Ok(source) => {
+                let source = Arc::new(source);
+                let check: Arc<dyn Fn() -> SpiffeHealthStatus + Send + Sync> =
+                    Arc::new(move || match source.svid() {
+                        Err(err) => SpiffeHealthStatus::Error(err.to_string()),
+                        Ok(_svid) => {
+                            if source.is_healthy() {
+                                SpiffeHealthStatus::Ok
+                            } else {
+                                SpiffeHealthStatus::Warn(
+                                    "SPIFFE X509Source SVID is stale or expired; peer mTLS \
+                                     handshakes may be failing silently"
+                                        .to_string(),
+                                )
+                            }
                         }
-                    }
-                });
-            state.set_spiffe_health_check(check).await;
+                    });
+                state.set_spiffe_health_check(check).await;
+                debug!("SPIFFE health check wired.");
+            }
+            Err(e) => {
+                warn!("Failed to initialize SPIFFE X509Source for health checks: {e:#}");
+            }
         }
-        Err(e) => {
-            warn!("Failed to initialize SPIFFE X509Source for health checks: {e}");
-        }
-    }
+    });
 }
 
 /// Keep `[database]` TLS material fed from Keystone's own SPIFFE SVID/trust

@@ -272,6 +272,11 @@ pub async fn ensure_raft_initialized(
 
     let node_id = storage.node_id();
     let my_cluster_addr = ds.node_cluster_addr.to_string();
+    tracing::debug!(
+        node_id,
+        peers = ds.retry_join_nodes.len(),
+        "Checking whether Raft storage is initialized..."
+    );
 
     // Bootstrap node (node_id == 0): self-bootstrap as a single-node cluster.
     // Known peers join later via [add_learner] (non-bootstrap path below).
@@ -327,6 +332,7 @@ pub async fn ensure_raft_initialized(
     // Wait for our own Raft gRPC listener to be bound before calling
     // add_learner.  Without this, the leader may try to replicate back to us
     // before the port is accepting connections, causing join timeouts.
+    tracing::debug!("Waiting up to 30s for the Raft gRPC listener to bind...");
     tokio::time::timeout(std::time::Duration::from_secs(30), async {
         let _ = listener_bound.changed().await;
     })
@@ -352,6 +358,7 @@ pub async fn ensure_raft_initialized(
                     tracing::debug!(
                         node_id,
                         join_addr,
+                        attempt,
                         ?e,
                         "join attempt failed, trying next address"
                     );
@@ -359,7 +366,7 @@ pub async fn ensure_raft_initialized(
             }
         }
         if attempt % 10 == 0 {
-            tracing::debug!(
+            tracing::info!(
                 node_id,
                 attempt,
                 "still waiting for join addresses to be available"

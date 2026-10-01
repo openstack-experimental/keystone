@@ -28,7 +28,7 @@ use clap::Parser;
 use color_eyre::eyre::{Report, Result};
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::config::Config;
 use openstack_keystone_core::keystone::ServiceState;
@@ -100,7 +100,9 @@ pub async fn run() -> Result<(), Report> {
     // Phase timings from here on are measured relative to the start of the
     // listen phase (matching the original `main`), not process start.
     let listen_phase_start = Instant::now();
+    debug!("Spawning background tasks...");
     background::spawn_all(&startup, listen_phase_start).await;
+    debug_elapsed(listen_phase_start, "spawn_background_tasks");
 
     let (app, http_metrics) = router::build(&startup, main_router, openapi).await?;
     debug_elapsed(listen_phase_start, "build_router");
@@ -108,11 +110,19 @@ pub async fn run() -> Result<(), Report> {
     shutdown::spawn_watcher(&startup);
 
     let mut handles: JoinSet<()> = JoinSet::new();
+    debug!("Starting Raft gRPC listener and cluster join...");
     raft::start(&startup, &mut handles).await?;
+    debug_elapsed(listen_phase_start, "raft_start");
+    debug!("Starting embedded OPA...");
     opa::spawn(&startup, &mut handles).await?;
+    debug_elapsed(listen_phase_start, "opa_spawn");
+    debug!("Starting public listener...");
     listeners::spawn_public(&startup, app.clone(), &mut handles).await?;
+    debug!("Starting internal listener...");
     listeners::spawn_internal(&startup, app.clone(), &mut handles)?;
+    debug!("Starting metrics listener...");
     listeners::spawn_metrics(&startup, http_metrics.as_ref(), &mut handles).await?;
+    debug!("Starting admin listener...");
     listeners::spawn_admin(&startup, app, &mut handles);
 
     info!(

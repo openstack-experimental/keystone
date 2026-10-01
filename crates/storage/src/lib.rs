@@ -38,6 +38,7 @@ pub mod network;
 pub mod preflight;
 pub mod prometheus_metrics;
 mod proto_impl;
+pub mod spiffe_wait;
 mod types;
 pub mod store {
     pub mod log_store;

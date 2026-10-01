@@ -47,6 +47,7 @@ use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 
 use eyre::{Report, WrapErr};
+use openstack_keystone_distributed_storage::spiffe_wait::wait_for_spiffe_source;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -66,7 +67,7 @@ pub struct DbSpiffeWriterConfig {
 /// paths in `main()` - it must not block the rest of startup.
 pub async fn run(cancel: CancellationToken, config: DbSpiffeWriterConfig) -> Result<(), Report> {
     let source = tokio::select! {
-        res = spiffe::X509Source::new() => res.wrap_err("SPIFFE X509Source init for DB mTLS failed")?,
+        res = wait_for_spiffe_source("database mTLS", spiffe::X509Source::new()) => res.wrap_err("SPIFFE X509Source init for DB mTLS failed")?,
         () = cancel.cancelled() => return Ok(()),
     };
 

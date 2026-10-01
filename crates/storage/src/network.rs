@@ -682,13 +682,16 @@ async fn init_spiffe_raft_tls(
     trust_domains: Vec<String>,
     own_svid_path: String,
 ) -> Result<RaftTlsClient, StoreError> {
-    let source = X509SourceBuilder::new()
-        .picker(PathSvidPicker {
-            path: own_svid_path,
-        })
-        .build()
-        .await
-        .map_err(|e| StoreError::Other(eyre::eyre!("SPIFFE X509Source init failed: {e}")))?;
+    let source = crate::spiffe_wait::wait_for_spiffe_source(
+        "Raft peer mTLS client",
+        X509SourceBuilder::new()
+            .picker(PathSvidPicker {
+                path: own_svid_path,
+            })
+            .build(),
+    )
+    .await
+    .map_err(StoreError::Other)?;
 
     let mut rustls_config = mtls_client(source)
         .authorize(
@@ -715,9 +718,10 @@ pub async fn get_spiffe_grpc_channel(
     target_addr: http::Uri,
     trust_domains: &[String],
 ) -> Result<Channel, StoreError> {
-    let source = X509Source::new()
-        .await
-        .map_err(|e| StoreError::Other(eyre::eyre!("SPIFFE X509Source init failed: {e}")))?;
+    let source =
+        crate::spiffe_wait::wait_for_spiffe_source("Raft gRPC client channel", X509Source::new())
+            .await
+            .map_err(StoreError::Other)?;
 
     let mut rustls_config = mtls_client(source)
         .authorize(

@@ -396,7 +396,13 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
     // (`validate_kek_selection`) already rejects `env` outside `dev_mode` and
     // missing `pkcs11`/`tpm` sections, but that is a fail-fast, not the sole
     // enforcement point — `build_kek` re-checks at construction time too.
+    tracing::debug!(
+        node_id = ds_config.node_id,
+        path = %ds_config.path.display(),
+        "Initializing distributed storage: loading KEK..."
+    );
     let kek: Arc<dyn KekProvider> = build_kek(&ds_config)?;
+    tracing::debug!("KEK loaded; running preflight checks...");
 
     // Run OS-level security pre-flight checks after key material is cleared.
     // In production mode (dev_mode = false) any failure is fatal per ADR
@@ -412,6 +418,7 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
     }
 
     // Create stores and network
+    tracing::debug!("Opening Raft log/state-machine stores...");
     let (
         log_store,
         state_machine_store,
@@ -420,7 +427,9 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
         pending_rotations,
         quarantine_rx,
     ) = crate::new::<crate::TypeConfig, _>(ds_config.path, ds_config.node_id, kek.clone()).await?;
+    tracing::debug!("Raft stores opened; initializing Raft TLS client...");
     let tls_client = init_tls_watcher(config_manager).await?;
+    tracing::debug!("Raft TLS client initialized.");
     let network = Arc::new(NetworkManager::new(tls_client.clone())?);
 
     // Spawn expiry watchdog for manual-TLS fallback (ADR §4.2). The 30-day
@@ -437,6 +446,7 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
     }
 
     // Create Raft instance
+    tracing::debug!("Creating Raft instance...");
     let raft = Raft::new(
         ds_config.node_id,
         raft_config.clone(),
@@ -450,6 +460,10 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
     // address.
     let rpc_addr = ds_config.node_cluster_addr.to_string();
     check_node_id_uniqueness(&raft, ds_config.node_id, &rpc_addr).await?;
+    tracing::debug!(
+        peers = ds_config.retry_join_nodes.len(),
+        "Raft instance created; live peer uniqueness check (if peers configured)..."
+    );
 
     // Additionally verify against a live peer's current membership, since
     // the local check above cannot detect a conflict that appeared while

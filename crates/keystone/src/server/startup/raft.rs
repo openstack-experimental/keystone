@@ -55,7 +55,10 @@ pub async fn start(startup: &Startup, handles: &mut JoinSet<()>) -> Result<(), R
         }
         debug!("Raft gRPC task exited");
     });
-    debug!("Raft task spawned, calling ensure_raft_initialized...");
+    debug!(
+        node_id = raft_storage_init.node_id(),
+        "Raft gRPC task spawned, calling ensure_raft_initialized..."
+    );
     raft_grpc::ensure_raft_initialized(raft_storage_init, cfg.clone(), raft_bound_rx).await?;
     debug!("Raft initialized and ready");
     Ok(())

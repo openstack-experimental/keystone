@@ -25,6 +25,8 @@ use spiffe::x509_source::SvidPicker;
 use spiffe_rustls::{authorizer, mtls_server};
 use tokio_util::sync::CancellationToken;
 
+use openstack_keystone_distributed_storage::spiffe_wait::wait_for_spiffe_source;
+
 /// Selects the SVID whose SPIFFE ID path exactly matches a configured value.
 ///
 /// The Workload API returns every SVID a workload's selectors match (e.g. a
@@ -82,11 +84,14 @@ pub async fn build_spiffe_config(
     let source = tokio::select! {
         res = async {
             match spiffe_id_path {
-                Some(path) => spiffe::X509SourceBuilder::new()
-                    .picker(PathSvidPicker { path: path.to_string() })
-                    .build()
-                    .await,
-                None => spiffe::X509Source::new().await,
+                Some(path) => wait_for_spiffe_source(
+                    "SPIFFE mTLS listener",
+                    spiffe::X509SourceBuilder::new()
+                        .picker(PathSvidPicker { path: path.to_string() })
+                        .build(),
+                )
+                .await,
+                None => wait_for_spiffe_source("SPIFFE mTLS listener", spiffe::X509Source::new()).await,
             }
         } => { res? }
         _ = token.cancelled() => {
