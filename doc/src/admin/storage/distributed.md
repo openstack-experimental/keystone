@@ -367,34 +367,51 @@ operation is aborted with a clear error message. If membership cannot be queried
 
 ## Audit Log
 
-Every security-relevant operation is signed and forwarded to an external SIEM.
+Every security-relevant operation is signed and written to a durable, fsynced
+local spool. An external shipper (for example Filebeat or Vector) tails the
+spool and forwards it to the SIEM; the storage engine itself does not open a
+network connection to the SIEM.
 
-**Record structure:**
+**Spool line structure** (one JSON object per line):
 
 ```json
-{
-  "timestamp": 1750000000,
-  "event_type": "DEK_ROTATION",
-  "actor": "operator@example.org",
-  "node_id": 1,
-  "dek_version": 3,
-  "details": { ... }
-}
+{"record":{"timestamp":1750000000,"event_type":"DEK_ROTATION","actor":"operator@example.org","node_id":1,"dek_version":3,"details":{}},"key_version":3,"hmac":"<hex>"}
 ```
 
-**Signature:** `HMAC-SHA256(AuditHmacKey, canonical_json_of_record)`
+**Signature:** `HMAC-SHA256(AuditHmacKey, record_bytes)`, where `record_bytes`
+is the exact bytes of the `record` object as written in the line (do not
+re-serialise it before verifying).
 
-The 32-byte MAC is transmitted alongside the record as a hex string. The SIEM
-retains each epoch's key for audit retention purposes. The `node_id` in the HKDF
-derivation ensures different nodes hold distinct signing keys, preventing a
-compromised node from forging records attributed to other nodes.
+**Key derivation:** the key is derived from the DEK of the epoch it signs for,
+not from the KEK:
+`HKDF-Expand(DEK, info = "keystone-audit-dek-v1" ‖ dek_version_u32_be ‖ node_id_u64_be)`.
+It rotates with every DEK epoch swap, on every node, and the `key_version` field
+names the epoch whose key signed the line — verifiers select the key by
+`key_version`. The `node_id` binding gives each node a distinct key. Because the
+key derives from the DEK, a verifier needs the epoch's key material exported
+from a cluster node; export and retention of epoch keys is an operator
+responsibility and is not automated.
 
-**Availability:** If the SIEM is unreachable, records are buffered locally
-(encrypted under the Log DEK). At 90% buffer capacity a CRITICAL alert is
-emitted. Buffer exhaustion does **not** block writes to the identity store.
+**Availability:** the spool is bounded by `audit_max_spool_bytes` (default 256
+MiB, directory `audit_spool_dir`, default `<path>/audit-spool`). At 90% a
+`CRITICAL` alert is logged; at 100% the oldest sealed segment is deleted and an
+`ERROR` is logged. Spool contents are **not** encrypted at rest (files are
+created `0600`). Spool exhaustion or write failure never blocks writes to the
+identity store, but dropped records are counted in
+`keystone_raft_audit_dropped_total`; the current spool size is exposed as
+`keystone_raft_audit_spool_bytes`.
 
-Audited events include: `DEK_ROTATION`, `DEK_ROTATION_EMERGENCY`,
-`QUARANTINE_CLEARED`, and any operator access to gRPC management RPCs.
+**Ordering and failures:** a record is emitted only after the Raft write it
+describes has been attempted. A failed operation produces `<EVENT>_FAILED` with
+the error in `details.error`, never the success event. Every node additionally
+emits `DEK_INSTALLED` when it applies a DEK epoch swap.
+
+Audited events include: `DEK_ROTATION`, `DEK_ROTATION_EMERGENCY_STAGED`,
+`DEK_ROTATION_EMERGENCY_CONFIRMED`, `DEK_ROTATION_EMERGENCY_ABORTED`,
+`DEK_ROTATION_LOCAL_EMERGENCY_STAGED`,
+`DEK_ROTATION_LOCAL_EMERGENCY_RECONCILED`, `DEK_INSTALLED`,
+`QUARANTINE_CLEARED`, `BACKUP_CREATED`, `BACKUP_RESTORED`, and the `_FAILED`
+variants of the Raft-committed operations.
 
 ---
 

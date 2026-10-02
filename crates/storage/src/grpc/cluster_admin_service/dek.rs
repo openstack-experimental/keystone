@@ -48,23 +48,24 @@ impl ClusterAdminServiceImpl {
         let payload =
             pb::api::CommandRequest::try_from(cmd).map_err(|e| Status::internal(e.to_string()))?;
 
-        self.raft_node
+        let write = self
+            .raft_node
             .client_write(payload)
             .await
-            .map_err(|e| Status::internal(format!("Raft write failed: {e}")))?;
-
+            .map_err(|e| Status::internal(format!("Raft write failed: {e}")));
         let dek_version = self
             .current_dek
             .read()
             .unwrap_or_else(|p| p.into_inner())
             .version;
-        self.audit.emit(AuditRecord::now(
+        self.audit_outcome(
             "QUARANTINE_CLEARED",
             &actor,
-            self.node_id,
             dek_version,
             serde_json::json!({ "partition": partition }),
-        ));
+            &write,
+        );
+        write?;
 
         Ok(Response::new(()))
     }
@@ -121,22 +122,23 @@ impl ClusterAdminServiceImpl {
             let payload = pb::api::CommandRequest::try_from(cmd)
                 .map_err(|e| Status::internal(e.to_string()))?;
 
-            self.audit.emit(AuditRecord::now(
+            let write = self
+                .raft_node
+                .client_write(payload)
+                .await
+                .map_err(|e| Status::internal(format!("Raft write failed: {e}")));
+            self.audit_outcome(
                 "DEK_ROTATION_EMERGENCY_STAGED",
                 &actor,
-                self.node_id,
                 current_version,
                 serde_json::json!({
                     "rotation_id": rotation_id,
                     "new_version": new_version,
                     "expires_at": expires_at,
                 }),
-            ));
-
-            self.raft_node
-                .client_write(payload)
-                .await
-                .map_err(|e| Status::internal(format!("Raft write failed: {e}")))?;
+                &write,
+            );
+            write?;
 
             tracing::info!(
                 rotation_id,
@@ -160,18 +162,19 @@ impl ClusterAdminServiceImpl {
         let payload =
             pb::api::CommandRequest::try_from(cmd).map_err(|e| Status::internal(e.to_string()))?;
 
-        self.audit.emit(AuditRecord::now(
-            "DEK_ROTATION",
-            &actor,
-            self.node_id,
-            new_version,
-            serde_json::json!({ "previous_version": current_version }),
-        ));
-
-        self.raft_node
+        let write = self
+            .raft_node
             .client_write(payload)
             .await
-            .map_err(|e| Status::internal(format!("Raft write failed: {e}")))?;
+            .map_err(|e| Status::internal(format!("Raft write failed: {e}")));
+        self.audit_outcome(
+            "DEK_ROTATION",
+            &actor,
+            new_version,
+            serde_json::json!({ "previous_version": current_version }),
+            &write,
+        );
+        write?;
 
         tracing::info!(new_version, "DEK rotation committed to Raft log");
         Ok(Response::new(pb::raft::AdminResponse::default()))
@@ -241,18 +244,19 @@ impl ClusterAdminServiceImpl {
         let payload =
             pb::api::CommandRequest::try_from(cmd).map_err(|e| Status::internal(e.to_string()))?;
 
-        self.audit.emit(AuditRecord::now(
-            "DEK_ROTATION_EMERGENCY_CONFIRMED",
-            &actor,
-            self.node_id,
-            pending_version,
-            serde_json::json!({ "rotation_id": req.rotation_id }),
-        ));
-
-        self.raft_node
+        let write = self
+            .raft_node
             .client_write(payload)
             .await
-            .map_err(|e| Status::internal(format!("Raft write failed: {e}")))?;
+            .map_err(|e| Status::internal(format!("Raft write failed: {e}")));
+        self.audit_outcome(
+            "DEK_ROTATION_EMERGENCY_CONFIRMED",
+            &actor,
+            pending_version,
+            serde_json::json!({ "rotation_id": req.rotation_id }),
+            &write,
+        );
+        write?;
 
         tracing::warn!(
             rotation_id = req.rotation_id,
@@ -406,18 +410,19 @@ impl ClusterAdminServiceImpl {
         let install_payload =
             pb::api::CommandRequest::try_from(cmd).map_err(|e| Status::internal(e.to_string()))?;
 
-        self.audit.emit(AuditRecord::now(
-            "DEK_ROTATION_LOCAL_EMERGENCY_RECONCILED",
-            &actor,
-            self.node_id,
-            payload.dek_version,
-            serde_json::json!({ "rotation_id": req.rotation_id }),
-        ));
-
-        self.raft_node
+        let write = self
+            .raft_node
             .client_write(install_payload)
             .await
-            .map_err(|e| Status::internal(format!("Raft write failed: {e}")))?;
+            .map_err(|e| Status::internal(format!("Raft write failed: {e}")));
+        self.audit_outcome(
+            "DEK_ROTATION_LOCAL_EMERGENCY_RECONCILED",
+            &actor,
+            payload.dek_version,
+            serde_json::json!({ "rotation_id": req.rotation_id }),
+            &write,
+        );
+        write?;
 
         tracing::warn!(
             rotation_id = req.rotation_id,

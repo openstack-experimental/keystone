@@ -103,6 +103,39 @@ pub struct ClusterAdminServiceImpl {
 }
 
 impl ClusterAdminServiceImpl {
+    /// Audit the outcome of a state-changing operation, *after* it has been
+    /// attempted: `event` on success, `<event>_FAILED` (with the error in
+    /// `details.error`) on failure. Callers then propagate the result, so a
+    /// failed Raft write never leaves a success record behind.
+    fn audit_outcome<T>(
+        &self,
+        event: &str,
+        actor: &str,
+        dek_version: u32,
+        mut details: serde_json::Value,
+        result: &Result<T, Status>,
+    ) {
+        let event = match result {
+            Ok(_) => event.to_string(),
+            Err(status) => {
+                if let Some(map) = details.as_object_mut() {
+                    map.insert(
+                        "error".to_string(),
+                        serde_json::Value::String(status.message().to_string()),
+                    );
+                }
+                format!("{event}_FAILED")
+            }
+        };
+        self.audit.emit(AuditRecord::now(
+            event,
+            actor,
+            self.node_id,
+            dek_version,
+            details,
+        ));
+    }
+
     /// Creates a new instance of the API service.
     ///
     /// # Parameters

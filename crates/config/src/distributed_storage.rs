@@ -82,6 +82,19 @@ pub struct DistributedStorageConfiguration {
     #[serde(default = "default_ensure_linearizable_retry_delay_ms")]
     pub ensure_linearizable_retry_delay_ms: u64,
 
+    /// Directory holding the durable, fsynced audit spool for this node
+    /// (ADR 0016-v2 §3.1). Defaults to `<path>/audit-spool`. An external
+    /// shipper tails these files to the SIEM; records are never deleted
+    /// before `audit_max_spool_bytes` is reached.
+    #[serde(default)]
+    pub audit_spool_dir: Option<PathBuf>,
+
+    /// Upper bound, in bytes, on the total size of the audit spool (live file
+    /// plus sealed segments). At 90% a `CRITICAL` alert is logged; at 100%
+    /// the oldest sealed segment is dropped. Defaults to 256 MiB.
+    #[serde(default = "default_audit_max_spool_bytes")]
+    pub audit_max_spool_bytes: u64,
+
     /// PKCS#11 KEK configuration (ADR 0016-v2 §2.5.1). Required when
     /// `kek_provider = "pkcs11"`.
     #[serde(default)]
@@ -334,6 +347,10 @@ where
     Ok(out)
 }
 
+fn default_audit_max_spool_bytes() -> u64 {
+    256 * 1024 * 1024
+}
+
 fn default_tcp_address() -> SocketAddr {
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8081)
 }
@@ -384,6 +401,8 @@ impl Default for DistributedStorageConfiguration {
             path: PathBuf::new(),
             ensure_linearizable_retries: default_ensure_linearizable_retries(),
             ensure_linearizable_retry_delay_ms: default_ensure_linearizable_retry_delay_ms(),
+            audit_spool_dir: None,
+            audit_max_spool_bytes: default_audit_max_spool_bytes(),
             pkcs11: None,
             retry_join_nodes: Vec::new(),
             auto_bootstrap: default_auto_bootstrap(),

@@ -364,3 +364,58 @@ fn decrypt_with_revoked_and_discarded_epoch_returns_clean_error_not_quarantine()
         "expected a clean RevokedDek error, got: {err:?}"
     );
 }
+
+/// A DEK swap applied before the audit forwarder is attached must not leave
+/// the forwarder signing with a stale epoch key (GitHub #1300).
+#[tokio::test]
+async fn attaching_audit_forwarder_syncs_key_to_current_epoch() {
+    let (sm, td) = make_sm(test_epoch(0x06, 1));
+    let epoch2 = test_epoch(0x07, 2);
+    // Forwarder built from epoch 1, then the swap lands before attach.
+    let epoch1_key = test_epoch(0x06, 1).derive_audit_key(1).expect("key");
+    let (fwd, _task) = crate::audit::AuditForwarder::spawn(
+        1,
+        epoch1_key,
+        crate::audit::AuditSpoolConfig {
+            dir: td.path().join("audit"),
+            node_id: 1,
+            max_bytes: 1 << 20,
+        },
+    )
+    .expect("spawn");
+    *sm.dek.write().unwrap() = epoch2.clone();
+
+    sm.set_audit_forwarder(fwd.clone());
+    fwd.emit(crate::audit::AuditRecord::now(
+        "T",
+        "op",
+        1,
+        2,
+        serde_json::json!({}),
+    ));
+
+    let spool = td.path().join("audit").join("raft-audit-1.jsonl");
+    let mut line = String::new();
+    for _ in 0..100 {
+        line = std::fs::read_to_string(&spool).unwrap_or_default();
+        if !line.is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(line.contains(r#""key_version":2"#), "got: {line}");
+    let (record, rest) = line
+        .strip_prefix(r#"{"record":"#)
+        .and_then(|l| l.split_once(r#","key_version":"#))
+        .expect("framing");
+    let hmac = rest.split_once(r#","hmac":""#).expect("framing").1;
+    let mac: String = epoch2
+        .derive_audit_key(1)
+        .expect("key")
+        .sign(record.as_bytes())
+        .expect("sign")
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    assert_eq!(hmac.trim().trim_end_matches(r#""}"#), mac);
+}

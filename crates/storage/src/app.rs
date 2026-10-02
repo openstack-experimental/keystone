@@ -38,7 +38,7 @@ use crate::StorageApi;
 use crate::StoreError;
 use crate::StoreResponse;
 use crate::Violation;
-use crate::audit::{AuditForwarder, AuditRecord};
+use crate::audit::{AuditForwarder, AuditRecord, AuditSpoolConfig};
 use crate::grpc::cluster_admin_service::ClusterAdminServiceImpl;
 use crate::grpc::raft_service::RaftServiceImpl;
 use crate::grpc::storage_service::StorageServiceImpl;
@@ -426,7 +426,8 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
         _revoked_deks,
         pending_rotations,
         quarantine_rx,
-    ) = crate::new::<crate::TypeConfig, _>(ds_config.path, ds_config.node_id, kek.clone()).await?;
+    ) = crate::new::<crate::TypeConfig, _>(ds_config.path.clone(), ds_config.node_id, kek.clone())
+        .await?;
     tracing::debug!("Raft stores opened; initializing Raft TLS client...");
     let tls_client = init_tls_watcher(config_manager).await?;
     tracing::debug!("Raft TLS client initialized.");
@@ -444,6 +445,33 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
         let cert_bytes = cert_content.expose_secret().to_vec();
         CertExpiryWatchdog::spawn(cert_bytes, false);
     }
+
+    // Derive the per-node audit HMAC key from the current DEK epoch (ADR
+    // §3.1). The state machine re-derives and installs the key for every
+    // later epoch swap (`AuditForwarder::rotate_key`). Attached before the
+    // Raft instance starts applying, so no epoch swap can be applied without
+    // the forwarder (GitHub #1300).
+    let (audit_key_version, audit_key) = {
+        let guard = current_dek.read().unwrap_or_else(|p| p.into_inner());
+        let key = guard
+            .derive_audit_key(ds_config.node_id)
+            .map_err(|e| StoreError::Other(eyre!("failed to derive audit HMAC key: {e}")))?;
+        (guard.version, key)
+    };
+    let (audit_forwarder, _audit_task) = AuditForwarder::spawn(
+        audit_key_version,
+        audit_key,
+        AuditSpoolConfig {
+            dir: ds_config
+                .audit_spool_dir
+                .clone()
+                .unwrap_or_else(|| ds_config.path.join("audit-spool")),
+            node_id: ds_config.node_id,
+            max_bytes: ds_config.audit_max_spool_bytes,
+        },
+    )
+    .map_err(|e| StoreError::Other(eyre!("failed to open audit spool: {e}")))?;
+    state_machine_store.set_audit_forwarder(audit_forwarder.clone());
 
     // Create Raft instance
     tracing::debug!("Creating Raft instance...");
@@ -492,15 +520,6 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
             Err(e) => return Err(e),
         }
     }
-
-    // Derive the per-node audit HMAC key from the current DEK epoch (ADR §3.1).
-    let audit_key = {
-        let guard = current_dek.read().unwrap_or_else(|p| p.into_inner());
-        guard
-            .derive_audit_key(ds_config.node_id)
-            .map_err(|e| StoreError::Other(eyre!("failed to derive audit HMAC key: {e}")))?
-    };
-    let (audit_forwarder, _audit_task) = AuditForwarder::spawn(audit_key);
 
     // Extract SPIFFE configuration when the cluster is in SPIFFE mTLS mode
     // so the admin service interceptor can validate SVID patterns.
@@ -1346,9 +1365,12 @@ impl Storage {
     pub fn format_raft_prometheus_metrics(&self) -> String {
         let metrics_rx = self.raft.metrics();
         let live = metrics_rx.borrow_watched();
-        self.state_machine_store
+        let mut out = self
+            .state_machine_store
             .raft_prometheus_metrics()
-            .format_prometheus_text(&live, self.node_id)
+            .format_prometheus_text(&live, self.node_id);
+        out.push_str(&self.audit_forwarder.format_prometheus_text());
+        out
     }
 
     /// Enumerate current Raft membership peers (excluding self) from the

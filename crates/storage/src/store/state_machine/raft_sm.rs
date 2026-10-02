@@ -980,6 +980,10 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                 // Swap the active DEK epoch after a successful InstallDek
                 // commit.
                 if let Some((new_epoch, is_emergency_rotation)) = pending_dek_swap {
+                    // Audit key follows the DEK epoch (ADR 0016-v2 §3.1):
+                    // derive it before `new_epoch` moves into the swap.
+                    let new_version = new_epoch.version;
+                    let new_audit_key = new_epoch.derive_audit_key(self.node_id);
                     let old_epoch = {
                         let mut guard = self.dek.write().unwrap_or_else(|p| p.into_inner());
                         std::mem::replace(&mut *guard, new_epoch)
@@ -1029,6 +1033,26 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                     // channel full).
                     let _ = self.reencrypt_tx.try_send(old_epoch);
                     tracing::info!("DEK epoch swapped");
+                    // Every node audits the apply-side outcome and switches
+                    // its signing key to the new epoch.
+                    if let Some(audit) = self.audit.get() {
+                        match new_audit_key {
+                            Ok(key) => audit.rotate_key(new_version, key),
+                            Err(e) => tracing::error!(
+                                error = %e,
+                                version = new_version,
+                                "AUDIT: failed to derive audit key for new DEK epoch; \
+                                 records will be signed with the previous epoch key"
+                            ),
+                        }
+                        audit.emit(crate::audit::AuditRecord::now(
+                            "DEK_INSTALLED",
+                            "raft-apply",
+                            self.node_id,
+                            new_version,
+                            serde_json::json!({ "emergency": is_emergency_rotation }),
+                        ));
+                    }
                 }
             }
 

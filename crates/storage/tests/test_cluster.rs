@@ -492,6 +492,44 @@ async fn test_emergency_dek_rotation_preserves_data_across_restart_inner() -> Re
     let (current_version, _) = storage.state_machine_store().current_dek_wrapped()?;
     assert_eq!(current_version, new_version);
 
+    // The apply-side audit record must be signed with the *new* epoch's key
+    // (GitHub #1300): derive the expected key from the new root DEK and
+    // verify the HMAC over the exact record bytes in the spool.
+    {
+        let expected_key =
+            openstack_keystone_storage_crypto::DekEpoch::from_raw(new_raw, new_version)?
+                .derive_audit_key(105)?;
+        let spool = storage_dir
+            .path()
+            .join("audit-spool")
+            .join("raft-audit-105.jsonl");
+        let mut found = None;
+        for _ in 0..100 {
+            let text = std::fs::read_to_string(&spool).unwrap_or_default();
+            found = text
+                .lines()
+                .find(|l| l.contains(r#""event_type":"DEK_INSTALLED""#))
+                .map(str::to_string);
+            if found.is_some() {
+                break;
+            }
+            TypeConfig::sleep(Duration::from_millis(50)).await;
+        }
+        let line = found.expect("DEK_INSTALLED audit record must be spooled");
+        let (record, rest) = line
+            .strip_prefix(r#"{"record":"#)
+            .and_then(|l| l.split_once(r#","key_version":"#))
+            .expect("spool line framing");
+        let (version, hmac) = rest.split_once(r#","hmac":""#).expect("spool line framing");
+        assert_eq!(version, new_version.to_string());
+        let mac: String = expected_key
+            .sign(record.as_bytes())?
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(hmac.trim_end_matches(r#""}"#), mac);
+    }
+
     // The pre-rotation record must remain immediately readable. This is the
     // core regression: pre-fix, the old key was dropped and zeroized in the
     // very same `apply()` call that revoked it, before anything could be

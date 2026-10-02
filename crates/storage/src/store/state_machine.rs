@@ -207,6 +207,10 @@ pub struct FjallStateMachine {
     /// the same instance via `raft_prometheus_metrics()` to also render the
     /// `openraft`-snapshot-derived gauges for `/metrics`.
     raft_prometheus_metrics: Arc<crate::prometheus_metrics::KeystoneRaftPrometheusMetrics>,
+    /// Audit forwarder, set once after construction. Receives the new audit
+    /// HMAC key on every DEK epoch swap and the apply-side audit records
+    /// (ADR 0016-v2 §3.1). Unset in unit tests that do not exercise audit.
+    audit: std::sync::OnceLock<crate::audit::AuditForwarder>,
 }
 
 impl FjallStateMachine {
@@ -279,7 +283,29 @@ impl FjallStateMachine {
             raft_prometheus_metrics: Arc::new(
                 crate::prometheus_metrics::KeystoneRaftPrometheusMetrics::new(),
             ),
+            audit: std::sync::OnceLock::new(),
         })
+    }
+
+    /// Attach the audit forwarder. First call wins; later calls are ignored.
+    ///
+    /// Re-syncs the forwarder's key with the current DEK epoch: a swap
+    /// applied before the forwarder was attached could not rotate its key.
+    pub fn set_audit_forwarder(&self, forwarder: crate::audit::AuditForwarder) {
+        if self.audit.set(forwarder).is_err() {
+            return;
+        }
+        let epoch = self.dek.read().unwrap_or_else(|p| p.into_inner()).clone();
+        if let Some(audit) = self.audit.get() {
+            match epoch.derive_audit_key(self.node_id) {
+                Ok(key) => audit.rotate_key(epoch.version, key),
+                Err(e) => tracing::error!(
+                    error = %e,
+                    version = epoch.version,
+                    "AUDIT: failed to derive audit key for current DEK epoch"
+                ),
+            }
+        }
     }
 
     /// This node's ADR 0031 Raft Prometheus metrics. Shared (via `Arc`)

@@ -451,40 +451,37 @@ an external SIEM or centralized logging pipeline. The audit log is not stored
 within the Raft storage engine, satisfying GDPR Article 30 requirements
 independently of the identity data store.
 
-**Integrity:** Each audit record is signed with a per-node HMAC-SHA256 key
-derived from the KEK via
-`HKDF-Expand(KEK, info="keystone-audit-hmac-v1" ++ node_id_u64_be, L=32)`. The
-`node_id` is included in the derivation so each node holds a distinct signing
-key; a compromised node cannot forge audit records attributed to other nodes.
-The signing key is rotated on every DEK rotation, binding the HMAC key lifetime
-to the DEK epoch. The signature is computed over the canonical JSON
-representation of the audit record (including timestamp, event type, actor, and
-`node_id`), and transmitted alongside the record. An epoch tag
-(`dek_version_u32`) and the originating `node_id` are included in each audit
-record to identify which HMAC key signed it. Because the KEK never enters
-process memory in production (§2.1), this derivation is performed inside the
-HSM or Cloud KMS using a context-keyed derivation operation.
+**Integrity:** Each audit record is signed with a per-node, per-epoch
+HMAC-SHA256 key derived from the active DEK via
+`HKDF-Expand(DEK, info="keystone-audit-dek-v1" ++ dek_version_u32_be ++ node_id_u64_be, L=32)`.
+The `node_id` makes each node's key distinct; a compromised node cannot forge
+records attributed to other nodes. The key rotates on every DEK epoch swap
+(applied on every node from the Raft state machine), binding the HMAC key
+lifetime to the DEK epoch. The signature covers the exact serialised bytes of
+the record (timestamp, event type, actor, `node_id`, `dek_version`, details).
+Each spooled line carries `key_version`, the epoch whose key signed it, so a
+verifier selects the key by that field.
 
-**Transport:** Audit records are forwarded over an authenticated channel
-(TCP/TLS) to the SIEM. The keystone node cannot unilaterally modify records
-already received by the SIEM, which enforces append-only semantics downstream.
+_Implementation note (GitHub #1300):_ KEK-based derivation was rejected for
+the current implementation because it needs a KMS-side derive operation for
+PKCS#11/TPM providers and would not rotate with the DEK epoch. DEK-based
+derivation is the standard; export of epoch keys to the verifier is an
+operator step.
 
-**HMAC Key Lifecycle:** The epoch-tagged HMAC signing key is transmitted to the
-SIEM over the same authenticated channel as the audit records, bound to the
-`dek_version_u32` epoch. This ensures the HMAC key is protected by the same
-transport mechanisms as the audit records themselves. The SIEM retains each
-epoch's key for the duration of the audit retention period, enabling re-
-verification of historic records across epoch boundaries. The keystone node does
-not need to retain epoch keys beyond the current DEK epoch — responsibility for
-key lifecycle lies with the SIEM.
+**Transport:** Records are appended to a local fsynced JSONL spool; an external
+shipper forwards them to the SIEM, which enforces append-only semantics
+downstream. Built-in TCP/TLS delivery and automatic epoch-key transmission to
+the SIEM are not implemented.
 
-**Availability:** If the SIEM endpoint is unreachable, audit records are
-buffered locally (encrypted at rest with the Log DEK) and replayed on
-connectivity restoration. Buffer capacity is bounded to prevent disk exhaustion;
-if the buffer reaches 90% capacity, the node emits a `CRITICAL` alert. Audit
-buffer exhaustion is an operational concern for the audit pipeline, and does NOT
-affect the Raft storage engine's availability — writes to the identity data
-store proceed normally regardless of SIEM connectivity or audit buffer state.
+**Availability:** The spool is size-bounded (`audit_max_spool_bytes`). At 90% of
+the bound the node emits a `CRITICAL` alert; at 100% the oldest sealed segment
+is dropped. The spool is not encrypted at rest. Spool pressure or failure does
+NOT affect the Raft storage engine's availability — writes to the identity data
+store proceed normally.
+
+**Ordering:** An audit record for an operation is emitted after the operation
+has been attempted; failures emit `<EVENT>_FAILED`. Apply-side outcomes (for
+example `DEK_INSTALLED`) are emitted on every node.
 
 ---
 
