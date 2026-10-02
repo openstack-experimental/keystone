@@ -116,6 +116,16 @@ For browser-based apps and CLIs that can open a browser.
    already-used one is treated as a possible theft and revokes the entire token
    family, forcing a fresh login.
 
+   A refresh token family also has an **absolute lifetime** (default 90 days
+   from the original login, `[oauth2] refresh_token_absolute_lifetime_days`).
+   Rotating never extends it: once reached, the refresh fails with
+   `invalid_grant` and the user must log in again. On every refresh the server
+   re-checks that the user still exists, is enabled and that the domain is
+   enabled; otherwise the whole family is revoked and `invalid_grant` is
+   returned. The `expires_in` of the response is the plain access-token
+   lifetime. Once roles are embedded in access tokens, a refreshed token
+   carries the roles resolved at rotation time.
+
 ## CLI / headless login: Device Authorization Grant (RFC 8628)
 
 For `openstack`/`osc` CLI and other headless clients, the same flow every major

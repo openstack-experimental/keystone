@@ -110,8 +110,9 @@ pub enum RefreshTokenRedemption {
         reason: RefreshTokenRevocationReason,
     },
     /// The presented token does not resolve to any known, unexpired
-    /// record (unknown, already-revoked-family (tombstoned), or past
-    /// `refresh_token_lifetime_days`).
+    /// record (unknown, already-revoked-family (tombstoned), past
+    /// `refresh_token_lifetime_days`, or past the family's absolute
+    /// lifetime `refresh_token_absolute_lifetime_days`).
     Invalid,
 }
 
@@ -245,6 +246,28 @@ pub trait Oauth2SessionApi: Send + Sync {
         state: &ServiceState,
         presented_bearer: &str,
     ) -> Result<RefreshTokenRedemption, Oauth2SessionProviderError>;
+
+    /// Read-only lookup of the record behind a presented `refresh_token`
+    /// bearer, without rotating or otherwise mutating it. Lets the `/token`
+    /// handler validate the owning user/domain *before*
+    /// [`Self::redeem_refresh_token`] spends the token, so a failed
+    /// validation lookup does not strand the client with a lost bearer.
+    /// `None` when unknown.
+    async fn peek_refresh_token(
+        &self,
+        state: &ServiceState,
+        presented_bearer: &str,
+    ) -> Result<Option<RefreshToken>, Oauth2SessionProviderError>;
+
+    /// Revoke every member of a refresh token family (tombstoned, not
+    /// deleted) with the given `reason`. Used by the `/token` handler when
+    /// the owning user or domain is no longer valid at rotation time.
+    async fn revoke_refresh_token_family(
+        &self,
+        state: &ServiceState,
+        family_id: &str,
+        reason: RefreshTokenRevocationReason,
+    ) -> Result<(), Oauth2SessionProviderError>;
 
     /// Mint a new RFC 8628 Device Authorization Grant at
     /// `POST /device_authorization` (ADR 0026 §7.C).

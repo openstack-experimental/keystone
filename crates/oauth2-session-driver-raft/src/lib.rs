@@ -384,6 +384,7 @@ impl RaftOauth2SessionBackend {
             issued_at: data.issued_at,
             spent_at: None,
             expires_at: data.expires_at,
+            family_expires_at: data.family_expires_at,
             revoked_at: None,
             revocation_reason: None,
         };
@@ -1237,7 +1238,32 @@ mod tests {
             scope: vec!["openid".to_string()],
             issued_at: 1000,
             expires_at: 1000 + 2_592_000,
+            family_expires_at: 1000 + 7_776_000,
         }
+    }
+
+    #[test]
+    fn test_refresh_token_legacy_record_deserializes_without_family_expiry() {
+        // Records are stored as positional msgpack arrays; a pre-cap
+        // record is a 12-element array (no trailing `family_expires_at`).
+        let legacy = (
+            "t",
+            "f",
+            None::<String>,
+            "d",
+            "c",
+            "u",
+            Vec::<String>::new(),
+            1_i64,
+            None::<i64>,
+            2_i64,
+            None::<i64>,
+            None::<String>,
+        );
+        let bytes = rmp_serde::to_vec(&legacy).unwrap();
+        let record: RefreshToken = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(record.family_expires_at, 0);
+        assert_eq!(record.expires_at, 2);
     }
 
     #[tokio::test]

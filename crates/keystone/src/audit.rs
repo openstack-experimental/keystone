@@ -341,6 +341,46 @@ pub async fn emit_oauth2_refresh_reuse_critical_event(
     }
 }
 
+/// Emit the best-effort `OAUTH2_REFRESH_FAMILY_REVOKED` CADF event when a
+/// `refresh_token` family is revoked because its principal is no longer
+/// valid (user deleted/disabled/moved, domain disabled), so incident
+/// forensics can correlate the tombstones by `family_id` and `reason`.
+/// Best-effort `dispatch()`: unlike reuse detection this is not a breach
+/// signal, it is the expected consequence of an administrative change.
+pub fn emit_oauth2_refresh_family_revoked_event(
+    dispatcher: &Arc<AuditDispatcher>,
+    correlation_id: &str,
+    initiator: Initiator,
+    family_id: &str,
+    reason: &str,
+) {
+    let node_id = dispatcher.node_id().to_string();
+    let event_id = format!("{}:{}", node_id, Uuid::new_v4());
+    let payload = CadfEventPayload::new(
+        event_id,
+        "1.1".to_string(),
+        "default".to_string(),
+        correlation_id.to_string(),
+        chrono::Utc::now().to_rfc3339(),
+        "OAUTH2_REFRESH_FAMILY_REVOKED".to_string(),
+        "success".to_string(),
+        Some(format!(
+            "refresh_token family {family_id} revoked ({reason})"
+        )),
+        initiator,
+        Target {
+            id: family_id.to_string(),
+            type_uri: "data/security/keystone/oauth2_refresh_family".to_string(),
+        },
+        Observer {
+            node_id: node_id.clone(),
+            id: format!("service/security/keystone/{node_id}"),
+        },
+    );
+    let event = payload.sign(dispatcher);
+    dispatcher.dispatch(event);
+}
+
 /// Emit the best-effort `OAUTH2_KEY_ROTATION` CADF event (ADR 0026 §3,
 /// "Normal Rotation Flow", step 5) after a domain's signing key rotates.
 /// Uses `dispatch()` (best-effort), same posture as
@@ -588,6 +628,18 @@ mod tests {
         )
         .await;
         assert_eq!(dispatcher.postaudit_dropped_count(), before + 1);
+    }
+
+    #[test]
+    fn emit_oauth2_refresh_family_revoked_event_does_not_panic() {
+        let dispatcher = AuditDispatcher::noop();
+        emit_oauth2_refresh_family_revoked_event(
+            &dispatcher,
+            "req-1",
+            build_initiator_unknown(),
+            "family-1",
+            "user_disabled",
+        );
     }
 
     #[test]

@@ -197,6 +197,16 @@ pub struct RefreshToken {
     /// Stored as its `snake_case` string form. `None` while live.
     #[serde(default)]
     pub revocation_reason: Option<String>,
+    /// UTC epoch seconds after which the whole family is no longer valid
+    /// regardless of rotation (`[oauth2] refresh_token_absolute_lifetime_days`
+    /// from root issuance). Copied unchanged to every rotated child. `0`
+    /// (records written before this field existed) means "no cap".
+    ///
+    /// Must stay the last field: records are stored as positional msgpack
+    /// arrays, so only a trailing `#[serde(default)]` field stays
+    /// decodable from older, shorter records.
+    #[serde(default)]
+    pub family_expires_at: i64,
 }
 
 /// Reason a refresh token family was revoked (stored in
@@ -214,6 +224,8 @@ pub enum RefreshTokenRevocationReason {
     UserDeleted,
     /// The owning domain was disabled.
     DomainDisabled,
+    /// The owning user no longer belongs to the family's domain.
+    UserDomainChanged,
     /// Revoked manually by an operator.
     Operator,
     /// Revoked by the relying party (RFC 7009 revocation).
@@ -229,6 +241,7 @@ impl RefreshTokenRevocationReason {
             Self::UserDisabled => "user_disabled",
             Self::UserDeleted => "user_deleted",
             Self::DomainDisabled => "domain_disabled",
+            Self::UserDomainChanged => "user_domain_changed",
             Self::Operator => "operator",
             Self::RpRevoke => "rp_revoke",
         }
@@ -334,4 +347,7 @@ pub struct RefreshTokenCreate {
     pub issued_at: i64,
     /// UTC epoch seconds.
     pub expires_at: i64,
+    /// UTC epoch seconds the whole family expires (absolute cap); `0` = no
+    /// cap.
+    pub family_expires_at: i64,
 }

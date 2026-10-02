@@ -252,6 +252,10 @@ impl Oauth2SessionApi for Oauth2SessionService {
         let issued_at = now();
         let expires_at =
             issued_at + i64::from(self.oauth2_config.refresh_token_lifetime_days) * 86400;
+        // Absolute family cap: fixed here at root issuance and copied
+        // unchanged to every rotated child.
+        let family_expires_at =
+            issued_at + i64::from(self.oauth2_config.refresh_token_absolute_lifetime_days) * 86400;
         let record = self
             .backend_driver
             .create_refresh_token(
@@ -265,7 +269,8 @@ impl Oauth2SessionApi for Oauth2SessionService {
                     user_id: req.user_id,
                     scope: req.scope,
                     issued_at,
-                    expires_at,
+                    expires_at: expires_at.min(family_expires_at),
+                    family_expires_at,
                 },
             )
             .await?;
@@ -287,6 +292,12 @@ impl Oauth2SessionApi for Oauth2SessionService {
         };
         let now = now();
         if record.expires_at < now {
+            return Ok(RefreshTokenRedemption::Invalid);
+        }
+        // Absolute family lifetime: checked before any write so an
+        // over-age family can never mint a child. `0` is a legacy record
+        // from before the cap existed ("no cap").
+        if record.family_expires_at != 0 && now >= record.family_expires_at {
             return Ok(RefreshTokenRedemption::Invalid);
         }
         // Tombstoned (revoked) family: checked before the `spent_at`
@@ -314,8 +325,20 @@ impl Oauth2SessionApi for Oauth2SessionService {
                     Err(e) => return Err(e),
                 }
                 let bearer = generate_entropy();
-                let expires_at =
-                    now + i64::from(self.oauth2_config.refresh_token_lifetime_days) * 86400;
+                // Legacy record (written before the absolute cap existed,
+                // `family_expires_at == 0`): backfill the cap on its first
+                // post-upgrade rotation, measured from now, so such a
+                // family cannot stay uncapped forever.
+                let family_expires_at = if record.family_expires_at == 0 {
+                    now + i64::from(self.oauth2_config.refresh_token_absolute_lifetime_days) * 86400
+                } else {
+                    record.family_expires_at
+                };
+                // Rotation resets the idle window but never extends the
+                // family beyond its absolute cap.
+                let expires_at = (now
+                    + i64::from(self.oauth2_config.refresh_token_lifetime_days) * 86400)
+                    .min(family_expires_at);
                 let child = self
                     .backend_driver
                     .create_refresh_token(
@@ -330,6 +353,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
                             scope: record.scope.clone(),
                             issued_at: now,
                             expires_at,
+                            family_expires_at,
                         },
                     )
                     .await?;
@@ -380,6 +404,27 @@ impl Oauth2SessionApi for Oauth2SessionService {
                 }
             }
         }
+    }
+
+    async fn peek_refresh_token(
+        &self,
+        state: &ServiceState,
+        presented_bearer: &str,
+    ) -> Result<Option<RefreshToken>, Oauth2SessionProviderError> {
+        self.backend_driver
+            .get_refresh_token(state, &hash_bearer(presented_bearer))
+            .await
+    }
+
+    async fn revoke_refresh_token_family(
+        &self,
+        state: &ServiceState,
+        family_id: &str,
+        reason: RefreshTokenRevocationReason,
+    ) -> Result<(), Oauth2SessionProviderError> {
+        self.backend_driver
+            .revoke_refresh_token_family(state, family_id, reason, now())
+            .await
     }
 
     async fn start_device_authorization(
@@ -612,6 +657,7 @@ mod tests {
             revoked_at: None,
             revocation_reason: None,
             expires_at: now() + 1_000_000,
+            family_expires_at: now() + 10_000_000,
         }
     }
 
@@ -695,6 +741,7 @@ mod tests {
                 issued_at: data.issued_at,
                 spent_at: None,
                 expires_at: data.expires_at,
+                family_expires_at: data.family_expires_at,
                 revoked_at: None,
                 revocation_reason: None,
             })
@@ -707,6 +754,156 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(result, RefreshTokenRedemption::Rotated { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_redeem_refresh_token_family_lifetime_reached_is_invalid_no_writes() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_get_refresh_token().returning(|_, _| {
+            let mut record = sample_refresh_token(None);
+            record.family_expires_at = now() - 1;
+            Ok(Some(record))
+        });
+        // `mark_refresh_token_spent` / `create_refresh_token` deliberately
+        // not configured: mockall panics if a write is attempted.
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let result = service
+            .redeem_refresh_token(&state, "presented-bearer")
+            .await
+            .unwrap();
+        assert!(matches!(result, RefreshTokenRedemption::Invalid));
+    }
+
+    #[tokio::test]
+    async fn test_redeem_refresh_token_child_inherits_and_is_capped_by_family_expiry() {
+        let family_expires_at = now() + 3600; // far sooner than the 30d idle window
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_get_refresh_token().returning(move |_, _| {
+            let mut record = sample_refresh_token(None);
+            record.family_expires_at = family_expires_at;
+            Ok(Some(record))
+        });
+        mock.expect_mark_refresh_token_spent()
+            .returning(|_, _, _| Ok(()));
+        mock.expect_create_refresh_token()
+            .withf(move |_, data| {
+                data.family_expires_at == family_expires_at && data.expires_at == family_expires_at
+            })
+            .returning(|_, data| {
+                Ok(RefreshToken {
+                    token_id: data.token_id,
+                    family_id: data.family_id,
+                    parent_token_id: data.parent_token_id,
+                    domain_id: data.domain_id,
+                    client_id: data.client_id,
+                    user_id: data.user_id,
+                    scope: data.scope,
+                    issued_at: data.issued_at,
+                    spent_at: None,
+                    expires_at: data.expires_at,
+                    family_expires_at: data.family_expires_at,
+                    revoked_at: None,
+                    revocation_reason: None,
+                })
+            });
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let result = service
+            .redeem_refresh_token(&state, "presented-bearer")
+            .await
+            .unwrap();
+        assert!(matches!(result, RefreshTokenRedemption::Rotated { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_redeem_refresh_token_legacy_record_backfills_family_cap() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_get_refresh_token().returning(|_, _| {
+            let mut record = sample_refresh_token(None);
+            record.family_expires_at = 0;
+            Ok(Some(record))
+        });
+        mock.expect_mark_refresh_token_spent()
+            .returning(|_, _, _| Ok(()));
+        mock.expect_create_refresh_token()
+            .withf(|_, data| {
+                // Backfilled: now + 90d (config default), idle 30d inside it.
+                data.family_expires_at > now() + 89 * 86400
+                    && data.family_expires_at <= now() + 90 * 86400
+                    && data.expires_at > now() + 29 * 86400
+                    && data.expires_at <= data.family_expires_at
+            })
+            .returning(|_, data| {
+                Ok(RefreshToken {
+                    token_id: data.token_id,
+                    family_id: data.family_id,
+                    parent_token_id: data.parent_token_id,
+                    domain_id: data.domain_id,
+                    client_id: data.client_id,
+                    user_id: data.user_id,
+                    scope: data.scope,
+                    issued_at: data.issued_at,
+                    spent_at: None,
+                    expires_at: data.expires_at,
+                    family_expires_at: data.family_expires_at,
+                    revoked_at: None,
+                    revocation_reason: None,
+                })
+            });
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let result = service
+            .redeem_refresh_token(&state, "presented-bearer")
+            .await
+            .unwrap();
+        assert!(matches!(result, RefreshTokenRedemption::Rotated { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_issue_refresh_token_sets_family_expiry() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_create_refresh_token()
+            .withf(|_, data| {
+                let abs = 90 * 86400;
+                data.family_expires_at - data.issued_at == abs
+                    && data.expires_at - data.issued_at == 30 * 86400
+            })
+            .returning(|_, data| {
+                Ok(RefreshToken {
+                    token_id: data.token_id,
+                    family_id: data.family_id,
+                    parent_token_id: data.parent_token_id,
+                    domain_id: data.domain_id,
+                    client_id: data.client_id,
+                    user_id: data.user_id,
+                    scope: data.scope,
+                    issued_at: data.issued_at,
+                    spent_at: None,
+                    expires_at: data.expires_at,
+                    family_expires_at: data.family_expires_at,
+                    revoked_at: None,
+                    revocation_reason: None,
+                })
+            });
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        service
+            .issue_refresh_token(
+                &state,
+                IssueRefreshTokenRequest {
+                    domain_id: "d".to_string(),
+                    client_id: "c".to_string(),
+                    user_id: "u".to_string(),
+                    scope: vec![],
+                },
+            )
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -783,6 +980,7 @@ mod tests {
                 issued_at: data.issued_at,
                 spent_at: None,
                 expires_at: data.expires_at,
+                family_expires_at: data.family_expires_at,
                 revoked_at: None,
                 revocation_reason: None,
             })
@@ -838,6 +1036,23 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(result, RefreshTokenRedemption::Invalid));
+    }
+
+    #[tokio::test]
+    async fn test_peek_refresh_token_is_read_only() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_get_refresh_token()
+            .returning(|_, _| Ok(Some(sample_refresh_token(None))));
+        // `mark_refresh_token_spent` / `create_refresh_token` deliberately
+        // not configured: peeking must never mutate.
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let record = service
+            .peek_refresh_token(&state, "presented-bearer")
+            .await
+            .unwrap();
+        assert_eq!(record.unwrap().family_id, "family-1");
     }
 
     #[tokio::test]

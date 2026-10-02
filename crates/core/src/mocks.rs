@@ -347,6 +347,7 @@ mod oauth2_session {
 
     use openstack_keystone_core_types::oauth2_session::{
         AuthorizationCode, DeviceCodeGrant, PreAuthSession, RefreshToken,
+        RefreshTokenRevocationReason,
     };
 
     use crate::oauth2_session::provider_api::{
@@ -417,6 +418,19 @@ mod oauth2_session {
                 state: &ServiceState,
                 presented_bearer: &str,
             ) -> Result<RefreshTokenRedemption, Oauth2SessionProviderError>;
+
+            async fn peek_refresh_token(
+                &self,
+                state: &ServiceState,
+                presented_bearer: &str,
+            ) -> Result<Option<RefreshToken>, Oauth2SessionProviderError>;
+
+            async fn revoke_refresh_token_family(
+                &self,
+                state: &ServiceState,
+                family_id: &str,
+                reason: RefreshTokenRevocationReason,
+            ) -> Result<(), Oauth2SessionProviderError>;
 
             async fn start_device_authorization(
                 &self,

@@ -41,7 +41,8 @@ code), see the [OAuth2 / OIDC user guide](../../user/features/oauth2.md).
 | `access_token_lifetime_minutes`         | 15      | `access_token` TTL.                                                                                                                              |
 | `id_token_lifetime_minutes`             | 15      | `id_token` TTL.                                                                                                                                  |
 | `authorization_code_lifetime_seconds`   | 60      | Single-use authorization code TTL.                                                                                                               |
-| `refresh_token_lifetime_days`           | 30      | Idle lifetime of a refresh token family; reset on each rotation.                                                                                 |
+| `refresh_token_lifetime_days`           | 30      | Idle lifetime of a refresh token family; reset on each rotation (never beyond the absolute lifetime).                                            |
+| `refresh_token_absolute_lifetime_days`  | 90      | Absolute lifetime of a refresh token family from root issuance; rotation never extends it.                                                       |
 | `refresh_token_reuse_grace_minutes`     | 10      | Grace window before a reused refresh token is treated as a breach (family revoked). `0` = tightest detection, most multi-device false positives. |
 | `pre_auth_session_lifetime_minutes`     | 10      | Pre-authentication browser session TTL for the login/consent sequence.                                                                           |
 | `device_code_lifetime_minutes`          | 10      | RFC 8628 `device_code`/`user_code` TTL.                                                                                                          |
@@ -258,6 +259,20 @@ falling through to Fernet once its operator has explicitly accepted the
 15-minute stateless revocation window (or wired back-channel introspection for
 high-criticality operations) — record that acceptance in your deployment's
 migration runbook.
+
+## Upgrading to the absolute refresh-token lifetime
+
+- **Existing refresh families** (issued before `refresh_token_absolute_lifetime_days`
+  existed) carry no cap. On their first rotation after the upgrade they are
+  backfilled with `now + refresh_token_absolute_lifetime_days`, so they are
+  capped from then on rather than staying uncapped forever.
+- **Rolling upgrades of a Raft cluster:** `create_refresh_token` commands now
+  carry a `family_expires_at` field. Nodes still running the old version cannot
+  apply them, so upgrade all nodes before serving refresh-token traffic from the
+  new version (stored records stay readable in both directions).
+- Revoking a family because its user or domain is no longer valid emits an
+  `OAUTH2_REFRESH_FAMILY_REVOKED` audit event (family id and reason:
+  `user_deleted`, `user_disabled`, `user_domain_changed`, `domain_disabled`).
 
 ## Known gaps
 

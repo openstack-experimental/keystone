@@ -115,10 +115,19 @@ pub struct Oauth2Provider {
 
     /// Idle lifetime, in days, of a `refresh_token` family before it must
     /// be re-established via a fresh `authorization_code` grant (ADR 0026
-    /// §2). Reset on each successful rotation.
+    /// §2). Reset on each successful rotation, but never beyond the
+    /// family's absolute lifetime (`refresh_token_absolute_lifetime_days`).
     #[serde(default = "default_refresh_token_lifetime_days")]
     #[validate(range(min = 1))]
     pub refresh_token_lifetime_days: u32,
+
+    /// Absolute lifetime, in days, of a `refresh_token` family measured
+    /// from the root issuance. Rotation never extends it: once reached the
+    /// family must be re-established via a fresh `authorization_code`
+    /// grant, no matter how recently it was rotated.
+    #[serde(default = "default_refresh_token_absolute_lifetime_days")]
+    #[validate(range(min = 1))]
+    pub refresh_token_absolute_lifetime_days: u32,
 
     /// Grace period, in minutes, during which a `refresh_token` presented
     /// a second time is tolerated as a benign multi-device race rather
@@ -211,6 +220,10 @@ fn default_refresh_token_lifetime_days() -> u32 {
     30
 }
 
+fn default_refresh_token_absolute_lifetime_days() -> u32 {
+    90
+}
+
 fn default_refresh_token_reuse_grace_minutes() -> u32 {
     10
 }
@@ -249,6 +262,7 @@ impl Default for Oauth2Provider {
             id_token_lifetime_minutes: default_id_token_lifetime_minutes(),
             authorization_code_lifetime_seconds: default_authorization_code_lifetime_seconds(),
             refresh_token_lifetime_days: default_refresh_token_lifetime_days(),
+            refresh_token_absolute_lifetime_days: default_refresh_token_absolute_lifetime_days(),
             refresh_token_reuse_grace_minutes: default_refresh_token_reuse_grace_minutes(),
             pre_auth_session_lifetime_minutes: default_pre_auth_session_lifetime_minutes(),
             device_code_lifetime_minutes: default_device_code_lifetime_minutes(),
@@ -275,6 +289,7 @@ mod tests {
         assert_eq!(cfg.id_token_lifetime_minutes, 15);
         assert_eq!(cfg.authorization_code_lifetime_seconds, 60);
         assert_eq!(cfg.refresh_token_lifetime_days, 30);
+        assert_eq!(cfg.refresh_token_absolute_lifetime_days, 90);
         assert_eq!(cfg.refresh_token_reuse_grace_minutes, 10);
         assert_eq!(cfg.pre_auth_session_lifetime_minutes, 10);
         assert_eq!(cfg.device_code_lifetime_minutes, 10);
@@ -288,6 +303,13 @@ mod tests {
     fn test_validate_rejects_refresh_token_reuse_grace_minutes_over_30() {
         let cfg: Oauth2Provider =
             serde_json::from_str(r#"{"refresh_token_reuse_grace_minutes": 31}"#).unwrap();
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_rejects_zero_refresh_token_absolute_lifetime_days() {
+        let cfg: Oauth2Provider =
+            serde_json::from_str(r#"{"refresh_token_absolute_lifetime_days": 0}"#).unwrap();
         assert!(cfg.validate().is_err());
     }
 
