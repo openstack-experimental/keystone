@@ -11,4 +11,6 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+#[cfg(feature = "conv")]
+mod conv;
 pub mod token;

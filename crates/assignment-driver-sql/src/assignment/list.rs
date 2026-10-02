@@ -201,8 +201,6 @@ async fn list_for_multiple_actors_and_targets_system(
 mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, Transaction};
 
-    use openstack_keystone_core_types::assignment::*;
-
     use super::super::tests::*;
     use super::*;
     use crate::entity::assignment;
@@ -445,7 +443,8 @@ mod tests {
         .unwrap();
 
         // The generated SQL must include `actor_id IN($1)` so that
-        // assignments belonging to other actors (users, other groups) are excluded.
+        // assignments belonging to other actors (users, other groups) are
+        // excluded.
         assert_eq!(
             db.into_transaction_log(),
             [

@@ -40,8 +40,8 @@ const AUDIT_HMAC_KEY_VERSION: u64 = 1;
 /// `MultiKeyStore` holds every key version seen during this process lifetime.
 ///
 /// Currently only one version exists; the map is pre-populated with the
-/// current key so `verify_sealed_spool` can verify events signed by it. When key
-/// rotation is implemented, callers MUST insert the new version before
+/// current key so `verify_sealed_spool` can verify events signed by it. When
+/// key rotation is implemented, callers MUST insert the new version before
 /// calling `refresh_hmac_key` on the dispatcher — spool events written
 /// before the rotation still carry the old version number and must remain
 /// verifiable during the drain window (ADR 0023 §"Key Rotation").

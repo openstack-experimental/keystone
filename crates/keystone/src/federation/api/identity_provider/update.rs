@@ -58,7 +58,8 @@ pub(super) async fn update(
     Json(req): Json<IdentityProviderUpdateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     req.validate()?;
-    // Fetch the current resource to pass current object into the policy evaluation
+    // Fetch the current resource to pass current object into the policy
+    // evaluation
     let current = state
         .provider
         .get_federation_provider()

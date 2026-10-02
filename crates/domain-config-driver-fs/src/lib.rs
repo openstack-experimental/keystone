@@ -37,8 +37,8 @@
 //!
 //! The re-scan is driven by [`DomainConfigBackend::reload`], whose sole
 //! in-process caller is `AssignmentService::rebuild` on the
-//! `reload_assignment_drivers_on_config_change` reactor. Because the driver is a
-//! single shared `Arc`, that one call also refreshes the store this backend
+//! `reload_assignment_drivers_on_config_change` reactor. Because the driver is
+//! a single shared `Arc`, that one call also refreshes the store this backend
 //! serves to the identity service and the provider's own resolver.
 //!
 //! The driver is **read-only**. Every create, update, delete and registration
@@ -79,7 +79,8 @@ pub struct FsBackend {
 }
 
 impl FsBackend {
-    /// Load the driver from the directory named by `[identity] domain_config_dir`.
+    /// Load the driver from the directory named by `[identity]
+    /// domain_config_dir`.
     ///
     /// # Parameters
     /// - `config`: The service configuration.
@@ -232,8 +233,8 @@ impl DomainConfigBackend for FsBackend {
     /// A scan error is propagated with the last good store left in place; the
     /// reload reactor logs it and keeps serving the previous scan.
     ///
-    /// The scan is synchronous `std::fs` walking the whole directory, so it runs
-    /// on a blocking thread rather than the reactor's worker.
+    /// The scan is synchronous `std::fs` walking the whole directory, so it
+    /// runs on a blocking thread rather than the reactor's worker.
     async fn reload(&self, config: &Config) -> Result<bool, DomainConfigProviderError> {
         let dir = config.identity.domain_config_dir.clone();
         let fresh = tokio::task::spawn_blocking(move || store::DomainConfigStore::load(&dir))

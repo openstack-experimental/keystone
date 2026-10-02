@@ -514,15 +514,17 @@ mod tests {
         // Reset should clear the cache so the next call recomputes.
         reset_dummy_hash_cache().await;
 
-        // After reset, cache is cold; the new hash may differ (bcrypt is randomized).
-        // We just need to confirm the call succeeds and the cache is re-populated.
+        // After reset, cache is cold; the new hash may differ (bcrypt is
+        // randomized). We just need to confirm the call succeeds and
+        // the cache is re-populated.
         let after = get_or_init_dummy_hash(&conf).await.unwrap();
         assert!(
             after.starts_with("$2b$"),
             "After cache reset, dummy hash should still be a valid bcrypt hash"
         );
-        // The two hashes are likely different (random salt), but we can't assert
-        // inequality deterministically. Just verify both are structurally valid.
+        // The two hashes are likely different (random salt), but we can't
+        // assert inequality deterministically. Just verify both are
+        // structurally valid.
         let _ = before;
     }
 

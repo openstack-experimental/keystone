@@ -36,8 +36,8 @@
 //! ADR requires:
 //!
 //! - `check_ip` (the `global_ip` limiter) -> `scope = "per_ip"`
-//! - `check_user` (the `user_auth` limiter, only ever called on
-//!   authentication paths) -> `scope = "per_user"`
+//! - `check_user` (the `user_auth` limiter, only ever called on authentication
+//!   paths) -> `scope = "per_user"`
 //!
 //! `global` and `auth_endpoint` are intentionally unused today; if a future
 //! limiter instance is added that genuinely matches one of those scopes,

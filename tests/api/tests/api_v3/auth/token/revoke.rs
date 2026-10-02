@@ -23,7 +23,7 @@ use test_api::common::TestClient;
 
 #[tokio::test]
 async fn test_invalid_token_cannot_be_used_for_authentication() -> Result<()> {
-    let client = TestClient::default()?;
+    let client = TestClient::new()?;
     let invalid = SecretString::from("invalid-token");
     let response = authenticate_by_token(&client, &invalid, None).await?;
 
@@ -37,10 +37,10 @@ async fn test_invalid_token_cannot_be_used_for_authentication() -> Result<()> {
 #[tokio::test]
 #[traced_test]
 async fn test_revoked_token_cannot_be_validated_or_used_for_authentication() -> Result<()> {
-    let mut admin_client = TestClient::default()?;
+    let mut admin_client = TestClient::new()?;
     admin_client.auth_admin().await?;
 
-    let mut subject_client = TestClient::default()?;
+    let mut subject_client = TestClient::new()?;
     subject_client.auth_admin().await?;
     let subject_token = subject_client
         .token

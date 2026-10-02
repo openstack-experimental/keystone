@@ -25,6 +25,8 @@ use openstack_keystone_storage_crypto::EnvKek;
 
 use super::*;
 
+type KvPair = (Vec<u8>, Vec<u8>);
+
 fn make_sm() -> (Arc<FjallStateMachine>, tempfile::TempDir) {
     let td = tempfile::TempDir::new().expect("tempdir");
     let db = Arc::new(Database::builder(td.path()).open().expect("open db"));
@@ -63,7 +65,7 @@ fn seed_ephemeral(sm: &FjallStateMachine, keyspace: &str, key: &[u8]) {
 
 /// Dumps every entry currently in Fjall keyspace `name`, sorted for
 /// deterministic comparison.
-fn dump(sm: &FjallStateMachine, name: &str) -> Vec<(Vec<u8>, Vec<u8>)> {
+fn dump(sm: &FjallStateMachine, name: &str) -> Vec<KvPair> {
     let ks = sm.keyspace(name).expect("keyspace handle");
     let mut out: Vec<_> = ks
         .iter()
@@ -100,7 +102,7 @@ async fn build_snapshot_captures_every_keyspace_and_ephemeral_registry() {
 
     assert_eq!(payload.version, SNAPSHOT_FORMAT_VERSION);
 
-    let by_name: HashMap<String, Vec<(Vec<u8>, Vec<u8>)>> = payload.keyspaces.into_iter().collect();
+    let by_name: HashMap<String, Vec<KvPair>> = payload.keyspaces.into_iter().collect();
     assert_eq!(
         by_name.get("data"),
         Some(&vec![(b"rec1".to_vec(), b"ciphertext".to_vec())])
@@ -633,7 +635,7 @@ async fn get_current_snapshot_falls_back_to_an_older_file_if_newest_is_corrupt()
         .expect("must fall back to the older, still-valid snapshot");
     let payload: SnapshotPayload =
         rmp_serde::from_slice(&snapshot.snapshot).expect("decode payload");
-    let by_name: HashMap<String, Vec<(Vec<u8>, Vec<u8>)>> = payload.keyspaces.into_iter().collect();
+    let by_name: HashMap<String, Vec<KvPair>> = payload.keyspaces.into_iter().collect();
     assert_eq!(
         by_name.get("data"),
         Some(&vec![(b"rec1".to_vec(), b"good-data".to_vec())])

@@ -168,8 +168,8 @@ pub(crate) mod tests {
 
     #[test]
     fn test_to_model_iter() {
-        // Test conversion of multiple options to ensure we do not stop on first match.
-        // It is not necessary to cover all options in this test
+        // Test conversion of multiple options to ensure we do not stop on first
+        // match. It is not necessary to cover all options in this test
         let rows: Vec<user_option::Model> = UserOptions {
             ignore_change_password_upon_first_use: Some(true),
             ignore_password_expiry: Some(true),

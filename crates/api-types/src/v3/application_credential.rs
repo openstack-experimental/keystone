@@ -13,4 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod access_rule;
+#[allow(clippy::module_inception)]
 pub mod application_credential;
+#[cfg(feature = "conv")]
+mod conv;

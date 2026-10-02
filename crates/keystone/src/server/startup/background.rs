@@ -67,11 +67,11 @@ pub async fn spawn_all(startup: &Startup, phase_start: Instant) {
 
     // Leader-gated janitors (each runs on every node, only does work on the
     // current Raft leader):
-    //  - API Key (SCIM ingress) inactivity disablement + tombstone purge
-    //    (ADR 0021 §6.F)
+    //  - API Key (SCIM ingress) inactivity disablement + tombstone purge (ADR
+    //    0021 §6.F)
     //  - SCIM resource permanent purge past retention (ADR 0024 §6.C)
-    //  - OAuth2 signing-key `Previous` retirement + JTI list pruning
-    //    (ADR 0026 §3)
+    //  - OAuth2 signing-key `Previous` retirement + JTI list pruning (ADR 0026
+    //    §3)
     //  - OAuth2 expired session/code/device/refresh-token purge (ADR 0026 §9)
     api_key_janitor::spawn(state.clone());
     scim_resource_janitor::spawn(state.clone());

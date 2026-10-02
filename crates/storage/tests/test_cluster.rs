@@ -893,8 +893,8 @@ async fn test_node_restart_inner() -> Result<()> {
     _srv.join().ok();
     TypeConfig::sleep(Duration::from_millis(500)).await;
 
-    // Step 2: Reinitialize the SAME storage dir but with schema prefix + trailing
-    // slash This simulates pod restart where Uri::Display produces "https://host:port/"
+    // Step 2: Reinitialize the SAME storage dir but with schema prefix +
+    // trailing slash This simulates pod restart where Uri::Display produces "https://host:port/"
     let ds_config_restart = DistributedStorageConfiguration {
         node_cluster_addr: "https://127.0.0.1:21005/".parse().expect("valid address"),
         node_listener_addr: "127.0.0.1:21005".parse().expect("valid address"),
@@ -1206,8 +1206,8 @@ impl InstanceHolder {
     // reading (ADR 0016-v2 §2.1).  In production each node is a separate
     // process so removal happens once per process.  Here all test nodes share
     // one process, so we re-set the variable before each init_storage call.
-    // SAFETY: nodes are initialised sequentially before any async tasks that read
-    // the environment are spawned, so there are no concurrent readers.
+    // SAFETY: nodes are initialised sequentially before any async tasks that
+    // read the environment are spawned, so there are no concurrent readers.
     #[allow(unsafe_code)]
     async fn new(node_id: u64, tls_config: TlsConfiguration) -> Result<Self> {
         Self::new_with_port(node_id, 0, tls_config).await
@@ -1309,8 +1309,8 @@ async fn test_cluster_inner() -> Result<()> {
 
         let metrics = admin_client1.metrics(()).await?.into_inner();
         println!("=== metrics after init: {:?}", metrics);
-        // Wait until node 1 has committed the init membership and elected itself
-        // leader.
+        // Wait until node 1 has committed the init membership and elected
+        // itself leader.
         wait_for_leader(&mut admin_client1, 1).await;
     }
 
@@ -1400,8 +1400,9 @@ async fn test_cluster_inner() -> Result<()> {
         //    // --- Wait for a while to let the replication get done.
         TypeConfig::sleep(Duration::from_millis(1_000)).await;
 
-        // Write Sensitive-tier data so that `prefix` enters the ensure_linearizable
-        // path and forwards to the leader for a linearizable read.
+        // Write Sensitive-tier data so that `prefix` enters the
+        // ensure_linearizable path and forwards to the leader for a
+        // linearizable read.
         let sensitive_meta = Metadata::with_tier(DataTier::Sensitive);
         let sensitive_val = StoreDataEnvelope {
             data: rmp_serde::to_vec("sensitive_value")?,
@@ -1421,9 +1422,10 @@ async fn test_cluster_inner() -> Result<()> {
             .set_value("sec:k2".to_string(), sensitive_val2, None, None)
             .await?;
 
-        // Immediate re-read after write (no replication sleep) — this reproduces
-        // the k8s_auth race condition pattern: `upsert_virtual_user_shadow` writes
-        // then immediately reads the same key without waiting for Raft replication.
+        // Immediate re-read after write (no replication sleep) — this
+        // reproduces the k8s_auth race condition pattern:
+        // `upsert_virtual_user_shadow` writes then immediately reads
+        // the same key without waiting for Raft replication.
         let immediate_read = instance1
             .storage
             .get_by_key("sec:k1".as_bytes(), None)
@@ -1436,10 +1438,12 @@ async fn test_cluster_inner() -> Result<()> {
     println!("=== read `foo` on every node (including followers)");
     {
         // Verify the leader is node 1 (set by change-membership).
-        // On a follower node, `get_by_key` calls `ensure_linearizable(ReadIndex)`
-        // which returns `ForwardToLeader`. The storage code must catch this error
-        // and fall back to a local FjallDB read. This regression test ensures that
-        // reads on followers do NOT fail with "ReadIndex failed: ForwardToLeader".
+        // On a follower node, `get_by_key` calls
+        // `ensure_linearizable(ReadIndex)` which returns
+        // `ForwardToLeader`. The storage code must catch this error and
+        // fall back to a local FjallDB read. This regression test ensures that
+        // reads on followers do NOT fail with "ReadIndex failed:
+        // ForwardToLeader".
         let current_leader = admin_client1.metrics(()).await?.into_inner().current_leader;
         assert_eq!(
             current_leader,
@@ -1493,10 +1497,11 @@ async fn test_cluster_inner() -> Result<()> {
             assert_eq!(indexes.len(), 3);
 
             // Prefix-read Sensitive-tier data from follower.
-            // `prefix` only enters `ensure_linearizable(ReadIndex)` when any result
-            // entry has `tier >= DataTier::Sensitive` (app.rs:461).
-            // On a follower, ReadIndex returns `ForwardToLeader`. The storage code
-            // must catch this and fall back to a local FjallDB read.
+            // `prefix` only enters `ensure_linearizable(ReadIndex)` when any
+            // result entry has `tier >= DataTier::Sensitive`
+            // (app.rs:461). On a follower, ReadIndex returns
+            // `ForwardToLeader`. The storage code must catch this
+            // and fall back to a local FjallDB read.
             let sensitive_prefix = instance.storage.prefix("sec:".as_bytes(), None).await?;
             assert_eq!(sensitive_prefix.len(), 2);
             let sec_keys: std::collections::HashSet<_> =

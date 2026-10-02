@@ -55,7 +55,7 @@ pub fn get_system_scope_config() -> Result<CloudConfig> {
 // /// Create a test domain + project, returning (domain, project) for explicit
 // cleanup. pub async fn create_test_project(tc: &TestClient) -> Result<(Domain,
 // Project)> {     let domain = create_test_domain(tc).await?;
-//     let mut domain_tc = TestClient::default()?;
+//     let mut domain_tc = TestClient::new()?;
 //     auth_domain(&mut domain_tc, &domain.id).await?;
 //     let project = ProjectCreateBuilder::default()
 //         .name(format!("test-project-{}", uuid::Uuid::new_v4()))

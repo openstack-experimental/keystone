@@ -346,7 +346,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
                     return Ok(RefreshTokenRedemption::Invalid);
                 }
                 Ok(RefreshTokenRedemption::Rotated {
-                    record: child,
+                    record: Box::new(child),
                     bearer,
                 })
             }

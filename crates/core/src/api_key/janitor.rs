@@ -330,7 +330,8 @@ mod tests {
         let mut mock = MockApiKeyProvider::default();
         mock.expect_list_all()
             .returning(move |_| Ok(vec![recent.clone()]));
-        // No `expect_update`/`expect_purge`: calling either would panic the mock.
+        // No `expect_update`/`expect_purge`: calling either would panic the
+        // mock.
 
         let state =
             get_mocked_state(None, Some(Provider::mocked_builder().mock_api_key(mock))).await;

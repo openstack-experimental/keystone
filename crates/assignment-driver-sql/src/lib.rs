@@ -302,8 +302,8 @@ impl AssignmentBackend for SqlBackend {
         if let Some(true) = &params.effective
             && let Some(uid) = &params.user_id
         {
-            // Effective assignments mean we need to expand user_id to list of all groups
-            // the user is member of.
+            // Effective assignments mean we need to expand user_id to list of
+            // all groups the user is member of.
             let users = state
                 .provider
                 .get_identity_provider()
@@ -323,7 +323,8 @@ impl AssignmentBackend for SqlBackend {
                 .get_project_parents(&ExecutionContext::internal(state), val)
                 .await?
             {
-                // All assignments for parent projects having `inherited=true` must be included.
+                // All assignments for parent projects having `inherited=true`
+                // must be included.
                 parents.iter().for_each(|parent_project| {
                     targets.push(RoleAssignmentTarget {
                         id: parent_project.id.clone(),
@@ -346,10 +347,11 @@ impl AssignmentBackend for SqlBackend {
             })
         }
 
-        // Defensive guard: if any actor-targeting parameter was set, the `actors`
-        // list must be non-empty. A prior bug silently dropped `group_id`,
-        // causing both `actors` and `targets` to be empty, which translated to
-        // a query without a WHERE clause that swept ALL assignments.
+        // Defensive guard: if any actor-targeting parameter was set, the
+        // `actors` list must be non-empty. A prior bug silently dropped
+        // `group_id`, causing both `actors` and `targets` to be empty,
+        // which translated to a query without a WHERE clause that swept
+        // ALL assignments.
         if params.user_id.is_some() || params.group_id.is_some() {
             debug_assert!(
                 !actors.is_empty(),

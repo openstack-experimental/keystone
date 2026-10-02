@@ -313,9 +313,10 @@ impl TokenService {
             }
         }
 
-        // For special token types restore the original resource (ApplicationCredential,
-        // Trust, etc) to use it for the corresponding AuthenticationContext.
-        // Otherwise the AuthenticationContext remains just Token
+        // For special token types restore the original resource
+        // (ApplicationCredential, Trust, etc) to use it for the
+        // corresponding AuthenticationContext. Otherwise the
+        // AuthenticationContext remains just Token
         let auth_context = match &token {
             FernetToken::ApplicationCredential(data) => {
                 AuthenticationContext::ApplicationCredential {

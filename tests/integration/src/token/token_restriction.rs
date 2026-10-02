@@ -32,6 +32,12 @@ impl_deleter!(
     delete_token_restriction
 );
 
+/// Create a token restriction.
+///
+/// `#[allow(dead_code)]`: no integration test exercises token restrictions
+/// yet; kept as the scaffolding (with the [`impl_deleter!`] impl below) for
+/// the first one to land.
+#[allow(dead_code)]
 pub async fn create_token_restriction(
     state: &ServiceState,
     data: TokenRestrictionCreate,

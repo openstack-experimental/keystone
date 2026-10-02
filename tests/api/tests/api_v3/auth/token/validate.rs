@@ -21,7 +21,7 @@ use test_api::common::*;
 
 #[tokio::test]
 async fn test_validate_own() -> Result<()> {
-    let mut admin_client = TestClient::default()?;
+    let mut admin_client = TestClient::new()?;
     admin_client.auth_admin().await?;
 
     let subject = admin_client
@@ -38,7 +38,7 @@ async fn test_validate_own() -> Result<()> {
 
 #[tokio::test]
 async fn test_validate_nocatalog_flag() -> Result<()> {
-    let mut admin_client = TestClient::default()?;
+    let mut admin_client = TestClient::new()?;
     admin_client.auth_admin().await?;
     let subject = admin_client
         .token

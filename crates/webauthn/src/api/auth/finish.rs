@@ -72,13 +72,14 @@ pub async fn finish(
     };
 
     // Deserialize request data into webauthn_rs types *before* consuming state.
-    // If deserialization fails (e.g. base64 decode error), the challenge remains
-    // intact and the user can retry without restarting the ceremony.
+    // If deserialization fails (e.g. base64 decode error), the challenge
+    // remains intact and the user can retry without restarting the
+    // ceremony.
     let auth_req = req.try_into().map_err(WebauthnError::from)?;
 
     // Consume the challenge state unconditionally after deserialization so that
-    // it cannot be replayed regardless of whether the ceremony succeeds or fails
-    // (WebAuthn Level 3 §6.3.3 step 21).
+    // it cannot be replayed regardless of whether the ceremony succeeds or
+    // fails (WebAuthn Level 3 §6.3.3 step 21).
     state
         .extension
         .provider
@@ -101,15 +102,15 @@ pub async fn finish(
 
     // As per https://www.w3.org/TR/webauthn-3/#sctn-verifying-assertion 21:
     //
-    // If the Credential Counter is greater than 0 you MUST assert that the counter
-    // is greater than the stored counter. If the counter is equal or less than this
-    // MAY indicate a cloned credential and you SHOULD invalidate and reject that
-    // credential as a result.
+    // If the Credential Counter is greater than 0 you MUST assert that the
+    // counter is greater than the stored counter. If the counter is equal
+    // or less than this MAY indicate a cloned credential and you SHOULD
+    // invalidate and reject that credential as a result.
     //
     // From this AuthenticationResult you should update the Credential’s Counter
-    // value if it is valid per the above check. If you wish you may use the content
-    // of the AuthenticationResult for extended validations (such as the presence of
-    // the user verification flag).
+    // value if it is valid per the above check. If you wish you may use the
+    // content of the AuthenticationResult for extended validations (such as
+    // the presence of the user verification flag).
     let cred_id = URL_SAFE_NO_PAD.encode(auth_result.cred_id());
     let mut credential = state
         .extension
@@ -134,8 +135,8 @@ pub async fn finish(
 
     credential.last_used_at = Some(now);
     credential.updated_at = Some(now);
-    // Integrate auth_result into the saved passkey data. Ignore the result since we
-    // want to update the last_used_at anyway.
+    // Integrate auth_result into the saved passkey data. Ignore the result
+    // since we want to update the last_used_at anyway.
     credential.data.update_credential(&auth_result);
 
     // Persist updated data.

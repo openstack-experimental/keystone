@@ -122,7 +122,8 @@ mod tests {
         let mut params = CertificateParams::default();
         params.distinguished_name = DistinguishedName::new();
         params.subject_alt_names = vec![SanType::URI(spiffe_uri.try_into().unwrap())];
-        // X509Svid::parse_from_der requires KeyUsage and BasicConstraints extensions.
+        // X509Svid::parse_from_der requires KeyUsage and BasicConstraints
+        // extensions.
         params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
         params.is_ca = IsCa::ExplicitNoCa;
         let key = KeyPair::generate().unwrap();

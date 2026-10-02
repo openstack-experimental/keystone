@@ -32,6 +32,14 @@ use tracing::info;
 use crate::config::Interface;
 use crate::server::listener::spiffe_common;
 
+/// Expected SO_PEERCRED/LOCAL_PEERCRED peer credentials for the UDS
+/// listener; a `None` field disables that check.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PeerCredentials {
+    pub uid: Option<u32>,
+    pub gid: Option<u32>,
+}
+
 /// Verify peer credentials obtained via SO_PEERCRED against expected UID/GID.
 ///
 /// Returns `Ok(())` when all configured checks pass, or `Err` if any configured
@@ -147,8 +155,7 @@ pub async fn start_axum_app(
     trust_domains: Vec<String>,
     svid_path: Option<String>,
     interface: Interface,
-    peer_uid: Option<u32>,
-    peer_gid: Option<u32>,
+    peer_credentials: PeerCredentials,
 ) -> Result<(), Report> {
     let spiffe_server_config = match spiffe_common::build_spiffe_config(
         token.clone(),
@@ -179,7 +186,11 @@ pub async fn start_axum_app(
             _ = token.cancelled() => break,
             Ok((stream, _peer_addr)) = listener.accept() => {
                 // SO_PEERCRED validation BEFORE TLS wrap (cheap kernel-level check)
-                if let Err(e) = verify_peer_credentials(&stream, peer_uid, peer_gid) {
+                if let Err(e) = verify_peer_credentials(
+                    &stream,
+                    peer_credentials.uid,
+                    peer_credentials.gid,
+                ) {
                     tracing::warn!("UDS connection rejected: peer credential mismatch: {}", e);
                     continue;
                 }
@@ -187,7 +198,7 @@ pub async fn start_axum_app(
                 let acceptor = acceptor.clone();
                 let app = app.clone();
                 let conn_token = token.clone();
-                let interface_clone = interface.clone();
+                let interface_clone = interface;
 
                 tokio::spawn(async move {
                     match acceptor.accept(stream).await {
@@ -210,7 +221,6 @@ pub async fn start_axum_app(
                             let hyper_service = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
                                 let mut app = app.clone();
                                 let spiffe_id = spiffe_id.clone();
-                                let interface_clone = interface_clone.clone();
                                 async move {
                                     let mut req = req;
                                     if let Some(spiffe_id) = spiffe_id {

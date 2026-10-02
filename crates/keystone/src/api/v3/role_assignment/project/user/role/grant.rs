@@ -58,8 +58,8 @@ pub(super) async fn grant(
     Path((project_id, user_id, role_id)): Path<(String, String, String)>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
-    // Use join instead of try_join to have more constant latency preventing timing
-    // attacks.
+    // Use join instead of try_join to have more constant latency preventing
+    // timing attacks.
     let exec = &ExecutionContext::from_auth(&state, &user_auth);
     let (user, role, project) = tokio::join!(
         state

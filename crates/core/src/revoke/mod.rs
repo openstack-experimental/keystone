@@ -82,7 +82,8 @@ impl TryFrom<&ValidatedSecurityContext> for RevocationEventListParametersBuilder
             if let FernetToken::Trust(token) = &token {
                 if let AuthenticationContext::Trust { trust, .. } = &value.authentication_context()
                 {
-                    // Trust tokens include trust, trustor, and trustee user IDs for revocation
+                    // Trust tokens include trust, trustor, and trustee user IDs
+                    // for revocation
                     builder.trust_id(trust.id.clone());
                     builder.user_ids(vec![
                         token.user_id.clone(),
@@ -98,8 +99,9 @@ impl TryFrom<&ValidatedSecurityContext> for RevocationEventListParametersBuilder
             if let Some(authz) = value.authorization()
                 && let Some(roles) = authz.effective_roles()
             {
-                // For ValidatedSecurityContext from ApplicationCredentials we need to consider
-                // original roles tied to the application_credential and not the roles that the
+                // For ValidatedSecurityContext from ApplicationCredentials we
+                // need to consider original roles tied to the
+                // application_credential and not the roles that the
                 // effective in the revocation check.
                 if let AuthenticationContext::ApplicationCredential {
                     application_credential,

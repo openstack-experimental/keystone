@@ -131,7 +131,7 @@ async fn test_application_credential_route_issues_token() -> Result<()> {
 /// (e) A router `Deny` fails the whole request closed over real HTTP.
 #[tokio::test]
 async fn test_route_deny_is_rejected() -> Result<()> {
-    let test_client = TestClient::default()?;
+    let test_client = TestClient::new()?;
     let identity = IdentityBuilder::default()
         .methods(vec!["application_credential".to_string()])
         .extra(HashMap::from([(
@@ -149,11 +149,11 @@ async fn test_route_deny_is_rejected() -> Result<()> {
 
 /// A non-routed application-credential-shaped request is passed back to the
 /// normal auth-method dispatcher. The current server has no built-in
-/// application-credential authentication handler, so it must fail closed rather than issue a
-/// password, token, or plugin identity by fallback.
+/// application-credential authentication handler, so it must fail closed rather
+/// than issue a password, token, or plugin identity by fallback.
 #[tokio::test]
 async fn test_application_credential_passthrough_fails_closed() -> Result<()> {
-    let test_client = TestClient::default()?;
+    let test_client = TestClient::new()?;
     let identity = IdentityBuilder::default()
         .methods(vec!["application_credential".to_string()])
         .extra(HashMap::from([(
@@ -200,7 +200,7 @@ async fn test_mapping_plugin_ruleset_lifecycle() -> Result<()> {
 
     // --- Before any ruleset exists: reject, don't fall back. ---
     let ident = identity(format!("no-rule-{}", Uuid::new_v4().simple()))?;
-    let raw_client = TestClient::default()?;
+    let raw_client = TestClient::new()?;
     let response = authenticate_identity(&raw_client, ident, None).await?;
     assert_unauthorized(
         response.error_for_status(),

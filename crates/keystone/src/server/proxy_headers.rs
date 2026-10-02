@@ -140,7 +140,8 @@ mod tests {
 
     #[tokio::test]
     async fn rewrites_to_client_when_peer_is_trusted() {
-        // Raw peer 10.0.0.9 is a trusted proxy; the XFF chain carries the client.
+        // Raw peer 10.0.0.9 is a trusted proxy; the XFF chain carries the
+        // client.
         let addr = observed_addr(
             &["10.0.0.0/8"],
             ProxyHeader::XForwardedFor,

@@ -62,7 +62,6 @@ pub async fn delete_for_project(
 mod tests {
     use sea_orm::ActiveValue::Set;
     use sea_orm::DatabaseConnection;
-    use sea_orm::entity::*;
 
     use crate::test_support::create_credential_table;
 

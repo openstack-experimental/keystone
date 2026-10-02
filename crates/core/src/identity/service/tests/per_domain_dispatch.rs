@@ -14,10 +14,11 @@
 
 //! Per-domain identity driver dispatch unit tests.
 //!
-//! Split out of `service.rs::tests`. Covers `DomainConfigResolver` consultation,
-//! per-domain resolution caching, the id-mapping public-id lookup, the two
-//! ported python-keystone guards (`is_domain_aware`/`DomainNotFound`,
-//! `CrossBackendNotAllowed`), and password-auth dispatch.
+//! Split out of `service.rs::tests`. Covers `DomainConfigResolver`
+//! consultation, per-domain resolution caching, the id-mapping public-id
+//! lookup, the two ported python-keystone guards
+//! (`is_domain_aware`/`DomainNotFound`, `CrossBackendNotAllowed`), and
+//! password-auth dispatch.
 
 use openstack_keystone_core_types::domain_config::DomainConfig;
 

@@ -23,8 +23,9 @@
 //! - `oauth2:refresh_token:v1:<token_id>` -- one node in a refresh token
 //!   rotation family (`token_id` is a hash of the bearer value, never the
 //!   bearer value itself).
-//! - `oauth2:device_code:v1:<device_code>` / `oauth2:device_user_code:v1:<user_code>`
-//!   -- an RFC 8628 device authorization grant, addressable by either code.
+//! - `oauth2:device_code:v1:<device_code>` /
+//!   `oauth2:device_user_code:v1:<user_code>` -- an RFC 8628 device
+//!   authorization grant, addressable by either code.
 //!
 //! Plus secondary indexes, written atomically (`StorageApi::transaction`)
 //! alongside the primary record they describe, keeping revocation and
@@ -39,13 +40,13 @@
 //! - `oauth2:refresh_user_idx:v1:<domain_id>:<user_id>:<family_id>` /
 //!   `oauth2:refresh_client_idx:v1:<client_id>:<family_id>` /
 //!   `oauth2:refresh_domain_idx:v1:<domain_id>:<family_id>` -- pure
-//!   index-keyspace keys (no value) mapping a user/client/domain to the
-//!   refresh token families it owns.
+//!   index-keyspace keys (no value) mapping a user/client/domain to the refresh
+//!   token families it owns.
 //! - `oauth2:expiry_idx:v1:<expires_at zero-padded i64>:<kind>:<primary_key>`
-//!   -- orders every session/code/refresh/device record by `expires_at`
-//!   for expiry sweeps. Rewritten on refresh rotation: the spent token's
-//!   entry is removed (`mark_refresh_token_spent_impl`) and the rotated
-//!   child gets its own fresh entry (`create_refresh_token_impl`).
+//!   -- orders every session/code/refresh/device record by `expires_at` for
+//!   expiry sweeps. Rewritten on refresh rotation: the spent token's entry is
+//!   removed (`mark_refresh_token_spent_impl`) and the rotated child gets its
+//!   own fresh entry (`create_refresh_token_impl`).
 use async_trait::async_trait;
 use serde::Serialize;
 use serde::de::DeserializeOwned;

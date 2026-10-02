@@ -90,7 +90,8 @@ pub async fn update_password(
         return Err(AuthenticationError::UserNameOrPasswordWrong.into());
     }
 
-    // Set the new password (reuse pre-loaded passwords, history check is inside)
+    // Set the new password (reuse pre-loaded passwords, history check is
+    // inside)
     super::password::set_new_password(db, conf, local_user.id, new_password, passwords_vec).await?;
 
     Ok(())

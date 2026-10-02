@@ -78,7 +78,8 @@ pub(super) async fn list(
 
     let domain_ids = if query.domain_id.as_ref().is_none() {
         if !res.can_see_other_domain_resources.is_some_and(|x| x) {
-            //let principal_domain_id = user_auth.principal().domain_id.clone();
+            //let principal_domain_id =
+            // user_auth.principal().domain_id.clone();
             let domain_ids: HashSet<Option<String>> = HashSet::from([
                 None,
                 // TODO: perhaps we should first look at the domain_scope and than user domain.
@@ -86,7 +87,8 @@ pub(super) async fn list(
             ]);
             Some(domain_ids)
         } else {
-            // User can see other domain's resources and query is empty - leave it empty
+            // User can see other domain's resources and query is empty - leave
+            // it empty
             None
         }
     } else {

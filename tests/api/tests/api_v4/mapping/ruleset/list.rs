@@ -116,7 +116,8 @@ async fn test_list_global_mapping_rulesets() -> Result<()> {
     let listed = list_ruleset(&test_client).await?;
     assert!(listed.iter().any(|r| r.mapping_id == mapping_id));
 
-    // Verify the global ruleset is NOT returned when filtering by "default" domain
+    // Verify the global ruleset is NOT returned when filtering by "default"
+    // domain
     let rulesets_for_default: Vec<MappingRuleSet> = MappingRuleSetListParameters {
         domain_id: Some("default".to_string()),
         ..Default::default()

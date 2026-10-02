@@ -27,10 +27,10 @@ pub(super) struct ScryptHasher;
 impl PasswordHasher for ScryptHasher {
     async fn hash(&self, _conf: &Config, password: &[u8]) -> Result<String, PasswordHashError> {
         // mirrors keystone/common/password_hashers/scrypt.py::Scrypt.hash()
-        // Python hardcodes: n=2**16 (ln=16), r=8, p=1, salt_size=16, output=32 bytes.
-        // scrypt_block_size / scrypt_parallelism / salt_bytesize config fields are
-        // not yet in IdentityProvider - use Keystone's own defaults until they are
-        // added.
+        // Python hardcodes: n=2**16 (ln=16), r=8, p=1, salt_size=16, output=32
+        // bytes. scrypt_block_size / scrypt_parallelism / salt_bytesize
+        // config fields are not yet in IdentityProvider - use
+        // Keystone's own defaults until they are added.
         let password_bytes = password.to_vec();
         let hash = task::spawn_blocking(move || {
             let salt = generate_salt();
@@ -40,7 +40,8 @@ impl PasswordHasher for ScryptHasher {
             let mut digest = vec![0u8; 32];
             ::scrypt::scrypt(&password_bytes, &salt, &params, &mut digest)
                 .map_err(|e| PasswordHashError::CryptoHash(e.to_string()))?;
-            // Python uses binascii.b2a_base64(x).rstrip(b"=\n") - standard base64 no-pad.
+            // Python uses binascii.b2a_base64(x).rstrip(b"=\n") - standard
+            // base64 no-pad.
             let salt_str = STANDARD_NO_PAD.encode(salt);
             let digest_str = STANDARD_NO_PAD.encode(&digest);
             Ok::<String, PasswordHashError>(format!(
@@ -59,13 +60,13 @@ impl PasswordHasher for ScryptHasher {
     ) -> Result<bool, PasswordHashError> {
         // mirrors keystone/common/password_hashers/scrypt.py::Scrypt.verify()
         // Parses the embedded ln/r/p params from the hash string so this path
-        // correctly verifies both hashes produced by this hasher (ln=16) and any
-        // old hashes with different params.
+        // correctly verifies both hashes produced by this hasher (ln=16) and
+        // any old hashes with different params.
         let password_bytes = password.to_vec();
         let hash_str = hash.to_string();
         let res = task::spawn_blocking(move || -> Result<bool, PasswordHashError> {
-            // Strip leading '$', split on '$': ["scrypt", "ln=N,r=R,p=P", salt_b64,
-            // digest_b64]
+            // Strip leading '$', split on '$': ["scrypt", "ln=N,r=R,p=P",
+            // salt_b64, digest_b64]
             let parts: Vec<&str> = hash_str[1..].split('$').collect();
             if parts.len() != 4 {
                 return Ok(false);
@@ -90,8 +91,8 @@ impl PasswordHasher for ScryptHasher {
                 }
             }
 
-            // replace('.', "+") handles old Passlib-era hashes that used '.' in place of
-            // '+'.
+            // replace('.', "+") handles old Passlib-era hashes that used '.' in
+            // place of '+'.
             let salt = STANDARD_NO_PAD
                 .decode(salt_b64.replace('.', "+").as_bytes())
                 .map_err(|_| PasswordHashError::CryptoHash("Invalid scrypt salt".into()))?;

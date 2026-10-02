@@ -59,7 +59,8 @@ pub(super) async fn update(
     Json(req): Json<K8sAuthInstanceUpdateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     req.validate()?;
-    // Fetch the current resource to pass current object into the policy evaluation
+    // Fetch the current resource to pass current object into the policy
+    // evaluation
     let current = state
         .provider
         .get_k8s_auth_provider()

@@ -796,34 +796,43 @@ impl SecurityContext {
                     AuthenticationContext::Token(_) => Ok(()),
                     AuthenticationContext::Trust { trust, token } => {
                         // A plain Project scope is legal for a trust ONLY when
-                        // (a) it is the trust's own bound project, mirroring the
-                        // ApplicationCredential arm above, AND (b) the context was
-                        // freshly reconstructed rather than decoded from a bearer
-                        // trust token (`token.is_none()`). A real OS-Trust auth
-                        // request can only ever request `OS-TRUST:trust` scope --
-                        // there is no client-facing way to present a trust
+                        // (a) it is the trust's own bound project, mirroring
+                        // the ApplicationCredential arm
+                        // above, AND (b) the context was
+                        // freshly reconstructed rather than decoded from a
+                        // bearer trust token
+                        // (`token.is_none()`). A real OS-Trust auth
+                        // request can only ever request `OS-TRUST:trust` scope
+                        // -- there is no client-facing
+                        // way to present a trust
                         // identity and ask for a plain project scope. The one
-                        // legitimate producer of this exact shape is `/v3/ec2tokens`
-                        // redemption of an EC2 credential minted under a trust: it
-                        // reconstructs `AuthenticationContext::Trust` directly from
-                        // the credential's stored `trust_id` blob field (`token:
+                        // legitimate producer of this exact shape is
+                        // `/v3/ec2tokens` redemption of
+                        // an EC2 credential minted under a trust: it
+                        // reconstructs `AuthenticationContext::Trust` directly
+                        // from the credential's stored
+                        // `trust_id` blob field (`token:
                         // None`, see `create_inner` in
-                        // `crates/keystone/src/api/v3/ec2tokens/create.rs`) because
-                        // the credential carries a bare `project_id`, not a
+                        // `crates/keystone/src/api/v3/ec2tokens/create.rs`)
+                        // because the credential
+                        // carries a bare `project_id`, not a
                         // `TrustProject` scope -- see
-                        // `calculate_effective_roles()`'s Trust-on-Project handling,
-                        // which bounds the resulting roles to the trust's delegated
+                        // `calculate_effective_roles()`'s Trust-on-Project
+                        // handling, which bounds the
+                        // resulting roles to the trust's delegated
                         // set exactly as the native `TrustProject` path does
-                        // (OSSA-2026-015). A caller reauthenticating with method
-                        // "token" against an actual trust-scoped bearer token
+                        // (OSSA-2026-015). A caller reauthenticating with
+                        // method "token" against an
+                        // actual trust-scoped bearer token
                         // (`token: Some(_)`, see `validate_to_context_impl` in
                         // `crates/core/src/token/service.rs`) and requesting a
                         // project scope must be rejected here: trust tokens can
-                        // never be used to mint another token ("token renewal ...
-                        // is prohibited"), and the `TrustProject` arm below already
+                        // never be used to mint another token ("token renewal
+                        // ... is prohibited"), and the
+                        // `TrustProject` arm below already
                         // blocks the same caller from renewing via its native
-                        // scope -- this closes the equivalent Project-scope escape
-                        // hatch.
+                        // scope -- this closes the equivalent Project-scope
+                        // escape hatch.
                         if token.is_some()
                             || trust.project_id.as_deref() != Some(project.id.as_str())
                         {
@@ -1190,9 +1199,9 @@ impl UserIdentityInfo {
     /// * `Err(AuthenticationError::UserDomainDisabled)` if the user domain is
     ///   disabled.
     pub fn validate(&self) -> Result<(), AuthenticationError> {
-        // TODO: all validations (disabled user, locked, etc) should be placed here
-        // since every authentication method goes different way and we risk
-        // missing validations
+        // TODO: all validations (disabled user, locked, etc) should be placed
+        // here since every authentication method goes different way and
+        // we risk missing validations
         if self.user_id.is_empty() || self.user_id.len() > 64 {
             return Err(validator::ValidationError::new(
                 "user id must be >1 and <64 characters long",

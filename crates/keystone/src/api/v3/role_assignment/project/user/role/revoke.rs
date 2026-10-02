@@ -65,8 +65,8 @@ pub(super) async fn revoke(
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     let inherited = request.uri().path().contains("inherited_to_projects");
     let exec = &ExecutionContext::from_auth(&state, &user_auth);
-    // Use join instead of try_join to have more constant latency preventing timing
-    // attacks.
+    // Use join instead of try_join to have more constant latency preventing
+    // timing attacks.
     let (user, role, project) = tokio::join!(
         state
             .provider

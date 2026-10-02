@@ -321,7 +321,8 @@ impl StorageApi for MockStorage {
                                 ),
                             })
                     });
-                    // If key doesn't exist and expected_revision is set, it's also a conflict
+                    // If key doesn't exist and expected_revision is set, it's
+                    // also a conflict
                     let violation = violation.or_else(|| {
                         expected_revision.map(|exp_rev| {
                             Violation {
@@ -763,8 +764,9 @@ mod tests {
             .await
             .unwrap();
 
-        // key1 has revision 0 (Metadata::new()), requesting wrong revision -> conflict
-        // key2 has revision 3, requesting correct revision -> success
+        // key1 has revision 0 (Metadata::new()), requesting wrong revision ->
+        // conflict key2 has revision 3, requesting correct revision ->
+        // success
         let mutations = vec![
             Mutation::remove("key1", None::<&str>, Some(99)),
             Mutation::remove("key2", None::<&str>, Some(3)),

@@ -75,8 +75,7 @@ pub(super) async fn list(
     let filter =
         core_type_application_credential::ApplicationCredentialListParametersBuilder::from(payload)
             .user_id(user_id.clone())
-            .build()
-            .unwrap();
+            .build()?;
     let application_credentials = state
         .provider
         .get_application_credential_provider()

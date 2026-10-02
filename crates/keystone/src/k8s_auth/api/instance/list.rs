@@ -74,12 +74,13 @@ pub(super) async fn list(
         if !res.can_see_other_domain_resources.is_some_and(|x| x) {
             user_auth.principal().domain_id()
         } else {
-            // User can see other domain's resources and query is empty - leave it empty
+            // User can see other domain's resources and query is empty - leave
+            // it empty
             None
         }
     } else {
-        // The policy is expected to verify whether the user is allowed to see into that
-        // other domain
+        // The policy is expected to verify whether the user is allowed to see
+        // into that other domain
         query.domain_id.clone()
     };
     let config = state.config_manager.config.read().await;
@@ -458,8 +459,8 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_list_all() {
-        // Test listing ALL configs when the user does not specify the domain_id and is
-        // allowed to see configs of other domains (admin)
+        // Test listing ALL configs when the user does not specify the domain_id
+        // and is allowed to see configs of other domains (admin)
         let mut provider = Provider::mocked_builder();
         let mut mock = MockK8sAuthProvider::default();
         mock.expect_list_auth_instances()

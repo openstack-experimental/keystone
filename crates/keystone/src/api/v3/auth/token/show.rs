@@ -91,8 +91,8 @@ pub(super) async fn show(
         });
     }
 
-    // Default behavior is to return 404 for expired tokens. It makes sense to log
-    // internally the error before mapping it.
+    // Default behavior is to return 404 for expired tokens. It makes sense to
+    // log internally the error before mapping it.
     let vsc = state
         .provider
         .get_token_provider()
@@ -285,7 +285,7 @@ mod tests {
     /// `policy/identity.rego`). Requires `opa` on `PATH`.
     mod real_policy_decision {
         use openstack_keystone_core::auth::ValidatedSecurityContext;
-        use openstack_keystone_core_types::auth::{AuthzInfoBuilder, *};
+        use openstack_keystone_core_types::auth::AuthzInfoBuilder;
         use openstack_keystone_core_types::resource::Domain as CoreDomain;
         use openstack_keystone_core_types::token::UnscopedPayload;
 

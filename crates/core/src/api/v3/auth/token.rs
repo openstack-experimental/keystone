@@ -80,7 +80,8 @@ fn fill_identity_info(
         IdentityInfo::Principal(principal) => {
             let mut user_builder = UserBuilder::default();
             user_builder.id(ctx.principal().get_user_id().clone());
-            // Use resolved user name from mapping rule if available, fall back to id
+            // Use resolved user name from mapping rule if available, fall back
+            // to id
             user_builder.name(
                 principal
                     .resolved_user_name

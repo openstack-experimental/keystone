@@ -93,7 +93,8 @@ impl NonceManager {
         let persisted_ctr = storage.read_u64(&ctr_key)?.unwrap_or(0) as u32;
         let hwm = storage.read_u64(&hwm_key)?.unwrap_or(0) as u32;
 
-        // Detect counter rollback: recovered start must not be strictly behind HWM.
+        // Detect counter rollback: recovered start must not be strictly behind
+        // HWM.
         if persisted_ctr < hwm {
             return Err(CryptoError::NonceCounterRollback {
                 current: persisted_ctr as u64,

@@ -159,7 +159,8 @@ unsafe fn locked_alloc() -> Option<NonNull<[u8; KEY_SIZE]>> {
     let page_size = s.page_size;
     let page_mask = page_size - 1;
 
-    // CANARY_SIZE + KEY_SIZE = 48; round up to one page on all common platforms.
+    // CANARY_SIZE + KEY_SIZE = 48; round up to one page on all common
+    // platforms.
     let size_with_canary = CANARY_SIZE + KEY_SIZE;
     let unprotected_size = (size_with_canary + page_mask) & !page_mask;
     let total_size = page_size * 2 + unprotected_size + page_size; // 4 pages
@@ -337,7 +338,8 @@ unsafe fn locked_free(ptr: NonNull<[u8; KEY_SIZE]>) {
             ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
         );
 
-        // Zero the entire data page (canary + key + padding) with volatile writes.
+        // Zero the entire data page (canary + key + padding) with volatile
+        // writes.
         let data_slice = std::slice::from_raw_parts_mut(unprotected_ptr, unprotected_size);
         data_slice.zeroize();
 

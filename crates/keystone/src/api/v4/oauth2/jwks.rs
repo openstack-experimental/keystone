@@ -343,7 +343,8 @@ mod tests {
             "first request must not be rate-limited"
         );
 
-        // Second request from the same IP — burst exhausted → 429 + Retry-After.
+        // Second request from the same IP — burst exhausted → 429 +
+        // Retry-After.
         let mut req2 = Request::builder()
             .uri("/domain-1/jwks")
             .body(Body::empty())

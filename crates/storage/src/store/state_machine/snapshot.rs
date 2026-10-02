@@ -18,6 +18,7 @@ use super::*;
 
 impl FjallStateMachine {
     /// Return the path to the snapshot directory.
+    #[cfg(test)]
     pub(crate) fn snapshot_dir(&self) -> &std::path::Path {
         &self.snapshot_dir
     }
@@ -63,9 +64,9 @@ impl FjallStateMachine {
     /// On-disk format: `[dek_version_u32_BE; 4] ++ [utc_epoch_u64_BE; 8] ++
     /// [nonce_salt_u64_BE; 8] ++ [manifest_len_u32_BE; 4] ++ DekManifest ++
     /// AES-256-GCM(file_bytes)`. The KEK-wrapped [`DekManifest`] lets a node
-    /// that does not know the DEK yet decrypt a restored backup. `nonce_salt` is
-    /// a fresh random value per snapshot rather than a per-process counter
-    /// (GitHub #1296 item 4): a counter reset to 0 on every process
+    /// that does not know the DEK yet decrypt a restored backup. `nonce_salt`
+    /// is a fresh random value per snapshot rather than a per-process
+    /// counter (GitHub #1296 item 4): a counter reset to 0 on every process
     /// restart could reuse a nonce if a snapshot were written again within
     /// the same wall-clock second, and a missing durable counter forced
     /// `decrypt_snapshot_file` to brute-force it (capping snapshots at
@@ -178,10 +179,11 @@ impl FjallStateMachine {
     /// consistent per-keyspace.
     ///
     /// Holds `keyspace_lifecycle`'s read side for the whole capture — same
-    /// lock `apply()` holds — so a concurrent `drop_keyspace`/`install_snapshot`
-    /// (both write-side) can't create or remove a keyspace between the
-    /// `db.snapshot()` call and the `list_keyspace_names()` walk, and can't
-    /// tear one down mid-iteration either.
+    /// lock `apply()` holds — so a concurrent
+    /// `drop_keyspace`/`install_snapshot` (both write-side) can't create or
+    /// remove a keyspace between the `db.snapshot()` call and the
+    /// `list_keyspace_names()` walk, and can't tear one down mid-iteration
+    /// either.
     pub(super) fn snapshot_payload(&self) -> Result<SnapshotPayload, io::Error> {
         let _lifecycle_guard = self
             .keyspace_lifecycle

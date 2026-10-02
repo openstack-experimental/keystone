@@ -196,8 +196,7 @@ async fn profile_user_list() -> Result<()> {
     let password_count = (user_count as f64 * password_pct as f64 / 100.0).floor() as usize;
 
     println!(
-        "{}: creating {} users ({} w/ password, {} w/o)",
-        "profile_user_list",
+        "profile_user_list: creating {} users ({} w/ password, {} w/o)",
         user_count,
         password_count,
         user_count - password_count

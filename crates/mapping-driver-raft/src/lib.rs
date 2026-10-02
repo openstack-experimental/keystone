@@ -506,7 +506,8 @@ impl RaftBackend {
         source: &IdentitySource,
     ) -> Result<Option<MappingRuleSet>, StoreError> {
         let source_key = source.to_string_key();
-        // Index key: mapping:ruleset:source:<domain_id>:<source_key>:<mapping_id>
+        // Index key:
+        // mapping:ruleset:source:<domain_id>:<source_key>:<mapping_id>
         let prefix = format!("mapping:ruleset:source:{}:{}:", domain_id, source_key);
         let indexes = storage.prefix_index(prefix.as_bytes()).await?;
         if indexes.is_empty() {

@@ -381,9 +381,9 @@ impl RoleApi for RoleService {
         ctx: &ExecutionContext<'a>,
         roles: &mut Vec<RoleRef>,
     ) -> Result<(), RoleProviderError> {
-        // In most of the cases a logic for expanding the roles may be implemented by
-        // the provider itself, but some backend drivers may have more efficient
-        // methods.
+        // In most of the cases a logic for expanding the roles may be
+        // implemented by the provider itself, but some backend drivers
+        // may have more efficient methods.
         self.backend_driver
             .expand_implied_roles(ctx.state(), roles)
             .await?;

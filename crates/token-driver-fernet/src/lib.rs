@@ -240,8 +240,8 @@ impl FernetTokenProvider {
             .iter()
             .fold(0, |acc, (k, v)| acc + if me.contains(v) { *k } else { 0 });
 
-        // TODO: Improve unit tests to ensure unsupported auth method immediately raises
-        // error.
+        // TODO: Improve unit tests to ensure unsupported auth method
+        // immediately raises error.
         if res == 0 {
             return Err(FernetDriverError::UnsupportedAuthMethods(
                 me.iter().join(","),
@@ -275,14 +275,17 @@ impl FernetTokenProvider {
             // right past 1 and silently drop the smaller method.
             for (idx, name) in self.auth_map.iter().rev() {
                 // (lbragstad): By dividing the method_int by each key in the
-                // method_map, we know if the division results in an integer of 1, that
-                // key was used in the construction of the total sum of the method_int.
-                // In that case, we should confirm the key value and store it so we can
-                // look it up later. Then we should take the remainder of what is
-                // confirmed and the method_int and continue the process. In the end, we
-                // should have a list of integers that correspond to indexes in our
-                // method_map and we can reinflate the methods that the original
-                // method_int represents.
+                // method_map, we know if the division results in an integer of
+                // 1, that key was used in the construction of
+                // the total sum of the method_int.
+                // In that case, we should confirm the key value and store it so
+                // we can look it up later. Then we should take
+                // the remainder of what is confirmed and the
+                // method_int and continue the process. In the end, we
+                // should have a list of integers that correspond to indexes in
+                // our method_map and we can reinflate the
+                // methods that the original method_int
+                // represents.
                 let result: u8 = auth / idx;
                 if result == 1 {
                     results.push(name.clone());
@@ -1037,8 +1040,9 @@ pub mod tests {
 
     #[test]
     fn test_decode_auth_methods_cache_miss_preserves_all_bits() {
-        // setup_config() configures "password,token,openid,application_credential",
-        // so bits are password=1, token=2, openid=4, application_credential=8.
+        // setup_config() configures
+        // "password,token,openid,application_credential", so bits are
+        // password=1, token=2, openid=4, application_credential=8.
         let mut provider = FernetTokenProvider::new(setup_config());
         // Force the fallback bit-decomposition path (normally only hit when a
         // token's bitmask isn't one of the pre-cached combinations).

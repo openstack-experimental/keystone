@@ -23,19 +23,18 @@
 //! Two ADR aspects are covered elsewhere, not here:
 //!
 //! - **The domain-scoped carve-out** — a domain-scoped token (whether it
-//!   carries `manager` or even `admin`) may write every other group of its
-//!   own domain but not `assignment` — needs a domain-scoped token, which the
-//!   v3 API cannot mint (there is no domain role-grant route; only project
-//!   and system). It is verified in
+//!   carries `manager` or even `admin`) may write every other group of its own
+//!   domain but not `assignment` — needs a domain-scoped token, which the v3
+//!   API cannot mint (there is no domain role-grant route; only project and
+//!   system). It is verified in
 //!   `policy/domain_config/{create,update,delete}_test.rego` and the
-//!   `crates/keystone/src/api/v3/domain_config/group.rs`
-//!   `real_policy_decision` handler tests (real `opa`), which drive both a
-//!   `domain_scoped_vsc(&["manager"])` and a `domain_scoped_vsc(&["admin"])`
-//!   to a `FORBIDDEN` on the `assignment` group and to `OK` on every other
-//!   group.
+//!   `crates/keystone/src/api/v3/domain_config/group.rs` `real_policy_decision`
+//!   handler tests (real `opa`), which drive both a
+//!   `domain_scoped_vsc(&["manager"])` and a `domain_scoped_vsc(&["admin"])` to
+//!   a `FORBIDDEN` on the `assignment` group and to `OK` on every other group.
 //! - **Provisioning a named OpenFGA backend and routing a domain onto it** —
-//!   the live server runs a fixed sql-only `[assignment]` config. That path
-//!   is covered by `tests/integration/src/assignment_per_domain.rs`.
+//!   the live server runs a fixed sql-only `[assignment]` config. That path is
+//!   covered by `tests/integration/src/assignment_per_domain.rs`.
 
 use eyre::Result;
 use serde_json::Value;

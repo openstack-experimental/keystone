@@ -58,9 +58,9 @@ impl DomainConfigService {
     /// Create a new `DomainConfigService`.
     ///
     /// # Parameters
-    /// - `config`: The service configuration; only
-    ///   `[identity] domain_configurations_from_database` is read, to decide
-    ///   whether the registration lock is enforced.
+    /// - `config`: The service configuration; only `[identity]
+    ///   domain_configurations_from_database` is read, to decide whether the
+    ///   registration lock is enforced.
     /// - `plugin_manager`: The plugin manager used to resolve the backend
     ///   driver.
     ///

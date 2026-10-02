@@ -527,8 +527,9 @@ impl Config {
         }
         // Per-domain config files (ADR 0034 §9): watch the directory so an
         // operator's edit to a `keystone.<name>.conf` triggers a reload and the
-        // `fs` domain-config driver re-scans. Only when it actually exists — the
-        // default path is rarely present and a missing watch target just logs.
+        // `fs` domain-config driver re-scans. Only when it actually exists —
+        // the default path is rarely present and a missing watch target
+        // just logs.
         if self.identity.domain_config_dir.is_dir() {
             watched_paths.insert(self.identity.domain_config_dir.clone());
         }
@@ -664,15 +665,17 @@ impl ConfigManager {
             notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
                 if let Ok(event) = res {
                     // Data modifications, name changes (renames/symlink swaps),
-                    // creations, and removals. Removal matters for the per-domain
-                    // config directory (ADR 0034 §9): deleting a
-                    // `keystone.<name>.conf` must re-scan so the domain's binding
+                    // creations, and removals. Removal matters for the
+                    // per-domain config directory (ADR 0034
+                    // §9): deleting a `keystone.<name>.
+                    // conf` must re-scan so the domain's binding
                     // drops. A spurious removal event on another watched file
                     // costs one reload that lands on last-known-good.
                     if event.kind.is_modify() || event.kind.is_create() || event.kind.is_remove() {
-                        // `try_send`, not `blocking_send`: this callback runs on
-                        // notify's single background event-loop thread, which
-                        // also services `watch()`/`unwatch()` control requests.
+                        // `try_send`, not `blocking_send`: this callback runs
+                        // on notify's single background
+                        // event-loop thread, which also
+                        // services `watch()`/`unwatch()` control requests.
                         // Blocking here until `sync_rx` is drained can deadlock
                         // that thread against a concurrent `watcher.watch()`
                         // call (e.g. while registering the initial watch set)
@@ -684,15 +687,16 @@ impl ConfigManager {
                 }
             })
             .expect("Failed to create watcher");
-        // A global set of watches to prevent deadlock while re-registering the same
-        // file.
+        // A global set of watches to prevent deadlock while re-registering the
+        // same file.
         let mut watched_paths = manager.config.read().await.get_watch_files();
 
         // Watch the main config
         watched_paths.insert(config_path.clone());
         if let Some(parent) = config_path.parent() {
-            // For K8 it is practical to add a directory watch since the CM is replaced as a
-            // whole without touching the individual file.
+            // For K8 it is practical to add a directory watch since the CM is
+            // replaced as a whole without touching the individual
+            // file.
             watched_paths.insert(parent.to_path_buf());
         }
 
@@ -829,9 +833,9 @@ mod tests {
     // `build_raw` reads process-global environment (`OS_*` overrides and
     // `KEYSTONE_SITE_VARS_FILE`). Tests that mutate that environment are marked
     // `#[serial]` and every test that loads a config through `build_raw` is
-    // marked `#[parallel]`, so a mutated variable (e.g. a `KEYSTONE_SITE_VARS_FILE`
-    // pointing at a temp file that is about to be dropped) can never leak into a
-    // concurrently loading test.
+    // marked `#[parallel]`, so a mutated variable (e.g. a
+    // `KEYSTONE_SITE_VARS_FILE` pointing at a temp file that is about to be
+    // dropped) can never leak into a concurrently loading test.
     /// ADR 0034 §9: the per-domain config directory joins the reload watch set
     /// when it exists on disk, and is left out when it does not (the common
     /// case, where watching a missing path would only log).
@@ -1211,17 +1215,18 @@ mod tests {
         write_vault_config(&mut config_file, &server, 60);
 
         let _manager = ConfigManager::watched(config_file.path()).await.unwrap();
-        // The renewal deadline (half_ttl of the 2s lookup TTL = 1s) is set as an
-        // absolute Instant during vault::resolve(), before the spawned watch-loop
-        // task has entered its select!. We need the task to:
+        // The renewal deadline (half_ttl of the 2s lookup TTL = 1s) is set as
+        // an absolute Instant during vault::resolve(), before the
+        // spawned watch-loop task has entered its select!. We need the
+        // task to:
         // 1. Start and reach its select! loop
         // 2. Have sleep_until() fire when the 1s deadline passes
-        // 3. Get picked by select! (biased — sync_rx.recv() wins if a notify event is
-        //    queued from spawn-time filesystem activity)
+        // 3. Get picked by select! (biased — sync_rx.recv() wins if a notify
+        //    event is queued from spawn-time filesystem activity)
         //
-        // yield_now() is insufficient on loaded CI runners because it only gives
-        // one scheduling opportunity. A short sleep gives the executor repeated
-        // chances to run the spawned task.
+        // yield_now() is insufficient on loaded CI runners because it only
+        // gives one scheduling opportunity. A short sleep gives the
+        // executor repeated chances to run the spawned task.
         // #[serial] prevents other config tests' notify watchers from firing
         // spurious directory events that fill sync_rx and starve vault_tick via
         // select! bias.
@@ -1243,7 +1248,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let config_path = setup_files(dir.path());
 
-        // A tiny delay for a higher probability that FS operations are really complete.
+        // A tiny delay for a higher probability that FS operations are really
+        // complete.
         tokio::time::sleep(Duration::from_millis(10)).await;
 
         let manager = ConfigManager::watched(config_path)
@@ -1260,15 +1266,16 @@ mod tests {
     async fn test_reload_on_config_change() {
         let dir = tempdir().unwrap();
         let config_path = setup_files(dir.path());
-        // A tiny delay for a higher probability that FS operations are really complete.
+        // A tiny delay for a higher probability that FS operations are really
+        // complete.
         tokio::time::sleep(Duration::from_millis(10)).await;
 
         let manager = ConfigManager::watched(config_path.clone())
             .await
             .expect("Should initialize");
 
-        // Another delay to correlate update the config after the watch thread is
-        // started
+        // Another delay to correlate update the config after the watch thread
+        // is started
         tokio::time::sleep(Duration::from_millis(10)).await;
         // Update the config file
         fs::write(
@@ -1331,15 +1338,16 @@ mod tests {
         )
         .unwrap();
         f.sync_all().unwrap();
-        // A tiny delay for a higher probability that FS operations are really complete.
+        // A tiny delay for a higher probability that FS operations are really
+        // complete.
         tokio::time::sleep(Duration::from_millis(10)).await;
 
         let mgr = ConfigManager::watched(config_file.path())
             .await
             .expect("Should initialize");
 
-        // Another delay to correlate update the config after the watch thread is
-        // started
+        // Another delay to correlate update the config after the watch thread
+        // is started
         tokio::time::sleep(Duration::from_millis(10)).await;
 
         let mut f = std::fs::OpenOptions::new()
@@ -1482,8 +1490,8 @@ mod tests {
             err_msg
         );
 
-        // 3. FULL COVERAGE: Explicitly ensure the error message blames every single
-        //    invalid field
+        // 3. FULL COVERAGE: Explicitly ensure the error message blames every
+        //    single invalid field
         assert!(
             err_msg.contains("security_compliance.password_expires_days"),
             "Error message should explicitly blame password_expires_days, but got: {}",

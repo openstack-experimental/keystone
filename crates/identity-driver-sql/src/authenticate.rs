@@ -71,10 +71,10 @@ pub async fn authenticate_by_password(
     let user_found = user_with_passwords.is_some();
     // Prevent timing attacks: if user is not found, generate a dummy hash and
     // verify against it to consume comparable time to the "user exists" path.
-    // The `log_failed_auth` function is intentionally not called here because the
-    // user does not exist and cannot be locked out. The dummy hash prevents an
-    // attacker from distinguishing between "user not found" and "wrong
-    // password" via timing analysis.
+    // The `log_failed_auth` function is intentionally not called here because
+    // the user does not exist and cannot be locked out. The dummy hash
+    // prevents an attacker from distinguishing between "user not found" and
+    // "wrong password" via timing analysis.
     if !user_found {
         // Fetch the pre-calculated dummy hash instantly from the cache
         let dummy_hash = password_hashing::get_or_init_dummy_hash(config)
@@ -856,9 +856,9 @@ mod tests {
         let not_found_avg = not_found_total.as_secs_f64() / iterations as f64;
         let wrong_password_avg = wrong_password_total.as_secs_f64() / iterations as f64;
 
-        // The "user not found" path should take at least 70% of the time of the "wrong
-        // password" path. If it's significantly faster, an attacker could
-        // distinguish between the two paths.
+        // The "user not found" path should take at least 70% of the time of the
+        // "wrong password" path. If it's significantly faster, an
+        // attacker could distinguish between the two paths.
         let ratio = if wrong_password_avg > 0.0 {
             not_found_avg / wrong_password_avg
         } else {

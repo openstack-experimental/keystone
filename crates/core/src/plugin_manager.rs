@@ -233,8 +233,8 @@ fn single_registration<T>(
 /// (ADR 0034 §4).
 ///
 /// # Errors
-/// - [`AssignmentProviderError::UnsupportedDriver`] when no driver registered
-///   a [`NamedAssignmentBackendRegistration`] for `driver`.
+/// - [`AssignmentProviderError::UnsupportedDriver`] when no driver registered a
+///   [`NamedAssignmentBackendRegistration`] for `driver`.
 /// - [`AssignmentProviderError::NamedBackendMisconfigured`] when the block is
 ///   absent or names a different driver.
 /// - [`AssignmentProviderError::Driver`] when more than one driver registered

@@ -16,11 +16,10 @@
 //! Each node owns one spool directory (guarded by [`SpoolLock`]) holding:
 //!
 //! - the live spool `audit-spool-{node}.jsonl`, appended by the single
-//!   [`run_spool_writer`] task that merges the critical and perimeter
-//!   channels;
+//!   [`run_spool_writer`] task that merges the critical and perimeter channels;
 //! - sealed, immutable segments `audit-spool-{node}.jsonl.seg-<timestamp>`,
-//!   produced by size/age rotation and by sealing the previous run's live
-//!   spool at startup ([`seal_previous_spool`]).
+//!   produced by size/age rotation and by sealing the previous run's live spool
+//!   at startup ([`seal_previous_spool`]).
 //!
 //! Sealed segments are what a downstream sink consumes (not yet implemented,
 //! see ADR 0023); they are never re-dispatched into the live spool, which

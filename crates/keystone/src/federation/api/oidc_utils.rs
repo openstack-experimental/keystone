@@ -59,7 +59,8 @@ pub(super) async fn discover(
         .await
         .map_err(OidcError::from)?;
 
-    // RFC 8414 §3: issuer in the document MUST match the URL used for discovery.
+    // RFC 8414 §3: issuer in the document MUST match the URL used for
+    // discovery.
     let returned_issuer = metadata.issuer.trim_end_matches('/');
     if returned_issuer != base {
         return Err(OidcError::IssuerMismatch {
@@ -379,8 +380,8 @@ aAmc9ACPh/hdBmHlSF++nRg+5t+4okyZHe3dgCYUM7n5tq5OFvyrfZ1lmGQlHcyD\n\
 w61t8gqclj1jTxn4LURp0Q==\n\
 -----END PRIVATE KEY-----\n";
 
-    // Base64urlUInt-encoded RSA modulus (n) for the key above — 256 raw bytes, no
-    // leading zero.
+    // Base64urlUInt-encoded RSA modulus (n) for the key above — 256 raw bytes,
+    // no leading zero.
     const TEST_JWK_N: &str = "lerX5dN8XqasOu36YbojjUAtTyNa96aPN4wzqF934Xae81EGupvKbniubSSvsv4s\
 MCtKJPW0UJeThUdPJsslunz28_bMNiVDci30pgIbeHc4_ptBTiEzG1EQrtJqYAyP\
 HIqnEFbiiuBA0xQWvKfv_aX-UTkCoHsGyZ04wCXA3DjpC45j8lHxJJ2wrEbky3rF\
@@ -483,7 +484,8 @@ nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
         assert_ne!(t1, t2);
     }
 
-    // ── build_auth_url ────────────────────────────────────────────────────────
+    // ── build_auth_url
+    // ────────────────────────────────────────────────────────
 
     #[test]
     fn auth_url_contains_required_params() {
@@ -569,7 +571,8 @@ nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
         assert!(matches!(result, Err(OidcError::UrlParse { .. })));
     }
 
-    // ── discover ──────────────────────────────────────────────────────────────
+    // ── discover
+    // ──────────────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn discover_success() {
@@ -646,7 +649,8 @@ nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
         );
     }
 
-    // ── fetch_jwks ────────────────────────────────────────────────────────────
+    // ── fetch_jwks
+    // ────────────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn fetch_jwks_parses_key_set() {
@@ -680,7 +684,8 @@ nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
         assert!(result.is_err());
     }
 
-    // ── exchange_code ─────────────────────────────────────────────────────────
+    // ── exchange_code
+    // ─────────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn exchange_code_success() {
@@ -788,7 +793,8 @@ nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
         assert!(result.is_err());
     }
 
-    // ── verify_jwt ────────────────────────────────────────────────────────────
+    // ── verify_jwt
+    // ────────────────────────────────────────────────────────────
 
     #[test]
     fn verify_jwt_rejects_symmetric_hs256() {
@@ -963,7 +969,8 @@ nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
 
     #[test]
     fn verify_jwt_accepts_aud_as_json_array() {
-        // OIDC Core §3.1.3.7: real IdPs (Keycloak, Auth0) emit `aud` as a JSON array.
+        // OIDC Core §3.1.3.7: real IdPs (Keycloak, Auth0) emit `aud` as a JSON
+        // array.
         let jwks = JwkSet {
             keys: vec![rsa_jwk(TEST_KID)],
         };
@@ -992,7 +999,8 @@ nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
 
     #[test]
     fn verify_jwt_rejects_aud_when_none_match() {
-        // RFC 7519 §4.1.3: when audience is validated, at least one value must match.
+        // RFC 7519 §4.1.3: when audience is validated, at least one value must
+        // match.
         let jwks = JwkSet {
             keys: vec![rsa_jwk(TEST_KID)],
         };
@@ -1021,8 +1029,8 @@ nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
 
     #[test]
     fn verify_jwt_selects_correct_kid_from_multi_key_jwks() {
-        // RFC 7517 §3: key rotation — JWKS contains multiple keys, verify_jwt must
-        // select the one matching the token's kid.
+        // RFC 7517 §3: key rotation — JWKS contains multiple keys, verify_jwt
+        // must select the one matching the token's kid.
         let jwks = JwkSet {
             keys: vec![rsa_jwk("old-key"), rsa_jwk(TEST_KID), rsa_jwk("unused-key")],
         };
@@ -1044,9 +1052,10 @@ nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
 
     #[test]
     fn verify_jwt_rejects_alg_none() {
-        // CVE-2015-9235: algorithm confusion — alg none tokens must be rejected.
-        // jsonwebtoken's decode_header fails on `alg: "none"` with a JSON parse error
-        // since it doesn't support the `none` variant, producing `JwtDecode`.
+        // CVE-2015-9235: algorithm confusion — alg none tokens must be
+        // rejected. jsonwebtoken's decode_header fails on `alg: "none"`
+        // with a JSON parse error since it doesn't support the `none`
+        // variant, producing `JwtDecode`.
         let exp = (Utc::now() + TimeDelta::hours(1)).timestamp();
         let header_b64 = URL_SAFE_NO_PAD.encode(b"{\"alg\":\"none\",\"typ\":\"JWT\"}");
         let claims_b64 =
@@ -1065,9 +1074,9 @@ nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
 
     #[test]
     fn verify_jwt_rejects_missing_nonce_when_expected() {
-        // OIDC Core §3.1.3.6: nonce is REQUIRED in ID tokens for authorization code
-        // flows. When caller expects a nonce but token lacks the claim,
-        // verification must fail.
+        // OIDC Core §3.1.3.6: nonce is REQUIRED in ID tokens for authorization
+        // code flows. When caller expects a nonce but token lacks the
+        // claim, verification must fail.
         let jwks = JwkSet {
             keys: vec![rsa_jwk(TEST_KID)],
         };
@@ -1089,8 +1098,8 @@ nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
 
     #[test]
     fn verify_jwt_rejects_future_nbf() {
-        // RFC 7519 §4.1.5: nbf (not-before) — token with nbf in the future must be
-        // rejected.
+        // RFC 7519 §4.1.5: nbf (not-before) — token with nbf in the future must
+        // be rejected.
         let jwks = JwkSet {
             keys: vec![rsa_jwk(TEST_KID)],
         };
@@ -1120,8 +1129,8 @@ nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
 
     #[test]
     fn verify_jwt_does_not_panic_on_malformed_token() {
-        // Malformed JWT (bad base64, wrong segments) must produce JwtDecode, not a
-        // panic.
+        // Malformed JWT (bad base64, wrong segments) must produce JwtDecode,
+        // not a panic.
         let jwks = JwkSet {
             keys: vec![rsa_jwk(TEST_KID)],
         };
@@ -1134,8 +1143,9 @@ nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
 
     #[test]
     fn verify_jwt_rejects_tampered_signature() {
-        // A validly-signed token whose signature is then altered must be rejected:
-        // signature validation must be enforced (token tampering).
+        // A validly-signed token whose signature is then altered must be
+        // rejected: signature validation must be enforced (token
+        // tampering).
         let jwks = JwkSet {
             keys: vec![rsa_jwk(TEST_KID)],
         };
@@ -1176,8 +1186,9 @@ nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
 
     #[test]
     fn verify_jwt_rejects_tampered_payload() {
-        // Altering the claims after signing (keeping the original signature) must be
-        // rejected — the signature no longer matches the payload.
+        // Altering the claims after signing (keeping the original signature)
+        // must be rejected — the signature no longer matches the
+        // payload.
         let jwks = JwkSet {
             keys: vec![rsa_jwk(TEST_KID)],
         };
@@ -1189,8 +1200,8 @@ nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
         let _original_payload = parts.next().expect("payload segment");
         let signature = parts.next().expect("signature segment");
 
-        // Re-encode a different set of claims (e.g. impersonating another subject)
-        // while keeping the original header and signature.
+        // Re-encode a different set of claims (e.g. impersonating another
+        // subject) while keeping the original header and signature.
         let evil_claims = valid_claims("https://iss.example.com", "my-client", None);
         let mut evil_claims = evil_claims;
         evil_claims["sub"] = json!("attacker");
@@ -1213,7 +1224,8 @@ nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
 
     #[tokio::test]
     async fn token_exchange_response_id_token_only() {
-        // TokenExchangeResponse with only id_token verifies access_token optionality.
+        // TokenExchangeResponse with only id_token verifies access_token
+        // optionality.
         let server = MockServer::start();
         server.mock(|when, then| {
             when.method(POST).path("/token");
@@ -1246,7 +1258,8 @@ nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
         );
     }
 
-    // ── iat validation ────────────────────────────────────────────────────────
+    // ── iat validation
+    // ────────────────────────────────────────────────────────
 
     #[test]
     fn verify_jwt_rejects_iat_too_far_in_future() {
@@ -1306,7 +1319,8 @@ nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
         );
     }
 
-    // ── required claims ───────────────────────────────────────────────────────
+    // ── required claims
+    // ───────────────────────────────────────────────────────
 
     #[test]
     fn verify_jwt_rejects_missing_sub() {

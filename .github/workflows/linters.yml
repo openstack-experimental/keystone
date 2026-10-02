@@ -14,7 +14,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  rust_min: 1.93.0
+  rust_min: 1.94.0
 
 jobs:
   rustfmt:
@@ -52,10 +52,13 @@ jobs:
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Install protobuf-compiler
+      - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler
+          # `storage-crypto-tpm`'s `tss-esapi` needs `libtss2-dev` +
+          # `pkg-config` to compile (see the matching step in ci.yml); no
+          # TPM device is required.
+          sudo apt-get install -y protobuf-compiler libtss2-dev pkg-config
 
       - name: Install Rust ${{ env.rust_min }}
         uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921 # stable
@@ -73,8 +76,9 @@ jobs:
 
       - name: Run rust-clippy
         run: |
+          set -o pipefail
           cargo clippy \
-          --lib --tests \
+          --lib --tests --all-features \
           --message-format=json | ${CARGO_HOME}/bin/clippy-sarif | tee rust-clippy-results.sarif | ${CARGO_HOME}/bin/sarif-fmt
 
       - name: Upload analysis results to GitHub

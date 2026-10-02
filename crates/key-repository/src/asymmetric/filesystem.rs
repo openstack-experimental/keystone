@@ -299,7 +299,8 @@ mod tests {
         assert_eq!(loaded.len(), 1);
         let primary = loaded.get(&KeyRole::Primary).unwrap();
         assert_eq!(primary.algorithm, SigningAlgorithm::Es256);
-        // No Previous/Pending files present, matching Python's single-key model.
+        // No Previous/Pending files present, matching Python's single-key
+        // model.
         assert!(!loaded.contains_key(&KeyRole::Previous));
         assert!(!loaded.contains_key(&KeyRole::Pending));
     }

@@ -903,7 +903,7 @@ async fn handle_refresh_token_grant(
                 "refresh_token has already been used; the session has been revoked",
             ));
         }
-        RefreshTokenRedemption::Rotated { record, bearer } => (record, bearer),
+        RefreshTokenRedemption::Rotated { record, bearer } => (*record, bearer),
     };
 
     if record.client_id != client_id || record.domain_id != domain_id {
@@ -1951,7 +1951,7 @@ mod tests {
             .expect_redeem_refresh_token()
             .returning(|_, _| {
                 Ok(RefreshTokenRedemption::Rotated {
-                    record: sample_refresh_record(None),
+                    record: Box::new(sample_refresh_record(None)),
                     bearer: "new-bearer-token".to_string(),
                 })
             });
@@ -2008,7 +2008,7 @@ mod tests {
             .expect_redeem_refresh_token()
             .returning(|_, _| {
                 Ok(RefreshTokenRedemption::Rotated {
-                    record: sample_refresh_record(None),
+                    record: Box::new(sample_refresh_record(None)),
                     bearer: "new-bearer-token".to_string(),
                 })
             });

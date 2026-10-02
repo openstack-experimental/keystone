@@ -73,9 +73,9 @@ where
 /// Return a system-admin client whose default authentication token has already
 /// been revoked by a separate system-admin session.
 pub async fn revoked_admin_client() -> Result<TestClient> {
-    let mut revoker = TestClient::default()?;
+    let mut revoker = TestClient::new()?;
     revoker.auth_admin_system().await?;
-    let mut caller = TestClient::default()?;
+    let mut caller = TestClient::new()?;
     caller.auth_admin_system().await?;
     let caller_token = caller
         .token

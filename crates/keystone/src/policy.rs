@@ -121,7 +121,8 @@ impl PolicyEnforcer for HttpPolicyEnforcer {
         // (e.g. `PolicyError::ScopeDrift`) before an OPA round-trip is even
         // attempted -- not just the success path.
         let result: Result<PolicyEvaluationResult, PolicyError> = async {
-            // Convert SecurityContext into Credentials object that is passed to OPA
+            // Convert SecurityContext into Credentials object that is passed to
+            // OPA
             let creds: Credentials = credentials.try_into()?;
             let input = json!({
                 "credentials": creds,

@@ -521,7 +521,8 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                     batch.insert(&self.index, key, vec![]);
                                 }
                                 MutationInner::ClearQuarantine { partition } => {
-                                    // Clear in-memory tracker first so reads are
+                                    // Clear in-memory tracker first so reads
+                                    // are
                                     // unblocked as soon as the batch commits.
                                     // Harmless no-op on nodes that were never
                                     // quarantined for this partition.
@@ -582,7 +583,8 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         DekEpoch::from_raw(locked_dek, dek_version)
                                             .map_err(|e| io::Error::other(e.to_string()))?,
                                     );
-                                    // Persist new DEK: [version_u32_BE; 4] ++ wrapped_bytes.
+                                    // Persist new DEK: [version_u32_BE; 4] ++
+                                    // wrapped_bytes.
                                     let mut persisted = dek_version.to_be_bytes().to_vec();
                                     persisted.extend_from_slice(&wrapped_dek);
                                     batch.insert(&self.meta, META_DEK_CURRENT, persisted);
@@ -590,7 +592,8 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         let g = self.dek.read().unwrap_or_else(|p| p.into_inner());
                                         g.version
                                     };
-                                    // Only persist retired DEK if not emergency (emergency
+                                    // Only persist retired DEK if not emergency
+                                    // (emergency
                                     // revokes).
                                     if !is_emergency {
                                         let retired_key =
@@ -613,10 +616,14 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                             }
                                         }
                                     } else {
-                                        // Emergency rotation: durably record the revoked
-                                        // marker in the same atomic batch as the DEK swap,
-                                        // so containment survives a restart (ADR 0016-v2
-                                        // §6.2 step 2). This timestamp-only marker is
+                                        // Emergency rotation: durably record
+                                        // the revoked
+                                        // marker in the same atomic batch as
+                                        // the DEK swap,
+                                        // so containment survives a restart
+                                        // (ADR 0016-v2
+                                        // §6.2 step 2). This timestamp-only
+                                        // marker is
                                         // permanent and is never removed.
                                         let revoked_key =
                                             format!("{DEK_REVOKED_PREFIX}{old_version}");
@@ -630,14 +637,22 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                             now.to_be_bytes(),
                                         );
 
-                                        // Also stage the old epoch's wrapped bytes under a
-                                        // *separate*, temporary prefix so the re-encryption
-                                        // sweep this rotation still requires (ADR §6.2 step
-                                        // 4) survives a restart before it completes.
-                                        // `reencrypt_pending` deletes this entry the moment
-                                        // the sweep confirms every record has migrated and
-                                        // no log entry still references it — only then is
-                                        // the compromised key genuinely discarded (step 5).
+                                        // Also stage the old epoch's wrapped
+                                        // bytes under a
+                                        // *separate*, temporary prefix so the
+                                        // re-encryption
+                                        // sweep this rotation still requires
+                                        // (ADR §6.2 step
+                                        // 4) survives a restart before it
+                                        //    completes.
+                                        // `reencrypt_pending` deletes this
+                                        // entry the moment
+                                        // the sweep confirms every record has
+                                        // migrated and
+                                        // no log entry still references it —
+                                        // only then is
+                                        // the compromised key genuinely
+                                        // discarded (step 5).
                                         let revoked_pending_key =
                                             format!("{DEK_REVOKED_PENDING_PREFIX}{old_version}");
                                         match self.meta.get(META_DEK_CURRENT) {
@@ -678,7 +693,8 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         .duration_since(std::time::UNIX_EPOCH)
                                         .unwrap_or_default()
                                         .as_secs();
-                                    // Remove any pre-existing expired entries first.
+                                    // Remove any pre-existing expired entries
+                                    // first.
                                     let mut pending = self
                                         .pending_rotations
                                         .lock()
@@ -706,7 +722,8 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         let meta_key =
                                             format!("{PENDING_ROTATION_PREFIX}{rotation_id}");
                                         batch.insert(&self.meta, meta_key.as_bytes(), serialised);
-                                        // Not inserted into `pending` yet — deferred
+                                        // Not inserted into `pending` yet —
+                                        // deferred
                                         // until the whole transaction's `batch`
                                         // actually commits (see
                                         // `pending_rotation_mutation` above).
@@ -732,15 +749,19 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         .duration_since(std::time::UNIX_EPOCH)
                                         .unwrap_or_default()
                                         .as_secs();
-                                    // Peek rather than remove (GitHub #1297 item 4):
+                                    // Peek rather than remove (GitHub #1297
+                                    // item 4):
                                     // the old code removed the entry from the
                                     // in-memory map up front, but on the
-                                    // NOT_FOUND/EXPIRED violation branches below
-                                    // the surrounding `batch` is never committed
+                                    // NOT_FOUND/EXPIRED violation branches
+                                    // below
+                                    // the surrounding `batch` is never
+                                    // committed
                                     // (nothing here ever put it back for those
                                     // two cases), leaving the in-memory map and
                                     // the Fjall `meta` entry disagreeing until
-                                    // restart. Only the genuine success arm below
+                                    // restart. Only the genuine success arm
+                                    // below
                                     // now removes it.
                                     let entry = self
                                         .pending_rotations
@@ -782,8 +803,10 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                             });
                                         }
                                         Some(entry) => {
-                                            // Dual-control satisfied — execute DEK install.
-                                            // Removal from `pending` is deferred
+                                            // Dual-control satisfied — execute
+                                            // DEK install.
+                                            // Removal from `pending` is
+                                            // deferred
                                             // until the batch actually commits
                                             // (see `pending_rotation_mutation`).
                                             pending_rotation_mutation =
@@ -815,13 +838,20 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                                 g.version
                                             };
 
-                                            // Dual-control-confirmed emergency rotation:
-                                            // same containment + staged-re-encryption
-                                            // bookkeeping as `InstallDek`'s emergency
-                                            // branch (ADR 0016-v2 §6.2 steps 2, 4) — this
-                                            // path used to skip both durable writes
-                                            // entirely, silently losing revocation status
-                                            // and the re-encryption key on restart
+                                            // Dual-control-confirmed emergency
+                                            // rotation:
+                                            // same containment +
+                                            // staged-re-encryption
+                                            // bookkeeping as `InstallDek`'s
+                                            // emergency
+                                            // branch (ADR 0016-v2 §6.2 steps 2,
+                                            // 4) — this
+                                            // path used to skip both durable
+                                            // writes
+                                            // entirely, silently losing
+                                            // revocation status
+                                            // and the re-encryption key on
+                                            // restart
                                             // (GitHub #1299).
                                             let revoked_key =
                                                 format!("{DEK_REVOKED_PREFIX}{old_version}");
@@ -880,11 +910,16 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         .pending_rotations
                                         .lock()
                                         .unwrap_or_else(|p| p.into_inner());
-                                    // Defensive re-check: only remove if still present and
-                                    // actually expired. A ConfirmRotateDek may have raced
-                                    // ahead of the sweeper and already resolved this entry,
-                                    // or the sweeper's read may have been stale — either
-                                    // way this is a silent no-op, not a violation.
+                                    // Defensive re-check: only remove if still
+                                    // present and
+                                    // actually expired. A ConfirmRotateDek may
+                                    // have raced
+                                    // ahead of the sweeper and already resolved
+                                    // this entry,
+                                    // or the sweeper's read may have been stale
+                                    // — either
+                                    // way this is a silent no-op, not a
+                                    // violation.
                                     if let Some(entry) = pending.get(&rotation_id)
                                         && entry.expires_at <= now
                                     {
@@ -942,7 +977,8 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                     None => {}
                 }
 
-                // Swap the active DEK epoch after a successful InstallDek commit.
+                // Swap the active DEK epoch after a successful InstallDek
+                // commit.
                 if let Some((new_epoch, is_emergency_rotation)) = pending_dek_swap {
                     let old_epoch = {
                         let mut guard = self.dek.write().unwrap_or_else(|p| p.into_inner());
@@ -989,7 +1025,8 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                         .lock()
                         .unwrap_or_else(|p| p.into_inner())
                         .insert(old_epoch.version, old_epoch.clone());
-                    // Signal background re-encryption task (non-fatal on channel full).
+                    // Signal background re-encryption task (non-fatal on
+                    // channel full).
                     let _ = self.reencrypt_tx.try_send(old_epoch);
                     tracing::info!("DEK epoch swapped");
                 }

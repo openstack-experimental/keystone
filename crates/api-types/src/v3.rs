@@ -31,10 +31,6 @@ pub mod trust;
 pub mod user;
 
 #[cfg(feature = "conv")]
-mod application_credential_conv;
-#[cfg(feature = "conv")]
-mod auth_conv;
-#[cfg(feature = "conv")]
 mod credential_conv;
 #[cfg(feature = "conv")]
 mod domain_config_conv;

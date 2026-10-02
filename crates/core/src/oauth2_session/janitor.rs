@@ -29,15 +29,15 @@
 //!
 //! Retention:
 //!
-//! - sessions, codes, device grants and refresh tokens that were never
-//!   revoked (live leaves, spent rotated parents) are purged once they have
-//!   been expired for [`EXPIRY_GRACE_SECONDS`];
+//! - sessions, codes, device grants and refresh tokens that were never revoked
+//!   (live leaves, spent rotated parents) are purged once they have been
+//!   expired for [`EXPIRY_GRACE_SECONDS`];
 //! - tombstones of revoked refresh families (expiry index kind
-//!   `refresh_tombstone`, set when the family is revoked) are purged once
-//!   they have been expired for `[oauth2] revoked_family_retention_days`.
-//!   Presenting an expired token is rejected regardless, so this retention
-//!   only keeps the records around for forensics and correlation with the
-//!   critical breach audit event.
+//!   `refresh_tombstone`, set when the family is revoked) are purged once they
+//!   have been expired for `[oauth2] revoked_family_retention_days`. Presenting
+//!   an expired token is rejected regardless, so this retention only keeps the
+//!   records around for forensics and correlation with the critical breach
+//!   audit event.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -452,7 +452,7 @@ mod tests {
         let mut clean = JanitorReport::default();
         clean.purged_by_kind.insert("code".to_string(), 2);
         emit_maintenance_event(&dispatcher, &clean);
-        let json = serde_json::to_value(&receivers.perimeter.try_recv().unwrap()).unwrap();
+        let json = serde_json::to_value(receivers.perimeter.try_recv().unwrap()).unwrap();
         assert_eq!(json["outcome"], "success");
         assert_eq!(json["outcome_reason"], "code=2,errors=0");
 
@@ -462,7 +462,7 @@ mod tests {
             ..JanitorReport::default()
         };
         emit_maintenance_event(&dispatcher, &broken);
-        let json = serde_json::to_value(&receivers.perimeter.try_recv().unwrap()).unwrap();
+        let json = serde_json::to_value(receivers.perimeter.try_recv().unwrap()).unwrap();
         assert_eq!(json["outcome"], "failure");
         assert_eq!(json["outcome_reason"], "errors=2");
     }

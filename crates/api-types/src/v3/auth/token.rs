@@ -501,9 +501,10 @@ mod tests {
 
     #[test]
     fn full_auth_request_serialize_carries_password_for_transport() {
-        // The password sits 4 levels deep (auth -> identity -> password -> user).
-        // Serialization must carry it through the whole nested tree so a client
-        // can send the request, via both `to_string` and `to_value`.
+        // The password sits 4 levels deep (auth -> identity -> password ->
+        // user). Serialization must carry it through the whole nested
+        // tree so a client can send the request, via both `to_string`
+        // and `to_value`.
         let req = nested_auth_request();
         let as_string = serde_json::to_string(&req).unwrap();
         let as_value = serde_json::to_value(&req).unwrap().to_string();

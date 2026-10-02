@@ -25,8 +25,8 @@ use openstack_keystone_api_types::v3::auth::token::{
     TokenResponse,
 };
 use openstack_sdk::AsyncOpenStack;
-use openstack_sdk::api::RawQueryAsync;
 use openstack_sdk::api::rest_endpoint_prelude::*;
+use openstack_sdk::api::{QueryAsync, raw};
 
 /// Perform token check request.
 fn sensitive_header(secret: &SecretString) -> Result<HeaderValue> {
@@ -180,9 +180,9 @@ pub async fn auth_token(
     identity: Identity,
     scope: Option<Scope>,
 ) -> Result<(Token, SecretString)> {
-    let rsp: http::Response<bytes::Bytes> = AuthTokenRequest { identity, scope }
-        .raw_query_async_ll(client, Some(false))
-        .await?;
+    let req = AuthTokenRequest { identity, scope };
+    let rsp: http::Response<bytes::Bytes> =
+        raw(req).skip_error_check(true).query_async(client).await?;
 
     if rsp.status() != http::StatusCode::CREATED {
         return Err(eyre!(

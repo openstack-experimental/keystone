@@ -129,8 +129,8 @@ impl ValidatedSecurityContext {
         if ctx.expires_at().is_some_and(|expiry| expiry < now) {
             return Err(AuthenticationError::AuthTokenExpired);
         }
-        // Not all of the checks can be done synchronously inside the SecurityContext.
-        // Do whatever else is required.
+        // Not all of the checks can be done synchronously inside the
+        // SecurityContext. Do whatever else is required.
         match &ctx.authentication_context() {
             AuthenticationContext::ApplicationCredential {
                 application_credential,
@@ -225,8 +225,8 @@ impl ValidatedSecurityContext {
                     ));
                 }
 
-                // TODO: this hints to eventual necessity to include trustor information in the
-                // Context statically.
+                // TODO: this hints to eventual necessity to include trustor
+                // information in the Context statically.
                 if let IdentityInfo::User(user) = &ctx.principal().identity {
                     if let Some(user) = &user.user
                         && user.domain_id != trustor.domain_id
@@ -388,8 +388,9 @@ impl ValidatedSecurityContext {
                     }
                 } else if matches!(scope_clone, ScopeInfo::Unscoped) {
                     // Unscoped with no pre-populated roles: skip storage read.
-                    // There's nothing to derive from the virtual user, and a read
-                    // would race with Raft replication during auth.
+                    // There's nothing to derive from the virtual user, and a
+                    // read would race with Raft replication
+                    // during auth.
                     debug!(
                         virtual_user_id = &virtual_user_id,
                         "Mapping: Unscoped with no prepopulated roles, skipping storage read"
@@ -468,8 +469,8 @@ impl ValidatedSecurityContext {
                 }
             }
         }
-        // TODO: Evaluate whether token revocation check should be done here - it is a
-        // part of the authentication validation
+        // TODO: Evaluate whether token revocation check should be done here -
+        // it is a part of the authentication validation
         // Populate roles before locking
         if let Some(authz) = ctx.authorization() {
             let role_vec = calculate_effective_roles(state, &ctx, &authz.scope).await?;

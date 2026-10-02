@@ -59,7 +59,7 @@ async fn admin_session() -> Result<Arc<AsyncOpenStack>> {
 
 /// An admin caller token for the `x-auth-token` header.
 async fn admin_token() -> Result<String> {
-    let mut tc = TestClient::default()?;
+    let mut tc = TestClient::new()?;
     tc.auth_admin().await?;
     Ok(tc
         .token
@@ -140,7 +140,7 @@ async fn test_ec2_token_forbidden_member_caller() -> Result<()> {
 
     // Even with a perfectly valid signature over their own credential, a
     // plain member caller is not `admin`/`service` and must be denied.
-    let mut member_tc = TestClient::default()?;
+    let mut member_tc = TestClient::new()?;
     member_tc
         .auth_password(
             test_api::common::get_password_auth(&member.user.name, FIXTURE_PASSWORD, "default")?,
@@ -262,7 +262,7 @@ async fn test_ec2_token_validates_at_auth_tokens() -> Result<()> {
 
     // The one place the EC2 token remains a valid *subject*: token
     // validation by an authorized caller.
-    let mut tc = TestClient::default()?;
+    let mut tc = TestClient::new()?;
     tc.auth_admin().await?;
     let rsp = test_api::auth::token::check_token(&tc, &token.clone().into()).await?;
     test_api::asserts::assert_response_status(
@@ -310,7 +310,7 @@ async fn test_ec2_token_reauth_allowed() -> Result<()> {
     let (member, cred, token) = issue_ec2_token(&admin).await?;
 
     // #1071 explicitly keeps token-from-token reauth working.
-    let mut tc = TestClient::default()?;
+    let mut tc = TestClient::new()?;
     tc.auth_token(
         &token,
         Some(Scope::Project(

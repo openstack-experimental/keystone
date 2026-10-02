@@ -271,8 +271,9 @@ pub fn read_uuid(rd: &mut &[u8]) -> Result<String, FernetDriverError> {
             match read_marker(rd).map_err(ValueReadError::from)? {
                 Marker::True => {
                     // This is uuid as bytes
-                    // Technically we may fail reading it into bytes, but python part is
-                    // responsible that it doesn not happen
+                    // Technically we may fail reading it into bytes, but python
+                    // part is responsible that it doesn not
+                    // happen
                     let marker = read_marker(rd).map_err(ValueReadError::from)?;
                     if let Marker::Bin8 | Marker::Bin16 | Marker::Bin32 = marker {
                         let len = read_bin_len_for_marker(marker, rd)?;

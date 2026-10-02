@@ -126,6 +126,11 @@ fn segments_match(pattern: &[&str], path: &[&str]) -> bool {
 }
 
 /// The application credential access rule object to be created.
+///
+/// `user_id` is optional in the builder because the API payload carries no
+/// owner for inline rules -- the provider stamps the credential's owner onto
+/// each rule before validating (see
+/// `ApplicationCredentialService::create_application_credential`).
 #[derive(Builder, Clone, Debug, Default, PartialEq, Validate)]
 #[builder(build_fn(error = "BuilderError"))]
 #[builder(setter(strip_option, into))]
@@ -158,6 +163,7 @@ pub struct AccessRuleCreate {
 
     /// The ID of the user who owns the access rule.
     // TODO: modify DB so that user_id is not nullable
+    #[builder(default)]
     #[validate(length(min = 1, max = 64))]
     pub user_id: String,
 }

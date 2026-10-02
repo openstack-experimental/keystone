@@ -67,8 +67,8 @@ pub(super) async fn list(
         ..Default::default()
     };
 
-    // Use join instead of try_join to have more constant latency preventing timing
-    // attacks.
+    // Use join instead of try_join to have more constant latency preventing
+    // timing attacks.
     let exec = &ExecutionContext::from_auth(&state, &user_auth);
     let (user, project, assignments) = tokio::join!(
         state
@@ -111,7 +111,8 @@ pub(super) async fn list(
         .await?;
 
     let assignments = assignments?;
-    // Collect to HashSet<Role> to deduplicate, then convert to Vec for API response
+    // Collect to HashSet<Role> to deduplicate, then convert to Vec for API
+    // response
     let roles: Vec<Role> = assignments
         .into_iter()
         .map(|a| a.try_into())

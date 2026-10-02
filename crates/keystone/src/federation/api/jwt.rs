@@ -78,8 +78,8 @@ pub async fn login(
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     let result = login_inner(&state, headers, peer_addr, &idp_id).await;
     // `idp_id` is a pre-auth signal known before any validation happens, so it
-    // is recorded as `Initiator.host` regardless of outcome (ADR 0023 §"Perimeter
-    // Auditing").
+    // is recorded as `Initiator.host` regardless of outcome (ADR 0023
+    // §"Perimeter Auditing").
     let host = sanitize_initiator_host(&idp_id, HostKind::FederationIdpUuid)
         .or_else(|| sanitize_initiator_host(&idp_id, HostKind::FederationIdpNonUuid))
         .map(Host::from_id);
@@ -202,10 +202,10 @@ async fn login_inner(
         .await
         .map_err(|err| OidcError::discovery(&jwks_url, &err))?;
 
-    // Verify the JWT and extract claims. In the JWT flow we don't enforce audience
-    // matching because the JWT Bearer token is not necessarily issued to the
-    // keystone audience. The identity provider handles audience validation through
-    // its configured bound_issuer.
+    // Verify the JWT and extract claims. In the JWT flow we don't enforce
+    // audience matching because the JWT Bearer token is not necessarily
+    // issued to the keystone audience. The identity provider handles
+    // audience validation through its configured bound_issuer.
     let claims_value: serde_json::Value =
         verify_jwt(&jwt, &jwks, issuer_url.as_deref(), None, &[])?;
 

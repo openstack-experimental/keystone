@@ -124,8 +124,8 @@ async fn create_inner(
     let provider_scope: Option<ProviderScope> = req.auth.scope.clone().map(Into::into);
     let authz_info = get_authz_info(state, provider_scope.as_ref()).await?;
 
-    // This is a new authentication/reauthentication. Check if that is allowed at
-    // all
+    // This is a new authentication/reauthentication. Check if that is allowed
+    // at all
     if let Some(token_restriction) = ctx.token_restriction()
         && !token_restriction.allow_rescope
         && req.auth.scope.is_some()
@@ -801,7 +801,8 @@ mod tests {
             "first request must not be rate-limited"
         );
 
-        // Second request from the same IP — burst exhausted → 429 + Retry-After.
+        // Second request from the same IP — burst exhausted → 429 +
+        // Retry-After.
         let mut req2 = Request::builder()
             .uri("/")
             .method("POST")
@@ -1081,7 +1082,8 @@ mod tests {
             assert_ne!(response.status(), StatusCode::TOO_MANY_REQUESTS);
         }
 
-        // Same Forwarded client again is throttled, even with a fresh ignored XFF.
+        // Same Forwarded client again is throttled, even with a fresh ignored
+        // XFF.
         let mut request = Request::builder()
             .uri("/")
             .method("POST")
@@ -1139,7 +1141,8 @@ mod tests {
             .with_state(state.clone());
 
         let peer: SocketAddr = "10.0.0.1:1234".parse().unwrap();
-        // Both requests carry the shared mesh peer but must still reach identity.
+        // Both requests carry the shared mesh peer but must still reach
+        // identity.
         for _ in 0..2 {
             let mut request = Request::builder()
                 .uri("/")
@@ -1222,7 +1225,8 @@ mod tests {
                 .unwrap()
         };
 
-        // First request from the peer: passes rate limit, fails at auth → not 429.
+        // First request from the peer: passes rate limit, fails at auth → not
+        // 429.
         let svc1 = make.clone().oneshot(peer).await.unwrap();
         let resp1 = svc1.oneshot(post()).await.unwrap();
         assert_ne!(

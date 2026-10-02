@@ -29,7 +29,8 @@ impl PasswordHasher for PlaintextHasher {
         warn!(
             "PasswordHashingAlgo::None is active - passwords are stored and compared in plaintext"
         );
-        // Reject invalid UTF-8 outright to prevent collisions from lossy conversion.
+        // Reject invalid UTF-8 outright to prevent collisions from lossy
+        // conversion.
         String::from_utf8(password.to_vec())
             .map_err(|_| PasswordHashError::CryptoHash("Invalid UTF-8 sequence in password".into()))
     }

@@ -81,8 +81,9 @@ fn openfga_block_at(
 }
 
 /// A named OpenFGA block at a dead address. Used where the block is only there
-/// to make `openfga` a bindable name and no operation routes to it: `with_config`
-/// only builds a `reqwest::Client`, so constructing it does no I/O.
+/// to make `openfga` a bindable name and no operation routes to it:
+/// `with_config` only builds a `reqwest::Client`, so constructing it does no
+/// I/O.
 fn openfga_block() -> AssignmentBackendConfig {
     openfga_block_at(
         "http://127.0.0.1:59191/",

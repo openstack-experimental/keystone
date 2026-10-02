@@ -53,8 +53,8 @@ impl TryFrom<db_project::Model> for Project {
         if let Some(description) = &value.description {
             project_builder.description(description);
         }
-        // python keystone defaults to project/domain being enabled when the column is
-        // unset.
+        // python keystone defaults to project/domain being enabled when the
+        // column is unset.
         project_builder.enabled(value.enabled.unwrap_or(true));
         if let Some(extra) = &value.extra
             && extra != "{}"

@@ -32,7 +32,7 @@ use test_api::fixtures::{
 };
 
 async fn project_client(fixture: &ProjectScopedUser) -> Result<TestClient> {
-    let mut client = TestClient::default()?;
+    let mut client = TestClient::new()?;
     client
         .auth_password(
             get_password_auth(&fixture.user.name, FIXTURE_PASSWORD, "default")?,
@@ -48,7 +48,7 @@ async fn project_client(fixture: &ProjectScopedUser) -> Result<TestClient> {
 }
 
 async fn system_client(fixture: &SystemScopedUser) -> Result<TestClient> {
-    let mut client = TestClient::default()?;
+    let mut client = TestClient::new()?;
     client
         .auth_password(
             get_password_auth(&fixture.user.name, FIXTURE_PASSWORD, "default")?,
@@ -65,7 +65,7 @@ async fn test_token_owner_can_show_and_revoke_own_token() -> Result<()> {
 
     let result: Result<(reqwest::Response, reqwest::Response, reqwest::Response)> = async {
         let owner_client = project_client(&owner).await?;
-        let mut admin_client = TestClient::default()?;
+        let mut admin_client = TestClient::new()?;
         admin_client.auth_admin_system().await?;
         let owner_token = owner_client
             .token
@@ -186,7 +186,7 @@ async fn test_system_reader_can_show_but_not_revoke_another_users_token() -> Res
 
 #[tokio::test]
 async fn test_token_show_and_revoke_require_valid_authentication() -> Result<()> {
-    let client = TestClient::default()?;
+    let client = TestClient::new()?;
     let invalid = SecretString::from("invalid-token");
 
     let invalid_show = check_token_with_auth(&client, Some(&invalid), &invalid).await?;

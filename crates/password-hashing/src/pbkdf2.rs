@@ -65,8 +65,8 @@ impl PasswordHasher for Pbkdf2Sha512Hasher {
     ) -> Result<bool, PasswordHashError> {
         // mirrors keystone/common/password_hashers/pbkdf2.py::Sha512.verify()
         // Parses the embedded rounds from the hash string.
-        // replace('.', "+") handles old Passlib-era hashes that used '.' instead of
-        // '+'.
+        // replace('.', "+") handles old Passlib-era hashes that used '.'
+        // instead of '+'.
         let password_bytes = password.to_vec();
         let hash_str = hash.to_string();
         let res = task::spawn_blocking(move || {
@@ -198,8 +198,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_pbkdf2_roundtrip_non_default_rounds() {
-        // Exercises the case where password_hash_rounds is explicitly configured.
-        // This is the scenario where bugs in reading the config field hide.
+        // Exercises the case where password_hash_rounds is explicitly
+        // configured. This is the scenario where bugs in reading the
+        // config field hide.
         let mut conf = mock_config(PasswordHashingAlgo::Pbkdf2Sha512, 255);
         conf.identity.password_hash_rounds = Some(10000);
         let password = "pbkdf2_custom_rounds";

@@ -13,9 +13,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Prometheus text-format scrape endpoint helpers (ADR 0023 Phase 4).
 //!
-//! [`format_prometheus_text`] serialises the audit counters and spool gauge into the
-//! Prometheus text exposition format (version 0.0.4) so they can be scraped
-//! by any Prometheus-compatible collector without pulling in the full
+//! [`format_prometheus_text`] serialises the audit counters and spool gauge
+//! into the Prometheus text exposition format (version 0.0.4) so they can be
+//! scraped by any Prometheus-compatible collector without pulling in the full
 //! `prometheus` client library.
 //!
 //! Metric names match the alert rules in `deploy/prometheus/alert_rules.yaml`.

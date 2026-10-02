@@ -69,8 +69,9 @@ where
     /// contains the scope information (whether it is scoped or explicitly
     /// Unscoped).
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        // Only available in tests - get mock ValidatedSecurityContext injected as
-        // extension instead of populating mocks for all individual calls.
+        // Only available in tests - get mock ValidatedSecurityContext injected
+        // as extension instead of populating mocks for all individual
+        // calls.
         #[cfg(any(test, feature = "mock"))]
         {
             if let Some(vsc) = parts.extensions.get::<ValidatedSecurityContext>() {
@@ -127,8 +128,8 @@ where
                 && **config_admin_svid == svid.to_string()
                 && interface == Interface::Admin
             {
-                // The admin_svid was configured and it is it over the admin interface - short
-                // circuit the admin
+                // The admin_svid was configured and it is it over the admin
+                // interface - short circuit the admin
                 let auth_result: AuthenticationResult = AuthenticationResultBuilder::default()
                     .context(AuthenticationContext::Admin)
                     .principal(
@@ -158,8 +159,8 @@ where
                 return Ok(Auth(vsc));
             }
 
-            // Authenticate via mapping engine (SPIFFE bindings are deprecated — ADR-0020
-            // Phase 3)
+            // Authenticate via mapping engine (SPIFFE bindings are deprecated —
+            // ADR-0020 Phase 3)
             let result = state
                 .provider
                 .get_mapping_provider()
@@ -295,8 +296,8 @@ fn flat_spiffe_claims(svid: &SpiffeId) -> Result<MappingAuthRequest, KeystoneApi
 /// used for `AuthenticationError::TokenRenewalForbidden` — always maps to
 /// 400, never 403, per `error_conv.rs`).
 fn reject_if_ec2(user_auth: &ValidatedSecurityContext) -> Result<(), KeystoneApiError> {
-    // SECURITY: this must stay here unchanged to prevent security vulnerabilities
-    // from the EC2 auth reuse.
+    // SECURITY: this must stay here unchanged to prevent security
+    // vulnerabilities from the EC2 auth reuse.
     //
     // A bare EC2 credential (not minted under a trust/app-cred) surfaces as
     // `AuthenticationContext::Ec2Credential` directly. One minted under a
@@ -626,8 +627,8 @@ mod tests {
         let request = flat_spiffe_claims(&svid).unwrap();
 
         assert_eq!(request.claims.get("spiffe.host").unwrap()[0], "compute-1");
-        assert!(request.claims.get("spiffe.project_id").is_none());
-        assert!(request.claims.get("spiffe.instance_id").is_none());
+        assert!(!request.claims.contains_key("spiffe.project_id"));
+        assert!(!request.claims.contains_key("spiffe.instance_id"));
     }
 
     #[test]
@@ -637,7 +638,7 @@ mod tests {
 
         assert_eq!(request.claims.get("spiffe.project_id").unwrap()[0], "p1");
         assert_eq!(request.claims.get("spiffe.instance_id").unwrap()[0], "i1");
-        assert!(request.claims.get("spiffe.host").is_none());
+        assert!(!request.claims.contains_key("spiffe.host"));
     }
 
     #[test]
@@ -645,9 +646,9 @@ mod tests {
         let svid = SpiffeId::new("spiffe://cloud.trust.domain/service/nova-api").unwrap();
         let request = flat_spiffe_claims(&svid).unwrap();
 
-        assert!(request.claims.get("spiffe.host").is_none());
-        assert!(request.claims.get("spiffe.project_id").is_none());
-        assert!(request.claims.get("spiffe.instance_id").is_none());
+        assert!(!request.claims.contains_key("spiffe.host"));
+        assert!(!request.claims.contains_key("spiffe.project_id"));
+        assert!(!request.claims.contains_key("spiffe.instance_id"));
     }
 
     #[test]
@@ -770,10 +771,11 @@ mod tests {
     async fn test_admin_svid_mismatch_falls_to_mapping() {
         use crate::role::MockRoleProvider;
 
-        // When admin_svid is configured and interface is Admin, but the client's
-        // SVID does not match the configured admin_svid, the shortcut is bypassed
-        // and the request falls through to the mapping engine. If no mapping rule
-        // matches, authentication fails.
+        // When admin_svid is configured and interface is Admin, but the
+        // client's SVID does not match the configured admin_svid, the
+        // shortcut is bypassed and the request falls through to the
+        // mapping engine. If no mapping rule matches, authentication
+        // fails.
         let mut mapping_mock = MockMappingProvider::new();
         mapping_mock
             .expect_authenticate_by_mapping()
@@ -845,7 +847,8 @@ mod tests {
             .insert(SpiffeId::new("spiffe://other-domain/workload").unwrap());
         parts.extensions.insert(Interface::Admin);
 
-        // No mapping rule matches, no X-Auth-Token fallback — authentication fails
+        // No mapping rule matches, no X-Auth-Token fallback — authentication
+        // fails
         let result = Auth::from_request_parts(&mut parts, &state).await;
         assert!(result.is_err());
     }

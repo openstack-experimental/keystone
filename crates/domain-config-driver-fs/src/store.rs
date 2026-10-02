@@ -165,7 +165,8 @@ fn parse_file(path: &Path) -> Result<Option<DomainConfig>, DomainConfigProviderE
             continue;
         };
         // Group names are lowercase, as python-keystone spells them; match
-        // exactly, so a mis-cased [Ldap] is reported rather than silently honoured.
+        // exactly, so a mis-cased [Ldap] is reported rather than silently
+        // honoured.
         let Ok(group) = section.parse::<DomainConfigGroupName>() else {
             warn!(
                 file = %path.display(),

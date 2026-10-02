@@ -155,9 +155,9 @@ pub trait DomainConfigBackend: Send + Sync {
     ///
     /// The default is a no-op returning `Ok(false)`: the `sql` driver holds
     /// nothing cached, and the config API's own writes are already live. The
-    /// `fs` driver overrides it to re-scan `[identity] domain_config_dir`, so an
-    /// operator's edit to a per-domain `keystone.<name>.conf` takes effect
-    /// without a restart.
+    /// `fs` driver overrides it to re-scan `[identity] domain_config_dir`, so
+    /// an operator's edit to a per-domain `keystone.<name>.conf` takes
+    /// effect without a restart.
     ///
     /// # Parameters
     /// - `_config`: The reloaded service configuration.

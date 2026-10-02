@@ -57,12 +57,12 @@ pub(super) struct BcryptSha256Hasher;
 
 impl PasswordHasher for BcryptSha256Hasher {
     async fn hash(&self, conf: &Config, password: &[u8]) -> Result<String, PasswordHashError> {
-        // mirrors keystone/common/password_hashers/bcrypt.py::Bcrypt_sha256.hash():
-        //   salt_with_opts = bcrypt.gensalt(rounds)
+        // mirrors keystone/common/password_hashers/bcrypt.py::Bcrypt_sha256.
+        // hash():   salt_with_opts = bcrypt.gensalt(rounds)
         //   salt = salt_with_opts[-22:]
-        //   hmac_digest = base64.b64encode(hmac.digest(salt, password, "sha256"))
-        //   hashed = bcrypt.hashpw(hmac_digest, salt_with_opts)
-        //   digest = hashed[-31:]
+        //   hmac_digest = base64.b64encode(hmac.digest(salt, password,
+        // "sha256"))   hashed = bcrypt.hashpw(hmac_digest,
+        // salt_with_opts)   digest = hashed[-31:]
         //   return f"$bcrypt-sha256$v=2,t=2b,r={rounds}${salt}${digest}"
         let password_bytes = password.to_vec();
         let rounds = conf.identity.password_hash_rounds.unwrap_or(12);
@@ -101,7 +101,8 @@ impl PasswordHasher for BcryptSha256Hasher {
             let hmac_res = compute_hmac_sha256(salt_str.as_bytes(), &password_bytes)?;
             let hmac_digest_b64 = STANDARD.encode(hmac_res);
 
-            // Hash using the real raw salt and the HMAC-derived intermediate password.
+            // Hash using the real raw salt and the HMAC-derived intermediate
+            // password.
             let final_bcrypt =
                 ::bcrypt::hash_with_salt(hmac_digest_b64.as_bytes(), rounds as u32, raw_salt)?;
             let full_bcrypt_str = final_bcrypt.format_for_version(::bcrypt::Version::TwoB);
@@ -129,11 +130,12 @@ impl PasswordHasher for BcryptSha256Hasher {
         password: &[u8],
         hash: &str,
     ) -> Result<bool, PasswordHashError> {
-        // mirrors keystone/common/password_hashers/bcrypt.py::Bcrypt_sha256.verify()
-        // exactly: there is no "version" concept in the real implementation.
-        // It always HMACs (never falls back to a plain digest), and it does not
-        // even look at `v=`, it just scans every comma-delimited param for `t=`
-        // and `r=` and ignores anything else. An earlier revision of this module
+        // mirrors keystone/common/password_hashers/bcrypt.py::Bcrypt_sha256.
+        // verify() exactly: there is no "version" concept in the real
+        // implementation. It always HMACs (never falls back to a plain
+        // digest), and it does not even look at `v=`, it just scans
+        // every comma-delimited param for `t=` and `r=` and ignores
+        // anything else. An earlier revision of this module
         // had a second, version-gated code path that computed a plain SHA-256
         // digest (no HMAC) for records without `v=2`. That path was based on a
         // Passlib-only format Keystone's own implementation never produces or
@@ -176,14 +178,16 @@ impl PasswordHasher for BcryptSha256Hasher {
         match task::spawn_blocking(move || {
             // Reconstruct the bcrypt hash string for checkpw.
             // Python does: new_salt = f"${opts['t']}${opts['r']}${salt}"
-            // then bcrypt.checkpw(hmac_digest, f"{new_salt}{digest}".encode("ascii")).
+            // then bcrypt.checkpw(hmac_digest,
+            // f"{new_salt}{digest}".encode("ascii")).
             //
             // The {:02} zero-pad is deliberate and must NOT be dropped to
             // literally mirror Python's f-string: the Rust `bcrypt` crate's
             // parser requires the cost field to be exactly two digits, whereas
-            // Python's `int`-formatted `r=` lets the underlying libbcrypt accept
-            // a single digit. The stored digest was originally computed against
-            // a salt from `bcrypt.gensalt(rounds)`, which always embeds a
+            // Python's `int`-formatted `r=` lets the underlying libbcrypt
+            // accept a single digit. The stored digest was
+            // originally computed against a salt from
+            // `bcrypt.gensalt(rounds)`, which always embeds a
             // 2-digit zero-padded cost (e.g. "05"), so "05", not "5", is the
             // cost the digest actually corresponds to. For realistic round
             // counts (>= 10) the two forms are identical anyway.

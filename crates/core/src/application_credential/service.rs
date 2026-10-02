@@ -141,6 +141,15 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
         ctx: &ExecutionContext<'a>,
         rec: ApplicationCredentialCreate,
     ) -> Result<ApplicationCredentialCreateResponse, ApplicationCredentialProviderError> {
+        let mut rec = rec;
+        // The API payload carries no owner for inline access rules; stamp the
+        // credential's owner onto each rule before validation, which
+        // enforces a min-length on `user_id`.
+        if let Some(rules) = rec.access_rules.as_mut() {
+            for rule in rules {
+                rule.user_id = rec.user_id.clone();
+            }
+        }
         rec.validate()?;
         let roles: HashSet<String> = ctx
             .state()
@@ -188,7 +197,6 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
                 if rule.id.is_none() {
                     rule.id = Some(Uuid::new_v4().simple().to_string());
                 }
-                rule.user_id = new_rec.user_id.clone();
             }
         }
         if new_rec.secret.is_none() {
@@ -478,8 +486,9 @@ pub fn generate_secret() -> SecretString {
     let mut secret_bytes = [0u8; LENGTH];
     rng().fill(&mut secret_bytes[..]);
 
-    // 2. Base64 URL-safe encoding (Analogous to `base64.urlsafe_b64encode(secret)`)
-    //    with stripping padding handled automatically by `URL_SAFE_NO_PAD` engine.
+    // 2. Base64 URL-safe encoding (Analogous to
+    //    `base64.urlsafe_b64encode(secret)`) with stripping padding handled
+    //    automatically by `URL_SAFE_NO_PAD` engine.
     let encoded_secret = general_purpose::URL_SAFE_NO_PAD.encode(secret_bytes);
 
     SecretString::new(encoded_secret.into())

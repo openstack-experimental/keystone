@@ -1177,13 +1177,13 @@ impl IdentityApi for IdentityService {
         }
         let (backend, local_id) = self.resolve_public_id(ctx, user_id).await?;
         let mut user = backend.get_user(ctx.state(), &local_id).await?;
-        if !Arc::ptr_eq(&backend, &self.backend_driver) {
-            if let Some(user) = &mut user {
-                // Non-default backend: the driver knows the entity by
-                // `local_id`, not `user_id` -- restore the public id the
-                // caller looked it up by before it's cached/returned.
-                user.id = user_id.to_string();
-            }
+        if !Arc::ptr_eq(&backend, &self.backend_driver)
+            && let Some(user) = &mut user
+        {
+            // Non-default backend: the driver knows the entity by
+            // `local_id`, not `user_id` -- restore the public id the
+            // caller looked it up by before it's cached/returned.
+            user.id = user_id.to_string();
         }
         if let Some(user) = &user {
             if self.caching {

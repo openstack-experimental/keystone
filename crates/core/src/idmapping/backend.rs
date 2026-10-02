@@ -87,8 +87,8 @@ pub trait IdMappingBackend: Send + Sync {
     /// - `public_id`: The public identifier.
     ///
     /// # Returns
-    /// - `Result<(), IdMappingProviderError>` - `Ok` on success (including
-    ///   when nothing was found), or an `Error`.
+    /// - `Result<(), IdMappingProviderError>` - `Ok` on success (including when
+    ///   nothing was found), or an `Error`.
     async fn delete_id_mapping<'a>(
         &self,
         state: &ServiceState,
@@ -106,8 +106,8 @@ pub trait IdMappingBackend: Send + Sync {
     /// - `domain_id`: The domain identifier.
     ///
     /// # Returns
-    /// - `Result<(), IdMappingProviderError>` - `Ok` on success (including
-    ///   when nothing was found), or an `Error`.
+    /// - `Result<(), IdMappingProviderError>` - `Ok` on success (including when
+    ///   nothing was found), or an `Error`.
     async fn delete_mappings_for_domain<'a>(
         &self,
         state: &ServiceState,

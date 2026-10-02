@@ -21,9 +21,9 @@
 //! instead of the Raft gRPC one. It performs two checks:
 //!
 //! 1. Connects to the internal REST port over SPIFFE mTLS using a fetched
-//!    workload SVID and issues a request, proving the internal SPIFFE
-//!    listener really does serve the REST/axum router end-to-end (closing
-//!    the gap the plan doc's own `curl` verification snippet describes).
+//!    workload SVID and issues a request, proving the internal SPIFFE listener
+//!    really does serve the REST/axum router end-to-end (closing the gap the
+//!    plan doc's own `curl` verification snippet describes).
 //! 2. Verifies that a plain (non-SPIFFE) TLS connection to the same port is
 //!    rejected at the TLS handshake layer.
 

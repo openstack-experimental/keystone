@@ -96,7 +96,8 @@ pub(super) async fn list(
         .await?;
 
     let assignments = assignments?;
-    // Collect to HashSet<Role> to deduplicate, then convert to Vec for API response
+    // Collect to HashSet<Role> to deduplicate, then convert to Vec for API
+    // response
     let roles: Vec<Role> = assignments
         .into_iter()
         .map(|a| a.try_into())

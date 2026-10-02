@@ -237,7 +237,8 @@ mod tests {
     async fn test_update_policy_denied() {
         let mut identity_mock = MockIdentityProvider::default();
 
-        // Mock get_user to return the existing user (called before policy check)
+        // Mock get_user to return the existing user (called before policy
+        // check)
         identity_mock
             .expect_get_user()
             .withf(|_, id: &'_ str| id == "bar")

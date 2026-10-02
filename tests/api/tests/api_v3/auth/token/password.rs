@@ -22,14 +22,14 @@ use test_api::common::*;
 
 #[tokio::test]
 async fn test_login_password() -> Result<()> {
-    let mut admin_client = TestClient::default()?;
+    let mut admin_client = TestClient::new()?;
     admin_client.auth_admin().await?;
     Ok(())
 }
 
 #[tokio::test]
 async fn test_login_system_scope() -> Result<()> {
-    let mut admin_client = TestClient::default()?;
+    let mut admin_client = TestClient::new()?;
 
     let auth = IdentityBuilder::default()
         .methods(vec!["password".into()])

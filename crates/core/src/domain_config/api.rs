@@ -14,7 +14,8 @@
 
 //! # Domain configuration provider API
 //!
-//! The subset of [`DomainConfigBackend`](crate::domain_config::DomainConfigBackend)
+//! The subset of
+//! [`DomainConfigBackend`](crate::domain_config::DomainConfigBackend)
 //! that backs the `/v3/domains/{domain_id}/config` REST endpoints: every verb
 //! at the three granularities (whole configuration, single group, single
 //! option), plus the read-only defaults. The registration lock methods of the

@@ -15,11 +15,11 @@
 //! Per ADR 0034 the assignment provider routes each operation to a backend
 //! chosen from the assignment's **target**: `system` targets and every
 //! unconfigured domain use the global `[assignment] driver`; a domain that
-//! stores an `assignment/driver` binding and is mapped by `[assignment.domains]`
-//! to a matching `[assignment.backends.<name>]` block uses that block's shared
-//! instance. Untargeted listings fan out over every active backend and union
-//! the results (§5). The routing table is an immutable [`AssignmentBundle`]
-//! swapped in whole on every config / binding change (§9).
+//! stores an `assignment/driver` binding and is mapped by
+//! `[assignment.domains]` to a matching `[assignment.backends.<name>]` block
+//! uses that block's shared instance. Untargeted listings fan out over every
+//! active backend and union the results (§5). The routing table is an immutable
+//! [`AssignmentBundle`] swapped in whole on every config / binding change (§9).
 use async_trait::async_trait;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -81,9 +81,9 @@ struct AssignmentBundle {
     dispatch_enabled: bool,
     /// `[assignment.domains]`: domain id → backend block name.
     domains: HashMap<String, String>,
-    /// `[assignment.backends.*]`: block name → driver configuration. Retained so
-    /// a later rebuild can tell a changed block from an unchanged one and reuse
-    /// the live instance in the latter case.
+    /// `[assignment.backends.*]`: block name → driver configuration. Retained
+    /// so a later rebuild can tell a changed block from an unchanged one
+    /// and reuse the live instance in the latter case.
     backend_blocks: HashMap<String, AssignmentBackendConfig>,
     /// Built named instances, block name → backend. One entry per block a
     /// currently bound domain maps to; several domains may share one.
@@ -98,11 +98,11 @@ impl AssignmentBundle {
     /// `assignment/driver` `name` (empty = no binding).
     ///
     /// Mirrors ADR 0034 §4 step 3: an empty or global name resolves cleanly to
-    /// the global backend; a *stale* binding — a non-empty, non-global name with
-    /// no matching live `[assignment.backends.*]` block (gone / renamed / now a
-    /// different driver) — also falls back to the global backend but returns
-    /// `true` so the caller can log it once per resolution rather than once per
-    /// request.
+    /// the global backend; a *stale* binding — a non-empty, non-global name
+    /// with no matching live `[assignment.backends.*]` block (gone /
+    /// renamed / now a different driver) — also falls back to the global
+    /// backend but returns `true` so the caller can log it once per
+    /// resolution rather than once per request.
     fn resolve_named(&self, domain_id: &str, name: &str) -> (Arc<dyn AssignmentBackend>, bool) {
         if name.is_empty() || name == self.global_driver_name {
             return (self.global.clone(), false);
@@ -285,9 +285,9 @@ impl AssignmentService {
         self
     }
 
-    /// Attach an `fs` domain-config backend handle so [`Self::rebuild`] re-scans
-    /// the per-domain config files before enumerating bound domains (ADR 0034
-    /// §9). Test-only.
+    /// Attach an `fs` domain-config backend handle so [`Self::rebuild`]
+    /// re-scans the per-domain config files before enumerating bound
+    /// domains (ADR 0034 §9). Test-only.
     #[cfg(test)]
     pub(crate) fn with_dc_file_backend(mut self, backend: Arc<dyn DomainConfigBackend>) -> Self {
         self.dc_file_backend = Some(backend);
@@ -394,9 +394,10 @@ impl AssignmentService {
 
         // ADR 0034 §9: a per-domain `keystone.<name>.conf` the operator edited
         // on disk is invisible until the `fs` domain-config driver re-scans its
-        // directory. The reload watch now covers `[identity] domain_config_dir`,
-        // so refresh the captured handle's store before the resolver enumerates
-        // the bound domains. Best-effort: a scan error keeps the last good scan.
+        // directory. The reload watch now covers `[identity]
+        // domain_config_dir`, so refresh the captured handle's store
+        // before the resolver enumerates the bound domains.
+        // Best-effort: a scan error keeps the last good scan.
         if let Some(file) = &self.dc_file_backend
             && let Err(error) = file.reload(&config).await
         {

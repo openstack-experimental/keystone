@@ -220,9 +220,10 @@ impl FjallStateMachine {
             .map(|(plaintext, _next_version)| plaintext)
     }
 
-    /// Same deterministic-epoch selection as [`Self::decrypt_state_by_version`],
-    /// but also returns the record's next nonce version (`stored_version + 1`,
-    /// per [`state_decrypt`]'s contract).
+    /// Same deterministic-epoch selection as
+    /// [`Self::decrypt_state_by_version`], but also returns the record's
+    /// next nonce version (`stored_version + 1`, per [`state_decrypt`]'s
+    /// contract).
     ///
     /// Shared with [`Self::encrypt_and_store`], which needs that version to
     /// continue the per-record nonce counter across a DEK rotation instead
@@ -318,9 +319,10 @@ impl FjallStateMachine {
         match result {
             Ok((plaintext, _next_version)) => Ok(plaintext.to_vec()),
             Err(openstack_keystone_storage_crypto::CryptoError::AesDecrypt) => {
-                // ALWAYS record failure first, even if retired DEK succeeds (M6 fix).
-                // The retired DEK fallback is only for reading pre-rotation data,
-                // but the GCM failure with the current DEK still counts toward
+                // ALWAYS record failure first, even if retired DEK succeeds (M6
+                // fix). The retired DEK fallback is only for
+                // reading pre-rotation data, but the GCM
+                // failure with the current DEK still counts toward
                 // quarantine threshold.
                 let failed = self.quarantine.record_failure(partition);
 

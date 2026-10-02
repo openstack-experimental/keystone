@@ -107,7 +107,8 @@ impl PerformAction for RestoreCommand {
             .map_err(|e| eyre!("cannot open snapshot file {:?}: {e}", self.snapshot))?;
         let file_size = file.metadata().await.map(|m| m.len()).unwrap_or(0);
 
-        // Stream in 256 KiB chunks; at most one chunk is resident in memory at a time.
+        // Stream in 256 KiB chunks; at most one chunk is resident in memory at
+        // a time.
         let stream = file_chunk_stream(file, self.elect, file_size);
 
         let mut client = get_grpc_client(config, self.cluster_addr).await?;

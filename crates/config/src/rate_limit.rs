@@ -130,7 +130,8 @@ mod tests {
 
     #[test]
     fn deserialize_disabled_ignores_zero_values() {
-        // Disabled sections with zero limits are valid config (no startup failure).
+        // Disabled sections with zero limits are valid config (no startup
+        // failure).
         let s: RateLimitSection = serde_json::from_value(json!({"enabled": false, "burst_size": 0,
                 "replenish_rate_per_second": 0}))
         .unwrap();

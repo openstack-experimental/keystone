@@ -579,7 +579,8 @@ pub(crate) mod tests {
         // mounted as the outer router's fallback.
         let normalized = NormalizePathLayer::trim_trailing_slash().layer(router);
         // The raw peer (10.0.0.9) must be a trusted proxy for the header to be
-        // honoured, mirroring the `[oslo_middleware] trusted_proxies` allowlist.
+        // honoured, mirroring the `[oslo_middleware] trusted_proxies`
+        // allowlist.
         let proxy_config = std::sync::Arc::new(openstack_keystone_config::OsloMiddleware {
             enable_proxy_headers_parsing: true,
             trusted_header: openstack_keystone_config::ProxyHeader::XForwardedFor,
@@ -595,7 +596,8 @@ pub(crate) mod tests {
 
         let make =
             AxumServiceExt::<Request<Body>>::into_make_service_with_connect_info::<SocketAddr>(app);
-        // Raw TCP peer is the reverse proxy; the header carries the real client.
+        // Raw TCP peer is the reverse proxy; the header carries the real
+        // client.
         let peer: SocketAddr = "10.0.0.9:5555".parse().unwrap();
         let svc = make.oneshot(peer).await.unwrap();
 

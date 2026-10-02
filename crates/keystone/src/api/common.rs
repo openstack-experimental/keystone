@@ -80,8 +80,9 @@ pub async fn public_base_url(state: &ServiceState, headers: &axum::http::HeaderM
                             .unwrap_or("http")
                     } else {
                         // When proxy headers are not enabled, never trust the
-                        // forwarded-protocol header — it could be spoofed by any
-                        // client reaching the listener directly.
+                        // forwarded-protocol header — it could be spoofed by
+                        // any client reaching the
+                        // listener directly.
                         "http"
                     };
                     format!("{proto}://{h}")

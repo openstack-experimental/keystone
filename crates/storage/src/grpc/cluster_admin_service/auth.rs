@@ -177,7 +177,8 @@ pub(super) fn check_peer_trust_domain<T>(
         ));
     }
 
-    // In SPIFFE mode, enforce the 5-minute force-renewal window (ADR 0016-v2 §4.1).
+    // In SPIFFE mode, enforce the 5-minute force-renewal window (ADR 0016-v2
+    // §4.1).
     if trust_domains.is_some() {
         check_svid_ttl(request)?;
     }

@@ -150,7 +150,8 @@ impl ClusterAdminServiceImpl {
             }));
         }
 
-        // Non-emergency: commit InstallDek directly (old DEK is retired, not revoked).
+        // Non-emergency: commit InstallDek directly (old DEK is retired, not
+        // revoked).
         let cmd = StoreCommand::Transaction(vec![MutationInner::InstallDek {
             wrapped_dek,
             dek_version: new_version,

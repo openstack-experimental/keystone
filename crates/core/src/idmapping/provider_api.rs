@@ -63,9 +63,8 @@ pub trait IdMappingApi: Send + Sync {
     /// - `local_id`: The local identifier.
     /// - `domain_id`: The domain identifier.
     /// - `entity_type`: The entity type.
-    /// - `public_id`: The public identifier to use. If `None`, one is
-    ///   generated deterministically from `domain_id`, `entity_type` and
-    ///   `local_id`.
+    /// - `public_id`: The public identifier to use. If `None`, one is generated
+    ///   deterministically from `domain_id`, `entity_type` and `local_id`.
     ///
     /// # Returns
     /// - `Result<IdMapping, IdMappingProviderError>` - The created (or
@@ -88,8 +87,8 @@ pub trait IdMappingApi: Send + Sync {
     /// - `public_id`: The public identifier.
     ///
     /// # Returns
-    /// - `Result<(), IdMappingProviderError>` - `Ok` on success (including
-    ///   when nothing was found), or an `Error`.
+    /// - `Result<(), IdMappingProviderError>` - `Ok` on success (including when
+    ///   nothing was found), or an `Error`.
     async fn delete_id_mapping<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -107,8 +106,8 @@ pub trait IdMappingApi: Send + Sync {
     /// - `domain_id`: The domain identifier.
     ///
     /// # Returns
-    /// - `Result<(), IdMappingProviderError>` - `Ok` on success (including
-    ///   when nothing was found), or an `Error`.
+    /// - `Result<(), IdMappingProviderError>` - `Ok` on success (including when
+    ///   nothing was found), or an `Error`.
     async fn delete_mappings_for_domain<'a>(
         &self,
         ctx: &ExecutionContext<'a>,

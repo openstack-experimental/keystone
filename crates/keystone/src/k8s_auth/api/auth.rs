@@ -157,9 +157,10 @@ async fn mapping_auth(
             ScopeInfo::Unscoped
         } else {
             // Slow path: read virtual user to derive scope from authorizations.
-            // On a follower this read can race with Raft replication (ForwardToLeader
-            // always fails locally), so handle the None gracefully to avoid aborting
-            // the HTTP connection with a panic.
+            // On a follower this read can race with Raft replication
+            // (ForwardToLeader always fails locally), so handle the
+            // None gracefully to avoid aborting the HTTP connection
+            // with a panic.
             match state
                 .provider
                 .get_mapping_provider()
@@ -173,8 +174,9 @@ async fn mapping_auth(
                 Ok(None) => {
                     // Virtual user not found locally (Raft replication lag).
                     // The ruleset match is trustworthy; fall back to unscoped
-                    // to avoid aborting the connection. This returns a 401 instead
-                    // of a server-panic connection drop.
+                    // to avoid aborting the connection. This returns a 401
+                    // instead of a server-panic connection
+                    // drop.
                     warn!(
                         virtual_user_id = mapping_ctx.virtual_user_id,
                         "virtual user not found locally, falling back to unscoped scope"

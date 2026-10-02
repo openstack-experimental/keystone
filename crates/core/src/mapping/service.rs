@@ -610,7 +610,8 @@ impl MappingService {
                 .await?;
 
             let result = if let Some(mut vu) = existing {
-                // Update path: refresh fields, preserve created_at and is_system
+                // Update path: refresh fields, preserve created_at and
+                // is_system
                 vu.mapping_id = ruleset.mapping_id.clone();
                 vu.matched_rule_name = match_result.rule_name.clone();
                 vu.resolved_user_name = match_result.user_name.clone();

@@ -34,9 +34,10 @@ use crate::mapping::ruleset::MappingRuleSetCreate;
 /// # Returns
 /// `u128` value representing the content hash of the ruleset.
 pub fn compute_ruleset_version(ruleset: &MappingRuleSetCreate) -> u128 {
-    // Serialize to deterministic JSON (struct field order, not sorted) for hashing.
-    // The Rust `Serialize` impl preserves struct field order, which is stable for a
-    // given struct definition. Any struct change will produce a different hash.
+    // Serialize to deterministic JSON (struct field order, not sorted) for
+    // hashing. The Rust `Serialize` impl preserves struct field order,
+    // which is stable for a given struct definition. Any struct change will
+    // produce a different hash.
     #[allow(clippy::expect_used)]
     let serialized =
         serde_json::to_string(ruleset).expect("ruleset serialization should never fail");

@@ -346,7 +346,8 @@ fn validate_domain_resolution_mode(
             }
         }
         DomainResolutionMode::ClaimsOnly { allowed_domains } => {
-            // ClaimsOnly: at least one rule must have claim template in user_domain_id
+            // ClaimsOnly: at least one rule must have claim template in
+            // user_domain_id
             let has_claims_template = rules.iter().any(|r| {
                 r.identity
                     .user_domain_id
@@ -431,11 +432,12 @@ fn check_nested_quantifiers(hir: &Hir, errors: &mut Vec<String>) {
         check_body_for_nested_quantifiers(rep, &rep.sub, errors);
     }
 
-    // Recurse into all children to find nested quantifiers wrapped in other nodes
-    // (e.g., a Repetition inside a Capture inside another Repetition).
-    // The `subs()` method returns the sub-expressions of `Concat`, `Alternation`,
-    // `Capture`, and `Repetition`. We recurse into all children, accepting that
-    // nested repetitions will be checked again (without adding duplicate errors).
+    // Recurse into all children to find nested quantifiers wrapped in other
+    // nodes (e.g., a Repetition inside a Capture inside another
+    // Repetition). The `subs()` method returns the sub-expressions of
+    // `Concat`, `Alternation`, `Capture`, and `Repetition`. We recurse into
+    // all children, accepting that nested repetitions will be checked again
+    // (without adding duplicate errors).
     for child in hir.kind().subs() {
         check_nested_quantifiers(child, errors);
     }
@@ -461,9 +463,9 @@ fn check_body_for_nested_quantifiers(rep: &HirRepetition, body: &Hir, errors: &m
         return;
     }
 
-    // Look through intermediate nodes (e.g., Capture) to find nested repetitions.
-    // The HIR wraps `(a+)` in a Capture node, so we need to look inside Capture
-    // to find the nested Repetition.
+    // Look through intermediate nodes (e.g., Capture) to find nested
+    // repetitions. The HIR wraps `(a+)` in a Capture node, so we need to
+    // look inside Capture to find the nested Repetition.
     match body.kind() {
         // Direct nested quantifier: `a++`, `(a+)*`, etc.
         HirKind::Repetition(_)
@@ -618,8 +620,8 @@ mod tests {
         // Build a pattern that exceeds MAX_REGEX_HIR_SIZE
         let pattern = "a".repeat(MAX_REGEX_HIR_SIZE + 100);
         let result = validate_regex(&pattern);
-        // Simple literals have HIR of same length as pattern, so it will exceed the
-        // limit
+        // Simple literals have HIR of same length as pattern, so it will exceed
+        // the limit
         assert!(matches!(
             result,
             Err(MappingProviderError::RegexTooComplex(_))

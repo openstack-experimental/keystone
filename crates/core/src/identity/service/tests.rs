@@ -336,11 +336,13 @@ async fn test_authenticate_by_totp_rate_limited() {
     let mut credential_mock = MockCredentialProvider::default();
     // Rejected before verification: credentials must never be listed.
     credential_mock.expect_list_credentials_for_user().times(0);
-    let mut config = openstack_keystone_config::Config::default();
-    config.rate_limit_user_auth = openstack_keystone_config::RateLimitSection {
-        enabled: true,
-        burst_size: 1,
-        replenish_rate_per_second: 1,
+    let config = openstack_keystone_config::Config {
+        rate_limit_user_auth: openstack_keystone_config::RateLimitSection {
+            enabled: true,
+            burst_size: 1,
+            replenish_rate_per_second: 1,
+        },
+        ..Default::default()
     };
     let state = get_mocked_state(
         Some(config),
@@ -581,11 +583,13 @@ async fn test_authenticate_by_totp_success_by_name_and_domain() {
 /// attempt) so timing cannot replenish it mid-test.
 #[tokio::test]
 async fn test_authenticate_by_password_rate_limited() {
-    let mut config = openstack_keystone_config::Config::default();
-    config.rate_limit_user_auth = openstack_keystone_config::RateLimitSection {
-        enabled: true,
-        burst_size: 1,
-        replenish_rate_per_second: 1,
+    let config = openstack_keystone_config::Config {
+        rate_limit_user_auth: openstack_keystone_config::RateLimitSection {
+            enabled: true,
+            burst_size: 1,
+            replenish_rate_per_second: 1,
+        },
+        ..Default::default()
     };
     let state = get_mocked_state(Some(config), None).await;
     assert!(state.rate_limiters.check_user("uid").is_ok());
@@ -622,11 +626,13 @@ async fn test_authenticate_by_password_rate_limited() {
 /// matter how often it is retried.
 #[tokio::test]
 async fn test_authenticate_by_password_unknown_user_uniform_error() {
-    let mut config = openstack_keystone_config::Config::default();
-    config.rate_limit_user_auth = openstack_keystone_config::RateLimitSection {
-        enabled: true,
-        burst_size: 1,
-        replenish_rate_per_second: 1,
+    let config = openstack_keystone_config::Config {
+        rate_limit_user_auth: openstack_keystone_config::RateLimitSection {
+            enabled: true,
+            burst_size: 1,
+            replenish_rate_per_second: 1,
+        },
+        ..Default::default()
     };
     let state = get_mocked_state(Some(config), None).await;
 
@@ -696,11 +702,13 @@ async fn test_authenticate_by_password_probe_skipped_when_disabled() {
 /// Within quota the request proceeds to the backend normally.
 #[tokio::test]
 async fn test_authenticate_by_password_within_quota_reaches_backend() {
-    let mut config = openstack_keystone_config::Config::default();
-    config.rate_limit_user_auth = openstack_keystone_config::RateLimitSection {
-        enabled: true,
-        burst_size: 100,
-        replenish_rate_per_second: 10,
+    let config = openstack_keystone_config::Config {
+        rate_limit_user_auth: openstack_keystone_config::RateLimitSection {
+            enabled: true,
+            burst_size: 100,
+            replenish_rate_per_second: 10,
+        },
+        ..Default::default()
     };
     let state = get_mocked_state(Some(config), None).await;
 

@@ -51,8 +51,8 @@ pub async fn set_new_password<C: ConnectionTrait, S: AsRef<str>>(
 ) -> Result<password::Model, IdentityProviderError> {
     let now = Utc::now();
 
-    // Determine history size: unique_last_password_count + 1 (for the new password)
-    // If unique_count is 0, don't keep any old passwords.
+    // Determine history size: unique_last_password_count + 1 (for the new
+    // password) If unique_count is 0, don't keep any old passwords.
     let keep_count = unique_count as usize;
 
     // existing_passwords is sorted DESC (newest first). Expire the newest
@@ -169,7 +169,8 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------
-    // unique_last_password_count = 1  ->  expire 1 old password, delete the rest
+    // unique_last_password_count = 1  ->  expire 1 old password, delete the
+    // rest
     // ---------------------------------------------------------------------------
 
     #[tokio::test]
@@ -188,7 +189,8 @@ mod tests {
 
     #[tokio::test]
     async fn unique_one_one_existing_kept() {
-        // 1 existing, unique=1 → keep 1 old → no truncation → expire the 1 kept.
+        // 1 existing, unique=1 → keep 1 old → no truncation → expire the 1
+        // kept.
         let existing = vec![make_pwd(1, 100, false)];
 
         let db = MockDatabase::new(DatabaseBackend::Postgres)
@@ -207,8 +209,8 @@ mod tests {
 
     #[tokio::test]
     async fn unique_one_two_existing_truncate_excess() {
-        // 2 existing (newest=200, older=100), unique=1 → expire 1 (newest), delete 1
-        // (older).
+        // 2 existing (newest=200, older=100), unique=1 → expire 1 (newest),
+        // delete 1 (older).
         let existing = vec![
             make_pwd(2, 200, false), // newest first
             make_pwd(3, 100, false), // older
@@ -233,7 +235,8 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------
-    // unique_last_password_count = 2  ->  expire 2 old passwords, delete the rest
+    // unique_last_password_count = 2  ->  expire 2 old passwords, delete the
+    // rest
     // ---------------------------------------------------------------------------
 
     #[tokio::test]
@@ -256,7 +259,8 @@ mod tests {
 
     #[tokio::test]
     async fn unique_two_five_existing_truncate_excess() {
-        // 5 existing, unique=2 → expire 2 new (id=1,2), delete 3 old (id=3,4,5).
+        // 5 existing, unique=2 → expire 2 new (id=1,2), delete 3 old
+        // (id=3,4,5).
         let existing = vec![
             make_pwd(1, 500, false),
             make_pwd(2, 400, false),
@@ -342,8 +346,9 @@ mod tests {
 
         let res = set_new_password(&db, 1, 0, "hash", Some(expires), existing).await;
         assert!(res.is_ok());
-        // The create() call uses the expires_at argument; mock doesn't validate,
-        // but the fact that it succeeded means the flow is correct.
+        // The create() call uses the expires_at argument; mock doesn't
+        // validate, but the fact that it succeeded means the flow is
+        // correct.
         let _ = res.unwrap();
     }
 

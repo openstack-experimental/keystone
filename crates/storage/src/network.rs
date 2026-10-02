@@ -135,8 +135,9 @@ impl tower::Service<http::Uri> for SpiffeConnector {
             let port = uri.port_u16().unwrap_or(443);
             let tcp = tokio::net::TcpStream::connect(format!("{host}:{port}")).await?;
             let connector = tokio_rustls::TlsConnector::from(tls);
-            // `SpiffeServerCertVerifier` validates the peer's SPIFFE URI SAN and
-            // ignores the DNS server name, so any valid constant name is fine here.
+            // `SpiffeServerCertVerifier` validates the peer's SPIFFE URI SAN
+            // and ignores the DNS server name, so any valid
+            // constant name is fine here.
             let server_name = rustls::pki_types::ServerName::try_from(
                 "keystone-raft-peer.internal",
             )

@@ -5,7 +5,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "proto/storage.proto",
     ];
 
-    // Use PROTOC_INCLUDE env var if set; otherwise auto-detect common system paths.
+    // Use PROTOC_INCLUDE env var if set; otherwise auto-detect common system
+    // paths.
     let sys_include = std::env::var("PROTOC_INCLUDE").ok().or_else(|| {
         ["/usr/include", "/usr/local/include"]
             .iter()

@@ -140,7 +140,8 @@ mod tests {
     }
 
     // upsert is private; tests exercise it directly with arbitrary serializable
-    // payloads. This covers the same SQL path as create_auth and create_register.
+    // payloads. This covers the same SQL path as create_auth and
+    // create_register.
 
     #[tokio::test]
     async fn test_upsert_auth_delete_then_insert() {
@@ -268,8 +269,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_upsert_same_sql_structure_as_delete_and_get() {
-        // Ensures the DELETE in create/delete.rs and create/create.rs use the same
-        // column predicates, so the create path can safely replace stale state.
+        // Ensures the DELETE in create/delete.rs and create/create.rs use the
+        // same column predicates, so the create path can safely replace
+        // stale state.
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_exec_results([MockExecResult {
                 rows_affected: 0,

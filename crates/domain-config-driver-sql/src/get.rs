@@ -205,7 +205,8 @@ pub async fn get_option<C: ConnectionTrait>(
         .next())
 }
 
-/// The IDs of every domain with a `whitelisted_config` row for `group`/`option`.
+/// The IDs of every domain with a `whitelisted_config` row for
+/// `group`/`option`.
 ///
 /// Reads the readable table only: an `assignment/driver` binding is a
 /// whitelisted option, never a sensitive one.

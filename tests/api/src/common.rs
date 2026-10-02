@@ -60,7 +60,7 @@ pub struct TestClient {
 }
 
 impl TestClient {
-    pub fn default() -> Result<Self> {
+    pub fn new() -> Result<Self> {
         Ok(Self {
             client: Client::new(),
             base_url: env::var("KEYSTONE_URL")
@@ -293,7 +293,7 @@ pub async fn get_session_by_user_password<U: AsRef<str>, D: AsRef<str>, P: AsRef
 
 /// Get AsyncOpenStack session system scope
 pub async fn get_system_scope_session() -> Result<Arc<AsyncOpenStack>> {
-    let mut test_client = AsyncOpenStack::new(&CloudConfig::from_env()?).await?;
+    let test_client = AsyncOpenStack::new(&CloudConfig::from_env()?).await?;
     test_client
         .authorize(
             Some(openstack_sdk::auth::authtoken::AuthTokenScope::System(

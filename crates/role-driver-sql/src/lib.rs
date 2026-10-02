@@ -81,16 +81,16 @@ pub async fn expand_implied_roles(
         .filter_map(|role| rules.get(&role.id))
         .flat_map(|val| val.iter())
     {
-        // Add the role that was not processed yet (present in the `role_ids` into the
-        // temporary list and save the processed id.
+        // Add the role that was not processed yet (present in the `role_ids`
+        // into the temporary list and save the processed id.
         if !role_ids.contains(&implied_role.id) {
             implied_roles.push(implied_role.clone());
             role_ids.insert(implied_role.id.clone());
         }
     }
     roles.extend(implied_roles);
-    // The request list may only contain role IDs. In the response we need to make
-    // sure name and domain_id are populated.
+    // The request list may only contain role IDs. In the response we need to
+    // make sure name and domain_id are populated.
     for role in roles.iter_mut() {
         if role.name.is_none() {
             // The role was not resolved and only has the ID. Re-fetch it

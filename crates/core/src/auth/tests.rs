@@ -1371,8 +1371,8 @@ async fn test_trust_scope_expand_adds_missing_role() {
         .build();
     let scope = make_trust_scope(trustor, "trustee", pid, Some(trust_roles));
     let result = calculate_effective_roles(&state, &ctx, &scope).await;
-    // After expand, trust_roles includes extra_role, but trustor does not have it
-    // .all() check fails -> ActorHasNoRolesOnTarget
+    // After expand, trust_roles includes extra_role, but trustor does not have
+    // it .all() check fails -> ActorHasNoRolesOnTarget
     assert!(matches!(
         result,
         Err(AuthenticationError::ActorHasNoRolesOnTarget)
@@ -3012,12 +3012,13 @@ async fn test_delegation_scope_kind_matrix_roles_never_exceed_delegation() {
         };
 
     // (label, principal user_id, delegation's own role ids, context builder)
-    let delegating_cases: Vec<(
-        &str,
-        &str,
-        Vec<&str>,
+    type DelegatingCase<'a> = (
+        &'a str,
+        &'a str,
+        Vec<&'a str>,
         Box<dyn Fn() -> AuthenticationContext>,
-    )> = vec![
+    );
+    let delegating_cases: Vec<DelegatingCase<'_>> = vec![
         (
             "trust",
             "trustee",

@@ -32,9 +32,9 @@
 //!
 //! - **Group membership** must be represented in OpenFGA (e.g. a `member`
 //!   relation on the group type) so that a `check` for a user picks up grants
-//!   made to that user's groups. Keystone's identity backend is *not*
-//!   consulted here, and nothing in this driver syncs group membership into
-//!   OpenFGA - the deployment is responsible for that.
+//!   made to that user's groups. Keystone's identity backend is *not* consulted
+//!   here, and nothing in this driver syncs group membership into OpenFGA - the
+//!   deployment is responsible for that.
 //! - **Implied roles** must be expressed as relation rewrites in the model.
 //!
 //! ## `effective` selects the API family
@@ -44,15 +44,15 @@
 //! - **`effective == Some(true)`** - use the model-resolving APIs. An
 //!   actor+target query uses `check`/`batch-check`; an actor-only query uses
 //!   `streamed-list-objects` (the uncapped streaming form of `list-objects`).
-//!   Results include grants reached via group membership,
-//!   implied roles and project-tree inheritance, each reported as a direct
-//!   (`inherited: false`, `implied_via: None`) assignment. `resolve_implied_roles`
-//!   only takes effect in this mode (again, via the model).
+//!   Results include grants reached via group membership, implied roles and
+//!   project-tree inheritance, each reported as a direct (`inherited: false`,
+//!   `implied_via: None`) assignment. `resolve_implied_roles` only takes effect
+//!   in this mode (again, via the model).
 //! - **otherwise** - use a raw `read` of the stored tuples (direct grants
-//!   only). An actor-only query issues a type-scoped `read` (`object:
-//!   "type:"`) with a `user` filter per target type, returning only the
-//!   actor's stored tuples -- the actor-keyed counterpart of a target-scoped
-//!   listing, used by SCIM deprovisioning.
+//!   only). An actor-only query issues a type-scoped `read` (`object: "type:"`)
+//!   with a `user` filter per target type, returning only the actor's stored
+//!   tuples -- the actor-keyed counterpart of a target-scoped listing, used by
+//!   SCIM deprovisioning.
 //!
 //! A **target-scoped** listing always uses `read` (direct only) even in
 //! effective mode - this driver does not call `list-users`, so group-derived
@@ -372,8 +372,8 @@ impl OpenFGADriver {
     /// (direct or computed by the model).
     ///
     /// Uses `streamed-list-objects` rather than `list-objects`: the streaming
-    /// endpoint has no `OPENFGA_LIST_OBJECTS_MAX_RESULTS` cap (its only bound is
-    /// `OPENFGA_LIST_OBJECTS_DEADLINE`), so the result is not silently
+    /// endpoint has no `OPENFGA_LIST_OBJECTS_MAX_RESULTS` cap (its only bound
+    /// is `OPENFGA_LIST_OBJECTS_DEADLINE`), so the result is not silently
     /// truncated. The response is a sequence of newline-delimited JSON frames,
     /// each `{"result":{"object":"type:id"}}`; frames without a `result` (an
     /// end-of-stream marker, say) are ignored.
@@ -637,10 +637,11 @@ impl AssignmentBackend for OpenFGADriver {
         let (actor_kind, target_kind) = assignment_type_kinds(&assignment.r#type);
 
         if assignment.inherited {
-            // A grant is stored as a single tuple with no `inherited` marker, so
-            // an inherited grant could not be distinguished from a direct one on
-            // read. Reject rather than silently downgrade (see the module docs);
-            // project-tree inheritance belongs in the authorization model.
+            // A grant is stored as a single tuple with no `inherited` marker,
+            // so an inherited grant could not be distinguished from
+            // a direct one on read. Reject rather than silently
+            // downgrade (see the module docs); project-tree
+            // inheritance belongs in the authorization model.
             return Err(OpenFGADriverError::InheritedGrantsNotSupported.into());
         }
 
@@ -672,8 +673,9 @@ impl AssignmentBackend for OpenFGADriver {
         // Whether the caller asked for the *effective* assignment set - grants
         // reached via group membership, implied roles and project-tree
         // inheritance. This driver never expands those itself; it relies on the
-        // OpenFGA authorization model. `effective` therefore selects between the
-        // model-resolving APIs (`check`/`batch-check`/`list-objects`) and a raw
+        // OpenFGA authorization model. `effective` therefore selects between
+        // the model-resolving APIs
+        // (`check`/`batch-check`/`list-objects`) and a raw
         // `read` of the stored tuples. See the module docs.
         let effective = params.effective == Some(true);
         if params.resolve_implied_roles && !effective {
@@ -693,8 +695,8 @@ impl AssignmentBackend for OpenFGADriver {
 
         // Every fan-out below issues its OpenFGA calls concurrently, capped at
         // `max_concurrency`. Rebind `cfg`/`mapper` as shared references so the
-        // per-task `async move` blocks copy the reference rather than moving the
-        // value.
+        // per-task `async move` blocks copy the reference rather than moving
+        // the value.
         let max_concurrency = cfg.max_concurrency;
         let cfg = &cfg;
         let mapper = &mapper;
@@ -792,14 +794,13 @@ impl AssignmentBackend for OpenFGADriver {
             // actor without a target scope: enumerate the objects the actor
             // holds each role relation on, per target kind.
             //
-            // - effective mode: `list-objects` per (relation, target type),
-            //   which resolves the model (group- and hierarchy-derived grants).
-            // - otherwise: a direct `read` per (target type[, relation]) with a
-            //   `user` filter and a type-scoped `object` (`type:`), which
-            //   returns only stored tuples for the actor. This is the same
-            //   "direct tuples only" contract the target-scoped branch gives,
-            //   just keyed on the actor -- SCIM deprovisioning needs to sweep a
-            //   principal's grants without knowing every target up front.
+            // - effective mode: `list-objects` per (relation, target type), which resolves the
+            //   model (group- and hierarchy-derived grants).
+            // - otherwise: a direct `read` per (target type[, relation]) with a `user` filter and a
+            //   type-scoped `object` (`type:`), which returns only stored tuples for the actor.
+            //   This is the same "direct tuples only" contract the target-scoped branch gives, just
+            //   keyed on the actor -- SCIM deprovisioning needs to sweep a principal's grants
+            //   without knowing every target up front.
             (Some((actor_kind, actor_id)), None) => {
                 let users = mapper.objects_for(actor_kind, actor_id);
                 let target_types = [Kind::Project, Kind::Domain, Kind::System]
@@ -830,8 +831,10 @@ impl AssignmentBackend for OpenFGADriver {
                                             );
                                             continue;
                                         };
-                                        // `make_assignment` returns `None` for a
-                                        // nonsensical actor/target kind pairing.
+                                        // `make_assignment` returns `None` for
+                                        // a
+                                        // nonsensical actor/target kind
+                                        // pairing.
                                         out.extend(make_assignment(
                                             role_id.clone(),
                                             actor_kind,
@@ -952,8 +955,8 @@ impl AssignmentBackend for OpenFGADriver {
     /// Revoke a grant, fanning the delete out over every representation.
     ///
     /// Mirrors the SQL driver: revoking a grant that is not present is a no-op,
-    /// not an error. Each representation is probed with a direct `read` first so
-    /// OpenFGA's "tuple not found" delete error is never hit; only the
+    /// not an error. Each representation is probed with a direct `read` first
+    /// so OpenFGA's "tuple not found" delete error is never hit; only the
     /// representations that actually hold the tuple are deleted. A real OpenFGA
     /// error from either the `read` or the `delete` propagates as-is. The
     /// representations are probed concurrently, capped at `max_concurrency`.

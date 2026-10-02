@@ -55,6 +55,10 @@ pub(super) const SNAPSHOT_KEEP: usize = 2;
 /// pairs exactly as stored in Fjall.
 pub(super) type SnapshotKeyspaceEntries = Vec<(Vec<u8>, Vec<u8>)>;
 
+/// Every DEK epoch unwrapped from a snapshot's manifest: the current epoch
+/// and the retired ones, keyed by version.
+pub(super) type UnwrappedDeks = (Arc<DekEpoch>, BTreeMap<u32, Arc<DekEpoch>>);
+
 /// Full contents of every replicated Fjall keyspace, plus the ephemeral
 /// keyspace name registry.
 ///
@@ -168,7 +172,7 @@ pub(super) fn dek_manifest_from_payload(payload: &SnapshotPayload) -> io::Result
 pub(super) fn dek_epochs_from_manifest(
     manifest: &DekManifest,
     kek: &dyn KekProvider,
-) -> Result<(Arc<DekEpoch>, BTreeMap<u32, Arc<DekEpoch>>), StoreError> {
+) -> Result<UnwrappedDeks, StoreError> {
     let unwrap = |version: u32, wrapped: &[u8]| -> Result<Arc<DekEpoch>, StoreError> {
         let raw = kek.unwrap_dek(wrapped).map_err(|e| {
             StoreError::Other(eyre::eyre!(
@@ -244,8 +248,8 @@ pub(super) const LEGACY_SNAPSHOT_HEADER_LEN: usize = 4 + 8 + 8;
 /// Decrypt and deserialize a snapshot file from disk.
 ///
 /// On-disk format:
-/// `[dek_version_u32_BE; 4] ++ [utc_epoch_u64_BE; 8] ++ [nonce_salt_u64_BE; 8] ++
-/// [manifest_len_u32_BE; 4] ++ DekManifest ++
+/// `[dek_version_u32_BE; 4] ++ [utc_epoch_u64_BE; 8] ++ [nonce_salt_u64_BE; 8]
+/// ++ [manifest_len_u32_BE; 4] ++ DekManifest ++
 /// backup_encrypt(rmp_serde(SnapshotFile))`. Files without the manifest (the
 /// header is followed by the ciphertext directly) are still read: the
 /// authenticated decryption tells the two layouts apart. `extra_epochs` are

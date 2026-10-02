@@ -1145,24 +1145,25 @@ mod tests {
         }
     }
 
+    /// `(method, url, guest_headers, auth_header)` per call, for tests
+    /// to assert core correctly separated guest headers from the
+    /// host-injected auth header (attaching them in the right order is
+    /// the `reqwest`-impl's job, not core's - core's job is only to
+    /// pass both through distinctly).
+    type FetchCall = (
+        String,
+        String,
+        HashMap<String, String>,
+        Option<(String, String)>,
+    );
+
     /// Scripted [`DynamicPluginHttpFetcher`] returning one canned response
     /// per call, used by tests that need `http_fetch` to actually complete.
     struct ScriptedHttpFetcher {
         responses:
             std::sync::Mutex<std::collections::VecDeque<crate::auth_plugin_http::FetchResponse>>,
-        /// `(method, url, guest_headers, auth_header)` per call, for tests
-        /// to assert core correctly separated guest headers from the
-        /// host-injected auth header (attaching them in the right order is
-        /// the `reqwest`-impl's job, not core's - core's job is only to
-        /// pass both through distinctly).
-        calls: std::sync::Mutex<
-            Vec<(
-                String,
-                String,
-                HashMap<String, String>,
-                Option<(String, String)>,
-            )>,
-        >,
+        /// See [`FetchCall`].
+        calls: std::sync::Mutex<Vec<FetchCall>>,
     }
 
     impl ScriptedHttpFetcher {
@@ -1174,14 +1175,7 @@ mod tests {
             }
         }
 
-        fn calls(
-            &self,
-        ) -> Vec<(
-            String,
-            String,
-            HashMap<String, String>,
-            Option<(String, String)>,
-        )> {
+        fn calls(&self) -> Vec<FetchCall> {
             self.calls.lock().unwrap().clone()
         }
     }

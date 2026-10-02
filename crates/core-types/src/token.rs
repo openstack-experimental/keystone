@@ -74,9 +74,9 @@ impl FernetToken {
     /// keystone's fernet formatter (which reports the fernet envelope time as
     /// `issued_at`). The caller passes it explicitly, at whole-second
     /// precision, so it lands in the payload at mint time:
-    /// - **JWS**: written straight into the signed `iat` claim and read back
-    ///   as `issued_at` on validation — the payload is authoritative, there
-    ///   is nothing else to fall back to.
+    /// - **JWS**: written straight into the signed `iat` claim and read back as
+    ///   `issued_at` on validation — the payload is authoritative, there is
+    ///   nothing else to fall back to.
     /// - **Fernet**: used for the authentication/rescope response body, which
     ///   is built directly from this payload before encryption. On a later
     ///   decode the driver overwrites it from the fernet envelope timestamp

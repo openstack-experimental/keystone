@@ -72,8 +72,8 @@ pub(super) async fn remove(
         )
         .await?;
 
-    // TODO: decide what to do with the users provisioned using this IDP, mappings,
-    // ...
+    // TODO: decide what to do with the users provisioned using this IDP,
+    // mappings, ...
 
     if current.is_some() {
         state

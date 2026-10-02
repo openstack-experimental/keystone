@@ -46,15 +46,15 @@ use crate::policy::{PolicyError, PolicyEvaluationResult};
 /// Prometheus metrics for OPA policy decisions.
 ///
 /// Label sets are fixed and bounded (ADR 0031 cardinality guardrail):
-/// - `outcome`: `allow` | `deny` | `error` (see [`outcome_label`] for the
-///   exact mapping from a policy-enforcement `Result`).
+/// - `outcome`: `allow` | `deny` | `error` (see [`outcome_label`] for the exact
+///   mapping from a policy-enforcement `Result`).
 /// - `transport`: `http` | `wasm`. `wasm` is part of the fixed label set
-///   defined by ADR 0031 but is **not currently emitted**: as of this
-///   change the only `PolicyEnforcer` implementation in the tree is
+///   defined by ADR 0031 but is **not currently emitted**: as of this change
+///   the only `PolicyEnforcer` implementation in the tree is
 ///   `HttpPolicyEnforcer` (`crates/keystone/src/policy.rs`), which records
-///   `transport = "http"`. No WASM-transport policy enforcer exists yet --
-///   when one lands it should record into these same series with
-///   `transport = "wasm"` instead of introducing a parallel metric.
+///   `transport = "http"`. No WASM-transport policy enforcer exists yet -- when
+///   one lands it should record into these same series with `transport =
+///   "wasm"` instead of introducing a parallel metric.
 pub struct PolicyMetrics {
     /// `keystone_policy_decisions_total{outcome}` -- decision volume.
     pub decisions_total: LabeledCounter<1>,
@@ -124,17 +124,16 @@ impl PrometheusText for PolicyMetrics {
 /// # Mapping
 /// - `Ok(_)` -> `"allow"`.
 /// - `Err(PolicyError::Forbidden(_))` -> `"deny"`. This is a genuine OPA
-///   decision -- the request reached OPA, was evaluated, and was denied --
-///   not an infrastructure failure. It does **not** count toward
-///   `errors_total`.
+///   decision -- the request reached OPA, was evaluated, and was denied -- not
+///   an infrastructure failure. It does **not** count toward `errors_total`.
 /// - Every other `Err(_)` variant -- `PolicyError::IO` (OPA unreachable /
-///   transport failure), `Json` (malformed response), `SecurityContextNotResolved`,
-///   `ScopeDrift`, `StructBuilder`, `UrlParse`, `UnsupportedScheme`,
-///   `Compilation`, `Join`, `Dummy` -- -> `"error"`. These are
-///   plumbing/invariant failures rather than policy decisions, mirroring the
-///   split `PolicyError`'s `From<PolicyError> for KeystoneApiError`
-///   already draws for HTTP status mapping: only `Forbidden` maps to a
-///   caller-facing 403, every other variant is an internal (500) failure.
+///   transport failure), `Json` (malformed response),
+///   `SecurityContextNotResolved`, `ScopeDrift`, `StructBuilder`, `UrlParse`,
+///   `UnsupportedScheme`, `Compilation`, `Join`, `Dummy` -- -> `"error"`. These
+///   are plumbing/invariant failures rather than policy decisions, mirroring
+///   the split `PolicyError`'s `From<PolicyError> for KeystoneApiError` already
+///   draws for HTTP status mapping: only `Forbidden` maps to a caller-facing
+///   403, every other variant is an internal (500) failure.
 #[must_use]
 pub fn outcome_label(result: &Result<PolicyEvaluationResult, PolicyError>) -> &'static str {
     match result {

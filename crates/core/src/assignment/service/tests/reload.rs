@@ -18,10 +18,10 @@
 //! backend build: an unchanged block is reused by `Arc::ptr_eq`, a block a
 //! bound domain no longer maps to is dropped, the dispatch switch going off
 //! drops every named instance, the binding cache is cleared, and an
-//! unresolvable new configuration keeps the last-known-good bundle (`Ok(false)`).
-//! Cases that add or mutate an `[assignment.backends.*]` block (which builds a
-//! fresh instance through `inventory`) live in `tests/integration`, where the
-//! driver crates are linked.
+//! unresolvable new configuration keeps the last-known-good bundle
+//! (`Ok(false)`). Cases that add or mutate an `[assignment.backends.*]` block
+//! (which builds a fresh instance through `inventory`) live in
+//! `tests/integration`, where the driver crates are linked.
 
 use std::collections::HashMap;
 

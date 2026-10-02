@@ -601,7 +601,8 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
             return Err(Status::internal("snapshot file too short"));
         }
 
-        // Read and parse the first 12 bytes of the header: [dek_version: u32_be][utc_epoch: u64_be].
+        // Read and parse the first 12 bytes of the header: [dek_version:
+        // u32_be][utc_epoch: u64_be].
         let (file, header_bytes, dek_version, utc_epoch) = {
             let mut file = file;
             let mut header = [0u8; 12];
@@ -706,9 +707,9 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
     /// - Initialized cluster: the backup is committed through the Raft log
     ///   (leader only) and replaces the data on every node; membership is
     ///   unchanged.
-    /// - Uninitialized node (disaster recovery): the backup is installed as
-    ///   a Raft snapshot, restoring the original membership. Repeat on every
-    ///   node and set `elect` on one (OpenRaft "restore from snapshot").
+    /// - Uninitialized node (disaster recovery): the backup is installed as a
+    ///   Raft snapshot, restoring the original membership. Repeat on every node
+    ///   and set `elect` on one (OpenRaft "restore from snapshot").
     ///
     /// See ADR 0016-v2 §7 and the Restore runbook.
     #[tracing::instrument(level = "trace", skip(self, request))]

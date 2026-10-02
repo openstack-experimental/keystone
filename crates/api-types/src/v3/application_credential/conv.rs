@@ -68,22 +68,25 @@ impl From<provider_types::ApplicationCredentialCreateResponse>
     }
 }
 
-impl From<api_types_application_credential::ApplicationCredentialCreate>
+impl TryFrom<api_types_application_credential::ApplicationCredentialCreate>
     for provider_types::ApplicationCredentialCreateBuilder
 {
-    fn from(value: api_types_application_credential::ApplicationCredentialCreate) -> Self {
+    type Error = crate::error::BuilderError;
+
+    fn try_from(
+        value: api_types_application_credential::ApplicationCredentialCreate,
+    ) -> Result<Self, Self::Error> {
         let mut builder = provider_types::ApplicationCredentialCreateBuilder::default();
         builder.name(value.name);
         builder.roles(value.roles.into_iter().map(Into::into).collect::<Vec<_>>());
         if let Some(v) = value.access_rules {
+            // The API payload carries no owner for inline access rules; the
+            // provider stamps the credential's owner onto each rule before
+            // validation.
             builder.access_rules(
                 v.into_iter()
-                    .map(|r| {
-                        provider_types::AccessRuleCreateBuilder::from(r)
-                            .build()
-                            .unwrap()
-                    })
-                    .collect::<Vec<_>>(),
+                    .map(|r| provider_types::AccessRuleCreateBuilder::from(r).build())
+                    .collect::<Result<Vec<_>, _>>()?,
             );
         }
         if let Some(v) = value.description {
@@ -98,7 +101,7 @@ impl From<api_types_application_credential::ApplicationCredentialCreate>
         if let Some(v) = value.secret {
             builder.secret(v);
         }
-        builder
+        Ok(builder)
     }
 }
 

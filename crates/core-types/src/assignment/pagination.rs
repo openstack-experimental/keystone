@@ -27,7 +27,8 @@ use crate::assignment::Assignment;
 /// row is the caller's "has a next page" probe.
 ///
 /// # Parameters
-/// - `assignments`: The fully fetched, deduplicated result set, mutated in place.
+/// - `assignments`: The fully fetched, deduplicated result set, mutated in
+///   place.
 /// - `pagination`: The requested `limit` / `marker` / `page_reverse`.
 pub fn paginate_in_memory(assignments: &mut Vec<Assignment>, pagination: &ListPagination) {
     assignments.sort_by_key(Assignment::pagination_marker);

@@ -131,7 +131,8 @@ fn make_certificates() -> Result<TlsConfiguration> {
     let mut peer_cert_params = CertificateParams::default();
 
     // Leaf cert validity must not exceed 30 days (ADR 0016-v2 §4.2, enforced
-    // by check_cert_max_validity via get_client_tls_config/get_server_tls_config).
+    // by check_cert_max_validity via
+    // get_client_tls_config/get_server_tls_config).
     let now = time::OffsetDateTime::now_utc();
     peer_cert_params.not_before = now - time::Duration::days(1);
     peer_cert_params.not_after = now + time::Duration::days(28);

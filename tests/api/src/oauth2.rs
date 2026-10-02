@@ -37,7 +37,7 @@ pub async fn register_client(
     allowed_scopes: Vec<String>,
     confidential: bool,
 ) -> Result<(String, Option<String>)> {
-    let mut admin = TestClient::default()?;
+    let mut admin = TestClient::new()?;
     admin.auth_admin_system().await?;
 
     #[derive(Serialize)]
@@ -105,7 +105,7 @@ pub async fn register_client(
 /// keys provisioned -- anything needing `jwks`/`well-known`/token signing
 /// to actually work must use a domain created through this call instead.
 pub async fn create_test_domain(name: &str) -> Result<String> {
-    let mut admin = TestClient::default()?;
+    let mut admin = TestClient::new()?;
     admin.auth_admin_system().await?;
 
     #[derive(Serialize)]
@@ -154,7 +154,7 @@ pub async fn create_test_domain(name: &str) -> Result<String> {
 /// user's `id`. Used to give the device-grant browser flow (`device.rs`'s
 /// `/device/login`) a real username/password to sign in with.
 pub async fn create_test_user(domain_id: &str, name: &str, password: &str) -> Result<String> {
-    let mut admin = TestClient::default()?;
+    let mut admin = TestClient::new()?;
     admin.auth_admin_system().await?;
 
     #[derive(Serialize)]

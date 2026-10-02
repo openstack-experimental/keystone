@@ -46,7 +46,8 @@ fn build_query_filters(
     //}
 
     //if let Some(val) = &params.audit_chain_id {
-    //    select = select.filter(db_revocation_event::Column::AuditChainId.eq(val));
+    //    select =
+    // select.filter(db_revocation_event::Column::AuditChainId.eq(val));
     //}
 
     select = select.filter(

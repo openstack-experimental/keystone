@@ -229,8 +229,9 @@ impl AuditHook for CadfAuditHook {
         match self.dispatcher.dispatch_critical(signed).await {
             Ok(()) => Ok(()),
             Err(_) => {
-                // Only count as post-audit drop for terminal outcomes (Success/Failure).
-                // Pre-audit Attempt failures represent blockage before any commit.
+                // Only count as post-audit drop for terminal outcomes
+                // (Success/Failure). Pre-audit Attempt failures
+                // represent blockage before any commit.
                 if !matches!(outcome, AuditOutcome::Attempt) {
                     self.dispatcher.record_postaudit_drop();
                 }

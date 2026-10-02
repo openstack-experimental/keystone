@@ -68,11 +68,14 @@ impl fmt::Display for SpiffeId {
 /// integration plan, Phase 3).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SpiffePathClaims {
-    /// Hostname from `spiffe://{trust_domain}/service/nova-compute/host/{hostname}`.
+    /// Hostname from
+    /// `spiffe://{trust_domain}/service/nova-compute/host/{hostname}`.
     pub host: Option<String>,
-    /// Project id from `spiffe://{trust_domain}/project/{project_id}/instance/{instance_id}`.
+    /// Project id from
+    /// `spiffe://{trust_domain}/project/{project_id}/instance/{instance_id}`.
     pub project_id: Option<String>,
-    /// Instance id from `spiffe://{trust_domain}/project/{project_id}/instance/{instance_id}`.
+    /// Instance id from
+    /// `spiffe://{trust_domain}/project/{project_id}/instance/{instance_id}`.
     pub instance_id: Option<String>,
 }
 
@@ -112,7 +115,8 @@ impl SpiffeId {
     /// caller.
     pub fn path_claims(&self) -> SpiffePathMatch {
         let Some(path) = self.id.strip_prefix("spiffe://").and_then(|rest| {
-            // Strip the trust domain segment already captured in `self.trust_domain`.
+            // Strip the trust domain segment already captured in
+            // `self.trust_domain`.
             rest.strip_prefix(&self.trust_domain)
         }) else {
             return SpiffePathMatch::Unrecognized;

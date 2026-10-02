@@ -25,7 +25,7 @@ use openstack_keystone_api_types::webauthn::register::*;
 use openstack_keystone_api_types::webauthn::{PublicKeyCredentialCreationOptions, auth::*};
 use openstack_sdk::{
     AsyncOpenStack,
-    api::{QueryAsync, RawQueryAsync},
+    api::{QueryAsync, raw},
 };
 use openstack_sdk::{api::rest_endpoint_prelude::*, types::identity::v3::AuthResponse};
 use webauthn_authenticator_rs::{AuthenticatorBackend, WebauthnAuthenticator};
@@ -207,11 +207,10 @@ pub async fn finish_auth(
     client: &Arc<AsyncOpenStack>,
     data: PasskeyAuthenticationFinishRequest,
 ) -> Result<http::Response<bytes::Bytes>> {
-    Ok(PasskeyAuthFinishRequestBuilder::default()
+    let req = PasskeyAuthFinishRequestBuilder::default()
         .passkey(data)
-        .build()?
-        .raw_query_async(client.as_ref())
-        .await?)
+        .build()?;
+    Ok(raw(req).query_async(client.as_ref()).await?)
 }
 
 pub async fn register_user_passkey<B, U: AsRef<str>, D: Into<String>>(

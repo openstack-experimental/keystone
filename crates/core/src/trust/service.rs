@@ -80,8 +80,8 @@ impl TrustService {
         let mut parent_trust: Option<Trust> = None;
         let mut parent_expiration: Option<DateTime<Utc>> = None;
         for delegation in chain.iter().rev() {
-            // None of the trusts can specify the redelegation_count > delegation_count of
-            // the top level trust
+            // None of the trusts can specify the redelegation_count >
+            // delegation_count of the top level trust
             if let Some(current_redelegation_count) = delegation.redelegation_count
                 && current_redelegation_count > max_redelegation_count as u32
             {
@@ -93,7 +93,8 @@ impl TrustService {
             if delegation.remaining_uses.is_some() {
                 return Err(TrustProviderError::RemainingUsesMustBeUnset);
             }
-            // Check that the parent trust is not expiring earlier than the redelegated
+            // Check that the parent trust is not expiring earlier than the
+            // redelegated
             if let Some(trust_expiry) = delegation.expires_at {
                 if let Some(parent_expiry) = parent_trust
                     .as_ref()
@@ -103,7 +104,8 @@ impl TrustService {
                     if trust_expiry > parent_expiry {
                         return Err(TrustProviderError::ExpirationImpossible);
                     }
-                    // reset the parent_expiration to the one of the current delegation.
+                    // reset the parent_expiration to the one of the current
+                    // delegation.
                     parent_expiration = Some(trust_expiry);
                 }
                 // Ensure we set the parent_expiration with the first met value.
@@ -167,7 +169,7 @@ impl TrustApi for TrustService {
         ctx: &ExecutionContext<'a>,
         trust: TrustCreate,
     ) -> Result<Trust, TrustProviderError> {
-        if trust.project_id.is_some() != !trust.roles.is_empty() {
+        if trust.project_id.is_some() == trust.roles.is_empty() {
             return Err(TrustProviderError::ProjectRolesPairingInvalid);
         }
 
@@ -376,8 +378,9 @@ impl TrustApi for TrustService {
                         role.name = Some(erole.name.clone());
                     }
                 }
-                // Drop all roles for which name is not set (it is a signal that the processing
-                // above has not found the role matching the parameters.
+                // Drop all roles for which name is not set (it is a signal that
+                // the processing above has not found the role
+                // matching the parameters.
                 roles.retain_mut(|role| role.name.is_some());
             }
             return Ok(Some(trust));
@@ -444,8 +447,9 @@ impl TrustApi for TrustService {
                         role.name = Some(erole.name.clone());
                     }
                 }
-                // Drop all roles for which name is not set (it is a signal that the processing
-                // above has not found the role matching the parameters.
+                // Drop all roles for which name is not set (it is a signal that
+                // the processing above has not found the role
+                // matching the parameters.
                 roles.retain_mut(|role| role.name.is_some());
             }
         }
@@ -488,8 +492,6 @@ impl TrustApi for TrustService {
 mod tests {
     use chrono::{DateTime, Utc};
     use std::sync::Arc;
-
-    use openstack_keystone_core_types::role::*;
 
     use super::*;
     use crate::provider::Provider;

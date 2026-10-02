@@ -93,7 +93,7 @@ pub enum RefreshTokenRedemption {
     /// minted in the same family.
     Rotated {
         /// The newly minted leaf record.
-        record: RefreshToken,
+        record: Box<RefreshToken>,
         /// The newly minted leaf's plaintext bearer value.
         bearer: String,
     },

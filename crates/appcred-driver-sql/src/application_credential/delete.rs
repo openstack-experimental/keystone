@@ -43,7 +43,6 @@ pub async fn delete(
 mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
 
-    use super::super::tests::*;
     use super::*;
 
     #[tokio::test]

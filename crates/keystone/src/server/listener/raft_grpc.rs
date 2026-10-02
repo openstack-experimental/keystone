@@ -75,7 +75,8 @@ fn validate_spiffe_id(
         // Fallback: accept paths starting with the configured storage prefix
         // (defaults to `/keystone/storage/`, same setting cluster_admin_service
         // uses for `spiffe://<td><spiffe_path_prefix><role>` role parsing) or
-        // `/ns/<namespace>/sa/<service-account>` (standard SPIRE SpiffeID format).
+        // `/ns/<namespace>/sa/<service-account>` (standard SPIRE SpiffeID
+        // format).
         let path = spiffe_id.path();
         if !(path.starts_with(spiffe_path_prefix) || path.starts_with("/ns/")) {
             return Err(tonic::Status::permission_denied(format!(
@@ -500,7 +501,8 @@ mod tests {
     fn test_spiffe_id_svid_in_force_renewal_window() {
         use rcgen::{CertificateParams, DistinguishedName, KeyPair, SanType, date_time_ymd};
 
-        // Build a cert whose not_after is in the past (expired / force-renewal window).
+        // Build a cert whose not_after is in the past (expired / force-renewal
+        // window).
         let spiffe_uri = "spiffe://example.org/keystone/storage/node-0"
             .try_into()
             .unwrap();

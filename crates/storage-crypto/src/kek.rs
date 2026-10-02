@@ -112,10 +112,10 @@ impl EnvKek {
     // threads reading the environment while we mutate it can cause UB in some
     // C library implementations).  Here the call is safe because:
     //
-    // 1. `from_env` is called exactly once during storage initialisation, before
-    //    any async tasks that might inspect the environment are spawned.
-    // 2. No other thread is spawned before `init_storage` reaches this point, so
-    //    there is no concurrent reader of `KEYSTONE_DEV_KEK`.
+    // 1. `from_env` is called exactly once during storage initialisation,
+    //    before any async tasks that might inspect the environment are spawned.
+    // 2. No other thread is spawned before `init_storage` reaches this point,
+    //    so there is no concurrent reader of `KEYSTONE_DEV_KEK`.
     // 3. Removing the variable immediately after reading minimises (but, per
     //    `zero_environ_entry`, does not eliminate) the window in which
     //    `/proc/<pid>/environ` exposes the key (ADR 0016-v2 §2.1).

@@ -582,8 +582,8 @@ mod tests {
         dispatcher.subscribe_audit(hook).await;
         let vsc = make_vsc();
         let event = make_event();
-        // The outer call returns HookFailed (because the inner call returned Reentered,
-        // which is collected as a generic hook error).
+        // The outer call returns HookFailed (because the inner call returned
+        // Reentered, which is collected as a generic hook error).
         let result = dispatcher
             .emit_critical(&vsc, &event, &AuditOutcome::Attempt)
             .await;
@@ -632,7 +632,8 @@ mod tests {
 
         let vsc = make_vsc();
         let event = make_event();
-        // Wrap in async block so `?` inside the macro propagates from the block.
+        // Wrap in async block so `?` inside the macro propagates from the
+        // block.
         let result: Result<u32, &str> = async {
             crate::audited_op! {
                 dispatcher: &dispatcher,
@@ -677,7 +678,8 @@ mod tests {
 
         let op_ran = Arc::new(AtomicUsize::new(0));
         let op_ran_clone = Arc::clone(&op_ran);
-        // Wrap in async block so `?` propagates from the block rather than the test fn.
+        // Wrap in async block so `?` propagates from the block rather than the
+        // test fn.
         let result: Result<(), &str> = async {
             crate::audited_op! {
                 dispatcher: &dispatcher,

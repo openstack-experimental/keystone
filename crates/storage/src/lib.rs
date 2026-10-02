@@ -566,7 +566,8 @@ fn bootstrap_dek(db: &Database, kek: &dyn KekProvider) -> Result<Arc<DekEpoch>, 
             );
             (version, &stored[4..])
         } else if stored.len() == 60 {
-            // Legacy format (no version prefix): treat as version 1 and migrate.
+            // Legacy format (no version prefix): treat as version 1 and
+            // migrate.
             tracing::warn!(
                 "DEK stored in legacy format (no version prefix); treating as version 1"
             );

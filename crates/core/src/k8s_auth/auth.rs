@@ -67,7 +67,8 @@ impl K8sAuthService {
         // Flatten TokenReview response and JWT claims.
         let claims = self.flatten_k8s_claims(&review.token_review, &review.claims)?;
 
-        // Derive unique workload ID from claims: "<sa>:<ns>" per ADR-0020 §11.2.
+        // Derive unique workload ID from claims: "<sa>:<ns>" per ADR-0020
+        // §11.2.
         let sa_name = &claims["k8s.serviceaccount.name"][0];
         let namespace = &claims["k8s.serviceaccount.namespace"][0];
         let unique_workload_id = format!("{sa_name}:{namespace}");

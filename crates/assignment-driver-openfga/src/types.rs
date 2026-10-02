@@ -343,11 +343,11 @@ pub enum OpenFGADriverError {
     ListingActorWithoutScopeRequiresEffective,
 
     /// A `create_grant` asked for an inherited grant. The OpenFGA driver stores
-    /// every grant as a single relationship tuple with no `inherited` marker, so
-    /// an inherited grant would be indistinguishable from a direct one on read.
-    /// Project-tree inheritance must instead be expressed in the OpenFGA
-    /// authorization model; the request is rejected rather than silently
-    /// downgraded to a direct grant.
+    /// every grant as a single relationship tuple with no `inherited` marker,
+    /// so an inherited grant would be indistinguishable from a direct one
+    /// on read. Project-tree inheritance must instead be expressed in the
+    /// OpenFGA authorization model; the request is rejected rather than
+    /// silently downgraded to a direct grant.
     #[error("the openfga assignment driver does not support inherited grants")]
     InheritedGrantsNotSupported,
 

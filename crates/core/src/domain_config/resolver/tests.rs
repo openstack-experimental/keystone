@@ -212,7 +212,8 @@ mod effective_sources {
     #[test]
     fn an_explicit_key_that_contradicts_a_moved_identity_switch_warns() {
         // Operator set `domain_specific_drivers_enabled = true` and then
-        // `[domain_config] from_files = false`: the new key wins, with a warning.
+        // `[domain_config] from_files = false`: the new key wins, with a
+        // warning.
         assert_eq!(
             effective_domain_config_sources(&config(true, false, Some(false), Some(true))),
             (false, true)

@@ -58,8 +58,8 @@ pub async fn update(
     let mut update_model: db_user::ActiveModel = existing_user.clone().into();
 
     // Update default_project_id if provided in the patch
-    // user.default_project_id is Option<Option<String>> - inner None means clear,
-    // inner Some(val) means set
+    // user.default_project_id is Option<Option<String>> - inner None means
+    // clear, inner Some(val) means set
     if let Some(Some(default_project_id)) = &user.default_project_id {
         update_model.default_project_id = Set(Some(default_project_id.clone()));
     } else if let Some(None) = &user.default_project_id {
@@ -344,7 +344,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_password_with_history_truncation() {
-        // Config: unique_last_password_count=1 means expire 1 newest, delete 2 older.
+        // Config: unique_last_password_count=1 means expire 1 newest, delete 2
+        // older.
         let mut conf = Config::default();
         conf.security_compliance.unique_last_password_count = Some(1);
 

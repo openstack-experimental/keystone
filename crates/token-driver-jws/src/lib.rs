@@ -136,7 +136,7 @@ impl TokenBackend for JwsTokenProvider {
                 Ok(token_data) => {
                     return token_data.claims.into_token_payload().map_err(|error| {
                         TokenProviderError::InvalidToken {
-                            source: Box::new(JwsDriverError::from(error)),
+                            source: Box::new(error),
                         }
                     });
                 }

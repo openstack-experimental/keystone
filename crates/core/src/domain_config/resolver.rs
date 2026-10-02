@@ -115,8 +115,9 @@ pub struct DomainConfigResolver {
     /// The `fs` driver, `Some` when [`effective_domain_config_sources`] reports
     /// the file source on.
     file: Option<Arc<dyn DomainConfigBackend>>,
-    /// The `sql` driver, `Some` when [`effective_domain_config_sources`] reports
-    /// the database source on. Overrides the file source option by option.
+    /// The `sql` driver, `Some` when [`effective_domain_config_sources`]
+    /// reports the database source on. Overrides the file source option by
+    /// option.
     database: Option<Arc<dyn DomainConfigBackend>>,
 }
 
@@ -125,8 +126,9 @@ impl DomainConfigResolver {
     /// domain-config backends.
     ///
     /// # Parameters
-    /// - `config`: The running service configuration; [`effective_domain_config_sources`]
-    ///   decides which sources are consulted.
+    /// - `config`: The running service configuration;
+    ///   [`effective_domain_config_sources`] decides which sources are
+    ///   consulted.
     /// - `plugin_manager`: Provides the `"fs"` / `"sql"` backends by name.
     ///
     /// # Returns
@@ -160,8 +162,9 @@ impl DomainConfigResolver {
     /// handle is `None` (the driver was never registered) is simply skipped.
     ///
     /// # Parameters
-    /// - `config`: The running service configuration; [`effective_domain_config_sources`]
-    ///   decides which sources are consulted.
+    /// - `config`: The running service configuration;
+    ///   [`effective_domain_config_sources`] decides which sources are
+    ///   consulted.
     /// - `file`: The `fs` domain-config backend handle, if registered.
     /// - `database`: The `sql` domain-config backend handle, if registered.
     pub fn from_backends(

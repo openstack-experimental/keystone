@@ -174,11 +174,11 @@ async fn test_update_extra_overwrites() -> Result<()> {
     // Only the supplied key remains; previously stored keys are overwritten.
     assert_eq!(extra.get("add").and_then(|v| v.as_str()), Some("new"));
     assert!(
-        extra.get("keep").is_none(),
+        !extra.contains_key("keep"),
         "update overwrites `extra` wholesale"
     );
     assert!(
-        extra.get("drop").is_none(),
+        !extra.contains_key("drop"),
         "update overwrites `extra` wholesale"
     );
     Ok(())

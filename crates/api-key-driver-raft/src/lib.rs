@@ -799,7 +799,8 @@ mod tests {
         let backend = RaftBackend::default();
         let storage = MockStorage::default();
 
-        // No prior create(): purging a record that never existed must not error.
+        // No prior create(): purging a record that never existed must not
+        // error.
         backend
             .purge_impl(&storage, "domain-1", "nonexistent")
             .await

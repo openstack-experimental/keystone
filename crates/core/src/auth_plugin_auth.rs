@@ -600,7 +600,8 @@ pub async fn authenticate_via_wasm_mapping_plugin(
         MappingResponse::Claims { claims } => claims,
     };
 
-    // Guaranteed present and a string by `decode_and_validate_mapping_response`.
+    // Guaranteed present and a string by
+    // `decode_and_validate_mapping_response`.
     let unique_workload_id = claims
         .get(WORKLOAD_ID_CLAIM_KEY)
         .and_then(|v| v.as_str())

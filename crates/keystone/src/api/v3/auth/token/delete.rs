@@ -59,8 +59,8 @@ pub(super) async fn delete(
         .map_err(|_| KeystoneApiError::InvalidHeader)?
         .to_string();
 
-    // Default behavior is to return 404 for expired tokens. It makes sense to log
-    // internally the error before mapping it.
+    // Default behavior is to return 404 for expired tokens. It makes sense to
+    // log internally the error before mapping it.
     let vsc = state
         .provider
         .get_token_provider()

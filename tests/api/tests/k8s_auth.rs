@@ -302,7 +302,8 @@ async fn test_k8s_auth_rule_name_respected() -> Result<()> {
         "no rule_name: first-match-wins should select ci-pipeline"
     );
 
-    // --- Test 2: rule_name="rule-monitoring" -> targets the monitoring rule. ---
+    // --- Test 2: rule_name="rule-monitoring" -> targets the monitoring rule.
+    // ---
     let (tok2, _) = k8s_auth(
         &test_client,
         &instance.id,

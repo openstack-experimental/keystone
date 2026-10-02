@@ -63,7 +63,7 @@ pub async fn start_axum_app(
                 let acceptor = acceptor.clone();
                 let app = app.clone();
                 let conn_token = token.clone();
-                let interface_clone = interface.clone();
+                let interface_clone = interface;
 
                 tokio::spawn(async move {
                     match acceptor.accept(stream).await {
@@ -79,7 +79,6 @@ pub async fn start_axum_app(
                             let hyper_service = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
                                 let mut app = app.clone();
                                 let spiffe_id = spiffe_id.clone();
-                                let interface_clone = interface_clone.clone();
                                 async move {
                                     let mut req = req;
                                     attach_request_context(

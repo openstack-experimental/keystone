@@ -44,8 +44,9 @@ impl ClassifyResponse for KeystoneResponseClassifier {
         let status = res.status();
 
         // Logic: If it's a 503, we check if we should "ignore" it.
-        // For a global layer, you can simply decide that 503s are NEVER hard errors
-        // because in a Raft/Distributed system, 503 is an expected state (Catching up).
+        // For a global layer, you can simply decide that 503s are NEVER hard
+        // errors because in a Raft/Distributed system, 503 is an
+        // expected state (Catching up).
         if status == StatusCode::SERVICE_UNAVAILABLE {
             return ClassifiedResponse::Ready(Ok(()));
         }
@@ -106,7 +107,8 @@ where
         match axum::Json::<T>::from_request(req, state).await {
             Ok(axum::Json(value)) => Ok(TracedJson(value)),
             Err(rejection) => {
-                // Log the exact error context behind the 422 Unprocessable Entity
+                // Log the exact error context behind the 422 Unprocessable
+                // Entity
                 tracing::debug!(
                     error = %rejection.body_text(),
                     status = %rejection.status().as_u16(),

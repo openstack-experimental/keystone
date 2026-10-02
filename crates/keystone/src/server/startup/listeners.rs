@@ -190,8 +190,10 @@ pub fn spawn_admin(startup: &Startup, app: Router, handles: &mut JoinSet<()>) {
     let rest_cancel_token = startup.token.clone();
     let rest_spiffe_trust_domains = admin_if.listener.trust_domains.clone();
     let rest_spiffe_svid_path = admin_if.listener.svid_path.clone();
-    let peer_uid = admin_if.listener.peer_uid;
-    let peer_gid = admin_if.listener.peer_gid;
+    let peer_credentials = spiffe_tls_uds::PeerCredentials {
+        uid: admin_if.listener.peer_uid,
+        gid: admin_if.listener.peer_gid,
+    };
 
     handles.spawn(async move {
         let cancel_token = rest_cancel_token.clone();
@@ -202,8 +204,7 @@ pub fn spawn_admin(startup: &Startup, app: Router, handles: &mut JoinSet<()>) {
             rest_spiffe_trust_domains,
             rest_spiffe_svid_path,
             Interface::Admin,
-            peer_uid,
-            peer_gid,
+            peer_credentials,
         )
         .await
         {

@@ -367,7 +367,7 @@ mod tests {
                 .to_string()
                 .contains("not found after concurrent creation")
         );
-        assert_eq!(lookup.hits(), 2);
+        assert_eq!(lookup.calls(), 2);
     }
 
     #[tokio::test]

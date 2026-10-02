@@ -259,8 +259,8 @@ pub async fn list(
             vec![None; count_of_users_selected]
         };
 
-    // Determine the date for which users with the last activity earlier than are
-    // determined as inactive.
+    // Determine the date for which users with the last activity earlier than
+    // are determined as inactive.
     let last_activity_cutof_date = conf.security_compliance.get_user_last_activity_cutof_date();
 
     let mut results: Vec<UserResponse> = Vec::new();

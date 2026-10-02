@@ -100,7 +100,7 @@ async fn test_rescope_between_authorized_projects() -> Result<()> {
 
 #[tokio::test]
 async fn test_rescope_project_to_system_preserves_audit_chain() -> Result<()> {
-    let mut client = TestClient::default()?;
+    let mut client = TestClient::new()?;
     client.auth_admin().await?;
     let parent_audit_id = current_token(&client)?
         .audit_ids
@@ -124,7 +124,7 @@ async fn test_rescope_project_to_system_preserves_audit_chain() -> Result<()> {
 
 #[tokio::test]
 async fn test_rescope_to_unauthorized_domain_fails_closed() -> Result<()> {
-    let mut client = TestClient::default()?;
+    let mut client = TestClient::new()?;
     client.auth_admin().await?;
     let token = client
         .token

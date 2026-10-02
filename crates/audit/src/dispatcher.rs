@@ -170,8 +170,8 @@ impl AuditDispatcher {
     /// This method atomically swaps the **active** signing key but does NOT
     /// retain the previous key version. Any spool events that were signed with
     /// the old key version and have not yet been drained will fail HMAC
-    /// verification during the next `verify_sealed_spool` call unless the caller
-    /// separately persists old key versions in its `HmacKeyStore`.
+    /// verification during the next `verify_sealed_spool` call unless the
+    /// caller separately persists old key versions in its `HmacKeyStore`.
     ///
     /// Callers performing key rotation MUST:
     /// 1. Persist the new key to stable storage under `new_version`.

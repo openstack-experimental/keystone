@@ -24,7 +24,7 @@ use test_api::role::*;
 #[tokio::test]
 #[traced_test]
 async fn test_create() -> Result<()> {
-    //let mut test_client = TestClient::default()?;
+    //let mut test_client = TestClient::new()?;
     let test_client = Arc::new(AsyncOpenStack::new(&CloudConfig::from_env()?).await?);
     //test_client.auth_admin().await?;
     let name = uuid::Uuid::new_v4().to_string();

@@ -529,7 +529,8 @@ mod tests {
     //   pairs sorted by key.lower(): Action, AWSAccessKeyId, SignatureVersion,
     // Timestamp
     //   msg = "ActionDescribeInstancesAWSAccessKeyIdAKIDSignatureVersion1Timestamp2026-06-11T12:00:00Z"
-    //   base64.b64encode(hmac.new(b"secret", msg.encode(), hashlib.sha1).digest())
+    //   base64.b64encode(hmac.new(b"secret", msg.encode(),
+    // hashlib.sha1).digest())
 
     #[test]
     fn test_v1_known_vector() {

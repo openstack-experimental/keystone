@@ -456,8 +456,8 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
     )
     .await?;
 
-    // Refuse to start if our node_id is already in the cluster under a different
-    // address.
+    // Refuse to start if our node_id is already in the cluster under a
+    // different address.
     let rpc_addr = ds_config.node_cluster_addr.to_string();
     check_node_id_uniqueness(&raft, ds_config.node_id, &rpc_addr).await?;
     tracing::debug!(
@@ -848,7 +848,8 @@ impl Storage {
                     return Ok(EnsureLinearizableOutcome::Forward(id, node.rpc_addr));
                 }
                 Err(RaftError::APIError(LinearizableReadError::ForwardToLeader(_))) => {
-                    // ForwardToLeader without leader info during election — retry.
+                    // ForwardToLeader without leader info during election —
+                    // retry.
                     debug!(
                         "ensure_linearizable (ReadIndex) returned ForwardToLeader \
                              without leader info (attempt {}); retrying",
@@ -1021,8 +1022,9 @@ impl StorageApi for Storage {
 
         // On the leader, ReadIndex guarantees linearizable read. On a follower,
         // ReadIndex returns ForwardToLeader, so we forward the prefix scan to
-        // the leader via gRPC. The retry loop also handles transient QuorumNotEnough
-        // errors that occur during concurrent Raft activity.
+        // the leader via gRPC. The retry loop also handles transient
+        // QuorumNotEnough errors that occur during concurrent Raft
+        // activity.
         match self.ensure_linearizable_with_retry().await? {
             EnsureLinearizableOutcome::Leader => {}
             EnsureLinearizableOutcome::Forward(lead_id, leader_addr) => {
@@ -1550,8 +1552,8 @@ impl Storage {
         );
 
         // Replication is handled by OpenRaft's ReplicationHandler which retries
-        // on transient failures (DNS propagation delay, port not yet bound, etc.).
-        // No need to block here waiting for `current_leader()`.
+        // on transient failures (DNS propagation delay, port not yet bound,
+        // etc.). No need to block here waiting for `current_leader()`.
         Ok(())
     }
 

@@ -67,8 +67,8 @@ pub(super) async fn check(
         resolve_implied_roles: false,
         ..Default::default()
     };
-    // Use join instead of try_join to have more constant latency preventing timing
-    // attacks.
+    // Use join instead of try_join to have more constant latency preventing
+    // timing attacks.
     let exec = &ExecutionContext::from_auth(&state, &user_auth);
     let (user, role, project, assignments) = tokio::join!(
         state

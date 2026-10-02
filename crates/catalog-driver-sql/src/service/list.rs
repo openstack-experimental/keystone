@@ -82,9 +82,9 @@ pub async fn list(
         .map(TryInto::<Service>::try_into)
         .collect::<Result<_, _>>()?;
 
-    // The service `name` is stored inside the `extra` JSON blob, so it cannot be
-    // filtered in the database query; apply it as a post-filter on the fetched
-    // rows instead.
+    // The service `name` is stored inside the `extra` JSON blob, so it cannot
+    // be filtered in the database query; apply it as a post-filter on the
+    // fetched rows instead.
     if let Some(name) = &params.name {
         services.retain(|service| service.name().as_deref() == Some(name.as_str()));
     }
