@@ -92,8 +92,14 @@ DELETE /v4/oauth2/{domain_id}/clients/{provider_id}
   self-service path otherwise available on this endpoint, and is rejected
   together with `openstack:api` in `allowed_scopes` (a pre-authorized client
   cannot silently gain OpenStack authorization).
-- `DELETE` revokes the client and immediately invalidates all refresh tokens in
-  its family tree. Outstanding bearer access/id tokens remain valid until
+- `DELETE` soft-deletes the client and tombstones every refresh token family
+  issued to it (revocation reason `client_revoked`) before returning. Setting
+  `enabled: false` through `PATCH` does the same, since a disabled client must
+  not keep live refresh families. Both emit an `OAUTH2_CLIENT_REVOKED` CADF
+  event carrying the number of revoked families. Pending device grants and
+  pre-auth sessions of the client are not purged eagerly: they are rejected at
+  redemption because the client is disabled and are removed by the expired
+  record janitor. Outstanding bearer access/id tokens remain valid until
   natural `exp` — for immediate access-token invalidation on a compromised
   client, use emergency signing-key rotation instead.
 - Every create/update/delete/rotate-secret call emits a CADF audit event.

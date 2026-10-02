@@ -157,7 +157,7 @@ mod oauth2_client {
                 domain_id: &'a str,
                 provider_id: &'a str,
                 data: OAuth2ClientResourceUpdate,
-            ) -> Result<OAuth2ClientResource, Oauth2ClientProviderError>;
+            ) -> Result<(OAuth2ClientResource, usize), Oauth2ClientProviderError>;
 
             async fn rotate_secret<'a>(
                 &self,
@@ -171,7 +171,7 @@ mod oauth2_client {
                 ctx: &ExecutionContext<'a>,
                 domain_id: &'a str,
                 provider_id: &'a str,
-            ) -> Result<OAuth2ClientResource, Oauth2ClientProviderError>;
+            ) -> Result<(OAuth2ClientResource, usize), Oauth2ClientProviderError>;
         }
     }
 }
@@ -431,6 +431,13 @@ mod oauth2_session {
                 family_id: &str,
                 reason: RefreshTokenRevocationReason,
             ) -> Result<(), Oauth2SessionProviderError>;
+
+            async fn revoke_refresh_token_families_by_client(
+                &self,
+                state: &ServiceState,
+                client_id: &str,
+                reason: RefreshTokenRevocationReason,
+            ) -> Result<usize, Oauth2SessionProviderError>;
 
             async fn start_device_authorization(
                 &self,

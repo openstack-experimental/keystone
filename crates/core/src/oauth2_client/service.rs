@@ -20,6 +20,7 @@ use secrecy::ExposeSecret;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::oauth2_client::*;
+use openstack_keystone_core_types::oauth2_session::RefreshTokenRevocationReason;
 
 use crate::auth::ExecutionContext;
 use crate::oauth2_client::backend::Oauth2ClientBackend;
@@ -184,10 +185,13 @@ impl Oauth2ClientApi for Oauth2ClientService {
         ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
         provider_id: &'a str,
-    ) -> Result<OAuth2ClientResource, Oauth2ClientProviderError> {
-        self.backend_driver
+    ) -> Result<(OAuth2ClientResource, usize), Oauth2ClientProviderError> {
+        let deleted = self
+            .backend_driver
             .delete(ctx.state(), domain_id, provider_id)
-            .await
+            .await?;
+        let revoked = revoke_client_families(ctx, &deleted.client_id).await?;
+        Ok((deleted, revoked))
     }
 
     async fn get<'a>(
@@ -256,7 +260,7 @@ impl Oauth2ClientApi for Oauth2ClientService {
         domain_id: &'a str,
         provider_id: &'a str,
         data: OAuth2ClientResourceUpdate,
-    ) -> Result<OAuth2ClientResource, Oauth2ClientProviderError> {
+    ) -> Result<(OAuth2ClientResource, usize), Oauth2ClientProviderError> {
         let current = self
             .backend_driver
             .get(ctx.state(), domain_id, provider_id)
@@ -281,16 +285,52 @@ impl Oauth2ClientApi for Oauth2ClientService {
             validate_claims_template(claims_template)?;
         }
 
-        self.backend_driver
+        // Revoke on every explicit disable, not only on the enabled ->
+        // disabled transition: revocation is idempotent, and gating on the
+        // transition would make a retry after a failed revocation (the
+        // client is already disabled by then) a silent no-op.
+        let disabling = data.enabled == Some(false);
+
+        let updated = self
+            .backend_driver
             .update(ctx.state(), domain_id, provider_id, data)
-            .await
+            .await?;
+        // A disabled client must not keep live refresh families.
+        let revoked = if disabling {
+            revoke_client_families(ctx, &updated.client_id).await?
+        } else {
+            0
+        };
+        Ok((updated, revoked))
     }
+}
+
+/// Tombstone every refresh token family of `client_id` (reason
+/// `client_revoked`) and return how many were revoked. Pending device
+/// grants and pre-auth sessions are not purged here: they are short-lived,
+/// re-validate the client at redemption and are removed by the janitor.
+async fn revoke_client_families<'a>(
+    ctx: &ExecutionContext<'a>,
+    client_id: &str,
+) -> Result<usize, Oauth2ClientProviderError> {
+    ctx.state()
+        .provider
+        .get_oauth2_session_provider()
+        .revoke_refresh_token_families_by_client(
+            ctx.state(),
+            client_id,
+            RefreshTokenRevocationReason::ClientRevoked,
+        )
+        .await
+        .map_err(|e| Oauth2ClientProviderError::FamilyRevocation(e.to_string()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::oauth2_client::backend::MockOauth2ClientBackend;
+    use crate::oauth2_session::MockOauth2SessionProvider;
+    use crate::provider::Provider;
     use crate::tests::get_mocked_state;
     use std::collections::HashMap;
 
@@ -469,6 +509,136 @@ mod tests {
             result,
             Err(Oauth2ClientProviderError::Conflict(_))
         ));
+    }
+
+    async fn state_with_session(mock: MockOauth2SessionProvider) -> crate::keystone::ServiceState {
+        get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_oauth2_session(mock)),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_delete_revokes_client_families() {
+        let mut backend = MockOauth2ClientBackend::new();
+        backend.expect_delete().returning(|_, _, _| {
+            Ok(OAuth2ClientResource {
+                enabled: false,
+                deleted_at: Some(1),
+                ..sample_resource_from(sample_create())
+            })
+        });
+        let mut session = MockOauth2SessionProvider::new();
+        session
+            .expect_revoke_refresh_token_families_by_client()
+            .withf(|_, client_id, reason| {
+                client_id == "client-1" && *reason == RefreshTokenRevocationReason::ClientRevoked
+            })
+            .times(1)
+            .returning(|_, _, _| Ok(3));
+        let service = service_with(backend);
+        let state = state_with_session(session).await;
+        let ctx = ExecutionContext::internal(&state);
+
+        let (deleted, revoked) = service
+            .delete(&ctx, "domain-1", "provider-1")
+            .await
+            .unwrap();
+        assert!(deleted.deleted_at.is_some());
+        assert_eq!(revoked, 3);
+    }
+
+    #[tokio::test]
+    async fn test_delete_propagates_revocation_failure() {
+        let mut backend = MockOauth2ClientBackend::new();
+        backend
+            .expect_delete()
+            .returning(|_, _, _| Ok(sample_resource_from(sample_create())));
+        let mut session = MockOauth2SessionProvider::new();
+        session
+            .expect_revoke_refresh_token_families_by_client()
+            .returning(|_, _, _| {
+                Err(crate::oauth2_session::Oauth2SessionProviderError::RaftNotAvailable)
+            });
+        let service = service_with(backend);
+        let state = state_with_session(session).await;
+        let ctx = ExecutionContext::internal(&state);
+
+        let result = service.delete(&ctx, "domain-1", "provider-1").await;
+        assert!(matches!(
+            result,
+            Err(Oauth2ClientProviderError::FamilyRevocation(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_update_disable_revokes_client_families() {
+        let mut backend = MockOauth2ClientBackend::new();
+        backend
+            .expect_get()
+            .returning(|_, _, _| Ok(Some(sample_resource_from(sample_create()))));
+        backend.expect_update().returning(|_, _, _, _| {
+            Ok(OAuth2ClientResource {
+                enabled: false,
+                ..sample_resource_from(sample_create())
+            })
+        });
+        let mut session = MockOauth2SessionProvider::new();
+        session
+            .expect_revoke_refresh_token_families_by_client()
+            .withf(|_, client_id, reason| {
+                client_id == "client-1" && *reason == RefreshTokenRevocationReason::ClientRevoked
+            })
+            .times(1)
+            .returning(|_, _, _| Ok(2));
+        let service = service_with(backend);
+        let state = state_with_session(session).await;
+        let ctx = ExecutionContext::internal(&state);
+
+        let (updated, revoked) = service
+            .update(
+                &ctx,
+                "domain-1",
+                "provider-1",
+                OAuth2ClientResourceUpdate {
+                    enabled: Some(false),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert!(!updated.enabled);
+        assert_eq!(revoked, 2);
+    }
+
+    #[tokio::test]
+    async fn test_update_without_disable_does_not_revoke() {
+        let mut backend = MockOauth2ClientBackend::new();
+        backend
+            .expect_get()
+            .returning(|_, _, _| Ok(Some(sample_resource_from(sample_create()))));
+        backend
+            .expect_update()
+            .returning(|_, _, _, _| Ok(sample_resource_from(sample_create())));
+        // No expectation on the session provider: mockall panics on call.
+        let service = service_with(backend);
+        let state = state_with_session(MockOauth2SessionProvider::new()).await;
+        let ctx = ExecutionContext::internal(&state);
+
+        let (_, revoked) = service
+            .update(
+                &ctx,
+                "domain-1",
+                "provider-1",
+                OAuth2ClientResourceUpdate {
+                    enabled: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(revoked, 0);
     }
 
     fn sample_resource_from(data: OAuth2ClientResourceCreate) -> OAuth2ClientResource {

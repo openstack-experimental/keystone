@@ -22,6 +22,7 @@ use axum::{
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
+use crate::audit::{CorrelationId, build_initiator_from_vsc, emit_oauth2_client_revoked_event};
 use crate::keystone::ServiceState;
 use openstack_keystone_api_types::v4::oauth2_client::OAuth2Client;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -49,6 +50,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 )]
 pub(super) async fn delete(
     Auth(user_auth): Auth,
+    CorrelationId(correlation_id): CorrelationId,
     Path((domain_id, provider_id)): Path<(String, String)>,
     State(state): State<ServiceState>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
@@ -74,11 +76,20 @@ pub(super) async fn delete(
         )
         .await?;
 
-    state
+    let (deleted, revoked_families) = state
         .provider
         .get_oauth2_client_provider()
         .delete(&exec, &domain_id, &provider_id)
         .await?;
+
+    emit_oauth2_client_revoked_event(
+        &state.audit_dispatcher,
+        &correlation_id,
+        build_initiator_from_vsc(&user_auth),
+        &deleted.client_id,
+        "delete",
+        revoked_families,
+    );
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -126,11 +137,14 @@ mod tests {
         mock.expect_get()
             .returning(|_, _, _| Ok(Some(sample_resource())));
         mock.expect_delete().returning(|_, _, _| {
-            Ok(provider_types::OAuth2ClientResource {
-                enabled: false,
-                deleted_at: Some(1),
-                ..sample_resource()
-            })
+            Ok((
+                provider_types::OAuth2ClientResource {
+                    enabled: false,
+                    deleted_at: Some(1),
+                    ..sample_resource()
+                },
+                2,
+            ))
         });
         let provider = Provider::mocked_builder().mock_oauth2_client(mock);
 

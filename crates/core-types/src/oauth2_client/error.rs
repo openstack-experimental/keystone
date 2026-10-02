@@ -64,6 +64,10 @@ pub enum Oauth2ClientProviderError {
     /// reserved claim template key).
     #[error("validation error in the oauth2 client provider: {0}")]
     Validation(String),
+
+    /// Revoking the client's refresh token families failed.
+    #[error("failed to revoke refresh token families of the oauth2 client: {0}")]
+    FamilyRevocation(String),
 }
 
 impl Oauth2ClientProviderError {

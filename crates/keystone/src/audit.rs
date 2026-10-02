@@ -381,6 +381,45 @@ pub fn emit_oauth2_refresh_family_revoked_event(
     dispatcher.dispatch(event);
 }
 
+/// Emit the best-effort `OAUTH2_CLIENT_REVOKED` CADF event when an OAuth2
+/// client is deleted or disabled. `action` is `delete` or `disable`;
+/// `revoked_families` is the number of refresh token families tombstoned as
+/// a consequence.
+pub fn emit_oauth2_client_revoked_event(
+    dispatcher: &Arc<AuditDispatcher>,
+    correlation_id: &str,
+    initiator: Initiator,
+    client_id: &str,
+    action: &str,
+    revoked_families: usize,
+) {
+    let node_id = dispatcher.node_id().to_string();
+    let event_id = format!("{}:{}", node_id, Uuid::new_v4());
+    let payload = CadfEventPayload::new(
+        event_id,
+        "1.1".to_string(),
+        "default".to_string(),
+        correlation_id.to_string(),
+        chrono::Utc::now().to_rfc3339(),
+        "OAUTH2_CLIENT_REVOKED".to_string(),
+        "success".to_string(),
+        Some(format!(
+            "oauth2 client {client_id} {action}d, {revoked_families} refresh token families revoked"
+        )),
+        initiator,
+        Target {
+            id: client_id.to_string(),
+            type_uri: "data/security/keystone/oauth2_client".to_string(),
+        },
+        Observer {
+            node_id: node_id.clone(),
+            id: format!("service/security/keystone/{node_id}"),
+        },
+    );
+    let event = payload.sign(dispatcher);
+    dispatcher.dispatch(event);
+}
+
 /// Emit the best-effort `OAUTH2_KEY_ROTATION` CADF event (ADR 0026 §3,
 /// "Normal Rotation Flow", step 5) after a domain's signing key rotates.
 /// Uses `dispatch()` (best-effort), same posture as

@@ -27,6 +27,7 @@ use validator::Validate;
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
+use crate::audit::{CorrelationId, build_initiator_from_vsc, emit_oauth2_client_revoked_event};
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
 
@@ -54,6 +55,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 )]
 pub(super) async fn update(
     Auth(user_auth): Auth,
+    CorrelationId(correlation_id): CorrelationId,
     Path((domain_id, provider_id)): Path<(String, String)>,
     State(state): State<ServiceState>,
     Json(req): Json<OAuth2ClientUpdateRequest>,
@@ -82,11 +84,23 @@ pub(super) async fn update(
         )
         .await?;
 
-    let res = state
+    let disabling = req.oauth2_client.enabled == Some(false);
+    let (res, revoked_families) = state
         .provider
         .get_oauth2_client_provider()
         .update(&exec, &domain_id, &provider_id, req.oauth2_client.into())
         .await?;
+
+    if !res.enabled && disabling {
+        emit_oauth2_client_revoked_event(
+            &state.audit_dispatcher,
+            &correlation_id,
+            build_initiator_from_vsc(&user_auth),
+            &res.client_id,
+            "disable",
+            revoked_families,
+        );
+    }
 
     Ok((
         StatusCode::OK,
@@ -160,7 +174,7 @@ mod tests {
         mock.expect_get()
             .returning(|_, _, _| Ok(Some(sample_resource())));
         mock.expect_update()
-            .returning(|_, _, _, _| Ok(sample_disabled_resource()));
+            .returning(|_, _, _, _| Ok((sample_disabled_resource(), 1)));
         let provider = Provider::mocked_builder().mock_oauth2_client(mock);
 
         let state = get_mocked_state(provider, true, None).await;

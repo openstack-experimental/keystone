@@ -35,9 +35,10 @@ use openstack_keystone_core::oauth2_session::{
 };
 use openstack_keystone_core_types::identity::UserCreateBuilder;
 use openstack_keystone_core_types::identity::UserPasswordAuthRequestBuilder;
+use openstack_keystone_core_types::oauth2_client::{GrantType, OAuth2ClientResourceCreateBuilder};
 use openstack_keystone_oauth2_session_driver_raft::RaftOauth2SessionBackend;
 
-use crate::common::get_state_with_config;
+use crate::common::{get_state, get_state_with_config};
 use crate::create_domain;
 
 #[tokio::test]
@@ -219,6 +220,72 @@ async fn test_authorization_code_flow_and_refresh_reuse_collapses_family() -> Re
     for member in &members {
         assert!(member.revoked_at.is_some());
         assert_eq!(member.revocation_reason.as_deref(), Some("reuse_detected"));
+    }
+
+    Ok(())
+}
+
+/// Issue #1261: deleting an OAuth2 client must tombstone every refresh
+/// token family issued to it, not only reject them at redemption.
+#[tokio::test]
+#[traced_test]
+async fn test_client_delete_revokes_refresh_families() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let uid = Uuid::new_v4().simple().to_string();
+    let ctx = ExecutionContext::internal(&state);
+
+    let (client, _secret) = state
+        .provider
+        .get_oauth2_client_provider()
+        .create(
+            &ctx,
+            OAuth2ClientResourceCreateBuilder::default()
+                .client_id("")
+                .provider_id(format!("provider-{}", domain.id))
+                .domain_id(domain.id.clone())
+                .token_endpoint_auth_method("client_secret_basic")
+                .grant_types(vec![GrantType::AuthorizationCode, GrantType::RefreshToken])
+                .build()?,
+            true,
+        )
+        .await?;
+
+    let session_provider = state.provider.get_oauth2_session_provider();
+    let (root, bearer) = session_provider
+        .issue_refresh_token(
+            &state,
+            IssueRefreshTokenRequest {
+                domain_id: domain.id.clone(),
+                client_id: client.client_id.clone(),
+                user_id: uid,
+                scope: vec!["openid".to_string()],
+            },
+        )
+        .await?;
+
+    let (deleted, revoked) = state
+        .provider
+        .get_oauth2_client_provider()
+        .delete(&ctx, &domain.id, &client.provider_id)
+        .await?;
+    assert!(deleted.deleted_at.is_some());
+    assert_eq!(revoked, 1);
+
+    // The refresh token no longer redeems.
+    let redemption = session_provider
+        .redeem_refresh_token(&state, &bearer)
+        .await?;
+    assert!(matches!(redemption, RefreshTokenRedemption::Invalid));
+
+    // The family is tombstoned with the `client_revoked` reason.
+    let members = RaftOauth2SessionBackend::default()
+        .list_refresh_token_family(&state, &root.family_id)
+        .await?;
+    assert!(!members.is_empty());
+    for member in &members {
+        assert!(member.revoked_at.is_some());
+        assert_eq!(member.revocation_reason.as_deref(), Some("client_revoked"));
     }
 
     Ok(())

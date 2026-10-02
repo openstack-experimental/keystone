@@ -109,7 +109,8 @@ pub struct OAuth2ClientResource {
     pub updated_at: i64,
 
     /// UTC epoch seconds of soft-delete (`DELETE`). Record retained (not
-    /// hard-deleted) for Phase 4's refresh-token family-tree invalidation.
+    /// hard-deleted) as a tombstone so redemption of any leftover token
+    /// still fails closed; refresh families are revoked at delete time.
     #[builder(default)]
     pub deleted_at: Option<i64>,
 }
@@ -172,9 +173,8 @@ impl OAuth2ClientResource {
     }
 
     /// Apply the soft-delete path: disables the client and stamps the
-    /// tombstone, without deleting the record (Phase 2 design decision --
-    /// keeps the record available for Phase 4's refresh-token family-tree
-    /// invalidation walk).
+    /// tombstone, without deleting the record (the client service revokes
+    /// the client's refresh token families right after this is persisted).
     pub fn soft_delete(self, now: i64) -> Self {
         Self {
             enabled: false,

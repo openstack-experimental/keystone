@@ -269,6 +269,17 @@ pub trait Oauth2SessionApi: Send + Sync {
         reason: RefreshTokenRevocationReason,
     ) -> Result<(), Oauth2SessionProviderError>;
 
+    /// Revoke every refresh token family issued to `client_id` with the
+    /// given `reason` and return how many families were processed.
+    /// Idempotent: families that are already revoked keep their original
+    /// tombstone. Used when a client is deleted or disabled.
+    async fn revoke_refresh_token_families_by_client(
+        &self,
+        state: &ServiceState,
+        client_id: &str,
+        reason: RefreshTokenRevocationReason,
+    ) -> Result<usize, Oauth2SessionProviderError>;
+
     /// Mint a new RFC 8628 Device Authorization Grant at
     /// `POST /device_authorization` (ADR 0026 §7.C).
     async fn start_device_authorization(

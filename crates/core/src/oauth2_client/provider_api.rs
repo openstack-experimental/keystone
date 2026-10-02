@@ -39,13 +39,15 @@ pub trait Oauth2ClientApi: Send + Sync {
         confidential: bool,
     ) -> Result<(OAuth2ClientResource, Option<String>), Oauth2ClientProviderError>;
 
-    /// Soft-delete a client (disables and stamps the tombstone).
+    /// Soft-delete a client (disables and stamps the tombstone) and revoke
+    /// all of its refresh token families. Returns the tombstoned client and
+    /// the number of revoked families.
     async fn delete<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
         provider_id: &'a str,
-    ) -> Result<OAuth2ClientResource, Oauth2ClientProviderError>;
+    ) -> Result<(OAuth2ClientResource, usize), Oauth2ClientProviderError>;
 
     /// Fetch a client by its `(domain_id, provider_id)` coordinate.
     async fn get<'a>(
@@ -78,12 +80,14 @@ pub trait Oauth2ClientApi: Send + Sync {
         provider_id: &'a str,
     ) -> Result<(OAuth2ClientResource, String), Oauth2ClientProviderError>;
 
-    /// Update an OAuth2 client's configuration.
+    /// Update an OAuth2 client's configuration. Disabling an enabled client
+    /// (`enabled: false`) also revokes all of its refresh token families;
+    /// the number of revoked families is returned alongside the client.
     async fn update<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
         provider_id: &'a str,
         data: OAuth2ClientResourceUpdate,
-    ) -> Result<OAuth2ClientResource, Oauth2ClientProviderError>;
+    ) -> Result<(OAuth2ClientResource, usize), Oauth2ClientProviderError>;
 }

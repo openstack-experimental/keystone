@@ -427,6 +427,25 @@ impl Oauth2SessionApi for Oauth2SessionService {
             .await
     }
 
+    async fn revoke_refresh_token_families_by_client(
+        &self,
+        state: &ServiceState,
+        client_id: &str,
+        reason: RefreshTokenRevocationReason,
+    ) -> Result<usize, Oauth2SessionProviderError> {
+        let family_ids = self
+            .backend_driver
+            .list_refresh_families_by_client(state, client_id)
+            .await?;
+        let revoked_at = now();
+        for family_id in &family_ids {
+            self.backend_driver
+                .revoke_refresh_token_family(state, family_id, reason, revoked_at)
+                .await?;
+        }
+        Ok(family_ids.len())
+    }
+
     async fn start_device_authorization(
         &self,
         state: &ServiceState,
@@ -641,6 +660,30 @@ mod tests {
                 ..Default::default()
             },
         }
+    }
+
+    #[tokio::test]
+    async fn test_revoke_families_by_client_revokes_each_family() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_list_refresh_families_by_client()
+            .withf(|_, client_id| client_id == "client-1")
+            .returning(|_, _| Ok(vec!["f1".to_string(), "f2".to_string()]));
+        mock.expect_revoke_refresh_token_family()
+            .withf(|_, _, reason, _| *reason == RefreshTokenRevocationReason::ClientRevoked)
+            .times(2)
+            .returning(|_, _, _, _| Ok(()));
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let revoked = service
+            .revoke_refresh_token_families_by_client(
+                &state,
+                "client-1",
+                RefreshTokenRevocationReason::ClientRevoked,
+            )
+            .await
+            .unwrap();
+        assert_eq!(revoked, 2);
     }
 
     fn sample_refresh_token(spent_at: Option<i64>) -> RefreshToken {
