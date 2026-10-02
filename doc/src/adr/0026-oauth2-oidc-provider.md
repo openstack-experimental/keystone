@@ -1220,6 +1220,18 @@ spent, `keystone-rs` interprets the event as an active infrastructure breach:
 4. If channel congestion occurs, the system writes a local compensating JSONL
    log to disk and exposes the drop metric immediately to the Prometheus
    monitoring alert `KeystoneAuditPostauditDrops`.
+5. Revoked families are kept as tombstones (for forensics and correlation with
+   the critical audit event), not deleted. Expiry is otherwise enforced lazily
+   on read, so a leader-only session janitor (`oauth2_session::janitor`, every
+   `[oauth2] session_janitor_interval_seconds`, default 300) walks the expiry
+   index and purges abandoned pre-auth sessions, unredeemed authorization codes,
+   unpolled device grants and never-revoked refresh tokens (live or spent)
+   shortly after they expire. Revoking a family moves its members to a separate
+   `refresh_tombstone` expiry kind, which is purged
+   `[oauth2] revoked_family_retention_days` (default 30) after the token's own
+   `expires_at`. Each pass emits one CADF `maintenance` event carrying the
+   per-kind purge counts. Spent refresh tokens keep their expiry index entry so
+   rotated parents are reclaimed too.
 
 ---
 

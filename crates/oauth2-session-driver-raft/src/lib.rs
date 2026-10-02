@@ -135,7 +135,7 @@ const EXPIRY_IDX_PREFIX: &str = "oauth2:expiry_idx:v1:";
 /// still reads the whole index per call (`StorageApi::prefix_index` has no
 /// range-bounded query) and filters/breaks client-side on `before`/`limit`.
 /// `kind` distinguishes the record type sharing this index (`"session"`,
-/// `"code"`, `"refresh"`, `"device"`).
+/// `"code"`, `"device"`, `"refresh"`, `"refresh_tombstone"`).
 fn expiry_idx_key(expires_at: i64, kind: &str, primary_key: &str) -> String {
     format!("{EXPIRY_IDX_PREFIX}{expires_at:0>EXPIRY_TS_WIDTH$}:{kind}:{primary_key}")
 }
@@ -446,9 +446,10 @@ impl RaftOauth2SessionBackend {
             return Err(Oauth2SessionProviderError::NotFound(token_id.to_string()));
         }
         record.spent_at = Some(spent_at);
-        // Rewrite the expiry entry on rotation: the spent token no longer
-        // needs to be tracked for expiry sweeps (the rotated child gets
-        // its own fresh entry via `create_refresh_token_impl`).
+        // The expiry entry is deliberately kept: a spent token must stay
+        // readable for reuse detection until it expires, and the janitor
+        // needs the entry to reclaim rotated parents of a family that is
+        // never revoked.
         let mutations = vec![
             Mutation::set(
                 refresh_key(token_id),
@@ -458,7 +459,6 @@ impl RaftOauth2SessionBackend {
                 None,
             )
             .map_err(store_err)?,
-            Mutation::remove_index(expiry_idx_key(record.expires_at, "refresh", token_id)),
         ];
         storage.transaction(mutations).await.map_err(store_err)?;
         Ok(())
@@ -505,14 +505,20 @@ impl RaftOauth2SessionBackend {
         // Tombstone, don't delete: the token records and the family index
         // stay so forensics can correlate them with the critical audit
         // event, and the janitor can purge them after
-        // `expires_at + retention`. Every member gets an expiry index entry
-        // (spent members lost theirs on rotation) so the janitor can find
-        // them. Members that are already revoked keep their original stamp
-        // (idempotent).
+        // `expires_at + retention`. Every member is moved from the
+        // `"refresh"` to the `"refresh_tombstone"` expiry index kind so the
+        // janitor can apply the longer tombstone retention without reading
+        // each record. Members that are already revoked keep their original
+        // stamp (idempotent).
         for member in &members {
-            mutations.push(Mutation::set_index(expiry_idx_key(
+            mutations.push(Mutation::remove_index(expiry_idx_key(
                 member.expires_at,
                 "refresh",
+                &member.token_id,
+            )));
+            mutations.push(Mutation::set_index(expiry_idx_key(
+                member.expires_at,
+                "refresh_tombstone",
                 &member.token_id,
             )));
         }
@@ -604,6 +610,7 @@ impl RaftOauth2SessionBackend {
     async fn list_expired_impl(
         &self,
         storage: &dyn StorageApi,
+        kind_filter: Option<&str>,
         before: i64,
         limit: usize,
     ) -> Result<Vec<(String, String)>, Oauth2SessionProviderError> {
@@ -633,9 +640,66 @@ impl RaftOauth2SessionBackend {
                 // yet expired.
                 break;
             }
+            // Filter before applying `limit`, so a caller sweeping one kind
+            // is not starved by older entries of another kind.
+            if kind_filter.is_some_and(|f| f != kind) {
+                continue;
+            }
             out.push((kind.to_string(), primary_key.to_string()));
         }
         Ok(out)
+    }
+
+    async fn delete_refresh_token_impl(
+        &self,
+        storage: &dyn StorageApi,
+        token_id: &str,
+    ) -> Result<(), Oauth2SessionProviderError> {
+        let Some(record): Option<RefreshToken> = get(storage, &refresh_key(token_id))
+            .await
+            .map_err(store_err)?
+        else {
+            return Ok(());
+        };
+        let mut mutations = vec![
+            Mutation::remove(refresh_key(token_id), None::<&str>, None),
+            Mutation::remove(
+                family_idx_key(&record.family_id, token_id),
+                None::<&str>,
+                None,
+            ),
+            Mutation::remove_index(expiry_idx_key(record.expires_at, "refresh", token_id)),
+            Mutation::remove_index(expiry_idx_key(
+                record.expires_at,
+                "refresh_tombstone",
+                token_id,
+            )),
+        ];
+        // Revoking a family already dropped the user/client/domain
+        // indexes. For a family that was never revoked, drop them with its
+        // last member; removing an absent index key is harmless.
+        let remaining = self
+            .list_refresh_token_family_impl(storage, &record.family_id)
+            .await?
+            .into_iter()
+            .any(|t| t.token_id != token_id);
+        if !remaining {
+            mutations.push(Mutation::remove_index(refresh_user_idx_key(
+                &record.domain_id,
+                &record.user_id,
+                &record.family_id,
+            )));
+            mutations.push(Mutation::remove_index(refresh_client_idx_key(
+                &record.client_id,
+                &record.family_id,
+            )));
+            mutations.push(Mutation::remove_index(refresh_domain_idx_key(
+                &record.domain_id,
+                &record.family_id,
+            )));
+        }
+        storage.transaction(mutations).await.map_err(store_err)?;
+        Ok(())
     }
 
     async fn create_device_code_grant_impl(
@@ -1003,13 +1067,23 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
             .await
     }
 
-    async fn list_expired(
+    async fn list_expired<'k>(
         &self,
         state: &ServiceState,
+        kind: Option<&'k str>,
         before: i64,
         limit: usize,
     ) -> Result<Vec<(String, String)>, Oauth2SessionProviderError> {
-        self.list_expired_impl(self.storage(state)?, before, limit)
+        self.list_expired_impl(self.storage(state)?, kind, before, limit)
+            .await
+    }
+
+    async fn delete_refresh_token(
+        &self,
+        state: &ServiceState,
+        token_id: &str,
+    ) -> Result<(), Oauth2SessionProviderError> {
+        self.delete_refresh_token_impl(self.storage(state)?, token_id)
             .await
     }
 }
@@ -1451,7 +1525,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_revoke_refresh_token_family_reindexes_spent_members_for_expiry() {
+    async fn test_revoke_refresh_token_family_moves_members_to_tombstone_expiry_kind() {
         let backend = RaftOauth2SessionBackend::default();
         let storage = MockStorage::default();
         backend
@@ -1462,13 +1536,13 @@ mod tests {
             .mark_refresh_token_spent_impl(&storage, "token-1", 2000)
             .await
             .unwrap();
-        // Rotation dropped the spent token's expiry entry.
-        assert!(
+        // Rotation keeps the spent token's expiry entry.
+        assert_eq!(
             backend
-                .list_expired_impl(&storage, i64::MAX, 100)
+                .list_expired_impl(&storage, None, i64::MAX, 100)
                 .await
-                .unwrap()
-                .is_empty()
+                .unwrap(),
+            vec![("refresh".to_string(), "token-1".to_string())]
         );
 
         backend
@@ -1481,12 +1555,34 @@ mod tests {
             .await
             .unwrap();
 
+        // Revocation moves the member to the tombstone kind, so the plain
+        // refresh sweep no longer sees it.
         assert_eq!(
             backend
-                .list_expired_impl(&storage, i64::MAX, 100)
+                .list_expired_impl(&storage, None, i64::MAX, 100)
                 .await
                 .unwrap(),
-            vec![("refresh".to_string(), "token-1".to_string())]
+            vec![("refresh_tombstone".to_string(), "token-1".to_string())]
+        );
+        assert!(
+            backend
+                .list_expired_impl(&storage, Some("refresh"), i64::MAX, 100)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        // Deleting the tombstone clears its expiry entry.
+        backend
+            .delete_refresh_token_impl(&storage, "token-1")
+            .await
+            .unwrap();
+        assert!(
+            backend
+                .list_expired_impl(&storage, None, i64::MAX, 100)
+                .await
+                .unwrap()
+                .is_empty()
         );
     }
 
@@ -1579,7 +1675,7 @@ mod tests {
         // Expiry entry kept so the janitor can purge the tombstone.
         assert_eq!(
             backend
-                .list_expired_impl(&storage, i64::MAX, 100)
+                .list_expired_impl(&storage, None, i64::MAX, 100)
                 .await
                 .unwrap()
                 .len(),
@@ -1615,7 +1711,7 @@ mod tests {
         // the auth code and the device grant) precede `before = 2000`;
         // the pre-auth session (2000) and refresh token (~2.6M) don't.
         let expired = backend
-            .list_expired_impl(&storage, 2000, 100)
+            .list_expired_impl(&storage, None, 2000, 100)
             .await
             .unwrap();
         assert_eq!(
@@ -1627,7 +1723,10 @@ mod tests {
         );
 
         // `limit` caps the result even when more entries are expired.
-        let limited = backend.list_expired_impl(&storage, 2000, 1).await.unwrap();
+        let limited = backend
+            .list_expired_impl(&storage, None, 2000, 1)
+            .await
+            .unwrap();
         assert_eq!(
             limited,
             vec![("code".to_string(), "code-early".to_string())]
@@ -1635,7 +1734,7 @@ mod tests {
 
         // A generous `before` picks up everything, in expiry order.
         let all = backend
-            .list_expired_impl(&storage, i64::MAX, 100)
+            .list_expired_impl(&storage, None, i64::MAX, 100)
             .await
             .unwrap();
         assert_eq!(
@@ -1665,7 +1764,7 @@ mod tests {
 
         assert!(
             backend
-                .list_expired_impl(&storage, i64::MAX, 100)
+                .list_expired_impl(&storage, None, i64::MAX, 100)
                 .await
                 .unwrap()
                 .is_empty()
@@ -1688,7 +1787,7 @@ mod tests {
 
         assert!(
             backend
-                .list_expired_impl(&storage, i64::MAX, 100)
+                .list_expired_impl(&storage, None, i64::MAX, 100)
                 .await
                 .unwrap()
                 .is_empty()
@@ -1711,7 +1810,7 @@ mod tests {
 
         assert!(
             backend
-                .list_expired_impl(&storage, i64::MAX, 100)
+                .list_expired_impl(&storage, None, i64::MAX, 100)
                 .await
                 .unwrap()
                 .is_empty()
@@ -1719,7 +1818,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_mark_refresh_token_spent_rewrites_expiry_entry() {
+    async fn test_mark_refresh_token_spent_keeps_expiry_entry() {
         let backend = RaftOauth2SessionBackend::default();
         let storage = MockStorage::default();
         backend
@@ -1728,7 +1827,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             backend
-                .list_expired_impl(&storage, i64::MAX, 100)
+                .list_expired_impl(&storage, None, i64::MAX, 100)
                 .await
                 .unwrap(),
             vec![("refresh".to_string(), "token-1".to_string())]
@@ -1739,14 +1838,15 @@ mod tests {
             .await
             .unwrap();
 
-        // Spent tokens drop out of the expiry sweep; the primary record is
-        // untouched (still readable, `spent_at` set).
-        assert!(
+        // Spent tokens stay in the expiry sweep so rotated parents are
+        // reclaimed; the primary record is untouched (still readable,
+        // `spent_at` set).
+        assert_eq!(
             backend
-                .list_expired_impl(&storage, i64::MAX, 100)
+                .list_expired_impl(&storage, None, i64::MAX, 100)
                 .await
-                .unwrap()
-                .is_empty()
+                .unwrap(),
+            vec![("refresh".to_string(), "token-1".to_string())]
         );
         assert!(
             backend
@@ -1757,5 +1857,79 @@ mod tests {
                 .spent_at
                 .is_some()
         );
+    }
+    #[tokio::test]
+    async fn test_list_expired_kind_filter_applies_before_limit() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        let mut code = sample_code_create();
+        code.code = "code-early".to_string();
+        code.expires_at = 500;
+        backend
+            .create_authorization_code_impl(&storage, code)
+            .await
+            .unwrap();
+        backend
+            .create_pre_auth_session_impl(&storage, sample_session_create())
+            .await
+            .unwrap();
+
+        // The older code must not hide the session behind `limit = 1`.
+        assert_eq!(
+            backend
+                .list_expired_impl(&storage, Some("session"), i64::MAX, 1)
+                .await
+                .unwrap(),
+            vec![("session".to_string(), "session-1".to_string())]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_refresh_token_removes_record_and_indexes() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_refresh_token_impl(&storage, sample_refresh_create("token-1", "family-1"))
+            .await
+            .unwrap();
+
+        backend
+            .delete_refresh_token_impl(&storage, "token-1")
+            .await
+            .unwrap();
+
+        assert!(
+            backend
+                .get_refresh_token_impl(&storage, "token-1")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            backend
+                .list_refresh_token_family_impl(&storage, "family-1")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            backend
+                .list_expired_impl(&storage, None, i64::MAX, 100)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            backend
+                .list_refresh_families_by_user_impl(&storage, "domain-1", "user-1")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        // Deleting a missing token is a no-op.
+        backend
+            .delete_refresh_token_impl(&storage, "token-1")
+            .await
+            .unwrap();
     }
 }

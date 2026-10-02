@@ -530,6 +530,53 @@ impl Oauth2SessionApi for Oauth2SessionService {
             }
         }
     }
+
+    async fn list_expired(
+        &self,
+        state: &ServiceState,
+        kind: &str,
+        before: i64,
+        limit: usize,
+    ) -> Result<Vec<(String, String)>, Oauth2SessionProviderError> {
+        self.backend_driver
+            .list_expired(state, Some(kind), before, limit)
+            .await
+    }
+
+    async fn purge_expired(
+        &self,
+        state: &ServiceState,
+        kind: &str,
+        primary_key: &str,
+    ) -> Result<(), Oauth2SessionProviderError> {
+        match kind {
+            "session" => {
+                self.backend_driver
+                    .delete_pre_auth_session(state, primary_key)
+                    .await
+            }
+            // `take_*` fetch-and-delete, which also drops the expiry index
+            // entry; the returned record is discarded.
+            "code" => self
+                .backend_driver
+                .take_authorization_code(state, primary_key)
+                .await
+                .map(|_| ()),
+            "device" => self
+                .backend_driver
+                .take_device_code_grant(state, primary_key)
+                .await
+                .map(|_| ()),
+            "refresh" | "refresh_tombstone" => {
+                self.backend_driver
+                    .delete_refresh_token(state, primary_key)
+                    .await
+            }
+            other => Err(Oauth2SessionProviderError::InvalidRecordKind(
+                other.to_string(),
+            )),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1000,5 +1047,59 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(result, DevicePollOutcome::Expired));
+    }
+    #[tokio::test]
+    async fn test_purge_expired_dispatches_by_kind() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_delete_pre_auth_session()
+            .withf(|_, id| id == "s1")
+            .times(1)
+            .returning(|_, _| Ok(()));
+        mock.expect_take_authorization_code()
+            .withf(|_, c| c == "c1")
+            .times(1)
+            .returning(|_, _| Ok(None));
+        mock.expect_take_device_code_grant()
+            .withf(|_, d| d == "d1")
+            .times(1)
+            .returning(|_, _| Ok(None));
+        mock.expect_delete_refresh_token()
+            .withf(|_, t| t == "t1")
+            .times(2)
+            .returning(|_, _| Ok(()));
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        for (kind, pk) in [
+            ("session", "s1"),
+            ("code", "c1"),
+            ("device", "d1"),
+            ("refresh", "t1"),
+            ("refresh_tombstone", "t1"),
+        ] {
+            service.purge_expired(&state, kind, pk).await.unwrap();
+        }
+        assert!(matches!(
+            service.purge_expired(&state, "bogus", "x").await,
+            Err(Oauth2SessionProviderError::InvalidRecordKind(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_list_expired_filters_by_kind() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_list_expired()
+            .withf(|_, kind, before, limit| {
+                *kind == Some("session") && *before == 10 && *limit == 5
+            })
+            .returning(|_, _, _, _| Ok(vec![("session".to_string(), "s1".to_string())]));
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let out = service
+            .list_expired(&state, "session", 10, 5)
+            .await
+            .unwrap();
+        assert_eq!(out, vec![("session".to_string(), "s1".to_string())]);
     }
 }

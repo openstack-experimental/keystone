@@ -46,6 +46,8 @@ code), see the [OAuth2 / OIDC user guide](../../user/features/oauth2.md).
 | `pre_auth_session_lifetime_minutes`     | 10      | Pre-authentication browser session TTL for the login/consent sequence.                                                                           |
 | `device_code_lifetime_minutes`          | 10      | RFC 8628 `device_code`/`user_code` TTL.                                                                                                          |
 | `device_code_poll_interval_seconds`     | 5       | Minimum interval between `/token` polls for a `device_code`.                                                                                     |
+| `revoked_family_retention_days`         | 30      | Days a revoked-family refresh token tombstone is kept after its own expiry (forensics only) before the session janitor purges it.            |
+| `session_janitor_interval_seconds`      | 300     | Interval of the leader-only janitor that purges expired pre-auth sessions, authorization codes, device grants and refresh tokens from Raft.      |
 | `token_rate_limit_burst_size`           | 10      | `/token` rate-limit burst, keyed on unverified `client_id`.                                                                                      |
 | `token_rate_limit_replenish_per_minute` | 60      | `/token` sustained rate after burst is exhausted.                                                                                                |
 

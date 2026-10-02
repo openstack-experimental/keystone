@@ -35,6 +35,11 @@ pub enum Oauth2SessionProviderError {
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
 
+    /// The record kind passed to a purge is not one of `session`, `code`,
+    /// `device` or `refresh`.
+    #[error("unknown oauth2 session record kind `{0}`")]
+    InvalidRecordKind(String),
+
     /// Unsupported driver.
     #[error("unsupported driver `{0}` for the oauth2 session provider")]
     UnsupportedDriver(String),

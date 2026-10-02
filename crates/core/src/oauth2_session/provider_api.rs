@@ -302,4 +302,26 @@ pub trait Oauth2SessionApi: Send + Sync {
         device_code: &str,
         client_id: &str,
     ) -> Result<DevicePollOutcome, Oauth2SessionProviderError>;
+
+    /// List up to `limit` records of `kind` (`"session"`, `"code"`,
+    /// `"device"`, `"refresh"` or `"refresh_tombstone"`) whose
+    /// `expires_at < before`, oldest first, as `(kind, primary_key)` pairs.
+    /// Backs the session janitor.
+    async fn list_expired(
+        &self,
+        state: &ServiceState,
+        kind: &str,
+        before: i64,
+        limit: usize,
+    ) -> Result<Vec<(String, String)>, Oauth2SessionProviderError>;
+
+    /// Physically delete one expired record -- primary key and every index
+    /// entry -- as returned by [`Self::list_expired`]. Deleting a record
+    /// that is already gone is a no-op. Backs the session janitor.
+    async fn purge_expired(
+        &self,
+        state: &ServiceState,
+        kind: &str,
+        primary_key: &str,
+    ) -> Result<(), Oauth2SessionProviderError>;
 }

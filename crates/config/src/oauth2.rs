@@ -149,6 +149,23 @@ pub struct Oauth2Provider {
     #[validate(range(min = 1))]
     pub device_code_poll_interval_seconds: u32,
 
+    /// Days a revoked (tombstoned) refresh token is retained after its own
+    /// `expires_at` before the session janitor purges it. Presenting an
+    /// expired token is rejected regardless; retention only keeps the
+    /// record for forensics and correlation with the breach audit event.
+    /// Refresh tokens that were never revoked are purged shortly after
+    /// they expire.
+    #[serde(default = "default_revoked_family_retention_days")]
+    #[validate(range(min = 1))]
+    pub revoked_family_retention_days: u32,
+
+    /// Interval, in seconds, between two sweeps of the OAuth2 session
+    /// janitor that purges expired pre-auth sessions, authorization
+    /// codes, device grants and refresh tokens.
+    #[serde(default = "default_session_janitor_interval_seconds")]
+    #[validate(range(min = 1))]
+    pub session_janitor_interval_seconds: u32,
+
     /// `GET /v4/oauth2/{domain_id}/clients` pagination limits.
     #[serde(default)]
     pub list_limit: ListLimitConfig,
@@ -210,6 +227,14 @@ fn default_device_code_poll_interval_seconds() -> u32 {
     5
 }
 
+fn default_revoked_family_retention_days() -> u32 {
+    30
+}
+
+fn default_session_janitor_interval_seconds() -> u32 {
+    300
+}
+
 impl Default for Oauth2Provider {
     fn default() -> Self {
         Self {
@@ -228,6 +253,8 @@ impl Default for Oauth2Provider {
             pre_auth_session_lifetime_minutes: default_pre_auth_session_lifetime_minutes(),
             device_code_lifetime_minutes: default_device_code_lifetime_minutes(),
             device_code_poll_interval_seconds: default_device_code_poll_interval_seconds(),
+            revoked_family_retention_days: default_revoked_family_retention_days(),
+            session_janitor_interval_seconds: default_session_janitor_interval_seconds(),
             list_limit: ListLimitConfig::default(),
         }
     }
@@ -252,6 +279,8 @@ mod tests {
         assert_eq!(cfg.pre_auth_session_lifetime_minutes, 10);
         assert_eq!(cfg.device_code_lifetime_minutes, 10);
         assert_eq!(cfg.device_code_poll_interval_seconds, 5);
+        assert_eq!(cfg.revoked_family_retention_days, 30);
+        assert_eq!(cfg.session_janitor_interval_seconds, 300);
         assert!(cfg.validate().is_ok());
     }
 
@@ -281,6 +310,16 @@ mod tests {
     fn test_validate_rejects_zero_rotation_days() {
         let cfg: Oauth2Provider =
             serde_json::from_str(r#"{"signing_key_rotation_days": 0}"#).unwrap();
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_rejects_zero_janitor_settings() {
+        let cfg: Oauth2Provider =
+            serde_json::from_str(r#"{"revoked_family_retention_days": 0}"#).unwrap();
+        assert!(cfg.validate().is_err());
+        let cfg: Oauth2Provider =
+            serde_json::from_str(r#"{"session_janitor_interval_seconds": 0}"#).unwrap();
         assert!(cfg.validate().is_err());
     }
 }

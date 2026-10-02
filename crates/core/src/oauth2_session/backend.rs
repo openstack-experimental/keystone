@@ -210,14 +210,26 @@ pub trait Oauth2SessionBackend: Send + Sync {
         domain_id: &str,
     ) -> Result<Vec<String>, Oauth2SessionProviderError>;
 
-    /// List up to `limit` expired records with `expires_at < before`,
-    /// ordered oldest first, as `(kind, primary_key)` pairs. `kind` is one
-    /// of `"session"`, `"code"`, `"refresh"`, `"device"`. Backs a sweeper
-    /// that reclaims expired pre-auth sessions, authorization codes,
-    /// refresh tokens and device grants without a full table scan.
-    async fn list_expired(
+    /// Delete a refresh token together with its family and expiry index
+    /// entries. Deleting a missing token is a no-op. Used by the session
+    /// janitor only.
+    async fn delete_refresh_token(
         &self,
         state: &ServiceState,
+        token_id: &str,
+    ) -> Result<(), Oauth2SessionProviderError>;
+
+    /// List up to `limit` expired records with `expires_at < before`,
+    /// ordered oldest first, as `(kind, primary_key)` pairs. When `kind` is
+    /// set only records of that kind are returned (filtered before `limit`
+    /// is applied). `kind` is one of `"session"`, `"code"`, `"device"`,
+    /// `"refresh"`, `"refresh_tombstone"`. Backs a sweeper that reclaims
+    /// expired pre-auth sessions, authorization codes, refresh tokens and
+    /// device grants without a full table scan.
+    async fn list_expired<'k>(
+        &self,
+        state: &ServiceState,
+        kind: Option<&'k str>,
         before: i64,
         limit: usize,
     ) -> Result<Vec<(String, String)>, Oauth2SessionProviderError>;

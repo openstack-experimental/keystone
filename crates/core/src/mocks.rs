@@ -458,6 +458,21 @@ mod oauth2_session {
                 device_code: &str,
                 client_id: &str,
             ) -> Result<DevicePollOutcome, Oauth2SessionProviderError>;
+
+            async fn list_expired(
+                &self,
+                state: &ServiceState,
+                kind: &str,
+                before: i64,
+                limit: usize,
+            ) -> Result<Vec<(String, String)>, Oauth2SessionProviderError>;
+
+            async fn purge_expired(
+                &self,
+                state: &ServiceState,
+                kind: &str,
+                primary_key: &str,
+            ) -> Result<(), Oauth2SessionProviderError>;
         }
     }
 }
