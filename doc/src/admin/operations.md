@@ -16,7 +16,10 @@ allows warning states to remain `200 OK`.
 ## Metrics and Logging
 
 `GET /metrics` returns Prometheus text format. Current exported metrics include
-audit event/drop counters and dynamic-auth-plugin load failures.
+audit event, drop, queue-depth, spool, sink and key-version series
+(`keystone_audit_*`, listed in ADR 0023 §Observability; ready-made alert rules
+are in `deploy/prometheus/alert_rules.yaml`) and dynamic-auth-plugin load
+failures.
 
 Keystone uses structured logging. Protect logs because request and identity
 metadata can be sensitive, and never enable logging that records bearer tokens,

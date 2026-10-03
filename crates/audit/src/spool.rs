@@ -39,6 +39,7 @@ use tokio::time::{MissedTickBehavior, interval};
 use tracing::{error, info, warn};
 
 use crate::dispatcher::AuditDispatcher;
+use crate::metrics::AuditMetrics;
 use crate::types::CadfEvent;
 
 /// How often buffered perimeter events are flushed and fsynced.
@@ -120,6 +121,8 @@ pub struct SpoolConfig {
     /// is requested. Events still queued at the deadline are dropped and
     /// logged at `ERROR` with their count.
     pub drain_timeout: Duration,
+    /// Counters the writer updates (write failures).
+    pub metrics: Arc<AuditMetrics>,
 }
 
 impl Default for SpoolConfig {
@@ -129,6 +132,7 @@ impl Default for SpoolConfig {
             max_segment_age: Duration::from_secs(24 * 60 * 60),
             max_segments: None,
             drain_timeout: Duration::from_secs(10),
+            metrics: Arc::new(AuditMetrics::default()),
         }
     }
 }
@@ -375,11 +379,11 @@ pub async fn run_spool_writer(
                 break;
             }
             event = critical.recv(), if critical_open => match event {
-                Some(event) => log_append(writer.append(&event, true), &writer.path, &event),
+                Some(event) => log_append(writer.append(&event, true), &writer.path, &event, &writer.cfg.metrics),
                 None => critical_open = false,
             },
             event = perimeter.recv(), if perimeter_open => match event {
-                Some(event) => log_append(writer.append(&event, false), &writer.path, &event),
+                Some(event) => log_append(writer.append(&event, false), &writer.path, &event, &writer.cfg.metrics),
                 None => perimeter_open = false,
             },
             _ = flush_tick.tick() => {
@@ -438,7 +442,12 @@ fn drain_on_shutdown(
                 Err(_) => break,
             },
         };
-        log_append(writer.append(&event, durable), &writer.path, &event);
+        log_append(
+            writer.append(&event, durable),
+            &writer.path,
+            &event,
+            &writer.cfg.metrics,
+        );
         drained += 1;
     }
     if drained > 0 {
@@ -446,8 +455,14 @@ fn drain_on_shutdown(
     }
 }
 
-fn log_append(result: Result<(), SpoolError>, path: &Path, event: &CadfEvent) {
+fn log_append(
+    result: Result<(), SpoolError>,
+    path: &Path,
+    event: &CadfEvent,
+    metrics: &AuditMetrics,
+) {
     if let Err(e) = result {
+        metrics.spool_write_failures.inc();
         error!(
             path = %path.display(),
             error = %e,
@@ -549,8 +564,12 @@ pub fn verify_sealed_spool(
         }
     }
 
+    let metrics = dispatcher.metrics();
+    metrics.spool_verified.add(["verified"], verified as u64);
+    metrics.spool_verified.add(["invalid"], skipped as u64);
     if skipped > 0 {
         quarantine_segment(path)?;
+        metrics.spool_quarantined.inc();
     }
     info!(verified, skipped, "audit spool verification complete");
     Ok(VerifyStats { verified, skipped })
@@ -834,6 +853,22 @@ mod tests {
     }
 
     #[test]
+    fn append_failure_is_counted() {
+        let metrics = AuditMetrics::default();
+        let key: Arc<[u8]> = Arc::from(b"testkey".as_slice());
+        let (dispatcher, _rx) = make_dispatcher("node-1", key);
+        let event = event(&dispatcher);
+        log_append(
+            Err(SpoolError::Io(std::io::Error::other("disk full"))),
+            Path::new("/spool"),
+            &event,
+            &metrics,
+        );
+        log_append(Ok(()), Path::new("/spool"), &event, &metrics);
+        assert_eq!(metrics.spool_write_failures.get(), 1);
+    }
+
+    #[test]
     fn seal_moves_previous_spool_to_segment() {
         let dir = tempdir().unwrap();
         let key: Arc<[u8]> = Arc::from(b"testkey".as_slice());
@@ -904,6 +939,10 @@ mod tests {
         assert!(!segment.exists());
         // Quarantined copies are not listed as sealed segments.
         assert!(list_segments(dir.path(), "node-1").unwrap().is_empty());
+        let metrics = dispatcher.metrics();
+        assert_eq!(metrics.spool_verified.get(["verified"]), 1);
+        assert_eq!(metrics.spool_verified.get(["invalid"]), 1);
+        assert_eq!(metrics.spool_quarantined.get(), 1);
     }
 
     #[test]

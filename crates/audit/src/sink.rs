@@ -30,6 +30,7 @@ use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tracing::{debug, error, info, warn};
 
+use crate::metrics::AuditMetrics;
 use crate::spool::{SpoolError, list_segments, quarantine_segment};
 use crate::types::CadfEvent;
 
@@ -85,6 +86,9 @@ pub struct ShipperConfig {
     /// First retry delay after a sink failure; doubles up to `max_backoff`.
     pub initial_backoff: Duration,
     pub max_backoff: Duration,
+    /// Counters the shipper updates (shipped/skipped events, sink errors,
+    /// quarantined segments).
+    pub metrics: Arc<AuditMetrics>,
 }
 
 impl Default for ShipperConfig {
@@ -94,6 +98,7 @@ impl Default for ShipperConfig {
             poll_interval: Duration::from_secs(5),
             initial_backoff: Duration::from_secs(1),
             max_backoff: Duration::from_secs(60),
+            metrics: Arc::new(AuditMetrics::default()),
         }
     }
 }
@@ -152,6 +157,9 @@ async fn ship_segment(
         if !batch.is_empty() && (done || batch.len() >= cfg.batch_size) {
             sink.write_batch(&batch).await?;
             shipped += batch.len();
+            cfg.metrics
+                .shipped_events
+                .add(["shipped"], batch.len() as u64);
             batch.clear();
         }
         if done {
@@ -160,7 +168,9 @@ async fn ship_segment(
     }
 
     if skipped > 0 {
+        cfg.metrics.shipped_events.add(["skipped"], skipped as u64);
         quarantine_segment(path)?;
+        cfg.metrics.spool_quarantined.inc();
         spool_bytes.fetch_sub(size, Ordering::Relaxed);
         warn!(segment = %path.display(), shipped, skipped, "segment shipped with unparsable lines and quarantined");
         return Ok(ShipOutcome::Quarantined);
@@ -202,6 +212,9 @@ pub async fn run_segment_shipper(
                 cfg.poll_interval
             }
             Err(e) => {
+                if matches!(e, ShipError::Sink(_)) {
+                    cfg.metrics.sink_errors.inc();
+                }
                 error!(error = %e, retry_in = ?backoff, "failed to ship audit segment; will retry");
                 let wait = backoff;
                 backoff = (backoff * 2).min(cfg.max_backoff);
@@ -312,6 +325,7 @@ mod tests {
             poll_interval: Duration::from_millis(10),
             initial_backoff: Duration::from_millis(10),
             max_backoff: Duration::from_millis(20),
+            metrics: Arc::new(AuditMetrics::default()),
         }
     }
 
@@ -376,11 +390,15 @@ mod tests {
         let seg = write_segment(dir.path(), "20260101T000000000Z", &l);
         let bytes = AtomicU64::new(0);
         let sink = RecordingSink::default();
+        let cfg = cfg();
 
-        ship_pending(dir.path(), "node-1", &sink, &cfg(), &bytes)
+        ship_pending(dir.path(), "node-1", &sink, &cfg, &bytes)
             .await
             .unwrap();
 
+        assert_eq!(cfg.metrics.shipped_events.get(["shipped"]), 2);
+        assert_eq!(cfg.metrics.shipped_events.get(["skipped"]), 1);
+        assert_eq!(cfg.metrics.spool_quarantined.get(), 1);
         assert_eq!(sink.ids.lock().unwrap().len(), 2, "valid lines still ship");
         assert!(!seg.exists());
         let quarantined = std::fs::read_dir(dir.path())
@@ -398,11 +416,13 @@ mod tests {
         let sink = Arc::new(RecordingSink::default());
         *sink.fail_next.lock().unwrap() = 2;
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let shipper_cfg = cfg();
+        let metrics = Arc::clone(&shipper_cfg.metrics);
         let task = tokio::spawn(run_segment_shipper(
             dir.path().to_path_buf(),
             "node-1".to_string(),
             sink.clone(),
-            cfg(),
+            shipper_cfg,
             Arc::new(AtomicU64::new(0)),
             async move {
                 rx.await.ok();
@@ -415,6 +435,8 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert!(!seg.exists(), "segment acked after the sink recovers");
+        assert_eq!(metrics.sink_errors.get(), 2, "one per failed attempt");
+        assert_eq!(metrics.shipped_events.get(["shipped"]), 3);
         tx.send(()).unwrap();
         tokio::time::timeout(Duration::from_secs(5), task)
             .await
