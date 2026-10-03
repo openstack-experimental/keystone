@@ -128,3 +128,5 @@
     - [Per-Domain Assignment Drivers](adr/0034-per-domain-assignment-drivers.md)
     - [Relation Sync Provider](adr/0035-relation-sync-provider.md)
     - [Service Delegation](adr/0036-service-delegation.md)
+    - [Application-Credential Access-Rule Enforcement](adr/0037-access-rule-enforcement.md)
+    - [Unified Limits](adr/0038-unified-limits.md)

@@ -51,6 +51,7 @@ See [Fernet tokens](../admin/tokens/fernet.md) and
 | `[catalog]` | `driver` |
 | `[resource]` | `driver` |
 | `[role]` | `driver` |
+| `[limit]` | `driver`, `list_limit`, `enforcement_model` |
 | `[revoke]` | `driver`, `expiration_buffer` |
 | `[idmapping]` | `driver` |
 | `[token_restriction]` | `driver` |

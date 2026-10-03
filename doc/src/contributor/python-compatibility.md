@@ -39,7 +39,7 @@ regressions.
 | Endpoints | `/v3/endpoints` (CRUD) | Done — legacy `region` attribute auto-vivifies a Region and is mirrored back |
 | Regions | `/v3/regions` (CRUD, plus `PUT /v3/regions/{id}`) | Done (#1078) |
 | Policies (legacy blob store) | `/v3/policies` (CRUD) | Done (#1035) — tempest verified, see below |
-| Limits | `/v3/limits`, `/v3/limits-model` | Missing |
+| Unified limits | `/v3/registered_limits` (CRUD, batch create), `/v3/limits` (CRUD, batch create), `/v3/limits/model` | Done (#1091) |
 | Project tags | `/v3/projects/{project_id}/tags` | Missing |
 | Application credentials (v3.10) | `/v3/users/{user_id}/application_credentials` | Missing |
 | Access rules (v3.13) | `/v3/users/{user_id}/access_rules` | Missing |
