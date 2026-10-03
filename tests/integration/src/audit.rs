@@ -176,6 +176,7 @@ async fn fail_closed_hook_blocks_operation() -> Result<()> {
                 op_ran.store(true, std::sync::atomic::Ordering::SeqCst);
                 Ok::<(), &str>(())
             },
+            reason:     |_| "TestError",
             on_audit_error: |_| "audit dispatch failed",
         }
     }
@@ -226,6 +227,7 @@ async fn postaudit_drop_counter_increments_on_failure() -> Result<()> {
             ctx:        &vsc,
             event:      event,
             operation:  async { Ok::<(), &str>(()) },
+            reason:     |_| "TestError",
             on_audit_error: |_| "pre-audit error",
         }
     }

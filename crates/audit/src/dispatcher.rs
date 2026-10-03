@@ -235,6 +235,12 @@ impl AuditDispatcher {
         self.postaudit_dropped_count.load(Ordering::Relaxed)
     }
 
+    /// Shared handle to the post-audit drop counter, so the provider event
+    /// dispatcher can feed the exported metric.
+    pub fn postaudit_dropped_handle(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.postaudit_dropped_count)
+    }
+
     /// Record a post-audit outcome loss (called by the CADF hook when the
     /// critical channel is dead).
     pub fn record_postaudit_drop(&self) {
