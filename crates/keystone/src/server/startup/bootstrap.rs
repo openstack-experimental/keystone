@@ -106,7 +106,7 @@ pub async fn run(
         token,
         state,
         concrete_storage,
-        audit_writer: Some(audit_writer),
+        audit_writer,
     })
 }
 

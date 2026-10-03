@@ -114,14 +114,22 @@ fn load_or_generate_kek(kek_file: &Path) -> Result<SecretBox<Vec<u8>>, Report> {
 /// spool left by the previous run, spawn the single spool writer, and verify
 /// the sealed spool in the background. See ADR 0023 / ADR 0016-v2 §3.1.
 ///
+/// With `[audit] enabled = false` nothing is created on disk: a
+/// [`AuditDispatcher::disabled`] dispatcher is returned together with no
+/// writer handle.
+///
 /// Cancelling `token` makes the writer drain already-queued events (bounded
 /// by `[audit] spool_drain_timeout_secs`) and exit; the returned handle
 /// resolves once it has, and the spool lock is released.
 pub async fn init(
     cfg: &Config,
     token: &CancellationToken,
-) -> Result<(Arc<AuditDispatcher>, JoinHandle<()>), Report> {
+) -> Result<(Arc<AuditDispatcher>, Option<JoinHandle<()>>), Report> {
     let audit_cfg = cfg.audit.clone();
+    if !audit_cfg.enabled {
+        warn!("audit framework is disabled ([audit] enabled = false): audit events are discarded");
+        return Ok((AuditDispatcher::disabled(audit_cfg.node_id.as_str()), None));
+    }
     let spool_dir = audit_cfg.spool_dir.clone();
     let node_id = audit_cfg.node_id.clone();
     std::fs::create_dir_all(&spool_dir).wrap_err("failed to create audit spool directory")?;
@@ -230,7 +238,7 @@ pub async fn init(
         );
     });
 
-    Ok((audit_dispatcher, writer))
+    Ok((audit_dispatcher, Some(writer)))
 }
 
 #[cfg(test)]
@@ -272,7 +280,10 @@ mod tests {
         // regenerating it (which would invalidate any spooled events signed
         // with the old key).
         token.cancel();
-        writer.await.expect("writer exits on shutdown");
+        writer
+            .expect("writer is started when audit is enabled")
+            .await
+            .expect("writer exits on shutdown");
         drop(dispatcher);
         init(&cfg, &CancellationToken::new())
             .await
@@ -341,7 +352,7 @@ mod tests {
         }
 
         token.cancel();
-        super::super::shutdown::await_audit_writer(Some(writer), &cfg).await;
+        super::super::shutdown::await_audit_writer(writer, &cfg).await;
 
         let spooled = std::fs::read_to_string(spool_path(tmp.path(), "test-node"))
             .expect("live spool exists")
@@ -353,5 +364,34 @@ mod tests {
         init(&cfg, &CancellationToken::new())
             .await
             .expect("spool lock released after shutdown");
+    }
+
+    /// With auditing disabled startup must not touch the spool directory, so
+    /// an unwritable `spool_dir` is not an error and events are accepted.
+    #[tokio::test]
+    async fn init_disabled_skips_spool_and_accepts_events() {
+        let tmp = tempfile::tempdir().unwrap();
+        // A regular file where the directory should be: creating the spool
+        // directory beneath it would fail.
+        let blocker = tmp.path().join("not-a-dir");
+        std::fs::write(&blocker, b"").unwrap();
+        let mut cfg = test_config(blocker.join("audit"));
+        cfg.audit.enabled = false;
+
+        let (dispatcher, writer) = init(&cfg, &CancellationToken::new())
+            .await
+            .expect("disabled audit must not need a writable spool_dir");
+        assert!(writer.is_none());
+        assert!(!dispatcher.is_enabled());
+        assert!(!cfg.audit.spool_dir.exists());
+        dispatcher
+            .dispatch_critical(test_event(&dispatcher))
+            .await
+            .expect("critical dispatch succeeds when disabled");
+        dispatcher.dispatch(test_event(&dispatcher));
+
+        // The same unwritable path fails when auditing is enabled.
+        cfg.audit.enabled = true;
+        assert!(init(&cfg, &CancellationToken::new()).await.is_err());
     }
 }
