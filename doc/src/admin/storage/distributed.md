@@ -401,6 +401,14 @@ identity store, but dropped records are counted in
 `keystone_raft_audit_dropped_total`; the current spool size is exposed as
 `keystone_raft_audit_spool_bytes`.
 
+**Shipping:** when `[audit] sink` is configured (see
+[Configuration options](../../configuration/options.md)), Keystone ships the
+sealed `raft-audit-<node_id>.jsonl.seg-*` segments to that sink verbatim and
+deletes each one after the sink acknowledged it; the live file is not
+touched. Delivery is at-least-once, so receivers should deduplicate. Without a
+sink, an external shipper must tail the spool as before. The records keep their
+own signature scheme described above; they are not CADF events.
+
 **Ordering and failures:** a record is emitted only after the Raft write it
 describes has been attempted. A failed operation produces `<EVENT>_FAILED` with
 the error in `details.error`, never the success event. Every node additionally

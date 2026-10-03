@@ -328,8 +328,18 @@ impl SpoolWriter {
         Ok(())
     }
 
+    /// Forget sealed segments that no longer exist on disk.
+    ///
+    /// A shipper that has delivered a sealed segment deletes it (the
+    /// keystone audit sink shipper does, once the sink acknowledged it); the
+    /// size accounting must then stop counting it.
+    fn forget_missing_segments(&mut self) {
+        self.sealed.retain(|(path, _)| path.exists());
+    }
+
     /// Drop the oldest sealed segments while over the bound; alert at 90%.
     fn enforce_bound(&mut self) {
+        self.forget_missing_segments();
         while self.total_bytes() > self.max_bytes && !self.sealed.is_empty() {
             let (path, len) = self.sealed.remove(0);
             match fs::remove_file(&path) {
@@ -522,6 +532,27 @@ mod tests {
             i64::try_from(w.total_bytes()).unwrap()
         );
         assert!(!w.sealed.is_empty());
+    }
+
+    #[test]
+    fn segments_deleted_by_a_shipper_stop_counting() {
+        let dir = tempfile::tempdir().unwrap();
+        let metrics = Arc::new(AuditMetrics::default());
+        let mut w = SpoolWriter::open(cfg(dir.path(), 100_000), metrics.clone()).unwrap();
+        // 12_500-byte segments: five 100-byte lines never seal, so seal by hand.
+        for _ in 0..3 {
+            w.append(&"z".repeat(99)).unwrap();
+            w.seal().unwrap();
+        }
+        assert_eq!(w.sealed.len(), 3);
+        let (acked, _) = w.sealed[0].clone();
+        fs::remove_file(acked).unwrap();
+
+        w.append(&"z".repeat(99)).unwrap();
+
+        assert_eq!(w.sealed.len(), 2);
+        assert_eq!(w.total_bytes(), 300);
+        assert_eq!(metrics.spool_bytes.get(), 300);
     }
 
     #[test]

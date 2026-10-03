@@ -41,7 +41,9 @@ pub use dispatcher::{
 };
 pub use kdf::derive_audit_hmac_key;
 pub use keyring::{HmacKeyring, KeyringError, NodeKeyStore};
-pub use sink::{AuditSink, ShipperConfig, SinkError, StdoutSink, run_segment_shipper};
+pub use sink::{
+    AuditSink, ShipperConfig, SinkError, StdoutSink, run_raw_segment_shipper, run_segment_shipper,
+};
 pub use spool::{HmacKeyStore, SpoolConfig, SpoolError};
 #[cfg(feature = "syslog")]
 pub use syslog::{SyslogSink, SyslogSinkConfig};

@@ -52,6 +52,20 @@ pub trait AuditSink: Send + Sync {
     /// treats the batch as durably accepted. On `Err` the whole segment is
     /// retried later, so a sink may see an event more than once.
     async fn write_batch(&self, events: &[CadfEvent]) -> Result<(), SinkError>;
+
+    /// Deliver pre-serialised JSON `lines` from another audit producer,
+    /// identified by `source` (for example `raft-audit`). The lines are
+    /// forwarded verbatim; they carry their own signature scheme.
+    ///
+    /// Same acknowledgement contract as [`AuditSink::write_batch`]. Sinks that
+    /// cannot carry foreign records keep the default, which fails so the
+    /// shipper reports the problem and keeps the segment.
+    async fn write_lines(&self, source: &str, lines: &[String]) -> Result<(), SinkError> {
+        let _ = lines;
+        Err(SinkError::Delivery(format!(
+            "this sink cannot carry `{source}` records"
+        )))
+    }
 }
 
 /// Writes each event as one JSON line to the process's standard output, for
@@ -70,6 +84,17 @@ impl AuditSink for StdoutSink {
         }
         let mut out = std::io::stdout().lock();
         out.write_all(&buf)?;
+        out.flush()?;
+        Ok(())
+    }
+
+    async fn write_lines(&self, _source: &str, lines: &[String]) -> Result<(), SinkError> {
+        use std::io::Write;
+        let mut out = std::io::stdout().lock();
+        for line in lines {
+            out.write_all(line.as_bytes())?;
+            out.write_all(b"\n")?;
+        }
         out.flush()?;
         Ok(())
     }
@@ -217,6 +242,113 @@ pub async fn run_segment_shipper(
     debug!("audit segment shipper stopped");
 }
 
+/// Ship sealed segments of another audit producer, verbatim, to `sink`.
+///
+/// Segments are the files in `dir` whose name starts with `file_prefix`,
+/// oldest (lexicographically smallest) first. The producer keeps writing its
+/// own live file and sealing segments; this worker only ever reads sealed
+/// ones, and deletes each after the sink acknowledged every line, so the
+/// producer's size bound is not what discards data a sink could have taken.
+/// Failure handling matches [`run_segment_shipper`].
+pub async fn run_raw_segment_shipper(
+    dir: PathBuf,
+    file_prefix: String,
+    source: String,
+    sink: Arc<dyn AuditSink>,
+    cfg: ShipperConfig,
+    shutdown: impl Future<Output = ()>,
+) {
+    tokio::pin!(shutdown);
+    let mut backoff = cfg.initial_backoff;
+    loop {
+        let wait = match ship_raw_pending(&dir, &file_prefix, &source, sink.as_ref(), &cfg).await {
+            Ok(()) => {
+                backoff = cfg.initial_backoff;
+                cfg.poll_interval
+            }
+            Err(e) => {
+                error!(%source, error = %e, retry_in = ?backoff, "failed to ship audit segment; will retry");
+                let wait = backoff;
+                backoff = (backoff * 2).min(cfg.max_backoff);
+                wait
+            }
+        };
+        tokio::select! {
+            biased;
+            () = &mut shutdown => break,
+            () = tokio::time::sleep(wait) => {}
+        }
+    }
+    debug!(%source, "raw audit segment shipper stopped");
+}
+
+async fn ship_raw_pending(
+    dir: &Path,
+    file_prefix: &str,
+    source: &str,
+    sink: &dyn AuditSink,
+    cfg: &ShipperConfig,
+) -> Result<(), ShipError> {
+    let mut segments = Vec::new();
+    let mut entries = match tokio::fs::read_dir(dir).await {
+        Ok(entries) => entries,
+        // The producer creates the directory when it starts.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(SpoolError::Io(e).into()),
+    };
+    while let Some(entry) = entries.next_entry().await.map_err(SpoolError::Io)? {
+        if entry.file_name().to_string_lossy().starts_with(file_prefix) {
+            segments.push(entry.path());
+        }
+    }
+    segments.sort();
+    for segment in segments {
+        ship_raw_segment(&segment, source, sink, cfg).await?;
+    }
+    Ok(())
+}
+
+async fn ship_raw_segment(
+    path: &Path,
+    source: &str,
+    sink: &dyn AuditSink,
+    cfg: &ShipperConfig,
+) -> Result<(), ShipError> {
+    let file = match tokio::fs::File::open(path).await {
+        Ok(f) => f,
+        // Deleted by the producer's size bound in the meantime.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(SpoolError::Io(e).into()),
+    };
+    let mut lines = BufReader::new(file).lines();
+    let mut batch: Vec<String> = Vec::with_capacity(cfg.batch_size);
+    let mut shipped = 0usize;
+    loop {
+        let line = lines.next_line().await.map_err(SpoolError::Io)?;
+        let done = line.is_none();
+        if let Some(line) = line
+            && !line.trim().is_empty()
+        {
+            batch.push(line);
+        }
+        if !batch.is_empty() && (done || batch.len() >= cfg.batch_size) {
+            sink.write_lines(source, &batch).await?;
+            shipped += batch.len();
+            batch.clear();
+        }
+        if done {
+            break;
+        }
+    }
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(SpoolError::Io(e).into()),
+    }
+    info!(%source, segment = %path.display(), records = shipped, "audit segment acknowledged by sink");
+    Ok(())
+}
+
 async fn ship_pending(
     spool_dir: &Path,
     node_id: &str,
@@ -313,6 +445,122 @@ mod tests {
             initial_backoff: Duration::from_millis(10),
             max_backoff: Duration::from_millis(20),
         }
+    }
+
+    #[derive(Default)]
+    struct LineSink {
+        lines: Mutex<Vec<(String, String)>>,
+        fail_next: Mutex<u32>,
+    }
+
+    #[async_trait]
+    impl AuditSink for LineSink {
+        async fn write_batch(&self, _events: &[CadfEvent]) -> Result<(), SinkError> {
+            Ok(())
+        }
+
+        async fn write_lines(&self, source: &str, lines: &[String]) -> Result<(), SinkError> {
+            {
+                let mut fail = self.fail_next.lock().unwrap();
+                if *fail > 0 {
+                    *fail -= 1;
+                    return Err(SinkError::Delivery("down".into()));
+                }
+            }
+            self.lines
+                .lock()
+                .unwrap()
+                .extend(lines.iter().map(|l| (source.to_string(), l.clone())));
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn raw_shipper_delivers_foreign_segments_and_ignores_the_live_file() {
+        let dir = tempdir().unwrap();
+        let seg = |suffix: &str, body: &str| {
+            std::fs::write(
+                dir.path().join(format!("raft-audit-7.jsonl.seg-{suffix}")),
+                body,
+            )
+            .unwrap();
+        };
+        seg("1", "{\"a\":1}\n{\"a\":2}\n{\"a\":3}\n");
+        seg("2", "{\"a\":4}\n");
+        std::fs::write(dir.path().join("raft-audit-7.jsonl"), "{\"live\":true}\n").unwrap();
+        std::fs::write(dir.path().join("unrelated"), "x\n").unwrap();
+        let sink = Arc::new(LineSink::default());
+        *sink.fail_next.lock().unwrap() = 1;
+
+        let shipper = tokio::spawn(run_raw_segment_shipper(
+            dir.path().to_path_buf(),
+            "raft-audit-7.jsonl.seg-".to_string(),
+            "raft-audit".to_string(),
+            sink.clone(),
+            cfg(),
+            std::future::pending(),
+        ));
+        for _ in 0..200 {
+            if sink.lines.lock().unwrap().len() >= 4 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        shipper.abort();
+
+        let got: Vec<String> = sink
+            .lines
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, l)| l.clone())
+            .collect();
+        assert_eq!(got, ["{\"a\":1}", "{\"a\":2}", "{\"a\":3}", "{\"a\":4}"]);
+        assert!(
+            sink.lines
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|(s, _)| s == "raft-audit")
+        );
+        assert!(!dir.path().join("raft-audit-7.jsonl.seg-1").exists());
+        assert!(!dir.path().join("raft-audit-7.jsonl.seg-2").exists());
+        assert!(dir.path().join("raft-audit-7.jsonl").exists());
+        assert!(dir.path().join("unrelated").exists());
+    }
+
+    #[tokio::test]
+    async fn raw_shipper_tolerates_a_missing_directory() {
+        let dir = tempdir().unwrap();
+        let sink = LineSink::default();
+        ship_raw_pending(
+            &dir.path().join("not-yet"),
+            "raft-audit-7.jsonl.seg-",
+            "raft-audit",
+            &sink,
+            &cfg(),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn sinks_without_raw_support_keep_the_segment() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("raft-audit-7.jsonl.seg-1");
+        std::fs::write(&path, "{\"a\":1}\n").unwrap();
+        // `RecordingSink` keeps the default `write_lines`.
+        let sink = RecordingSink::default();
+        let result = ship_raw_pending(
+            dir.path(),
+            "raft-audit-7.jsonl.seg-",
+            "raft-audit",
+            &sink,
+            &cfg(),
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(path.exists(), "an undelivered segment must stay");
     }
 
     #[tokio::test]
