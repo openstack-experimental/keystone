@@ -15,13 +15,12 @@
 //! Audit dispatcher bootstrap (ADR 0023 / ADR 0016-v2 §3.1): KEK
 //! load-or-generate, per-node key derivation, spool replay, spool writers.
 
-use std::collections::HashMap;
-use std::path::Path;
+use std::future::Future;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use color_eyre::eyre::{Report, Result, WrapErr};
-use secrecy::{ExposeSecret, SecretBox};
 use tokio::spawn;
 use tokio::task::{JoinHandle, spawn_blocking};
 use tokio_util::sync::CancellationToken;
@@ -34,79 +33,82 @@ use openstack_keystone_audit::spool::{
     SpoolLock, run_spool_writer, seal_previous_spool, verify_sealed_spool,
 };
 use openstack_keystone_audit::{
-    AuditDispatcher, AuditSink, HmacKeyStore, ShipperConfig, SpoolConfig, StdoutSink,
-    derive_audit_hmac_key, run_segment_shipper,
+    AuditDispatcher, AuditSink, HmacKeyring, ShipperConfig, SpoolConfig, StdoutSink,
+    run_segment_shipper,
 };
 
-/// Version tag stamped on audit HMAC keys (ADR 0023 / ADR 0016-v2 §3.1).
-const AUDIT_HMAC_KEY_VERSION: u64 = 1;
+/// How often the running server checks the keyring file for a rotation made
+/// by `keystone-manage audit rotate-hmac-key`.
+const KEY_RELOAD_INTERVAL: Duration = Duration::from_secs(30);
 
-/// `MultiKeyStore` holds every key version seen during this process lifetime.
-///
-/// Currently only one version exists; the map is pre-populated with the
-/// current key so `verify_sealed_spool` can verify events signed by it. When
-/// key rotation is implemented, callers MUST insert the new version before
-/// calling `refresh_hmac_key` on the dispatcher — spool events written
-/// before the rotation still carry the old version number and must remain
-/// verifiable during the drain window (ADR 0023 §"Key Rotation").
-struct MultiKeyStore(HashMap<u64, Arc<[u8]>>);
-
-impl HmacKeyStore for MultiKeyStore {
-    fn get_key(&self, version: u64) -> Option<Arc<[u8]>> {
-        self.0.get(&version).map(Arc::clone)
+/// Switch the dispatcher to a newer key version when the keyring file on disk
+/// has one, until `shutdown` resolves. Rotation only ever adds versions, so
+/// events signed before the switch stay verifiable.
+async fn run_key_reloader(
+    dispatcher: Arc<AuditDispatcher>,
+    kek_path: PathBuf,
+    node_id: String,
+    mut active_version: u64,
+    reload_interval: Duration,
+    shutdown: impl Future<Output = ()>,
+) {
+    let mut tick = tokio::time::interval(reload_interval);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    tokio::pin!(shutdown);
+    loop {
+        tokio::select! {
+            () = &mut shutdown => return,
+            _ = tick.tick() => {}
+        }
+        let path = kek_path.clone();
+        let loaded = spawn_blocking(move || HmacKeyring::load(&path)).await;
+        match loaded {
+            Ok(Ok(Some(keyring))) if keyring.current_version() > active_version => {
+                let version = keyring.current_version();
+                dispatcher.refresh_hmac_key(
+                    Arc::from(keyring.current_node_key(&node_id).as_slice()),
+                    version,
+                );
+                info!(
+                    from = active_version,
+                    to = version,
+                    "rotated audit HMAC signing key"
+                );
+                active_version = version;
+            }
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => {
+                warn!(%error, "failed to reload the audit HMAC keyring; keeping the current key");
+            }
+            Err(error) => warn!(%error, "audit HMAC keyring reload task failed"),
+        }
     }
 }
 
-/// Load the persisted 32-byte key-encryption-key (KEK) from `kek_file`, or
-/// generate one from `/dev/urandom` and persist it atomically with `0600`
-/// permissions if the file does not exist.
+/// Refuse a key file inside the spool directory and warn when the legacy
+/// default location is in use.
 ///
-/// The KEK is not the HMAC signing key — a per-node key is derived from it
-/// via HKDF-Expand (see [`derive_audit_hmac_key`]). Persisting the KEK lets a
-/// restart re-derive the same per-node key and replay the spool.
-///
-/// The returned `SecretBox` zeroizes the bytes on drop.
-fn load_or_generate_kek(kek_file: &Path) -> Result<SecretBox<Vec<u8>>, Report> {
-    let bytes = match std::fs::read(kek_file) {
-        Ok(bytes) => {
-            if bytes.len() != 32 {
-                return Err(eyre::eyre!(
-                    "audit KEK at {} is {} bytes — expected 32; \
-                     delete the file to regenerate",
-                    kek_file.display(),
-                    bytes.len()
-                ));
-            }
-            bytes
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            use std::fs::OpenOptions;
-            use std::io::{Read as _, Write as _};
-            use std::os::unix::fs::OpenOptionsExt;
-            let mut raw = [0u8; 32];
-            std::fs::File::open("/dev/urandom")
-                .and_then(|mut f| f.read_exact(&mut raw))
-                .wrap_err("failed to generate audit KEK from /dev/urandom")?;
-            // Write to a temp file with restricted permissions, then
-            // atomically rename. Avoids both a world-readable key file and a
-            // TOCTOU window where two processes each generate independent keys.
-            let tmp_path = kek_file.with_extension("tmp");
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&tmp_path)
-                .wrap_err("failed to create temporary audit KEK file")?;
-            file.write_all(&raw).wrap_err("failed to write audit KEK")?;
-            std::fs::rename(&tmp_path, kek_file).wrap_err("failed to finalize audit KEK file")?;
-            info!(path = %kek_file.display(), "generated new audit KEK");
-            raw.to_vec()
-        }
-        Err(e) => {
-            return Err(e).wrap_err("failed to read audit KEK; fix permissions or delete the file");
-        }
+/// Whoever can write the spool must not also be able to read the key that
+/// signs it, otherwise they could tamper with the records and re-sign them.
+fn check_kek_location(cfg: &openstack_keystone_config::AuditConfig) -> Result<(), Report> {
+    let Some(explicit) = &cfg.hmac_kek_file else {
+        warn!(
+            path = %cfg.hmac_kek_path().display(),
+            "audit HMAC key is stored inside spool_dir; set `[audit] hmac_kek_file` to a \
+             location that spool writers cannot read"
+        );
+        return Ok(());
     };
-    Ok(SecretBox::new(Box::new(bytes)))
+    let key = std::path::absolute(explicit).wrap_err("cannot resolve [audit] hmac_kek_file")?;
+    let spool = std::path::absolute(&cfg.spool_dir).wrap_err("cannot resolve [audit] spool_dir")?;
+    if key.starts_with(&spool) {
+        return Err(eyre::eyre!(
+            "[audit] hmac_kek_file {} must not be inside spool_dir {}",
+            key.display(),
+            spool.display()
+        ));
+    }
+    Ok(())
 }
 
 /// Build the syslog sink from its `[audit] sink` options.
@@ -149,8 +151,8 @@ fn build_syslog_sink(
     ))
 }
 
-/// Load or generate the persisted audit HMAC key-encryption-key (KEK),
-/// derive the per-node signing key, build the `AuditDispatcher`, seal the
+/// Load or generate the persisted audit HMAC keyring, derive the per-node
+/// signing key, build the `AuditDispatcher`, seal the
 /// spool left by the previous run, spawn the single spool writer, and verify
 /// the sealed spool in the background. See ADR 0023 / ADR 0016-v2 §3.1.
 ///
@@ -170,8 +172,11 @@ pub async fn init(
         warn!("audit framework is disabled ([audit] enabled = false): audit events are discarded");
         return Ok((AuditDispatcher::disabled(audit_cfg.node_id.as_str()), None));
     }
+    audit_cfg.validate_node_id().map_err(|e| eyre::eyre!(e))?;
     let spool_dir = audit_cfg.spool_dir.clone();
     let node_id = audit_cfg.node_id.clone();
+    let kek_path = audit_cfg.hmac_kek_path();
+    check_kek_location(&audit_cfg)?;
     std::fs::create_dir_all(&spool_dir).wrap_err("failed to create audit spool directory")?;
 
     // Exclusive per-node spool lock for the process lifetime; fails fast if
@@ -184,20 +189,22 @@ pub async fn init(
     let sealed = seal_previous_spool(&spool_dir, node_id.as_str())
         .wrap_err("failed to seal the previous audit spool")?;
 
-    let audit_kek = load_or_generate_kek(&spool_dir.join("hmac-key.bin"))?;
+    let keyring =
+        HmacKeyring::load_or_create(&kek_path).wrap_err("failed to load the audit HMAC keyring")?;
+    let hmac_key_version = keyring.current_version();
 
-    // Derive the per-node signing key:
+    // Per-node signing key:
     //   HKDF-Expand(KEK, info="keystone-audit-hmac-v1:{node_id}", L=32)
     // Per ADR 0023 / ADR 0016-v2 §3.1: per-node derivation ensures a
     // compromised node cannot forge records attributed to other nodes.
     let audit_hmac_key: Arc<[u8]> =
-        Arc::from(derive_audit_hmac_key(audit_kek.expose_secret(), node_id.as_str()).as_slice());
+        Arc::from(keyring.current_node_key(node_id.as_str()).as_slice());
 
     let (audit_dispatcher, audit_receivers) = AuditDispatcher::with_capacities(
         node_id.as_str(),
         Uuid::new_v4().to_string(),
         Arc::clone(&audit_hmac_key),
-        AUDIT_HMAC_KEY_VERSION,
+        hmac_key_version,
         audit_cfg.perimeter_channel_capacity,
         audit_cfg.critical_channel_capacity,
     );
@@ -224,10 +231,9 @@ pub async fn init(
     // starts once verification is done, so a tampered segment is quarantined
     // before a sink can see it.
     let verification = sealed.map(|segment| {
-        let mut key_store = MultiKeyStore(HashMap::new());
-        key_store
-            .0
-            .insert(AUDIT_HMAC_KEY_VERSION, Arc::clone(&audit_hmac_key));
+        // Every key version in the keyring, so segments signed before a
+        // rotation still verify.
+        let key_store = keyring.key_store(node_id.as_str());
         let dispatcher = Arc::clone(&audit_dispatcher);
         let node_id = node_id.clone();
         spawn_blocking(move || {
@@ -289,9 +295,18 @@ pub async fn init(
 
     // The writer and shipper share one task that owns the spool lock, so the
     // lock lives until both have stopped.
+    let reloader = run_key_reloader(
+        Arc::clone(&audit_dispatcher),
+        kek_path,
+        node_id.clone(),
+        hmac_key_version,
+        KEY_RELOAD_INTERVAL,
+        token.clone().cancelled_owned(),
+    );
     let writer = spawn(async move {
         let _spool_lock = spool_lock;
         tokio::join!(
+            reloader,
             run_spool_writer(
                 audit_receivers.perimeter,
                 audit_receivers.critical,
@@ -311,7 +326,7 @@ pub async fn init(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openstack_keystone_audit::spool::spool_path;
+    use openstack_keystone_audit::spool::{HmacKeyStore, spool_path};
     use openstack_keystone_audit::{CadfEvent, CadfEventPayload, Initiator, Observer, Target};
     use std::path::PathBuf;
 
@@ -333,7 +348,7 @@ mod tests {
             .expect("first init generates a KEK");
         let kek_file = tmp.path().join("hmac-key.bin");
         let generated = std::fs::read(&kek_file).expect("KEK file was written");
-        assert_eq!(generated.len(), 32);
+        assert!(!generated.is_empty());
 
         // The first init's writer holds the spool lock for as long as the
         // dispatcher lives, so a concurrent second init must be refused.
@@ -367,8 +382,11 @@ mod tests {
         std::fs::write(cfg.audit.spool_dir.join("hmac-key.bin"), b"too-short").unwrap();
 
         match init(&cfg, &CancellationToken::new()).await {
-            Ok(_) => panic!("expected init_audit to reject a wrong-length KEK"),
-            Err(e) => assert!(e.to_string().contains("expected 32")),
+            Ok(_) => panic!("expected init_audit to reject a malformed key file"),
+            Err(e) => assert!(
+                format!("{e:#}").contains("neither a 32-byte legacy key"),
+                "got: {e:#}"
+            ),
         }
     }
 
@@ -460,5 +478,85 @@ mod tests {
         // The same unwritable path fails when auditing is enabled.
         cfg.audit.enabled = true;
         assert!(init(&cfg, &CancellationToken::new()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn init_rejects_unset_or_unsafe_node_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        for bad in [openstack_keystone_config::UNKNOWN_NODE_ID, "../escape", ""] {
+            let mut cfg = test_config(tmp.path().to_path_buf());
+            cfg.audit.node_id = bad.to_string();
+            let Err(err) = init(&cfg, &CancellationToken::new()).await else {
+                panic!("node_id {bad:?} must be rejected");
+            };
+            assert!(format!("{err:#}").contains("node_id"), "got: {err:#}");
+        }
+    }
+
+    #[tokio::test]
+    async fn init_rejects_key_file_inside_spool_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cfg = test_config(tmp.path().join("spool"));
+        cfg.audit.hmac_kek_file = Some(tmp.path().join("spool").join("keys").join("k"));
+        let Err(err) = init(&cfg, &CancellationToken::new()).await else {
+            panic!("a key file inside spool_dir must be rejected");
+        };
+        assert!(
+            format!("{err:#}").contains("must not be inside"),
+            "got: {err:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn init_uses_configured_key_file_outside_spool() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cfg = test_config(tmp.path().join("spool"));
+        let key_file = tmp.path().join("keys").join("audit.keyring");
+        cfg.audit.hmac_kek_file = Some(key_file.clone());
+        let (_dispatcher, writer) = init(&cfg, &CancellationToken::new()).await.unwrap();
+        assert!(key_file.exists());
+        assert!(!tmp.path().join("spool").join("hmac-key.bin").exists());
+        drop(writer);
+    }
+
+    /// A rotation done out of process (`keystone-manage audit
+    /// rotate-hmac-key`) must start signing with the new key version, while
+    /// the previous version stays resolvable for verification.
+    #[tokio::test]
+    async fn running_server_switches_to_a_rotated_key() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("audit.keyring");
+        let keyring = HmacKeyring::load_or_create(&path).unwrap();
+        let key: Arc<[u8]> = Arc::from(keyring.current_node_key("test-node").as_slice());
+        let (dispatcher, _rx) = AuditDispatcher::new(
+            "test-node",
+            Uuid::new_v4().to_string(),
+            key,
+            keyring.current_version(),
+        );
+
+        let token = CancellationToken::new();
+        let reloader = tokio::spawn(run_key_reloader(
+            Arc::clone(&dispatcher),
+            path.clone(),
+            "test-node".to_string(),
+            keyring.current_version(),
+            Duration::from_millis(20),
+            token.clone().cancelled_owned(),
+        ));
+
+        assert_eq!(test_event(&dispatcher).payload().hmac_key_version(), 1);
+        assert_eq!(HmacKeyring::rotate(&path).unwrap(), 2);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let event = test_event(&dispatcher);
+        assert_eq!(event.payload().hmac_key_version(), 2);
+        let rotated = HmacKeyring::load(&path).unwrap().unwrap();
+        let store = rotated.key_store("test-node");
+        let key = store.get_key(2).unwrap();
+        assert!(dispatcher.verify_hmac(&event, &key));
+
+        token.cancel();
+        reloader.await.unwrap();
     }
 }
