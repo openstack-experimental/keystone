@@ -198,6 +198,8 @@ pub async fn init(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use openstack_keystone_audit::spool::spool_path;
+    use openstack_keystone_audit::{CadfEvent, CadfEventPayload, Initiator, Observer, Target};
     use std::path::PathBuf;
 
     fn test_config(spool_dir: PathBuf) -> Config {
@@ -252,5 +254,66 @@ mod tests {
             Ok(_) => panic!("expected init_audit to reject a wrong-length KEK"),
             Err(e) => assert!(e.to_string().contains("expected 32")),
         }
+    }
+
+    fn test_event(dispatcher: &AuditDispatcher) -> CadfEvent {
+        CadfEventPayload::new(
+            format!("{}:{}", dispatcher.node_id(), Uuid::new_v4()),
+            "1.0".to_string(),
+            "default".to_string(),
+            Uuid::new_v4().to_string(),
+            chrono::Utc::now().to_rfc3339(),
+            "authenticate".to_string(),
+            "success".to_string(),
+            None,
+            Initiator::new("unknown".to_string(), None, None, None),
+            Target {
+                id: "keystone".to_string(),
+                type_uri: "service/security/keystone/auth".to_string(),
+            },
+            Observer {
+                node_id: dispatcher.node_id().to_string(),
+                id: format!("service/security/keystone/{}", dispatcher.node_id()),
+            },
+        )
+        .sign(dispatcher)
+    }
+
+    /// Graceful shutdown must flush every queued event to the spool even
+    /// though the dispatcher (and thus the channel senders) stays alive, as
+    /// it does in the running server.
+    #[tokio::test]
+    async fn shutdown_flushes_queued_events_to_spool() {
+        const PERIMETER: usize = 300;
+        const CRITICAL: usize = 100;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().to_path_buf());
+        let token = CancellationToken::new();
+        let (dispatcher, writer) = init(&cfg, &token).await.expect("init audit");
+
+        for _ in 0..PERIMETER {
+            dispatcher.dispatch(test_event(&dispatcher));
+        }
+        for _ in 0..CRITICAL {
+            dispatcher
+                .dispatch_critical(test_event(&dispatcher))
+                .await
+                .expect("critical channel is open");
+        }
+
+        token.cancel();
+        super::super::shutdown::await_audit_writer(Some(writer), &cfg).await;
+
+        let spooled = std::fs::read_to_string(spool_path(tmp.path(), "test-node"))
+            .expect("live spool exists")
+            .lines()
+            .count();
+        assert_eq!(spooled, PERIMETER + CRITICAL);
+        assert_eq!(dispatcher.dropped_count(), 0);
+        // The writer released the spool lock, so a restart can take it.
+        init(&cfg, &CancellationToken::new())
+            .await
+            .expect("spool lock released after shutdown");
     }
 }
