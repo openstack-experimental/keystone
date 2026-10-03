@@ -160,6 +160,7 @@ pub async fn init(
         max_segment_age: Duration::from_secs(audit_cfg.spool_max_segment_age_secs),
         max_segments: audit_cfg.spool_max_segments,
         drain_timeout: Duration::from_secs(audit_cfg.spool_drain_timeout_secs),
+        metrics: Arc::clone(audit_dispatcher.metrics()),
     };
     let spool_bytes = audit_dispatcher.spool_bytes_handle();
     let writer_dir = spool_dir.clone();
@@ -190,6 +191,7 @@ pub async fn init(
         AuditSinkConfig::None => None,
         AuditSinkConfig::Stdout => Some(Arc::new(StdoutSink)),
     };
+    let shipper_metrics = Arc::clone(audit_dispatcher.metrics());
     let shipper_bytes = Arc::clone(&spool_bytes);
     let shipper_dir = spool_dir.clone();
     let shipper_node_id = node_id.clone();
@@ -205,7 +207,10 @@ pub async fn init(
             shipper_dir,
             shipper_node_id,
             sink,
-            ShipperConfig::default(),
+            ShipperConfig {
+                metrics: shipper_metrics,
+                ..ShipperConfig::default()
+            },
             shipper_bytes,
             shipper_shutdown,
         )

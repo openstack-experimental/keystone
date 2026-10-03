@@ -8,13 +8,15 @@ groups:
     rules:
       # Fires when the perimeter best-effort channel drops events faster than
       # 100/s AND those drops represent more than 5 % of all audit events.
+      # `keystone_audit_events_total` counts only events accepted into a
+      # channel, so the total offered load is events + drops.
       # A sustained burst at this level may indicate a volumetric attack; check
       # rate-limiting health (ADR 0022) before investigating audit consumers.
       - alert: KeystoneAuditDropsVolumetric
         expr: |
           rate(keystone_audit_dropped_total[5m]) > 100 and
           rate(keystone_audit_dropped_total[5m]) /
-          rate(keystone_audit_events_total[5m]) > 0.05
+          (rate(keystone_audit_events_total[5m]) + rate(keystone_audit_dropped_total[5m])) > 0.05
         for: 2m
         labels:
           severity: critical
@@ -43,3 +45,51 @@ groups:
             The pre-audit Attempt exists but the final outcome is lost.
             Compensating local JSONL log entries should be shipped to the
             SIEM as a dual-delivery fallback (see ADR 0023 §Observability).
+
+      # The spool writer failed to append events: each one is lost for good.
+      - alert: KeystoneAuditSpoolWriteFailures
+        expr: increase(keystone_audit_spool_write_failures_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Audit events could not be written to the spool"
+          description: >
+            The spool writer failed to append events (disk full, permissions or
+            I/O error). Check `keystone_audit_spool_bytes` and the node logs.
+
+      # A spool segment failed verification or could not be parsed: possible
+      # tampering. The segment is kept as *.quarantine-* for investigation.
+      - alert: KeystoneAuditSpoolQuarantined
+        expr: increase(keystone_audit_spool_quarantined_total[1h]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Audit spool segment quarantined"
+          description: >
+            A sealed spool segment contained tampered or unparsable lines.
+            Investigate the *.quarantine-* file in the spool directory.
+
+      # The sink keeps rejecting batches, so segments pile up in the spool.
+      - alert: KeystoneAuditSinkFailing
+        expr: increase(keystone_audit_sink_errors_total[10m]) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Audit sink delivery is failing"
+          description: >
+            Batches are being retried with backoff and sealed segments are
+            accumulating (see `keystone_audit_spool_bytes`).
+
+      # The writer is not keeping up with the critical (fail-closed) channel.
+      - alert: KeystoneAuditCriticalChannelBacklog
+        expr: keystone_audit_channel_depth{channel="critical"} > 192
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Audit critical channel is >75% full"
+          description: >
+            Provider operations will block once the channel (256 events by
+            default) is full. Check the spool writer and disk latency.
