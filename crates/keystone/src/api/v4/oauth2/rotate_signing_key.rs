@@ -40,6 +40,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use openstack_keystone_core::auth::ExecutionContext;
 
 use openstack_keystone_api_types::v4::oauth2_key::{
     RotateSigningKeyRequest, RotateSigningKeyResponse,
@@ -47,7 +48,7 @@ use openstack_keystone_api_types::v4::oauth2_key::{
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
-use crate::audit::{CorrelationId, build_initiator_from_vsc, emit_oauth2_key_rotation_event};
+use crate::audit::CorrelationId;
 use crate::keystone::ServiceState;
 
 #[utoipa::path(
@@ -98,7 +99,12 @@ pub(super) async fn rotate_signing_key(
         let staged = state
             .provider
             .get_oauth2_key_provider()
-            .stage_local_emergency_rotation(&state, &domain_id, &initiator, &justification)
+            .stage_local_emergency_rotation(
+                &ExecutionContext::from_auth(&state, &user_auth),
+                &domain_id,
+                &initiator,
+                &justification,
+            )
             .await?;
         RotateSigningKeyResponse {
             kid: None,
@@ -110,7 +116,11 @@ pub(super) async fn rotate_signing_key(
         let pending = state
             .provider
             .get_oauth2_key_provider()
-            .stage_emergency_rotation(&state, &domain_id, &initiator)
+            .stage_emergency_rotation(
+                &ExecutionContext::from_auth(&state, &user_auth),
+                &domain_id,
+                &initiator,
+            )
             .await?;
         RotateSigningKeyResponse {
             kid: None,
@@ -122,15 +132,8 @@ pub(super) async fn rotate_signing_key(
         let key = state
             .provider
             .get_oauth2_key_provider()
-            .rotate_signing_key(&state, &domain_id)
+            .rotate_signing_key(&ExecutionContext::from_auth(&state, &user_auth), &domain_id)
             .await?;
-        emit_oauth2_key_rotation_event(
-            &state.audit_dispatcher,
-            &correlation_id,
-            build_initiator_from_vsc(&user_auth),
-            &domain_id,
-            &key.kid,
-        );
         RotateSigningKeyResponse {
             kid: Some(key.kid),
             pending_rotation_id: None,

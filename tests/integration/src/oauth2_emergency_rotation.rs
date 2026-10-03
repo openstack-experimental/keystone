@@ -28,6 +28,7 @@
 //! deliberately not duplicated at this layer.
 
 use eyre::Result;
+use openstack_keystone_core::auth::ExecutionContext;
 use tracing_test::traced_test;
 
 use openstack_keystone_core::oauth2_key::Oauth2KeyProviderError;
@@ -45,13 +46,17 @@ async fn test_emergency_rotation_dual_control_promotes_staged_key() -> Result<()
     let primary_before = key_provider.ensure_domain_keys(&state, &domain.id).await?;
 
     let pending = key_provider
-        .stage_emergency_rotation(&state, &domain.id, "operator-a")
+        .stage_emergency_rotation(
+            &ExecutionContext::internal(&state),
+            &domain.id,
+            "operator-a",
+        )
         .await?;
     assert!(!pending.rotation_id.is_empty());
 
     let promoted = key_provider
         .confirm_emergency_rotation(
-            &state,
+            &ExecutionContext::internal(&state),
             &domain.id,
             &pending.rotation_id,
             "operator-b",
@@ -94,12 +99,16 @@ async fn test_emergency_rotation_rejects_same_operator_confirmation() -> Result<
     key_provider.ensure_domain_keys(&state, &domain.id).await?;
 
     let pending = key_provider
-        .stage_emergency_rotation(&state, &domain.id, "operator-a")
+        .stage_emergency_rotation(
+            &ExecutionContext::internal(&state),
+            &domain.id,
+            "operator-a",
+        )
         .await?;
 
     let err = key_provider
         .confirm_emergency_rotation(
-            &state,
+            &ExecutionContext::internal(&state),
             &domain.id,
             &pending.rotation_id,
             "operator-a",
@@ -127,11 +136,15 @@ async fn test_emergency_rotation_revokes_jtis_without_removing_previous_key_from
     key_provider.ensure_domain_keys(&state, &domain.id).await?;
 
     let pending = key_provider
-        .stage_emergency_rotation(&state, &domain.id, "operator-a")
+        .stage_emergency_rotation(
+            &ExecutionContext::internal(&state),
+            &domain.id,
+            "operator-a",
+        )
         .await?;
     key_provider
         .confirm_emergency_rotation(
-            &state,
+            &ExecutionContext::internal(&state),
             &domain.id,
             &pending.rotation_id,
             "operator-b",

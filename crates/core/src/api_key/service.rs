@@ -19,8 +19,11 @@ use async_trait::async_trait;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::api_key::*;
+use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 
 use crate::api_key::{ApiKeyApi, ApiKeyProviderError, backend::ApiKeyBackend};
+use crate::auth::ExecutionContext;
+use crate::events::AuditDispatchError;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 
@@ -51,14 +54,33 @@ impl ApiKeyService {
     }
 }
 
+/// Build the audit event for an API key change. The payload carries the public
+/// `client_id` only, never the key, its lookup hash or its secret hash.
+fn api_key_event(operation: Operation, domain_id: &str, client_id: &str) -> Event {
+    Event::new(
+        operation,
+        EventPayload::ApiKey {
+            domain_id: domain_id.to_string(),
+            client_id: client_id.to_string(),
+        },
+    )
+}
+
 #[async_trait]
 impl ApiKeyApi for ApiKeyService {
-    async fn create(
+    async fn create<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         data: ApiClientResourceCreate,
     ) -> Result<ApiClientResource, ApiKeyProviderError> {
-        self.backend_driver.create(state, data).await
+        let event = api_key_event(Operation::Create, &data.domain_id, &data.client_id);
+        let op = async { self.backend_driver.create(ctx.state(), data).await };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: event,
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| ApiKeyProviderError::AuditUnavailable,
+        }
     }
 
     async fn get_by_client_id<'a>(
@@ -93,11 +115,12 @@ impl ApiKeyApi for ApiKeyService {
 
     async fn update<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
         client_id: &'a str,
         data: ApiClientResourceUpdate,
     ) -> Result<ApiClientResource, ApiKeyProviderError> {
+        let state = ctx.state();
         // ADR 0021 §5.C: revocation is the emergency-response path and MUST
         // NOT be reversible through the ordinary update surface. Enforced
         // here (not just at the HTTP layer) so it holds for every caller,
@@ -116,21 +139,37 @@ impl ApiKeyApi for ApiKeyService {
                 ));
             }
         }
-        self.backend_driver
-            .update(state, domain_id, client_id, data)
-            .await
+        let op = async {
+            self.backend_driver
+                .update(state, domain_id, client_id, data)
+                .await
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: api_key_event(Operation::Update, domain_id, client_id),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| ApiKeyProviderError::AuditUnavailable,
+        }
     }
 
     async fn revoke<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
         client_id: &'a str,
         revoked_by: &'a str,
     ) -> Result<ApiClientResource, ApiKeyProviderError> {
-        self.backend_driver
-            .revoke(state, domain_id, client_id, revoked_by)
-            .await
+        let op = async {
+            self.backend_driver
+                .revoke(ctx.state(), domain_id, client_id, revoked_by)
+                .await
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: api_key_event(Operation::Revoke, domain_id, client_id),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| ApiKeyProviderError::AuditUnavailable,
+        }
     }
 
     async fn update_last_used<'a>(
@@ -166,11 +205,21 @@ impl ApiKeyApi for ApiKeyService {
 
     async fn purge<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
         client_id: &'a str,
     ) -> Result<(), ApiKeyProviderError> {
-        self.backend_driver.purge(state, domain_id, client_id).await
+        let op = async {
+            self.backend_driver
+                .purge(ctx.state(), domain_id, client_id)
+                .await
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: api_key_event(Operation::Delete, domain_id, client_id),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| ApiKeyProviderError::AuditUnavailable,
+        }
     }
 }
 
@@ -219,7 +268,12 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .update(&state, "domain_id", "client-1", enable_patch())
+            .update(
+                &ExecutionContext::internal(&state),
+                "domain_id",
+                "client-1",
+                enable_patch(),
+            )
             .await;
 
         assert!(matches!(result, Err(ApiKeyProviderError::Conflict(_))));
@@ -238,7 +292,12 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .update(&state, "domain_id", "client-1", enable_patch())
+            .update(
+                &ExecutionContext::internal(&state),
+                "domain_id",
+                "client-1",
+                enable_patch(),
+            )
             .await;
 
         assert!(result.is_ok());
@@ -258,7 +317,7 @@ mod tests {
 
         let result = service
             .update(
-                &state,
+                &ExecutionContext::internal(&state),
                 "domain_id",
                 "client-1",
                 ApiClientResourceUpdate {
@@ -282,9 +341,96 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .update(&state, "domain_id", "nonexistent", enable_patch())
+            .update(
+                &ExecutionContext::internal(&state),
+                "domain_id",
+                "nonexistent",
+                enable_patch(),
+            )
             .await;
 
         assert!(matches!(result, Err(ApiKeyProviderError::NotFound(_))));
+    }
+
+    // ---- audit (ADR 0023): fail-closed around the provider operation ----
+
+    #[tokio::test]
+    async fn test_revoke_with_security_context_records_attempt_and_success() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockApiKeyBackend::default();
+        backend
+            .expect_revoke()
+            .returning(|_, _, _, _| Ok(sample_resource(Some(1))));
+        let service = ApiKeyService {
+            backend_driver: std::sync::Arc::new(backend),
+        };
+        let hook = crate::tests::RecordingAuditHook::new();
+        state.event_dispatcher.subscribe_audit(hook.clone()).await;
+        let vsc = crate::tests::test_vsc();
+
+        service
+            .revoke(
+                &ExecutionContext::from_auth(&state, &vsc),
+                "domain_id",
+                "client-1",
+                "operator-1",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(hook.outcomes(), ["Attempt", "Success"]);
+        let (operation, payload, _) = &hook.seen()[0];
+        assert_eq!(operation, "Revoke");
+        assert!(payload.contains("ApiKey"), "{payload}");
+        assert!(payload.contains("client-1"), "{payload}");
+        assert!(!payload.contains("hash-1"), "lookup hash leaked: {payload}");
+        assert!(!payload.contains("argon2"), "secret hash leaked: {payload}");
+    }
+
+    #[tokio::test]
+    async fn test_purge_fails_closed_when_the_pre_audit_is_refused() {
+        let state = get_mocked_state(None, None).await;
+        // No `expect_purge`: the backend must not be reached.
+        let service = ApiKeyService {
+            backend_driver: std::sync::Arc::new(MockApiKeyBackend::default()),
+        };
+        state
+            .event_dispatcher
+            .subscribe_audit(crate::tests::RecordingAuditHook::refusing())
+            .await;
+        let vsc = crate::tests::test_vsc();
+
+        let err = service
+            .purge(
+                &ExecutionContext::from_auth(&state, &vsc),
+                "domain_id",
+                "client-1",
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, ApiKeyProviderError::AuditUnavailable));
+    }
+
+    #[tokio::test]
+    async fn test_internal_purge_is_not_blocked_by_a_refusing_hook() {
+        // The janitor has no principal: it runs the operation and the event
+        // is best-effort (the `emit` path), so a refusing audit hook cannot
+        // wedge housekeeping.
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockApiKeyBackend::default();
+        backend.expect_purge().times(1).returning(|_, _, _| Ok(()));
+        let service = ApiKeyService {
+            backend_driver: std::sync::Arc::new(backend),
+        };
+        state
+            .event_dispatcher
+            .subscribe_audit(crate::tests::RecordingAuditHook::refusing())
+            .await;
+
+        service
+            .purge(&ExecutionContext::internal(&state), "domain_id", "client-1")
+            .await
+            .unwrap();
     }
 }

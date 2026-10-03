@@ -85,7 +85,11 @@ async fn a_domain_pinned_to_the_sql_driver_serves_user_crud() -> Result<()> {
     state
         .provider
         .get_domain_config_provider()
-        .create_domain_config(&state, &domain.id, sql_identity_config())
+        .create_domain_config(
+            &ExecutionContext::internal(&state),
+            &domain.id,
+            sql_identity_config(),
+        )
         .await?;
 
     let name = Uuid::new_v4().to_string();
@@ -132,11 +136,19 @@ async fn the_sql_identity_driver_registration_is_single_domain() -> Result<()> {
     let second = crate::create_domain!(state)?;
     let dc = state.provider.get_domain_config_provider();
 
-    dc.create_domain_config(&state, &first.id, sql_identity_config())
-        .await?;
+    dc.create_domain_config(
+        &ExecutionContext::internal(&state),
+        &first.id,
+        sql_identity_config(),
+    )
+    .await?;
 
     let err = dc
-        .create_domain_config(&state, &second.id, sql_identity_config())
+        .create_domain_config(
+            &ExecutionContext::internal(&state),
+            &second.id,
+            sql_identity_config(),
+        )
         .await
         .expect_err("a second domain must not claim the SQL identity driver");
     assert!(
@@ -161,13 +173,22 @@ async fn deleting_a_domain_config_frees_the_sql_registration() -> Result<()> {
     let second = crate::create_domain!(state)?;
     let dc = state.provider.get_domain_config_provider();
 
-    dc.create_domain_config(&state, &first.id, sql_identity_config())
+    dc.create_domain_config(
+        &ExecutionContext::internal(&state),
+        &first.id,
+        sql_identity_config(),
+    )
+    .await?;
+    dc.delete_domain_config(&ExecutionContext::internal(&state), &first.id)
         .await?;
-    dc.delete_domain_config(&state, &first.id).await?;
 
     // Registration is free again.
-    dc.create_domain_config(&state, &second.id, sql_identity_config())
-        .await?;
+    dc.create_domain_config(
+        &ExecutionContext::internal(&state),
+        &second.id,
+        sql_identity_config(),
+    )
+    .await?;
     Ok(())
 }
 

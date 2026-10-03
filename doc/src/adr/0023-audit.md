@@ -500,6 +500,18 @@ macro_rules! audited_op {
 **Provider usage:**
 `audited_op! { dispatcher: ..., ctx: ..., event: ..., operation: ..., error_variant: ProviderError::AuditDispatchFailed }`
 
+**Coverage:** every state-changing provider method is wrapped in `audited_op!`
+(through `audited_if_ctx!`, which runs the operation unaudited-but-emitted when
+the caller is internal, e.g. a janitor or a hook, and has no principal to
+attribute it to). That includes API keys, OAuth2 clients and signing keys,
+token revocation (`DELETE /v3/auth/tokens`), domain configuration, ID
+mappings, dynamic plugin identities, SCIM index entries and the credential
+bulk deletes. Payloads carry IDs only, never secrets or option values. The
+unit test `audit_coverage::every_mutating_provider_method_is_audited_or_allow_listed`
+walks every provider `service.rs` and fails for a mutating method that has
+neither call site nor an `ALLOW_LIST` entry with a reason, so a new provider
+cannot ship unaudited by accident.
+
 **CADF Hook:** Single `CadfAuditHook` translates events to CADF, signs via
 `CadfEventPayload::sign()`, dispatches via `dispatch_critical()`. Wired at
 startup: `state.event_dispatcher.subscribe_audit(CadfAuditHook).await`.

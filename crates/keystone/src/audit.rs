@@ -213,51 +213,11 @@ pub fn emit_perimeter_authenticate_event(
     dispatcher.dispatch(event);
 }
 
-/// Emit a `control` CADF event for an API Key lifecycle action performed by
-/// an administrator (revoke: ADR 0021 §5.C; janitor disablement/purge: §6.F
-/// use `action` `"maintenance"` instead via the same helper).
-///
-/// Unlike [`emit_perimeter_authenticate_event`], this is for low-volume
-/// administrative actions, not the high-volume authentication hot path.
-pub fn emit_api_key_control_event(
-    dispatcher: &Arc<AuditDispatcher>,
-    correlation_id: &str,
-    action: &str,
-    initiator: Initiator,
-    client_id: &str,
-    outcome: &str,
-    outcome_reason: Option<String>,
-) {
-    let node_id = dispatcher.node_id().to_string();
-    let event_id = format!("{}:{}", node_id, Uuid::new_v4());
-    let payload = CadfEventPayload::new(
-        event_id,
-        "1.1".to_string(),
-        "default".to_string(),
-        correlation_id.to_string(),
-        chrono::Utc::now().to_rfc3339(),
-        action.to_string(),
-        outcome.to_string(),
-        outcome_reason,
-        initiator,
-        Target {
-            id: client_id.to_string(),
-            type_uri: "data/security/keystone/api_key".to_string(),
-        },
-        Observer {
-            node_id: node_id.clone(),
-            id: format!("service/security/keystone/{node_id}"),
-        },
-    );
-    let event = payload.sign(dispatcher);
-    dispatcher.dispatch(event);
-}
-
 /// Emit a best-effort CADF event for an OAuth2 browser-flow lifecycle step
 /// (ADR 0026 §10 Phase 4): `/authorize` request, login attempt, consent
 /// granted/denied, authorization code redeemed, refresh token rotated.
 /// Uses the dispatcher's `dispatch()` (best-effort), same posture as
-/// [`emit_api_key_control_event`] -- these are low-to-moderate volume
+/// the other `dispatch()` helpers -- these are low-to-moderate volume
 /// administrative/session-lifecycle events, not the critical breach path.
 pub fn emit_oauth2_session_event(
     dispatcher: &Arc<AuditDispatcher>,
@@ -410,45 +370,6 @@ pub fn emit_oauth2_client_revoked_event(
         Target {
             id: client_id.to_string(),
             type_uri: "data/security/keystone/oauth2_client".to_string(),
-        },
-        Observer {
-            node_id: node_id.clone(),
-            id: format!("service/security/keystone/{node_id}"),
-        },
-    );
-    let event = payload.sign(dispatcher);
-    dispatcher.dispatch(event);
-}
-
-/// Emit the best-effort `OAUTH2_KEY_ROTATION` CADF event (ADR 0026 §3,
-/// "Normal Rotation Flow", step 5) after a domain's signing key rotates.
-/// Uses `dispatch()` (best-effort), same posture as
-/// [`emit_oauth2_session_event`] -- routine, operator-triggered rotation,
-/// not the emergency/breach path.
-pub fn emit_oauth2_key_rotation_event(
-    dispatcher: &Arc<AuditDispatcher>,
-    correlation_id: &str,
-    initiator: Initiator,
-    domain_id: &str,
-    new_kid: &str,
-) {
-    let node_id = dispatcher.node_id().to_string();
-    let event_id = format!("{}:{}", node_id, Uuid::new_v4());
-    let payload = CadfEventPayload::new(
-        event_id,
-        "1.1".to_string(),
-        "default".to_string(),
-        correlation_id.to_string(),
-        chrono::Utc::now().to_rfc3339(),
-        "OAUTH2_KEY_ROTATION".to_string(),
-        "success".to_string(),
-        Some(format!(
-            "domain {domain_id} rotated to new signing key {new_kid}"
-        )),
-        initiator,
-        Target {
-            id: domain_id.to_string(),
-            type_uri: "data/security/keystone/oauth2_signing_key".to_string(),
         },
         Observer {
             node_id: node_id.clone(),
@@ -678,18 +599,6 @@ mod tests {
             build_initiator_unknown(),
             "family-1",
             "user_disabled",
-        );
-    }
-
-    #[test]
-    fn emit_oauth2_key_rotation_event_does_not_panic() {
-        let dispatcher = AuditDispatcher::noop();
-        emit_oauth2_key_rotation_event(
-            &dispatcher,
-            "req-1",
-            build_initiator_unknown(),
-            "domain-1",
-            "kid-new",
         );
     }
 

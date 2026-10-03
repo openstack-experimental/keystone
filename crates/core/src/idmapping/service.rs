@@ -18,9 +18,11 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::idmapping::*;
 
 use crate::auth::ExecutionContext;
+use crate::events::AuditDispatchError;
 use crate::idmapping::{IdMappingApi, IdMappingProviderError, backend::IdMappingBackend};
 use crate::plugin_manager::PluginManagerApi;
 
@@ -47,6 +49,22 @@ impl IdMappingService {
             .clone();
         Ok(Self { backend_driver })
     }
+}
+
+/// Build the audit event for an ID mapping change. A bulk delete carries only
+/// the domain; a single mapping carries its public ID.
+fn id_mapping_event(
+    operation: Operation,
+    domain_id: Option<&str>,
+    public_id: Option<&str>,
+) -> Event {
+    Event::new(
+        operation,
+        EventPayload::IdMapping {
+            domain_id: domain_id.map(str::to_string),
+            public_id: public_id.map(str::to_string),
+        },
+    )
 }
 
 #[async_trait]
@@ -124,9 +142,18 @@ impl IdMappingApi for IdMappingService {
                 &generated
             }
         };
-        self.backend_driver
-            .create_id_mapping(ctx.state(), local_id, domain_id, entity_type, public_id)
-            .await
+        let event = id_mapping_event(Operation::Create, Some(domain_id), Some(public_id));
+        let op = async {
+            self.backend_driver
+                .create_id_mapping(ctx.state(), local_id, domain_id, entity_type, public_id)
+                .await
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: event,
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| IdMappingProviderError::AuditUnavailable,
+        }
     }
 
     /// Delete the `IdMapping` by the public identifier.
@@ -145,9 +172,17 @@ impl IdMappingApi for IdMappingService {
         ctx: &ExecutionContext<'a>,
         public_id: &'a str,
     ) -> Result<(), IdMappingProviderError> {
-        self.backend_driver
-            .delete_id_mapping(ctx.state(), public_id)
-            .await
+        let op = async {
+            self.backend_driver
+                .delete_id_mapping(ctx.state(), public_id)
+                .await
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: id_mapping_event(Operation::Delete, None, Some(public_id)),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| IdMappingProviderError::AuditUnavailable,
+        }
     }
 
     /// Delete every `IdMapping` row belonging to a domain.
@@ -164,9 +199,17 @@ impl IdMappingApi for IdMappingService {
         ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
     ) -> Result<(), IdMappingProviderError> {
-        self.backend_driver
-            .delete_mappings_for_domain(ctx.state(), domain_id)
-            .await
+        let op = async {
+            self.backend_driver
+                .delete_mappings_for_domain(ctx.state(), domain_id)
+                .await
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: id_mapping_event(Operation::Delete, Some(domain_id), None),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| IdMappingProviderError::AuditUnavailable,
+        }
     }
 }
 
@@ -341,5 +384,28 @@ mod tests {
             .delete_mappings_for_domain(&ExecutionContext::internal(&state), "did")
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_delete_mappings_for_domain_is_audited() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockIdMappingBackend::default();
+        backend
+            .expect_delete_mappings_for_domain()
+            .returning(|_, _| Ok(()));
+        let provider = IdMappingService {
+            backend_driver: std::sync::Arc::new(backend),
+        };
+        let hook = crate::tests::RecordingAuditHook::new();
+        state.event_dispatcher.subscribe_audit(hook.clone()).await;
+        let vsc = crate::tests::test_vsc();
+
+        provider
+            .delete_mappings_for_domain(&ExecutionContext::from_auth(&state, &vsc), "domain-1")
+            .await
+            .unwrap();
+
+        assert_eq!(hook.outcomes(), ["Attempt", "Success"]);
+        assert!(hook.seen()[0].1.contains("IdMapping"));
     }
 }

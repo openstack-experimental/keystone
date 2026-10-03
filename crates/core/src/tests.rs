@@ -49,3 +49,83 @@ pub async fn get_mocked_state(
         .unwrap(),
     )
 }
+
+/// A `ValidatedSecurityContext` for a password-authenticated user, for tests
+/// that exercise the audited (fail-closed) path of a provider.
+pub fn test_vsc() -> crate::auth::ValidatedSecurityContext {
+    use openstack_keystone_core_types::auth::{
+        AuthenticationContext, IdentityInfo, PrincipalInfo, SecurityContext,
+        UserIdentityInfoBuilder,
+    };
+    let user = UserIdentityInfoBuilder::default()
+        .user_id("test-user-id".to_string())
+        .build()
+        .unwrap();
+    let sc = SecurityContext::test_build()
+        .authentication_context(AuthenticationContext::Password)
+        .principal(PrincipalInfo {
+            identity: IdentityInfo::User(user),
+        })
+        .build();
+    crate::auth::ValidatedSecurityContext::test_new(sc)
+}
+
+/// An [`AuditHook`](crate::events::AuditHook) that records every
+/// `(operation, payload, outcome)` it sees and can be told to refuse the
+/// pre-audit `Attempt`, which makes the audited operation fail closed.
+#[derive(Default)]
+pub struct RecordingAuditHook {
+    seen: std::sync::Mutex<Vec<(String, String, String)>>,
+    refuse_attempt: std::sync::atomic::AtomicBool,
+}
+
+impl RecordingAuditHook {
+    /// A hook that accepts every event.
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// A hook whose pre-audit call fails.
+    pub fn refusing() -> Arc<Self> {
+        let hook = Self::default();
+        hook.refuse_attempt
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        Arc::new(hook)
+    }
+
+    /// The recorded `(operation, payload, outcome)` triples, `Debug`-formatted.
+    pub fn seen(&self) -> Vec<(String, String, String)> {
+        self.seen.lock().unwrap().clone()
+    }
+
+    /// The recorded outcomes only, e.g. `["Attempt", "Success"]`.
+    pub fn outcomes(&self) -> Vec<String> {
+        self.seen().into_iter().map(|(_, _, o)| o).collect()
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::events::AuditHook for RecordingAuditHook {
+    async fn on_auditable_event(
+        &self,
+        _ctx: &crate::auth::ValidatedSecurityContext,
+        event: &openstack_keystone_core_types::events::Event,
+        outcome: &crate::events::AuditOutcome,
+    ) -> Result<(), crate::events::AuditDispatchError> {
+        if self
+            .refuse_attempt
+            .load(std::sync::atomic::Ordering::SeqCst)
+            && matches!(outcome, crate::events::AuditOutcome::Attempt)
+        {
+            return Err(crate::events::AuditDispatchError::HookFailed {
+                description: "refused by test hook",
+            });
+        }
+        self.seen.lock().unwrap().push((
+            format!("{:?}", event.operation),
+            format!("{:?}", event.payload),
+            format!("{outcome:?}"),
+        ));
+        Ok(())
+    }
+}

@@ -14,6 +14,7 @@
 //! API Key: create.
 
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
+use openstack_keystone_core::auth::ExecutionContext;
 use secrecy::ExposeSecret;
 use validator::Validate;
 
@@ -80,7 +81,7 @@ pub(super) async fn create(
     let res = state
         .provider
         .get_api_key_provider()
-        .create(&state, data)
+        .create(&ExecutionContext::from_auth(&state, &user_auth), data)
         .await?;
 
     Ok((

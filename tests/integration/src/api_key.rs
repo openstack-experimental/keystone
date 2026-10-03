@@ -17,6 +17,7 @@
 //! profile (see `.config/nextest.toml`), matching the `mapping`/`spiffe`
 //! test suites.
 
+use openstack_keystone_core::auth::ExecutionContext;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -47,7 +48,7 @@ impl ResourceDeleter<ApiClientResource> for Arc<Service> {
                 .provider
                 .get_api_key_provider()
                 .revoke(
-                    self,
+                    &ExecutionContext::internal(self),
                     &resource.domain_id,
                     &resource.client_id,
                     "test-cleanup",
@@ -64,7 +65,7 @@ pub async fn create_api_key(
     let res = state
         .provider
         .get_api_key_provider()
-        .create(state, data)
+        .create(&ExecutionContext::internal(state), data)
         .await
         .unwrap();
     Ok(AsyncResourceGuard::new(res, state.clone()))

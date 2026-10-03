@@ -18,7 +18,7 @@ use thiserror::Error;
 use crate::error::BuilderError;
 
 /// OAuth2 per-domain signing key provider error (ADR 0026 §3).
-#[derive(Error, Debug)]
+#[derive(Error, Debug, strum::IntoStaticStr)]
 #[non_exhaustive]
 pub enum Oauth2KeyProviderError {
     /// Asymmetric keypair generation, DER encoding, or JWK conversion
@@ -49,6 +49,11 @@ pub enum Oauth2KeyProviderError {
         #[from]
         source: Box<BuilderError>,
     },
+
+    /// The fail-closed audit record could not be written, so the operation
+    /// was not performed.
+    #[error("audit dispatch failed in the oauth2 key provider; operation not performed")]
+    AuditUnavailable,
 
     /// Unsupported driver.
     #[error("unsupported driver `{0}` for the oauth2 key provider")]

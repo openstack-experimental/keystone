@@ -30,6 +30,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use openstack_keystone_core::auth::ExecutionContext;
 
 use openstack_keystone_api_types::v4::oauth2_key::{
     ListLocalEmergencyCandidatesResponse, LocalEmergencyCandidateSummary,
@@ -143,7 +144,12 @@ pub(super) async fn reconcile_local_emergency_key(
     let key = state
         .provider
         .get_oauth2_key_provider()
-        .reconcile_local_emergency_rotation(&state, &domain_id, &req.rotation_id, &confirmer)
+        .reconcile_local_emergency_rotation(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &domain_id,
+            &req.rotation_id,
+            &confirmer,
+        )
         .await?;
 
     let event_id = emit_oauth2_local_emergency_key_reconciled_event(

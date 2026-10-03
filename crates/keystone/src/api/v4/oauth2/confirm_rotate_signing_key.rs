@@ -26,6 +26,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use openstack_keystone_core::auth::ExecutionContext;
 
 use openstack_keystone_api_types::v4::oauth2_key::{
     ConfirmRotateSigningKeyRequest, ConfirmRotateSigningKeyResponse,
@@ -82,7 +83,7 @@ pub(super) async fn confirm_rotate_signing_key(
         .provider
         .get_oauth2_key_provider()
         .confirm_emergency_rotation(
-            &state,
+            &ExecutionContext::from_auth(&state, &user_auth),
             &domain_id,
             &req.rotation_id,
             &confirmer,

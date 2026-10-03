@@ -26,6 +26,7 @@ use async_trait::async_trait;
 
 use openstack_keystone_core_types::domain_config::*;
 
+use crate::auth::ExecutionContext;
 use crate::domain_config::DomainConfigProviderError;
 use crate::keystone::ServiceState;
 
@@ -41,7 +42,7 @@ pub trait DomainConfigApi: Send + Sync {
     /// (`PUT /v3/domains/{domain_id}/config`).
     async fn create_domain_config<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
         config: DomainConfigCreate,
     ) -> Result<DomainConfig, DomainConfigProviderError>;
@@ -77,7 +78,7 @@ pub trait DomainConfigApi: Send + Sync {
     /// (`PATCH /v3/domains/{domain_id}/config`).
     async fn update_domain_config<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
         config: DomainConfigUpdate,
     ) -> Result<DomainConfig, DomainConfigProviderError>;
@@ -86,7 +87,7 @@ pub trait DomainConfigApi: Send + Sync {
     /// (`PATCH /v3/domains/{domain_id}/config/{group}`).
     async fn update_domain_config_group<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
         group: DomainConfigGroupName,
         config: DomainConfigUpdate,
@@ -96,7 +97,7 @@ pub trait DomainConfigApi: Send + Sync {
     /// (`PATCH /v3/domains/{domain_id}/config/{group}/{option}`).
     async fn update_domain_config_option<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
         option: DomainConfigOption,
     ) -> Result<DomainConfigOption, DomainConfigProviderError>;
@@ -105,7 +106,7 @@ pub trait DomainConfigApi: Send + Sync {
     /// (`DELETE /v3/domains/{domain_id}/config`).
     async fn delete_domain_config<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
     ) -> Result<(), DomainConfigProviderError>;
 
@@ -113,7 +114,7 @@ pub trait DomainConfigApi: Send + Sync {
     /// (`DELETE /v3/domains/{domain_id}/config/{group}`).
     async fn delete_domain_config_group<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
         group: DomainConfigGroupName,
     ) -> Result<(), DomainConfigProviderError>;
@@ -122,7 +123,7 @@ pub trait DomainConfigApi: Send + Sync {
     /// (`DELETE /v3/domains/{domain_id}/config/{group}/{option}`).
     async fn delete_domain_config_option<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
         group: DomainConfigGroupName,
         option: &'a str,

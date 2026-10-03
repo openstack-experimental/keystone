@@ -18,7 +18,7 @@ use thiserror::Error;
 use crate::error::BuilderError;
 
 /// IdMapping provider error.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, strum::IntoStaticStr)]
 pub enum IdMappingProviderError {
     /// Conflict.
     #[error("conflict: {0}")]
@@ -42,6 +42,11 @@ pub enum IdMappingProviderError {
         #[from]
         source: BuilderError,
     },
+
+    /// The fail-closed audit record could not be written, so the operation
+    /// was not performed.
+    #[error("audit dispatch failed in the idmapping provider; operation not performed")]
+    AuditUnavailable,
 
     /// Unsupported driver.
     #[error("unsupported driver `{0}` for the idmapping provider")]

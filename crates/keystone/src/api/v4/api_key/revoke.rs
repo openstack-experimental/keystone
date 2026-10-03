@@ -19,13 +19,14 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use openstack_keystone_core::auth::ExecutionContext;
 use serde::Deserialize;
 
 use openstack_keystone_api_types::v4::api_key::{ApiKey, ApiKeyResponse};
 
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
-use crate::audit::{CorrelationId, build_initiator_from_vsc, emit_api_key_control_event};
+use crate::audit::CorrelationId;
 use crate::keystone::ServiceState;
 
 /// Query parameters for `POST /v4/api-keys/{client_id}/revoke`.
@@ -89,18 +90,13 @@ pub(super) async fn revoke(
     let res = state
         .provider
         .get_api_key_provider()
-        .revoke(&state, &params.domain_id, &client_id, &revoked_by)
+        .revoke(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &params.domain_id,
+            &client_id,
+            &revoked_by,
+        )
         .await?;
-
-    emit_api_key_control_event(
-        &state.audit_dispatcher,
-        &cid,
-        "revoke",
-        build_initiator_from_vsc(&user_auth),
-        &client_id,
-        "success",
-        None,
-    );
 
     Ok((
         StatusCode::OK,

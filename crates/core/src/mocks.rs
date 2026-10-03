@@ -38,9 +38,9 @@ mod api_key {
 
         #[async_trait]
         impl ApiKeyApi for ApiKeyProvider {
-            async fn create(
+            async fn create<'a>(
                 &self,
-                state: &ServiceState,
+                ctx: &ExecutionContext<'a>,
                 data: ApiClientResourceCreate,
             ) -> Result<ApiClientResource, ApiKeyProviderError>;
 
@@ -66,7 +66,7 @@ mod api_key {
 
             async fn update<'a>(
                 &self,
-                state: &ServiceState,
+                ctx: &ExecutionContext<'a>,
                 domain_id: &'a str,
                 client_id: &'a str,
                 data: ApiClientResourceUpdate,
@@ -74,7 +74,7 @@ mod api_key {
 
             async fn revoke<'a>(
                 &self,
-                state: &ServiceState,
+                ctx: &ExecutionContext<'a>,
                 domain_id: &'a str,
                 client_id: &'a str,
                 revoked_by: &'a str,
@@ -103,7 +103,7 @@ mod api_key {
 
             async fn purge<'a>(
                 &self,
-                state: &ServiceState,
+                ctx: &ExecutionContext<'a>,
                 domain_id: &'a str,
                 client_id: &'a str,
             ) -> Result<(), ApiKeyProviderError>;
@@ -212,31 +212,31 @@ mod oauth2_key {
                 domain_id: &str,
             ) -> Result<KeyMaterial, Oauth2KeyProviderError>;
 
-            async fn rotate_signing_key(
+            async fn rotate_signing_key<'a>(
                 &self,
-                state: &ServiceState,
+                ctx: &ExecutionContext<'a>,
                 domain_id: &str,
             ) -> Result<KeyMaterial, Oauth2KeyProviderError>;
 
-            async fn stage_emergency_rotation(
+            async fn stage_emergency_rotation<'a>(
                 &self,
-                state: &ServiceState,
+                ctx: &ExecutionContext<'a>,
                 domain_id: &str,
                 initiator: &str,
             ) -> Result<PendingRotationInfo, Oauth2KeyProviderError>;
 
-            async fn confirm_emergency_rotation(
+            async fn confirm_emergency_rotation<'a>(
                 &self,
-                state: &ServiceState,
+                ctx: &ExecutionContext<'a>,
                 domain_id: &str,
                 rotation_id: &str,
                 confirmer: &str,
                 revoke_jtis: Vec<String>,
             ) -> Result<KeyMaterial, Oauth2KeyProviderError>;
 
-            async fn stage_local_emergency_rotation(
+            async fn stage_local_emergency_rotation<'a>(
                 &self,
-                state: &ServiceState,
+                ctx: &ExecutionContext<'a>,
                 domain_id: &str,
                 initiator: &str,
                 justification: &str,
@@ -248,9 +248,9 @@ mod oauth2_key {
                 domain_id: &str,
             ) -> Result<Vec<LocalEmergencyCandidateSummary>, Oauth2KeyProviderError>;
 
-            async fn reconcile_local_emergency_rotation(
+            async fn reconcile_local_emergency_rotation<'a>(
                 &self,
-                state: &ServiceState,
+                ctx: &ExecutionContext<'a>,
                 domain_id: &str,
                 rotation_id: &str,
                 confirmer: &str,
@@ -1942,7 +1942,7 @@ mod domain_config {
         impl DomainConfigApi for DomainConfigProvider {
             async fn create_domain_config<'a>(
                 &self,
-                state: &ServiceState,
+                ctx: &ExecutionContext<'a>,
                 domain_id: &'a str,
                 config: DomainConfigCreate,
             ) -> Result<DomainConfig, DomainConfigProviderError>;
@@ -1970,14 +1970,14 @@ mod domain_config {
 
             async fn update_domain_config<'a>(
                 &self,
-                state: &ServiceState,
+                ctx: &ExecutionContext<'a>,
                 domain_id: &'a str,
                 config: DomainConfigUpdate,
             ) -> Result<DomainConfig, DomainConfigProviderError>;
 
             async fn update_domain_config_group<'a>(
                 &self,
-                state: &ServiceState,
+                ctx: &ExecutionContext<'a>,
                 domain_id: &'a str,
                 group: DomainConfigGroupName,
                 config: DomainConfigUpdate,
@@ -1985,27 +1985,27 @@ mod domain_config {
 
             async fn update_domain_config_option<'a>(
                 &self,
-                state: &ServiceState,
+                ctx: &ExecutionContext<'a>,
                 domain_id: &'a str,
                 option: DomainConfigOption,
             ) -> Result<DomainConfigOption, DomainConfigProviderError>;
 
             async fn delete_domain_config<'a>(
                 &self,
-                state: &ServiceState,
+                ctx: &ExecutionContext<'a>,
                 domain_id: &'a str,
             ) -> Result<(), DomainConfigProviderError>;
 
             async fn delete_domain_config_group<'a>(
                 &self,
-                state: &ServiceState,
+                ctx: &ExecutionContext<'a>,
                 domain_id: &'a str,
                 group: DomainConfigGroupName,
             ) -> Result<(), DomainConfigProviderError>;
 
             async fn delete_domain_config_option<'a>(
                 &self,
-                state: &ServiceState,
+                ctx: &ExecutionContext<'a>,
                 domain_id: &'a str,
                 group: DomainConfigGroupName,
                 option: &'a str,

@@ -16,7 +16,7 @@
 use thiserror::Error;
 
 /// Revoke provider error.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, strum::IntoStaticStr)]
 pub enum RevokeProviderError {
     /// Conflict.
     #[error("conflict: {0}")]
@@ -41,6 +41,11 @@ pub enum RevokeProviderError {
     /// No audit ID in the token.
     #[error("token does not have the audit_id set")]
     TokenHasNoAuditId,
+
+    /// The fail-closed audit record could not be written, so the operation
+    /// was not performed.
+    #[error("audit dispatch failed in the revoke provider; operation not performed")]
+    AuditUnavailable,
 
     /// Unsupported driver.
     #[error("unsupported driver `{0}` for the revoke provider")]

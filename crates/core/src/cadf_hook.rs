@@ -61,6 +61,10 @@ pub fn map_event_to_action(event: &Event) -> String {
     }
 }
 
+/// Target ID for a payload whose subject IDs are all absent (a bulk operation
+/// without a single subject).
+const UNKNOWN_TARGET_ID: &str = "unknown";
+
 /// Map an [`EventPayload`] to a CADF `(target_id, type_uri)` pair.
 ///
 /// `target_id` is passed through [`sanitize_audit_id`] to enforce UUID format.
@@ -85,6 +89,16 @@ fn build_target_from_event(event: &Event) -> Target {
         }
         EventPayload::AccessRule { id, .. } => (id, "data/security/identity/access-rule"),
         EventPayload::Credential { id, .. } => (id, "data/security/identity/credential"),
+        EventPayload::CredentialSet {
+            user_id,
+            project_id,
+        } => (
+            user_id
+                .as_deref()
+                .or(project_id.as_deref())
+                .unwrap_or(UNKNOWN_TARGET_ID),
+            "data/security/identity/credential",
+        ),
         EventPayload::Endpoint { id } => (id, "data/compute/catalog/endpoint"),
         EventPayload::EndpointGroup { id } => (id, "data/compute/catalog/endpoint-group"),
         EventPayload::ProjectEndpoint {
@@ -108,6 +122,46 @@ fn build_target_from_event(event: &Event) -> Target {
         EventPayload::K8sAuthInstance { id } => (id, "data/security/identity/k8s-auth-instance"),
         EventPayload::ScimRealm { provider_id } => {
             (provider_id, "data/security/identity/scim-realm")
+        }
+        EventPayload::ApiKey { client_id, .. } => (client_id, "data/security/identity/api-key"),
+        EventPayload::Oauth2Client { provider_id, .. } => {
+            (provider_id, "data/security/identity/oauth2-client")
+        }
+        EventPayload::Oauth2SigningKey { domain_id } => {
+            (domain_id, "data/security/identity/oauth2-signing-key")
+        }
+        EventPayload::RevocationEvent { audit_id, user_id } => (
+            audit_id
+                .as_deref()
+                .or(user_id.as_deref())
+                .unwrap_or(UNKNOWN_TARGET_ID),
+            "data/security/identity/token",
+        ),
+        EventPayload::DomainConfig { domain_id } => {
+            (domain_id, "data/security/account/domain-config")
+        }
+        EventPayload::IdMapping {
+            public_id,
+            domain_id,
+        } => (
+            public_id
+                .as_deref()
+                .or(domain_id.as_deref())
+                .unwrap_or(UNKNOWN_TARGET_ID),
+            "data/security/identity/id-mapping",
+        ),
+        EventPayload::PluginIdentity {
+            user_id,
+            plugin_name,
+        } => (
+            user_id
+                .as_deref()
+                .or(plugin_name.as_deref())
+                .unwrap_or(UNKNOWN_TARGET_ID),
+            "data/security/identity/plugin-identity",
+        ),
+        EventPayload::ScimIndex { keystone_id, .. } => {
+            (keystone_id, "data/security/identity/scim-index")
         }
     };
     Target {
