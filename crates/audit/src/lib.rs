@@ -30,6 +30,8 @@ pub mod metrics;
 pub mod sanitize;
 pub mod sink;
 pub mod spool;
+#[cfg(feature = "syslog")]
+pub mod syslog;
 pub mod types;
 
 pub use dispatcher::{
@@ -39,4 +41,6 @@ pub use dispatcher::{
 pub use kdf::derive_audit_hmac_key;
 pub use sink::{AuditSink, ShipperConfig, SinkError, StdoutSink, run_segment_shipper};
 pub use spool::{HmacKeyStore, SpoolConfig, SpoolError};
+#[cfg(feature = "syslog")]
+pub use syslog::{SyslogSink, SyslogSinkConfig};
 pub use types::{CadfEvent, CadfEventPayload, Host, Initiator, Observer, Target};

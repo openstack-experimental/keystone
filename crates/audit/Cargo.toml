@@ -18,16 +18,29 @@ openstack-keystone-core-types.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sha2.workspace = true
+rustls = { workspace = true, features = ["aws-lc-rs"], optional = true }
+rustls-native-certs = { workspace = true, optional = true }
+rustls-pki-types = { workspace = true, features = ["std"], optional = true }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "time", "fs", "io-util"] }
+tokio-rustls = { workspace = true, optional = true }
 tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
 [features]
 default = []
 testing = []
+# RFC 5424 syslog sink over TCP, optionally wrapped in TLS.
+syslog = [
+    "dep:rustls",
+    "dep:rustls-native-certs",
+    "dep:rustls-pki-types",
+    "dep:tokio-rustls",
+    "tokio/net",
+]
 
 [dev-dependencies]
+rcgen.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 tempfile.workspace = true
