@@ -28,10 +28,12 @@ pub mod dispatcher;
 pub mod kdf;
 pub mod metrics;
 pub mod sanitize;
+pub mod sink;
 pub mod spool;
 pub mod types;
 
 pub use dispatcher::{AuditChannelDead, AuditChannelReceivers, AuditDispatcher};
 pub use kdf::derive_audit_hmac_key;
+pub use sink::{AuditSink, ShipperConfig, SinkError, StdoutSink, run_segment_shipper};
 pub use spool::{HmacKeyStore, SpoolConfig, SpoolError};
 pub use types::{CadfEvent, CadfEventPayload, Host, Initiator, Observer, Target};

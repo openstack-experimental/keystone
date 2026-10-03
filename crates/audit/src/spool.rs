@@ -21,9 +21,9 @@
 //!   produced by size/age rotation and by sealing the previous run's live spool
 //!   at startup ([`seal_previous_spool`]).
 //!
-//! Sealed segments are what a downstream sink consumes (not yet implemented,
-//! see ADR 0023); they are never re-dispatched into the live spool, which
-//! previously made "replay" a self-loop. At startup the previous run's
+//! Sealed segments are what a downstream sink consumes (see [`crate::sink`]);
+//! they are never re-dispatched into the live spool, which previously made
+//! "replay" a self-loop. At startup the previous run's
 //! segment is HMAC-verified at rest ([`verify_sealed_spool`]); a segment with
 //! corrupted or tampered lines is quarantined.
 
@@ -102,7 +102,7 @@ pub fn spool_path(spool_dir: &Path, node_id: &str) -> PathBuf {
     spool_dir.join(format!("audit-spool-{node_id}.jsonl"))
 }
 
-fn segment_prefix(node_id: &str) -> String {
+pub(crate) fn segment_prefix(node_id: &str) -> String {
     format!("audit-spool-{node_id}.jsonl.seg-")
 }
 
@@ -557,7 +557,7 @@ pub fn verify_sealed_spool(
 }
 
 /// Rename a segment to `<segment>.quarantine-<timestamp>`.
-fn quarantine_segment(path: &Path) -> Result<(), SpoolError> {
+pub(crate) fn quarantine_segment(path: &Path) -> Result<(), SpoolError> {
     let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
     let quarantine = PathBuf::from(format!("{}.quarantine-{ts}", path.display()));
     std::fs::rename(path, &quarantine)?;

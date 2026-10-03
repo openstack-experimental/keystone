@@ -41,6 +41,21 @@ fn default_spool_max_segment_age_secs() -> u64 {
     24 * 60 * 60
 }
 
+/// Downstream sink that sealed spool segments are shipped to.
+///
+/// A segment is deleted from the spool only after the sink has accepted all of
+/// its events.
+#[derive(Debug, Default, Deserialize, Clone, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AuditSinkConfig {
+    /// No sink: sealed segments stay in the spool for an external shipper
+    /// (e.g. a log forwarder tailing `spool_dir`). Nothing is acknowledged.
+    #[default]
+    None,
+    /// Write each event as a JSON line to the process's standard output.
+    Stdout,
+}
+
 /// Configuration for the CADF audit framework (ADR 0023).
 #[derive(Debug, Deserialize, Clone)]
 pub struct AuditConfig {
@@ -75,6 +90,11 @@ pub struct AuditConfig {
     /// dropped and logged at `ERROR`. Defaults to 10.
     #[serde(default = "default_spool_drain_timeout_secs")]
     pub spool_drain_timeout_secs: u64,
+
+    /// Downstream sink for sealed segments, e.g. `sink = { type = "stdout" }`.
+    /// Defaults to `{ type = "none" }`.
+    #[serde(default)]
+    pub sink: AuditSinkConfig,
 }
 
 impl Default for AuditConfig {
@@ -86,6 +106,7 @@ impl Default for AuditConfig {
             spool_max_segment_age_secs: default_spool_max_segment_age_secs(),
             spool_max_segments: None,
             spool_drain_timeout_secs: default_spool_drain_timeout_secs(),
+            sink: AuditSinkConfig::default(),
         }
     }
 }

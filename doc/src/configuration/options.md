@@ -87,7 +87,7 @@ from it.
 | `[auth_plugins]` | `plugins`, `trusted_proxies`, `trusted_header` |
 | `[auth_plugin.<name>]` | `path`, `sha256`, `mode`, capabilities, headers, outbound hosts, provisioning/role bounds, route targets, resource limits, rate limits, concurrency, `valid_since` |
 | `[auth_plugin_identity]` | `driver` |
-| `[audit]` | `spool_dir`, `node_id`, `spool_max_segment_bytes`, `spool_max_segment_age_secs`, `spool_max_segments`, `spool_drain_timeout_secs` |
+| `[audit]` | `spool_dir`, `node_id`, `spool_max_segment_bytes`, `spool_max_segment_age_secs`, `spool_max_segments`, `spool_drain_timeout_secs`, `sink` |
 
 See [Dynamic authentication plugin operations](../admin/features/auth-plugins.md).
 

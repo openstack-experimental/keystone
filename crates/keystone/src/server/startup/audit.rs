@@ -28,11 +28,15 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use crate::config::AuditSinkConfig;
 use crate::config::Config;
 use openstack_keystone_audit::spool::{
     SpoolLock, run_spool_writer, seal_previous_spool, verify_sealed_spool,
 };
-use openstack_keystone_audit::{AuditDispatcher, HmacKeyStore, SpoolConfig, derive_audit_hmac_key};
+use openstack_keystone_audit::{
+    AuditDispatcher, AuditSink, HmacKeyStore, ShipperConfig, SpoolConfig, StdoutSink,
+    derive_audit_hmac_key, run_segment_shipper,
+};
 
 /// Version tag stamped on audit HMAC keys (ADR 0023 / ADR 0016-v2 §3.1).
 const AUDIT_HMAC_KEY_VERSION: u64 = 1;
@@ -161,36 +165,70 @@ pub async fn init(
     let writer_dir = spool_dir.clone();
     let writer_node_id = node_id.clone();
     let shutdown = token.clone().cancelled_owned();
-    let writer = spawn(async move {
-        let _spool_lock = spool_lock;
-        run_spool_writer(
-            audit_receivers.perimeter,
-            audit_receivers.critical,
-            writer_dir,
-            writer_node_id,
-            spool_cfg,
-            spool_bytes,
-            shutdown,
-        )
-        .await;
-    });
 
     // Verify the sealed segment at rest in the background: it can be large
-    // and must not delay startup. Nothing is re-dispatched.
-    if let Some(segment) = sealed {
+    // and must not delay startup. Nothing is re-dispatched. The shipper only
+    // starts once verification is done, so a tampered segment is quarantined
+    // before a sink can see it.
+    let verification = sealed.map(|segment| {
         let mut key_store = MultiKeyStore(HashMap::new());
         key_store
             .0
             .insert(AUDIT_HMAC_KEY_VERSION, Arc::clone(&audit_hmac_key));
         let dispatcher = Arc::clone(&audit_dispatcher);
+        let node_id = node_id.clone();
         spawn_blocking(move || {
             if let Err(error) =
                 verify_sealed_spool(&segment, node_id.as_str(), &dispatcher, &key_store)
             {
                 warn!(%error, segment = %segment.display(), "audit spool verification failed");
             }
-        });
-    }
+        })
+    });
+
+    let sink: Option<Arc<dyn AuditSink>> = match audit_cfg.sink {
+        AuditSinkConfig::None => None,
+        AuditSinkConfig::Stdout => Some(Arc::new(StdoutSink)),
+    };
+    let shipper_bytes = Arc::clone(&spool_bytes);
+    let shipper_dir = spool_dir.clone();
+    let shipper_node_id = node_id.clone();
+    let shipper_shutdown = token.clone().cancelled_owned();
+    let shipper = async move {
+        let Some(sink) = sink else {
+            return;
+        };
+        if let Some(verification) = verification {
+            let _ = verification.await;
+        }
+        run_segment_shipper(
+            shipper_dir,
+            shipper_node_id,
+            sink,
+            ShipperConfig::default(),
+            shipper_bytes,
+            shipper_shutdown,
+        )
+        .await;
+    };
+
+    // The writer and shipper share one task that owns the spool lock, so the
+    // lock lives until both have stopped.
+    let writer = spawn(async move {
+        let _spool_lock = spool_lock;
+        tokio::join!(
+            run_spool_writer(
+                audit_receivers.perimeter,
+                audit_receivers.critical,
+                writer_dir,
+                writer_node_id,
+                spool_cfg,
+                spool_bytes,
+                shutdown,
+            ),
+            shipper,
+        );
+    });
 
     Ok((audit_dispatcher, writer))
 }

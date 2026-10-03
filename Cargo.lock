@@ -5127,6 +5127,7 @@ name = "openstack-keystone-audit"
 version = "0.1.0"
 dependencies = [
  "arc-swap",
+ "async-trait",
  "chrono",
  "hkdf 0.13.0",
  "hmac 0.13.0",

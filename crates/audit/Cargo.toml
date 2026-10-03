@@ -10,6 +10,7 @@ repository.workspace = true
 
 [dependencies]
 arc-swap.workspace = true
+async-trait.workspace = true
 chrono = { workspace = true, features = ["serde", "now"] }
 hmac.workspace = true
 hkdf.workspace = true
@@ -18,7 +19,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync", "rt"] }
+tokio = { workspace = true, features = ["sync", "rt", "time", "fs", "io-util"] }
 tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
