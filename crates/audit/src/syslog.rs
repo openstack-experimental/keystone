@@ -162,10 +162,23 @@ impl AuditSink for SyslogSink {
         let mut payload = Vec::new();
         for event in events {
             let message = format_message(&self.cfg.hostname, &self.cfg.app_name, event)?;
-            // RFC 6587 octet counting: `MSG-LEN SP SYSLOG-MSG`.
-            payload.extend_from_slice(message.len().to_string().as_bytes());
-            payload.push(b' ');
-            payload.extend_from_slice(message.as_bytes());
+            frame(&mut payload, &message);
+        }
+        self.deliver(&payload).await
+    }
+
+    async fn write_lines(&self, source: &str, lines: &[String]) -> Result<(), SinkError> {
+        let mut payload = Vec::new();
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        for line in lines {
+            let message = render(
+                &self.cfg.hostname,
+                &self.cfg.app_name,
+                &timestamp,
+                source,
+                line,
+            );
+            frame(&mut payload, &message);
         }
         self.deliver(&payload).await
     }
@@ -217,19 +230,39 @@ fn client_config(cfg: &SyslogSinkConfig) -> Result<Arc<rustls::ClientConfig>, Si
     Ok(Arc::new(config))
 }
 
+/// RFC 6587 octet counting: `MSG-LEN SP SYSLOG-MSG`.
+fn frame(payload: &mut Vec<u8>, message: &str) {
+    payload.extend_from_slice(message.len().to_string().as_bytes());
+    payload.push(b' ');
+    payload.extend_from_slice(message.as_bytes());
+}
+
 /// Render one RFC 5424 message (without the framing prefix).
-fn format_message(hostname: &str, app_name: &str, event: &CadfEvent) -> Result<String, SinkError> {
+///
+/// `<PRI>VERSION TIMESTAMP HOSTNAME APP-NAME PROCID MSGID STRUCTURED-DATA MSG`
+/// with PROCID the process id and no structured data.
+fn render(hostname: &str, app_name: &str, timestamp: &str, msgid: &str, msg: &str) -> String {
     let pri = FACILITY_LOG_AUDIT * 8 + SEVERITY_INFORMATIONAL;
-    let json = serde_json::to_string(event)?;
-    // `<PRI>VERSION TIMESTAMP HOSTNAME APP-NAME PROCID MSGID STRUCTURED-DATA MSG`
-    // PROCID is the process id; MSGID is the CADF action; no structured data.
-    Ok(format!(
-        "<{pri}>1 {timestamp} {host} {app} {procid} {msgid} - {json}",
-        timestamp = header_field(&event.event.event_time),
+    format!(
+        "<{pri}>1 {timestamp} {host} {app} {procid} {msgid} - {msg}",
+        timestamp = header_field(timestamp),
         host = header_field(hostname),
         app = header_field(app_name),
         procid = std::process::id(),
-        msgid = header_field(&event.event.action),
+        msgid = header_field(msgid),
+    )
+}
+
+/// Render the message for a CADF event: the timestamp is the event time and
+/// the MSGID the CADF action.
+fn format_message(hostname: &str, app_name: &str, event: &CadfEvent) -> Result<String, SinkError> {
+    let json = serde_json::to_string(event)?;
+    Ok(render(
+        hostname,
+        app_name,
+        &event.event.event_time,
+        &event.event.action,
+        &json,
     ))
 }
 
@@ -342,6 +375,33 @@ mod tests {
         assert_eq!(frames.len(), 2);
         assert!(frames[0].contains(" create - {"));
         assert!(frames[1].contains(" delete - {"));
+    }
+
+    #[tokio::test]
+    async fn delivers_foreign_records_with_their_source_as_msgid() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let receiver = tokio::spawn(async move {
+            let (mut conn, _) = listener.accept().await.unwrap();
+            let mut buf = Vec::new();
+            conn.read_to_end(&mut buf).await.unwrap();
+            buf
+        });
+
+        let sink = SyslogSink::new(SyslogSinkConfig::new(addr.to_string(), "node-1")).unwrap();
+        sink.write_lines("raft-audit", &["{\"record\":{}}".to_string()])
+            .await
+            .expect("delivery succeeds");
+
+        let frames = parse_frames(&receiver.await.unwrap());
+        assert_eq!(frames.len(), 1);
+        assert!(frames[0].starts_with("<110>1 "));
+        assert!(frames[0].contains(" node-1 keystone "));
+        assert!(
+            frames[0].ends_with(" raft-audit - {\"record\":{}}"),
+            "{}",
+            frames[0]
+        );
     }
 
     #[tokio::test]

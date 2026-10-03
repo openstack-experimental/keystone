@@ -34,7 +34,7 @@ use openstack_keystone_audit::spool::{
 };
 use openstack_keystone_audit::{
     AuditDispatcher, AuditSink, HmacKeyring, ShipperConfig, SpoolConfig, StdoutSink,
-    run_segment_shipper,
+    run_raw_segment_shipper, run_segment_shipper,
 };
 
 /// How often the running server checks the keyring file for a rotation made
@@ -271,6 +271,27 @@ pub async fn init(
         initial_backoff: Duration::from_secs(audit_cfg.shipper_initial_backoff_secs),
         max_backoff: Duration::from_secs(audit_cfg.shipper_max_backoff_secs),
     };
+    // The raft storage layer keeps its own signed audit spool (ADR 0016-v2
+    // §3.1) with a different key hierarchy and record shape. Its sealed
+    // segments are shipped verbatim through the same sink, so one sink
+    // configuration covers both producers.
+    let raft_shipper = sink
+        .clone()
+        .zip(cfg.distributed_storage.as_ref())
+        .map(|(sink, ds)| {
+            let dir = ds
+                .audit_spool_dir
+                .clone()
+                .unwrap_or_else(|| ds.path.join("audit-spool"));
+            run_raw_segment_shipper(
+                dir,
+                format!("raft-audit-{}.jsonl.seg-", ds.node_id),
+                "raft-audit".to_string(),
+                sink,
+                shipper_cfg.clone(),
+                token.clone().cancelled_owned(),
+            )
+        });
     let shipper_bytes = Arc::clone(&spool_bytes);
     let shipper_dir = spool_dir.clone();
     let shipper_node_id = node_id.clone();
@@ -307,6 +328,11 @@ pub async fn init(
         let _spool_lock = spool_lock;
         tokio::join!(
             reloader,
+            async move {
+                if let Some(raft_shipper) = raft_shipper {
+                    raft_shipper.await;
+                }
+            },
             run_spool_writer(
                 audit_receivers.perimeter,
                 audit_receivers.critical,
@@ -558,5 +584,47 @@ mod tests {
 
         token.cancel();
         reloader.await.unwrap();
+    }
+
+    /// The raft storage audit spool is shipped through the same sink: a
+    /// sealed `raft-audit-<node>` segment is delivered and removed, the live
+    /// file is left alone.
+    #[tokio::test]
+    async fn raft_audit_segments_are_shipped_through_the_sink() {
+        let tmp = tempfile::tempdir().unwrap();
+        let raft_spool = tmp.path().join("raft-spool");
+        std::fs::create_dir_all(&raft_spool).unwrap();
+        let sealed = raft_spool.join("raft-audit-7.jsonl.seg-000001");
+        std::fs::write(
+            &sealed,
+            "{\"record\":{},\"key_version\":1,\"hmac\":\"00\"}\n",
+        )
+        .unwrap();
+        let live = raft_spool.join("raft-audit-7.jsonl");
+        std::fs::write(&live, "{\"live\":true}\n").unwrap();
+
+        let mut cfg = test_config(tmp.path().join("spool"));
+        cfg.audit.sink = AuditSinkConfig::Stdout;
+        cfg.audit.shipper_poll_interval_secs = 1;
+        cfg.distributed_storage =
+            Some(openstack_keystone_config::DistributedStorageConfiguration {
+                node_id: 7,
+                audit_spool_dir: Some(raft_spool.clone()),
+                ..Default::default()
+            });
+        let token = CancellationToken::new();
+        let (_dispatcher, writer) = init(&cfg, &token).await.unwrap();
+
+        for _ in 0..100 {
+            if !sealed.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        token.cancel();
+        super::super::shutdown::await_audit_writer(writer, &cfg).await;
+
+        assert!(!sealed.exists(), "acknowledged segment is removed");
+        assert!(live.exists(), "the live raft spool is never touched");
     }
 }
