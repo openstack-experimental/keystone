@@ -87,7 +87,7 @@ pub async fn build(
     let state = &startup.state;
     let mut app = Router::new().merge(main_router.with_state(state.clone()));
     app = mount_extensions(app, startup).await?;
-    app = apply_middleware(app);
+    app = apply_middleware(app, state);
     let (app, http_metrics) = attach_http_metrics(app, state).await;
     Ok((finalize(app, openapi), http_metrics))
 }
@@ -115,7 +115,7 @@ async fn mount_extensions(mut app: Router, startup: &Startup) -> Result<Router, 
 /// The `ServiceBuilder` runs top-to-bottom; it stays a local rather than a
 /// named return type because the composed tower type is effectively
 /// unwriteable.
-fn apply_middleware(app: Router) -> Router {
+fn apply_middleware(app: Router, state: &ServiceState) -> Router {
     let x_request_id = HeaderName::from_static("x-openstack-request-id");
     let sensitive_headers: Arc<[_]> = vec![
         header::AUTHORIZATION,
@@ -142,6 +142,12 @@ fn apply_middleware(app: Router) -> Router {
         // Establish the per-request cache scope (ADR 0030) before any
         // handler runs.
         .layer(middleware::from_fn(request_cache::with_request_cache))
+        // Establish the per-request audit context (client address,
+        // correlation ID) so every audit record of the request carries them.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::audit::with_audit_request_context,
+        ))
         .sensitive_request_headers(sensitive_headers.clone())
         .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT))
         .layer(

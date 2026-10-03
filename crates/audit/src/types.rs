@@ -55,7 +55,7 @@ impl CadfEventPayload {
         event_time: String,
         action: String,
         outcome: String,
-        outcome_reason: Option<String>,
+        outcome_reason: Option<OutcomeReason>,
         initiator: Initiator,
         target: Target,
         observer: Observer,
@@ -71,7 +71,7 @@ impl CadfEventPayload {
             event_time,
             action,
             outcome,
-            outcome_reason,
+            outcome_reason: outcome_reason.map(OutcomeReason::into_string),
             initiator,
             target,
             observer,
@@ -203,6 +203,70 @@ impl Host {
     }
 }
 
+/// The `outcome_reason` of an audit record: a closed vocabulary, never free
+/// text.
+///
+/// ADR 0023 ("Outcome Isolation") limits the reason to a sanitized variant
+/// name. Making that a type means a caller cannot put an ID, a plugin-supplied
+/// sentence or `Debug` output of a request into the record: the only
+/// constructors take a `'static` literal, a variant name that is reduced to
+/// `[A-Za-z0-9_-]` (at most 64 characters), or a list of `name=count` pairs
+/// whose names are reduced the same way. Identifiers belong in the `target`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutcomeReason(std::borrow::Cow<'static, str>);
+
+impl OutcomeReason {
+    /// Longest accepted variant name.
+    const MAX_VARIANT_LEN: usize = 64;
+
+    /// A fixed, compile-time reason such as `"RouteDenied"`.
+    #[must_use]
+    pub const fn literal(reason: &'static str) -> Self {
+        Self(std::borrow::Cow::Borrowed(reason))
+    }
+
+    /// A reason derived from an error variant name. Anything outside
+    /// `[A-Za-z0-9_-]` is dropped and the result is capped, so even a name
+    /// built from error data cannot smuggle free text into the record. An
+    /// empty result becomes `"unknown"`.
+    #[must_use]
+    pub fn variant(name: &str) -> Self {
+        let cleaned: String = name
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+            .take(Self::MAX_VARIANT_LEN)
+            .collect();
+        if cleaned.is_empty() {
+            Self::literal("unknown")
+        } else {
+            Self(std::borrow::Cow::Owned(cleaned))
+        }
+    }
+
+    /// A summary of counters such as `session=3,errors=1`. The values are
+    /// numbers and each name is reduced like a [`variant`](Self::variant)
+    /// name.
+    #[must_use]
+    pub fn counts(pairs: &[(&str, u64)]) -> Self {
+        let rendered = pairs
+            .iter()
+            .map(|(name, value)| format!("{}={value}", Self::variant(name).as_str()))
+            .collect::<Vec<_>>()
+            .join(",");
+        Self(std::borrow::Cow::Owned(rendered))
+    }
+
+    /// The reason as a string slice.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    fn into_string(self) -> String {
+        self.0.into_owned()
+    }
+}
+
 /// Audit initiator — only opaque identifiers, never PII.
 ///
 /// Human-readable fields (usernames, emails, project names) are excluded by
@@ -242,6 +306,33 @@ impl Initiator {
             domain_id,
             host,
         }
+    }
+
+    /// An initiator for work the service does on its own behalf (janitors,
+    /// maintenance, startup tasks), identified as `system:<component>`.
+    ///
+    /// `component` is a compile-time name such as `"api_key_janitor"`; the
+    /// `system:` prefix keeps these apart from user and service UUIDs, which
+    /// is why the ID is not run through the UUID sanitizer.
+    #[must_use]
+    pub fn system(component: &'static str) -> Self {
+        Self::new(format!("system:{component}"), None, None, None)
+    }
+
+    /// Attach a pre-auth identity signal (EC2 access key, federation IdP) to
+    /// `host.id`, already sanitized with
+    /// [`crate::sanitize::sanitize_initiator_host`]. `None` leaves the
+    /// initiator unchanged. Preserves any `host.address` already set.
+    #[must_use]
+    pub fn with_host_id(mut self, host_id: Option<String>) -> Self {
+        let Some(host_id) = host_id else {
+            return self;
+        };
+        match &mut self.host {
+            Some(host) => host.id = Some(host_id),
+            None => self.host = Some(Host::from_id(host_id)),
+        }
+        self
     }
 
     /// Attach a client IP address to `host.address`, sanitized via
@@ -402,5 +493,52 @@ mod tests {
         let initiator = Initiator::new("uid".to_string(), None, None, None);
         let json = serde_json::to_value(&initiator).unwrap();
         assert!(json.get("host").is_none());
+    }
+
+    #[test]
+    fn outcome_reason_variant_drops_everything_but_identifier_characters() {
+        assert_eq!(OutcomeReason::variant("NotFound").as_str(), "NotFound");
+        // An ID, a sentence and Debug output cannot pass through.
+        assert_eq!(
+            OutcomeReason::variant("user 4f1c-a9 not found: {\"x\": [1]}").as_str(),
+            "user4f1c-a9notfoundx1"
+        );
+        assert_eq!(OutcomeReason::variant("!!! ???").as_str(), "unknown");
+        assert_eq!(OutcomeReason::variant("").as_str(), "unknown");
+        assert_eq!(OutcomeReason::variant(&"a".repeat(500)).as_str().len(), 64);
+    }
+
+    #[test]
+    fn outcome_reason_counts_renders_name_value_pairs() {
+        assert_eq!(
+            OutcomeReason::counts(&[("session", 3), ("errors", 1)]).as_str(),
+            "session=3,errors=1"
+        );
+    }
+
+    #[test]
+    fn system_initiator_is_prefixed_and_has_no_scope() {
+        let i = Initiator::system("api_key_janitor");
+        assert_eq!(i.id(), "system:api_key_janitor");
+        assert_eq!(i.project_id(), None);
+        assert!(i.host().is_none());
+    }
+
+    #[test]
+    fn with_host_id_and_with_address_compose_in_either_order() {
+        let a = Initiator::new("unknown".into(), None, None, None)
+            .with_host_id(Some("AKIAABCDEFGHIJKLMNOP".into()))
+            .with_address(Some("203.0.113.9".into()));
+        let b = Initiator::new("unknown".into(), None, None, None)
+            .with_address(Some("203.0.113.9".into()))
+            .with_host_id(Some("AKIAABCDEFGHIJKLMNOP".into()));
+        for i in [a, b] {
+            let host = i.host().expect("host");
+            assert_eq!(host.id(), Some("AKIAABCDEFGHIJKLMNOP"));
+            assert_eq!(host.address(), Some("203.0.113.9"));
+        }
+        // `None` leaves the initiator untouched.
+        let none = Initiator::new("unknown".into(), None, None, None).with_host_id(None);
+        assert!(none.host().is_none());
     }
 }

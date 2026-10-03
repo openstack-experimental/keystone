@@ -29,6 +29,7 @@ use axum::{
 };
 use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, SameSite};
+use openstack_keystone_audit::OutcomeReason;
 use secrecy::SecretString;
 use serde::Deserialize;
 
@@ -409,7 +410,7 @@ pub(super) async fn device_login(
                 build_initiator_unknown(),
                 &grant.client_id,
                 "failure",
-                Some("invalid username or password".to_string()),
+                Some(OutcomeReason::literal("InvalidCredentials")),
             );
             return Ok(render_login(
                 &domain_id,
@@ -571,7 +572,7 @@ async fn finish_decision(
                 build_initiator_unknown(),
                 &grant.client_id,
                 if granted { "success" } else { "failure" },
-                (!granted).then(|| "consent denied".to_string()),
+                (!granted).then(|| OutcomeReason::literal("ConsentDenied")),
             );
             render_result(granted, &client_id)
         }

@@ -144,7 +144,7 @@ fn emit_maintenance_event(dispatcher: &Arc<AuditDispatcher>, action: &str, domai
     let node_id = dispatcher.node_id().to_string();
     let event_id = format!("{node_id}:{}", Uuid::new_v4());
     let correlation_id = format!("janitor:{}", Uuid::new_v4());
-    let initiator = Initiator::new("oauth2_key_janitor".to_string(), None, None, None);
+    let initiator = Initiator::system("oauth2_key_janitor");
     let payload = CadfEventPayload::new(
         event_id,
         "1.1".to_string(),

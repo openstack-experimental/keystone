@@ -43,6 +43,7 @@ use axum::{
 use governor::clock::Clock as _;
 use serde::Deserialize;
 
+use openstack_keystone_audit::OutcomeReason;
 use openstack_keystone_audit::{Initiator, sanitize::sanitize_audit_id};
 use openstack_keystone_core::oauth2_client::verify_revocable_access_token;
 use openstack_keystone_core_types::oauth2_key::Oauth2KeyProviderError;
@@ -210,7 +211,7 @@ struct RevokeContext<'a> {
 }
 
 impl RevokeContext<'_> {
-    fn audit(&self, outcome: &str, reason: String) {
+    fn audit(&self, outcome: &str, reason: OutcomeReason) {
         emit_oauth2_session_event(
             &self.state.audit_dispatcher,
             self.correlation_id,
@@ -239,13 +240,7 @@ impl RevokeContext<'_> {
 
         // Never act on (or reveal anything about) another client's family.
         if record.client_id != self.client_id || record.domain_id != self.domain_id {
-            self.audit(
-                "failure",
-                format!(
-                    "refresh_token presented by foreign client: presenter={} owner={}",
-                    self.client_id, record.client_id
-                ),
-            );
+            self.audit("failure", OutcomeReason::literal("ForeignClient"));
             return Ok(true);
         }
         // Idempotent: an already-tombstoned family keeps its original
@@ -269,7 +264,7 @@ impl RevokeContext<'_> {
             &record.family_id,
             reason.as_str(),
         );
-        self.audit("success", "token_type=refresh_token".to_string());
+        self.audit("success", OutcomeReason::literal("RefreshToken"));
         Ok(true)
     }
 
@@ -336,14 +331,11 @@ impl RevokeContext<'_> {
                 ),
                 Err(e) => {
                     tracing::error!(error = %e, family_id, "oauth2 revoke: family revocation failed after jti revoked");
-                    self.audit(
-                        "failure",
-                        format!("sid family revocation failed: family_id={family_id}"),
-                    );
+                    self.audit("failure", OutcomeReason::literal("FamilyRevocationFailed"));
                 }
             }
         }
-        self.audit("success", "token_type=access_token".to_string());
+        self.audit("success", OutcomeReason::literal("AccessToken"));
         Ok(true)
     }
 }

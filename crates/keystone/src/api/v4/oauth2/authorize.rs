@@ -32,6 +32,7 @@ use axum::{
 };
 use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, SameSite};
+use openstack_keystone_audit::OutcomeReason;
 use secrecy::SecretString;
 use serde::Deserialize;
 
@@ -507,7 +508,7 @@ pub(super) async fn authorize_login(
                 build_initiator_unknown(),
                 &session.client_id,
                 "failure",
-                Some("invalid username or password".to_string()),
+                Some(OutcomeReason::literal("InvalidCredentials")),
             );
             return Ok(render_login(
                 &domain_id,
@@ -668,7 +669,7 @@ async fn finish_consent(
             build_initiator_unknown(),
             &session.client_id,
             "failure",
-            Some("consent denied".to_string()),
+            Some(OutcomeReason::literal("ConsentDenied")),
         );
         return redirect_with_error(
             &session.redirect_uri,

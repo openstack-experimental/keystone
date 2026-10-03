@@ -19,6 +19,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use governor::clock::Clock as _;
+use openstack_keystone_audit::OutcomeReason;
 
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::oauth2_session::RefreshTokenRedemption;
@@ -120,10 +121,7 @@ pub(super) async fn handle_refresh_token_grant(
                 build_initiator_unknown(),
                 &client_id,
                 "failure",
-                Some(format!(
-                    "refresh_token presented by foreign client: presenter={client_id} owner={}",
-                    record.client_id
-                )),
+                Some(OutcomeReason::literal("ForeignClient")),
             );
             // Same message as an unknown/expired token: must not reveal
             // that the bearer exists and belongs to another client.
