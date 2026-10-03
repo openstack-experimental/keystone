@@ -34,10 +34,12 @@ pub mod domain_config;
 pub mod ec2tokens;
 pub mod endpoint;
 pub mod group;
+pub mod limit;
 pub mod os_trust;
 pub mod policy;
 pub mod project;
 pub mod region;
+pub mod registered_limit;
 pub mod role;
 pub mod role_assignment;
 pub mod role_inferences;
@@ -67,9 +69,11 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .nest("/endpoints", endpoint::openapi_router())
         .nest("/groups", group::openapi_router())
         .nest("/OS-TRUST", os_trust::openapi_router())
+        .nest("/limits", limit::openapi_router())
         .nest("/policies", policy::openapi_router())
         .nest("/projects", project::openapi_router())
         .nest("/regions", region::openapi_router())
+        .nest("/registered_limits", registered_limit::openapi_router())
         .nest("/roles", role::openapi_router())
         .nest("/role_inferences", role_inferences::openapi_router())
         .nest("/services", service::openapi_router())
