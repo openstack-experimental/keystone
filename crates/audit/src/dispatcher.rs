@@ -35,6 +35,11 @@ use crate::types::{CadfEvent, CadfEventPayload};
 
 type HmacSha256 = Hmac<Sha256>;
 
+/// Default capacity of the best-effort perimeter channel.
+pub const DEFAULT_PERIMETER_CHANNEL_CAPACITY: usize = 4096;
+/// Default capacity of the fail-closed critical channel.
+pub const DEFAULT_CRITICAL_CHANNEL_CAPACITY: usize = 256;
+
 /// Returned when the critical channel's receiver has been dropped.
 #[derive(Debug, thiserror::Error)]
 #[error("audit critical channel is dead")]
@@ -60,6 +65,7 @@ pub struct AuditDispatcher {
     pub(crate) postaudit_dropped_count: Arc<AtomicU64>,
     pub(crate) events_total: Arc<AtomicU64>,
     pub(crate) spool_bytes: Arc<AtomicU64>,
+    pub(crate) spool_retention_deleted: Arc<AtomicU64>,
     /// When `false` every dispatch is a successful no-op.
     enabled: bool,
 }
@@ -112,8 +118,30 @@ impl AuditDispatcher {
         hmac_key: Arc<[u8]>,
         hmac_key_version: u64,
     ) -> (Arc<Self>, AuditChannelReceivers) {
-        let (perimeter_tx, perimeter_rx) = mpsc::channel(4096);
-        let (critical_tx, critical_rx) = mpsc::channel(256);
+        Self::with_capacities(
+            node_id,
+            boot_session_id,
+            hmac_key,
+            hmac_key_version,
+            DEFAULT_PERIMETER_CHANNEL_CAPACITY,
+            DEFAULT_CRITICAL_CHANNEL_CAPACITY,
+        )
+    }
+
+    /// Like [`AuditDispatcher::new`] with explicit channel capacities.
+    ///
+    /// A capacity of `0` is raised to `1` (a Tokio channel needs at least one
+    /// slot).
+    pub fn with_capacities(
+        node_id: impl Into<Arc<str>>,
+        boot_session_id: String,
+        hmac_key: Arc<[u8]>,
+        hmac_key_version: u64,
+        perimeter_capacity: usize,
+        critical_capacity: usize,
+    ) -> (Arc<Self>, AuditChannelReceivers) {
+        let (perimeter_tx, perimeter_rx) = mpsc::channel(perimeter_capacity.max(1));
+        let (critical_tx, critical_rx) = mpsc::channel(critical_capacity.max(1));
         let dispatcher = Arc::new(Self {
             perimeter_sender: perimeter_tx,
             critical_sender: critical_tx,
@@ -127,6 +155,7 @@ impl AuditDispatcher {
             postaudit_dropped_count: Arc::new(AtomicU64::new(0)),
             events_total: Arc::new(AtomicU64::new(0)),
             spool_bytes: Arc::new(AtomicU64::new(0)),
+            spool_retention_deleted: Arc::new(AtomicU64::new(0)),
             enabled: true,
         });
         let receivers = AuditChannelReceivers {
@@ -252,6 +281,16 @@ impl AuditDispatcher {
         Arc::clone(&self.spool_bytes)
     }
 
+    /// Sealed segments deleted by the spool size/age/count limits.
+    pub fn spool_retention_deleted(&self) -> u64 {
+        self.spool_retention_deleted.load(Ordering::Relaxed)
+    }
+
+    /// Shared handle the spool writer increments on retention deletions.
+    pub fn spool_retention_deleted_handle(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.spool_retention_deleted)
+    }
+
     pub fn events_total(&self) -> u64 {
         self.events_total.load(Ordering::Relaxed)
     }
@@ -342,6 +381,18 @@ mod tests {
         let key: Arc<[u8]> = Arc::from(b"test-key-32-bytes-0123456789abcd".as_slice());
         let (d, _rx) = AuditDispatcher::new("node-1", Uuid::new_v4().to_string(), key, 1);
         d
+    }
+
+    #[test]
+    fn channel_capacities_are_configurable() {
+        let key: Arc<[u8]> = Arc::from(b"test-key-32-bytes-0123456789abcd".as_slice());
+        let (d, _rx) =
+            AuditDispatcher::with_capacities("node-1", Uuid::new_v4().to_string(), key, 1, 2, 1);
+        for _ in 0..5 {
+            d.dispatch(make_payload(&d).sign(&d));
+        }
+        // Two fit in the perimeter channel; the other three are dropped.
+        assert_eq!(d.dropped_count(), 3);
     }
 
     #[tokio::test]

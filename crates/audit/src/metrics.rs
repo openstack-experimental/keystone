@@ -29,6 +29,7 @@ use crate::AuditDispatcher;
 /// - `keystone_audit_postaudit_dropped_total`
 /// - `keystone_audit_events_total`
 /// - `keystone_audit_spool_bytes` (gauge)
+/// - `keystone_audit_spool_retention_deleted_total`
 pub fn format_prometheus_text(dispatcher: &AuditDispatcher) -> String {
     format!(
         "# HELP keystone_audit_dropped_total \
@@ -47,11 +48,16 @@ keystone_audit_events_total {total}\n\
 # HELP keystone_audit_spool_bytes \
 Bytes held on disk by the audit spool (live file plus sealed segments).\n\
 # TYPE keystone_audit_spool_bytes gauge\n\
-keystone_audit_spool_bytes {spool_bytes}\n",
+keystone_audit_spool_bytes {spool_bytes}\n\
+# HELP keystone_audit_spool_retention_deleted_total \
+Sealed spool segments deleted unacknowledged by the size, age or count limits.\n\
+# TYPE keystone_audit_spool_retention_deleted_total counter\n\
+keystone_audit_spool_retention_deleted_total {retention_deleted}\n",
         dropped = dispatcher.dropped_count(),
         postaudit = dispatcher.postaudit_dropped_count(),
         total = dispatcher.events_total(),
         spool_bytes = dispatcher.spool_bytes(),
+        retention_deleted = dispatcher.spool_retention_deleted(),
     )
 }
 
@@ -68,9 +74,9 @@ mod tests {
         assert!(text.contains("keystone_audit_events_total"));
         // Each metric has HELP and TYPE headers.
         assert!(text.contains("keystone_audit_spool_bytes"));
-        assert_eq!(text.matches("# HELP").count(), 4);
-        assert_eq!(text.matches("# TYPE").count(), 4);
-        assert_eq!(text.matches("counter").count(), 3);
+        assert_eq!(text.matches("# HELP").count(), 5);
+        assert_eq!(text.matches("# TYPE").count(), 5);
+        assert_eq!(text.matches("counter").count(), 4);
         assert_eq!(text.matches("gauge").count(), 1);
     }
 
@@ -82,5 +88,6 @@ mod tests {
         assert!(text.contains("keystone_audit_postaudit_dropped_total 0"));
         assert!(text.contains("keystone_audit_events_total 0"));
         assert!(text.contains("keystone_audit_spool_bytes 0"));
+        assert!(text.contains("keystone_audit_spool_retention_deleted_total 0"));
     }
 }
