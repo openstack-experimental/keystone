@@ -31,6 +31,7 @@ use sha2::Sha256;
 use tokio::sync::mpsc;
 use tracing::error;
 
+use crate::metrics::AuditMetrics;
 use crate::types::{CadfEvent, CadfEventPayload};
 
 type HmacSha256 = Hmac<Sha256>;
@@ -60,6 +61,7 @@ pub struct AuditDispatcher {
     pub(crate) postaudit_dropped_count: Arc<AtomicU64>,
     pub(crate) events_total: Arc<AtomicU64>,
     pub(crate) spool_bytes: Arc<AtomicU64>,
+    metrics: Arc<AuditMetrics>,
 }
 
 impl AuditDispatcher {
@@ -98,6 +100,7 @@ impl AuditDispatcher {
             postaudit_dropped_count: Arc::new(AtomicU64::new(0)),
             events_total: Arc::new(AtomicU64::new(0)),
             spool_bytes: Arc::new(AtomicU64::new(0)),
+            metrics: Arc::new(AuditMetrics::default()),
         });
         let receivers = AuditChannelReceivers {
             perimeter: perimeter_rx,
@@ -130,9 +133,10 @@ impl AuditDispatcher {
     ///
     /// Floor-rate logs: at least once per second, and on every 1024th drop.
     pub fn dispatch(&self, event: CadfEvent) {
-        self.events_total.fetch_add(1, Ordering::Relaxed);
         let cid = event.correlation_id().to_string();
-        if self.perimeter_sender.try_send(event).is_err() {
+        if self.perimeter_sender.try_send(event).is_ok() {
+            self.events_total.fetch_add(1, Ordering::Relaxed);
+        } else {
             let count = self.dropped_count.fetch_add(1, Ordering::Relaxed);
             let now_us = self.log_baseline.elapsed().as_micros() as u64;
             let should_log = count.is_multiple_of(1024)
@@ -150,11 +154,12 @@ impl AuditDispatcher {
 
     /// Fail-closed dispatch to the critical channel. Blocks until sent.
     pub async fn dispatch_critical(&self, event: CadfEvent) -> Result<(), AuditChannelDead> {
-        self.events_total.fetch_add(1, Ordering::Relaxed);
         self.critical_sender
             .send(event)
             .await
-            .map_err(|_| AuditChannelDead)
+            .map_err(|_| AuditChannelDead)?;
+        self.events_total.fetch_add(1, Ordering::Relaxed);
+        Ok(())
     }
 
     /// Rotate the HMAC key.
@@ -222,6 +227,25 @@ impl AuditDispatcher {
         Arc::clone(&self.spool_bytes)
     }
 
+    /// Counters maintained by the spool writer, verifier and shipper.
+    pub fn metrics(&self) -> &Arc<AuditMetrics> {
+        &self.metrics
+    }
+
+    /// Version of the HMAC key currently signing events.
+    pub fn hmac_key_version(&self) -> u64 {
+        self.hmac_key_and_version.load().1
+    }
+
+    /// Events currently queued in the `(perimeter, critical)` channels.
+    pub fn channel_depths(&self) -> (usize, usize) {
+        (
+            self.perimeter_sender.max_capacity() - self.perimeter_sender.capacity(),
+            self.critical_sender.max_capacity() - self.critical_sender.capacity(),
+        )
+    }
+
+    /// Events accepted into a channel (drops excluded).
     pub fn events_total(&self) -> u64 {
         self.events_total.load(Ordering::Relaxed)
     }

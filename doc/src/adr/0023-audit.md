@@ -557,7 +557,29 @@ startup: `state.event_dispatcher.subscribe_audit(CadfAuditHook).await`.
 
 ## Observability
 
-`dropped_count` / `postaudit_dropped_count` exported as Prometheus gauges:
+The audit counters are exported as Prometheus **counters** (not gauges), next
+to gauges for the queue depth, spool size and signing key version, using the
+shared `openstack-keystone-metrics` primitives (ADR 0031):
+
+| Metric | Type | Meaning |
+| --- | --- | --- |
+| `keystone_audit_events_total` | counter | Events accepted into a channel (drops excluded) |
+| `keystone_audit_dropped_total` | counter | Perimeter events dropped because the channel was full |
+| `keystone_audit_postaudit_dropped_total` | counter | Post-audit outcomes that could not be recorded |
+| `keystone_audit_channel_depth{channel}` | gauge | Events queued for the spool writer (`perimeter`, `critical`) |
+| `keystone_audit_hmac_key_version` | gauge | HMAC key version currently signing events |
+| `keystone_audit_spool_bytes` | gauge | Live spool plus sealed segments on disk |
+| `keystone_audit_spool_write_failures_total` | counter | Events the writer failed to append (lost) |
+| `keystone_audit_spool_quarantined_total` | counter | Segments quarantined for tampered or unparsable lines |
+| `keystone_audit_spool_verified_total{result}` | counter | Lines checked at startup (`verified`, `invalid`) |
+| `keystone_audit_shipped_events_total{result}` | counter | Events handed to the sink (`shipped`, `skipped`) |
+| `keystone_audit_sink_errors_total` | counter | Failed batch deliveries to the sink |
+
+Offered load on the perimeter channel is `events + dropped`, so the drop ratio
+is `dropped / (events + dropped)`. The rules below live in
+`deploy/prometheus/alert_rules.yaml`, together with alerts for spool write
+failures, quarantined segments, a failing sink and a backed-up critical
+channel:
 
 ```yaml
 groups:
@@ -567,7 +589,7 @@ groups:
         expr: |
           rate(keystone_audit_dropped_total[5m]) > 100 and
           rate(keystone_audit_dropped_total[5m]) /
-          rate(keystone_audit_events_total[5m]) > 0.05
+          (rate(keystone_audit_events_total[5m]) + rate(keystone_audit_dropped_total[5m])) > 0.05
         for: 2m
         labels: { severity: critical }
         annotations:
