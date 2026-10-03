@@ -109,6 +109,52 @@ fn load_or_generate_kek(kek_file: &Path) -> Result<SecretBox<Vec<u8>>, Report> {
     Ok(SecretBox::new(Box::new(bytes)))
 }
 
+/// Build the syslog sink from its `[audit] sink` options.
+#[cfg(feature = "audit-syslog")]
+fn build_syslog_sink(
+    endpoint: String,
+    tls: bool,
+    ca_file: Option<std::path::PathBuf>,
+    app_name: String,
+    connect_timeout_secs: u64,
+    write_timeout_secs: u64,
+    node_id: &str,
+) -> Result<Arc<dyn AuditSink>, Report> {
+    use openstack_keystone_audit::{SyslogSink, SyslogSinkConfig};
+    if !tls {
+        warn!(
+            "audit syslog sink {endpoint} runs without TLS: audit records cross the network \
+             in clear text and can be read or altered in transit"
+        );
+    }
+    let mut cfg = SyslogSinkConfig::new(endpoint, node_id);
+    cfg.tls = tls;
+    cfg.ca_file = ca_file;
+    cfg.app_name = app_name;
+    cfg.connect_timeout = Duration::from_secs(connect_timeout_secs);
+    cfg.write_timeout = Duration::from_secs(write_timeout_secs);
+    let sink = SyslogSink::new(cfg).wrap_err("invalid audit syslog sink configuration")?;
+    Ok(Arc::new(sink))
+}
+
+/// Without the `audit-syslog` feature the sink is unavailable; refuse to
+/// start rather than silently accumulating an unshipped spool.
+#[cfg(not(feature = "audit-syslog"))]
+fn build_syslog_sink(
+    _endpoint: String,
+    _tls: bool,
+    _ca_file: Option<std::path::PathBuf>,
+    _app_name: String,
+    _connect_timeout_secs: u64,
+    _write_timeout_secs: u64,
+    _node_id: &str,
+) -> Result<Arc<dyn AuditSink>, Report> {
+    Err(eyre::eyre!(
+        "[audit] sink type \"syslog\" requires Keystone to be built with the \
+         `audit-syslog` feature"
+    ))
+}
+
 /// Load or generate the persisted audit HMAC key-encryption-key (KEK),
 /// derive the per-node signing key, build the `AuditDispatcher`, seal the
 /// spool left by the previous run, spawn the single spool writer, and verify
@@ -202,6 +248,22 @@ pub async fn init(
     let sink: Option<Arc<dyn AuditSink>> = match audit_cfg.sink {
         AuditSinkConfig::None => None,
         AuditSinkConfig::Stdout => Some(Arc::new(StdoutSink)),
+        AuditSinkConfig::Syslog {
+            endpoint,
+            tls,
+            ca_file,
+            app_name,
+            connect_timeout_secs,
+            write_timeout_secs,
+        } => Some(build_syslog_sink(
+            endpoint,
+            tls,
+            ca_file,
+            app_name,
+            connect_timeout_secs,
+            write_timeout_secs,
+            node_id.as_str(),
+        )?),
     };
     // A zero interval or backoff would turn the shipper into a busy loop
     // against a failing sink, so each is raised to one second and the

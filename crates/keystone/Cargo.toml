@@ -130,6 +130,8 @@ url.workspace = true
 [features]
 default = []
 openfga = ["dep:openstack-keystone-assignment-driver-openfga"]
+# RFC 5424 syslog audit sink (`[audit] sink = { type = "syslog", .. }`).
+audit-syslog = ["openstack-keystone-audit/syslog"]
 
 [lints]
 workspace = true

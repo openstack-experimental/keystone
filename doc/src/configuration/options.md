@@ -113,6 +113,33 @@ spool rotates. A segment deleted by a limit was never acknowledged by a sink:
 each deletion is logged at `ERROR` and counted in
 `keystone_audit_spool_retention_deleted_total`.
 
+Audit sink (`[audit] sink`): sealed spool segments are shipped to the sink and
+deleted only after the sink has accepted every event.
+
+| `type` | Description |
+| --- | --- |
+| `none` (default) | No sink; segments stay in `spool_dir` for an external shipper. |
+| `stdout` | One JSON line per event on standard output. |
+| `syslog` | RFC 5424 messages over TCP, optionally TLS. Requires building Keystone with the `audit-syslog` cargo feature. |
+
+The `syslog` sink takes `endpoint` (`host:port`, required), `tls` (default
+`false`), `ca_file` (PEM bundle; defaults to the system trust store),
+`app_name` (default `keystone`), `connect_timeout_secs` (default `10`) and
+`write_timeout_secs` (default `30`):
+
+```toml
+[audit]
+sink = { type = "syslog", endpoint = "siem.example.com:6514", tls = true, ca_file = "/etc/keystone/siem-ca.pem" }
+```
+
+Each message carries the signed CADF JSON as its `MSG` and is framed with octet
+counting (RFC 6587), so the receiver can verify the HMAC as it would from the
+spool. Delivery is at-least-once: a failed or timed-out batch is retried with
+backoff and the segment is kept until delivery succeeds, so receivers should
+deduplicate on the event `id`. TCP has no application acknowledgement; a batch
+counts as delivered once it is written and flushed to the peer. If Keystone was
+built without `audit-syslog`, configuring this sink makes startup fail.
+
 See [Audit trail](../admin/features/audit.md).
 
 See [Dynamic authentication plugin operations](../admin/features/auth-plugins.md).
