@@ -105,7 +105,7 @@ enum ShipOutcome {
     Acked,
     /// The segment vanished (retention deleted it); nothing to do.
     Gone,
-    /// Delivered, but some lines were unparseable; segment quarantined.
+    /// Delivered, but some lines were unparsable; segment quarantined.
     Quarantined,
 }
 
@@ -144,7 +144,7 @@ async fn ship_segment(
             match serde_json::from_str::<CadfEvent>(&line) {
                 Ok(event) => batch.push(event),
                 Err(e) => {
-                    warn!(segment = %path.display(), error = %e, "unparseable audit spool line");
+                    warn!(segment = %path.display(), error = %e, "unparsable audit spool line");
                     skipped += 1;
                 }
             }
@@ -162,7 +162,7 @@ async fn ship_segment(
     if skipped > 0 {
         quarantine_segment(path)?;
         spool_bytes.fetch_sub(size, Ordering::Relaxed);
-        warn!(segment = %path.display(), shipped, skipped, "segment shipped with unparseable lines and quarantined");
+        warn!(segment = %path.display(), shipped, skipped, "segment shipped with unparsable lines and quarantined");
         return Ok(ShipOutcome::Quarantined);
     }
 
@@ -368,7 +368,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unparseable_lines_quarantine_the_segment() {
+    async fn unparsable_lines_quarantine_the_segment() {
         let dir = tempdir().unwrap();
         let events: Vec<_> = (0..2).map(event).collect();
         let mut l = lines(&events);
