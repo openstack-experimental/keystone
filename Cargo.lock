@@ -4972,6 +4972,7 @@ dependencies = [
  "openstack-keystone-k8s-auth-driver-raft",
  "openstack-keystone-k8s-auth-driver-sql",
  "openstack-keystone-key-repository",
+ "openstack-keystone-limit-driver-sql",
  "openstack-keystone-mapping-driver-raft",
  "openstack-keystone-metrics",
  "openstack-keystone-oauth2-client-driver-raft",
@@ -5589,6 +5590,21 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "openstack-keystone-limit-driver-sql"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "inventory",
+ "openstack-keystone-core",
+ "openstack-keystone-core-types",
+ "sea-orm",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
