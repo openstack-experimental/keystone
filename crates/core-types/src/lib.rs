@@ -33,6 +33,7 @@ pub mod federation;
 pub mod identity;
 pub mod idmapping;
 pub mod k8s_auth;
+pub mod limit;
 pub mod mapping;
 pub mod oauth2_client;
 pub mod oauth2_key;

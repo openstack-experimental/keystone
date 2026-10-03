@@ -138,6 +138,14 @@ pub enum EventPayload {
         id: String,
     },
 
+    // Limits
+    Limit {
+        id: String,
+    },
+    RegisteredLimit {
+        id: String,
+    },
+
     // Token
     TokenRestriction {
         id: String,

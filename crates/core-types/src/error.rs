@@ -28,6 +28,7 @@ use crate::federation::FederationProviderError;
 use crate::identity::IdentityProviderError;
 use crate::idmapping::IdMappingProviderError;
 use crate::k8s_auth::K8sAuthProviderError;
+use crate::limit::LimitProviderError;
 use crate::mapping::MappingProviderError;
 use crate::oauth2_client::Oauth2ClientProviderError;
 use crate::oauth2_key::Oauth2KeyProviderError;
@@ -101,6 +102,14 @@ pub enum KeystoneError {
         /// The source of the error.
         #[from]
         source: AuthenticationError,
+    },
+
+    /// Limit provider.
+    #[error(transparent)]
+    LimitProvider {
+        /// The source of the error.
+        #[from]
+        source: LimitProviderError,
     },
 
     /// Catalog provider.
