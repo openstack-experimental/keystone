@@ -58,6 +58,7 @@ test_admin_allowed_the_assignment_group if {
 		"credentials": {"roles": [], "is_admin": true},
 		"target": {"domain_id": "d1", "group": "assignment"},
 	}
+
 	# system-scoped `admin`
 	delete.allow with input as {
 		"credentials": {"roles": ["admin"], "system": "all"},

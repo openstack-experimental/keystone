@@ -54,6 +54,7 @@ test_admin_allowed_the_assignment_group if {
 		"credentials": {"roles": [], "is_admin": true},
 		"target": {"domain_id": "d1", "config": {"assignment": {"driver": "openfga"}}},
 	}
+
 	# system-scoped `admin`
 	create.allow with input as {
 		"credentials": {"roles": ["admin"], "system": "all"},
