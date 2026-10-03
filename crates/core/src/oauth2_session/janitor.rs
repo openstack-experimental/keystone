@@ -47,7 +47,9 @@ use chrono::Utc;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use openstack_keystone_audit::{AuditDispatcher, CadfEventPayload, Initiator, Observer, Target};
+use openstack_keystone_audit::{
+    AuditDispatcher, CadfEventPayload, Initiator, Observer, OutcomeReason, Target,
+};
 
 use crate::keystone::ServiceState;
 use crate::oauth2_session::Oauth2SessionProviderError;
@@ -163,14 +165,13 @@ fn emit_maintenance_event(dispatcher: &Arc<AuditDispatcher>, report: &JanitorRep
     let node_id = dispatcher.node_id().to_string();
     let event_id = format!("{node_id}:{}", Uuid::new_v4());
     let correlation_id = format!("janitor:{}", Uuid::new_v4());
-    let initiator = Initiator::new("oauth2_session_janitor".to_string(), None, None, None);
-    let counts = report
+    let initiator = Initiator::system("oauth2_session_janitor");
+    let counts: Vec<(&str, u64)> = report
         .purged_by_kind
         .iter()
-        .map(|(kind, count)| format!("{kind}={count}"))
-        .chain(std::iter::once(format!("errors={}", report.errors)))
-        .collect::<Vec<_>>()
-        .join(",");
+        .map(|(kind, count)| (kind.as_str(), *count as u64))
+        .chain(std::iter::once(("errors", report.errors as u64)))
+        .collect();
     let outcome = if report.errors == 0 {
         "success"
     } else if report.total_purged() > 0 {
@@ -186,7 +187,7 @@ fn emit_maintenance_event(dispatcher: &Arc<AuditDispatcher>, report: &JanitorRep
         Utc::now().to_rfc3339(),
         "purge_expired_sessions".to_string(),
         outcome.to_string(),
-        Some(counts),
+        Some(OutcomeReason::counts(&counts)),
         initiator,
         Target {
             id: node_id.clone(),

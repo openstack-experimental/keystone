@@ -37,6 +37,8 @@ use openstack_keystone_core_types::mapping::auth::MappingAuthRequest;
 use openstack_keystone_core_types::mapping::resolution::IdentitySource;
 
 use crate::auth::ExecutionContext;
+use openstack_keystone_audit::OutcomeReason;
+
 use crate::auth_plugin::{emit_wasm_plugin_audit, emit_wasm_route_audit};
 use crate::keystone::ServiceState;
 use crate::net::resolve_client_ip;
@@ -55,6 +57,11 @@ pub struct WasmPluginAuthRequest {
     /// Raw public-interface TCP peer address. Internal/admin callers pass
     /// `None` even when their listener records a peer for audit logging.
     pub peer_ip: Option<std::net::IpAddr>,
+    /// The request's server-generated correlation ID (`x-openstack-request-id`),
+    /// so the plugin audit records can be joined with the perimeter event of
+    /// the same login. `None` for callers without a request (tests, internal
+    /// dispatch); the record then gets a fresh ID.
+    pub correlation_id: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -90,6 +97,7 @@ pub async fn authenticate_via_wasm_plugin(
     plugin_name: &str,
     request: WasmPluginAuthRequest,
 ) -> Result<AuthenticationResult, WasmPluginAuthError> {
+    let correlation_id = request.correlation_id.clone();
     let registry = state.auth_plugin_registry.read().await.clone();
     if !registry.contains(plugin_name) {
         return Err(WasmPluginAuthError::NotFound);
@@ -144,10 +152,11 @@ pub async fn authenticate_via_wasm_plugin(
     if let Err((bound, retry_after)) = limiter.check_per_source(remote_addr.as_deref()) {
         let _ = emit_wasm_plugin_audit(
             state,
+            correlation_id.as_deref(),
             plugin_name,
             "authenticate",
             "rate_limited",
-            Some(bound.as_str().to_string()),
+            Some(OutcomeReason::literal(bound.as_str())),
         )
         .await;
         return Err(WasmPluginAuthError::RateLimited(
@@ -158,10 +167,11 @@ pub async fn authenticate_via_wasm_plugin(
     if let Err((bound, retry_after)) = limiter.check_per_plugin() {
         let _ = emit_wasm_plugin_audit(
             state,
+            correlation_id.as_deref(),
             plugin_name,
             "authenticate",
             "rate_limited",
-            Some(bound.as_str().to_string()),
+            Some(OutcomeReason::literal(bound.as_str())),
         )
         .await;
         return Err(WasmPluginAuthError::RateLimited(
@@ -174,10 +184,11 @@ pub async fn authenticate_via_wasm_plugin(
         Err((bound, retry_after)) => {
             let _ = emit_wasm_plugin_audit(
                 state,
+                correlation_id.as_deref(),
                 plugin_name,
                 "authenticate",
                 "rate_limited",
-                Some(bound.as_str().to_string()),
+                Some(OutcomeReason::literal(bound.as_str())),
             )
             .await;
             return Err(WasmPluginAuthError::RateLimited(
@@ -243,10 +254,11 @@ pub async fn authenticate_via_wasm_plugin(
         Err(e) => {
             let _ = emit_wasm_plugin_audit(
                 state,
+                correlation_id.as_deref(),
                 plugin_name,
                 "authenticate",
                 "failure",
-                Some(e.to_string()),
+                Some(OutcomeReason::literal("InvokeFailed")),
             )
             .await;
             return Err(WasmPluginAuthError::InvokeFailed(e.to_string()));
@@ -259,10 +271,11 @@ pub async fn authenticate_via_wasm_plugin(
             Err(e) => {
                 let _ = emit_wasm_plugin_audit(
                     state,
+                    correlation_id.as_deref(),
                     plugin_name,
                     "authenticate",
                     "failure",
-                    Some(e.to_string()),
+                    Some(OutcomeReason::literal("MalformedResponse")),
                 )
                 .await;
                 return Err(WasmPluginAuthError::MalformedResponse(e.to_string()));
@@ -273,10 +286,11 @@ pub async fn authenticate_via_wasm_plugin(
         AuthPluginResponse::Deny { reason } => {
             let _ = emit_wasm_plugin_audit(
                 state,
+                correlation_id.as_deref(),
                 plugin_name,
                 "authenticate",
                 "failure",
-                Some(reason.clone()),
+                Some(OutcomeReason::literal("PluginDenied")),
             )
             .await;
             return Err(WasmPluginAuthError::Denied(reason));
@@ -299,10 +313,11 @@ pub async fn authenticate_via_wasm_plugin(
         // denial (ADR §4 "Identity Binding" step 3).
         let _ = emit_wasm_plugin_audit(
             state,
+            correlation_id.as_deref(),
             plugin_name,
             "authenticate",
             "suspicious",
-            Some("resolved_identity handle failed verification".to_string()),
+            Some(OutcomeReason::literal("InvalidHandle")),
         )
         .await;
         return Err(WasmPluginAuthError::InvalidHandle);
@@ -319,7 +334,15 @@ pub async fn authenticate_via_wasm_plugin(
             WasmPluginAuthError::Identity("resolved user no longer exists".to_string())
         })?;
 
-    let _ = emit_wasm_plugin_audit(state, plugin_name, "authenticate", "success", None).await;
+    let _ = emit_wasm_plugin_audit(
+        state,
+        correlation_id.as_deref(),
+        plugin_name,
+        "authenticate",
+        "success",
+        None,
+    )
+    .await;
 
     let result = AuthenticationResultBuilder::default()
         .context(AuthenticationContext::WasmPlugin {
@@ -421,6 +444,7 @@ pub async fn authenticate_via_wasm_mapping_plugin(
     plugin_name: &str,
     request: WasmPluginAuthRequest,
 ) -> Result<AuthenticationResult, WasmPluginAuthError> {
+    let correlation_id = request.correlation_id.clone();
     let registry = state.auth_plugin_registry.read().await.clone();
     if !registry.contains(plugin_name) {
         return Err(WasmPluginAuthError::NotFound);
@@ -468,10 +492,11 @@ pub async fn authenticate_via_wasm_mapping_plugin(
     if let Err((bound, retry_after)) = limiter.check_per_source(remote_addr.as_deref()) {
         let _ = emit_wasm_plugin_audit(
             state,
+            correlation_id.as_deref(),
             plugin_name,
             "mapping",
             "rate_limited",
-            Some(bound.as_str().to_string()),
+            Some(OutcomeReason::literal(bound.as_str())),
         )
         .await;
         return Err(WasmPluginAuthError::RateLimited(
@@ -482,10 +507,11 @@ pub async fn authenticate_via_wasm_mapping_plugin(
     if let Err((bound, retry_after)) = limiter.check_per_plugin() {
         let _ = emit_wasm_plugin_audit(
             state,
+            correlation_id.as_deref(),
             plugin_name,
             "mapping",
             "rate_limited",
-            Some(bound.as_str().to_string()),
+            Some(OutcomeReason::literal(bound.as_str())),
         )
         .await;
         return Err(WasmPluginAuthError::RateLimited(
@@ -498,10 +524,11 @@ pub async fn authenticate_via_wasm_mapping_plugin(
         Err((bound, retry_after)) => {
             let _ = emit_wasm_plugin_audit(
                 state,
+                correlation_id.as_deref(),
                 plugin_name,
                 "mapping",
                 "rate_limited",
-                Some(bound.as_str().to_string()),
+                Some(OutcomeReason::literal(bound.as_str())),
             )
             .await;
             return Err(WasmPluginAuthError::RateLimited(
@@ -558,10 +585,11 @@ pub async fn authenticate_via_wasm_mapping_plugin(
         Err(e) => {
             let _ = emit_wasm_plugin_audit(
                 state,
+                correlation_id.as_deref(),
                 plugin_name,
                 "mapping",
                 "failure",
-                Some(e.to_string()),
+                Some(OutcomeReason::literal("InvokeFailed")),
             )
             .await;
             return Err(WasmPluginAuthError::InvokeFailed(e.to_string()));
@@ -575,10 +603,11 @@ pub async fn authenticate_via_wasm_mapping_plugin(
         Err(e) => {
             let _ = emit_wasm_plugin_audit(
                 state,
+                correlation_id.as_deref(),
                 plugin_name,
                 "mapping",
                 "failure",
-                Some(e.to_string()),
+                Some(OutcomeReason::literal("MalformedResponse")),
             )
             .await;
             return Err(WasmPluginAuthError::MalformedResponse(e.to_string()));
@@ -589,10 +618,11 @@ pub async fn authenticate_via_wasm_mapping_plugin(
         MappingResponse::Deny { reason } => {
             let _ = emit_wasm_plugin_audit(
                 state,
+                correlation_id.as_deref(),
                 plugin_name,
                 "mapping",
                 "failure",
-                Some(reason.clone()),
+                Some(OutcomeReason::literal("PluginDenied")),
             )
             .await;
             return Err(WasmPluginAuthError::Denied(reason));
@@ -628,15 +658,26 @@ pub async fn authenticate_via_wasm_mapping_plugin(
 
     match &result {
         Ok(_) => {
-            let _ = emit_wasm_plugin_audit(state, plugin_name, "mapping", "success", None).await;
+            let _ = emit_wasm_plugin_audit(
+                state,
+                correlation_id.as_deref(),
+                plugin_name,
+                "mapping",
+                "success",
+                None,
+            )
+            .await;
         }
         Err(e) => {
             let _ = emit_wasm_plugin_audit(
                 state,
+                correlation_id.as_deref(),
                 plugin_name,
                 "mapping",
                 "failure",
-                Some(e.to_string()),
+                Some(OutcomeReason::variant(
+                    &crate::events::AuditReason::audit_reason(e),
+                )),
             )
             .await;
         }
@@ -676,6 +717,7 @@ pub async fn route_via_wasm_plugin(
     payloads: HashMap<String, serde_json::Value>,
     raw_headers: HashMap<String, String>,
     peer_ip: Option<std::net::IpAddr>,
+    correlation_id: Option<&str>,
 ) -> Result<RouteDecision, WasmPluginAuthError> {
     let registry = state.auth_plugin_registry.read().await.clone();
     if !registry.contains(plugin_name) {
@@ -725,11 +767,12 @@ pub async fn route_via_wasm_plugin(
     if let Err((bound, retry_after)) = limiter.check_per_source(remote_addr.as_deref()) {
         let _ = emit_wasm_route_audit(
             state,
+            correlation_id,
             plugin_name,
             methods,
             "rate_limited",
             None,
-            Some(bound.as_str().to_string()),
+            Some(OutcomeReason::literal(bound.as_str())),
         )
         .await;
         return Err(WasmPluginAuthError::RateLimited(
@@ -740,11 +783,12 @@ pub async fn route_via_wasm_plugin(
     if let Err((bound, retry_after)) = limiter.check_per_plugin() {
         let _ = emit_wasm_route_audit(
             state,
+            correlation_id,
             plugin_name,
             methods,
             "rate_limited",
             None,
-            Some(bound.as_str().to_string()),
+            Some(OutcomeReason::literal(bound.as_str())),
         )
         .await;
         return Err(WasmPluginAuthError::RateLimited(
@@ -757,11 +801,12 @@ pub async fn route_via_wasm_plugin(
         Err((bound, retry_after)) => {
             let _ = emit_wasm_route_audit(
                 state,
+                correlation_id,
                 plugin_name,
                 methods,
                 "rate_limited",
                 None,
-                Some(bound.as_str().to_string()),
+                Some(OutcomeReason::literal(bound.as_str())),
             )
             .await;
             return Err(WasmPluginAuthError::RateLimited(
@@ -818,11 +863,12 @@ pub async fn route_via_wasm_plugin(
         Err(e) => {
             let _ = emit_wasm_route_audit(
                 state,
+                correlation_id,
                 plugin_name,
                 methods,
                 "failure",
                 None,
-                Some(e.to_string()),
+                Some(OutcomeReason::literal("InvokeFailed")),
             )
             .await;
             return Err(WasmPluginAuthError::InvokeFailed(e.to_string()));
@@ -836,11 +882,12 @@ pub async fn route_via_wasm_plugin(
         Err(e) => {
             let _ = emit_wasm_route_audit(
                 state,
+                correlation_id,
                 plugin_name,
                 methods,
                 "failure",
                 None,
-                Some(e.to_string()),
+                Some(OutcomeReason::literal("MalformedResponse")),
             )
             .await;
             return Err(WasmPluginAuthError::MalformedResponse(e.to_string()));
@@ -849,8 +896,16 @@ pub async fn route_via_wasm_plugin(
 
     match response {
         RouteResponse::Passthrough => {
-            let _ =
-                emit_wasm_route_audit(state, plugin_name, methods, "passthrough", None, None).await;
+            let _ = emit_wasm_route_audit(
+                state,
+                correlation_id,
+                plugin_name,
+                methods,
+                "passthrough",
+                None,
+                None,
+            )
+            .await;
             Ok(RouteDecision {
                 target_method: None,
                 payload: None,
@@ -863,11 +918,12 @@ pub async fn route_via_wasm_plugin(
             if !config.route_targets.iter().any(|t| t == &target_method) {
                 let _ = emit_wasm_route_audit(
                     state,
+                    correlation_id,
                     plugin_name,
                     methods,
                     "failure",
                     Some(&target_method),
-                    Some("target_method outside configured route_targets".to_string()),
+                    Some(OutcomeReason::literal("TargetNotAllowed")),
                 )
                 .await;
                 return Err(WasmPluginAuthError::MalformedResponse(format!(
@@ -876,6 +932,7 @@ pub async fn route_via_wasm_plugin(
             }
             let _ = emit_wasm_route_audit(
                 state,
+                correlation_id,
                 plugin_name,
                 methods,
                 "route",
@@ -891,11 +948,12 @@ pub async fn route_via_wasm_plugin(
         RouteResponse::Deny { reason } => {
             let _ = emit_wasm_route_audit(
                 state,
+                correlation_id,
                 plugin_name,
                 methods,
                 "deny",
                 None,
-                Some(reason.clone()),
+                Some(OutcomeReason::literal("PluginDenied")),
             )
             .await;
             Err(WasmPluginAuthError::Denied(reason))
@@ -1175,6 +1233,7 @@ mod acceptance_tests {
         let state = build_state(identity_mock, dpi_mock).await;
 
         let request = |external_id: &str| WasmPluginAuthRequest {
+            correlation_id: None,
             payload: serde_json::json!({"external_id": external_id}),
             raw_headers: HashMap::new(),
             peer_ip: None,
@@ -1219,6 +1278,7 @@ mod acceptance_tests {
             &state,
             "p",
             WasmPluginAuthRequest {
+                correlation_id: None,
                 payload: serde_json::json!({"external_id": "mallory", "bad_handle": true}),
                 raw_headers: HashMap::new(),
                 peer_ip: None,
@@ -1239,6 +1299,7 @@ mod acceptance_tests {
             &state,
             "p",
             WasmPluginAuthRequest {
+                correlation_id: None,
                 payload: serde_json::json!({"external_id": "denied-user", "deny": true}),
                 raw_headers: HashMap::new(),
                 peer_ip: None,
@@ -1277,6 +1338,7 @@ mod acceptance_tests {
 
     fn request(external_id: &str, peer_ip: Option<std::net::IpAddr>) -> WasmPluginAuthRequest {
         WasmPluginAuthRequest {
+            correlation_id: None,
             payload: serde_json::json!({"external_id": external_id}),
             raw_headers: HashMap::new(),
             peer_ip,
@@ -1677,6 +1739,7 @@ mod mapping_acceptance_tests {
 
     fn mapping_request(external_id: &str, deny: bool) -> WasmPluginAuthRequest {
         WasmPluginAuthRequest {
+            correlation_id: None,
             payload: serde_json::json!({"external_id": external_id, "deny": deny}),
             raw_headers: HashMap::new(),
             peer_ip: None,
@@ -1990,6 +2053,7 @@ mod route_acceptance_tests {
             appcred_payloads("some-other-shape"),
             HashMap::new(),
             None,
+            None,
         )
         .await
         .expect("passthrough should not error");
@@ -2006,6 +2070,7 @@ mod route_acceptance_tests {
             &["application_credential".to_string()],
             appcred_payloads("tf-abc123"),
             HashMap::new(),
+            None,
             None,
         )
         .await
@@ -2035,6 +2100,7 @@ mod route_acceptance_tests {
             appcred_payloads("tf-abc123"),
             HashMap::new(),
             None,
+            None,
         )
         .await
         .expect_err("an off-allowlist target must be rejected, not redirected");
@@ -2051,6 +2117,7 @@ mod route_acceptance_tests {
             appcred_payloads("deny-me"),
             HashMap::new(),
             None,
+            None,
         )
         .await
         .expect_err("a plugin Deny response must be rejected");
@@ -2064,6 +2131,7 @@ mod route_acceptance_tests {
             &state,
             "p",
             WasmPluginAuthRequest {
+                correlation_id: None,
                 payload: serde_json::json!({"external_id": "alice"}),
                 raw_headers: HashMap::new(),
                 peer_ip: None,
@@ -2084,6 +2152,7 @@ mod route_acceptance_tests {
             &["password".to_string()],
             HashMap::new(),
             HashMap::new(),
+            None,
             None,
         )
         .await

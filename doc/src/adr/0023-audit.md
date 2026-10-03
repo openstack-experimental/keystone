@@ -159,19 +159,27 @@ pub struct Target { pub id: String, pub type_uri: String }
 pub struct Observer { pub node_id: String, pub id: String }
 ```
 
-**VerifiedFernetToken** - Opaque wrapper only constructible post-verification.
-The `_score: NonZeroU32` constructor guard proves crypto validation passed.
+**Principal-based initiator** - There is no separate "verified token" type.
+After authentication succeeds, `build_initiator_from_principal()` derives the
+`Initiator` from the authentication result's `PrincipalInfo` (immutable
+authentication chain, never from token scope). A later scope or authorization
+failure is therefore attributed to the known principal, while a failure before
+authentication completes yields an all-`"unknown"` initiator. Internal
+(non-request) actors use the system convention `system:<component>` as the
+initiator id (e.g. `system:oauth2-key-hook`).
 
-```rust
-pub struct VerifiedFernetToken(FernetToken);
+**Outcome reasons** - `reason` is drawn from the closed `OutcomeReason`
+vocabulary (the sanitized error variant name or a static literal). Free-form
+error text, plugin-supplied deny messages and route details never enter a
+signed record; they are logged instead.
 
-impl VerifiedFernetToken {
-    pub(crate) fn from_verified(token: FernetToken,
-        _score: std::num::NonZeroU32) -> Self { Self(token) }
-    pub fn user_id(&self) -> &str { self.0.user_id() }
-    pub fn domain_id(&self) -> Option<&str> { self.0.domain_id() }
-}
-```
+**Request audit context** - A request-scoped middleware
+(`with_audit_request_context`) places the resolved client IP and the
+correlation id in a task-local `AuditRequestContext`. Perimeter and provider
+emitters read it to stamp `initiator.host.address` and `correlation_id`; a
+value set explicitly by a handler (e.g. the EC2 access key as `host.id`) wins.
+Host functions invoked inside a WASM guest may not see the task-local and then
+use a fresh correlation id.
 
 **ID sanitization** - Strips non-ASCII, caps at 64 chars. Accepts either
 UUID rendering Keystone actually produces: canonical hyphenated, or
@@ -297,8 +305,8 @@ Captures access attempts at the boundary.
    token. Extracts `Initiator` from fully resolved `ValidatedSecurityContext`,
    token parse failure: `outcome: "failure"`, `Initiator` is all `"unknown"` (no
    partial data from untrusted payload). On partial validation failure (token
-   parsed but policy/scope failed): uses `VerifiedFernetToken` from
-   `vsc.verified_token()` to extract sanitized initiator. For endpoints with
+   parsed but policy/scope failed): uses the authenticated principal
+   (`build_initiator_from_principal`) to extract the sanitized initiator. For endpoints with
    pre-auth identity signals (EC2 `access` key, federation `idp_id`), include
    non-PII identifiers as `initiator.host.id` — these don't require a
    validated context and don't risk PII leakage. The client network address
@@ -559,9 +567,10 @@ startup: `state.event_dispatcher.subscribe_audit(CadfAuditHook).await`.
   `Success`/`Failure` within 300s as `outcome: unknown` and triggers a warning
   alert. Loki query:
   `sum_over_time({app="keystone"} | cadf_outcome="attempt" [10m]) -   sum_over_time({app="keystone"} | cadf_outcome=~"success|failure" [10m]) > 0`
-- **Verified Token Boundary:** `build_initiator_from_error()` accepts only
-  `VerifiedFernetToken` (constructible post-verification via `_score`). Partial
-  context failure = authorization issue, not crypto issue.
+- **Authenticated Principal Boundary:** the initiator of a post-authentication
+  failure comes only from the authentication result's principal
+  (`build_initiator_from_principal`). Partial context failure = authorization
+  issue, not crypto issue.
 - **Provider Error Sanitization:** `extract_provider_name` uses type-only
   dispatch (`is::<T>()`). No error string content used.
 

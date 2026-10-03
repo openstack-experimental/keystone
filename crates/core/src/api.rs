@@ -210,6 +210,44 @@ pub mod tests {
         policy_allow_see_other_domains: Option<bool>,
         config: Config,
     ) -> ServiceState {
+        mocked_state(
+            provider_builder,
+            policy_allow,
+            policy_allow_see_other_domains,
+            config,
+            AuditDispatcher::noop(),
+        )
+        .await
+    }
+
+    /// Like [`get_mocked_state`], but with a live audit dispatcher whose
+    /// channel receivers are returned, so a test can assert on the audit
+    /// records a handler emitted.
+    pub async fn get_mocked_state_with_audit(
+        provider_builder: ProviderBuilder,
+        policy_allow: bool,
+        config: Config,
+    ) -> (
+        ServiceState,
+        openstack_keystone_audit::AuditChannelReceivers,
+    ) {
+        let (dispatcher, receivers) = AuditDispatcher::new(
+            "test-node",
+            uuid::Uuid::new_v4().to_string(),
+            Arc::from(b"test-hmac-key-32-bytes-long!!!!".as_slice()),
+            0,
+        );
+        let state = mocked_state(provider_builder, policy_allow, None, config, dispatcher).await;
+        (state, receivers)
+    }
+
+    async fn mocked_state(
+        provider_builder: ProviderBuilder,
+        policy_allow: bool,
+        policy_allow_see_other_domains: Option<bool>,
+        config: Config,
+        audit_dispatcher: Arc<AuditDispatcher>,
+    ) -> ServiceState {
         let provider = provider_builder.build().unwrap();
 
         let mut policy_enforcer_mock = MockPolicy::default();
@@ -238,7 +276,7 @@ pub mod tests {
                 DatabaseConnection::default(),
                 provider,
                 Arc::new(policy_enforcer_mock),
-                AuditDispatcher::noop(),
+                audit_dispatcher,
                 None,
             )
             .await

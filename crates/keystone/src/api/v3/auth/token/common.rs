@@ -36,6 +36,7 @@ pub(super) async fn authenticate_request(
     req: &AuthRequest,
     headers: &axum::http::HeaderMap,
     peer_ip: Option<IpAddr>,
+    correlation_id: Option<&str>,
 ) -> Result<Vec<AuthenticationResult>, KeystoneApiError> {
     let raw_headers: HashMap<String, String> = headers
         .iter()
@@ -94,6 +95,7 @@ pub(super) async fn authenticate_request(
                 payloads,
                 raw_headers.clone(),
                 peer_ip,
+                correlation_id,
             )
             .await
             {
@@ -192,6 +194,7 @@ pub(super) async fn authenticate_request(
                 payload: payload.clone(),
                 raw_headers: raw_headers.clone(),
                 peer_ip,
+                correlation_id: correlation_id.map(str::to_string),
             };
             let dispatch_result = match plugin_mode {
                 Some(PluginMode::Mapping) => {
@@ -291,6 +294,7 @@ mod tests {
                 },
                 &axum::http::HeaderMap::new(),
                 None,
+                None
             )
             .await
             .unwrap()
@@ -350,6 +354,7 @@ mod tests {
                 },
                 &axum::http::HeaderMap::new(),
                 None,
+                None
             )
             .await
             .unwrap()
@@ -436,6 +441,7 @@ mod tests {
                 },
                 &axum::http::HeaderMap::new(),
                 None,
+                None
             )
             .await
             .unwrap()
@@ -508,6 +514,7 @@ mod tests {
             },
             &axum::http::HeaderMap::new(),
             None,
+            None,
         )
         .await;
 
@@ -533,6 +540,7 @@ mod tests {
                 },
             },
             &axum::http::HeaderMap::new(),
+            None,
             None,
         )
         .await;
@@ -819,6 +827,7 @@ mod route_dispatch_tests {
             },
             &axum::http::HeaderMap::new(),
             None,
+            None,
         )
         .await;
         assert!(matches!(
@@ -840,6 +849,7 @@ mod route_dispatch_tests {
             &state,
             &appcred_request("tf-alice"),
             &axum::http::HeaderMap::new(),
+            None,
             None,
         )
         .await
@@ -877,6 +887,7 @@ mod route_dispatch_tests {
             &appcred_request("tf-alice"),
             &axum::http::HeaderMap::new(),
             None,
+            None,
         )
         .await;
         assert!(matches!(
@@ -900,6 +911,7 @@ mod route_dispatch_tests {
             &state,
             &appcred_request("deny-me"),
             &axum::http::HeaderMap::new(),
+            None,
             None,
         )
         .await;
@@ -925,6 +937,7 @@ mod route_dispatch_tests {
             &state,
             &appcred_request("tf-bob"),
             &axum::http::HeaderMap::new(),
+            None,
             None,
         )
         .await

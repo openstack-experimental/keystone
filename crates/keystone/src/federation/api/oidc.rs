@@ -28,7 +28,7 @@ use crate::api::common::PeerAddr;
 use crate::api::error::KeystoneApiError;
 use crate::api::v4::auth::token::types::TokenResponse as KeystoneTokenResponse;
 use crate::audit::{
-    CorrelationId, build_initiator_unknown, emit_perimeter_authenticate_event, error_variant_name,
+    CorrelationId, build_initiator_unknown, emit_perimeter_authenticate_event, perimeter_outcome,
 };
 use crate::federation::api::error::OidcError;
 use crate::federation::api::types::*;
@@ -107,10 +107,7 @@ pub async fn callback(
         }
         None => build_initiator_unknown(),
     };
-    let (outcome, reason) = match &result {
-        Ok(_) => ("success", None),
-        Err(e) => ("failure", Some(error_variant_name(e))),
-    };
+    let (outcome, reason) = perimeter_outcome(&result);
     emit_perimeter_authenticate_event(&state.audit_dispatcher, &cid, initiator, outcome, reason);
     result
 }

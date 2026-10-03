@@ -22,6 +22,7 @@ use axum::{
 use serde_json::{Value, json};
 
 use openstack_keystone_api_types::v3::auth::token::{TokenBuilder, TokenResponse};
+use openstack_keystone_audit::sanitize::{HostKind, sanitize_initiator_host};
 use openstack_keystone_core::api::common::{get_authz_info, get_domain};
 use openstack_keystone_core::credential::ec2_signature::{validate_timestamp, verify_signature};
 use openstack_keystone_core_types::credential::{
@@ -35,7 +36,7 @@ use crate::api::v3::ec2tokens::types::Ec2TokenAuthRequest;
 use crate::api::{Catalog, CatalogService, error::KeystoneApiError};
 use crate::audit::{
     CorrelationId, build_initiator_from_vsc, build_initiator_unknown,
-    emit_perimeter_authenticate_event, error_variant_name,
+    emit_perimeter_authenticate_event, perimeter_outcome,
 };
 use crate::auth::*;
 use crate::common::TracedJson;
@@ -83,16 +84,19 @@ pub(super) async fn create(
         });
     }
 
+    // The EC2 `access` key is a pre-auth identity signal (ADR 0023
+    // §"Perimeter Auditing"): it is known before any lookup or signature
+    // check, so it is recorded in `Initiator.host.id` for every outcome. Only
+    // a well-formed access key survives sanitization.
+    let host_id = sanitize_initiator_host(&req.credentials.access, HostKind::Ec2AccessKey);
     let result = create_inner(&state, req).await;
     let initiator = result
         .as_ref()
         .ok()
         .map(|(vsc, _)| build_initiator_from_vsc(vsc))
         .unwrap_or_else(build_initiator_unknown);
-    let (outcome, reason) = match &result {
-        Ok(_) => ("success", None),
-        Err(e) => ("failure", Some(error_variant_name(e))),
-    };
+    let initiator = initiator.with_host_id(host_id);
+    let (outcome, reason) = perimeter_outcome(&result);
     emit_perimeter_authenticate_event(&state.audit_dispatcher, &cid, initiator, outcome, reason);
     result.map(|(_, response)| response)
 }
@@ -820,5 +824,70 @@ mod tests {
                 StatusCode::FORBIDDEN
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_failure_event_carries_ec2_access_key_and_client_address() {
+        use openstack_keystone_core::audit_context::AuditRequestContext;
+
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock
+            .expect_get_credential_by_ec2_access()
+            .returning(|_, _| Ok(None));
+        let provider = Provider::mocked_builder().mock_credential(credential_mock);
+        let (state, mut receivers) =
+            openstack_keystone_core::api::tests::get_mocked_state_with_audit(
+                provider,
+                true,
+                openstack_keystone_config::Config::default(),
+            )
+            .await;
+
+        let mut body = signed_body(&uuid::Uuid::new_v4().simple().to_string(), None);
+        body["credentials"]["access"] = json!("AKIAABCDEFGHIJKLMNOP");
+        let response = AuditRequestContext {
+            client_ip: Some("203.0.113.9".parse().unwrap()),
+            correlation_id: None,
+        }
+        .scope(post(state, body))
+        .await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let event = receivers
+            .perimeter
+            .try_recv()
+            .expect("perimeter audit event should have been emitted");
+        let initiator = event.payload().initiator();
+        assert_eq!(initiator.id(), "unknown");
+        let host = initiator.host().expect("host");
+        assert_eq!(host.id(), Some("AKIAABCDEFGHIJKLMNOP"));
+        assert_eq!(host.address(), Some("203.0.113.9"));
+    }
+
+    #[tokio::test]
+    async fn test_malformed_access_key_is_not_recorded_as_host_id() {
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock
+            .expect_get_credential_by_ec2_access()
+            .returning(|_, _| Ok(None));
+        let provider = Provider::mocked_builder().mock_credential(credential_mock);
+        let (state, mut receivers) =
+            openstack_keystone_core::api::tests::get_mocked_state_with_audit(
+                provider,
+                true,
+                openstack_keystone_config::Config::default(),
+            )
+            .await;
+
+        // `AKIA123` is not a well-formed access key: attacker-controlled
+        // text must not reach the record.
+        let _ = post(
+            state,
+            signed_body(&uuid::Uuid::new_v4().simple().to_string(), None),
+        )
+        .await;
+
+        let event = receivers.perimeter.try_recv().expect("event");
+        assert!(event.payload().initiator().host().is_none());
     }
 }

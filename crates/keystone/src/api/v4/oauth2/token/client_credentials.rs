@@ -19,6 +19,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use governor::clock::Clock as _;
+use openstack_keystone_audit::OutcomeReason;
 
 use openstack_keystone_core::oauth2_client::hydrate_client_credentials_context;
 use openstack_keystone_core::oauth2_client::{build_access_token_claims, crypto};
@@ -121,7 +122,7 @@ pub(super) async fn handle_client_credentials_grant(
             correlation_id,
             build_initiator_unknown(),
             "failure",
-            Some("client authentication failed".to_string()),
+            Some(OutcomeReason::literal("ClientAuthenticationFailed")),
         );
         return Err(Oauth2TokenError::invalid_client(
             "client authentication failed",
