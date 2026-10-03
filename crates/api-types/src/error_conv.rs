@@ -34,6 +34,7 @@ use openstack_keystone_core_types::domain_config::DomainConfigProviderError;
 use openstack_keystone_core_types::error::BuilderError;
 use openstack_keystone_core_types::error::KeystoneError;
 use openstack_keystone_core_types::identity::IdentityProviderError;
+use openstack_keystone_core_types::limit::LimitProviderError;
 use openstack_keystone_core_types::mapping::MappingProviderError;
 use openstack_keystone_core_types::oauth2_client::Oauth2ClientProviderError;
 use openstack_keystone_core_types::oauth2_key::Oauth2KeyProviderError;
@@ -290,6 +291,29 @@ impl From<CatalogProviderError> for KeystoneApiError {
                 resource: "region".into(),
                 identifier: x,
             },
+            other => Self::InternalError(other.to_string()),
+        }
+    }
+}
+
+impl From<LimitProviderError> for KeystoneApiError {
+    fn from(value: LimitProviderError) -> Self {
+        match value {
+            ref err @ LimitProviderError::Conflict(..) => Self::Conflict(err.to_string()),
+            LimitProviderError::LimitNotFound(x) => Self::NotFound {
+                resource: "limit".into(),
+                identifier: x,
+            },
+            LimitProviderError::RegisteredLimitNotFound(x) => Self::NotFound {
+                resource: "registered_limit".into(),
+                identifier: x,
+            },
+            ref err @ (LimitProviderError::InvalidReference(..)
+            | LimitProviderError::Validation { .. }) => Self::BadRequest(err.to_string()),
+            // Python Keystone answers these with 403.
+            err @ (LimitProviderError::InvalidLimit(..)
+            | LimitProviderError::NoLimitReference(..)
+            | LimitProviderError::RegisteredLimitInUse(..)) => Self::forbidden(err),
             other => Self::InternalError(other.to_string()),
         }
     }
@@ -745,6 +769,7 @@ impl From<KeystoneError> for KeystoneApiError {
             KeystoneError::CredentialProvider { source } => source.into(),
             KeystoneError::DomainConfigProvider { source } => source.into(),
             KeystoneError::FederationProvider { source } => source.into(),
+            KeystoneError::LimitProvider { source } => source.into(),
             KeystoneError::Json { source } => source.into(),
             KeystoneError::K8sAuthProvider { source } => source.into(),
             KeystoneError::PolicyEnforcementNotAvailable => KeystoneApiError::internal(value),
