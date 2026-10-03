@@ -18,6 +18,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use openstack_keystone_core::auth::ExecutionContext;
 use serde_json::json;
 
 use crate::api::auth::Auth;
@@ -54,7 +55,7 @@ pub(super) async fn remove(
     state
         .provider
         .get_domain_config_provider()
-        .delete_domain_config(&state, &domain_id)
+        .delete_domain_config(&ExecutionContext::from_auth(&state, &user_auth), &domain_id)
         .await?;
 
     Ok(StatusCode::NO_CONTENT)

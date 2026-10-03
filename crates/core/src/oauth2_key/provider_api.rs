@@ -18,6 +18,7 @@ use async_trait::async_trait;
 
 use openstack_keystone_key_repository::asymmetric::{ActiveKeys, KeyMaterial};
 
+use crate::auth::ExecutionContext;
 use crate::keystone::ServiceState;
 use crate::oauth2_key::Oauth2KeyProviderError;
 use openstack_keystone_core_types::oauth2_key::{
@@ -89,9 +90,9 @@ pub trait Oauth2KeyApi: Send + Sync {
     /// * Success with the newly active `Primary` [`KeyMaterial`].
     /// * [`Oauth2KeyProviderError::NotFound`] if no keys are provisioned yet
     ///   for this domain (rotation requires an existing `Primary`).
-    async fn rotate_signing_key(
+    async fn rotate_signing_key<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &str,
     ) -> Result<KeyMaterial, Oauth2KeyProviderError>;
 
@@ -104,9 +105,9 @@ pub trait Oauth2KeyApi: Send + Sync {
     /// # Arguments
     /// * `initiator` - Identity of the operator staging the rotation (recorded
     ///   for the dual-control check and the audit trail).
-    async fn stage_emergency_rotation(
+    async fn stage_emergency_rotation<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &str,
         initiator: &str,
     ) -> Result<PendingRotationInfo, Oauth2KeyProviderError>;
@@ -125,9 +126,9 @@ pub trait Oauth2KeyApi: Send + Sync {
     ///   elapsed.
     /// * [`Oauth2KeyProviderError::DualControlViolation`] if `confirmer ==
     ///   initiator`.
-    async fn confirm_emergency_rotation(
+    async fn confirm_emergency_rotation<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &str,
         rotation_id: &str,
         confirmer: &str,
@@ -148,9 +149,9 @@ pub trait Oauth2KeyApi: Send + Sync {
     /// * [`Oauth2KeyProviderError::LocalEmergencyAlreadyStaged`] if a
     ///   non-revoked local candidate already exists for this domain on this
     ///   node.
-    async fn stage_local_emergency_rotation(
+    async fn stage_local_emergency_rotation<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &str,
         initiator: &str,
         justification: &str,
@@ -183,9 +184,9 @@ pub trait Oauth2KeyApi: Send + Sync {
     ///   candidate already lost a prior reconciliation.
     /// * [`Oauth2KeyProviderError::DualControlViolation`] if `confirmer ==
     ///   initiator` (the operator who staged the candidate).
-    async fn reconcile_local_emergency_rotation(
+    async fn reconcile_local_emergency_rotation<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &str,
         rotation_id: &str,
         confirmer: &str,

@@ -126,6 +126,11 @@ pub enum ScimResourceProviderError {
     #[error(transparent)]
     StructBuilder(#[from] Box<BuilderError>),
 
+    /// The fail-closed audit record could not be written, so the operation
+    /// was not performed.
+    #[error("audit dispatch failed in the scim_resource provider; operation not performed")]
+    AuditUnavailable,
+
     /// Unsupported driver.
     #[error("unsupported driver `{0}` for the scim_resource provider")]
     UnsupportedDriver(String),

@@ -516,6 +516,45 @@ macro_rules! audited_op {
     }};
 }
 
+/// Run `$op` as a fail-closed audited operation when the call carries a
+/// security context, and as a plain operation followed by a best-effort
+/// event when it does not (internal callers such as janitors, hooks and
+/// token validation have no principal to attribute the action to).
+///
+/// `$ctx` is a `&ExecutionContext`; `$op` is a future (bind the operation to a
+/// local with `let op = async { .. };` so it is written once). The failure
+/// reason is the static variant name of the error (see [`AuditReason`]).
+#[macro_export]
+macro_rules! audited_if_ctx {
+    (
+        ctx: $ctx:expr,
+        event: $event:expr,
+        operation: $op:expr,
+        on_audit_error: $on_audit_error:expr $(,)?
+    ) => {{
+        let __exec = $ctx;
+        match __exec.ctx() {
+            Some(__vsc) => {
+                $crate::audited_op! {
+                    dispatcher: &__exec.state().event_dispatcher,
+                    ctx: __vsc,
+                    event: $event,
+                    operation: $op,
+                    on_audit_error: $on_audit_error,
+                }
+            }
+            None => {
+                let __event = $event;
+                let __result = $op.await;
+                if __result.is_ok() {
+                    __exec.state().event_dispatcher.emit(__event).await;
+                }
+                __result
+            }
+        }
+    }};
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

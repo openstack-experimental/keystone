@@ -64,6 +64,11 @@ pub enum ApiKeyProviderError {
         source: Box<BuilderError>,
     },
 
+    /// The fail-closed audit record could not be written, so the operation
+    /// was not performed.
+    #[error("audit dispatch failed in the api_key provider; operation not performed")]
+    AuditUnavailable,
+
     /// Unsupported driver.
     #[error("unsupported driver `{0}` for the api_key provider")]
     UnsupportedDriver(String),

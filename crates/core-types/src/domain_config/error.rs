@@ -125,6 +125,11 @@ pub enum DomainConfigProviderError {
         option: String,
     },
 
+    /// The fail-closed audit record could not be written, so the operation
+    /// was not performed.
+    #[error("audit dispatch failed in the domain_config provider; operation not performed")]
+    AuditUnavailable,
+
     /// Unsupported driver.
     #[error("unsupported driver `{0}` for the domain config provider")]
     UnsupportedDriver(String),

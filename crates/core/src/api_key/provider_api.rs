@@ -18,6 +18,7 @@ use async_trait::async_trait;
 use openstack_keystone_core_types::api_key::*;
 
 use crate::api_key::ApiKeyProviderError;
+use crate::auth::ExecutionContext;
 use crate::keystone::ServiceState;
 
 /// The trait for managing API Key (SCIM ingress) machine identities (ADR
@@ -33,9 +34,9 @@ pub trait ApiKeyApi: Send + Sync {
     /// # Returns
     /// * Success with the created [`ApiClientResource`].
     /// * Error if the key could not be created.
-    async fn create(
+    async fn create<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         data: ApiClientResourceCreate,
     ) -> Result<ApiClientResource, ApiKeyProviderError>;
 
@@ -102,7 +103,7 @@ pub trait ApiKeyApi: Send + Sync {
     /// * Error if the update failed.
     async fn update<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
         client_id: &'a str,
         data: ApiClientResourceUpdate,
@@ -122,7 +123,7 @@ pub trait ApiKeyApi: Send + Sync {
     /// * Error if the revocation failed.
     async fn revoke<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
         client_id: &'a str,
         revoked_by: &'a str,
@@ -175,7 +176,7 @@ pub trait ApiKeyApi: Send + Sync {
     /// reclamation). A no-op if the record is already gone.
     async fn purge<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
         client_id: &'a str,
     ) -> Result<(), ApiKeyProviderError>;

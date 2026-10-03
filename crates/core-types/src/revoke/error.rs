@@ -42,6 +42,11 @@ pub enum RevokeProviderError {
     #[error("token does not have the audit_id set")]
     TokenHasNoAuditId,
 
+    /// The fail-closed audit record could not be written, so the operation
+    /// was not performed.
+    #[error("audit dispatch failed in the revoke provider; operation not performed")]
+    AuditUnavailable,
+
     /// Unsupported driver.
     #[error("unsupported driver `{0}` for the revoke provider")]
     UnsupportedDriver(String),

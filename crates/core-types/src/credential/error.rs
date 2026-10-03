@@ -29,6 +29,11 @@ pub enum CredentialProviderError {
     #[error("conflict: {0}")]
     Conflict(String),
 
+    /// The fail-closed audit record could not be written, so the operation
+    /// was not performed.
+    #[error("audit dispatch failed in the credential provider; operation not performed")]
+    AuditUnavailable,
+
     /// Driver error.
     #[error("backend driver error: {0}")]
     Driver(String),

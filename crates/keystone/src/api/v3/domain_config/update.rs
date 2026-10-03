@@ -18,6 +18,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use openstack_keystone_core::auth::ExecutionContext;
 use serde_json::json;
 
 use super::types::{DomainConfigRequest, DomainConfigResponse};
@@ -65,7 +66,11 @@ pub(super) async fn update(
     let stored = state
         .provider
         .get_domain_config_provider()
-        .update_domain_config(&state, &domain_id, DomainConfigUpdate::from(config))
+        .update_domain_config(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &domain_id,
+            DomainConfigUpdate::from(config),
+        )
         .await?;
 
     Ok((StatusCode::OK, Json(DomainConfigResponse::from(stored))))

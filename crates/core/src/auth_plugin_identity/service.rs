@@ -19,11 +19,14 @@ use async_trait::async_trait;
 
 use openstack_keystone_config::Config;
 
+use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
+
 use crate::auth::ExecutionContext;
 use crate::auth_plugin_identity::{
     DynamicPluginIdentityApi, backend::DynamicPluginIdentityBackend,
     error::AuthPluginIdentityProviderError,
 };
+use crate::events::AuditDispatchError;
 use crate::plugin_manager::PluginManagerApi;
 
 /// Dynamic plugin identity index Provider.
@@ -53,6 +56,22 @@ impl DynamicPluginIdentityService {
     }
 }
 
+/// Build the audit event for a plugin identity link change. The external ID
+/// is plugin-controlled data and is deliberately not carried.
+fn plugin_identity_event(
+    operation: Operation,
+    plugin_name: Option<&str>,
+    user_id: Option<&str>,
+) -> Event {
+    Event::new(
+        operation,
+        EventPayload::PluginIdentity {
+            plugin_name: plugin_name.map(str::to_string),
+            user_id: user_id.map(str::to_string),
+        },
+    )
+}
+
 #[async_trait]
 impl DynamicPluginIdentityApi for DynamicPluginIdentityService {
     async fn create_or_resolve<'a>(
@@ -62,9 +81,21 @@ impl DynamicPluginIdentityApi for DynamicPluginIdentityService {
         external_id: &'a str,
         user_id: &'a str,
     ) -> Result<String, AuthPluginIdentityProviderError> {
-        self.backend_driver
-            .create_or_resolve(ctx.state(), plugin_name, external_id, user_id)
-            .await
+        let op = async {
+            self.backend_driver
+                .create_or_resolve(ctx.state(), plugin_name, external_id, user_id)
+                .await
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: plugin_identity_event(
+                Operation::Other("create_or_resolve".to_string()),
+                Some(plugin_name),
+                Some(user_id),
+            ),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| AuthPluginIdentityProviderError::AuditUnavailable,
+        }
     }
 
     async fn find<'a>(
@@ -84,9 +115,17 @@ impl DynamicPluginIdentityApi for DynamicPluginIdentityService {
         plugin_name: &'a str,
         external_id: &'a str,
     ) -> Result<(), AuthPluginIdentityProviderError> {
-        self.backend_driver
-            .purge(ctx.state(), plugin_name, external_id)
-            .await
+        let op = async {
+            self.backend_driver
+                .purge(ctx.state(), plugin_name, external_id)
+                .await
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: plugin_identity_event(Operation::Delete, Some(plugin_name), None),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| AuthPluginIdentityProviderError::AuditUnavailable,
+        }
     }
 
     async fn purge_by_user<'a>(
@@ -94,9 +133,17 @@ impl DynamicPluginIdentityApi for DynamicPluginIdentityService {
         ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<(), AuthPluginIdentityProviderError> {
-        self.backend_driver
-            .purge_by_user(ctx.state(), user_id)
-            .await
+        let op = async {
+            self.backend_driver
+                .purge_by_user(ctx.state(), user_id)
+                .await
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: plugin_identity_event(Operation::Delete, None, Some(user_id)),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| AuthPluginIdentityProviderError::AuditUnavailable,
+        }
     }
 
     async fn list_by_plugin<'a>(

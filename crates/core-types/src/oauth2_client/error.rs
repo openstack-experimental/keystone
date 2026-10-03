@@ -56,6 +56,11 @@ pub enum Oauth2ClientProviderError {
         source: Box<BuilderError>,
     },
 
+    /// The fail-closed audit record could not be written, so the operation
+    /// was not performed.
+    #[error("audit dispatch failed in the oauth2 client provider; operation not performed")]
+    AuditUnavailable,
+
     /// Unsupported driver.
     #[error("unsupported driver `{0}` for the oauth2 client provider")]
     UnsupportedDriver(String),

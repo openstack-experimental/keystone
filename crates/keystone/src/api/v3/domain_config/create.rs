@@ -18,6 +18,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use openstack_keystone_core::auth::ExecutionContext;
 use serde_json::json;
 
 use super::types::{DomainConfigRequest, DomainConfigResponse};
@@ -66,7 +67,11 @@ pub(super) async fn create(
     let stored = state
         .provider
         .get_domain_config_provider()
-        .create_domain_config(&state, &domain_id, DomainConfigCreate::from(config))
+        .create_domain_config(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &domain_id,
+            DomainConfigCreate::from(config),
+        )
         .await?;
 
     Ok((

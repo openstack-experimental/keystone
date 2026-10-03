@@ -33,6 +33,7 @@ use openstack_keystone_audit::{AuditDispatcher, CadfEventPayload, Initiator, Obs
 use openstack_keystone_core_types::api_key::{ApiClientResource, ApiClientResourceUpdate};
 
 use crate::api_key::ApiKeyProviderError;
+use crate::auth::ExecutionContext;
 use crate::keystone::ServiceState;
 
 /// Interval between sweep passes. Thresholds are day-granularity, so this is
@@ -99,7 +100,11 @@ pub async fn run_once(state: &ServiceState) -> Result<JanitorReport, ApiKeyProvi
             match state
                 .provider
                 .get_api_key_provider()
-                .purge(state, &key.domain_id, &key.client_id)
+                .purge(
+                    &ExecutionContext::internal(state),
+                    &key.domain_id,
+                    &key.client_id,
+                )
                 .await
             {
                 Ok(()) => report.purged += 1,
@@ -143,7 +148,7 @@ async fn disable_for_inactivity(
         .provider
         .get_api_key_provider()
         .update(
-            state,
+            &ExecutionContext::internal(state),
             &key.domain_id,
             &key.client_id,
             ApiClientResourceUpdate {

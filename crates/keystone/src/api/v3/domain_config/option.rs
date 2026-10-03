@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Option-scoped domain configuration API
 
+use openstack_keystone_core::auth::ExecutionContext;
 use std::str::FromStr;
 
 use axum::{
@@ -129,7 +130,11 @@ pub(super) async fn update(
     let stored = state
         .provider
         .get_domain_config_provider()
-        .update_domain_config_option(&state, &domain_id, to_store)
+        .update_domain_config_option(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &domain_id,
+            to_store,
+        )
         .await?;
 
     Ok((StatusCode::OK, Json(DomainConfigResponse::from(stored))))
@@ -171,7 +176,12 @@ pub(super) async fn remove(
     state
         .provider
         .get_domain_config_provider()
-        .delete_domain_config_option(&state, &domain_id, group, &option)
+        .delete_domain_config_option(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &domain_id,
+            group,
+            &option,
+        )
         .await?;
 
     Ok(StatusCode::NO_CONTENT)

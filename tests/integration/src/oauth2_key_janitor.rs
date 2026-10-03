@@ -21,6 +21,7 @@
 //! actually round-trip through the real Raft-backed storage layer,
 //! mirroring `tests/integration/src/api_key/janitor.rs`'s pattern.
 
+use openstack_keystone_core::auth::ExecutionContext;
 use std::time::Duration;
 
 use eyre::Result;
@@ -45,7 +46,9 @@ async fn test_janitor_retires_previous_key_via_real_backend() -> Result<()> {
     key_provider.ensure_domain_keys(&state, &domain.id).await?;
     // Normal rotation demotes the current Primary to Previous, stamping
     // `demoted_at = now`.
-    key_provider.rotate_signing_key(&state, &domain.id).await?;
+    key_provider
+        .rotate_signing_key(&ExecutionContext::internal(&state), &domain.id)
+        .await?;
     // Guarantee `now - demoted_at > 0` (second-granularity timestamps).
     tokio::time::sleep(Duration::from_secs(1)).await;
 
@@ -77,7 +80,9 @@ async fn test_janitor_leaves_recently_rotated_key_alone() -> Result<()> {
 
     let key_provider = state.provider.get_oauth2_key_provider();
     key_provider.ensure_domain_keys(&state, &domain.id).await?;
-    key_provider.rotate_signing_key(&state, &domain.id).await?;
+    key_provider
+        .rotate_signing_key(&ExecutionContext::internal(&state), &domain.id)
+        .await?;
 
     let report = janitor::run_once(&state).await?;
     assert_eq!(report.retired, 0);
@@ -107,7 +112,9 @@ async fn test_janitor_sweeps_across_multiple_domains() -> Result<()> {
     let key_provider = state.provider.get_oauth2_key_provider();
     for domain in [&domain_a, &domain_b] {
         key_provider.ensure_domain_keys(&state, &domain.id).await?;
-        key_provider.rotate_signing_key(&state, &domain.id).await?;
+        key_provider
+            .rotate_signing_key(&ExecutionContext::internal(&state), &domain.id)
+            .await?;
     }
     tokio::time::sleep(Duration::from_secs(1)).await;
 
