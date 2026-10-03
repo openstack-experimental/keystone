@@ -24,6 +24,7 @@ use axum::{
 use validator::Validate;
 
 use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
+use openstack_keystone_audit::Initiator;
 use openstack_keystone_core::auth::ValidatedSecurityContext;
 use openstack_keystone_core_types::auth::*;
 
@@ -36,8 +37,9 @@ use crate::api::v3::auth::token::common::authenticate_request;
 use crate::api::v3::auth::token::types::{AuthRequest, CreateTokenParameters, TokenResponse};
 use crate::api::{Catalog, CatalogService, error::KeystoneApiError};
 use crate::audit::{
-    CorrelationId, build_initiator_from_vsc, build_initiator_unknown,
-    emit_perimeter_authenticate_event, error_variant_name,
+    CorrelationId, build_initiator_from_principal, build_initiator_from_vsc,
+    build_initiator_unknown, emit_perimeter_authenticate_event, perimeter_outcome,
+    resolve_audit_ip,
 };
 use crate::common::TracedJson;
 use crate::keystone::ServiceState;
@@ -64,38 +66,36 @@ pub(super) async fn create(
     PeerAddr(peer_addr): PeerAddr,
     TracedJson(req): TracedJson<AuthRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
-    // Client IP for the audit trail, resolved through the operator's
-    // configured trusted-proxy/forwarding-header settings. This is a
-    // distinct trust boundary from rate limiting and auth-plugin dispatch
-    // inside `create_inner`, which each apply their own resolution over the
-    // same raw `peer_addr` (see `crate::net` module docs) -- `peer_addr`
-    // itself is the raw, pre-resolution TCP peer and must not be recorded
-    // directly, or every audited login behind a reverse proxy would record
-    // the proxy's address instead of the real client's.
-    let audit_ip = {
-        let config = state.config_manager.config.read().await;
-        openstack_keystone_core::net::resolve_client_ip_from_headers(
-            &headers,
-            peer_addr.map(|addr| addr.ip()),
-            &config.oslo_middleware.trusted_proxies,
-            config.oslo_middleware.trusted_header,
-        )
-    };
-    let result = create_inner(&state, query, req, &headers, peer_addr, audit_ip).await;
+    let audit_ip = resolve_audit_ip(&state, &headers, peer_addr).await;
+    // Set by `create_inner` once the caller has authenticated, so a request
+    // that then fails scope selection or a rescope restriction is recorded
+    // against the known principal, not as an unknown caller (ADR 0023
+    // Phase 2: partial context is an authorization failure).
+    let mut known_initiator = None;
+    let result = create_inner(
+        &state,
+        query,
+        req,
+        &headers,
+        peer_addr,
+        audit_ip,
+        &cid,
+        &mut known_initiator,
+    )
+    .await;
     let initiator = match result.as_ref() {
         Ok((vsc, _)) => build_initiator_from_vsc(vsc),
-        Err(_) => build_initiator_unknown().with_address(audit_ip.map(|ip| ip.to_string())),
+        Err(_) => known_initiator.unwrap_or_else(build_initiator_unknown),
     };
-    let (outcome, reason) = match &result {
-        Ok(_) => ("success", None),
-        Err(e) => ("failure", Some(error_variant_name(e))),
-    };
+    let initiator = initiator.with_address(audit_ip.map(|ip| ip.to_string()));
+    let (outcome, reason) = perimeter_outcome(&result);
     emit_perimeter_authenticate_event(&state.audit_dispatcher, &cid, initiator, outcome, reason);
     result.map(|(_, response)| response)
 }
 
 /// Inner auth flow that returns the `ValidatedSecurityContext` alongside the
 /// HTTP response so the outer handler can build the audit `Initiator`.
+#[allow(clippy::too_many_arguments)]
 async fn create_inner(
     state: &ServiceState,
     query: CreateTokenParameters,
@@ -103,6 +103,8 @@ async fn create_inner(
     headers: &HeaderMap,
     peer_addr: Option<SocketAddr>,
     audit_ip: Option<IpAddr>,
+    correlation_id: &str,
+    known_initiator: &mut Option<Initiator>,
 ) -> Result<(ValidatedSecurityContext, Response), KeystoneApiError> {
     req.validate()?;
 
@@ -118,9 +120,16 @@ async fn create_inner(
         });
     }
 
-    let auth_res =
-        authenticate_request(state, &req, headers, peer_addr.map(|addr| addr.ip())).await?;
+    let auth_res = authenticate_request(
+        state,
+        &req,
+        headers,
+        peer_addr.map(|addr| addr.ip()),
+        Some(correlation_id),
+    )
+    .await?;
     let ctx = SecurityContext::try_from(auth_res)?;
+    *known_initiator = Some(build_initiator_from_principal(ctx.principal()));
     let provider_scope: Option<ProviderScope> = req.auth.scope.clone().map(Into::into);
     let authz_info = get_authz_info(state, provider_scope.as_ref()).await?;
 
@@ -1243,6 +1252,90 @@ mod tests {
             resp2.headers().contains_key(header::RETRY_AFTER),
             "429 response must carry a Retry-After header"
         );
+    }
+
+    #[tokio::test]
+    async fn test_failure_after_authentication_is_attributed_to_the_principal() {
+        use axum::extract::ConnectInfo;
+        // The password is correct but the requested project does not exist:
+        // an authorization failure by a known user, which the audit record
+        // must say (ADR 0023 Phase 2), not an `unknown` caller.
+        const USER_ID: &str = "0123456789abcdef0123456789abcdef";
+        let auth = AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Password)
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id(USER_ID)
+                        .build()
+                        .unwrap(),
+                ),
+            })
+            .build()
+            .unwrap();
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_authenticate_by_password()
+            .returning(move |_, _| Ok(auth.clone()));
+        let mut resource_mock = MockResourceProvider::default();
+        resource_mock
+            .expect_get_project()
+            .returning(|_, _| Ok(None));
+        let provider = Provider::mocked_builder()
+            .mock_identity(identity_mock)
+            .mock_resource(resource_mock)
+            .build()
+            .unwrap();
+
+        let (audit_dispatcher, mut receivers) = AuditDispatcher::new(
+            "test-node",
+            uuid::Uuid::new_v4().to_string(),
+            Arc::from(b"test-hmac-key-32-bytes-long!!!!".as_slice()),
+            0,
+        );
+        let state = Arc::new(
+            Service::new(
+                ConfigManager::not_watched(Config::default()),
+                DatabaseConnection::default(),
+                provider,
+                Arc::new(MockPolicy::default()),
+                audit_dispatcher,
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let body = serde_json::to_vec(&json!({
+            "auth": {
+                "identity": {
+                    "methods": ["password"],
+                    "password": {"user": {"id": USER_ID, "password": "pass"}}
+                },
+                "scope": {"project": {"id": "missing"}}
+            }
+        }))
+        .unwrap();
+        let mut request = Request::builder()
+            .uri("/")
+            .method("POST")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        request.extensions_mut().insert(ConnectInfo(
+            "198.51.100.4:5555".parse::<SocketAddr>().unwrap(),
+        ));
+        let response = api.as_service().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let event = receivers.perimeter.try_recv().expect("event");
+        let initiator = event.payload().initiator();
+        assert_eq!(initiator.id(), USER_ID);
+        assert_eq!(initiator.address(), Some("198.51.100.4"));
+        assert_eq!(event.payload().outcome(), "failure");
     }
 }
 

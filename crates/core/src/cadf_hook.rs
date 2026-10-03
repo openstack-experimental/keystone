@@ -24,10 +24,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use openstack_keystone_audit::sanitize::sanitize_audit_id;
-use openstack_keystone_audit::{AuditDispatcher, CadfEventPayload, Initiator, Observer, Target};
-use openstack_keystone_core_types::auth::ScopeInfo;
+use openstack_keystone_audit::{
+    AuditDispatcher, CadfEventPayload, Initiator, Observer, OutcomeReason, Target,
+};
+use openstack_keystone_core_types::auth::{PrincipalInfo, ScopeInfo};
 use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
-use openstack_keystone_core_types::token::VerifiedFernetToken;
 use uuid::Uuid;
 
 use crate::auth::ValidatedSecurityContext;
@@ -203,24 +204,37 @@ pub fn build_initiator_unknown() -> Initiator {
     Initiator::new("unknown".to_string(), None, None, None)
 }
 
-/// Build an [`Initiator`] from a [`VerifiedFernetToken`].
+/// Build an [`Initiator`] from the principal of an authentication that
+/// succeeded, for a request that then failed later (scope selection, rescope
+/// restrictions, policy).
 ///
-/// Used when a token was crypto-verified but authorization subsequently
-/// failed (partial context). The `VerifiedFernetToken` type proves the caller
-/// went through the crypto-verification path.
-pub fn build_initiator_from_verified_token(token: &VerifiedFernetToken) -> Initiator {
+/// ADR 0023 §Phase 2: a request that authenticated but failed authorization
+/// is an authorization failure by a known principal, not an unknown caller,
+/// and the audit trail must say who it was. Only the user and the user's
+/// domain are known at this point: the scope was never established.
+pub fn build_initiator_from_principal(principal: &PrincipalInfo) -> Initiator {
+    let domain_id = principal
+        .domain_id()
+        .as_deref()
+        .map(sanitize_audit_id)
+        .filter(|id| id != "unknown");
     Initiator::new(
-        sanitize_audit_id(token.user_id()),
-        token
-            .project_id()
-            .map(sanitize_audit_id)
-            .filter(|id| id != "unknown"),
-        token
-            .domain_id()
-            .map(sanitize_audit_id)
-            .filter(|id| id != "unknown"),
+        sanitize_audit_id(&principal.get_user_id()),
+        None,
+        domain_id,
         None,
     )
+}
+
+/// Stamp the request's client address (from the request-scoped audit
+/// context) on an initiator that has none yet. An address set explicitly by
+/// the handler wins.
+#[must_use]
+pub fn with_request_address(initiator: Initiator) -> Initiator {
+    if initiator.address().is_some() {
+        return initiator;
+    }
+    initiator.with_address(crate::audit_context::client_ip().map(|ip| ip.to_string()))
 }
 
 fn outcome_str(outcome: &AuditOutcome) -> &'static str {
@@ -231,9 +245,11 @@ fn outcome_str(outcome: &AuditOutcome) -> &'static str {
     }
 }
 
-fn outcome_reason(outcome: &AuditOutcome) -> Option<String> {
+fn outcome_reason(outcome: &AuditOutcome) -> Option<OutcomeReason> {
     match outcome {
-        AuditOutcome::Failure { reason } => Some(reason.clone()),
+        // The reason is a static variant name, but `variant` re-checks that
+        // it is nothing else before it reaches the signed record.
+        AuditOutcome::Failure { reason } => Some(OutcomeReason::variant(reason)),
         _ => None,
     }
 }

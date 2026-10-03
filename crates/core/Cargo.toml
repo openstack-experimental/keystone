@@ -56,9 +56,9 @@ url = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4"] }
 validator.workspace = true
 subtle = "2.6.1"
+strum.workspace = true
 
 [dev-dependencies]
-strum.workspace = true
 axum = { workspace = true, default-features = false, features = ["json", "tokio"] }
 config = { workspace = true }
 openstack-keystone-auth-plugin-runtime.workspace = true

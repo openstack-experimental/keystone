@@ -25,7 +25,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use crate::api::common::PeerAddr;
 use crate::api::error::KeystoneApiError;
 use crate::api::v4::auth::token::types::TokenResponse as KeystoneTokenResponse;
-use crate::audit::{CorrelationId, emit_perimeter_authenticate_event, error_variant_name};
+use crate::audit::{CorrelationId, emit_perimeter_authenticate_event, perimeter_outcome};
 use crate::federation::api::error::OidcError;
 use crate::keystone::ServiceState;
 use openstack_keystone_audit::sanitize::{HostKind, sanitize_initiator_host};
@@ -84,10 +84,7 @@ pub async fn login(
         .or_else(|| sanitize_initiator_host(&idp_id, HostKind::FederationIdpNonUuid))
         .map(Host::from_id);
     let initiator = Initiator::new("unknown".to_string(), None, None, host);
-    let (outcome, reason) = match &result {
-        Ok(_) => ("success", None),
-        Err(e) => ("failure", Some(error_variant_name(e))),
-    };
+    let (outcome, reason) = perimeter_outcome(&result);
     emit_perimeter_authenticate_event(&state.audit_dispatcher, &cid, initiator, outcome, reason);
     result
 }

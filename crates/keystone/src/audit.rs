@@ -16,15 +16,19 @@
 //! Provides the `CorrelationId` Axum extractor, error sanitization, initiator
 //! construction, and perimeter event emission for authentication endpoints.
 
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use axum::extract::{FromRef, FromRequestParts};
+use axum::http::HeaderMap;
 use axum::http::request::Parts;
 use tower_http::request_id::RequestId;
 use uuid::Uuid;
 
 use openstack_keystone_api_types::error::KeystoneApiError;
-use openstack_keystone_audit::{AuditDispatcher, CadfEventPayload, Initiator, Observer, Target};
+use openstack_keystone_audit::{
+    AuditDispatcher, CadfEventPayload, Initiator, Observer, OutcomeReason, Target,
+};
 use openstack_keystone_core_types::assignment::AssignmentProviderError;
 use openstack_keystone_core_types::auth::AuthenticationError;
 use openstack_keystone_core_types::catalog::CatalogProviderError;
@@ -173,8 +177,77 @@ pub fn extract_provider_name(
 // the original names so existing callers in this crate don't need to change
 // their import paths.
 pub use openstack_keystone_core::cadf_hook::{
-    build_initiator_from_verified_token, build_initiator_from_vsc, build_initiator_unknown,
+    build_initiator_from_principal, build_initiator_from_vsc, build_initiator_unknown,
+    with_request_address,
 };
+
+/// The client IP for the audit trail, resolved through the operator's
+/// configured trusted-proxy/forwarding-header settings.
+///
+/// This is a distinct trust boundary from rate limiting and auth-plugin
+/// dispatch, which each apply their own resolution over the same raw
+/// `peer_addr` (see `crate::net`): `peer_addr` itself is the raw,
+/// pre-resolution TCP peer and must not be recorded directly, or every
+/// audited login behind a reverse proxy would record the proxy's address
+/// instead of the client's. Every perimeter handler resolves it once through
+/// this function and stamps it on the success and the failure event alike.
+pub async fn resolve_audit_ip(
+    state: &ServiceState,
+    headers: &HeaderMap,
+    peer_addr: Option<SocketAddr>,
+) -> Option<IpAddr> {
+    let config = state.config_manager.config.read().await;
+    openstack_keystone_core::net::resolve_client_ip_from_headers(
+        headers,
+        peer_addr.map(|addr| addr.ip()),
+        &config.oslo_middleware.trusted_proxies,
+        config.oslo_middleware.trusted_header,
+    )
+}
+
+/// Establish the request-scoped audit context (client address and
+/// correlation ID, see [`openstack_keystone_core::audit_context`]) around the
+/// rest of the request.
+///
+/// Runs after `SetRequestIdLayer`, so the correlation ID is the
+/// server-generated one. The client address is resolved once, here, through
+/// the operator's trusted-proxy settings, and only for requests that arrived
+/// on the public interface; the emitters in this module stamp it on every
+/// perimeter record that does not already carry an address, so no handler has
+/// to remember it.
+pub async fn with_audit_request_context(
+    axum::extract::State(state): axum::extract::State<ServiceState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let peer_addr = openstack_keystone_core::net::public_ingress_peer_addr(request.extensions());
+    let client_ip = resolve_audit_ip(&state, request.headers(), peer_addr).await;
+    let correlation_id = request
+        .extensions()
+        .get::<RequestId>()
+        .and_then(|r| r.header_value().to_str().ok())
+        .map(str::to_string);
+    openstack_keystone_core::audit_context::AuditRequestContext {
+        client_ip,
+        correlation_id,
+    }
+    .scope(next.run(request))
+    .await
+}
+
+/// The CADF `(outcome, outcome_reason)` of a perimeter handler result: the
+/// reason is the sanitized error variant name, never error data.
+pub fn perimeter_outcome<T>(
+    result: &Result<T, KeystoneApiError>,
+) -> (&'static str, Option<OutcomeReason>) {
+    match result {
+        Ok(_) => ("success", None),
+        Err(e) => (
+            "failure",
+            Some(OutcomeReason::variant(&error_variant_name(e))),
+        ),
+    }
+}
 
 /// Emit a best-effort perimeter CADF event for an authentication attempt.
 ///
@@ -186,7 +259,7 @@ pub fn emit_perimeter_authenticate_event(
     correlation_id: &str,
     initiator: Initiator,
     outcome: &str,
-    outcome_reason: Option<String>,
+    outcome_reason: Option<OutcomeReason>,
 ) {
     let node_id = dispatcher.node_id().to_string();
     let event_id = format!("{}:{}", node_id, Uuid::new_v4());
@@ -199,7 +272,7 @@ pub fn emit_perimeter_authenticate_event(
         "authenticate".to_string(),
         outcome.to_string(),
         outcome_reason,
-        initiator,
+        with_request_address(initiator),
         Target {
             id: "keystone".to_string(),
             type_uri: "service/security/keystone/auth".to_string(),
@@ -226,7 +299,7 @@ pub fn emit_oauth2_session_event(
     initiator: Initiator,
     client_id: &str,
     outcome: &str,
-    outcome_reason: Option<String>,
+    outcome_reason: Option<OutcomeReason>,
 ) {
     let node_id = dispatcher.node_id().to_string();
     let event_id = format!("{}:{}", node_id, Uuid::new_v4());
@@ -239,7 +312,7 @@ pub fn emit_oauth2_session_event(
         action.to_string(),
         outcome.to_string(),
         outcome_reason,
-        initiator,
+        with_request_address(initiator),
         Target {
             id: client_id.to_string(),
             type_uri: "data/security/keystone/oauth2_client".to_string(),
@@ -268,6 +341,11 @@ pub async fn emit_oauth2_refresh_reuse_critical_event(
     family_id: &str,
     reason: &str,
 ) {
+    tracing::warn!(
+        family_id,
+        reason,
+        "refresh token reuse detected, family revoked"
+    );
     let node_id = dispatcher.node_id().to_string();
     let event_id = format!("{}:{}", node_id, Uuid::new_v4());
     let payload = CadfEventPayload::new(
@@ -278,10 +356,10 @@ pub async fn emit_oauth2_refresh_reuse_critical_event(
         chrono::Utc::now().to_rfc3339(),
         "OAUTH2_REFRESH_REUSE_DETECTED".to_string(),
         "failure".to_string(),
-        Some(format!(
-            "refresh_token family {family_id} revoked ({reason}): reuse detected outside grace window"
-        )),
-        initiator,
+        // The family is the target; the revocation reason is a fixed
+        // vocabulary.
+        Some(OutcomeReason::literal("RefreshTokenReuseDetected")),
+        with_request_address(initiator),
         Target {
             id: family_id.to_string(),
             type_uri: "data/security/keystone/oauth2_refresh_family".to_string(),
@@ -324,10 +402,8 @@ pub fn emit_oauth2_refresh_family_revoked_event(
         chrono::Utc::now().to_rfc3339(),
         "OAUTH2_REFRESH_FAMILY_REVOKED".to_string(),
         "success".to_string(),
-        Some(format!(
-            "refresh_token family {family_id} revoked ({reason})"
-        )),
-        initiator,
+        Some(OutcomeReason::variant(reason)),
+        with_request_address(initiator),
         Target {
             id: family_id.to_string(),
             type_uri: "data/security/keystone/oauth2_refresh_family".to_string(),
@@ -353,6 +429,7 @@ pub fn emit_oauth2_client_revoked_event(
     action: &str,
     revoked_families: usize,
 ) {
+    tracing::info!(client_id, action, revoked_families, "oauth2 client revoked");
     let node_id = dispatcher.node_id().to_string();
     let event_id = format!("{}:{}", node_id, Uuid::new_v4());
     let payload = CadfEventPayload::new(
@@ -363,10 +440,11 @@ pub fn emit_oauth2_client_revoked_event(
         chrono::Utc::now().to_rfc3339(),
         "OAUTH2_CLIENT_REVOKED".to_string(),
         "success".to_string(),
-        Some(format!(
-            "oauth2 client {client_id} {action}d, {revoked_families} refresh token families revoked"
-        )),
-        initiator,
+        Some(OutcomeReason::counts(&[(
+            "revoked_families",
+            revoked_families as u64,
+        )])),
+        with_request_address(initiator),
         Target {
             id: client_id.to_string(),
             type_uri: "data/security/keystone/oauth2_client".to_string(),
@@ -395,6 +473,12 @@ pub async fn emit_oauth2_emergency_key_rotation_critical_event(
     new_kid: &str,
     revoked_jtis: &[String],
 ) {
+    tracing::info!(
+        domain_id,
+        new_kid,
+        revoked_jtis = ?revoked_jtis,
+        "oauth2 signing key emergency-rotated"
+    );
     let node_id = dispatcher.node_id().to_string();
     let event_id = format!("{}:{}", node_id, Uuid::new_v4());
     let payload = CadfEventPayload::new(
@@ -405,10 +489,14 @@ pub async fn emit_oauth2_emergency_key_rotation_critical_event(
         chrono::Utc::now().to_rfc3339(),
         "OAUTH2_EMERGENCY_KEY_ROTATION".to_string(),
         "success".to_string(),
-        Some(format!(
-            "domain {domain_id} emergency-rotated to new signing key {new_kid}; revoked_jtis={revoked_jtis:?}"
-        )),
-        initiator,
+        // The domain is the target. The new key ID and the revoked JTIs are
+        // not part of the signed record (no free text or ID lists in
+        // `outcome_reason`); they are logged for the investigation.
+        Some(OutcomeReason::counts(&[(
+            "revoked_jtis",
+            revoked_jtis.len() as u64,
+        )])),
+        with_request_address(initiator),
         Target {
             id: domain_id.to_string(),
             type_uri: "data/security/keystone/oauth2_signing_key".to_string(),
@@ -450,6 +538,12 @@ pub async fn emit_oauth2_local_emergency_key_reconciled_event(
     rotation_id: &str,
     new_kid: &str,
 ) -> String {
+    tracing::info!(
+        domain_id,
+        rotation_id,
+        new_kid,
+        "oauth2 local emergency rotation reconciled"
+    );
     let node_id = dispatcher.node_id().to_string();
     let event_id = format!("{}:{}", node_id, Uuid::new_v4());
     let payload = CadfEventPayload::new(
@@ -460,11 +554,11 @@ pub async fn emit_oauth2_local_emergency_key_reconciled_event(
         chrono::Utc::now().to_rfc3339(),
         "OAUTH2_LOCAL_EMERGENCY_KEY_RECONCILED".to_string(),
         "success".to_string(),
-        Some(format!(
-            "domain {domain_id} reconciled local emergency rotation {rotation_id} to new \
-             signing key {new_kid}"
-        )),
-        initiator,
+        // The domain is the target; the rotation ID and new key ID are
+        // logged, and the rotation ID is also kept in the spool pointer
+        // record the caller persists from the returned event ID.
+        None,
+        with_request_address(initiator),
         Target {
             id: domain_id.to_string(),
             type_uri: "data/security/keystone/oauth2_signing_key".to_string(),
@@ -633,5 +727,90 @@ mod tests {
         .await;
         assert!(!event_id.is_empty());
         assert_eq!(dispatcher.postaudit_dropped_count(), before + 1);
+    }
+
+    #[tokio::test]
+    async fn request_context_middleware_exposes_client_ip_and_correlation_id() {
+        use axum::extract::ConnectInfo;
+        use axum::routing::get;
+        use tower::ServiceExt;
+
+        let state = crate::api::tests::get_mocked_state(
+            openstack_keystone_core::provider::Provider::mocked_builder(),
+            true,
+            None,
+        )
+        .await;
+        let app = axum::Router::new()
+            .route(
+                "/",
+                get(|| async {
+                    format!(
+                        "{:?}|{:?}",
+                        openstack_keystone_core::audit_context::client_ip(),
+                        openstack_keystone_core::audit_context::correlation_id()
+                    )
+                }),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                state,
+                with_audit_request_context,
+            ));
+        let mut request = axum::http::Request::builder()
+            .uri("/")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        request.extensions_mut().insert(ConnectInfo(
+            "203.0.113.5:4000".parse::<SocketAddr>().unwrap(),
+        ));
+        request
+            .extensions_mut()
+            .insert(RequestId::new(axum::http::HeaderValue::from_static(
+                "req-abc",
+            )));
+
+        let response = app.oneshot(request).await.unwrap();
+        let body = http_body_util::BodyExt::collect(response.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        assert_eq!(
+            std::str::from_utf8(&body).unwrap(),
+            "Some(203.0.113.5)|Some(\"req-abc\")"
+        );
+    }
+
+    #[tokio::test]
+    async fn with_request_address_prefers_an_explicit_address() {
+        let ctx = openstack_keystone_core::audit_context::AuditRequestContext {
+            client_ip: Some("203.0.113.5".parse().unwrap()),
+            correlation_id: None,
+        };
+        ctx.scope(async {
+            let from_scope = with_request_address(build_initiator_unknown());
+            assert_eq!(from_scope.address(), Some("203.0.113.5"));
+            let explicit = with_request_address(
+                build_initiator_unknown().with_address(Some("198.51.100.1".into())),
+            );
+            assert_eq!(explicit.address(), Some("198.51.100.1"));
+        })
+        .await;
+        // Outside any scope the initiator is left as given.
+        assert_eq!(
+            with_request_address(build_initiator_unknown()).address(),
+            None
+        );
+    }
+
+    #[test]
+    fn perimeter_outcome_reason_is_the_sanitized_variant_name() {
+        let ok: Result<(), KeystoneApiError> = Ok(());
+        assert_eq!(perimeter_outcome(&ok), ("success", None));
+        let err: Result<(), KeystoneApiError> = Err(KeystoneApiError::Conflict(
+            "user 4f1c already exists".into(),
+        ));
+        let (outcome, reason) = perimeter_outcome(&err);
+        assert_eq!(outcome, "failure");
+        assert_eq!(reason.expect("reason").as_str(), "Conflict");
     }
 }
