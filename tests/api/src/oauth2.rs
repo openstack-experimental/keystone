@@ -307,6 +307,22 @@ pub async fn post_token_form(
     Ok((status, body))
 }
 
+/// `POST /v4/oauth2/{domain_id}/revoke` (RFC 7009). Returns the status and
+/// raw body text (empty on success).
+pub async fn post_revoke_form(
+    domain_id: &str,
+    form: &[(&str, &str)],
+) -> Result<(StatusCode, String)> {
+    let base_url: url::Url = env::var("KEYSTONE_URL")?.parse()?;
+    let rsp = Client::new()
+        .post(base_url.join(&format!("v4/oauth2/{domain_id}/revoke"))?)
+        .form(form)
+        .send()
+        .await?;
+    let status = rsp.status();
+    Ok((status, rsp.text().await?))
+}
+
 /// Poll `/token` with `grant_type=urn:ietf:params:oauth:grant-type:device_code`
 /// (RFC 8628 §3.4).
 pub async fn poll_device_token(

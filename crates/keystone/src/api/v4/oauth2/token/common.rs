@@ -36,6 +36,21 @@ pub(super) fn client_credentials_from_request(
     headers: &HeaderMap,
     form: &TokenForm,
 ) -> Option<(String, Option<String>)> {
+    client_credentials_from_parts(
+        headers,
+        form.client_id.as_deref(),
+        form.client_secret.as_deref(),
+    )
+}
+
+/// Same as [`client_credentials_from_request`] for endpoints with their own
+/// form type (e.g. RFC 7009 revocation): takes the body `client_id` /
+/// `client_secret` values directly.
+pub(in crate::api::v4::oauth2) fn client_credentials_from_parts(
+    headers: &HeaderMap,
+    body_client_id: Option<&str>,
+    body_client_secret: Option<&str>,
+) -> Option<(String, Option<String>)> {
     if let Some(basic) = headers
         .get(header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
@@ -46,9 +61,12 @@ pub(super) fn client_credentials_from_request(
         let (client_id, client_secret) = decoded.split_once(':')?;
         return Some((client_id.to_string(), Some(client_secret.to_string())));
     }
-    form.client_id
-        .clone()
-        .map(|client_id| (client_id, form.client_secret.clone()))
+    body_client_id.map(|client_id| {
+        (
+            client_id.to_string(),
+            body_client_secret.map(str::to_string),
+        )
+    })
 }
 
 /// Sign `claims` into a compact JWS using the domain's active OAuth2
@@ -96,7 +114,7 @@ pub(super) fn compute_at_hash(access_token: &str) -> String {
 /// Every rejection path burns the same Argon2id cost as a real verification
 /// (ADR 0026 §7.A enumeration defense), mirroring the `client_credentials`
 /// grant's posture.
-pub(super) async fn authenticate_client(
+pub(in crate::api::v4::oauth2) async fn authenticate_client(
     state: &ServiceState,
     oauth2_cfg: &openstack_keystone_config::Oauth2Provider,
     domain_id: &str,
@@ -154,4 +172,25 @@ pub(super) async fn authenticate_client(
     }
 
     Ok(client)
+}
+
+/// Best-effort cleanup when a grant fails *after* its refresh family was
+/// minted (e.g. JWT signing error): the bearer is never delivered, so the
+/// family must not linger against the per-user/client family caps. Failures
+/// here are only logged -- the caller is already returning the original error.
+pub(super) async fn discard_refresh_family(state: &ServiceState, family_id: Option<&str>) {
+    use openstack_keystone_core_types::oauth2_session::RefreshTokenRevocationReason;
+    let Some(family_id) = family_id else { return };
+    if let Err(e) = state
+        .provider
+        .get_oauth2_session_provider()
+        .revoke_refresh_token_family(
+            state,
+            family_id,
+            RefreshTokenRevocationReason::IssuanceFailed,
+        )
+        .await
+    {
+        tracing::warn!(error = %e, family_id, "failed to discard undelivered refresh family");
+    }
 }

@@ -127,6 +127,16 @@ pub trait Oauth2KeyBackend: Send + Sync {
         domain_id: &str,
     ) -> Result<HashSet<String>, Oauth2KeyProviderError>;
 
+    /// Add a single JTI to the domain's revocation list until `expires_at`.
+    /// See [`crate::oauth2_key::Oauth2KeyApi::revoke_jti`].
+    async fn revoke_jti(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        jti: &str,
+        expires_at: i64,
+    ) -> Result<(), Oauth2KeyProviderError>;
+
     /// Cross-domain scan of every domain currently holding a `Primary`
     /// signing key, for the previous-key/JTI janitor.
     /// See [`crate::oauth2_key::Oauth2KeyApi::list_all_active_keys`].

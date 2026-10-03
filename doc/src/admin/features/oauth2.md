@@ -255,6 +255,33 @@ Operational notes:
 - Set `keystone_expected_issuers` explicitly; claim presence of `iss` alone is
   not enough, the value is checked against this allowlist.
 
+## Relying-party token revocation (RFC 7009)
+
+`POST /v4/oauth2/{domain_id}/revoke` lets a client revoke its own refresh or
+access tokens (see the user guide). Operationally:
+
+- Refresh-token revocation tombstones the family with reason `rp_revoke` and
+  emits `OAUTH2_REFRESH_FAMILY_REVOKED`; every request also emits a `revoke`
+  session audit event whose initiator is the authenticated client. A client
+  presenting another client's refresh token gets `200` (no oracle) but a
+  `failure` audit event is recorded.
+- Access-token revocation writes the `jti` to the same per-domain revocation
+  list that emergency rotation uses (`/jwks/revocation`), so it is only
+  enforced by services that fetch that list (see "Downstream control-plane
+  enforcement"), after the list's 60s cache TTL. Entries are dropped once the
+  token's `exp` passes.
+- The endpoint is rate limited per client (`token_rate_limit_*`) and per source
+  IP (global IP limiter) before any token lookup.
+- OIDC access tokens carry a private `sid` claim (the refresh family id).
+  Revoking such an access token also revokes that family. The reverse does not
+  hold: revoking a refresh token does not revoke access tokens already minted
+  from its family (the list is keyed by `jti`; the server does not track
+  access tokens per family).
+- Writes to the per-domain JTI list use optimistic concurrency with bounded
+  retries, so concurrent revocations (or a revocation racing an emergency
+  rotation) do not lose entries; under sustained contention the call fails with
+  a 500 rather than silently dropping a revocation.
+
 ## Migration from Fernet
 
 Everything here is additive — Fernet issuance/validation continues unchanged.

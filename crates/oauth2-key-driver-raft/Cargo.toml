@@ -22,7 +22,7 @@ openstack-keystone-local-emergency-store.workspace = true
 rmp-serde.workspace = true
 secrecy.workspace = true
 serde = { workspace = true, features = ["derive"] }
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["sync", "time"] }
 tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 

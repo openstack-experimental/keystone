@@ -206,6 +206,7 @@ pub(super) async fn handle_refresh_token_grant(
         jti: uuid::Uuid::new_v4().to_string(),
         scope: record.scope.join(" "),
         token_use: "access".to_string(),
+        sid: Some(record.family_id.clone()),
     };
     let access_token = sign_jwt(state, domain_id, &access_claims).await?;
 
@@ -335,7 +336,7 @@ mod tests {
     use crate::api::tests::get_mocked_state;
     use crate::api::v4::oauth2::openapi_router;
     use crate::api::v4::oauth2::token::test_fixtures::{
-        json_body, ok_key_mock, public_authz_code_client, refresh_identity_mock,
+        json_body, jwt_claims, ok_key_mock, public_authz_code_client, refresh_identity_mock,
         refresh_resource_mock, refresh_user, request,
     };
     use crate::identity::MockIdentityProvider;
@@ -478,6 +479,9 @@ mod tests {
         assert_eq!(body["access_token"].as_str().unwrap().split('.').count(), 3);
         assert_eq!(body["refresh_token"], "new-bearer-token");
         assert!(body.get("id_token").is_none());
+        // The rotated family id rides along as `sid` for RFC 7009.
+        let claims = jwt_claims(body["access_token"].as_str().unwrap());
+        assert_eq!(claims["sid"], "family-1");
     }
 
     /// Run a refresh grant whose rotation succeeds and whose family, if

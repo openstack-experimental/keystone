@@ -29,7 +29,7 @@ GET /v4/oauth2/{domain_id}/jwks
 
 Both are unauthenticated. Point any standard OIDC library at the discovery
 document and it will find `authorization_endpoint`, `token_endpoint`,
-`jwks_uri`, supported grant types, and scopes.
+`jwks_uri`, `revocation_endpoint`, supported grant types, and scopes.
 
 ## Scopes
 
@@ -182,10 +182,47 @@ cloud CLI (`aws sso`, `gcloud`, `az`) uses.
   `/userinfo`.
 
 Access and ID tokens are short-lived (15 minutes by default) and **stateless
-bearer tokens** — there's no server-side revocation for them short of waiting
-out `exp` (or an operator triggering emergency signing-key rotation, which is
-out of your hands as a client). Treat them like any other bearer credential:
-don't log them, don't put them in URLs.
+bearer tokens**. You can end a session early with the revocation endpoint below
+(refresh tokens always; access tokens individually); otherwise wait out `exp`
+(or an operator triggers emergency signing-key rotation, which is out of your
+hands as a client). Treat them like any other bearer credential: don't log
+them, don't put them in URLs.
+
+## Revoking tokens (RFC 7009)
+
+```
+POST /v4/oauth2/{domain_id}/revoke
+Content-Type: application/x-www-form-urlencoded
+
+token=<refresh or access token>&token_type_hint=refresh_token
+```
+
+Authenticate the client exactly as for `/token` (HTTP Basic, or `client_id` /
+`client_secret` in the body). `token_type_hint` (`refresh_token` or
+`access_token`) is optional and only affects lookup order.
+
+- **Refresh token** — the whole refresh family (the token and everything
+  rotated from it) is revoked; any later `refresh_token` grant fails with
+  `invalid_grant`.
+- **Access token** — its `jti` is added to the domain's JTI revocation list
+  (`/jwks/revocation`) until the token's own `exp`. Services that enforce the
+  list (see the admin guide) reject it from then on, within the list's cache
+  TTL (60s). If the token carries a `sid` claim (the id of the refresh family
+  that minted it), that refresh family is revoked too, ending the session. ID
+  tokens carry no `jti` and are ignored.
+
+The endpoint always answers `200` with an empty body for an authenticated,
+well-formed request — including unknown, expired, already-revoked tokens and
+tokens that belong to another client — so it never reveals whether a token
+exists. A token is only revoked if it belongs to the authenticated client.
+Bad client credentials return `401 invalid_client`, a missing `token` returns
+`400 invalid_request`, and the endpoint is rate limited like `/token`.
+
+Limitation: revocation is one-directional. Revoking an access token also ends
+its refresh family (via `sid`), but revoking a refresh token does **not**
+revoke access tokens already issued from it; they expire on their own (or
+revoke them individually). Access tokens from `client_credentials` /
+token-exchange have no refresh family and no `sid`.
 
 ## Errors
 

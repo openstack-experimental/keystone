@@ -262,6 +262,14 @@ mod oauth2_key {
                 domain_id: &str,
             ) -> Result<HashSet<String>, Oauth2KeyProviderError>;
 
+            async fn revoke_jti(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+                jti: &str,
+                expires_at: i64,
+            ) -> Result<(), Oauth2KeyProviderError>;
+
             async fn list_all_active_keys(
                 &self,
                 state: &ServiceState,

@@ -29,7 +29,7 @@ mod device_code;
 mod error;
 mod refresh_token;
 #[cfg(test)]
-mod test_fixtures;
+pub(super) mod test_fixtures;
 mod token_exchange;
 
 use axum::{
@@ -46,6 +46,7 @@ use crate::keystone::ServiceState;
 
 use authorization_code::handle_authorization_code_grant;
 use client_credentials::handle_client_credentials_grant;
+pub(super) use common::{authenticate_client, client_credentials_from_parts};
 use device_code::handle_device_code_grant;
 pub(super) use error::Oauth2TokenError;
 use refresh_token::handle_refresh_token_grant;

@@ -230,6 +230,9 @@ pub enum RefreshTokenRevocationReason {
     Operator,
     /// Revoked by the relying party (RFC 7009 revocation).
     RpRevoke,
+    /// The grant failed after its refresh family was minted, so the bearer
+    /// was never delivered.
+    IssuanceFailed,
 }
 
 impl RefreshTokenRevocationReason {
@@ -244,6 +247,7 @@ impl RefreshTokenRevocationReason {
             Self::UserDomainChanged => "user_domain_changed",
             Self::Operator => "operator",
             Self::RpRevoke => "rp_revoke",
+            Self::IssuanceFailed => "issuance_failed",
         }
     }
 }

@@ -106,41 +106,10 @@ pub(super) async fn handle_device_code_grant(
     let access_lifetime = i64::from(oauth2_cfg.access_token_lifetime_minutes) * 60;
     let id_lifetime = i64::from(oauth2_cfg.id_token_lifetime_minutes) * 60;
 
-    let access_claims = OidcAccessTokenClaims {
-        iss: issuer.clone(),
-        sub: user_id.clone(),
-        aud: client_id.clone(),
-        exp: now + access_lifetime,
-        iat: now,
-        nbf: now,
-        jti: uuid::Uuid::new_v4().to_string(),
-        scope: record.scope.join(" "),
-        token_use: "access".to_string(),
-    };
-    let access_token = sign_jwt(state, domain_id, &access_claims).await?;
-
-    let id_token = if record.scope.iter().any(|s| s == "openid") {
-        let id_claims = IdTokenClaims {
-            iss: issuer,
-            sub: user_id.clone(),
-            aud: client_id.clone(),
-            exp: now + id_lifetime,
-            iat: now,
-            nbf: now,
-            auth_time,
-            nonce: record.nonce.clone(),
-            amr: record.amr.clone(),
-            at_hash: Some(compute_at_hash(&access_token)),
-            token_use: "id".to_string(),
-            extra_claims: Default::default(),
-        };
-        Some(sign_jwt(state, domain_id, &id_claims).await?)
-    } else {
-        None
-    };
-
-    let refresh_token = if client.grant_types.contains(&GrantType::RefreshToken) {
-        let (_, bearer) = state
+    // Issued before the access token so the token can carry the session id
+    // (`sid`) of its refresh family for RFC 7009 revocation.
+    let (sid, refresh_token) = if client.grant_types.contains(&GrantType::RefreshToken) {
+        let (record_rt, bearer) = state
             .provider
             .get_oauth2_session_provider()
             .issue_refresh_token(
@@ -148,7 +117,7 @@ pub(super) async fn handle_device_code_grant(
                 IssueRefreshTokenRequest {
                     domain_id: domain_id.to_string(),
                     client_id: client.client_id.clone(),
-                    user_id,
+                    user_id: user_id.clone(),
                     scope: record.scope.clone(),
                 },
             )
@@ -157,9 +126,54 @@ pub(super) async fn handle_device_code_grant(
                 tracing::warn!(error = %e, "oauth2 refresh token issuance failed");
                 Oauth2TokenError::internal("token issuance failed")
             })?;
-        Some(bearer)
+        (Some(record_rt.family_id), Some(bearer))
     } else {
-        None
+        (None, None)
+    };
+
+    let signed = async {
+        let access_claims = OidcAccessTokenClaims {
+            iss: issuer.clone(),
+            sub: user_id.clone(),
+            aud: client_id.clone(),
+            exp: now + access_lifetime,
+            iat: now,
+            nbf: now,
+            jti: uuid::Uuid::new_v4().to_string(),
+            scope: record.scope.join(" "),
+            token_use: "access".to_string(),
+            sid: sid.clone(),
+        };
+        let access_token = sign_jwt(state, domain_id, &access_claims).await?;
+
+        let id_token = if record.scope.iter().any(|s| s == "openid") {
+            let id_claims = IdTokenClaims {
+                iss: issuer,
+                sub: user_id.clone(),
+                aud: client_id.clone(),
+                exp: now + id_lifetime,
+                iat: now,
+                nbf: now,
+                auth_time,
+                nonce: record.nonce.clone(),
+                amr: record.amr.clone(),
+                at_hash: Some(compute_at_hash(&access_token)),
+                token_use: "id".to_string(),
+                extra_claims: Default::default(),
+            };
+            Some(sign_jwt(state, domain_id, &id_claims).await?)
+        } else {
+            None
+        };
+        Ok::<_, Oauth2TokenError>((access_token, id_token))
+    }
+    .await;
+    let (access_token, id_token) = match signed {
+        Ok(tokens) => tokens,
+        Err(e) => {
+            discard_refresh_family(state, sid.as_deref()).await;
+            return Err(e);
+        }
     };
 
     emit_oauth2_session_event(

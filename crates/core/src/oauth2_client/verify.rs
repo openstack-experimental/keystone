@@ -225,6 +225,111 @@ pub fn verify_openstack_access_token(
     Ok(claims)
 }
 
+/// Minimal facts about an access token that is eligible for RFC 7009
+/// revocation, as returned by [`verify_revocable_access_token`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RevocableAccessToken {
+    /// Token identifier to add to the JTI revocation list.
+    pub jti: String,
+    /// Token expiry (unix seconds); the revocation entry may be swept after.
+    pub exp: i64,
+    /// Refresh family (`sid` claim) that minted the token, if any.
+    pub sid: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct RevocableClaims {
+    iss: String,
+    aud: String,
+    exp: i64,
+    #[serde(default)]
+    jti: Option<String>,
+    #[serde(default)]
+    client_id: Option<String>,
+    #[serde(default)]
+    token_use: Option<String>,
+    #[serde(default)]
+    sid: Option<String>,
+}
+
+/// Verify an access token presented to the RFC 7009 revocation endpoint and
+/// extract what is needed to revoke it.
+///
+/// Accepts both access-token flavours this OP mints: the OIDC access token
+/// (`aud` == `client_id`) and the OpenStack access token
+/// (`aud` == `openstack-apis:{domain_id}` plus a `client_id` claim). In both
+/// cases the token must belong to `authenticated_client_id`; the signature,
+/// configured algorithm, issuer, `exp`/`nbf` and `token_use == "access"` are
+/// enforced exactly as in [`verify_openstack_access_token`]. Tokens without a
+/// `jti` (e.g. ID tokens) are rejected with
+/// [`TokenVerificationError::WrongTokenUse`].
+///
+/// # Errors
+/// See [`TokenVerificationError`]. The revocation endpoint maps every error
+/// to a plain `200` so it is not an oracle.
+pub fn verify_revocable_access_token(
+    token: &str,
+    jwks: &JwkSet,
+    expected_algorithm: SigningAlgorithm,
+    expected_issuers: &[String],
+    domain_id: &str,
+    authenticated_client_id: &str,
+) -> Result<RevocableAccessToken, TokenVerificationError> {
+    let header = decode_header(token)?;
+    let expected_alg = jwt_algorithm(expected_algorithm);
+    if header.alg != expected_alg {
+        return Err(TokenVerificationError::AlgorithmMismatch {
+            actual: header.alg,
+            expected: expected_alg,
+        });
+    }
+
+    let kid = header.kid.ok_or(TokenVerificationError::MissingKeyId)?;
+    let jwk = jwks
+        .find(&kid)
+        .ok_or_else(|| TokenVerificationError::UnknownKeyId(kid.clone()))?;
+    let decoding_key = DecodingKey::from_jwk(jwk)?;
+
+    let openstack_audience = format!("openstack-apis:{domain_id}");
+    let mut validation = Validation::new(expected_alg);
+    validation.set_required_spec_claims(&["exp", "iat", "nbf", "iss", "aud", "sub"]);
+    validation.set_audience(&[authenticated_client_id, openstack_audience.as_str()]);
+    validation.validate_nbf = true;
+
+    let claims = decode::<RevocableClaims>(token, &decoding_key, &validation)?.claims;
+
+    if !expected_issuers.iter().any(|iss| iss == &claims.iss) {
+        return Err(TokenVerificationError::UntrustedIssuer(claims.iss));
+    }
+
+    let token_use = claims.token_use.unwrap_or_default();
+    if token_use != "access" {
+        return Err(TokenVerificationError::WrongTokenUse(token_use));
+    }
+
+    // Ownership: the OIDC flavour is bound by `aud`; the OpenStack flavour
+    // by its `client_id` claim.
+    let owner = if claims.aud == openstack_audience {
+        claims.client_id.as_deref()
+    } else {
+        Some(claims.aud.as_str())
+    };
+    if owner != Some(authenticated_client_id) {
+        return Err(TokenVerificationError::WrongTokenUse(
+            "token belongs to another client".to_string(),
+        ));
+    }
+
+    let jti = claims
+        .jti
+        .ok_or_else(|| TokenVerificationError::WrongTokenUse("missing jti".to_string()))?;
+    Ok(RevocableAccessToken {
+        jti,
+        exp: claims.exp,
+        sid: claims.sid,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,6 +391,82 @@ mod tests {
         )
         .unwrap();
         (token, jwk, material.kid)
+    }
+
+    #[test]
+    fn test_revocable_openstack_token_owned_by_client() {
+        let now = chrono::Utc::now().timestamp();
+        let claims = valid_claims(now);
+        let (token, jwks, _kid) = sign(&claims);
+        let got = verify_revocable_access_token(
+            &token,
+            &jwks,
+            SigningAlgorithm::Es256,
+            &[ISSUER.to_string()],
+            DOMAIN_ID,
+            "client-1",
+        )
+        .unwrap();
+        assert_eq!(got.jti, "jti-1");
+        assert_eq!(got.exp, claims.exp);
+    }
+
+    #[test]
+    fn test_revocable_foreign_client_rejected() {
+        let now = chrono::Utc::now().timestamp();
+        let (token, jwks, _kid) = sign(&valid_claims(now));
+        let err = verify_revocable_access_token(
+            &token,
+            &jwks,
+            SigningAlgorithm::Es256,
+            &[ISSUER.to_string()],
+            DOMAIN_ID,
+            "client-2",
+        )
+        .unwrap_err();
+        assert!(matches!(err, TokenVerificationError::WrongTokenUse(_)));
+    }
+
+    #[test]
+    fn test_revocable_oidc_token_owned_by_aud() {
+        let now = chrono::Utc::now().timestamp();
+        let claims = serde_json::json!({
+            "iss": ISSUER, "sub": "u", "aud": "client-1", "exp": now + 900,
+            "iat": now, "nbf": now, "jti": "jti-oidc", "scope": "openid",
+            "token_use": "access", "sid": "family-1",
+        });
+        let (token, jwks, _kid) = sign(&claims);
+        let got = verify_revocable_access_token(
+            &token,
+            &jwks,
+            SigningAlgorithm::Es256,
+            &[ISSUER.to_string()],
+            DOMAIN_ID,
+            "client-1",
+        )
+        .unwrap();
+        assert_eq!(got.jti, "jti-oidc");
+        assert_eq!(got.sid.as_deref(), Some("family-1"));
+    }
+
+    #[test]
+    fn test_revocable_id_token_rejected() {
+        let now = chrono::Utc::now().timestamp();
+        let claims = serde_json::json!({
+            "iss": ISSUER, "sub": "u", "aud": "client-1", "exp": now + 900,
+            "iat": now, "nbf": now, "token_use": "id",
+        });
+        let (token, jwks, _kid) = sign(&claims);
+        let err = verify_revocable_access_token(
+            &token,
+            &jwks,
+            SigningAlgorithm::Es256,
+            &[ISSUER.to_string()],
+            DOMAIN_ID,
+            "client-1",
+        )
+        .unwrap_err();
+        assert!(matches!(err, TokenVerificationError::WrongTokenUse(_)));
     }
 
     #[test]

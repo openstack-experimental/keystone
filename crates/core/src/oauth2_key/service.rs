@@ -173,6 +173,18 @@ impl Oauth2KeyApi for Oauth2KeyService {
         self.backend_driver.revoked_jtis(state, domain_id).await
     }
 
+    async fn revoke_jti(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        jti: &str,
+        expires_at: i64,
+    ) -> Result<(), Oauth2KeyProviderError> {
+        self.backend_driver
+            .revoke_jti(state, domain_id, jti, expires_at)
+            .await
+    }
+
     async fn list_all_active_keys(
         &self,
         state: &ServiceState,

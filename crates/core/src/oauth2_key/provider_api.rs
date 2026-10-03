@@ -202,6 +202,18 @@ pub trait Oauth2KeyApi: Send + Sync {
         domain_id: &str,
     ) -> Result<HashSet<String>, Oauth2KeyProviderError>;
 
+    /// Add a single access-token `jti` to the domain's revocation list
+    /// (RFC 7009 token revocation). The entry is kept until `expires_at`
+    /// (the token's own `exp`, unix seconds), after which it is lazily swept
+    /// since the token is invalid anyway.
+    async fn revoke_jti(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        jti: &str,
+        expires_at: i64,
+    ) -> Result<(), Oauth2KeyProviderError>;
+
     /// Cross-domain scan of every domain currently holding a `Primary`
     /// signing key with its `Previous` (if any), for the previous-key/JTI
     /// janitor (`crate::oauth2_key::janitor`). There is no cluster-wide

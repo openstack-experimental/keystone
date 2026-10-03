@@ -6,7 +6,7 @@
 
 Accepted. Implemented in `crates/keystone/src/api/v4/oauth2/` (`authorize`,
 `token`, `device`, `device_authorization`, `jwks`, `jwks_revocation`,
-`well_known`). Status was left at `Proposed` after the feature shipped;
+`well_known`, `revoke`). Status was left at `Proposed` after the feature shipped;
 corrected 2026-09-14 (security review re-evaluation, V8) so a reader
 triaging by ADR status does not under-weight this live surface. The
 implementation was independently audited against OAuth2 client-enumeration
@@ -709,6 +709,15 @@ crossing domain/system boundaries, domain-confined self-service otherwise:
   delete (access tokens are short-lived at 15 min); only the stateful refresh
   path is targeted. Operators requiring immediate access-token revocation for a
   compromised client should trigger emergency signing key rotation (§3) instead.
+
+- **`POST /v4/oauth2/{domain_id}/revoke`** - RFC 7009 token revocation by the
+  authenticated client. A refresh token revokes its whole family (reason
+  `rp_revoke`); an access token's `jti` is added to the jti revocation list (§3)
+  until its `exp`. Always `200` for well-formed authenticated requests (unknown
+  or foreign tokens are not distinguishable). OIDC access tokens carry a private
+  `sid` claim (the refresh `family_id`), so revoking one also revokes its
+  family; revoking a refresh token does not revoke access tokens already minted
+  from its family (the jti list is not indexed by family).
 
 Every create/update/delete/rotate-secret event triggers a CADF audit event (§9),
 same as mapping ruleset mutations.

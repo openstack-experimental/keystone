@@ -36,7 +36,8 @@ use crate::identity::MockIdentityProvider;
 use crate::oauth2_key::MockOauth2KeyProvider;
 use crate::resource::MockResourceProvider;
 
-pub(super) async fn confidential_client() -> provider_types::OAuth2ClientResource {
+pub(in crate::api::v4::oauth2) async fn confidential_client() -> provider_types::OAuth2ClientResource
+{
     let cfg = openstack_keystone_config::Oauth2Provider {
         argon2_memory_kib: 8,
         argon2_time_cost: 1,
@@ -164,7 +165,7 @@ pub(super) fn request(body: &str) -> Request<Body> {
         .unwrap()
 }
 
-pub(super) async fn json_body(response: axum::response::Response) -> Value {
+pub(in crate::api::v4::oauth2) async fn json_body(response: axum::response::Response) -> Value {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     serde_json::from_slice(&body).unwrap()
 }
@@ -228,4 +229,11 @@ pub(super) async fn public_authz_code_client() -> provider_types::OAuth2ClientRe
         updated_at: 0,
         deleted_at: None,
     }
+}
+
+/// Decode (without verifying) the claims of a compact JWS.
+pub(in crate::api::v4::oauth2) fn jwt_claims(token: &str) -> Value {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    let payload = token.split('.').nth(1).unwrap();
+    serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap()
 }

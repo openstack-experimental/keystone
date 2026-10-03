@@ -713,6 +713,14 @@ impl RaftOauth2KeyBackend {
         Ok(stored.data)
     }
 
+    /// Add `new_jtis` to the domain's revocation list.
+    ///
+    /// The list is a single value, so this is a read-modify-write: it is made
+    /// safe against concurrent writers (two RPs revoking at once, or a revoke
+    /// racing an emergency rotation) with optimistic concurrency -- the write
+    /// carries the revision it read (or is create-if-absent for the first
+    /// entry) and the whole read-modify-write is retried on a conflict, so no
+    /// JTI is silently lost.
     async fn add_revoked_jtis_impl(
         &self,
         storage: &dyn StorageApi,
@@ -720,27 +728,92 @@ impl RaftOauth2KeyBackend {
         new_jtis: Vec<String>,
         ttl_secs: i64,
     ) -> Result<(), Oauth2KeyProviderError> {
-        let mut current = self.load_jti_revocations(storage, domain_id).await?;
-        let now = now_epoch_secs();
-        // Lazy-sweep expired entries (ADR 0020 §4.A posture) on every write,
-        // so the list never grows unbounded even without a dedicated
-        // janitor task.
-        current.retain(|_, expires_at| *expires_at > now);
-        let expires_at = now + ttl_secs;
-        for jti in new_jtis {
-            current.insert(jti, expires_at);
-        }
+        const MAX_ATTEMPTS: usize = 8;
+        let key = jti_revocation_key_name(domain_id);
+        let persist = |e: StoreError| Oauth2KeyProviderError::raft(store_err_to_key_repo_err(e));
 
-        let envelope = StoreDataEnvelope {
-            data: rmp_serde::to_vec(&current)
-                .map_err(|e| Oauth2KeyProviderError::Crypto(e.to_string()))?,
-            metadata: Metadata::new(),
-        };
-        storage
-            .set_value(jti_revocation_key_name(domain_id), envelope, None, None)
-            .await
-            .map_err(|e| Oauth2KeyProviderError::raft(store_err_to_key_repo_err(e)))?;
-        Ok(())
+        for attempt in 0..MAX_ATTEMPTS {
+            if attempt > 0 {
+                // Linear backoff with sub-second-clock jitter so concurrent
+                // revokers do not retry in lockstep.
+                let jitter = u64::from(chrono::Utc::now().timestamp_subsec_millis() % 5);
+                tokio::time::sleep(std::time::Duration::from_millis(
+                    5 * attempt as u64 + jitter,
+                ))
+                .await;
+            }
+            let existing = storage
+                .get_by_key(key.as_bytes(), None)
+                .await
+                .map_err(persist)?;
+            let (mut current, revision) = match existing {
+                Some(envelope) => {
+                    let stored: StoreDataEnvelope<HashMap<String, i64>> =
+                        envelope.try_deserialize().map_err(persist)?;
+                    (stored.data, Some(stored.metadata))
+                }
+                None => (HashMap::new(), None),
+            };
+            let now = now_epoch_secs();
+            // Lazy-sweep expired entries (ADR 0020 §4.A posture) on every
+            // write, so the list never grows unbounded even without a
+            // dedicated janitor task.
+            current.retain(|_, expires_at| *expires_at > now);
+            let expires_at = now + ttl_secs;
+            for jti in &new_jtis {
+                current.insert(jti.clone(), expires_at);
+            }
+
+            let result = match revision {
+                Some(meta) => {
+                    let envelope = StoreDataEnvelope {
+                        data: rmp_serde::to_vec(&current)
+                            .map_err(|e| Oauth2KeyProviderError::Crypto(e.to_string()))?,
+                        metadata: meta.new_revision(),
+                    };
+                    storage
+                        .set_value(key.clone(), envelope, None, Some(meta.revision))
+                        .await
+                }
+                None => {
+                    let mutation = Mutation::create_if_absent(
+                        key.as_bytes(),
+                        &current,
+                        Metadata::new(),
+                        None::<&str>,
+                    )
+                    .map_err(persist)?;
+                    storage.transaction(vec![mutation]).await
+                }
+            };
+            match result {
+                // The real storage surfaces a CAS miss as `Err(Conflict)`;
+                // the mock returns it as `violations` on an `Ok` response.
+                Ok(response) if response.violations.is_empty() => return Ok(()),
+                // Only a CAS/create-if-absent miss is retried; any other
+                // violation is a real failure, not contention.
+                Ok(response) => {
+                    if let Some(v) = response
+                        .violations
+                        .iter()
+                        .find(|v| !v.r#type.eq_ignore_ascii_case("CONFLICT"))
+                    {
+                        return Err(persist(StoreError::Conflict {
+                            subject: v.subject.clone(),
+                            description: v.description.clone(),
+                        }));
+                    }
+                }
+                Err(StoreError::Conflict { .. }) => {}
+                Err(e) => return Err(persist(e)),
+            }
+        }
+        Err(Oauth2KeyProviderError::raft(store_err_to_key_repo_err(
+            StoreError::Conflict {
+                subject: key,
+                description: "JTI revocation list contended; retries exhausted".to_string(),
+            },
+        )))
     }
 
     async fn revoked_jtis_impl(
@@ -1024,6 +1097,25 @@ impl Oauth2KeyBackend for RaftOauth2KeyBackend {
             .as_deref()
             .ok_or(Oauth2KeyProviderError::RaftNotAvailable)?;
         self.revoked_jtis_impl(storage, domain_id).await
+    }
+
+    async fn revoke_jti(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        jti: &str,
+        expires_at: i64,
+    ) -> Result<(), Oauth2KeyProviderError> {
+        let storage = state
+            .storage
+            .as_deref()
+            .ok_or(Oauth2KeyProviderError::RaftNotAvailable)?;
+        // Never keep an entry past what the token itself would live, but keep
+        // it for at least one second so an already-expired token is a no-op
+        // that the lazy sweep drops.
+        let ttl_secs = expires_at - now_epoch_secs();
+        self.add_revoked_jtis_impl(storage, domain_id, vec![jti.to_string()], ttl_secs)
+            .await
     }
 
     async fn list_all_active_keys(
@@ -1972,6 +2064,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_add_revoked_jtis_accumulates_across_writes_and_concurrent_adds() {
+        let backend = RaftOauth2KeyBackend::default();
+        let storage = MockStorage::default();
+
+        // First write goes through create-if-absent, later ones through CAS
+        // on the stored revision; none may drop earlier entries.
+        backend
+            .add_revoked_jtis_impl(&storage, "domain-1", vec!["a".to_string()], 900)
+            .await
+            .unwrap();
+        let (r1, r2) = tokio::join!(
+            backend.add_revoked_jtis_impl(&storage, "domain-1", vec!["b".to_string()], 900),
+            backend.add_revoked_jtis_impl(&storage, "domain-1", vec!["c".to_string()], 900),
+        );
+        r1.unwrap();
+        r2.unwrap();
+
+        let revoked = backend
+            .revoked_jtis_impl(&storage, "domain-1")
+            .await
+            .unwrap();
+        for jti in ["a", "b", "c"] {
+            assert!(revoked.contains(jti), "lost {jti}: {revoked:?}");
+        }
+    }
+
+    #[tokio::test]
     async fn test_jti_revocation_lists_are_isolated_per_domain() {
         let backend = RaftOauth2KeyBackend::default();
         let storage = MockStorage::default();
@@ -1991,5 +2110,342 @@ mod tests {
             .unwrap();
         assert!(revoked_a.contains("jti-a"));
         assert!(revoked_b.is_empty());
+    }
+
+    /// `MockStorage` wrapper that simulates a competing writer: the first
+    /// `interferences` reads of a domain's JTI revocation key each return the
+    /// value as it was *before* another writer adds `competitor-{n}` -- i.e.
+    /// exactly the stale read-modify-write window a concurrent revoke would
+    /// hit on the real cluster, which `MockStorage` alone (synchronous, no
+    /// yield between read and write) cannot produce.
+    struct InterferingStorage {
+        inner: MockStorage,
+        interferences: std::sync::atomic::AtomicUsize,
+        /// Writes still to be rejected with `Err(StoreError::Conflict)`, the
+        /// way the real raft storage reports a failed CAS.
+        conflicts: std::sync::atomic::AtomicUsize,
+    }
+
+    impl InterferingStorage {
+        fn new(interferences: usize) -> Self {
+            Self {
+                inner: MockStorage::default(),
+                interferences: std::sync::atomic::AtomicUsize::new(interferences),
+                conflicts: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+
+        fn take_conflict(&self) -> bool {
+            use std::sync::atomic::Ordering;
+            self.conflicts
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                .is_ok()
+        }
+
+        /// Atomically consume one pending interference, if any remain.
+        fn take_interference(&self) -> Option<usize> {
+            use std::sync::atomic::Ordering;
+            self.interferences
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                .ok()
+        }
+    }
+
+    #[async_trait]
+    impl StorageApi for InterferingStorage {
+        async fn contains_key(
+            &self,
+            key: &[u8],
+            keyspace: Option<&str>,
+        ) -> Result<bool, StoreError> {
+            self.inner.contains_key(key, keyspace).await
+        }
+
+        async fn get_by_key(
+            &self,
+            key: &[u8],
+            keyspace: Option<&str>,
+        ) -> Result<Option<StoreDataEnvelope<Vec<u8>>>, StoreError> {
+            let stale = self.inner.get_by_key(key, keyspace).await?;
+            if key.starts_with(b"oauth2:jti_revocation:v1:")
+                && let Some(n) = self.take_interference()
+            {
+                // Competing writer lands after our read, before our write.
+                let (mut map, meta) = match &stale {
+                    Some(env) => {
+                        let typed: StoreDataEnvelope<HashMap<String, i64>> =
+                            env.try_deserialize().unwrap();
+                        (typed.data, typed.metadata.new_revision())
+                    }
+                    None => (HashMap::new(), Metadata::new()),
+                };
+                map.insert(format!("competitor-{n}"), now_epoch_secs() + 900);
+                self.inner
+                    .set_value(
+                        String::from_utf8(key.to_vec()).unwrap(),
+                        StoreDataEnvelope {
+                            data: rmp_serde::to_vec(&map).unwrap(),
+                            metadata: meta,
+                        },
+                        keyspace.map(str::to_string),
+                        None,
+                    )
+                    .await?;
+            }
+            Ok(stale)
+        }
+
+        async fn prefix(
+            &self,
+            prefix: &[u8],
+            keyspace: Option<&str>,
+        ) -> Result<Vec<(String, StoreDataEnvelope<Vec<u8>>)>, StoreError> {
+            self.inner.prefix(prefix, keyspace).await
+        }
+
+        async fn prefix_index(&self, prefix: &[u8]) -> Result<Vec<String>, StoreError> {
+            self.inner.prefix_index(prefix).await
+        }
+
+        async fn remove(
+            &self,
+            key: String,
+            keyspace: Option<String>,
+        ) -> Result<openstack_keystone_distributed_storage::StoreResponse, StoreError> {
+            self.inner.remove(key, keyspace).await
+        }
+
+        async fn remove_index(
+            &self,
+            key: String,
+        ) -> Result<openstack_keystone_distributed_storage::StoreResponse, StoreError> {
+            self.inner.remove_index(key).await
+        }
+
+        async fn set_value(
+            &self,
+            key: String,
+            value: StoreDataEnvelope<Vec<u8>>,
+            keyspace: Option<String>,
+            expected_revision: Option<u64>,
+        ) -> Result<openstack_keystone_distributed_storage::StoreResponse, StoreError> {
+            if self.take_conflict() {
+                return Err(StoreError::Conflict {
+                    subject: key,
+                    description: "simulated CAS failure".to_string(),
+                });
+            }
+            self.inner
+                .set_value(key, value, keyspace, expected_revision)
+                .await
+        }
+
+        async fn set_index_key(
+            &self,
+            key: String,
+        ) -> Result<openstack_keystone_distributed_storage::StoreResponse, StoreError> {
+            self.inner.set_index_key(key).await
+        }
+
+        async fn transaction(
+            &self,
+            mutations: Vec<Mutation>,
+        ) -> Result<openstack_keystone_distributed_storage::StoreResponse, StoreError> {
+            if self.take_conflict() {
+                return Err(StoreError::Conflict {
+                    subject: "txn".to_string(),
+                    description: "simulated create conflict".to_string(),
+                });
+            }
+            self.inner.transaction(mutations).await
+        }
+
+        async fn is_initialized(&self) -> Result<bool, StoreError> {
+            self.inner.is_initialized().await
+        }
+
+        async fn initialize(
+            &self,
+            nodes: HashMap<u64, openstack_keystone_distributed_storage::Node>,
+        ) -> Result<(), StoreError> {
+            self.inner.initialize(nodes).await
+        }
+
+        async fn current_leader(&self) -> Option<u64> {
+            self.inner.current_leader().await
+        }
+
+        async fn keyspace_exists(&self, keyspace: &str) -> Result<bool, StoreError> {
+            self.inner.keyspace_exists(keyspace).await
+        }
+
+        async fn drop_keyspace(&self, keyspace: &str) -> Result<(), StoreError> {
+            self.inner.drop_keyspace(keyspace).await
+        }
+
+        async fn node_id(&self) -> u64 {
+            self.inner.node_id().await
+        }
+    }
+
+    #[tokio::test]
+    async fn test_add_revoked_jtis_retries_when_first_create_loses_race() {
+        // Key absent at read time; a competitor creates it before our
+        // create-if-absent lands. We must retry (via CAS) and keep both.
+        let backend = RaftOauth2KeyBackend::default();
+        let storage = InterferingStorage::new(1);
+
+        backend
+            .add_revoked_jtis_impl(&storage, "domain-1", vec!["mine".to_string()], 900)
+            .await
+            .unwrap();
+
+        let revoked = backend
+            .revoked_jtis_impl(&storage, "domain-1")
+            .await
+            .unwrap();
+        assert!(revoked.contains("mine"), "lost our jti: {revoked:?}");
+        assert!(
+            revoked.contains("competitor-1"),
+            "lost competitor's jti: {revoked:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_add_revoked_jtis_retries_on_stale_revision() {
+        // Key present at read time; a competitor bumps its revision before
+        // our CAS write. The stale write must be rejected and retried, not
+        // overwrite the competitor's entry.
+        let backend = RaftOauth2KeyBackend::default();
+        let storage = InterferingStorage::new(0);
+        backend
+            .add_revoked_jtis_impl(&storage, "domain-1", vec!["seed".to_string()], 900)
+            .await
+            .unwrap();
+        storage
+            .interferences
+            .store(2, std::sync::atomic::Ordering::SeqCst);
+
+        backend
+            .add_revoked_jtis_impl(&storage, "domain-1", vec!["mine".to_string()], 900)
+            .await
+            .unwrap();
+
+        let revoked = backend
+            .revoked_jtis_impl(&storage, "domain-1")
+            .await
+            .unwrap();
+        for jti in ["seed", "mine", "competitor-1", "competitor-2"] {
+            assert!(revoked.contains(jti), "lost {jti}: {revoked:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_add_revoked_jtis_retries_on_err_conflict() {
+        // The real raft path reports a lost CAS/create as `Err(Conflict)`,
+        // not as response violations. Both must be retried.
+        let backend = RaftOauth2KeyBackend::default();
+        let storage = InterferingStorage::new(0);
+        storage
+            .conflicts
+            .store(2, std::sync::atomic::Ordering::SeqCst);
+
+        backend
+            .add_revoked_jtis_impl(&storage, "domain-1", vec!["first".to_string()], 900)
+            .await
+            .unwrap();
+        storage
+            .conflicts
+            .store(2, std::sync::atomic::Ordering::SeqCst);
+        backend
+            .add_revoked_jtis_impl(&storage, "domain-1", vec!["second".to_string()], 900)
+            .await
+            .unwrap();
+
+        let revoked = backend
+            .revoked_jtis_impl(&storage, "domain-1")
+            .await
+            .unwrap();
+        assert!(revoked.contains("first") && revoked.contains("second"));
+    }
+
+    #[tokio::test]
+    async fn test_add_revoked_jtis_gives_up_after_bounded_retries() {
+        // A permanently contended key must surface an error, never loop
+        // forever and never report success for a write that did not land.
+        let backend = RaftOauth2KeyBackend::default();
+        let storage = InterferingStorage::new(usize::MAX);
+
+        let err = backend
+            .add_revoked_jtis_impl(&storage, "domain-1", vec!["mine".to_string()], 900)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("contended"),
+            "unexpected error: {err}"
+        );
+
+        storage
+            .interferences
+            .store(0, std::sync::atomic::Ordering::SeqCst);
+        let revoked = backend
+            .revoked_jtis_impl(&storage, "domain-1")
+            .await
+            .unwrap();
+        assert!(!revoked.contains("mine"));
+    }
+
+    #[tokio::test]
+    async fn test_revoke_jti_trait_method_requires_storage() {
+        let backend = RaftOauth2KeyBackend::default();
+        let state = test_service_state(openstack_keystone_config::Config::default()).await;
+        let err = backend
+            .revoke_jti(&state, "domain-1", "jti-1", now_epoch_secs() + 900)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Oauth2KeyProviderError::RaftNotAvailable));
+    }
+
+    #[tokio::test]
+    async fn test_revoke_jti_trait_method_lists_jti_until_exp() {
+        let backend = RaftOauth2KeyBackend::default();
+        let state = Arc::new(
+            openstack_keystone_core::keystone::Service::new(
+                openstack_keystone_config::ConfigManager::not_watched(
+                    openstack_keystone_config::Config::default(),
+                ),
+                sea_orm::DatabaseConnection::default(),
+                openstack_keystone_core::provider::Provider::mocked_builder()
+                    .build()
+                    .unwrap(),
+                Arc::new(openstack_keystone_core::policy::MockPolicy::default()),
+                openstack_keystone_audit::AuditDispatcher::noop(),
+                Some(Arc::new(MockStorage::default())),
+            )
+            .await
+            .unwrap(),
+        );
+
+        backend
+            .revoke_jti(&state, "domain-1", "live-jti", now_epoch_secs() + 900)
+            .await
+            .unwrap();
+        // Already-expired token: nothing to enforce, must not be listed.
+        backend
+            .revoke_jti(&state, "domain-1", "dead-jti", now_epoch_secs() - 10)
+            .await
+            .unwrap();
+
+        let revoked = backend.revoked_jtis(&state, "domain-1").await.unwrap();
+        assert!(revoked.contains("live-jti"));
+        assert!(!revoked.contains("dead-jti"));
+        // Scoped to its own domain.
+        assert!(
+            backend
+                .revoked_jtis(&state, "domain-2")
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 }
