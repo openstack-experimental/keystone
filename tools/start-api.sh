@@ -132,6 +132,7 @@ cluster_salt = "fbb27433d07ab307cc1fc899d0e174cf197fd398fbcff7285a63fe2f94eec2fe
 
 [audit]
 spool_dir = ${STATE_DIR}/audit
+node_id = api-test-node
 
 [auth_plugins]
 plugins = mapper,router,hacked_appcred_handler

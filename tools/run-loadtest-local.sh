@@ -72,6 +72,7 @@ admin_svid = spiffe://example.org/keystone
 
 [audit]
 spool_dir = ${STATE_DIR}/audit
+node_id = loadtest-node
 EOF
 
 echo "2Rlc-npWYOGqqG1zM-bmfBj2apLacLXhIbBsdyqQ0zg=" > "${STATE_DIR}/etc/fernet-keys/0"

@@ -22,6 +22,7 @@ use color_eyre::Report;
 
 use openstack_keystone_config::Config;
 
+mod audit;
 mod bootstrap;
 mod catalog;
 mod common;
@@ -32,6 +33,7 @@ mod oauth2;
 mod storage;
 mod token;
 
+use crate::audit::*;
 use crate::bootstrap::*;
 use crate::catalog::*;
 use crate::credential::*;
@@ -63,6 +65,9 @@ struct Args {
 
 #[derive(Parser)]
 enum Command {
+    /// Audit framework key management.
+    Audit(AuditCommand),
+
     /// Bootstrap.
     Bootstrap(BootstrapCommand),
 
@@ -99,6 +104,7 @@ async fn main() -> Result<(), Report> {
     let args = Args::parse();
     let cfg = Config::load_all(args.config).await?;
     match args.command {
+        Command::Audit(x) => x.take_action(&cfg).await?,
         Command::Bootstrap(x) => x.take_action(&cfg).await?,
         Command::Catalog(x) => x.take_action(&cfg).await?,
         Command::Credential(x) => x.take_action(&cfg).await?,

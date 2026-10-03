@@ -26,6 +26,7 @@
 
 pub mod dispatcher;
 pub mod kdf;
+pub mod keyring;
 pub mod metrics;
 pub mod sanitize;
 pub mod sink;
@@ -39,6 +40,7 @@ pub use dispatcher::{
     DEFAULT_PERIMETER_CHANNEL_CAPACITY,
 };
 pub use kdf::derive_audit_hmac_key;
+pub use keyring::{HmacKeyring, KeyringError, NodeKeyStore};
 pub use sink::{AuditSink, ShipperConfig, SinkError, StdoutSink, run_segment_shipper};
 pub use spool::{HmacKeyStore, SpoolConfig, SpoolError};
 #[cfg(feature = "syslog")]

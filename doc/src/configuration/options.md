@@ -87,11 +87,29 @@ from it.
 | `[auth_plugins]` | `plugins`, `trusted_proxies`, `trusted_header` |
 | `[auth_plugin.<name>]` | `path`, `sha256`, `mode`, capabilities, headers, outbound hosts, provisioning/role bounds, route targets, resource limits, rate limits, concurrency, `valid_since` |
 | `[auth_plugin_identity]` | `driver` |
-| `[audit]` | `enabled`, `spool_dir`, `node_id`, `spool_max_segment_bytes`, `spool_max_segment_age_secs`, `spool_max_segments`, `spool_max_bytes`, `spool_retention_secs`, `perimeter_channel_capacity`, `critical_channel_capacity`, `shipper_batch_size`, `shipper_poll_interval_secs`, `shipper_initial_backoff_secs`, `shipper_max_backoff_secs`, `spool_drain_timeout_secs`, `sink` |
+| `[audit]` | `enabled`, `spool_dir`, `hmac_kek_file`, `node_id`, `spool_max_segment_bytes`, `spool_max_segment_age_secs`, `spool_max_segments`, `spool_max_bytes`, `spool_retention_secs`, `perimeter_channel_capacity`, `critical_channel_capacity`, `shipper_batch_size`, `shipper_poll_interval_secs`, `shipper_initial_backoff_secs`, `shipper_max_backoff_secs`, `spool_drain_timeout_secs`, `sink` |
 
 `[audit] enabled` defaults to `true`. Setting it to `false` skips creating the
 spool directory, spool lock, HMAC key and writer, and discards audit events;
 use it only for development or deployments that do not need an audit trail.
+
+Audit signing key and node identity:
+
+- `node_id` identifies the node in every event, names its spool files and
+  keys its signing key, so it must be unique per node. It defaults to the
+  `HOSTNAME` environment variable, then the system hostname; Keystone refuses
+  to start with auditing enabled if it is empty, unset (the `unknown-node`
+  fallback) or contains characters outside `A-Z a-z 0-9 . _ -`.
+- `hmac_kek_file` is the keyring holding the audit key-encryption-keys, one per
+  key version, created with mode `0600` if missing. It must not be inside
+  `spool_dir` (startup fails if it is): whoever can write the spool must not be
+  able to read the key that signs it. When unset, the legacy
+  `<spool_dir>/hmac-key.bin` is used so existing deployments keep working, and
+  a warning is logged. A legacy 32-byte key file is read as key version 1.
+- Rotate the signing key with `keystone-manage audit rotate-hmac-key`. It adds a
+  new version and makes it current; old versions are kept so events already
+  signed stay verifiable. Running servers pick the new version up within about
+  30 seconds. Back up the keyring and give the SIEM verifier the updated copy.
 
 Spool and queue limits:
 
