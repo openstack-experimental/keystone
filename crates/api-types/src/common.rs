@@ -14,7 +14,17 @@
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use secrecy::{ExposeSecret, SecretString};
-use serde::Serializer;
+use serde::{Deserialize, Deserializer, Serializer};
+
+/// Distinguish the absent attribute (`None`) from the explicit `null`
+/// (`Some(None)`).
+pub(crate) fn double_option<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
 
 /// OpenStack clients (e.g. tempest, python-keystoneclient) parse timestamps
 /// with `strptime` formats accepting at most 6 fractional-second digits

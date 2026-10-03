@@ -42,6 +42,7 @@ pub mod role;
 pub mod role_assignment;
 pub mod role_inferences;
 pub mod service;
+pub mod unified_limit;
 pub mod user;
 
 use crate::api::types::*;
@@ -51,6 +52,7 @@ use crate::api::types::*;
 #[openapi(
     nest(
       (path = "/roles", api = role::ApiDoc),
+      (path = "/limits", api = unified_limit::ApiDoc),
     ),
 )]
 pub struct ApiDoc;
@@ -75,6 +77,7 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .nest("/services", service::openapi_router())
         .nest("/users", user::openapi_router())
         .merge(role_assignment::openapi_router())
+        .merge(unified_limit::openapi_router())
         .routes(routes!(version))
 }
 

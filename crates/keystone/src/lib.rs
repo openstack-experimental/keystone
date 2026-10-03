@@ -94,6 +94,7 @@ pub mod idmapping;
 pub mod k8s_auth;
 pub mod k8s_auth_client;
 pub mod keystone;
+pub mod limit;
 pub mod mapping;
 pub mod nova_client;
 pub mod nova_client_impl;

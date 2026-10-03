@@ -24,6 +24,7 @@ members = [
   "crates/k8s-auth-driver-sql",
   "crates/key-repository",
   "crates/keystone",
+  "crates/limit-driver-sql",
   "crates/local-emergency-store",
   "crates/mapping-driver-raft",
   "crates/metrics",
@@ -146,6 +147,7 @@ openstack-keystone-storage-crypto-pkcs11 = { version = "0.1.0", path = "crates/s
 openstack-keystone-storage-crypto-tpm = { version = "0.1.0", path = "crates/storage-crypto-tpm" }
 openstack-keystone-federation-driver-sql = { version = "0.1", path = "crates/federation-driver-sql" }
 openstack-keystone-k8s-auth-driver-sql = { version = "0.1", path = "crates/k8s-auth-driver-sql/" }
+openstack-keystone-limit-driver-sql = { version = "0.1", path = "crates/limit-driver-sql/" }
 openstack-keystone-k8s-auth-driver-raft = { version = "0.1", path = "crates/k8s-auth-driver-raft/" }
 openstack-keystone-key-repository = { version = "0.1.0", path = "crates/key-repository" }
 openstack-keystone-local-emergency-store = { version = "0.1.0", path = "crates/local-emergency-store" }

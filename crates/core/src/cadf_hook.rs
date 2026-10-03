@@ -97,6 +97,8 @@ fn build_target_from_event(event: &Event) -> Target {
             ..
         } => (id, "data/compute/catalog/project-endpoint-group"),
         EventPayload::Region { id } => (id, "data/compute/catalog/region"),
+        EventPayload::Limit { id } => (id, "data/compute/limit/limit"),
+        EventPayload::RegisteredLimit { id } => (id, "data/compute/limit/registered-limit"),
         EventPayload::Service { id } => (id, "data/compute/catalog/service"),
         EventPayload::Trust { id } => (id, "data/security/identity/trust"),
         EventPayload::Policy { id } => (id, "data/security/identity/policy"),

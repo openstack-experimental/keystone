@@ -104,6 +104,7 @@ pub mod identity;
 pub mod idmapping;
 pub mod k8s_auth;
 pub mod keystone;
+pub mod limit;
 pub mod mapping;
 pub mod net;
 pub mod nova_client;

@@ -23,6 +23,7 @@ pub mod federation;
 pub mod fixtures;
 pub mod guard;
 pub mod identity;
+pub mod limit;
 pub mod macros;
 pub mod mapping;
 pub mod oauth2;

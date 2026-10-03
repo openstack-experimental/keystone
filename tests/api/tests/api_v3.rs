@@ -23,8 +23,10 @@ mod api_v3 {
     mod domain_config;
     mod endpoint;
     mod identity;
+    mod limit;
     mod policy;
     mod region;
+    mod registered_limit;
     mod resource;
     mod role;
     mod service;

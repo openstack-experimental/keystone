@@ -58,6 +58,9 @@ use crate::k8s_auth::K8sAuthApi;
 use crate::k8s_auth::K8sHttpClient;
 #[cfg(any(test, feature = "mock"))]
 use crate::k8s_auth::MockK8sAuthProvider;
+use crate::limit::LimitApi;
+#[cfg(any(test, feature = "mock"))]
+use crate::limit::MockLimitProvider;
 use crate::mapping::MappingApi;
 #[cfg(any(test, feature = "mock"))]
 use crate::mapping::MockMappingProvider;
@@ -114,6 +117,8 @@ pub struct Provider {
     assignment: Box<dyn AssignmentApi>,
     /// Catalog provider.
     catalog: Box<dyn CatalogApi>,
+    /// Unified limits provider.
+    limit: Box<dyn LimitApi>,
     /// Credential provider.
     credential: Box<dyn CredentialApi>,
     /// Domain configuration provider: the CRUD surface behind the
@@ -192,6 +197,12 @@ impl ProviderBuilder {
     pub fn mock_catalog(self, value: impl CatalogApi + 'static) -> Self {
         let mut new = self;
         new.catalog = Some(Box::new(value));
+        new
+    }
+
+    pub fn mock_limit(self, value: impl LimitApi + 'static) -> Self {
+        let mut new = self;
+        new.limit = Some(Box::new(value));
         new
     }
 
@@ -339,6 +350,7 @@ impl Provider {
             plugin_manager,
         )?);
         let catalog = Box::new(crate::catalog::CatalogService::new(cfg, plugin_manager)?);
+        let limit = Box::new(crate::limit::LimitService::new(cfg, plugin_manager)?);
         let credential = Box::new(crate::credential::CredentialService::new(
             cfg,
             plugin_manager,
@@ -403,6 +415,7 @@ impl Provider {
             application_credential,
             assignment,
             catalog,
+            limit,
             credential,
             domain_config,
             domain_config_resolver,
@@ -436,6 +449,7 @@ impl Provider {
             .mock_application_credential(MockApplicationCredentialProvider::default())
             .mock_assignment(MockAssignmentProvider::default())
             .mock_catalog(MockCatalogProvider::default())
+            .mock_limit(MockLimitProvider::default())
             .mock_credential(MockCredentialProvider::default())
             .mock_domain_config(MockDomainConfigProvider::default())
             .mock_auth_plugin_identity(MockDynamicPluginIdentityProvider::default())
@@ -472,6 +486,11 @@ impl Provider {
     /// Get the assignment provider.
     pub fn get_assignment_provider(&self) -> &dyn AssignmentApi {
         &*self.assignment
+    }
+
+    /// Get the unified limits provider.
+    pub fn get_limit_provider(&self) -> &dyn LimitApi {
+        &*self.limit
     }
 
     /// Get the catalog provider.

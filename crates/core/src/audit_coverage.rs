@@ -77,6 +77,34 @@ const ALLOW_LIST: &[(&str, &str, &str)] = &[
          whole sequence",
     ),
     (
+        "limit",
+        "create_limits",
+        "audited per item: `audited_many` wraps the atomic backend call in a \
+         fail-closed `audited_op!` for every limit of the batch",
+    ),
+    (
+        "limit",
+        "create_registered_limits",
+        "audited per item: `audited_many` wraps the atomic backend call in a \
+         fail-closed `audited_op!` for every registered limit of the batch",
+    ),
+    (
+        "limit",
+        "delete_limits_by_domain",
+        "cascade cleanup invoked by the `LimitHook` on the audited \
+         domain-delete event; the triggering delete is audited by the \
+         resource provider (mirrors the oauth2_session lifecycle-hook \
+         precedent)",
+    ),
+    (
+        "limit",
+        "delete_limits_by_project",
+        "cascade cleanup invoked by the `LimitHook` on the audited \
+         project-delete event; the triggering delete is audited by the \
+         resource provider (mirrors the oauth2_session lifecycle-hook \
+         precedent)",
+    ),
+    (
         "oauth2_client",
         "revoke_client_families",
         "private helper called inside the audited client delete and disable",
