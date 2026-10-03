@@ -18,7 +18,7 @@ use crate::error::BuilderError;
 use crate::role::RoleProviderError;
 
 /// Application credential provider error.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, strum::IntoStaticStr)]
 pub enum ApplicationCredentialProviderError {
     /// AccessRule with matching ID and another one matching rest of parameters
     /// is found.

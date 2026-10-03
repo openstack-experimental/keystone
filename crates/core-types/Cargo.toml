@@ -18,6 +18,7 @@ openstack-keystone-config.workspace = true
 secrecy = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+strum.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 url = { workspace = true, features = ["serde"] }

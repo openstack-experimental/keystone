@@ -30,8 +30,8 @@
 //! - **No recursion**: Hook execution does not trigger further events.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use openstack_keystone_core_types::events::Event;
@@ -68,6 +68,29 @@ pub enum AuditOutcome {
         /// PII-free sanitized error variant name (see `error_variant_name`).
         reason: String,
     },
+}
+
+/// A PII-free, `'static` name for an operation error, recorded as the
+/// `outcome_reason` of a `Failure` audit event.
+///
+/// It is implemented for every type that derives `strum::IntoStaticStr`
+/// (all `*ProviderError` enums do): the derive generates an exhaustive match
+/// over the variants, so the reason is always a literal variant name, never
+/// formatted from error data, and a new variant is covered automatically. A
+/// type without the derive cannot be used with [`audited_op!`] unless the call
+/// passes an explicit `reason:` mapper.
+pub trait AuditReason {
+    /// The variant name.
+    fn audit_reason(&self) -> &'static str;
+}
+
+impl<E> AuditReason for E
+where
+    for<'a> &'a E: Into<&'static str>,
+{
+    fn audit_reason(&self) -> &'static str {
+        self.into()
+    }
 }
 
 /// Error from an [`AuditHook`] or from the `emit_critical` path.
@@ -147,9 +170,14 @@ pub struct EventDispatcher {
     /// Counter for generating unique hook IDs.
     counter: AtomicU64,
 
-    /// Counts post-audit drops: outcomes lost after a DB commit because the
-    /// critical channel was full. Exported as a Prometheus gauge (ADR 0023).
+    /// Counts post-audit drops: outcomes that could not be recorded after the
+    /// operation ran (an audit hook failed or the channel was closed).
     pub postaudit_dropped_count: Arc<AtomicU64>,
+
+    /// The exported `keystone_audit_postaudit_dropped_total` counter, once
+    /// linked. Every drop recorded here is forwarded to it so there is a
+    /// single exported number.
+    exported_postaudit_dropped: OnceLock<Arc<AtomicU64>>,
 }
 
 impl EventDispatcher {
@@ -177,6 +205,7 @@ impl EventDispatcher {
             audit_hooks: Mutex::new(HashMap::new()),
             counter: AtomicU64::new(0),
             postaudit_dropped_count: Arc::new(AtomicU64::new(0)),
+            exported_postaudit_dropped: OnceLock::new(),
         })
     }
 
@@ -340,6 +369,21 @@ impl EventDispatcher {
     pub fn postaudit_dropped_count(&self) -> u64 {
         self.postaudit_dropped_count.load(Ordering::Relaxed)
     }
+
+    /// Forward every post-audit drop to the exported counter (the
+    /// `AuditDispatcher`'s). Only the first call has an effect.
+    pub fn link_postaudit_counter(&self, exported: Arc<AtomicU64>) {
+        let _ = self.exported_postaudit_dropped.set(exported);
+    }
+
+    /// Record a post-audit outcome that could not be delivered. Called by
+    /// [`audited_op!`].
+    pub fn record_postaudit_drop(&self) {
+        self.postaudit_dropped_count.fetch_add(1, Ordering::Relaxed);
+        if let Some(exported) = self.exported_postaudit_dropped.get() {
+            exported.fetch_add(1, Ordering::Relaxed);
+        }
+    }
 }
 
 /// Audit-before-commit wrapper for high-criticality provider operations
@@ -357,19 +401,23 @@ impl EventDispatcher {
 /// - `on_audit_error` — closure `|AuditDispatchError| -> E` mapping pre-audit
 ///   failures to the outer error type
 ///
-/// # Failure reason extraction (Debug-format contract)
+/// - `reason:` (optional) — closure `|&E| -> &'static str` giving the
+///   `Failure` reason. The default is [`AuditReason::audit_reason`], i.e. the
+///   variant name from the error's `strum::IntoStaticStr` derive.
 ///
-/// The `Failure` post-audit reason is extracted by formatting the error value
-/// with `{:?}` (the `Debug` trait) and taking characters up to the first `(`,
-/// `{`, or space, capped at 64 characters.  This yields the enum variant name
-/// for typical Rust error enums (e.g. `NotFound`, `Conflict`).  Error types
-/// used with this macro MUST implement `Debug` such that the variant or type
-/// name appears before any delimiter.  In particular:
-/// - Struct-like variants (e.g. `NotFound { .. }`) produce the name before `{`.
-/// - Tuple variants (e.g. `Io(std::io::Error)`) produce the name before `(`.
-/// - Unit variants (e.g. `Unauthorized`) produce the full name unchanged.
-/// - Types that produce multi-word Debug output or leading punctuation will
-///   yield a truncated or empty string — avoid using those as operation errors.
+/// # Failure reason
+///
+/// The `Failure` post-audit reason is a `&'static str` variant name, never
+/// formatted from error data, so it cannot carry PII. Provider error enums
+/// get it from their `strum::IntoStaticStr` derive, which is exhaustive by
+/// construction; using the macro with an error type that lacks it is a compile
+/// error unless a `reason:` mapper is given.
+///
+/// # Post-audit loss
+///
+/// If the post-audit event cannot be recorded, a compensating `ERROR` log is
+/// written and [`EventDispatcher::record_postaudit_drop`] is called, which
+/// feeds `keystone_audit_postaudit_dropped_total`.
 ///
 /// # Cancellation safety
 /// If the future returned by `$op` is dropped before completing, the
@@ -383,8 +431,24 @@ macro_rules! audited_op {
         event:      $event:expr,
         operation:  $op:expr,
         on_audit_error: $on_audit_error:expr $(,)?
+    ) => {
+        $crate::audited_op! {
+            dispatcher: $dispatcher,
+            ctx: $ctx,
+            event: $event,
+            operation: $op,
+            reason: |__e| $crate::events::AuditReason::audit_reason(__e),
+            on_audit_error: $on_audit_error,
+        }
+    };
+    (
+        dispatcher: $dispatcher:expr,
+        ctx:        $ctx:expr,
+        event:      $event:expr,
+        operation:  $op:expr,
+        reason:     $reason:expr,
+        on_audit_error: $on_audit_error:expr $(,)?
     ) => {{
-        use ::std::sync::atomic::Ordering as __Ordering;
         use $crate::events::{AuditOutcome as __AuditOutcome};
 
         let __event = $event;
@@ -402,14 +466,10 @@ macro_rules! audited_op {
         let __outcome = match &__result {
             Ok(_) => __AuditOutcome::Success,
             Err(e) => __AuditOutcome::Failure {
-                // Extract only the type/variant name — strip args and field
-                // values that may contain PII or internal detail.
+                // A `'static` variant name: never formatted from error data.
                 reason: {
-                    let s = format!("{:?}", e);
-                    s.chars()
-                        .take_while(|c| !matches!(c, '(' | '{' | ' '))
-                        .take(64)
-                        .collect()
+                    let __reason: &'static str = ($reason)(e);
+                    __reason.to_string()
                 },
             },
         };
@@ -420,15 +480,14 @@ macro_rules! audited_op {
             .await
             .is_err()
         {
-            __dispatcher
-                .postaudit_dropped_count
-                .fetch_add(1, __Ordering::Relaxed);
+            __dispatcher.record_postaudit_drop();
             ::tracing::error!(
                 correlation_id = %__ctx.correlation_id(),
                 outcome         = ?__outcome,
                 event_operation = ?__event.operation,
                 event_resource  = ?__event.payload,
-                "post-audit channel full — compensating local log written"
+                "post-audit event could not be recorded (audit hook failed or \
+                 channel closed) — compensating local log written"
             );
         }
 
@@ -640,6 +699,7 @@ mod tests {
                 ctx: &vsc,
                 event: event,
                 operation: async { Ok::<u32, &str>(42) },
+                reason: |_| "TestError",
                 on_audit_error: |_| "audit error",
             }
         }
@@ -689,6 +749,7 @@ mod tests {
                     op_ran_clone.fetch_add(1, Ordering::SeqCst);
                     Ok::<(), &str>(())
                 },
+                reason: |_| "TestError",
                 on_audit_error: |_| "audit error",
             }
         }
@@ -732,6 +793,7 @@ mod tests {
                 ctx: &vsc,
                 event: event,
                 operation: async { Ok::<(), &str>(()) },
+                reason: |_| "TestError",
                 on_audit_error: |_| "pre-audit error",
             }
         }
@@ -742,6 +804,138 @@ mod tests {
             1,
             "post-audit drop counter must increment when post-audit fails"
         );
+    }
+
+    /// Hook recording the outcome of every call.
+    #[derive(Default)]
+    struct OutcomeLog(std::sync::Mutex<Vec<AuditOutcome>>);
+
+    #[async_trait]
+    impl AuditHook for Arc<OutcomeLog> {
+        async fn on_auditable_event(
+            &self,
+            _ctx: &ValidatedSecurityContext,
+            _event: &Event,
+            outcome: &AuditOutcome,
+        ) -> Result<(), AuditDispatchError> {
+            self.0.lock().unwrap().push(outcome.clone());
+            Ok(())
+        }
+    }
+
+    /// Error enum whose `Debug` output starts with user data: the old
+    /// `{:?}`-prefix extraction would have recorded `alice@example.com`.
+    #[derive(Debug, thiserror::Error, strum::IntoStaticStr)]
+    enum LeakyError {
+        #[error("no such user")]
+        UserMissing(String),
+        #[error("conflict")]
+        Conflict { name: String },
+    }
+
+    #[tokio::test]
+    async fn audited_op_failure_reason_is_the_static_variant_name() {
+        let log = Arc::new(OutcomeLog::default());
+        let dispatcher = EventDispatcher::new(4);
+        dispatcher.subscribe_audit(Arc::new(Arc::clone(&log))).await;
+        let vsc = make_vsc();
+
+        for err in [
+            LeakyError::UserMissing("alice@example.com".to_string()),
+            LeakyError::Conflict {
+                name: "secret name".to_string(),
+            },
+        ] {
+            let _: Result<(), LeakyError> = async {
+                crate::audited_op! {
+                    dispatcher: &dispatcher,
+                    ctx: &vsc,
+                    event: make_event(),
+                    operation: async { Err::<(), _>(err) },
+                    on_audit_error: |_| LeakyError::Conflict { name: String::new() },
+                }
+            }
+            .await;
+        }
+
+        let reasons: Vec<String> = log
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|o| match o {
+                AuditOutcome::Failure { reason } => Some(reason.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(reasons, ["UserMissing", "Conflict"]);
+    }
+
+    #[tokio::test]
+    async fn audited_op_uses_an_explicit_reason_mapper() {
+        let log = Arc::new(OutcomeLog::default());
+        let dispatcher = EventDispatcher::new(4);
+        dispatcher.subscribe_audit(Arc::new(Arc::clone(&log))).await;
+        let vsc = make_vsc();
+
+        let _: Result<(), String> = async {
+            crate::audited_op! {
+                dispatcher: &dispatcher,
+                ctx: &vsc,
+                event: make_event(),
+                operation: async { Err::<(), String>("alice@example.com".to_string()) },
+                reason: |_e: &String| "Opaque",
+                on_audit_error: |_| "pre-audit".to_string(),
+            }
+        }
+        .await;
+
+        let failure = log.0.lock().unwrap().iter().find_map(|o| match o {
+            AuditOutcome::Failure { reason } => Some(reason.clone()),
+            _ => None,
+        });
+        assert_eq!(failure.as_deref(), Some("Opaque"));
+    }
+
+    #[tokio::test]
+    async fn postaudit_drops_reach_the_linked_exported_counter() {
+        struct DropPostAudit;
+        #[async_trait]
+        impl AuditHook for DropPostAudit {
+            async fn on_auditable_event(
+                &self,
+                _ctx: &ValidatedSecurityContext,
+                _event: &Event,
+                outcome: &AuditOutcome,
+            ) -> Result<(), AuditDispatchError> {
+                match outcome {
+                    AuditOutcome::Attempt => Ok(()),
+                    _ => Err(AuditDispatchError::DispatcherDead),
+                }
+            }
+        }
+        let exported = Arc::new(AtomicU64::new(0));
+        let dispatcher = EventDispatcher::new(4);
+        dispatcher.link_postaudit_counter(Arc::clone(&exported));
+        dispatcher.subscribe_audit(Arc::new(DropPostAudit)).await;
+        let vsc = make_vsc();
+
+        for _ in 0..2 {
+            let _: Result<(), LeakyError> = async {
+                crate::audited_op! {
+                    dispatcher: &dispatcher,
+                    ctx: &vsc,
+                    event: make_event(),
+                    operation: async { Ok::<(), LeakyError>(()) },
+                    on_audit_error: |_| LeakyError::Conflict { name: String::new() },
+                }
+            }
+            .await;
+        }
+
+        // A dead channel is counted once per lost outcome, not twice.
+        assert_eq!(dispatcher.postaudit_dropped_count(), 2);
+        assert_eq!(exported.load(Ordering::Relaxed), 2);
     }
 
     struct TestHook {

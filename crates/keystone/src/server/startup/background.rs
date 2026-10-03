@@ -147,6 +147,12 @@ async fn subscribe_event_hooks(state: &ServiceState) {
         TrustHook,
     );
 
+    // Every post-audit loss recorded by `audited_op!` feeds the exported
+    // `keystone_audit_postaudit_dropped_total` counter.
+    state
+        .event_dispatcher
+        .link_postaudit_counter(state.audit_dispatcher.postaudit_dropped_handle());
+
     // Phase 3: the CADF audit hook (fail-closed provider auditing) — a
     // separate `subscribe_audit` channel, not the generic one above.
     state

@@ -19,7 +19,7 @@ use validator::ValidationErrors;
 use crate::error::BuilderError;
 
 /// Mapping provider error.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, strum::IntoStaticStr)]
 #[non_exhaustive]
 pub enum MappingProviderError {
     /// Mapping not found.

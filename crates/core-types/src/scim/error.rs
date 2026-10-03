@@ -18,7 +18,7 @@ use thiserror::Error;
 use crate::error::BuilderError;
 
 /// SCIM realm (`ScimRealmResource`) provider error.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, strum::IntoStaticStr)]
 #[non_exhaustive]
 pub enum ScimRealmProviderError {
     /// Realm not found.

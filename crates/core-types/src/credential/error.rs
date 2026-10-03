@@ -17,7 +17,7 @@ use thiserror::Error;
 use crate::error::BuilderError;
 
 /// Credential provider error.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, strum::IntoStaticStr)]
 pub enum CredentialProviderError {
     /// Credential with the given ID was not found.
     #[error("credential with id: {0} not found")]
