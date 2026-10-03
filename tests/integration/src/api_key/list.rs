@@ -14,6 +14,7 @@
 //! Test API Key listing (domain scoping, provider_id and enabled filters).
 
 use eyre::Result;
+use openstack_keystone_core::auth::ExecutionContext;
 use tracing_test::traced_test;
 
 use openstack_keystone_core_types::api_key::ApiClientResourceListParameters;
@@ -98,7 +99,12 @@ async fn test_list_filters_by_enabled() -> Result<()> {
     state
         .provider
         .get_api_key_provider()
-        .revoke(&state, &domain.id, &revoked_key.client_id, "operator-1")
+        .revoke(
+            &ExecutionContext::internal(&state),
+            &domain.id,
+            &revoked_key.client_id,
+            "operator-1",
+        )
         .await?;
 
     let listed_enabled = state

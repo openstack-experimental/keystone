@@ -116,10 +116,18 @@ async fn cross_backend_dispatch_routes_to_correct_backend() -> Result<()> {
     let sql_domain = crate::create_domain!(state)?;
     let ldap_domain_id = "default";
     let dc = state.provider.get_domain_config_provider();
-    dc.create_domain_config(&state, &sql_domain.id, sql_identity_config())
-        .await?;
-    dc.create_domain_config(&state, ldap_domain_id, ldap_identity_config())
-        .await?;
+    dc.create_domain_config(
+        &ExecutionContext::internal(&state),
+        &sql_domain.id,
+        sql_identity_config(),
+    )
+    .await?;
+    dc.create_domain_config(
+        &ExecutionContext::internal(&state),
+        ldap_domain_id,
+        ldap_identity_config(),
+    )
+    .await?;
 
     let sql_user_name = uuid::Uuid::new_v4().to_string();
     state
@@ -250,10 +258,18 @@ async fn cross_backend_group_membership_rejected() -> Result<()> {
     let sql_domain = crate::create_domain!(state)?;
     let ldap_domain_id = "default";
     let dc = state.provider.get_domain_config_provider();
-    dc.create_domain_config(&state, &sql_domain.id, sql_identity_config())
-        .await?;
-    dc.create_domain_config(&state, ldap_domain_id, ldap_identity_config())
-        .await?;
+    dc.create_domain_config(
+        &ExecutionContext::internal(&state),
+        &sql_domain.id,
+        sql_identity_config(),
+    )
+    .await?;
+    dc.create_domain_config(
+        &ExecutionContext::internal(&state),
+        ldap_domain_id,
+        ldap_identity_config(),
+    )
+    .await?;
 
     let sql_user_name = uuid::Uuid::new_v4().to_string();
     let sql_user = state

@@ -81,6 +81,8 @@ pub mod api;
 pub mod api_key;
 pub mod application_credential;
 pub mod assignment;
+#[cfg(test)]
+mod audit_coverage;
 pub mod auth;
 pub mod auth_metrics;
 pub mod auth_plugin;

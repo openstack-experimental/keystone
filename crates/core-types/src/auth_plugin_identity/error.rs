@@ -15,7 +15,7 @@ use thiserror::Error;
 
 /// `(plugin_name, external_id) -> user_id` identity-binding index provider
 /// error (ADR 0025 §4/§6.B/§6.C).
-#[derive(Error, Debug)]
+#[derive(Error, Debug, strum::IntoStaticStr)]
 #[non_exhaustive]
 pub enum AuthPluginIdentityProviderError {
     /// Driver error.
@@ -35,6 +35,11 @@ pub enum AuthPluginIdentityProviderError {
         #[source]
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
+
+    /// The fail-closed audit record could not be written, so the operation
+    /// was not performed.
+    #[error("audit dispatch failed in the auth_plugin_identity provider; operation not performed")]
+    AuditUnavailable,
 
     /// Unsupported driver.
     #[error("unsupported driver `{0}` for the auth_plugin_identity provider")]

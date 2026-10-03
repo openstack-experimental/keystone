@@ -17,6 +17,7 @@
 //! `list_all`/`update`/`purge` actually round-trip through the real
 //! storage/CAS layer end to end.
 
+use openstack_keystone_core::auth::ExecutionContext;
 use std::time::Duration;
 
 use eyre::Result;
@@ -79,7 +80,12 @@ async fn test_janitor_purges_old_tombstone_via_real_backend() -> Result<()> {
     state
         .provider
         .get_api_key_provider()
-        .revoke(&state, &domain.id, &created.client_id, "operator-1")
+        .revoke(
+            &ExecutionContext::internal(&state),
+            &domain.id,
+            &created.client_id,
+            "operator-1",
+        )
         .await?;
     tokio::time::sleep(Duration::from_secs(1)).await;
 

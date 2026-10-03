@@ -19,6 +19,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use openstack_keystone_core::auth::ExecutionContext;
 use serde::Deserialize;
 use validator::Validate;
 
@@ -89,7 +90,12 @@ pub(super) async fn update(
     let res = state
         .provider
         .get_api_key_provider()
-        .update(&state, &params.domain_id, &client_id, req.api_key.into())
+        .update(
+            &ExecutionContext::from_auth(&state, &user_auth),
+            &params.domain_id,
+            &client_id,
+            req.api_key.into(),
+        )
         .await?;
 
     Ok((

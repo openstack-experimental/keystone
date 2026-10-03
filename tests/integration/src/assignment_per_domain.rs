@@ -162,7 +162,11 @@ async fn dispatch_on_serves_the_global_sql_grant_path() -> Result<()> {
     state
         .provider
         .get_domain_config_provider()
-        .create_domain_config(&state, &pinned.id, assignment_binding("sql"))
+        .create_domain_config(
+            &ExecutionContext::internal(&state),
+            &pinned.id,
+            assignment_binding("sql"),
+        )
         .await?;
 
     assert!(
@@ -207,7 +211,11 @@ async fn a_named_block_is_built_by_the_reload_reactor() -> Result<()> {
     state
         .provider
         .get_domain_config_provider()
-        .create_domain_config(&state, &fga_domain.id, assignment_binding("openfga"))
+        .create_domain_config(
+            &ExecutionContext::internal(&state),
+            &fga_domain.id,
+            assignment_binding("openfga"),
+        )
         .await?;
 
     // Positive proof the named instance landed in the routing bundle: a grant
@@ -262,7 +270,11 @@ async fn an_unmapped_binding_falls_back_to_global_and_warns() -> Result<()> {
     state
         .provider
         .get_domain_config_provider()
-        .create_domain_config(&state, &domain.id, assignment_binding("openfga"))
+        .create_domain_config(
+            &ExecutionContext::internal(&state),
+            &domain.id,
+            assignment_binding("openfga"),
+        )
         .await?;
 
     assert!(
@@ -287,7 +299,11 @@ async fn the_config_api_rejects_an_unbindable_driver() -> Result<()> {
     let dc = state.provider.get_domain_config_provider();
 
     let err = dc
-        .create_domain_config(&state, &domain.id, assignment_binding("openfga"))
+        .create_domain_config(
+            &ExecutionContext::internal(&state),
+            &domain.id,
+            assignment_binding("openfga"),
+        )
         .await
         .expect_err("no block names `openfga`, so the binding must be rejected");
     assert!(
@@ -299,8 +315,12 @@ async fn the_config_api_rejects_an_unbindable_driver() -> Result<()> {
         "the rejected binding must not have been stored"
     );
 
-    dc.create_domain_config(&state, &domain.id, assignment_binding("sql"))
-        .await?;
+    dc.create_domain_config(
+        &ExecutionContext::internal(&state),
+        &domain.id,
+        assignment_binding("sql"),
+    )
+    .await?;
     Ok(())
 }
 
@@ -335,7 +355,11 @@ async fn an_untargeted_listing_unions_and_deduplicates_the_fanout() -> Result<()
     state
         .provider
         .get_domain_config_provider()
-        .create_domain_config(&state, &mapped.id, assignment_binding("sql"))
+        .create_domain_config(
+            &ExecutionContext::internal(&state),
+            &mapped.id,
+            assignment_binding("sql"),
+        )
         .await?;
 
     for (user, domain) in [(&u_mapped.id, &mapped.id), (&u_other.id, &other.id)] {
@@ -388,7 +412,11 @@ async fn repeated_grants_on_a_bound_domain_reuse_the_cached_resolution() -> Resu
     state
         .provider
         .get_domain_config_provider()
-        .create_domain_config(&state, &domain.id, assignment_binding("sql"))
+        .create_domain_config(
+            &ExecutionContext::internal(&state),
+            &domain.id,
+            assignment_binding("sql"),
+        )
         .await?;
 
     let ctx = ExecutionContext::internal(&state);
@@ -444,7 +472,11 @@ async fn bind_domain_to_openfga_stub(
     state
         .provider
         .get_domain_config_provider()
-        .create_domain_config(state, fga_domain, assignment_binding("openfga"))
+        .create_domain_config(
+            &ExecutionContext::internal(state),
+            fga_domain,
+            assignment_binding("openfga"),
+        )
         .await?;
     Ok(())
 }

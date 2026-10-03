@@ -390,9 +390,23 @@ impl CredentialApi for CredentialService {
         ctx: &ExecutionContext<'a>,
         user_id: &'a str,
     ) -> Result<(), CredentialProviderError> {
-        self.backend_driver
-            .delete_credentials_for_user(ctx.state(), user_id)
-            .await
+        let op = async {
+            self.backend_driver
+                .delete_credentials_for_user(ctx.state(), user_id)
+                .await
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: Event::new(
+                Operation::Delete,
+                EventPayload::CredentialSet {
+                    user_id: Some(user_id.to_string()),
+                    project_id: None,
+                },
+            ),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| CredentialProviderError::Driver("audit dispatch failed".into()),
+        }
     }
 
     async fn delete_credentials_for_project<'a>(
@@ -400,9 +414,23 @@ impl CredentialApi for CredentialService {
         ctx: &ExecutionContext<'a>,
         project_id: &'a str,
     ) -> Result<(), CredentialProviderError> {
-        self.backend_driver
-            .delete_credentials_for_project(ctx.state(), project_id)
-            .await
+        let op = async {
+            self.backend_driver
+                .delete_credentials_for_project(ctx.state(), project_id)
+                .await
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: Event::new(
+                Operation::Delete,
+                EventPayload::CredentialSet {
+                    user_id: None,
+                    project_id: Some(project_id.to_string()),
+                },
+            ),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| CredentialProviderError::Driver("audit dispatch failed".into()),
+        }
     }
 }
 
@@ -844,5 +872,25 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, CredentialProviderError::ImmutableField(f) if f == "app_cred_id"));
+    }
+
+    #[tokio::test]
+    async fn test_delete_credentials_for_user_is_audited() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockCredentialBackend::default();
+        backend
+            .expect_delete_credentials_for_user()
+            .returning(|_, _| Ok(()));
+        let hook = crate::tests::RecordingAuditHook::new();
+        state.event_dispatcher.subscribe_audit(hook.clone()).await;
+        let vsc = crate::tests::test_vsc();
+
+        create_provider(backend)
+            .delete_credentials_for_user(&ExecutionContext::from_auth(&state, &vsc), "user-1")
+            .await
+            .unwrap();
+
+        assert_eq!(hook.outcomes(), ["Attempt", "Success"]);
+        assert!(hook.seen()[0].1.contains("CredentialSet"));
     }
 }

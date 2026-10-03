@@ -85,7 +85,7 @@ impl From<BuilderError> for ScimRealmProviderError {
 }
 
 /// SCIM resource ownership index (`ScimResourceIndex`) provider error.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, strum::IntoStaticStr)]
 #[non_exhaustive]
 pub enum ScimResourceProviderError {
     /// No ownership anchor found for the given coordinate.
@@ -125,6 +125,11 @@ pub enum ScimResourceProviderError {
     /// Structures builder error.
     #[error(transparent)]
     StructBuilder(#[from] Box<BuilderError>),
+
+    /// The fail-closed audit record could not be written, so the operation
+    /// was not performed.
+    #[error("audit dispatch failed in the scim_resource provider; operation not performed")]
+    AuditUnavailable,
 
     /// Unsupported driver.
     #[error("unsupported driver `{0}` for the scim_resource provider")]

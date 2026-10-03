@@ -116,6 +116,14 @@ pub enum EventPayload {
         user_id: String,
     },
 
+    // All credentials of a user or of a project, removed together when the
+    // owner is deleted. Exactly one of the two IDs is set; no credential
+    // IDs or blobs are carried.
+    CredentialSet {
+        user_id: Option<String>,
+        project_id: Option<String>,
+    },
+
     // Catalog
     Endpoint {
         id: String,
@@ -181,6 +189,56 @@ pub enum EventPayload {
     // `tools/check_event_payload_no_secret_fields.py`.
     Policy {
         id: String,
+    },
+
+    // API keys (ADR 0021). Carries the public `client_id`, never the key
+    // material, its lookup hash or its secret hash.
+    ApiKey {
+        domain_id: String,
+        client_id: String,
+    },
+
+    // OAuth2 relying-party registrations (ADR 0026 §5). `provider_id` is the
+    // registration ID; `client_secret` and its hash are never carried.
+    Oauth2Client {
+        domain_id: String,
+        provider_id: String,
+    },
+
+    // Per-domain OAuth2 signing key set (rotation, emergency rotation).
+    Oauth2SigningKey {
+        domain_id: String,
+    },
+
+    // Token revocation (`DELETE /v3/auth/tokens`, revocation events). Both
+    // fields are IDs of the revoked subject; at least one is set.
+    RevocationEvent {
+        audit_id: Option<String>,
+        user_id: Option<String>,
+    },
+
+    // Domain configuration (ADR 0034). Carries the domain ID only: option
+    // values can hold LDAP bind credentials and are never part of the event.
+    DomainConfig {
+        domain_id: String,
+    },
+
+    // Public-ID mappings of non-local identity backends.
+    IdMapping {
+        domain_id: Option<String>,
+        public_id: Option<String>,
+    },
+
+    // Dynamic auth plugin identity links (plugin name + external ID -> user).
+    PluginIdentity {
+        plugin_name: Option<String>,
+        user_id: Option<String>,
+    },
+
+    // SCIM resource index entries (ADR 0024).
+    ScimIndex {
+        provider_id: String,
+        keystone_id: String,
     },
 }
 

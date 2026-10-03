@@ -15,6 +15,7 @@
 //! `description` semantics (ADR 0021 Invariant 5).
 
 use eyre::Result;
+use openstack_keystone_core::auth::ExecutionContext;
 use tracing_test::traced_test;
 
 use openstack_keystone_core_types::api_key::ApiClientResourceUpdate;
@@ -36,7 +37,7 @@ async fn test_update_sets_allowed_ips() -> Result<()> {
         .provider
         .get_api_key_provider()
         .update(
-            &state,
+            &ExecutionContext::internal(&state),
             &domain.id,
             &created.client_id,
             ApiClientResourceUpdate {
@@ -67,7 +68,7 @@ async fn test_update_clears_allowed_ips_to_unrestricted() -> Result<()> {
         .provider
         .get_api_key_provider()
         .update(
-            &state,
+            &ExecutionContext::internal(&state),
             &domain.id,
             &created.client_id,
             ApiClientResourceUpdate {
@@ -95,7 +96,7 @@ async fn test_update_description() -> Result<()> {
         .provider
         .get_api_key_provider()
         .update(
-            &state,
+            &ExecutionContext::internal(&state),
             &domain.id,
             &created.client_id,
             ApiClientResourceUpdate {
@@ -122,7 +123,7 @@ async fn test_update_disable_key() -> Result<()> {
         .provider
         .get_api_key_provider()
         .update(
-            &state,
+            &ExecutionContext::internal(&state),
             &domain.id,
             &created.client_id,
             ApiClientResourceUpdate {
@@ -150,14 +151,19 @@ async fn test_update_cannot_reactivate_revoked_key() -> Result<()> {
     state
         .provider
         .get_api_key_provider()
-        .revoke(&state, &domain.id, &created.client_id, "operator-1")
+        .revoke(
+            &ExecutionContext::internal(&state),
+            &domain.id,
+            &created.client_id,
+            "operator-1",
+        )
         .await?;
 
     let result = state
         .provider
         .get_api_key_provider()
         .update(
-            &state,
+            &ExecutionContext::internal(&state),
             &domain.id,
             &created.client_id,
             ApiClientResourceUpdate {
@@ -196,14 +202,19 @@ async fn test_update_can_still_disable_a_revoked_key() -> Result<()> {
     state
         .provider
         .get_api_key_provider()
-        .revoke(&state, &domain.id, &created.client_id, "operator-1")
+        .revoke(
+            &ExecutionContext::internal(&state),
+            &domain.id,
+            &created.client_id,
+            "operator-1",
+        )
         .await?;
 
     let updated = state
         .provider
         .get_api_key_provider()
         .update(
-            &state,
+            &ExecutionContext::internal(&state),
             &domain.id,
             &created.client_id,
             ApiClientResourceUpdate {
@@ -233,7 +244,7 @@ async fn test_update_missing_key_fails() -> Result<()> {
         .provider
         .get_api_key_provider()
         .update(
-            &state,
+            &ExecutionContext::internal(&state),
             &domain.id,
             "nonexistent-client-id",
             ApiClientResourceUpdate::default(),

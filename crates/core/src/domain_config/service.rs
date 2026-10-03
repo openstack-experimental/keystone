@@ -20,10 +20,13 @@ use async_trait::async_trait;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::domain_config::*;
+use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 
+use crate::auth::ExecutionContext;
 use crate::domain_config::api::DomainConfigApi;
 use crate::domain_config::backend::DomainConfigBackend;
 use crate::domain_config::error::DomainConfigProviderError;
+use crate::events::AuditDispatchError;
 use crate::keystone::ServiceState;
 use crate::plugin_manager::PluginManagerApi;
 
@@ -258,31 +261,51 @@ impl DomainConfigService {
     }
 }
 
+/// Build the audit event for a domain configuration change. The payload
+/// carries the domain ID only: option values can hold LDAP bind credentials.
+fn domain_config_event(operation: Operation, domain_id: &str) -> Event {
+    Event::new(
+        operation,
+        EventPayload::DomainConfig {
+            domain_id: domain_id.to_string(),
+        },
+    )
+}
+
 #[async_trait]
 impl DomainConfigApi for DomainConfigService {
     async fn create_domain_config<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
         config: DomainConfigCreate,
     ) -> Result<DomainConfig, DomainConfigProviderError> {
-        let driver = Self::identity_driver(&config.0);
-        let assignment_driver = Self::assignment_driver(&config.0);
-        // Validate before `reconcile_registration_before`: a rejected write
-        // must not leave the SQL identity-driver registration claimed.
-        self.validate_assignment_binding(state, domain_id, assignment_driver.as_deref())
-            .await?;
-        self.reconcile_registration_before(state, domain_id, driver.as_deref())
-            .await?;
-        let stored = self
-            .backend_driver
-            .create_domain_config(state, domain_id, config)
-            .await?;
-        self.reconcile_registration_after(state, domain_id, driver.as_deref())
-            .await?;
-        self.refresh_assignment_bindings(state, assignment_driver.is_some())
-            .await;
-        Ok(stored)
+        let state = ctx.state();
+        let op = async {
+            let driver = Self::identity_driver(&config.0);
+            let assignment_driver = Self::assignment_driver(&config.0);
+            // Validate before `reconcile_registration_before`: a rejected write
+            // must not leave the SQL identity-driver registration claimed.
+            self.validate_assignment_binding(state, domain_id, assignment_driver.as_deref())
+                .await?;
+            self.reconcile_registration_before(state, domain_id, driver.as_deref())
+                .await?;
+            let stored = self
+                .backend_driver
+                .create_domain_config(state, domain_id, config)
+                .await?;
+            self.reconcile_registration_after(state, domain_id, driver.as_deref())
+                .await?;
+            self.refresh_assignment_bindings(state, assignment_driver.is_some())
+                .await;
+            Ok::<_, DomainConfigProviderError>(stored)
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: domain_config_event(Operation::Create, domain_id),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| DomainConfigProviderError::AuditUnavailable,
+        }
     }
 
     async fn get_domain_config<'a>(
@@ -320,133 +343,188 @@ impl DomainConfigApi for DomainConfigService {
 
     async fn update_domain_config<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
         config: DomainConfigUpdate,
     ) -> Result<DomainConfig, DomainConfigProviderError> {
-        let driver = Self::identity_driver(&config.0);
-        let assignment_driver = Self::assignment_driver(&config.0);
-        self.validate_assignment_binding(state, domain_id, assignment_driver.as_deref())
-            .await?;
-        self.reconcile_registration_before(state, domain_id, driver.as_deref())
-            .await?;
-        let stored = self
-            .backend_driver
-            .update_domain_config(state, domain_id, config)
-            .await?;
-        self.reconcile_registration_after(state, domain_id, driver.as_deref())
-            .await?;
-        self.refresh_assignment_bindings(state, assignment_driver.is_some())
-            .await;
-        Ok(stored)
+        let state = ctx.state();
+        let op = async {
+            let driver = Self::identity_driver(&config.0);
+            let assignment_driver = Self::assignment_driver(&config.0);
+            self.validate_assignment_binding(state, domain_id, assignment_driver.as_deref())
+                .await?;
+            self.reconcile_registration_before(state, domain_id, driver.as_deref())
+                .await?;
+            let stored = self
+                .backend_driver
+                .update_domain_config(state, domain_id, config)
+                .await?;
+            self.reconcile_registration_after(state, domain_id, driver.as_deref())
+                .await?;
+            self.refresh_assignment_bindings(state, assignment_driver.is_some())
+                .await;
+            Ok::<_, DomainConfigProviderError>(stored)
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: domain_config_event(Operation::Update, domain_id),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| DomainConfigProviderError::AuditUnavailable,
+        }
     }
 
     async fn update_domain_config_group<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
         group: DomainConfigGroupName,
         config: DomainConfigUpdate,
     ) -> Result<DomainConfigGroup, DomainConfigProviderError> {
-        let driver = (group == DomainConfigGroupName::Identity)
-            .then(|| Self::identity_driver(&config.0))
-            .flatten();
-        let assignment_driver = (group == DomainConfigGroupName::Assignment)
-            .then(|| Self::assignment_driver(&config.0))
-            .flatten();
-        self.validate_assignment_binding(state, domain_id, assignment_driver.as_deref())
-            .await?;
-        self.reconcile_registration_before(state, domain_id, driver.as_deref())
-            .await?;
-        let stored = self
-            .backend_driver
-            .update_domain_config_group(state, domain_id, group, config)
-            .await?;
-        self.reconcile_registration_after(state, domain_id, driver.as_deref())
-            .await?;
-        self.refresh_assignment_bindings(state, assignment_driver.is_some())
-            .await;
-        Ok(stored)
+        let state = ctx.state();
+        let op = async {
+            let driver = (group == DomainConfigGroupName::Identity)
+                .then(|| Self::identity_driver(&config.0))
+                .flatten();
+            let assignment_driver = (group == DomainConfigGroupName::Assignment)
+                .then(|| Self::assignment_driver(&config.0))
+                .flatten();
+            self.validate_assignment_binding(state, domain_id, assignment_driver.as_deref())
+                .await?;
+            self.reconcile_registration_before(state, domain_id, driver.as_deref())
+                .await?;
+            let stored = self
+                .backend_driver
+                .update_domain_config_group(state, domain_id, group, config)
+                .await?;
+            self.reconcile_registration_after(state, domain_id, driver.as_deref())
+                .await?;
+            self.refresh_assignment_bindings(state, assignment_driver.is_some())
+                .await;
+            Ok::<_, DomainConfigProviderError>(stored)
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: domain_config_event(Operation::Update, domain_id),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| DomainConfigProviderError::AuditUnavailable,
+        }
     }
 
     async fn update_domain_config_option<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
         option: DomainConfigOption,
     ) -> Result<DomainConfigOption, DomainConfigProviderError> {
-        let driver = (option.group == DomainConfigGroupName::Identity && option.option == "driver")
-            .then(|| option.value.as_value().as_str().map(str::to_owned))
-            .flatten();
-        let assignment_driver = (option.group == DomainConfigGroupName::Assignment
-            && option.option == "driver")
-            .then(|| option.value.as_value().as_str().map(str::to_owned))
-            .flatten();
-        self.validate_assignment_binding(state, domain_id, assignment_driver.as_deref())
-            .await?;
-        self.reconcile_registration_before(state, domain_id, driver.as_deref())
-            .await?;
-        let stored = self
-            .backend_driver
-            .update_domain_config_option(state, domain_id, option)
-            .await?;
-        self.reconcile_registration_after(state, domain_id, driver.as_deref())
-            .await?;
-        self.refresh_assignment_bindings(state, assignment_driver.is_some())
-            .await;
-        Ok(stored)
+        let state = ctx.state();
+        let op = async {
+            let driver = (option.group == DomainConfigGroupName::Identity
+                && option.option == "driver")
+                .then(|| option.value.as_value().as_str().map(str::to_owned))
+                .flatten();
+            let assignment_driver = (option.group == DomainConfigGroupName::Assignment
+                && option.option == "driver")
+                .then(|| option.value.as_value().as_str().map(str::to_owned))
+                .flatten();
+            self.validate_assignment_binding(state, domain_id, assignment_driver.as_deref())
+                .await?;
+            self.reconcile_registration_before(state, domain_id, driver.as_deref())
+                .await?;
+            let stored = self
+                .backend_driver
+                .update_domain_config_option(state, domain_id, option)
+                .await?;
+            self.reconcile_registration_after(state, domain_id, driver.as_deref())
+                .await?;
+            self.refresh_assignment_bindings(state, assignment_driver.is_some())
+                .await;
+            Ok::<_, DomainConfigProviderError>(stored)
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: domain_config_event(Operation::Update, domain_id),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| DomainConfigProviderError::AuditUnavailable,
+        }
     }
 
     async fn delete_domain_config<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
     ) -> Result<(), DomainConfigProviderError> {
-        self.backend_driver
-            .delete_domain_config(state, domain_id)
-            .await?;
-        // A whole-config delete may have dropped an `assignment/driver`
-        // binding; refresh unconditionally (ADR 0034 §9).
-        self.refresh_assignment_bindings(state, true).await;
-        self.release_sql_registration(state, domain_id).await
+        let state = ctx.state();
+        let op = async {
+            self.backend_driver
+                .delete_domain_config(state, domain_id)
+                .await?;
+            // A whole-config delete may have dropped an `assignment/driver`
+            // binding; refresh unconditionally (ADR 0034 §9).
+            self.refresh_assignment_bindings(state, true).await;
+            self.release_sql_registration(state, domain_id).await
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: domain_config_event(Operation::Delete, domain_id),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| DomainConfigProviderError::AuditUnavailable,
+        }
     }
 
     async fn delete_domain_config_group<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
         group: DomainConfigGroupName,
     ) -> Result<(), DomainConfigProviderError> {
-        self.backend_driver
-            .delete_domain_config_group(state, domain_id, group)
-            .await?;
-        if group == DomainConfigGroupName::Identity {
-            self.release_sql_registration(state, domain_id).await?;
+        let state = ctx.state();
+        let op = async {
+            self.backend_driver
+                .delete_domain_config_group(state, domain_id, group)
+                .await?;
+            if group == DomainConfigGroupName::Identity {
+                self.release_sql_registration(state, domain_id).await?;
+            }
+            self.refresh_assignment_bindings(state, group == DomainConfigGroupName::Assignment)
+                .await;
+            Ok::<_, DomainConfigProviderError>(())
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: domain_config_event(Operation::Delete, domain_id),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| DomainConfigProviderError::AuditUnavailable,
         }
-        self.refresh_assignment_bindings(state, group == DomainConfigGroupName::Assignment)
-            .await;
-        Ok(())
     }
 
     async fn delete_domain_config_option<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &'a str,
         group: DomainConfigGroupName,
         option: &'a str,
     ) -> Result<(), DomainConfigProviderError> {
-        self.backend_driver
-            .delete_domain_config_option(state, domain_id, group, option)
-            .await?;
-        if group == DomainConfigGroupName::Identity && option == "driver" {
-            self.release_sql_registration(state, domain_id).await?;
+        let state = ctx.state();
+        let op = async {
+            self.backend_driver
+                .delete_domain_config_option(state, domain_id, group, option)
+                .await?;
+            if group == DomainConfigGroupName::Identity && option == "driver" {
+                self.release_sql_registration(state, domain_id).await?;
+            }
+            self.refresh_assignment_bindings(
+                state,
+                group == DomainConfigGroupName::Assignment && option == "driver",
+            )
+            .await;
+            Ok::<_, DomainConfigProviderError>(())
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: domain_config_event(Operation::Delete, domain_id),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| DomainConfigProviderError::AuditUnavailable,
         }
-        self.refresh_assignment_bindings(
-            state,
-            group == DomainConfigGroupName::Assignment && option == "driver",
-        )
-        .await;
-        Ok(())
     }
 
     async fn get_default_config(
@@ -516,7 +594,7 @@ mod tests {
 
         service(backend, false)
             .create_domain_config(
-                &state,
+                &ExecutionContext::internal(&state),
                 "d1",
                 DomainConfigCreate(config(json!({"identity": {"driver": "sql"}}))),
             )
@@ -537,7 +615,7 @@ mod tests {
 
         service(backend, true)
             .create_domain_config(
-                &state,
+                &ExecutionContext::internal(&state),
                 "d1",
                 DomainConfigCreate(config(json!({"identity": {"driver": "sql"}}))),
             )
@@ -559,7 +637,7 @@ mod tests {
 
         let error = service(backend, true)
             .create_domain_config(
-                &state,
+                &ExecutionContext::internal(&state),
                 "d1",
                 DomainConfigCreate(config(json!({"identity": {"driver": "sql"}}))),
             )
@@ -582,7 +660,7 @@ mod tests {
 
         service(backend, true)
             .create_domain_config(
-                &state,
+                &ExecutionContext::internal(&state),
                 "d1",
                 DomainConfigCreate(config(json!({"identity": {"driver": "sql"}}))),
             )
@@ -605,7 +683,7 @@ mod tests {
 
         service(backend, true)
             .update_domain_config(
-                &state,
+                &ExecutionContext::internal(&state),
                 "d1",
                 DomainConfigUpdate(config(json!({"identity": {"driver": "ldap"}}))),
             )
@@ -626,7 +704,7 @@ mod tests {
             .returning(|_, _, _| Ok(()));
 
         service(backend, true)
-            .delete_domain_config(&state, "d1")
+            .delete_domain_config(&ExecutionContext::internal(&state), "d1")
             .await
             .unwrap();
     }
@@ -641,7 +719,7 @@ mod tests {
         backend.expect_release_registration().never();
 
         service(backend, false)
-            .delete_domain_config(&state, "d1")
+            .delete_domain_config(&ExecutionContext::internal(&state), "d1")
             .await
             .unwrap();
     }
@@ -674,7 +752,7 @@ mod tests {
 
         let error = service(backend, true)
             .create_domain_config(
-                &state,
+                &ExecutionContext::internal(&state),
                 "d1",
                 DomainConfigCreate(config(json!({
                     "identity": {"driver": "sql"},
@@ -699,7 +777,7 @@ mod tests {
 
         service(backend, false)
             .create_domain_config(
-                &state,
+                &ExecutionContext::internal(&state),
                 "d1",
                 DomainConfigCreate(config(json!({"assignment": {"driver": "openfga"}}))),
             )
@@ -717,7 +795,7 @@ mod tests {
 
         service(backend, false)
             .create_domain_config(
-                &state,
+                &ExecutionContext::internal(&state),
                 "d1",
                 DomainConfigCreate(config(json!({"assignment": {"driver": "sql"}}))),
             )
@@ -739,7 +817,7 @@ mod tests {
         // resolve straight back to the global driver.
         service(backend, false)
             .create_domain_config(
-                &state,
+                &ExecutionContext::internal(&state),
                 "d1",
                 DomainConfigCreate(config(json!({"assignment": {"driver": "openfga"}}))),
             )
@@ -763,7 +841,7 @@ mod tests {
 
         service(backend, false)
             .create_domain_config(
-                &state,
+                &ExecutionContext::internal(&state),
                 "d1",
                 DomainConfigCreate(config(json!({"assignment": {"driver": "openfga"}}))),
             )
@@ -780,7 +858,7 @@ mod tests {
 
         let error = service(backend, true)
             .update_domain_config_option(
-                &state,
+                &ExecutionContext::internal(&state),
                 "d1",
                 DomainConfigOption::new(DomainConfigGroupName::Assignment, "driver", "openfga"),
             )
@@ -790,5 +868,55 @@ mod tests {
             error,
             DomainConfigProviderError::InvalidOptionValue { .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn a_domain_config_write_is_audited_without_its_values() {
+        let state = get_mocked_state(None, None).await;
+        let mut backend = MockDomainConfigBackend::new();
+        expect_create(&mut backend);
+        let hook = crate::tests::RecordingAuditHook::new();
+        state.event_dispatcher.subscribe_audit(hook.clone()).await;
+        let vsc = crate::tests::test_vsc();
+
+        service(backend, false)
+            .create_domain_config(
+                &ExecutionContext::from_auth(&state, &vsc),
+                "d1",
+                DomainConfigCreate(config(
+                    json!({"identity": {"driver": "sql"}, "ldap": {"password": "s3cr3t-bind"}}),
+                )),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(hook.outcomes(), ["Attempt", "Success"]);
+        let (operation, payload, _) = &hook.seen()[0];
+        assert_eq!(operation, "Create");
+        assert!(payload.contains("DomainConfig"), "{payload}");
+        assert!(
+            !payload.contains("s3cr3t"),
+            "bind credential leaked: {payload}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_domain_config_delete_fails_closed_when_the_pre_audit_is_refused() {
+        let state = get_mocked_state(None, None).await;
+        // No expectations: neither the delete nor the registration release
+        // may be reached.
+        let backend = MockDomainConfigBackend::new();
+        state
+            .event_dispatcher
+            .subscribe_audit(crate::tests::RecordingAuditHook::refusing())
+            .await;
+        let vsc = crate::tests::test_vsc();
+
+        let err = service(backend, true)
+            .delete_domain_config(&ExecutionContext::from_auth(&state, &vsc), "d1")
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, DomainConfigProviderError::AuditUnavailable));
     }
 }

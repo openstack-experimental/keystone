@@ -19,10 +19,12 @@ use async_trait::async_trait;
 use secrecy::ExposeSecret;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::oauth2_client::*;
 use openstack_keystone_core_types::oauth2_session::RefreshTokenRevocationReason;
 
 use crate::auth::ExecutionContext;
+use crate::events::AuditDispatchError;
 use crate::oauth2_client::backend::Oauth2ClientBackend;
 use crate::oauth2_client::crypto;
 use crate::oauth2_client::{Oauth2ClientApi, Oauth2ClientProviderError};
@@ -69,6 +71,18 @@ const RESERVED_CLAIM_NAMES: &[&str] = &[
     "system_id",
     "roles",
 ];
+
+/// Build the audit event for an operation on one client registration. The
+/// payload carries IDs only, never the secret or its hash.
+fn oauth2_client_event(operation: Operation, domain_id: &str, provider_id: &str) -> Event {
+    Event::new(
+        operation,
+        EventPayload::Oauth2Client {
+            domain_id: domain_id.to_string(),
+            provider_id: provider_id.to_string(),
+        },
+    )
+}
 
 fn validate_claims_template(
     claims_template: &std::collections::HashMap<String, String>,
@@ -176,7 +190,14 @@ impl Oauth2ClientApi for Oauth2ClientService {
             None
         };
 
-        let created = self.backend_driver.create(ctx.state(), data).await?;
+        let event = oauth2_client_event(Operation::Create, &data.domain_id, &data.provider_id);
+        let op = async { self.backend_driver.create(ctx.state(), data).await };
+        let created = crate::audited_if_ctx! {
+            ctx: ctx,
+            event: event,
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| Oauth2ClientProviderError::AuditUnavailable,
+        }?;
         Ok((created, plaintext_secret))
     }
 
@@ -186,12 +207,20 @@ impl Oauth2ClientApi for Oauth2ClientService {
         domain_id: &'a str,
         provider_id: &'a str,
     ) -> Result<(OAuth2ClientResource, usize), Oauth2ClientProviderError> {
-        let deleted = self
-            .backend_driver
-            .delete(ctx.state(), domain_id, provider_id)
-            .await?;
-        let revoked = revoke_client_families(ctx, &deleted.client_id).await?;
-        Ok((deleted, revoked))
+        let op = async {
+            let deleted = self
+                .backend_driver
+                .delete(ctx.state(), domain_id, provider_id)
+                .await?;
+            let revoked = revoke_client_families(ctx, &deleted.client_id).await?;
+            Ok::<_, Oauth2ClientProviderError>((deleted, revoked))
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: oauth2_client_event(Operation::Delete, domain_id, provider_id),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| Oauth2ClientProviderError::AuditUnavailable,
+        }
     }
 
     async fn get<'a>(
@@ -247,10 +276,21 @@ impl Oauth2ClientApi for Oauth2ClientService {
 
         let secret = crypto::generate_secret();
         let hash = crypto::hash_secret(&secret, &self.oauth2_config).await?;
-        let updated = self
-            .backend_driver
-            .rotate_secret(ctx.state(), domain_id, provider_id, hash)
-            .await?;
+        let op = async {
+            self.backend_driver
+                .rotate_secret(ctx.state(), domain_id, provider_id, hash)
+                .await
+        };
+        let updated = crate::audited_if_ctx! {
+            ctx: ctx,
+            event: oauth2_client_event(
+                Operation::Other("rotate_secret".to_string()),
+                domain_id,
+                provider_id,
+            ),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| Oauth2ClientProviderError::AuditUnavailable,
+        }?;
         Ok((updated, secret.expose_secret().to_string()))
     }
 
@@ -291,17 +331,29 @@ impl Oauth2ClientApi for Oauth2ClientService {
         // client is already disabled by then) a silent no-op.
         let disabling = data.enabled == Some(false);
 
-        let updated = self
-            .backend_driver
-            .update(ctx.state(), domain_id, provider_id, data)
-            .await?;
-        // A disabled client must not keep live refresh families.
-        let revoked = if disabling {
-            revoke_client_families(ctx, &updated.client_id).await?
-        } else {
-            0
+        let op = async {
+            let updated = self
+                .backend_driver
+                .update(ctx.state(), domain_id, provider_id, data)
+                .await?;
+            // A disabled client must not keep live refresh families.
+            let revoked = if disabling {
+                revoke_client_families(ctx, &updated.client_id).await?
+            } else {
+                0
+            };
+            Ok::<_, Oauth2ClientProviderError>((updated, revoked))
         };
-        Ok((updated, revoked))
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: oauth2_client_event(
+                if disabling { Operation::Disable } else { Operation::Update },
+                domain_id,
+                provider_id,
+            ),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| Oauth2ClientProviderError::AuditUnavailable,
+        }
     }
 }
 
@@ -663,5 +715,76 @@ mod tests {
             updated_at: 0,
             deleted_at: None,
         }
+    }
+
+    // ---- audit (ADR 0023): fail-closed around the provider operation ----
+
+    #[tokio::test]
+    async fn test_create_with_security_context_records_attempt_and_success() {
+        let mut mock = MockOauth2ClientBackend::new();
+        mock.expect_create()
+            .returning(|_, data| Ok(sample_resource_from(data)));
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+        let hook = crate::tests::RecordingAuditHook::new();
+        state.event_dispatcher.subscribe_audit(hook.clone()).await;
+        let vsc = crate::tests::test_vsc();
+        let ctx = ExecutionContext::from_auth(&state, &vsc);
+
+        service.create(&ctx, sample_create(), true).await.unwrap();
+
+        assert_eq!(hook.outcomes(), ["Attempt", "Success"]);
+        let (operation, payload, _) = &hook.seen()[0];
+        assert_eq!(operation, "Create");
+        assert!(payload.contains("Oauth2Client"), "{payload}");
+        assert!(payload.contains("provider-1"), "{payload}");
+        assert!(!payload.contains("kosc_"), "secret leaked: {payload}");
+        assert!(!payload.contains("argon2"), "hash leaked: {payload}");
+    }
+
+    #[tokio::test]
+    async fn test_delete_failure_is_recorded_with_static_reason() {
+        let mut backend = MockOauth2ClientBackend::new();
+        backend
+            .expect_delete()
+            .returning(|_, _, _| Err(Oauth2ClientProviderError::NotFound("provider-1".into())));
+        let service = service_with(backend);
+        let state = get_mocked_state(None, None).await;
+        let hook = crate::tests::RecordingAuditHook::new();
+        state.event_dispatcher.subscribe_audit(hook.clone()).await;
+        let vsc = crate::tests::test_vsc();
+        let ctx = ExecutionContext::from_auth(&state, &vsc);
+
+        assert!(
+            service
+                .delete(&ctx, "domain-1", "provider-1")
+                .await
+                .is_err()
+        );
+
+        let outcomes = hook.outcomes();
+        assert_eq!(outcomes.len(), 2);
+        assert_eq!(outcomes[0], "Attempt");
+        assert!(outcomes[1].contains("NotFound"), "{outcomes:?}");
+        assert!(!outcomes[1].contains("provider-1"), "{outcomes:?}");
+    }
+
+    #[tokio::test]
+    async fn test_create_fails_closed_when_the_pre_audit_is_refused() {
+        // No `expect_create`: the backend must not be reached.
+        let service = service_with(MockOauth2ClientBackend::new());
+        let state = get_mocked_state(None, None).await;
+        let hook = crate::tests::RecordingAuditHook::refusing();
+        state.event_dispatcher.subscribe_audit(hook.clone()).await;
+        let vsc = crate::tests::test_vsc();
+        let ctx = ExecutionContext::from_auth(&state, &vsc);
+
+        let err = service
+            .create(&ctx, sample_create(), true)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, Oauth2ClientProviderError::AuditUnavailable));
+        assert!(hook.seen().is_empty());
     }
 }

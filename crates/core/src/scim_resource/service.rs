@@ -18,9 +18,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::scim::*;
 
 use crate::auth::ExecutionContext;
+use crate::events::AuditDispatchError;
 use crate::plugin_manager::PluginManagerApi;
 use crate::scim_resource::{
     ScimResourceApi, backend::ScimResourceBackend, error::ScimResourceProviderError,
@@ -53,6 +55,17 @@ impl ScimResourceService {
     }
 }
 
+/// Build the audit event for a SCIM index change.
+fn scim_index_event(operation: Operation, provider_id: &str, keystone_id: &str) -> Event {
+    Event::new(
+        operation,
+        EventPayload::ScimIndex {
+            provider_id: provider_id.to_string(),
+            keystone_id: keystone_id.to_string(),
+        },
+    )
+}
+
 #[async_trait]
 impl ScimResourceApi for ScimResourceService {
     async fn create_index<'a>(
@@ -60,7 +73,14 @@ impl ScimResourceApi for ScimResourceService {
         ctx: &ExecutionContext<'a>,
         data: ScimResourceIndexCreate,
     ) -> Result<ScimResourceIndex, ScimResourceProviderError> {
-        self.backend_driver.create(ctx.state(), data).await
+        let event = scim_index_event(Operation::Create, &data.provider_id, &data.keystone_id);
+        let op = async { self.backend_driver.create(ctx.state(), data).await };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: event,
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| ScimResourceProviderError::AuditUnavailable,
+        }
     }
 
     async fn get_index<'a>(
@@ -123,17 +143,25 @@ impl ScimResourceApi for ScimResourceService {
         data: ScimResourceIndexUpdate,
         expected_version: Option<u64>,
     ) -> Result<ScimResourceIndex, ScimResourceProviderError> {
-        self.backend_driver
-            .update(
-                ctx.state(),
-                domain_id,
-                provider_id,
-                resource_type,
-                keystone_id,
-                data,
-                expected_version,
-            )
-            .await
+        let op = async {
+            self.backend_driver
+                .update(
+                    ctx.state(),
+                    domain_id,
+                    provider_id,
+                    resource_type,
+                    keystone_id,
+                    data,
+                    expected_version,
+                )
+                .await
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: scim_index_event(Operation::Update, provider_id, keystone_id),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| ScimResourceProviderError::AuditUnavailable,
+        }
     }
 
     async fn list_all_index<'a>(
@@ -151,14 +179,22 @@ impl ScimResourceApi for ScimResourceService {
         resource_type: ScimResourceType,
         keystone_id: &'a str,
     ) -> Result<(), ScimResourceProviderError> {
-        self.backend_driver
-            .purge(
-                ctx.state(),
-                domain_id,
-                provider_id,
-                resource_type,
-                keystone_id,
-            )
-            .await
+        let op = async {
+            self.backend_driver
+                .purge(
+                    ctx.state(),
+                    domain_id,
+                    provider_id,
+                    resource_type,
+                    keystone_id,
+                )
+                .await
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: scim_index_event(Operation::Delete, provider_id, keystone_id),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| ScimResourceProviderError::AuditUnavailable,
+        }
     }
 }

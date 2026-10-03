@@ -17,11 +17,13 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use openstack_keystone_config::Config;
+use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use openstack_keystone_core_types::revoke::*;
 use openstack_keystone_core_types::token::FernetToken;
 
 use crate::auth::ExecutionContext;
 use crate::auth::ValidatedSecurityContext;
+use crate::events::AuditDispatchError;
 use crate::plugin_manager::PluginManagerApi;
 use crate::revoke::{RevokeApi, RevokeProviderError, backend::RevokeBackend};
 
@@ -60,9 +62,21 @@ impl RevokeApi for RevokeService {
         ctx: &ExecutionContext<'a>,
         event: RevocationEventCreate,
     ) -> Result<RevocationEvent, RevokeProviderError> {
-        self.backend_driver
-            .create_revocation_event(ctx.state(), event)
-            .await
+        let payload = EventPayload::RevocationEvent {
+            audit_id: event.audit_id.clone(),
+            user_id: event.user_id.clone(),
+        };
+        let op = async {
+            self.backend_driver
+                .create_revocation_event(ctx.state(), event)
+                .await
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: Event::new(Operation::Revoke, payload),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| RevokeProviderError::AuditUnavailable,
+        }
     }
 
     /// Check whether the token has been revoked or not.
@@ -98,7 +112,17 @@ impl RevokeApi for RevokeService {
         ctx: &ExecutionContext<'a>,
         token: &FernetToken,
     ) -> Result<(), RevokeProviderError> {
-        self.backend_driver.revoke_token(ctx.state(), token).await?;
+        let payload = EventPayload::RevocationEvent {
+            audit_id: token.audit_ids().first().cloned(),
+            user_id: Some(token.user_id().clone()),
+        };
+        let op = async { self.backend_driver.revoke_token(ctx.state(), token).await };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: Event::new(Operation::Revoke, payload),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| RevokeProviderError::AuditUnavailable,
+        }?;
         // ADR 0031 "Tokens": `keystone_token_revoked_total{reason}`. This
         // `RevokeApi::revoke_token` method (as opposed to the more general
         // `create_revocation_event`) has exactly one caller across the

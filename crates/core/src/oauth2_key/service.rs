@@ -25,6 +25,10 @@ use openstack_keystone_key_repository::asymmetric::{
     ActiveKeys, KeyMaterial, SigningAlgorithm as KeySigningAlgorithm,
 };
 
+use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
+
+use crate::auth::ExecutionContext;
+use crate::events::AuditDispatchError;
 use crate::keystone::ServiceState;
 use crate::oauth2_key::jwks::active_keys_to_jwk_set;
 use crate::oauth2_key::{Oauth2KeyApi, Oauth2KeyProviderError, backend::Oauth2KeyBackend};
@@ -34,6 +38,17 @@ use crate::plugin_manager::PluginManagerApi;
 /// ADR 0026 §3 mandates Raft + FjallDB, there is no alternative driver to
 /// select between (unlike e.g. `[api_key] driver`).
 const BACKEND_NAME: &str = "raft";
+
+/// Build the audit event for an operation on a domain's signing key set. The
+/// payload carries the domain ID only, never key material or JTIs.
+fn signing_key_event(operation: Operation, domain_id: &str) -> Event {
+    Event::new(
+        operation,
+        EventPayload::Oauth2SigningKey {
+            domain_id: domain_id.to_string(),
+        },
+    )
+}
 
 /// OAuth2 signing key Provider.
 pub struct Oauth2KeyService {
@@ -91,56 +106,94 @@ impl Oauth2KeyApi for Oauth2KeyService {
         Ok(active.primary)
     }
 
-    async fn rotate_signing_key(
+    async fn rotate_signing_key<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &str,
     ) -> Result<KeyMaterial, Oauth2KeyProviderError> {
-        self.backend_driver
-            .rotate_signing_key(state, domain_id, self.signing_algorithm)
-            .await
+        let op = async {
+            self.backend_driver
+                .rotate_signing_key(ctx.state(), domain_id, self.signing_algorithm)
+                .await
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: signing_key_event(Operation::Other("rotate".to_string()), domain_id),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| Oauth2KeyProviderError::AuditUnavailable,
+        }
     }
 
-    async fn stage_emergency_rotation(
+    async fn stage_emergency_rotation<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &str,
         initiator: &str,
     ) -> Result<PendingRotationInfo, Oauth2KeyProviderError> {
-        self.backend_driver
-            .stage_emergency_rotation(state, domain_id, self.signing_algorithm, initiator)
-            .await
+        let op = async {
+            self.backend_driver
+                .stage_emergency_rotation(ctx.state(), domain_id, self.signing_algorithm, initiator)
+                .await
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: signing_key_event(Operation::Other("stage_emergency_rotation".to_string()), domain_id),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| Oauth2KeyProviderError::AuditUnavailable,
+        }
     }
 
-    async fn confirm_emergency_rotation(
+    async fn confirm_emergency_rotation<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &str,
         rotation_id: &str,
         confirmer: &str,
         revoke_jtis: Vec<String>,
     ) -> Result<KeyMaterial, Oauth2KeyProviderError> {
-        self.backend_driver
-            .confirm_emergency_rotation(state, domain_id, rotation_id, confirmer, revoke_jtis)
-            .await
+        let op = async {
+            self.backend_driver
+                .confirm_emergency_rotation(
+                    ctx.state(),
+                    domain_id,
+                    rotation_id,
+                    confirmer,
+                    revoke_jtis,
+                )
+                .await
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: signing_key_event(Operation::Other("confirm_emergency_rotation".to_string()), domain_id),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| Oauth2KeyProviderError::AuditUnavailable,
+        }
     }
 
-    async fn stage_local_emergency_rotation(
+    async fn stage_local_emergency_rotation<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &str,
         initiator: &str,
         justification: &str,
     ) -> Result<LocalEmergencyRotationInfo, Oauth2KeyProviderError> {
-        self.backend_driver
-            .stage_local_emergency_rotation(
-                state,
-                domain_id,
-                self.signing_algorithm,
-                initiator,
-                justification,
-            )
-            .await
+        let op = async {
+            self.backend_driver
+                .stage_local_emergency_rotation(
+                    ctx.state(),
+                    domain_id,
+                    self.signing_algorithm,
+                    initiator,
+                    justification,
+                )
+                .await
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: signing_key_event(Operation::Other("stage_local_emergency_rotation".to_string()), domain_id),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| Oauth2KeyProviderError::AuditUnavailable,
+        }
     }
 
     async fn list_local_emergency_candidates(
@@ -153,16 +206,24 @@ impl Oauth2KeyApi for Oauth2KeyService {
             .await
     }
 
-    async fn reconcile_local_emergency_rotation(
+    async fn reconcile_local_emergency_rotation<'a>(
         &self,
-        state: &ServiceState,
+        ctx: &ExecutionContext<'a>,
         domain_id: &str,
         rotation_id: &str,
         confirmer: &str,
     ) -> Result<KeyMaterial, Oauth2KeyProviderError> {
-        self.backend_driver
-            .reconcile_local_emergency_rotation(state, domain_id, rotation_id, confirmer)
-            .await
+        let op = async {
+            self.backend_driver
+                .reconcile_local_emergency_rotation(ctx.state(), domain_id, rotation_id, confirmer)
+                .await
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: signing_key_event(Operation::Other("reconcile_local_emergency_rotation".to_string()), domain_id),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| Oauth2KeyProviderError::AuditUnavailable,
+        }
     }
 
     async fn revoked_jtis(
@@ -294,7 +355,12 @@ mod tests {
         };
         let state = get_mocked_state(None, None).await;
 
-        assert!(service.rotate_signing_key(&state, "domain-1").await.is_ok());
+        assert!(
+            service
+                .rotate_signing_key(&ExecutionContext::internal(&state), "domain-1")
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -322,7 +388,11 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let pending = service
-            .stage_emergency_rotation(&state, "domain-1", "operator-a")
+            .stage_emergency_rotation(
+                &ExecutionContext::internal(&state),
+                "domain-1",
+                "operator-a",
+            )
             .await
             .unwrap();
         assert_eq!(pending.rotation_id, "rotation-1");
@@ -355,7 +425,7 @@ mod tests {
         assert!(
             service
                 .confirm_emergency_rotation(
-                    &state,
+                    &ExecutionContext::internal(&state),
                     "domain-1",
                     "rotation-1",
                     "operator-b",
@@ -415,7 +485,7 @@ mod tests {
 
         let info = service
             .stage_local_emergency_rotation(
-                &state,
+                &ExecutionContext::internal(&state),
                 "domain-1",
                 "operator-a",
                 "suspected key compromise",

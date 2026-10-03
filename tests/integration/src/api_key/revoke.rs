@@ -15,6 +15,7 @@
 //! not hard delete.
 
 use eyre::Result;
+use openstack_keystone_core::auth::ExecutionContext;
 use tracing_test::traced_test;
 
 use super::{create_api_key, sample_api_key_create};
@@ -32,7 +33,12 @@ async fn test_revoke_disables_and_stamps_tombstone() -> Result<()> {
     let revoked = state
         .provider
         .get_api_key_provider()
-        .revoke(&state, &domain.id, &created.client_id, "operator-1")
+        .revoke(
+            &ExecutionContext::internal(&state),
+            &domain.id,
+            &created.client_id,
+            "operator-1",
+        )
         .await?;
 
     assert!(!revoked.enabled);
@@ -52,7 +58,12 @@ async fn test_revoke_does_not_hard_delete() -> Result<()> {
     state
         .provider
         .get_api_key_provider()
-        .revoke(&state, &domain.id, &created.client_id, "operator-1")
+        .revoke(
+            &ExecutionContext::internal(&state),
+            &domain.id,
+            &created.client_id,
+            "operator-1",
+        )
         .await?;
 
     // The lookup_hash → resource mapping must still resolve (audit trail /
@@ -78,7 +89,12 @@ async fn test_revoke_missing_key_fails() -> Result<()> {
     let result = state
         .provider
         .get_api_key_provider()
-        .revoke(&state, &domain.id, "nonexistent-client-id", "operator-1")
+        .revoke(
+            &ExecutionContext::internal(&state),
+            &domain.id,
+            "nonexistent-client-id",
+            "operator-1",
+        )
         .await;
 
     assert!(result.is_err());
