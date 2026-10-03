@@ -17,6 +17,18 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+fn default_syslog_app_name() -> String {
+    "keystone".to_string()
+}
+
+fn default_syslog_connect_timeout_secs() -> u64 {
+    10
+}
+
+fn default_syslog_write_timeout_secs() -> u64 {
+    30
+}
+
 fn default_enabled() -> bool {
     true
 }
@@ -82,6 +94,34 @@ pub enum AuditSinkConfig {
     None,
     /// Write each event as a JSON line to the process's standard output.
     Stdout,
+    /// Send each event as an RFC 5424 syslog message (octet-counted framing,
+    /// RFC 6587) over TCP, optionally wrapped in TLS. Requires Keystone to be
+    /// built with the `audit-syslog` feature.
+    ///
+    /// Delivery is at-least-once: a batch that could not be written is
+    /// retried, so the receiver may see an event twice and should deduplicate
+    /// on the event `id`.
+    Syslog {
+        /// `host:port` of the syslog receiver.
+        endpoint: String,
+        /// Wrap the connection in TLS. Defaults to `false`.
+        #[serde(default)]
+        tls: bool,
+        /// PEM bundle of CA certificates trusted for the receiver. Defaults to
+        /// the system trust store.
+        #[serde(default)]
+        ca_file: Option<PathBuf>,
+        /// `APP-NAME` header field. Defaults to `keystone`.
+        #[serde(default = "default_syslog_app_name")]
+        app_name: String,
+        /// Seconds allowed for connecting (including the TLS handshake).
+        /// Defaults to 10.
+        #[serde(default = "default_syslog_connect_timeout_secs")]
+        connect_timeout_secs: u64,
+        /// Seconds allowed for writing one batch. Defaults to 30.
+        #[serde(default = "default_syslog_write_timeout_secs")]
+        write_timeout_secs: u64,
+    },
 }
 
 /// Configuration for the CADF audit framework (ADR 0023).
@@ -215,6 +255,25 @@ mod tests {
         assert_eq!(cfg.shipper_max_backoff_secs, 60);
         assert_eq!(cfg.spool_max_bytes, None);
         assert_eq!(cfg.spool_retention_secs, None);
+    }
+
+    #[test]
+    fn syslog_sink_parses_with_defaults() {
+        let cfg: AuditConfig = serde_json::from_str(
+            r#"{"sink": {"type": "syslog", "endpoint": "siem:6514", "tls": true}}"#,
+        )
+        .expect("config parses");
+        assert_eq!(
+            cfg.sink,
+            AuditSinkConfig::Syslog {
+                endpoint: "siem:6514".to_string(),
+                tls: true,
+                ca_file: None,
+                app_name: "keystone".to_string(),
+                connect_timeout_secs: 10,
+                write_timeout_secs: 30,
+            }
+        );
     }
 
     #[test]
