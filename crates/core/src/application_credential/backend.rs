@@ -14,6 +14,7 @@
 //! # Application credential provider backend
 
 use async_trait::async_trait;
+use secrecy::SecretString;
 
 use openstack_keystone_core_types::application_credential::*;
 
@@ -151,4 +152,22 @@ pub trait ApplicationCredentialBackend: Send + Sync {
         state: &ServiceState,
         params: &ApplicationCredentialListParameters,
     ) -> Result<Vec<ApplicationCredential>, ApplicationCredentialProviderError>;
+
+    /// Verify an application credential's secret against the stored hash.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `credential_id`: The ID of the application credential.
+    /// - `secret`: The plaintext secret to verify.
+    ///
+    /// # Returns
+    /// - `Ok(())` if the secret matches the stored hash.
+    /// - `Err(ApplicationCredentialProviderError::AuthenticationFailed)` if
+    ///   the credential does not exist or the secret does not match.
+    async fn verify_application_credential_secret(
+        &self,
+        state: &ServiceState,
+        credential_id: &str,
+        secret: &SecretString,
+    ) -> Result<(), ApplicationCredentialProviderError>;
 }

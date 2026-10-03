@@ -69,6 +69,53 @@ pub struct ApplicationCredential {
     #[validate(length(min = 1, max = 64))]
     pub user_id: String,
 }
+/// Application credential authentication request.
+///
+/// Carries the secret and the credential identifier (by ID or by name).
+/// Used by [`ApplicationCredentialApi::authenticate_by_application_credential`].
+#[derive(Clone, Debug)]
+pub struct ApplicationCredentialAuthRequest {
+    /// The secret to verify against the stored hash.
+    pub secret: SecretString,
+    /// How the credential is identified.
+    pub credential: ApplicationCredentialAuthData,
+}
+
+/// How the application credential is identified for authentication.
+#[derive(Clone, Debug)]
+pub enum ApplicationCredentialAuthData {
+    /// By credential ID, with an optional user reference.
+    Id(ApplicationCredentialAuthById),
+    /// By credential name, with a required user reference.
+    Name(ApplicationCredentialAuthByName),
+}
+
+/// Identify an application credential by its ID.
+#[derive(Builder, Clone, Debug, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(strip_option, into))]
+pub struct ApplicationCredentialAuthById {
+    /// The credential ID.
+    #[validate(length(min = 1, max = 64))]
+    pub id: String,
+    /// Optional user reference.
+    #[builder(default)]
+    #[validate(nested)]
+    pub user: Option<UserAuthRef>,
+}
+
+/// Identify an application credential by name (requires a user reference).
+#[derive(Builder, Clone, Debug, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(into))]
+pub struct ApplicationCredentialAuthByName {
+    /// The credential name.
+    #[validate(length(min = 1, max = 255))]
+    pub name: String,
+    /// The owning user (required — name is unique per user).
+    #[validate(nested)]
+    pub user: UserAuthRef,
+}
 
 /// The created application credential object.
 #[derive(Builder, Clone, Debug, Validate)]
@@ -201,6 +248,35 @@ pub struct ApplicationCredentialListParameters {
     /// The ID of the user owning the application credential.
     #[validate(length(max = 64))]
     pub user_id: String,
+}
+
+/// Reference to a user for credential resolution.
+#[derive(Builder, Clone, Debug, Validate)]
+#[builder(build_fn(error = "BuilderError"))]
+#[builder(setter(strip_option, into))]
+#[validate(schema(function = "validate_user_auth_ref"))]
+pub struct UserAuthRef {
+    /// User ID.
+    #[builder(default)]
+    #[validate(length(max = 64))]
+    pub id: Option<String>,
+    /// User name.
+    #[builder(default)]
+    #[validate(length(max = 255))]
+    pub name: Option<String>,
+    /// User domain (needed when resolving by name).
+    #[builder(default)]
+    pub domain: Option<crate::scope::Domain>,
+}
+
+/// Validates that at least `id` or `name` is present.
+fn validate_user_auth_ref(value: &UserAuthRef) -> Result<(), validator::ValidationError> {
+    if value.id.is_none() && value.name.is_none() {
+        return Err(validator::ValidationError::new(
+            "user reference requires at least id or name",
+        ));
+    }
+    Ok(())
 }
 
 impl From<ApplicationCredentialCreateResponse> for ApplicationCredential {

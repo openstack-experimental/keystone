@@ -21,6 +21,7 @@ use openstack_keystone_core::keystone::Service;
 use openstack_keystone_core_types::application_credential as types;
 
 mod access_rule;
+mod authenticate;
 mod create;
 mod get;
 mod list;
