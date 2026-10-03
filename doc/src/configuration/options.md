@@ -97,9 +97,9 @@ Audit signing key and node identity:
 
 - `node_id` identifies the node in every event, names its spool files and
   keys its signing key, so it must be unique per node. It defaults to the
-  `HOSTNAME` environment variable; Keystone refuses to start with auditing
-  enabled if it is empty, unset (the `unknown-node` fallback) or contains
-  characters outside `A-Z a-z 0-9 . _ -`.
+  `HOSTNAME` environment variable, then the system hostname; Keystone refuses
+  to start with auditing enabled if it is empty, unset (the `unknown-node`
+  fallback) or contains characters outside `A-Z a-z 0-9 . _ -`.
 - `hmac_kek_file` is the keyring holding the audit key-encryption-keys, one per
   key version, created with mode `0600` if missing. It must not be inside
   `spool_dir` (startup fails if it is): whoever can write the spool must not be

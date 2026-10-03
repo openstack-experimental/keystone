@@ -38,11 +38,22 @@ fn default_spool_dir() -> PathBuf {
 }
 
 fn default_node_id() -> String {
-    // Use the HOSTNAME env var if set (common in containerised environments),
-    // otherwise fall back to a static sentinel. Full gethostname(2) is
-    // available via nix::unistd::gethostname but that dep is optional;
-    // operators should set node_id explicitly in config.
-    std::env::var("HOSTNAME").unwrap_or_else(|_| UNKNOWN_NODE_ID.to_string())
+    // `HOSTNAME` is set in most containers but not for services started by
+    // systemd, so fall back to the kernel's hostname before giving up with a
+    // sentinel that `AuditConfig::validate_node_id` rejects. Operators should
+    // still set `node_id` explicitly when hostnames are not unique.
+    std::env::var("HOSTNAME")
+        .ok()
+        .map(|h| h.trim().to_string())
+        .filter(|h| !h.is_empty())
+        .or_else(|| {
+            ["/proc/sys/kernel/hostname", "/etc/hostname"]
+                .iter()
+                .filter_map(|path| std::fs::read_to_string(path).ok())
+                .map(|h| h.trim().to_string())
+                .find(|h| !h.is_empty())
+        })
+        .unwrap_or_else(|| UNKNOWN_NODE_ID.to_string())
 }
 
 fn default_spool_drain_timeout_secs() -> u64 {
@@ -153,7 +164,7 @@ pub struct AuditConfig {
 
     /// Node identifier used in `observer.node_id` and spool file names.
     /// Must be unique per node and is validated at startup. Defaults to the
-    /// `HOSTNAME` environment variable.
+    /// `HOSTNAME` environment variable, then the system hostname.
     #[serde(default = "default_node_id")]
     pub node_id: String,
 
