@@ -60,6 +60,8 @@ pub struct AuditDispatcher {
     pub(crate) postaudit_dropped_count: Arc<AtomicU64>,
     pub(crate) events_total: Arc<AtomicU64>,
     pub(crate) spool_bytes: Arc<AtomicU64>,
+    /// When `false` every dispatch is a successful no-op.
+    enabled: bool,
 }
 
 impl AuditDispatcher {
@@ -73,6 +75,33 @@ impl AuditDispatcher {
         let (dispatcher, _receivers) =
             Self::new("noop-node", uuid::Uuid::new_v4().to_string(), key, 0);
         dispatcher
+    }
+
+    /// Create a dispatcher for deployments with auditing disabled
+    /// (`[audit] enabled = false`).
+    ///
+    /// Unlike [`AuditDispatcher::noop`] this never reports a dead channel:
+    /// both [`dispatch`](Self::dispatch) and
+    /// [`dispatch_critical`](Self::dispatch_critical) succeed and discard the
+    /// event, so fail-closed provider auditing does not reject operations.
+    /// Nothing is written to disk and no counter is incremented.
+    pub fn disabled(node_id: impl Into<Arc<str>>) -> Arc<Self> {
+        let key: Arc<[u8]> = Arc::from(b"audit-disabled".as_slice());
+        let (dispatcher, _receivers) = Self::new(node_id, uuid::Uuid::new_v4().to_string(), key, 0);
+        // Rebuild with the flag set; `new` hands out an `Arc`, so unwrap it
+        // while no clone exists yet.
+        match Arc::try_unwrap(dispatcher) {
+            Ok(mut inner) => {
+                inner.enabled = false;
+                Arc::new(inner)
+            }
+            Err(shared) => shared,
+        }
+    }
+
+    /// Whether events are actually recorded.
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
     }
 
     /// Create a new dispatcher. Returns the dispatcher and its two channel
@@ -98,6 +127,7 @@ impl AuditDispatcher {
             postaudit_dropped_count: Arc::new(AtomicU64::new(0)),
             events_total: Arc::new(AtomicU64::new(0)),
             spool_bytes: Arc::new(AtomicU64::new(0)),
+            enabled: true,
         });
         let receivers = AuditChannelReceivers {
             perimeter: perimeter_rx,
@@ -130,6 +160,9 @@ impl AuditDispatcher {
     ///
     /// Floor-rate logs: at least once per second, and on every 1024th drop.
     pub fn dispatch(&self, event: CadfEvent) {
+        if !self.enabled {
+            return;
+        }
         self.events_total.fetch_add(1, Ordering::Relaxed);
         let cid = event.correlation_id().to_string();
         if self.perimeter_sender.try_send(event).is_err() {
@@ -150,6 +183,9 @@ impl AuditDispatcher {
 
     /// Fail-closed dispatch to the critical channel. Blocks until sent.
     pub async fn dispatch_critical(&self, event: CadfEvent) -> Result<(), AuditChannelDead> {
+        if !self.enabled {
+            return Ok(());
+        }
         self.events_total.fetch_add(1, Ordering::Relaxed);
         self.critical_sender
             .send(event)
@@ -306,6 +342,18 @@ mod tests {
         let key: Arc<[u8]> = Arc::from(b"test-key-32-bytes-0123456789abcd".as_slice());
         let (d, _rx) = AuditDispatcher::new("node-1", Uuid::new_v4().to_string(), key, 1);
         d
+    }
+
+    #[tokio::test]
+    async fn disabled_dispatcher_accepts_and_discards_events() {
+        let d = AuditDispatcher::disabled("node-1");
+        assert!(!d.is_enabled());
+        d.dispatch(make_payload(&d).sign(&d));
+        d.dispatch_critical(make_payload(&d).sign(&d))
+            .await
+            .expect("a disabled dispatcher never reports a dead channel");
+        assert_eq!(d.events_total(), 0);
+        assert_eq!(d.dropped_count(), 0);
     }
 
     fn make_payload(dispatcher: &AuditDispatcher) -> CadfEventPayload {

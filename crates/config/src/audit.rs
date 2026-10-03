@@ -17,6 +17,10 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+fn default_enabled() -> bool {
+    true
+}
+
 fn default_spool_dir() -> PathBuf {
     PathBuf::from("/var/lib/keystone/audit")
 }
@@ -59,6 +63,15 @@ pub enum AuditSinkConfig {
 /// Configuration for the CADF audit framework (ADR 0023).
 #[derive(Debug, Deserialize, Clone)]
 pub struct AuditConfig {
+    /// Enable the audit framework. Defaults to `true`.
+    ///
+    /// When `false`, no spool directory, lock, HMAC key or writer is created
+    /// and audit events are discarded. Use this only for development or
+    /// deployments that do not need an audit trail; the remaining `[audit]`
+    /// options are ignored.
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+
     /// Directory for per-node JSONL spool files.
     #[serde(default = "default_spool_dir")]
     pub spool_dir: PathBuf,
@@ -100,6 +113,7 @@ pub struct AuditConfig {
 impl Default for AuditConfig {
     fn default() -> Self {
         Self {
+            enabled: default_enabled(),
             spool_dir: default_spool_dir(),
             node_id: default_node_id(),
             spool_max_segment_bytes: default_spool_max_segment_bytes(),
