@@ -720,7 +720,51 @@ transactional requirement.
 
 ---
 
+## Relationship to the Raft Storage Audit (#1378)
+
+The distributed storage layer (ADR 0016-v2 §3.1) keeps its own audit pipeline
+in `crates/storage`: `AuditForwarder` signs `AuditRecord`s with an HMAC key
+derived from the DEK epoch and appends them to a bounded, fsynced spool. That
+leaves two producers next to the CADF pipeline described here. The decision is
+to **keep the two signing schemes and record shapes separate, and to share the
+delivery path**.
+
+**Why not fold the forwarder into the `openstack-keystone-audit` spool:**
+
+- **Different trust root.** The storage key is derived from the DEK, rotates
+  with every DEK epoch swap on every node and is bound to the HSM/KEK
+  provider; the CADF key comes from the audit keyring
+  (`[audit] hmac_kek_file`) and rotates on its own schedule. Merging them would
+  either tie CADF signing to the storage key lifecycle or weaken the storage
+  one.
+- **Different record shape.** Storage records are `{"record", "key_version",
+  "hmac"}` lines keyed by `dek_version`, not CADF events; a SIEM already
+  verifies them with the documented procedure. Re-shaping them is a wire-format
+  break for no integrity gain.
+- **Dependency direction.** `crates/storage` is deliberately free of the
+  keystone service crates; the audit crate depends on `core-types`.
+
+**What is shared instead.** The segment shipper is generic over the producer:
+with `[audit] sink` configured, `run_raw_segment_shipper` ships the sealed
+`raft-audit-<node_id>.jsonl.seg-*` segments from the storage audit spool
+(`audit_spool_dir`, default `<path>/audit-spool`) through the same
+`AuditSink`, verbatim, and deletes each segment once the sink acknowledged it.
+The live file is never read. Sinks carry these lines through
+`AuditSink::write_lines` (stdout: the raw line; syslog: the line as `MSG` with
+`MSGID = raft-audit`). The storage spool writer drops segments the shipper
+removed from its size accounting, so acknowledged data no longer counts against
+`audit_max_spool_bytes`. One sink configuration, one delivery guarantee
+(at-least-once, deduplicate on the record), two signing schemes.
+
+**Open follow-up:** converging the two key hierarchies and record formats
+(one derivation, one CADF shape for storage-side events) remains a possible
+future change; it needs a KMS-side derive for PKCS#11/TPM and a migration for
+existing storage audit consumers, and is out of scope here.
+
+---
+
 ## Consequences
+
 
 - **Security:** Two-event perimeter + fail-closed provider audit ensures
   complete coverage. Post-audit uses `emit_critical` with compensating local log
