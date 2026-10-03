@@ -47,6 +47,8 @@ use openstack_keystone_core::idmapping::IdMappingProviderError;
 use openstack_keystone_core::idmapping::backend::IdMappingBackend;
 use openstack_keystone_core::k8s_auth::K8sAuthProviderError;
 use openstack_keystone_core::k8s_auth::backend::K8sAuthBackend;
+use openstack_keystone_core::limit::backend::LimitBackend;
+use openstack_keystone_core::limit::error::LimitProviderError;
 use openstack_keystone_core::mapping::MappingBackend;
 use openstack_keystone_core::mapping::MappingProviderError;
 use openstack_keystone_core::oauth2_client::Oauth2ClientProviderError;
@@ -86,6 +88,8 @@ pub struct PluginManager {
     assignment_backends: HashMap<String, Arc<dyn AssignmentBackend>>,
     /// Catalog backend plugins.
     catalog_backends: HashMap<String, Arc<dyn CatalogBackend>>,
+    /// Limit backend plugins.
+    limit_backends: HashMap<String, Arc<dyn LimitBackend>>,
     /// Credential backend plugins.
     credential_backends: HashMap<String, Arc<dyn CredentialBackend>>,
     /// Domain config backend plugins (one per source: `"fs"`, `"sql"`).
@@ -206,6 +210,19 @@ impl PluginManagerApi for PluginManager {
         self.catalog_backends
             .get(name.as_ref())
             .ok_or(CatalogProviderError::UnsupportedDriver(
+                name.as_ref().to_string(),
+            ))
+    }
+
+    /// Get registered limit backend.
+    #[allow(clippy::borrowed_box)]
+    fn get_limit_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn LimitBackend>, LimitProviderError> {
+        self.limit_backends
+            .get(name.as_ref())
+            .ok_or(LimitProviderError::UnsupportedDriver(
                 name.as_ref().to_string(),
             ))
     }
@@ -645,6 +662,12 @@ impl PluginManagerApi for PluginManager {
             .insert(name.as_ref().to_string(), plugin);
     }
 
+    /// Register limit backend.
+    fn register_limit_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn LimitBackend>) {
+        self.limit_backends
+            .insert(name.as_ref().to_string(), plugin);
+    }
+
     /// Register credential backend.
     ///
     /// # Parameters
@@ -917,6 +940,7 @@ impl PluginManager {
             application_credential_backends: HashMap::new(),
             assignment_backends: HashMap::new(),
             catalog_backends: HashMap::new(),
+            limit_backends: HashMap::new(),
             credential_backends: HashMap::new(),
             domain_config_backends: HashMap::new(),
             auth_plugin_identity_backends: HashMap::new(),
@@ -942,6 +966,7 @@ impl PluginManager {
         register_backends(config, &mut slf.application_credential_backends).await?;
         register_backends(config, &mut slf.assignment_backends).await?;
         register_backends(config, &mut slf.catalog_backends).await?;
+        register_backends(config, &mut slf.limit_backends).await?;
         register_backends(config, &mut slf.credential_backends).await?;
         register_backends(config, &mut slf.domain_config_backends).await?;
         register_backends(config, &mut slf.auth_plugin_identity_backends).await?;

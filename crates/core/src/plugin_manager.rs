@@ -50,6 +50,8 @@ use crate::idmapping::IdMappingProviderError;
 use crate::idmapping::backend::IdMappingBackend;
 use crate::k8s_auth::K8sAuthProviderError;
 use crate::k8s_auth::backend::K8sAuthBackend;
+use crate::limit::backend::LimitBackend;
+use crate::limit::error::LimitProviderError;
 use crate::mapping::MappingBackend;
 use crate::mapping::error::MappingProviderError;
 use crate::oauth2_client::Oauth2ClientProviderError;
@@ -115,6 +117,7 @@ declare_backend_registry!(
     dyn ApplicationCredentialBackend,
     dyn AssignmentBackend,
     dyn CatalogBackend,
+    dyn LimitBackend,
     dyn CredentialBackend,
     dyn DomainConfigBackend,
     dyn DynamicPluginIdentityBackend,
@@ -319,6 +322,19 @@ pub trait PluginManagerApi {
         &self,
         name: S,
     ) -> Result<&Arc<dyn CatalogBackend>, CatalogProviderError>;
+
+    /// Get registered limit backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn LimitBackend>)` if found, otherwise
+    ///   `Err(LimitProviderError)`.
+    fn get_limit_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn LimitBackend>, LimitProviderError>;
 
     /// Get registered credential backend.
     ///
@@ -652,6 +668,13 @@ pub trait PluginManagerApi {
     /// - `name`: The name to register the backend under.
     /// - `plugin`: The backend implementation.
     fn register_catalog_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn CatalogBackend>);
+
+    /// Register limit backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name to register the backend under.
+    /// - `plugin`: The backend implementation.
+    fn register_limit_backend<S: AsRef<str>>(&mut self, name: S, plugin: Arc<dyn LimitBackend>);
 
     /// Register federation backend.
     ///

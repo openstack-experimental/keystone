@@ -2024,3 +2024,99 @@ mod domain_config {
     }
 }
 pub use domain_config::MockDomainConfigProvider;
+
+mod limit {
+    use async_trait::async_trait;
+    use mockall::mock;
+
+    use crate::auth::ExecutionContext;
+    use crate::limit::{LimitApi, LimitProviderError};
+    use openstack_keystone_core_types::limit::*;
+
+    mock! {
+        pub LimitProvider {}
+
+        #[async_trait]
+        impl LimitApi for LimitProvider {
+            async fn get_limit_model<'a>(
+                &self,
+                exec: &ExecutionContext<'a>,
+            ) -> Result<LimitModel, LimitProviderError>;
+
+            async fn create_registered_limits<'a>(
+                &self,
+                exec: &ExecutionContext<'a>,
+                limits: Vec<RegisteredLimitCreate>,
+            ) -> Result<Vec<RegisteredLimit>, LimitProviderError>;
+
+            async fn get_registered_limit<'a>(
+                &self,
+                exec: &ExecutionContext<'a>,
+                id: &'a str,
+            ) -> Result<Option<RegisteredLimit>, LimitProviderError>;
+
+            async fn list_registered_limits<'a>(
+                &self,
+                exec: &ExecutionContext<'a>,
+                params: &RegisteredLimitListParameters,
+            ) -> Result<Vec<RegisteredLimit>, LimitProviderError>;
+
+            async fn update_registered_limit<'a>(
+                &self,
+                exec: &ExecutionContext<'a>,
+                id: &'a str,
+                data: RegisteredLimitUpdate,
+            ) -> Result<RegisteredLimit, LimitProviderError>;
+
+            async fn delete_registered_limit<'a>(
+                &self,
+                exec: &ExecutionContext<'a>,
+                id: &'a str,
+            ) -> Result<(), LimitProviderError>;
+
+            async fn create_limits<'a>(
+                &self,
+                exec: &ExecutionContext<'a>,
+                limits: Vec<LimitCreate>,
+            ) -> Result<Vec<Limit>, LimitProviderError>;
+
+            async fn get_limit<'a>(
+                &self,
+                exec: &ExecutionContext<'a>,
+                id: &'a str,
+            ) -> Result<Option<Limit>, LimitProviderError>;
+
+            async fn list_limits<'a>(
+                &self,
+                exec: &ExecutionContext<'a>,
+                params: &LimitListParameters,
+            ) -> Result<Vec<Limit>, LimitProviderError>;
+
+            async fn update_limit<'a>(
+                &self,
+                exec: &ExecutionContext<'a>,
+                id: &'a str,
+                data: LimitUpdate,
+            ) -> Result<Limit, LimitProviderError>;
+
+            async fn delete_limit<'a>(
+                &self,
+                exec: &ExecutionContext<'a>,
+                id: &'a str,
+            ) -> Result<(), LimitProviderError>;
+
+            async fn delete_limits_by_project<'a>(
+                &self,
+                exec: &ExecutionContext<'a>,
+                project_id: &'a str,
+            ) -> Result<(), LimitProviderError>;
+
+            async fn delete_limits_by_domain<'a>(
+                &self,
+                exec: &ExecutionContext<'a>,
+                domain_id: &'a str,
+            ) -> Result<(), LimitProviderError>;
+        }
+    }
+}
+pub use limit::MockLimitProvider;
