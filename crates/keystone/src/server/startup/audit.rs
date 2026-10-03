@@ -153,11 +153,13 @@ pub async fn init(
     let audit_hmac_key: Arc<[u8]> =
         Arc::from(derive_audit_hmac_key(audit_kek.expose_secret(), node_id.as_str()).as_slice());
 
-    let (audit_dispatcher, audit_receivers) = AuditDispatcher::new(
+    let (audit_dispatcher, audit_receivers) = AuditDispatcher::with_capacities(
         node_id.as_str(),
         Uuid::new_v4().to_string(),
         Arc::clone(&audit_hmac_key),
         AUDIT_HMAC_KEY_VERSION,
+        audit_cfg.perimeter_channel_capacity,
+        audit_cfg.critical_channel_capacity,
     );
 
     // One writer drains both QoS channels. It owns the spool lock: it runs
@@ -167,6 +169,9 @@ pub async fn init(
         max_segment_bytes: audit_cfg.spool_max_segment_bytes,
         max_segment_age: Duration::from_secs(audit_cfg.spool_max_segment_age_secs),
         max_segments: audit_cfg.spool_max_segments,
+        max_bytes: audit_cfg.spool_max_bytes,
+        retention: audit_cfg.spool_retention_secs.map(Duration::from_secs),
+        retention_deleted: audit_dispatcher.spool_retention_deleted_handle(),
         drain_timeout: Duration::from_secs(audit_cfg.spool_drain_timeout_secs),
     };
     let spool_bytes = audit_dispatcher.spool_bytes_handle();
@@ -198,6 +203,12 @@ pub async fn init(
         AuditSinkConfig::None => None,
         AuditSinkConfig::Stdout => Some(Arc::new(StdoutSink)),
     };
+    let shipper_cfg = ShipperConfig {
+        batch_size: audit_cfg.shipper_batch_size.max(1),
+        poll_interval: Duration::from_secs(audit_cfg.shipper_poll_interval_secs),
+        initial_backoff: Duration::from_secs(audit_cfg.shipper_initial_backoff_secs),
+        max_backoff: Duration::from_secs(audit_cfg.shipper_max_backoff_secs),
+    };
     let shipper_bytes = Arc::clone(&spool_bytes);
     let shipper_dir = spool_dir.clone();
     let shipper_node_id = node_id.clone();
@@ -213,7 +224,7 @@ pub async fn init(
             shipper_dir,
             shipper_node_id,
             sink,
-            ShipperConfig::default(),
+            shipper_cfg,
             shipper_bytes,
             shipper_shutdown,
         )
