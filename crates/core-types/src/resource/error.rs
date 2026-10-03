@@ -18,7 +18,7 @@ use crate::credential::CredentialProviderError;
 use crate::idmapping::IdMappingProviderError;
 use crate::oauth2_key::Oauth2KeyProviderError;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, strum::IntoStaticStr)]
 pub enum ResourceProviderError {
     /// Conflict.
     #[error("conflict: {0}")]

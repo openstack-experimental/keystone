@@ -26,7 +26,7 @@ use crate::role::RoleProviderError;
 use crate::trust::TrustProviderError;
 
 /// Token provider error.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, strum::IntoStaticStr)]
 #[non_exhaustive]
 pub enum TokenProviderError {
     /// Actor has no roles on the target scope.

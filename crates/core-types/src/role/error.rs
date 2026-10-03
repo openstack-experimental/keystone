@@ -15,7 +15,7 @@
 use thiserror::Error;
 
 /// Role provider error.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, strum::IntoStaticStr)]
 pub enum RoleProviderError {
     /// Conflict.
     #[error("conflict: {0}")]

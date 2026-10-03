@@ -20,7 +20,7 @@ use crate::revoke::RevokeProviderError;
 use crate::role::RoleProviderError;
 
 /// Assignment provider error.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, strum::IntoStaticStr)]
 pub enum AssignmentProviderError {
     /// Assignment not found.
     #[error("assignment not found: {0}")]

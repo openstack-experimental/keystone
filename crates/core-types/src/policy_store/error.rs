@@ -16,7 +16,7 @@ use thiserror::Error;
 
 use crate::error::BuilderError;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, strum::IntoStaticStr)]
 pub enum PolicyStoreProviderError {
     /// Conflict.
     #[error("conflict: {0}")]

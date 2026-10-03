@@ -21,7 +21,7 @@ use crate::revoke::RevokeProviderError;
 use crate::role::RoleProviderError;
 
 /// Trust extension error.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, strum::IntoStaticStr)]
 pub enum TrustProviderError {
     /// Assignment provider error.
     #[error(transparent)]

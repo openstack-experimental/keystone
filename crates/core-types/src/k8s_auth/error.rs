@@ -19,7 +19,7 @@ use crate::error::BuilderError;
 use crate::token::TokenProviderError;
 
 /// K8s auth provider error.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, strum::IntoStaticStr)]
 #[non_exhaustive]
 pub enum K8sAuthProviderError {
     /// K8s auth instance disabled.

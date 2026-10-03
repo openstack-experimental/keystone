@@ -17,7 +17,7 @@ use thiserror::Error;
 use crate::error::BuilderError;
 
 /// Federation provider error.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, strum::IntoStaticStr)]
 pub enum FederationProviderError {
     #[error("authentication state is not found")]
     AuthStateNotFound(String),

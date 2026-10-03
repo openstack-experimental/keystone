@@ -23,7 +23,7 @@ use crate::idmapping::IdMappingProviderError;
 use crate::resource::ResourceProviderError;
 
 /// Identity provider error.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, strum::IntoStaticStr)]
 pub enum IdentityProviderError {
     /// Authentication error.
     #[error(transparent)]
