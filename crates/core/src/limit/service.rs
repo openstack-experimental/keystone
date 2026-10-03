@@ -180,19 +180,30 @@ impl LimitService {
                 ));
             }
             (Some(project_id), None) => {
-                let project = exec
-                    .state()
-                    .provider
-                    .get_resource_provider()
+                let resource = exec.state().provider.get_resource_provider();
+                let project = resource
                     .get_project(exec, &project_id)
                     .await
-                    .map_err(|e| LimitProviderError::Driver(e.to_string()))?
-                    .ok_or_else(|| {
-                        LimitProviderError::InvalidReference(format!(
-                            "project_id: project {project_id} not found"
-                        ))
-                    })?;
-                if project.is_domain {
+                    .map_err(|e| LimitProviderError::Driver(e.to_string()))?;
+                // The project acting as a domain is addressed by the
+                // `domain_id`.
+                let is_domain = match project {
+                    Some(project) => project.is_domain,
+                    None => {
+                        if resource
+                            .get_domain(exec, &project_id)
+                            .await
+                            .map_err(|e| LimitProviderError::Driver(e.to_string()))?
+                            .is_none()
+                        {
+                            return Err(LimitProviderError::InvalidReference(format!(
+                                "project_id: project {project_id} not found"
+                            )));
+                        }
+                        true
+                    }
+                };
+                if is_domain {
                     limit.domain_id = limit.project_id.take();
                 }
             }
