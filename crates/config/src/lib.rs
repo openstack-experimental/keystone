@@ -86,6 +86,7 @@ mod interface;
 mod jws_token;
 mod k8s_auth;
 mod ldap;
+mod limit;
 mod listener;
 mod local_emergency;
 mod mapping;
@@ -131,6 +132,7 @@ pub use interface::*;
 pub use jws_token::*;
 pub use k8s_auth::*;
 pub use ldap::*;
+pub use limit::*;
 pub use listener::*;
 pub use local_emergency::*;
 pub use mapping::*;
@@ -187,6 +189,10 @@ pub struct Config {
     /// Catalog provider configuration.
     #[serde(default)]
     pub catalog: CatalogProvider,
+
+    /// Unified limits provider configuration.
+    #[serde(default)]
+    pub limit: LimitProvider,
 
     /// Credential provider configuration.
     #[serde(default)]
