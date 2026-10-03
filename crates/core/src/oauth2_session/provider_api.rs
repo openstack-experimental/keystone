@@ -241,10 +241,17 @@ pub trait Oauth2SessionApi: Send + Sync {
     /// was the family's live leaf, or triggers reuse-detection breach
     /// containment if it was already spent outside the grace window (ADR
     /// 0026 §9).
+    ///
+    /// `client_id` / `domain_id` identify the caller. A token owned by a
+    /// different client or domain yields [`RefreshTokenRedemption::Invalid`]
+    /// before any write, so a foreign presenter can neither spend the token
+    /// nor feed reuse detection.
     async fn redeem_refresh_token(
         &self,
         state: &ServiceState,
         presented_bearer: &str,
+        client_id: &str,
+        domain_id: &str,
     ) -> Result<RefreshTokenRedemption, Oauth2SessionProviderError>;
 
     /// Read-only lookup of the record behind a presented `refresh_token`

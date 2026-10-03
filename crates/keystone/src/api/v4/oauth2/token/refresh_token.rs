@@ -113,8 +113,22 @@ pub(super) async fn handle_refresh_token_grant(
     if let Some(record) = peeked {
         // Never act on (or reveal anything about) another client's family.
         if record.client_id != client_id || record.domain_id != domain_id {
+            emit_oauth2_session_event(
+                &state.audit_dispatcher,
+                correlation_id,
+                "authenticate",
+                build_initiator_unknown(),
+                &client_id,
+                "failure",
+                Some(format!(
+                    "refresh_token presented by foreign client: presenter={client_id} owner={}",
+                    record.client_id
+                )),
+            );
+            // Same message as an unknown/expired token: must not reveal
+            // that the bearer exists and belongs to another client.
             return Err(Oauth2TokenError::invalid_grant(
-                "refresh_token does not belong to this client",
+                "refresh_token is invalid, expired, or already used",
             ));
         }
         // Already-revoked families fall through to redemption, which
@@ -135,7 +149,7 @@ pub(super) async fn handle_refresh_token_grant(
     let redemption = state
         .provider
         .get_oauth2_session_provider()
-        .redeem_refresh_token(state, &presented_refresh_token)
+        .redeem_refresh_token(state, &presented_refresh_token, &client_id, domain_id)
         .await
         .map_err(|e| {
             tracing::warn!(error = %e, "oauth2 refresh token redemption failed");
@@ -163,12 +177,6 @@ pub(super) async fn handle_refresh_token_grant(
         }
         RefreshTokenRedemption::Rotated { record, bearer } => (*record, bearer),
     };
-
-    if record.client_id != client_id || record.domain_id != domain_id {
-        return Err(Oauth2TokenError::invalid_grant(
-            "refresh_token does not belong to this client",
-        ));
-    }
 
     // Close the window between the pre-redemption check and the rotation:
     // if the principal was disabled/deleted in between, revoke now (the
@@ -398,7 +406,7 @@ mod tests {
             .returning(|_, _| Ok(Some(sample_refresh_record(None))));
         session_mock
             .expect_redeem_refresh_token()
-            .returning(|_, _| {
+            .returning(|_, _, _, _| {
                 Ok(RefreshTokenRedemption::ReuseDetected {
                     family_id: "family-1".to_string(),
                     reason: openstack_keystone_core_types::oauth2_session::RefreshTokenRevocationReason::ReuseDetected,
@@ -442,7 +450,7 @@ mod tests {
             .returning(|_, _| Ok(Some(sample_refresh_record(None))));
         session_mock
             .expect_redeem_refresh_token()
-            .returning(|_, _| {
+            .returning(|_, _, _, _| {
                 Ok(RefreshTokenRedemption::Rotated {
                     record: Box::new(sample_refresh_record(None)),
                     bearer: "new-bearer-token".to_string(),
@@ -618,7 +626,7 @@ mod tests {
         session_mock
             .expect_redeem_refresh_token()
             .times(1)
-            .returning(|_, _| {
+            .returning(|_, _, _, _| {
                 Ok(RefreshTokenRedemption::Rotated {
                     record: Box::new(sample_refresh_record(None)),
                     bearer: "new-bearer-token".to_string(),
@@ -687,7 +695,7 @@ mod tests {
         session_mock
             .expect_redeem_refresh_token()
             .times(1)
-            .returning(|_, _| {
+            .returning(|_, _, _, _| {
                 Ok(RefreshTokenRedemption::Rotated {
                     record: Box::new(sample_refresh_record(None)),
                     bearer: "new-bearer-token".to_string(),
@@ -773,6 +781,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_refresh_token_foreign_presentation_does_not_break_owner() {
+        let mut client = public_authz_code_client().await;
+        client.grant_types = vec![
+            provider_types::GrantType::AuthorizationCode,
+            provider_types::GrantType::RefreshToken,
+        ];
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_get_by_client_id()
+            .returning(move |_, _| Ok(Some(client.clone())));
+
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_peek_refresh_token()
+            .returning(|_, bearer| {
+                let mut record = sample_refresh_record(None);
+                if bearer == "victim-token" {
+                    record.client_id = "victim-client".to_string();
+                }
+                Ok(Some(record))
+            });
+        // Only the owner's redemption may reach the backend; a second
+        // (foreign) call would exceed `times(1)` and panic.
+        session_mock
+            .expect_redeem_refresh_token()
+            .times(1)
+            .returning(|_, _, _, _| {
+                Ok(RefreshTokenRedemption::Rotated {
+                    record: Box::new(sample_refresh_record(None)),
+                    bearer: "new-bearer-token".to_string(),
+                })
+            });
+
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock)
+            .mock_oauth2_session(session_mock)
+            .mock_identity(refresh_identity_mock(Some(refresh_user(true, "domain-1"))))
+            .mock_resource(refresh_resource_mock(Some(true)))
+            .mock_oauth2_key(ok_key_mock());
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let foreign = api
+            .as_service()
+            .oneshot(request(&refresh_token_form("victim-token")))
+            .await
+            .unwrap();
+        assert_eq!(foreign.status(), StatusCode::BAD_REQUEST);
+        let foreign_body = json_body(foreign).await;
+        assert_eq!(foreign_body["error"], "invalid_grant");
+        assert_eq!(
+            foreign_body["error_description"],
+            "refresh_token is invalid, expired, or already used"
+        );
+
+        let owner = api
+            .as_service()
+            .oneshot(request(&refresh_token_form("own-token")))
+            .await
+            .unwrap();
+        assert_eq!(owner.status(), StatusCode::OK);
+        assert_eq!(json_body(owner).await["refresh_token"], "new-bearer-token");
+    }
+
+    #[tokio::test]
     async fn test_refresh_token_grant_rate_limited_by_ip_before_lookup() {
         // A stolen refresh token bearer is itself the secret (unlike
         // client_credentials' public client_id) -- the global per-IP
@@ -804,7 +879,7 @@ mod tests {
             .returning(|_, _| Ok(Some(sample_refresh_record(None))));
         session_mock
             .expect_redeem_refresh_token()
-            .returning(|_, _| {
+            .returning(|_, _, _, _| {
                 Ok(RefreshTokenRedemption::Rotated {
                     record: Box::new(sample_refresh_record(None)),
                     bearer: "new-bearer-token".to_string(),

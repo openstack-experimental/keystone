@@ -417,6 +417,8 @@ mod oauth2_session {
                 &self,
                 state: &ServiceState,
                 presented_bearer: &str,
+                client_id: &str,
+                domain_id: &str,
             ) -> Result<RefreshTokenRedemption, Oauth2SessionProviderError>;
 
             async fn peek_refresh_token(

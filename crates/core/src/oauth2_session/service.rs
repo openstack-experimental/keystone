@@ -281,6 +281,8 @@ impl Oauth2SessionApi for Oauth2SessionService {
         &self,
         state: &ServiceState,
         presented_bearer: &str,
+        client_id: &str,
+        domain_id: &str,
     ) -> Result<RefreshTokenRedemption, Oauth2SessionProviderError> {
         let token_id = hash_bearer(presented_bearer);
         let Some(record) = self
@@ -290,6 +292,12 @@ impl Oauth2SessionApi for Oauth2SessionService {
         else {
             return Ok(RefreshTokenRedemption::Invalid);
         };
+        // Ownership first, before any write or reuse accounting: a foreign
+        // presenter must not spend the owner's token or trip the breach
+        // cascade.
+        if record.client_id != client_id || record.domain_id != domain_id {
+            return Ok(RefreshTokenRedemption::Invalid);
+        }
         let now = now();
         if record.expires_at < now {
             return Ok(RefreshTokenRedemption::Invalid);
@@ -793,7 +801,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .redeem_refresh_token(&state, "presented-bearer")
+            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1")
             .await
             .unwrap();
         assert!(matches!(result, RefreshTokenRedemption::Rotated { .. }));
@@ -813,7 +821,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .redeem_refresh_token(&state, "presented-bearer")
+            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1")
             .await
             .unwrap();
         assert!(matches!(result, RefreshTokenRedemption::Invalid));
@@ -855,7 +863,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .redeem_refresh_token(&state, "presented-bearer")
+            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1")
             .await
             .unwrap();
         assert!(matches!(result, RefreshTokenRedemption::Rotated { .. }));
@@ -900,7 +908,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .redeem_refresh_token(&state, "presented-bearer")
+            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1")
             .await
             .unwrap();
         assert!(matches!(result, RefreshTokenRedemption::Rotated { .. }));
@@ -966,7 +974,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .redeem_refresh_token(&state, "presented-bearer")
+            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1")
             .await
             .unwrap();
         assert!(matches!(
@@ -989,7 +997,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .redeem_refresh_token(&state, "presented-bearer")
+            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1")
             .await
             .unwrap();
         assert!(matches!(result, RefreshTokenRedemption::Invalid));
@@ -1032,7 +1040,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .redeem_refresh_token(&state, "presented-bearer")
+            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1")
             .await
             .unwrap();
         assert!(matches!(result, RefreshTokenRedemption::Invalid));
@@ -1056,7 +1064,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .redeem_refresh_token(&state, "presented-bearer")
+            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1")
             .await
             .unwrap();
         assert!(matches!(result, RefreshTokenRedemption::Invalid));
@@ -1075,7 +1083,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .redeem_refresh_token(&state, "presented-bearer")
+            .redeem_refresh_token(&state, "presented-bearer", "client-1", "domain-1")
             .await
             .unwrap();
         assert!(matches!(result, RefreshTokenRedemption::Invalid));
@@ -1106,7 +1114,57 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .redeem_refresh_token(&state, "unknown-bearer")
+            .redeem_refresh_token(&state, "unknown-bearer", "client-1", "domain-1")
+            .await
+            .unwrap();
+        assert!(matches!(result, RefreshTokenRedemption::Invalid));
+    }
+
+    #[tokio::test]
+    async fn test_redeem_refresh_token_foreign_client_is_invalid_no_writes() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_get_refresh_token()
+            .returning(|_, _| Ok(Some(sample_refresh_token(None))));
+        // `mark_refresh_token_spent` / `create_refresh_token` /
+        // `revoke_refresh_token_family` deliberately not configured:
+        // mockall panics if a foreign presenter reaches any write.
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let result = service
+            .redeem_refresh_token(&state, "presented-bearer", "other-client", "domain-1")
+            .await
+            .unwrap();
+        assert!(matches!(result, RefreshTokenRedemption::Invalid));
+    }
+
+    #[tokio::test]
+    async fn test_redeem_refresh_token_foreign_domain_is_invalid_no_writes() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_get_refresh_token()
+            .returning(|_, _| Ok(Some(sample_refresh_token(None))));
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let result = service
+            .redeem_refresh_token(&state, "presented-bearer", "client-1", "other-domain")
+            .await
+            .unwrap();
+        assert!(matches!(result, RefreshTokenRedemption::Invalid));
+    }
+
+    #[tokio::test]
+    async fn test_redeem_refresh_token_foreign_client_spent_token_does_not_revoke() {
+        let mut mock = MockOauth2SessionBackend::new();
+        // Spent long ago: a legitimate presenter would trigger the breach
+        // cascade, a foreign one must not.
+        mock.expect_get_refresh_token()
+            .returning(|_, _| Ok(Some(sample_refresh_token(Some(1)))));
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let result = service
+            .redeem_refresh_token(&state, "presented-bearer", "other-client", "domain-1")
             .await
             .unwrap();
         assert!(matches!(result, RefreshTokenRedemption::Invalid));
