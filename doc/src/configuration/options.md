@@ -87,11 +87,29 @@ from it.
 | `[auth_plugins]` | `plugins`, `trusted_proxies`, `trusted_header` |
 | `[auth_plugin.<name>]` | `path`, `sha256`, `mode`, capabilities, headers, outbound hosts, provisioning/role bounds, route targets, resource limits, rate limits, concurrency, `valid_since` |
 | `[auth_plugin_identity]` | `driver` |
-| `[audit]` | `enabled` (`true`), `spool_dir` (`/var/lib/keystone/audit`), `node_id` (`$HOSTNAME`, else `unknown-node`; set it, unique per node), `spool_max_segment_bytes` (256 MiB), `spool_max_segment_age_secs` (86400), `spool_max_segments` (unset: keep all), `spool_max_bytes` (unset), `spool_retention_secs` (unset), `perimeter_channel_capacity` (4096), `critical_channel_capacity` (256), `shipper_batch_size` (500), `shipper_poll_interval_secs` (5), `shipper_initial_backoff_secs` (1), `shipper_max_backoff_secs` (60), `spool_drain_timeout_secs` (10), `sink` (none) |
+| `[audit]` | `enabled` (`true`), `spool_dir` (`/var/lib/keystone/audit`), `hmac_kek_file` (unset: `<spool_dir>/hmac-key.bin`), `node_id` (`$HOSTNAME`, else `unknown-node`; set it, unique per node), `spool_max_segment_bytes` (256 MiB), `spool_max_segment_age_secs` (86400), `spool_max_segments` (unset: keep all), `spool_max_bytes` (unset), `spool_retention_secs` (unset), `perimeter_channel_capacity` (4096), `critical_channel_capacity` (256), `shipper_batch_size` (500), `shipper_poll_interval_secs` (5), `shipper_initial_backoff_secs` (1), `shipper_max_backoff_secs` (60), `spool_drain_timeout_secs` (10), `sink` (none) |
 
 `[audit] enabled` defaults to `true`. Setting it to `false` skips creating the
 spool directory, spool lock, HMAC key and writer, and discards audit events;
 use it only for development or deployments that do not need an audit trail.
+
+Audit signing key and node identity:
+
+- `node_id` identifies the node in every event, names its spool files and
+  keys its signing key, so it must be unique per node. It defaults to the
+  `HOSTNAME` environment variable; Keystone refuses to start with auditing
+  enabled if it is empty, unset (the `unknown-node` fallback) or contains
+  characters outside `A-Z a-z 0-9 . _ -`.
+- `hmac_kek_file` is the keyring holding the audit key-encryption-keys, one per
+  key version, created with mode `0600` if missing. It must not be inside
+  `spool_dir` (startup fails if it is): whoever can write the spool must not be
+  able to read the key that signs it. When unset, the legacy
+  `<spool_dir>/hmac-key.bin` is used so existing deployments keep working, and
+  a warning is logged. A legacy 32-byte key file is read as key version 1.
+- Rotate the signing key with `keystone-manage audit rotate-hmac-key`. It adds a
+  new version and makes it current; old versions are kept so events already
+  signed stay verifiable. Running servers pick the new version up within about
+  30 seconds. Back up the keyring and give the SIEM verifier the updated copy.
 
 Spool and queue limits:
 

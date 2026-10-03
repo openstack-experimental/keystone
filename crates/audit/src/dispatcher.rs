@@ -335,9 +335,19 @@ impl AuditDispatcher {
     }
 
     /// Verify an event's signature using a specific key (for spool replay).
+    ///
+    /// The comparison is constant-time, and a signature that is not valid hex
+    /// of the right length simply fails verification.
     pub fn verify_hmac(&self, event: &CadfEvent, key: &[u8]) -> bool {
-        let expected = compute_hmac_sha256(&event.event, key);
-        expected == event.signature
+        let Some(signature) = crate::keyring::decode_hex(&event.signature) else {
+            return false;
+        };
+        let canonical = jcs_canonical(&event.event);
+        let Ok(mut mac) = HmacSha256::new_from_slice(key) else {
+            return false;
+        };
+        mac.update(canonical.as_bytes());
+        mac.verify_slice(&signature).is_ok()
     }
 }
 
@@ -502,6 +512,30 @@ mod tests {
         let mut event = dispatcher.finalize_event(make_payload(&dispatcher));
         event.signature = "deadbeef".to_string();
         assert!(!dispatcher.verify_hmac(&event, &key));
+    }
+
+    #[test]
+    fn verify_hmac_rejects_malformed_signatures() {
+        let key: Arc<[u8]> = Arc::from(b"test-key-32-bytes-0123456789abcd".as_slice());
+        let (dispatcher, _rx) =
+            AuditDispatcher::new("node-1", Uuid::new_v4().to_string(), Arc::clone(&key), 1);
+        let good = dispatcher.finalize_event(make_payload(&dispatcher));
+        for bad in [
+            "",
+            "zz",
+            "not hex at all",
+            // Right length, wrong content.
+            &"00".repeat(32),
+            // Valid prefix of the real signature.
+            &good.signature[..good.signature.len() - 2],
+            // Non-ASCII must not panic while slicing.
+            "\u{e9}\u{e9}",
+        ] {
+            let mut event = good.clone();
+            event.signature = bad.to_string();
+            assert!(!dispatcher.verify_hmac(&event, &key), "accepted {bad:?}");
+        }
+        assert!(dispatcher.verify_hmac(&good, &key));
     }
 
     #[test]

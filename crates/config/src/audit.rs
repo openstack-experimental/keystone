@@ -42,7 +42,7 @@ fn default_node_id() -> String {
     // otherwise fall back to a static sentinel. Full gethostname(2) is
     // available via nix::unistd::gethostname but that dep is optional;
     // operators should set node_id explicitly in config.
-    std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown-node".to_string())
+    std::env::var("HOSTNAME").unwrap_or_else(|_| UNKNOWN_NODE_ID.to_string())
 }
 
 fn default_spool_drain_timeout_secs() -> u64 {
@@ -140,8 +140,20 @@ pub struct AuditConfig {
     #[serde(default = "default_spool_dir")]
     pub spool_dir: PathBuf,
 
+    /// File holding the audit HMAC key-encryption-key(s), created with mode
+    /// `0600` if missing. It must NOT be inside `spool_dir`: anyone who can
+    /// write the spool must not also be able to read the signing key.
+    ///
+    /// When unset, the legacy location `<spool_dir>/hmac-key.bin` is used so
+    /// existing deployments keep working; Keystone logs a warning. Set this
+    /// explicitly (for example `/etc/keystone/audit-hmac.keyring`) and rotate
+    /// keys with `keystone-manage audit rotate-hmac-key`.
+    #[serde(default)]
+    pub hmac_kek_file: Option<PathBuf>,
+
     /// Node identifier used in `observer.node_id` and spool file names.
-    /// Defaults to the system hostname.
+    /// Must be unique per node and is validated at startup. Defaults to the
+    /// `HOSTNAME` environment variable.
     #[serde(default = "default_node_id")]
     pub node_id: String,
 
@@ -216,11 +228,49 @@ pub struct AuditConfig {
     pub sink: AuditSinkConfig,
 }
 
+/// Node id used when neither `[audit] node_id` nor `HOSTNAME` is available.
+pub const UNKNOWN_NODE_ID: &str = "unknown-node";
+
+impl AuditConfig {
+    /// Where the HMAC keyring lives: `hmac_kek_file`, or the legacy
+    /// `<spool_dir>/hmac-key.bin` when unset.
+    pub fn hmac_kek_path(&self) -> PathBuf {
+        self.hmac_kek_file
+            .clone()
+            .unwrap_or_else(|| self.spool_dir.join("hmac-key.bin"))
+    }
+
+    /// Reject a `node_id` that cannot safely identify a node.
+    ///
+    /// The id keys the per-node signing key and names the spool files, so it
+    /// must be unique per node (the `unknown-node` fallback is not), and may
+    /// only contain `A-Z a-z 0-9 . _ -` (at most 128 characters).
+    pub fn validate_node_id(&self) -> Result<(), String> {
+        let id = self.node_id.as_str();
+        if id.is_empty() || id == UNKNOWN_NODE_ID {
+            return Err(format!(
+                "[audit] node_id is not set (got `{id}`); set a value unique to this node"
+            ));
+        }
+        if id.len() > 128
+            || !id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        {
+            return Err(format!(
+                "[audit] node_id `{id}` must be at most 128 characters of A-Z a-z 0-9 . _ -"
+            ));
+        }
+        Ok(())
+    }
+}
+
 impl Default for AuditConfig {
     fn default() -> Self {
         Self {
             enabled: default_enabled(),
             spool_dir: default_spool_dir(),
+            hmac_kek_file: None,
             node_id: default_node_id(),
             spool_max_segment_bytes: default_spool_max_segment_bytes(),
             spool_max_segment_age_secs: default_spool_max_segment_age_secs(),
@@ -299,6 +349,40 @@ mod tests {
                 write_timeout_secs: 30,
             }
         );
+    }
+
+    #[test]
+    fn kek_path_defaults_to_legacy_location_and_can_be_overridden() {
+        let mut cfg = AuditConfig {
+            spool_dir: PathBuf::from("/spool"),
+            ..AuditConfig::default()
+        };
+        assert_eq!(cfg.hmac_kek_path(), PathBuf::from("/spool/hmac-key.bin"));
+        cfg.hmac_kek_file = Some(PathBuf::from("/etc/keystone/audit.keyring"));
+        assert_eq!(
+            cfg.hmac_kek_path(),
+            PathBuf::from("/etc/keystone/audit.keyring")
+        );
+    }
+
+    #[test]
+    fn node_id_validation() {
+        let mut cfg = AuditConfig::default();
+        for ok in ["node-1", "ks.example.com", "a_b-C.9"] {
+            cfg.node_id = ok.to_string();
+            assert!(cfg.validate_node_id().is_ok(), "{ok}");
+        }
+        for bad in [
+            UNKNOWN_NODE_ID,
+            "",
+            "a/b",
+            "../x",
+            "has space",
+            &"n".repeat(129),
+        ] {
+            cfg.node_id = bad.to_string();
+            assert!(cfg.validate_node_id().is_err(), "{bad:?}");
+        }
     }
 
     #[test]
