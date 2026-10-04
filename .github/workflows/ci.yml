@@ -67,39 +67,24 @@ jobs:
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Install protobuf-compiler
-        if: needs.changes.outputs.code == 'true'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y protobuf-compiler
-
-      # Build-time dependency of the `tpm` feature (`storage-crypto-tpm`'s
-      # `tss-esapi` needs `libtss2-dev` + `pkg-config` to compile at all, even
-      # without a real or virtual TPM present — `cargo nextest run
-      # --all-features` below builds it). No TPM device is required in CI:
-      # per ADR 0016-v2 §2.5.2's test/sample scope, `storage-crypto-tpm` has
-      # no CI-gated tests, only the example built in "Build TPM KEK example"
-      # below.
-      - name: Install libtss2-dev
-        if: needs.changes.outputs.code == 'true'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libtss2-dev pkg-config
-
-      # Run-time dependency of the `pkcs11` feature's SoftHSM2-backed
+      # protobuf-compiler: build dependency. libtss2-dev + pkg-config: build-time
+      # dependency of the `tpm` feature (`storage-crypto-tpm`'s `tss-esapi`
+      # needs them to compile at all, even without a real or virtual TPM;
+      # `cargo nextest run --all-features` below builds it). No TPM device is
+      # required in CI: per ADR 0016-v2 §2.5.2's test/sample scope,
+      # `storage-crypto-tpm` has no CI-gated tests, only the example built in
+      # "Build TPM KEK example" below.
+      # softhsm2: run-time dependency of the `pkcs11` feature's SoftHSM2-backed
       # integration tests (`storage-crypto-pkcs11/tests/softhsm.rs`,
       # `storage/tests/test_pkcs11_cluster.rs`). Each test provisions its own
-      # isolated token via `SOFTHSM2_CONF`, so no system-wide token
-      # initialization is needed here — only the module itself
-      # (`libsofthsm2.so`) needs to be present. Tests skip themselves
-      # (rather than fail) if it isn't, so this step is not a hard
-      # requirement for CI to pass, only for the pkcs11 tests to actually run
-      # instead of skipping.
-      - name: Install SoftHSM2
+      # isolated token via `SOFTHSM2_CONF`, so only the module itself
+      # (`libsofthsm2.so`) needs to be present. Tests skip themselves (rather
+      # than fail) if it isn't.
+      - name: Install system packages
         if: needs.changes.outputs.code == 'true'
         run: |
           sudo apt-get update
-          sudo apt-get install -y softhsm2
+          sudo apt-get install -y protobuf-compiler libtss2-dev pkg-config softhsm2
 
       - name: Install Rust
         if: needs.changes.outputs.code == 'true'
@@ -285,7 +270,7 @@ jobs:
 
   openapi:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && github.event_name != 'merge_group'
     runs-on: ubuntu-latest
 
     steps:

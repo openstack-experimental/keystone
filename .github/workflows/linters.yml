@@ -17,26 +17,6 @@ env:
   rust_min: 1.94.0
 
 jobs:
-  rustfmt:
-    name: Run rustfmt on the minimum supported toolchain
-    runs-on: ubuntu-latest
-    steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
-        with:
-          egress-policy: audit
-
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
-      - name: Install Rust ${{ env.rust_min }}
-        uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921 # stable
-        with:
-          toolchain: ${{ env.rust_min }}
-          components: rustfmt
-
-      - name: Run rustfmt
-        run: cargo fmt -- --check
-
   clippy:
     name: Run clippy on the minimum supported toolchain
     runs-on: ubuntu-latest
@@ -73,6 +53,9 @@ jobs:
 
       - name: Install required cargo
         run: cargo binstall clippy-sarif sarif-fmt --force
+
+      - name: Run rustfmt
+        run: cargo fmt -- --check
 
       - name: Run rust-clippy
         run: |

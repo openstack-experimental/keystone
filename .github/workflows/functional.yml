@@ -55,9 +55,11 @@ jobs:
               - 'tools/Dockerfile.tempest'
               - 'tools/tempest/**'
 
+  # `build` and `interop` are not required checks; skip them in the merge
+  # queue to keep runner pressure (and queue wait) down.
   build:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && github.event_name != 'merge_group'
     runs-on: ubuntu-latest
     permissions:
       contents: read

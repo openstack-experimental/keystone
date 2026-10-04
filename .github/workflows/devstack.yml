@@ -4,7 +4,6 @@ name: Devstack with rust Keystone
 on:
   workflow_dispatch:
   pull_request:
-  merge_group:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'merge_group' && github.run_id || github.event.pull_request.number || github.sha }}
