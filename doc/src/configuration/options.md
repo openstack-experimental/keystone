@@ -87,11 +87,13 @@ from it.
 | `[auth_plugins]` | `plugins`, `trusted_proxies`, `trusted_header` |
 | `[auth_plugin.<name>]` | `path`, `sha256`, `mode`, capabilities, headers, outbound hosts, provisioning/role bounds, route targets, resource limits, rate limits, concurrency, `valid_since` |
 | `[auth_plugin_identity]` | `driver` |
-| `[audit]` | `enabled`, `spool_dir`, `node_id`, `spool_max_segment_bytes`, `spool_max_segment_age_secs`, `spool_max_segments`, `spool_drain_timeout_secs`, `sink` |
+| `[audit]` | `enabled` (`true`), `spool_dir` (`/var/lib/keystone/audit`), `node_id` (`$HOSTNAME`, else `unknown-node`; set it, unique per node), `spool_max_segment_bytes` (256 MiB), `spool_max_segment_age_secs` (86400), `spool_max_segments` (unset: keep all), `spool_drain_timeout_secs` (10), `sink` (none) |
 
 `[audit] enabled` defaults to `true`. Setting it to `false` skips creating the
 spool directory, spool lock, HMAC key and writer, and discards audit events;
 use it only for development or deployments that do not need an audit trail.
+
+See [Audit trail](../admin/features/audit.md).
 
 See [Dynamic authentication plugin operations](../admin/features/auth-plugins.md).
 
