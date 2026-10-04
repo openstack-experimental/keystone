@@ -29,6 +29,9 @@
 
 use std::future::Future;
 use std::net::IpAddr;
+use std::sync::{Arc, Mutex, PoisonError};
+
+use openstack_keystone_audit::Initiator;
 
 /// The audit facts of one request.
 #[derive(Clone, Debug, Default)]
@@ -38,6 +41,26 @@ pub struct AuditRequestContext {
     pub client_ip: Option<IpAddr>,
     /// The server-generated `x-openstack-request-id`.
     pub correlation_id: Option<String>,
+    /// What the request's handlers recorded for the completion record.
+    completion: Arc<Mutex<CompletionState>>,
+}
+
+/// Facts the authentication layers leave for the completion middleware.
+#[derive(Debug, Default)]
+struct CompletionState {
+    /// Who the request authenticated as, once known.
+    initiator: Option<Initiator>,
+    /// A handler already emitted its own perimeter record for this request.
+    perimeter_emitted: bool,
+}
+
+/// What the completion middleware needs to know about a finished request.
+#[derive(Debug, Default)]
+pub struct RequestCompletion {
+    /// The authenticated initiator, if the request got that far.
+    pub initiator: Option<Initiator>,
+    /// A perimeter record was already emitted by the handler.
+    pub perimeter_emitted: bool,
 }
 
 tokio::task_local! {
@@ -45,6 +68,29 @@ tokio::task_local! {
 }
 
 impl AuditRequestContext {
+    /// A fresh context for one request.
+    #[must_use]
+    pub fn new(client_ip: Option<IpAddr>, correlation_id: Option<String>) -> Self {
+        Self {
+            client_ip,
+            correlation_id,
+            completion: Arc::default(),
+        }
+    }
+
+    /// Take what the handlers recorded for the completion record.
+    #[must_use]
+    pub fn completion(&self) -> RequestCompletion {
+        let state = self
+            .completion
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        RequestCompletion {
+            initiator: state.initiator.clone(),
+            perimeter_emitted: state.perimeter_emitted,
+        }
+    }
+
     /// Run `fut` with `self` established as the current request's audit
     /// context for its duration.
     pub async fn scope<F: Future>(self, fut: F) -> F::Output {
@@ -57,6 +103,28 @@ impl AuditRequestContext {
 #[must_use]
 pub fn client_ip() -> Option<IpAddr> {
     AUDIT_REQUEST.try_with(|ctx| ctx.client_ip).ok().flatten()
+}
+
+/// Record who the current request authenticated as, for the completion
+/// record. A no-op outside an established scope.
+pub fn record_initiator(initiator: Initiator) {
+    let _ = AUDIT_REQUEST.try_with(|ctx| {
+        ctx.completion
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .initiator = Some(initiator);
+    });
+}
+
+/// Note that a handler emitted its own perimeter record for the current
+/// request, so the completion middleware does not emit a second one.
+pub fn mark_perimeter_emitted() {
+    let _ = AUDIT_REQUEST.try_with(|ctx| {
+        ctx.completion
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .perimeter_emitted = true;
+    });
 }
 
 /// The current request's correlation ID, if a scope is established.
@@ -80,10 +148,8 @@ mod tests {
 
     #[tokio::test]
     async fn scope_exposes_the_context_to_nested_awaits() {
-        let ctx = AuditRequestContext {
-            client_ip: Some("203.0.113.7".parse().unwrap()),
-            correlation_id: Some("req-1".into()),
-        };
+        let ctx =
+            AuditRequestContext::new(Some("203.0.113.7".parse().unwrap()), Some("req-1".into()));
         ctx.scope(async {
             // Visible across an await point on the same task.
             tokio::task::yield_now().await;
@@ -92,5 +158,24 @@ mod tests {
         })
         .await;
         assert_eq!(client_ip(), None);
+    }
+
+    #[tokio::test]
+    async fn completion_state_is_shared_with_the_scope() {
+        let ctx = AuditRequestContext::new(None, None);
+        let probe = ctx.clone();
+        ctx.scope(async {
+            record_initiator(Initiator::new("u".to_string(), None, None, None));
+            mark_perimeter_emitted();
+        })
+        .await;
+        let completion = probe.completion();
+        assert_eq!(
+            completion.initiator.map(|i| i.id().to_string()).as_deref(),
+            Some("u")
+        );
+        assert!(completion.perimeter_emitted);
+        // Outside a scope recording is a silent no-op.
+        record_initiator(Initiator::new("x".to_string(), None, None, None));
     }
 }

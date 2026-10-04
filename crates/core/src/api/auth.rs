@@ -156,6 +156,9 @@ where
                     vsc.set_peer_addr(addr.to_string());
                 }
                 enforce_access_rules(&vsc, parts)?;
+                crate::audit_context::record_initiator(crate::cadf_hook::build_initiator_from_vsc(
+                    &vsc,
+                ));
                 return Ok(Auth(vsc));
             }
 
@@ -176,6 +179,9 @@ where
                 vsc.set_peer_addr(addr.to_string());
             }
             enforce_access_rules(&vsc, parts)?;
+            crate::audit_context::record_initiator(crate::cadf_hook::build_initiator_from_vsc(
+                &vsc,
+            ));
             return Ok(Auth(vsc));
         }
 
@@ -221,6 +227,9 @@ where
                 vsc.set_peer_addr(addr.to_string());
             }
             enforce_access_rules(&vsc, parts)?;
+            crate::audit_context::record_initiator(crate::cadf_hook::build_initiator_from_vsc(
+                &vsc,
+            ));
             return Ok(Auth(vsc));
         }
 
