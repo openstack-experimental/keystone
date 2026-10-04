@@ -167,3 +167,32 @@ async fn build_router_never_inserts_interface_extension() {
         "build's main app must never stamp an Interface extension itself"
     );
 }
+
+// ADR 0023 §2.1: a client-supplied `x-openstack-request-id` must never become
+// the correlation id of the audit trail (spoofing guard); the server mints a
+// fresh one and returns it.
+#[tokio::test]
+async fn client_supplied_request_id_is_replaced() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, _http_metrics) = build_test_router(test_config(tmp.path().to_path_buf())).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v3/")
+                .header("x-openstack-request-id", "req-attacker-chosen")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let id = response
+        .headers()
+        .get("x-openstack-request-id")
+        .expect("the response carries the server-minted request id")
+        .to_str()
+        .unwrap();
+    assert_ne!(id, "req-attacker-chosen");
+    assert!(id.starts_with("req-"), "unexpected id format: {id}");
+}

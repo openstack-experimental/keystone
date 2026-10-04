@@ -441,4 +441,126 @@ mod tests {
         assert!(i.project_id().is_none());
         assert!(i.domain_id().is_none());
     }
+
+    fn test_vsc() -> ValidatedSecurityContext {
+        let ctx = SecurityContextTestingBuilder::default()
+            .authentication_context(AuthenticationContext::Password)
+            .principal(make_user_identity("0123456789abcdef0123456789abcdef"))
+            .build();
+        ValidatedSecurityContext::test_new(ctx)
+    }
+
+    fn user_event() -> Event {
+        Event::new(
+            Operation::Delete,
+            EventPayload::User {
+                id: "fedcba9876543210fedcba9876543210".into(),
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn hook_dispatches_a_signed_record_on_the_critical_channel() {
+        let key: std::sync::Arc<[u8]> = std::sync::Arc::from(Uuid::new_v4().as_bytes().as_slice());
+        let (dispatcher, mut rx) = AuditDispatcher::new(
+            "node-1",
+            Uuid::new_v4().to_string(),
+            std::sync::Arc::clone(&key),
+            1,
+        );
+        let hook = CadfAuditHook::new(dispatcher.clone());
+
+        hook.on_auditable_event(&test_vsc(), &user_event(), &AuditOutcome::Attempt)
+            .await
+            .unwrap();
+        hook.on_auditable_event(
+            &test_vsc(),
+            &user_event(),
+            &AuditOutcome::Failure {
+                reason: "Conflict".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let attempt = rx.critical.try_recv().unwrap();
+        assert_eq!(attempt.payload().outcome(), "attempt");
+        assert_eq!(attempt.payload().action(), "delete");
+        assert_eq!(
+            attempt.payload().initiator().id(),
+            "0123456789abcdef0123456789abcdef"
+        );
+        assert!(dispatcher.verify_hmac(&attempt, &key));
+        let failure = rx.critical.try_recv().unwrap();
+        assert_eq!(failure.payload().outcome(), "failure");
+        assert!(failure.seq() > attempt.seq());
+        assert!(
+            rx.perimeter.try_recv().is_err(),
+            "provider records are critical"
+        );
+    }
+
+    #[tokio::test]
+    async fn dead_channel_maps_to_dispatcher_dead_without_counting_a_drop() {
+        let (dispatcher, rx) = AuditDispatcher::new(
+            "node-1",
+            Uuid::new_v4().to_string(),
+            std::sync::Arc::from(b"k".as_slice()),
+            1,
+        );
+        drop(rx.critical);
+        let hook = CadfAuditHook::new(dispatcher.clone());
+
+        for outcome in [AuditOutcome::Attempt, AuditOutcome::Success] {
+            let err = hook
+                .on_auditable_event(&test_vsc(), &user_event(), &outcome)
+                .await
+                .unwrap_err();
+            assert!(matches!(err, AuditDispatchError::DispatcherDead));
+        }
+        // Counting a lost outcome is `audited_op!`'s job, not the hook's.
+        assert_eq!(dispatcher.postaudit_dropped_count(), 0);
+    }
+
+    #[test]
+    fn build_target_type_uris_per_payload() {
+        let id = "0123456789abcdef0123456789abcdef".to_string();
+        for (payload, type_uri) in [
+            (
+                EventPayload::User { id: id.clone() },
+                "data/security/identity/user",
+            ),
+            (
+                EventPayload::Group { id: id.clone() },
+                "data/security/identity/group",
+            ),
+            (
+                EventPayload::Project { id: id.clone() },
+                "data/security/account/project",
+            ),
+            (
+                EventPayload::Domain { id: id.clone() },
+                "data/security/account/domain",
+            ),
+            (
+                EventPayload::Role { id: id.clone() },
+                "data/security/authz/role",
+            ),
+        ] {
+            let target = build_target_from_event(&Event::new(Operation::Create, payload));
+            assert_eq!(target.type_uri, type_uri);
+            assert_eq!(target.id, id);
+        }
+    }
+
+    #[test]
+    fn build_initiator_from_principal_has_user_and_domain_only() {
+        let principal = make_user_identity("0123456789abcdef0123456789abcdef");
+        let initiator = build_initiator_from_principal(&principal);
+        assert_eq!(initiator.id(), "0123456789abcdef0123456789abcdef");
+        assert!(
+            initiator.project_id().is_none(),
+            "scope was never established"
+        );
+    }
 }
