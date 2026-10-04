@@ -211,7 +211,6 @@ mod tests {
         CadfEventPayload::new(
             "n:1".to_string(),
             "1.0".to_string(),
-            "default".to_string(),
             "c".to_string(),
             "2026-10-03T20:00:00+00:00".to_string(),
             "authenticate".to_string(),

@@ -95,7 +95,7 @@ DELETE /v4/oauth2/{domain_id}/clients/{provider_id}
 - `DELETE` soft-deletes the client and tombstones every refresh token family
   issued to it (revocation reason `client_revoked`) before returning. Setting
   `enabled: false` through `PATCH` does the same, since a disabled client must
-  not keep live refresh families. Both emit an `OAUTH2_CLIENT_REVOKED` CADF
+  not keep live refresh families. Both emit an `oauth2/client_revoked` CADF
   event carrying the number of revoked families. Pending device grants and
   pre-auth sessions of the client are not purged eagerly: they are rejected at
   redemption because the client is disabled and are removed by the expired
@@ -152,7 +152,7 @@ What happens:
    gap).
 4. The downstream middleware (below) checks this list on every token
    verification and fails closed if the endpoint is unreachable.
-5. A distinct CADF event (`OAUTH2_EMERGENCY_KEY_ROTATION`) is recorded with
+5. A distinct CADF event (`oauth2/emergency_key_rotation`) is recorded with
    `domain_id`, revoked `kid`, new `kid`, operator identity, and the full
    `revoked_jtis` list.
 
@@ -215,7 +215,7 @@ normal rotation uses (requires quorum), demotes the prior `Primary` to
 `Previous`, clears the candidate on this node, and revokes any other active
 candidate for the domain on this node. Rejects if the confirming operator
 matches the initiator (dual-control) or if the candidate was already revoked.
-Emits `OAUTH2_LOCAL_EMERGENCY_KEY_RECONCILED` (CADF) with a
+Emits `oauth2/local_emergency_key_reconciled` (CADF) with a
 `_local:emergency:audit:<rotation_id>` pointer recorded in the local emergency
 store back to the event — staging itself is **not** audited (consistent with the
 ordinary emergency path's stage/confirm asymmetry); only reconciliation is.
@@ -261,7 +261,7 @@ Operational notes:
 access tokens (see the user guide). Operationally:
 
 - Refresh-token revocation tombstones the family with reason `rp_revoke` and
-  emits `OAUTH2_REFRESH_FAMILY_REVOKED`; every request also emits a `revoke`
+  emits `oauth2/refresh_family_revoked`; every request also emits a `revoke`
   session audit event whose initiator is the authenticated client. A client
   presenting another client's refresh token gets `200` (no oracle) but a
   `failure` audit event is recorded.
@@ -304,7 +304,7 @@ migration runbook.
   apply them, so upgrade all nodes before serving refresh-token traffic from the
   new version (stored records stay readable in both directions).
 - Revoking a family because its user or domain is no longer valid emits an
-  `OAUTH2_REFRESH_FAMILY_REVOKED` audit event (family id and reason:
+  `oauth2/refresh_family_revoked` audit event (family id and reason:
   `user_deleted`, `user_disabled`, `user_domain_changed`, `domain_disabled`).
 
 ## Known gaps

@@ -899,7 +899,7 @@ grep "rate_limited" /var/log/keystone/keystone.log
 ```
 
 **Timeouts/fuel/memory** - a resource-bound violation fails the specific
-invocation closed, audited via the plugin's CADF trail (`wasm_plugin.*` events,
+invocation closed, audited via the plugin's CADF trail (`wasm_plugin/*` events,
 ADR §6.E) rather than a distinct log grep target - check the audit event
 outcome/reason for the plugin's `authenticate`/`mapping`/`route` calls.
 
@@ -1036,7 +1036,7 @@ fn extract_claims(token_claims: &serde_json::Value) -> HashMap<String, serde_jso
    outstanding tokens (`full_auth` mode only - see ADR §4 "Plugin Version
    Binding")
 9. **Audit identity changes** - every host-function call and `authenticate`/
-   `mapping`/`route` outcome is CADF-audited (`wasm_plugin.*` events, ADR §6.E)
+   `mapping`/`route` outcome is CADF-audited (`wasm_plugin/*` events, ADR §6.E)
 10. **Monitor rate limits** - tune `invocation_rate_limit_per_minute` and
     `max_concurrent_invocations` based on load
 

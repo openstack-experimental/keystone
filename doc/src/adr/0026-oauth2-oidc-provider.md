@@ -254,7 +254,7 @@ DEK emergency rotation:
    carries `jti`, so they are covered. The revocation list TTL mirrors the
    one-max-lifetime retention window of normal rotation.
 4. **Incident logging:** Recorded as a distinct CADF event type
-   (`OAUTH2_EMERGENCY_KEY_ROTATION`) with `domain_id`, revoked `kid`, new `kid`,
+   (`oauth2/emergency_key_rotation`) with `domain_id`, revoked `kid`, new `kid`,
    operator identity, and the full `revoked_jtis` list appended to the event
    attachment. Including the jti revocation entries at event time provides an
    instant cryptographic baseline for security teams to reconcile which

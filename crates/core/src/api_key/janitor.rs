@@ -173,7 +173,6 @@ fn emit_maintenance_event(dispatcher: &Arc<AuditDispatcher>, action: &str, clien
     let payload = CadfEventPayload::new(
         event_id,
         "1.1".to_string(),
-        "default".to_string(),
         correlation_id,
         Utc::now().to_rfc3339(),
         action.to_string(),

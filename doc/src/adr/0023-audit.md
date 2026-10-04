@@ -39,6 +39,35 @@ cannot be used for policy enforcement before it is fully resolved, using an
 externally immutable `ValidatedSecurityContext` with read-only getters. This
 design prevents PII leaks while maintaining zero-trust guarantees.
 
+### Wire format: CADF-inspired Keystone schema
+
+The emitted JSON is a **CADF-inspired Keystone schema**, not a literal
+DSP0262 serialization. It keeps the CADF data model (initiator, target,
+observer, action, outcome, `host`) but uses snake_case keys and a flat layout
+so the signed canonical form stays small and stable. A SIEM that expects
+literal CADF needs a translation layer; the mapping is:
+
+| Keystone field | DSP0262 / pycadf |
+| --- | --- |
+| `event_time` | `eventTime` |
+| `target.type_uri`, `initiator` / `observer` (no type) | `typeURI` (initiator `service/security/account/user`) |
+| `correlation_id` | `attachments` / `tags` (request id) |
+| `outcome: "attempt"` | `pending` (pre-commit record of a fail-closed provider operation; Keystone only) |
+| `outcome: "client_error"` | `failure` with a client-side cause (perimeter records of rejected requests such as `429`) |
+| `domain` | the initiator's domain id, `unknown` when there is none (system actors) |
+| `action` | one shared style: lowercase `[a-z0-9_-]` words joined by `/` (e.g. `create`, `oauth2/refresh_reuse_detected`, `wasm_plugin/<host_function>`); applied to every record by `CadfEventPayload::new` |
+
+Renaming the wire keys to the DSP0262 spelling would be a breaking change of
+the signed canonical form and is deliberately not done; if it is ever needed
+it is a `version: "2.0"` format and the version field already lets a verifier
+tell them apart. `seq` is serialized as a JSON number; RFC 8785 numbers are
+IEEE-754 doubles, so a verifier that canonicalizes it MUST use a 64-bit
+integer type (values above 2^53 are not reachable in practice: the counter
+is per boot session). Cross-language vectors, including the v1.1 `host`
+cases (`host.id`, `host.address`, both, neither — omitted, never `null`), live
+in `tests/audit/hmac_vectors.jsonl`; `tools/audit_vectors.py verify`
+re-checks them with an independent Python JCS/HMAC implementation.
+
 ## Decision
 
 We implement a hybrid auditing architecture producing standardized CADF events,

@@ -47,18 +47,7 @@ pub fn map_event_to_action(event: &Event) -> String {
         Operation::Enable => "enable".to_string(),
         Operation::Authenticate => "authenticate".to_string(),
         Operation::Revoke => "revoke".to_string(),
-        Operation::Other(action) => {
-            let s: String = action
-                .chars()
-                .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '/'))
-                .take(64)
-                .collect();
-            if s.is_empty() {
-                "unknown".to_string()
-            } else {
-                s
-            }
-        }
+        Operation::Other(action) => openstack_keystone_audit::types::sanitize_action(action),
     }
 }
 
@@ -282,7 +271,6 @@ impl AuditHook for CadfAuditHook {
         let payload = CadfEventPayload::new(
             event_id,
             "1.1".to_string(),
-            "default".to_string(),
             ctx.correlation_id().to_string(),
             event.timestamp.to_rfc3339(),
             map_event_to_action(event),

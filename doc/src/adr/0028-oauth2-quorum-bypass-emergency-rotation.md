@@ -326,7 +326,7 @@ as ADR 0023's audit spool," but ADR 0023's actual mechanism
 (`crates/audit/src/spool.rs`, `dispatcher.rs`) is a filesystem JSONL spool with
 independent per-event HMAC (a `seq` field, not a hash chain), not a Fjall
 partition. Implemented instead as an ordinary `CadfEvent` through the existing
-`AuditDispatcher`/spool pipeline (`OAUTH2_LOCAL_EMERGENCY_KEY_RECONCILED` for
+`AuditDispatcher`/spool pipeline (`oauth2/local_emergency_key_reconciled` for
 OAuth2; `DEK_ROTATION_LOCAL_EMERGENCY_STAGED`/`_RECONCILED` for DEK, via the
 distributed-storage crate's own `AuditForwarder`/`AuditRecord` mechanism,
 which predates and is independent of `AuditDispatcher`). A compact
