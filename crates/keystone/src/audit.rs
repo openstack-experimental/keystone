@@ -1028,4 +1028,34 @@ mod tests {
         .await;
         assert!(receivers.perimeter.try_recv().is_err());
     }
+
+    #[test]
+    fn unauthorized_and_forbidden_use_the_sanitized_authentication_reason() {
+        let locked = KeystoneApiError::unauthorized(
+            AuthenticationError::UserLocked("alice@example.com".into()),
+            Some("user alice@example.com is locked"),
+        );
+        // The reason is the variant name; neither the user nor the context
+        // text can reach the record.
+        assert_eq!(error_variant_name(&locked), "UserLocked");
+
+        let forbidden = KeystoneApiError::forbidden(AuthenticationError::ScopeNotAllowed);
+        assert_eq!(error_variant_name(&forbidden), "ScopeNotAllowed");
+
+        // A source that is not an `AuthenticationError` falls back to a
+        // constant instead of formatting the error.
+        let other = KeystoneApiError::unauthorized(
+            std::io::Error::other("secret token abc"),
+            None::<String>,
+        );
+        assert_eq!(error_variant_name(&other), "Unauthorized");
+    }
+
+    #[test]
+    fn provider_name_is_dispatched_on_type_only() {
+        let identity = IdentityProviderError::UserNotFound("alice@example.com".into());
+        assert_eq!(extract_provider_name(&identity), Some("Identity"));
+        let other = std::io::Error::other("alice@example.com");
+        assert_eq!(extract_provider_name(&other), None);
+    }
 }
