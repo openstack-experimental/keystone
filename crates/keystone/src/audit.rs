@@ -337,7 +337,6 @@ pub fn emit_perimeter_authenticate_event(
     let payload = CadfEventPayload::new(
         event_id,
         "1.1".to_string(),
-        "default".to_string(),
         correlation_id.to_string(),
         chrono::Utc::now().to_rfc3339(),
         "authenticate".to_string(),
@@ -379,7 +378,6 @@ pub fn emit_oauth2_session_event(
     let payload = CadfEventPayload::new(
         event_id,
         "1.1".to_string(),
-        "default".to_string(),
         correlation_id.to_string(),
         chrono::Utc::now().to_rfc3339(),
         action.to_string(),
@@ -399,7 +397,7 @@ pub fn emit_oauth2_session_event(
     dispatcher.dispatch(event);
 }
 
-/// Emit the critical `OAUTH2_REFRESH_REUSE_DETECTED` CADF event (ADR 0026
+/// Emit the critical `oauth2/refresh_reuse_detected` CADF event (ADR 0026
 /// §9, "Token Compromise Alerts") when a `refresh_token` is presented a
 /// second time outside the reuse grace window and its family has just been
 /// revoked. Fail-closed dispatch via
@@ -424,10 +422,9 @@ pub async fn emit_oauth2_refresh_reuse_critical_event(
     let payload = CadfEventPayload::new(
         event_id,
         "1.1".to_string(),
-        "default".to_string(),
         correlation_id.to_string(),
         chrono::Utc::now().to_rfc3339(),
-        "OAUTH2_REFRESH_REUSE_DETECTED".to_string(),
+        "oauth2/refresh_reuse_detected".to_string(),
         "failure".to_string(),
         // The family is the target; the revocation reason is a fixed
         // vocabulary.
@@ -447,12 +444,12 @@ pub async fn emit_oauth2_refresh_reuse_critical_event(
         dispatcher.record_postaudit_drop();
         tracing::error!(
             family_id,
-            "failed to dispatch OAUTH2_REFRESH_REUSE_DETECTED critical audit event: audit channel dead"
+            "failed to dispatch oauth2/refresh_reuse_detected critical audit event: audit channel dead"
         );
     }
 }
 
-/// Emit the best-effort `OAUTH2_REFRESH_FAMILY_REVOKED` CADF event when a
+/// Emit the best-effort `oauth2/refresh_family_revoked` CADF event when a
 /// `refresh_token` family is revoked because its principal is no longer
 /// valid (user deleted/disabled/moved, domain disabled), so incident
 /// forensics can correlate the tombstones by `family_id` and `reason`.
@@ -470,10 +467,9 @@ pub fn emit_oauth2_refresh_family_revoked_event(
     let payload = CadfEventPayload::new(
         event_id,
         "1.1".to_string(),
-        "default".to_string(),
         correlation_id.to_string(),
         chrono::Utc::now().to_rfc3339(),
-        "OAUTH2_REFRESH_FAMILY_REVOKED".to_string(),
+        "oauth2/refresh_family_revoked".to_string(),
         "success".to_string(),
         Some(OutcomeReason::variant(reason)),
         with_request_address(initiator),
@@ -490,7 +486,7 @@ pub fn emit_oauth2_refresh_family_revoked_event(
     dispatcher.dispatch(event);
 }
 
-/// Emit the best-effort `OAUTH2_CLIENT_REVOKED` CADF event when an OAuth2
+/// Emit the best-effort `oauth2/client_revoked` CADF event when an OAuth2
 /// client is deleted or disabled. `action` is `delete` or `disable`;
 /// `revoked_families` is the number of refresh token families tombstoned as
 /// a consequence.
@@ -508,10 +504,9 @@ pub fn emit_oauth2_client_revoked_event(
     let payload = CadfEventPayload::new(
         event_id,
         "1.1".to_string(),
-        "default".to_string(),
         correlation_id.to_string(),
         chrono::Utc::now().to_rfc3339(),
-        "OAUTH2_CLIENT_REVOKED".to_string(),
+        "oauth2/client_revoked".to_string(),
         "success".to_string(),
         Some(OutcomeReason::counts(&[(
             "revoked_families",
@@ -531,7 +526,7 @@ pub fn emit_oauth2_client_revoked_event(
     dispatcher.dispatch(event);
 }
 
-/// Emit the critical `OAUTH2_EMERGENCY_KEY_ROTATION` CADF event (ADR 0026
+/// Emit the critical `oauth2/emergency_key_rotation` CADF event (ADR 0026
 /// §3, "Emergency Rotation and Signing Key Compromise", step 4) once a
 /// pending emergency rotation is confirmed and the compromised key's JTIs
 /// are revoked. Fail-closed dispatch via
@@ -557,10 +552,9 @@ pub async fn emit_oauth2_emergency_key_rotation_critical_event(
     let payload = CadfEventPayload::new(
         event_id,
         "1.1".to_string(),
-        "default".to_string(),
         correlation_id.to_string(),
         chrono::Utc::now().to_rfc3339(),
-        "OAUTH2_EMERGENCY_KEY_ROTATION".to_string(),
+        "oauth2/emergency_key_rotation".to_string(),
         "success".to_string(),
         // The domain is the target. The new key ID and the revoked JTIs are
         // not part of the signed record (no free text or ID lists in
@@ -585,12 +579,12 @@ pub async fn emit_oauth2_emergency_key_rotation_critical_event(
         tracing::error!(
             domain_id,
             new_kid,
-            "failed to dispatch OAUTH2_EMERGENCY_KEY_ROTATION critical audit event: audit channel dead"
+            "failed to dispatch oauth2/emergency_key_rotation critical audit event: audit channel dead"
         );
     }
 }
 
-/// Emit the critical `OAUTH2_LOCAL_EMERGENCY_KEY_RECONCILED` CADF event
+/// Emit the critical `oauth2/local_emergency_key_reconciled` CADF event
 /// (ADR 0028 §6) once a node-local, quorum-bypass emergency rotation
 /// candidate is reconciled into Raft-replicated state. Fail-closed dispatch
 /// via [`AuditDispatcher::dispatch_critical`], same posture as
@@ -622,10 +616,9 @@ pub async fn emit_oauth2_local_emergency_key_reconciled_event(
     let payload = CadfEventPayload::new(
         event_id.clone(),
         "1.1".to_string(),
-        "default".to_string(),
         correlation_id.to_string(),
         chrono::Utc::now().to_rfc3339(),
-        "OAUTH2_LOCAL_EMERGENCY_KEY_RECONCILED".to_string(),
+        "oauth2/local_emergency_key_reconciled".to_string(),
         "success".to_string(),
         // The domain is the target; the rotation ID and new key ID are
         // logged, and the rotation ID is also kept in the spool pointer
@@ -648,7 +641,7 @@ pub async fn emit_oauth2_local_emergency_key_reconciled_event(
             domain_id,
             rotation_id,
             new_kid,
-            "failed to dispatch OAUTH2_LOCAL_EMERGENCY_KEY_RECONCILED critical audit event: \
+            "failed to dispatch oauth2/local_emergency_key_reconciled critical audit event: \
              audit channel dead"
         );
     }

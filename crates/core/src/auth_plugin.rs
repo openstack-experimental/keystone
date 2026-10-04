@@ -157,7 +157,6 @@ pub(crate) async fn emit_wasm_plugin_audit(
     let payload = CadfEventPayload::new(
         format!("{node_id}:{}", Uuid::new_v4()),
         "1.1".to_string(),
-        "default".to_string(),
         // The request's ID (given explicitly, else from the request's audit
         // scope), so the plugin record joins the perimeter event of the same
         // login; only a record raised outside any request gets a fresh ID.
@@ -166,7 +165,7 @@ pub(crate) async fn emit_wasm_plugin_audit(
             .or_else(crate::audit_context::correlation_id)
             .unwrap_or_else(|| Uuid::new_v4().to_string()),
         chrono::Utc::now().to_rfc3339(),
-        format!("wasm_plugin.{host_function}"),
+        format!("wasm_plugin/{host_function}"),
         outcome.to_string(),
         outcome_reason,
         crate::cadf_hook::with_request_address(build_initiator_unknown()),

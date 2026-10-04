@@ -314,7 +314,6 @@ mod tests {
         CadfEventPayload::new(
             format!("{}:{}", dispatcher.node_id(), Uuid::new_v4()),
             "1.0".to_string(),
-            "default".to_string(),
             Uuid::new_v4().to_string(),
             chrono::Utc::now().to_rfc3339(),
             "authenticate".to_string(),
