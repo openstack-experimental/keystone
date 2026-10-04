@@ -324,8 +324,19 @@ Captures access attempts at the boundary.
    exists, resolves and stamps it directly, independently of the raw peer
    address it separately feeds to rate limiting and auth-plugin dispatch.
 
-2. **Completion (Middleware):** Post-handler extracts `CorrelationId` and
-   `ReadOnlyInitiator`, emits event with HTTP status mapped to outcome.
+2. **Completion (Middleware):** `with_audit_request_context` wraps the
+   request. Authentication layers (`Auth`, API-key auth) record the
+   authenticated initiator in the request audit context; after the handler
+   returns, the middleware emits one perimeter record with the HTTP status
+   mapped to an outcome (`2xx/3xx` success, `401`/`403`/`5xx` failure, other
+   `4xx` including `429` `client_error`) and a static reason. It applies only
+   to an explicit allowlist of authentication surfaces (`/v3|v4/auth/tokens`,
+   `/v3/ec2tokens`, `/v4/auth/passkey`, `/v4/vendordata`, `/SCIM/v2`,
+   `POST /v4/k8s_auth/{id}/auth`), so ordinary validated-token traffic does
+   not swamp the perimeter channel; and only when the handler did not already
+   emit its own perimeter record, so each request leaves exactly one. An
+   early rejection such as a rate limit therefore still leaves a record.
+   Initiator is `unknown` when authentication never completed.
 
 **Error sanitization** - Exhaustive match prevents silent PII leakage:
 

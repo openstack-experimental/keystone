@@ -227,12 +227,83 @@ pub async fn with_audit_request_context(
         .get::<RequestId>()
         .and_then(|r| r.header_value().to_str().ok())
         .map(str::to_string);
-    openstack_keystone_core::audit_context::AuditRequestContext {
+    let audited = is_authentication_surface(request.method(), request.uri().path());
+    let ctx = openstack_keystone_core::audit_context::AuditRequestContext::new(
         client_ip,
-        correlation_id,
+        correlation_id.clone(),
+    );
+    let probe = ctx.clone();
+    let response = ctx.scope(next.run(request)).await;
+    if audited {
+        // Completion record (ADR 0023 Phase 2): authentication surfaces whose
+        // handler did not emit its own perimeter record (token validation and
+        // revocation, WebAuthn, Kubernetes, API-key, vendordata, and any early
+        // rejection such as a rate limit) still leave exactly one record.
+        let completion = probe.completion();
+        if !completion.perimeter_emitted {
+            let (outcome, reason) = status_outcome(response.status());
+            let initiator = completion.initiator.unwrap_or_else(build_initiator_unknown);
+            // Outside the request scope here, so stamp the address explicitly.
+            let initiator = if initiator.address().is_some() {
+                initiator
+            } else {
+                initiator.with_address(client_ip.map(|ip| ip.to_string()))
+            };
+            emit_perimeter_authenticate_event(
+                &state.audit_dispatcher,
+                correlation_id.as_deref().unwrap_or("unknown"),
+                initiator,
+                outcome,
+                reason,
+            );
+        }
     }
-    .scope(next.run(request))
-    .await
+    response
+}
+
+/// Whether a request is an authentication surface that the completion
+/// middleware audits.
+///
+/// An explicit allowlist keeps the perimeter channel for what ADR 0023 calls
+/// authentication events: validated-token traffic on ordinary resource
+/// endpoints (very high volume, already covered by the fail-closed provider
+/// audit of its mutations) is deliberately not recorded here.
+#[must_use]
+pub fn is_authentication_surface(method: &axum::http::Method, path: &str) -> bool {
+    const PREFIXES: [&str; 7] = [
+        "/v3/auth/tokens",
+        "/v4/auth/tokens",
+        "/v3/ec2tokens",
+        "/v4/auth/passkey",
+        "/v4/vendordata",
+        "/SCIM/v2",
+        "/v4/k8s_auth/",
+    ];
+    if path.starts_with("/v4/k8s_auth/") {
+        // Only the authentication call, not the instance administration.
+        return path.ends_with("/auth") && method == axum::http::Method::POST;
+    }
+    PREFIXES.iter().any(|p| path.starts_with(p))
+}
+
+/// The CADF `(outcome, reason)` of an HTTP status.
+///
+/// `401`/`403` and server errors are failures, any other `4xx` (rate limits,
+/// malformed requests) is a `client_error` (ADR 0022), the rest a success.
+#[must_use]
+pub fn status_outcome(status: axum::http::StatusCode) -> (&'static str, Option<OutcomeReason>) {
+    use axum::http::StatusCode;
+    match status {
+        s if s.as_u16() < 400 => ("success", None),
+        StatusCode::UNAUTHORIZED => ("failure", Some(OutcomeReason::literal("Unauthorized"))),
+        StatusCode::FORBIDDEN => ("failure", Some(OutcomeReason::literal("Forbidden"))),
+        StatusCode::TOO_MANY_REQUESTS => (
+            "client_error",
+            Some(OutcomeReason::literal("TooManyRequests")),
+        ),
+        s if s.is_client_error() => ("client_error", Some(OutcomeReason::literal("ClientError"))),
+        _ => ("failure", Some(OutcomeReason::literal("ServerError"))),
+    }
 }
 
 /// The CADF `(outcome, outcome_reason)` of a perimeter handler result: the
@@ -284,6 +355,8 @@ pub fn emit_perimeter_authenticate_event(
     );
     let event = payload.sign(dispatcher);
     dispatcher.dispatch(event);
+    // The completion middleware must not add a second record for this request.
+    openstack_keystone_core::audit_context::mark_perimeter_emitted();
 }
 
 /// Emit a best-effort CADF event for an OAuth2 browser-flow lifecycle step
@@ -782,10 +855,10 @@ mod tests {
 
     #[tokio::test]
     async fn with_request_address_prefers_an_explicit_address() {
-        let ctx = openstack_keystone_core::audit_context::AuditRequestContext {
-            client_ip: Some("203.0.113.5".parse().unwrap()),
-            correlation_id: None,
-        };
+        let ctx = openstack_keystone_core::audit_context::AuditRequestContext::new(
+            Some("203.0.113.5".parse().unwrap()),
+            None,
+        );
         ctx.scope(async {
             let from_scope = with_request_address(build_initiator_unknown());
             assert_eq!(from_scope.address(), Some("203.0.113.5"));
@@ -812,5 +885,154 @@ mod tests {
         let (outcome, reason) = perimeter_outcome(&err);
         assert_eq!(outcome, "failure");
         assert_eq!(reason.expect("reason").as_str(), "Conflict");
+    }
+
+    #[test]
+    fn authentication_surfaces_are_an_explicit_allowlist() {
+        use axum::http::Method;
+        for (m, p) in [
+            (Method::GET, "/v3/auth/tokens"),
+            (Method::DELETE, "/v3/auth/tokens"),
+            (Method::POST, "/v3/ec2tokens"),
+            (Method::POST, "/v4/auth/passkey/start"),
+            (Method::POST, "/v4/vendordata"),
+            (Method::GET, "/SCIM/v2/realms/x/Users"),
+            (Method::POST, "/v4/k8s_auth/abc/auth"),
+        ] {
+            assert!(is_authentication_surface(&m, p), "{m} {p}");
+        }
+        for (m, p) in [
+            (Method::GET, "/v3/projects"),
+            (Method::GET, "/v3/users"),
+            (Method::POST, "/v4/k8s_auth/instances"),
+            (Method::GET, "/v4/k8s_auth/abc/auth"),
+        ] {
+            assert!(!is_authentication_surface(&m, p), "{m} {p}");
+        }
+    }
+
+    #[test]
+    fn status_maps_to_outcome() {
+        use axum::http::StatusCode;
+        assert_eq!(status_outcome(StatusCode::OK), ("success", None));
+        assert_eq!(status_outcome(StatusCode::NO_CONTENT).0, "success");
+        for (code, outcome, reason) in [
+            (StatusCode::UNAUTHORIZED, "failure", "Unauthorized"),
+            (StatusCode::FORBIDDEN, "failure", "Forbidden"),
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                "client_error",
+                "TooManyRequests",
+            ),
+            (StatusCode::BAD_REQUEST, "client_error", "ClientError"),
+            (StatusCode::INTERNAL_SERVER_ERROR, "failure", "ServerError"),
+        ] {
+            let (o, r) = status_outcome(code);
+            assert_eq!(o, outcome);
+            assert_eq!(r.expect("reason").as_str(), reason);
+        }
+    }
+
+    /// Run one request through the context/completion middleware over a
+    /// router with the given handler and return the perimeter receiver.
+    async fn run_completion(
+        method: &str,
+        path: &str,
+        handler: axum::routing::MethodRouter,
+    ) -> openstack_keystone_audit::AuditChannelReceivers {
+        use axum::extract::ConnectInfo;
+        use tower::ServiceExt;
+
+        let (state, receivers) = openstack_keystone_core::api::tests::get_mocked_state_with_audit(
+            openstack_keystone_core::provider::Provider::mocked_builder(),
+            true,
+            openstack_keystone_config::Config::default(),
+        )
+        .await;
+        let app = axum::Router::new()
+            .route("/v3/auth/tokens", handler.clone())
+            .route("/v3/projects", handler)
+            .layer(axum::middleware::from_fn_with_state(
+                state,
+                with_audit_request_context,
+            ));
+        let mut request = axum::http::Request::builder()
+            .method(method)
+            .uri(path)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        request.extensions_mut().insert(ConnectInfo(
+            "203.0.113.5:4000".parse::<SocketAddr>().unwrap(),
+        ));
+        let _ = app.oneshot(request).await.unwrap();
+        receivers
+    }
+
+    #[tokio::test]
+    async fn completion_records_a_rejected_authentication_surface_request() {
+        use axum::routing::get;
+        let mut receivers = run_completion(
+            "GET",
+            "/v3/auth/tokens",
+            get(|| async { axum::http::StatusCode::UNAUTHORIZED }),
+        )
+        .await;
+        let event = receivers.perimeter.try_recv().expect("completion event");
+        assert_eq!(event.payload().outcome(), "failure");
+        assert_eq!(event.payload().initiator().id(), "unknown");
+        assert_eq!(event.payload().initiator().address(), Some("203.0.113.5"));
+        assert!(receivers.perimeter.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn completion_records_the_authenticated_initiator_on_success() {
+        use axum::routing::get;
+        let mut receivers = run_completion(
+            "GET",
+            "/v3/auth/tokens",
+            get(|| async {
+                openstack_keystone_core::audit_context::record_initiator(Initiator::new(
+                    "0123456789abcdef0123456789abcdef".to_string(),
+                    None,
+                    None,
+                    None,
+                ));
+                axum::http::StatusCode::OK
+            }),
+        )
+        .await;
+        let event = receivers.perimeter.try_recv().expect("completion event");
+        assert_eq!(event.payload().outcome(), "success");
+        assert_eq!(
+            event.payload().initiator().id(),
+            "0123456789abcdef0123456789abcdef"
+        );
+    }
+
+    #[tokio::test]
+    async fn completion_does_not_duplicate_a_handler_record() {
+        use axum::routing::get;
+        let mut receivers = run_completion(
+            "GET",
+            "/v3/auth/tokens",
+            get(|| async {
+                openstack_keystone_core::audit_context::mark_perimeter_emitted();
+                axum::http::StatusCode::OK
+            }),
+        )
+        .await;
+        assert!(receivers.perimeter.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn completion_ignores_ordinary_endpoints() {
+        use axum::routing::get;
+        let mut receivers = run_completion(
+            "GET",
+            "/v3/projects",
+            get(|| async { axum::http::StatusCode::OK }),
+        )
+        .await;
+        assert!(receivers.perimeter.try_recv().is_err());
     }
 }

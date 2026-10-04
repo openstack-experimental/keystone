@@ -845,12 +845,9 @@ mod tests {
 
         let mut body = signed_body("s3cr3t", None);
         body["credentials"]["access"] = json!("AKIAABCDEFGHIJKLMNOP");
-        let response = AuditRequestContext {
-            client_ip: Some("203.0.113.9".parse().unwrap()),
-            correlation_id: None,
-        }
-        .scope(post(state, body))
-        .await;
+        let response = AuditRequestContext::new(Some("203.0.113.9".parse().unwrap()), None)
+            .scope(post(state, body))
+            .await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
         let event = receivers
