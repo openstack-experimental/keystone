@@ -304,4 +304,46 @@ mod tests {
         );
         assert_eq!(sanitize_initiator_host("", HostKind::Other), None);
     }
+
+    #[test]
+    fn non_ascii_audit_id_is_unknown() {
+        assert_eq!(
+            sanitize_audit_id("550e8400-e29b-41d4-a716-44665544000\u{0430}"),
+            "unknown"
+        );
+        assert_eq!(sanitize_audit_id("\u{1F600}"), "unknown");
+    }
+
+    #[test]
+    fn other_host_kind_drops_non_printable_and_non_ascii() {
+        let host = sanitize_initiator_host("a\u{0430}b\n\tc\u{7f}d", HostKind::Other).unwrap();
+        assert_eq!(host, "abcd");
+        assert_eq!(
+            sanitize_initiator_host("\u{0430}\u{0431}", HostKind::Other),
+            None
+        );
+        assert_eq!(
+            sanitize_initiator_host(&"x".repeat(300), HostKind::Other)
+                .unwrap()
+                .len(),
+            128
+        );
+    }
+
+    #[test]
+    fn initiator_address_normalizes_ipv6_and_rejects_oddities() {
+        assert_eq!(
+            sanitize_initiator_address("2001:DB8:0:0:0:0:0:1").as_deref(),
+            Some("2001:db8::1")
+        );
+        // IPv4-mapped IPv6 stays a well-formed IPv6 literal.
+        assert_eq!(
+            sanitize_initiator_address("::ffff:192.0.2.1").as_deref(),
+            Some("::ffff:192.0.2.1")
+        );
+        // A zone id is not accepted: the stored value is a bare address.
+        assert_eq!(sanitize_initiator_address("fe80::1%eth0"), None);
+        assert_eq!(sanitize_initiator_address("203.0.113.9:443"), None);
+        assert_eq!(sanitize_initiator_address("203.0.113.9\nX"), None);
+    }
 }

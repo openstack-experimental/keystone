@@ -110,3 +110,33 @@ impl Default for AuditConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_apply_to_an_empty_section() {
+        let cfg: AuditConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(cfg.spool_dir, PathBuf::from("/var/lib/keystone/audit"));
+        assert_eq!(cfg.spool_max_segment_bytes, 256 * 1024 * 1024);
+        assert_eq!(cfg.spool_max_segment_age_secs, 24 * 60 * 60);
+        assert_eq!(cfg.spool_max_segments, None);
+        assert_eq!(cfg.spool_drain_timeout_secs, 10);
+        assert!(!cfg.node_id.is_empty());
+    }
+
+    #[test]
+    fn explicit_values_override_the_defaults() {
+        let cfg: AuditConfig = serde_json::from_str(
+            r#"{"spool_dir": "/srv/audit", "node_id": "ks-0", "spool_max_segments": 4,
+                "spool_drain_timeout_secs": 3, "sink": {"type": "stdout"}}"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.spool_dir, PathBuf::from("/srv/audit"));
+        assert_eq!(cfg.node_id, "ks-0");
+        assert_eq!(cfg.spool_max_segments, Some(4));
+        assert_eq!(cfg.spool_drain_timeout_secs, 3);
+        assert!(matches!(cfg.sink, AuditSinkConfig::Stdout));
+    }
+}

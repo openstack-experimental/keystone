@@ -978,4 +978,67 @@ mod tests {
 
         assert_eq!(stats.skipped, 1);
     }
+
+    /// Rewrite the `outcome` of the one spooled line, keeping its signature.
+    fn tamper_outcome(path: &Path) {
+        let content = std::fs::read_to_string(path).unwrap();
+        std::fs::write(
+            path,
+            content.replace("\"outcome\":\"success\"", "\"outcome\":\"failure\""),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn hmac_tampered_line_quarantines_segment() {
+        let dir = tempdir().unwrap();
+        let key: Arc<[u8]> = Arc::from(b"testkey".as_slice());
+        let (dispatcher, _rx) = make_dispatcher("node-1", Arc::clone(&key));
+        append_line(&spool_path(dir.path(), "node-1"), &event(&dispatcher));
+        tamper_outcome(&spool_path(dir.path(), "node-1"));
+        let segment = seal_previous_spool(dir.path(), "node-1").unwrap().unwrap();
+
+        let stats = verify_sealed_spool(&segment, "node-1", &dispatcher, &key_store(&key)).unwrap();
+
+        // The line still parses and names the right node: only the HMAC can
+        // tell it was altered.
+        assert_eq!((stats.verified, stats.skipped), (0, 1));
+        assert!(!segment.exists(), "tampered segment must be renamed");
+        assert_eq!(
+            dispatcher.metrics().spool_quarantined.get(),
+            1,
+            "quarantine must be counted"
+        );
+    }
+
+    #[test]
+    fn missing_key_version_quarantines_segment() {
+        let dir = tempdir().unwrap();
+        let key: Arc<[u8]> = Arc::from(b"testkey".as_slice());
+        let (dispatcher, _rx) = make_dispatcher("node-1", Arc::clone(&key));
+        append_line(&spool_path(dir.path(), "node-1"), &event(&dispatcher));
+        let segment = seal_previous_spool(dir.path(), "node-1").unwrap().unwrap();
+        // The event is signed with key version 1; the store only knows 2.
+        let store = MapKeyStore(HashMap::from([(2u64, Arc::clone(&key))]));
+
+        let stats = verify_sealed_spool(&segment, "node-1", &dispatcher, &store).unwrap();
+
+        assert_eq!((stats.verified, stats.skipped), (0, 1));
+        assert!(!segment.exists());
+    }
+
+    #[test]
+    fn untampered_segment_verifies_and_stays() {
+        let dir = tempdir().unwrap();
+        let key: Arc<[u8]> = Arc::from(b"testkey".as_slice());
+        let (dispatcher, _rx) = make_dispatcher("node-1", Arc::clone(&key));
+        append_line(&spool_path(dir.path(), "node-1"), &event(&dispatcher));
+        append_line(&spool_path(dir.path(), "node-1"), &event(&dispatcher));
+        let segment = seal_previous_spool(dir.path(), "node-1").unwrap().unwrap();
+
+        let stats = verify_sealed_spool(&segment, "node-1", &dispatcher, &key_store(&key)).unwrap();
+
+        assert_eq!((stats.verified, stats.skipped), (2, 0));
+        assert!(segment.exists());
+    }
 }

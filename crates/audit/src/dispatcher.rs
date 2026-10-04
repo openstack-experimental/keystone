@@ -433,4 +433,50 @@ mod tests {
         let event = dispatcher.finalize_event(make_payload(&dispatcher));
         assert!(dispatcher.dispatch_critical(event).await.is_err());
     }
+
+    #[test]
+    fn verify_hmac_rejects_the_wrong_key() {
+        let key: Arc<[u8]> = Arc::from(b"key".as_slice());
+        let (dispatcher, _rx) =
+            AuditDispatcher::new("node-1", Uuid::new_v4().to_string(), Arc::clone(&key), 1);
+        let event = dispatcher.finalize_event(make_payload(&dispatcher));
+        assert!(dispatcher.verify_hmac(&event, &key));
+        assert!(!dispatcher.verify_hmac(&event, b"another-key"));
+    }
+
+    #[test]
+    fn refresh_hmac_key_stamps_the_new_version_and_old_events_still_verify() {
+        let old_key: Arc<[u8]> = Arc::from(b"old-key".as_slice());
+        let new_key: Arc<[u8]> = Arc::from(b"new-key".as_slice());
+        let (dispatcher, _rx) = AuditDispatcher::new(
+            "node-1",
+            Uuid::new_v4().to_string(),
+            Arc::clone(&old_key),
+            1,
+        );
+        let before = dispatcher.finalize_event(make_payload(&dispatcher));
+
+        dispatcher.refresh_hmac_key(Arc::clone(&new_key), 2);
+        let after = dispatcher.finalize_event(make_payload(&dispatcher));
+
+        assert_eq!(dispatcher.hmac_key_version(), 2);
+        assert_eq!(before.payload().hmac_key_version(), 1);
+        assert_eq!(after.payload().hmac_key_version(), 2);
+        // Each event verifies under the key of the version it names, and not
+        // under the other one.
+        assert!(dispatcher.verify_hmac(&before, &old_key));
+        assert!(dispatcher.verify_hmac(&after, &new_key));
+        assert!(!dispatcher.verify_hmac(&before, &new_key));
+        assert!(!dispatcher.verify_hmac(&after, &old_key));
+    }
+
+    #[test]
+    fn sequence_numbers_continue_across_a_key_rotation() {
+        let key: Arc<[u8]> = Arc::from(b"k1".as_slice());
+        let (dispatcher, _rx) = AuditDispatcher::new("node-1", Uuid::new_v4().to_string(), key, 1);
+        let first = dispatcher.finalize_event(make_payload(&dispatcher));
+        dispatcher.refresh_hmac_key(Arc::from(b"k2".as_slice()), 2);
+        let second = dispatcher.finalize_event(make_payload(&dispatcher));
+        assert_eq!(second.seq(), first.seq() + 1);
+    }
 }
