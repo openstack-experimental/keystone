@@ -411,6 +411,17 @@ carries it, ticked by the reviewer, not just this prose reference.
       filters by** (I8a)?
 - [ ] Does the change let a narrow auth method be **broadened by a
       request-supplied scope** (I5)?
+- [ ] New state-changing provider method? Is it wrapped in `audited_op!` /
+      `audited_if_ctx!` (fail-closed `attempt` record, static failure reason),
+      or listed with a reason in the `audit_coverage` allow-list?
+- [ ] Does a new audit record take its **initiator from the authentication
+      chain** (`build_initiator_from_principal` / `_from_vsc`), never from the
+      token scope or from request-supplied text? Does it carry **identifiers
+      only** (no secrets, no free-form error or plugin text; reasons from the
+      closed `OutcomeReason` vocabulary)?
+- [ ] New authentication surface? Is it covered by the perimeter completion
+      allowlist (`is_authentication_surface`) or emitting its own perimeter
+      record, with a test asserting the record for success, failure and `429`?
 - [ ] Are there **negative tests** proving the escape is blocked, not just
       positive tests proving the happy path works?
 - [ ] Does the test drive `ValidatedSecurityContext::new_for_scope()`

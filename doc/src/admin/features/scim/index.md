@@ -254,7 +254,10 @@ default.
 
 ## Auditing
 
-Every SCIM write emits a CADF event (`Create`/`Update`/`Disable`), with
+Every SCIM write is audited through the provider layer: user and group writes
+emit a CADF event (`Create`/`Update`/`Disable`), and the writes to the
+realm and ownership index (`scim_realm`, `scim_resource`, including the purge of
+a realm's index) are audited the same way. Each record has
 `target.type_uri` of `data/security/account` (User) or `data/security/group`
 (Group), and `realm_provider_id`/`external_id` captured on the event for
 cross-referencing against the IdP's own provisioning logs.

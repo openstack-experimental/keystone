@@ -86,7 +86,10 @@ POST /v4/api-keys/{client_id}/revoke?domain_id=d1
 ```
 
 Soft-revoke only: sets `enabled: false`, stamps `revoked_at`/`revoked_by`,
-emits a CADF `revoke` event. Nothing is hard-deleted (needed for incident
+emits a CADF `revoke` event. Create, update and delete are audited the
+same way (fail-closed `attempt` record before the change); the last-use
+timestamp and the transparent re-hash of the secret are not, because the
+authentication that triggers them is audited at the perimeter. Nothing is hard-deleted (needed for incident
 audit trails). Revocation is permanent — the only way back into service is
 creating a new key. Physical purge of revoked records happens later via the
 janitor (see Configuration below).
