@@ -130,7 +130,6 @@ fn hmac_roundtrip_deterministic_payload() {
     let payload = CadfEventPayload::new(
         "test-node:550e8400-e29b-41d4-a716-446655440000".to_string(),
         "1.0".to_string(),
-        "default".to_string(),
         "req-00000000000000000000000000000002".to_string(),
         "2026-06-16T00:00:00+00:00".to_string(),
         "authenticate".to_string(),
@@ -168,7 +167,7 @@ fn hmac_roundtrip_deterministic_payload() {
     assert!(obj.contains_key("observer"));
 
     // Signature in the vector file must match the computed signature.
-    let expected = "a45b198cabe787c13a635e7e25d13760cd5ee016fecf258a5e9a99cda1e25b4c";
+    let expected = "6298c98d015ecc5801b3261b5f2103dfa0c9050992941ec10dc4027be2a84398";
     assert_eq!(
         event.signature(),
         expected,

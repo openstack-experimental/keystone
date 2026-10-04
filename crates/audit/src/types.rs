@@ -50,7 +50,6 @@ impl CadfEventPayload {
     pub fn new(
         id: String,
         version: String,
-        domain: String,
         correlation_id: String,
         event_time: String,
         action: String,
@@ -60,6 +59,9 @@ impl CadfEventPayload {
         target: Target,
         observer: Observer,
     ) -> Self {
+        // The record's `domain` is the initiator's domain (`"unknown"` when
+        // there is none, e.g. a system actor), never a constant.
+        let domain = initiator.domain_id().unwrap_or("unknown").to_string();
         Self {
             id,
             seq: 0,
@@ -69,7 +71,7 @@ impl CadfEventPayload {
             domain,
             correlation_id,
             event_time,
-            action,
+            action: sanitize_action(&action),
             outcome,
             outcome_reason: outcome_reason.map(OutcomeReason::into_string),
             initiator,
@@ -114,6 +116,34 @@ impl CadfEventPayload {
     }
     pub fn observer(&self) -> &Observer {
         &self.observer
+    }
+}
+
+/// Reduce an action name to the CADF action vocabulary every emitter shares:
+/// lowercase `[a-z0-9_-]` words separated by `/` (`.` is treated as a
+/// separator), at most 64 characters, `"unknown"` when nothing is left.
+///
+/// Applied by [`CadfEventPayload::new`], so a custom action cannot bypass the
+/// naming style of the standard verbs or smuggle free text into a signed
+/// record.
+#[must_use]
+pub fn sanitize_action(action: &str) -> String {
+    let cleaned: String = action
+        .chars()
+        .map(|c| {
+            if c == '.' {
+                '/'
+            } else {
+                c.to_ascii_lowercase()
+            }
+        })
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '/'))
+        .take(64)
+        .collect();
+    if cleaned.is_empty() {
+        "unknown".to_string()
+    } else {
+        cleaned
     }
 }
 
@@ -412,7 +442,6 @@ mod tests {
                 dispatcher.node_id()
             ),
             "1.0".to_string(),
-            "default".to_string(),
             "req-corr".to_string(),
             "2026-06-16T00:00:00+00:00".to_string(),
             "delete".to_string(),
@@ -540,5 +569,49 @@ mod tests {
         // `None` leaves the initiator untouched.
         let none = Initiator::new("unknown".into(), None, None, None).with_host_id(None);
         assert!(none.host().is_none());
+    }
+
+    #[test]
+    fn domain_is_the_initiators_domain() {
+        let (dispatcher, _rx) = make_dispatcher("test-node", Arc::from(b"k".as_slice()));
+        let with_domain = |domain: Option<&str>| {
+            CadfEventPayload::new(
+                "test-node:1".to_string(),
+                "1.1".to_string(),
+                "req".to_string(),
+                "2026-06-16T00:00:00+00:00".to_string(),
+                "delete".to_string(),
+                "success".to_string(),
+                None,
+                Initiator::new("u".to_string(), None, domain.map(str::to_string), None),
+                Target {
+                    id: "t".to_string(),
+                    type_uri: "x".to_string(),
+                },
+                Observer {
+                    node_id: "test-node".to_string(),
+                    id: "o".to_string(),
+                },
+            )
+            .sign(&dispatcher)
+        };
+        assert_eq!(with_domain(Some("d1")).payload().domain, "d1");
+        assert_eq!(with_domain(None).payload().domain, "unknown");
+    }
+
+    #[test]
+    fn actions_share_one_naming_style() {
+        assert_eq!(sanitize_action("create"), "create");
+        assert_eq!(
+            sanitize_action("OAUTH2_KEY_ROTATION"),
+            "oauth2_key_rotation"
+        );
+        assert_eq!(
+            sanitize_action("wasm_plugin.mapping"),
+            "wasm_plugin/mapping"
+        );
+        assert_eq!(sanitize_action("a b;\n\"c\""), "abc");
+        assert_eq!(sanitize_action("  "), "unknown");
+        assert_eq!(sanitize_action(&"x".repeat(100)).len(), 64);
     }
 }

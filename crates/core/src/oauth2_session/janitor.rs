@@ -182,7 +182,6 @@ fn emit_maintenance_event(dispatcher: &Arc<AuditDispatcher>, report: &JanitorRep
     let payload = CadfEventPayload::new(
         event_id,
         "1.1".to_string(),
-        "default".to_string(),
         correlation_id,
         Utc::now().to_rfc3339(),
         "purge_expired_sessions".to_string(),
