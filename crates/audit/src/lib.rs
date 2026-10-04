@@ -32,7 +32,10 @@ pub mod sink;
 pub mod spool;
 pub mod types;
 
-pub use dispatcher::{AuditChannelDead, AuditChannelReceivers, AuditDispatcher};
+pub use dispatcher::{
+    AuditChannelDead, AuditChannelReceivers, AuditDispatcher, DEFAULT_CRITICAL_CHANNEL_CAPACITY,
+    DEFAULT_PERIMETER_CHANNEL_CAPACITY,
+};
 pub use kdf::derive_audit_hmac_key;
 pub use sink::{AuditSink, ShipperConfig, SinkError, StdoutSink, run_segment_shipper};
 pub use spool::{HmacKeyStore, SpoolConfig, SpoolError};

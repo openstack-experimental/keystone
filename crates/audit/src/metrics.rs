@@ -44,6 +44,9 @@ pub struct AuditMetrics {
     pub shipped_events: LabeledCounter<1>,
     /// Failed attempts to deliver a batch to the sink.
     pub sink_errors: Counter,
+    /// Sealed segments deleted unacknowledged by the size, age or count
+    /// limits.
+    pub spool_retention_deleted: Counter,
 }
 
 impl Default for AuditMetrics {
@@ -54,6 +57,7 @@ impl Default for AuditMetrics {
             spool_verified: LabeledCounter::new(["result"]),
             shipped_events: LabeledCounter::new(["result"]),
             sink_errors: Counter::new(),
+            spool_retention_deleted: Counter::new(),
         }
     }
 }
@@ -79,6 +83,7 @@ impl fmt::Debug for AuditMetrics {
 /// - `keystone_audit_spool_verified_total{result}`
 /// - `keystone_audit_shipped_events_total{result}`
 /// - `keystone_audit_sink_errors_total`
+/// - `keystone_audit_spool_retention_deleted_total`
 pub fn format_prometheus_text(dispatcher: &AuditDispatcher) -> String {
     let m = dispatcher.metrics();
     let mut out = String::new();
@@ -197,6 +202,15 @@ pub fn format_prometheus_text(dispatcher: &AuditDispatcher) -> String {
     m.sink_errors
         .write_line(&mut out, "keystone_audit_sink_errors_total");
 
+    write_metric_header(
+        &mut out,
+        "keystone_audit_spool_retention_deleted_total",
+        "Sealed spool segments deleted unacknowledged by the size, age or count limits.",
+        "counter",
+    );
+    m.spool_retention_deleted
+        .write_line(&mut out, "keystone_audit_spool_retention_deleted_total");
+
     out
 }
 
@@ -245,12 +259,13 @@ mod tests {
             "keystone_audit_spool_verified_total",
             "keystone_audit_shipped_events_total",
             "keystone_audit_sink_errors_total",
+            "keystone_audit_spool_retention_deleted_total",
         ] {
             assert!(text.contains(&format!("# HELP {name} ")), "{name}");
             assert!(text.contains(&format!("# TYPE {name} ")), "{name}");
         }
-        assert_eq!(text.matches("# HELP").count(), 11);
-        assert_eq!(text.matches("# TYPE").count(), 11);
+        assert_eq!(text.matches("# HELP").count(), 12);
+        assert_eq!(text.matches("# TYPE").count(), 12);
         assert_eq!(text.matches(" gauge\n").count(), 3);
     }
 
@@ -265,6 +280,7 @@ mod tests {
         assert!(text.contains("keystone_audit_spool_write_failures_total 0"));
         assert!(text.contains("keystone_audit_spool_quarantined_total 0"));
         assert!(text.contains("keystone_audit_sink_errors_total 0"));
+        assert!(text.contains("keystone_audit_spool_retention_deleted_total 0"));
         assert!(text.contains("keystone_audit_channel_depth{channel=\"perimeter\"} 0"));
         assert!(text.contains("keystone_audit_hmac_key_version 0"));
     }

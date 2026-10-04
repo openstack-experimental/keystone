@@ -609,6 +609,7 @@ shared `openstack-keystone-metrics` primitives (ADR 0031):
 | `keystone_audit_spool_verified_total{result}` | counter | Lines checked at startup (`verified`, `invalid`) |
 | `keystone_audit_shipped_events_total{result}` | counter | Events handed to the sink (`shipped`, `skipped`) |
 | `keystone_audit_sink_errors_total` | counter | Failed batch deliveries to the sink |
+| `keystone_audit_spool_retention_deleted_total` | counter | Sealed segments deleted unacknowledged by the size, age or count limits |
 
 Offered load on the perimeter channel is `events + dropped`, so the drop ratio
 is `dropped / (events + dropped)`. The rules below live in

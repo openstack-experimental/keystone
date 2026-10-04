@@ -117,11 +117,19 @@ pub struct SpoolConfig {
     /// Keep at most this many sealed segments, deleting the oldest. `None`
     /// keeps all of them.
     pub max_segments: Option<usize>,
+    /// Keep the sealed segments plus one full live segment
+    /// (`max_segment_bytes`) within this many bytes, deleting the oldest
+    /// sealed segments first. `None` means no size cap. The live spool itself
+    /// is never deleted.
+    pub max_bytes: Option<u64>,
+    /// Delete sealed segments older than this (by modification time). `None`
+    /// keeps them regardless of age.
+    pub retention: Option<Duration>,
     /// Upper bound on the time spent draining queued events after shutdown
     /// is requested. Events still queued at the deadline are dropped and
     /// logged at `ERROR` with their count.
     pub drain_timeout: Duration,
-    /// Counters the writer updates (write failures).
+    /// Counters the writer updates (write failures, retention deletions).
     pub metrics: Arc<AuditMetrics>,
 }
 
@@ -131,6 +139,8 @@ impl Default for SpoolConfig {
             max_segment_bytes: 256 * 1024 * 1024,
             max_segment_age: Duration::from_secs(24 * 60 * 60),
             max_segments: None,
+            max_bytes: None,
+            retention: None,
             drain_timeout: Duration::from_secs(10),
             metrics: Arc::new(AuditMetrics::default()),
         }
@@ -239,6 +249,7 @@ impl SpoolWriter {
             total_bytes,
         };
         writer.open()?;
+        writer.enforce_retention()?;
         Ok(writer)
     }
 
@@ -311,22 +322,68 @@ impl SpoolWriter {
         self.enforce_retention()
     }
 
+    /// Delete sealed segments that exceed the configured count, total size or
+    /// age limits, oldest first. Every deletion is logged at `ERROR` (the
+    /// records were never acknowledged by a sink) and counted.
     fn enforce_retention(&self) -> Result<(), SpoolError> {
-        let Some(max) = self.cfg.max_segments else {
+        if self.cfg.max_segments.is_none()
+            && self.cfg.max_bytes.is_none()
+            && self.cfg.retention.is_none()
+        {
             return Ok(());
-        };
-        let segments = list_segments(&self.dir, &self.node_id)?;
-        let excess = segments.len().saturating_sub(max);
-        for segment in segments.into_iter().take(excess) {
-            let size = std::fs::metadata(&segment).map(|m| m.len()).unwrap_or(0);
-            std::fs::remove_file(&segment)?;
+        }
+        let mut segments =
+            std::collections::VecDeque::from(list_segments(&self.dir, &self.node_id)?);
+        // Total bytes still held: every remaining segment plus room for the
+        // live spool to grow to a full segment, so the size cap also holds
+        // between rotations.
+        let mut held = self.cfg.max_segment_bytes.max(self.segment_bytes);
+        let mut sizes = Vec::with_capacity(segments.len());
+        for segment in &segments {
+            let size = std::fs::metadata(segment).map(|m| m.len()).unwrap_or(0);
+            held += size;
+            sizes.push(size);
+        }
+        let mut sizes = std::collections::VecDeque::from(sizes);
+        let now = std::time::SystemTime::now();
+
+        while let Some(segment) = segments.front() {
+            let size = sizes.front().copied().unwrap_or(0);
+            let reason = if self
+                .cfg
+                .max_segments
+                .is_some_and(|max| segments.len() > max)
+            {
+                Some("max_segments")
+            } else if self.cfg.max_bytes.is_some_and(|max| held > max) {
+                Some("max_bytes")
+            } else if self.cfg.retention.is_some_and(|retention| {
+                std::fs::metadata(segment)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|modified| now.duration_since(modified).ok())
+                    .is_some_and(|age| age > retention)
+            }) {
+                Some("retention")
+            } else {
+                None
+            };
+            let Some(reason) = reason else {
+                break;
+            };
+            std::fs::remove_file(segment)?;
+            held = held.saturating_sub(size);
             self.total_bytes.fetch_sub(size, Ordering::Relaxed);
+            self.cfg.metrics.spool_retention_deleted.inc();
             error!(
                 segment = %segment.display(),
                 size_bytes = size,
-                max_segments = max,
-                "audit spool retention limit reached: deleted the oldest sealed segment"
+                limit = reason,
+                "audit spool retention limit reached: deleted the oldest sealed segment \
+                 that no sink had acknowledged"
             );
+            segments.pop_front();
+            sizes.pop_front();
         }
         Ok(())
     }
@@ -849,6 +906,59 @@ mod tests {
             bytes.load(Ordering::Relaxed),
             spool_total_bytes(dir.path(), "node-1").unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn writer_enforces_size_cap_and_counts_deletions() {
+        let dir = tempdir().unwrap();
+        let key: Arc<[u8]> = Arc::from(b"testkey".as_slice());
+        let (dispatcher, _rx) = make_dispatcher("node-1", key);
+        let one = serde_json::to_string(&event(&dispatcher)).unwrap().len() as u64 + 1;
+        let metrics = Arc::new(AuditMetrics::default());
+        let cfg = SpoolConfig {
+            max_segment_bytes: one, // one event per segment
+            max_bytes: Some(one * 3),
+            metrics: Arc::clone(&metrics),
+            ..SpoolConfig::default()
+        };
+        let events = (0..8).map(|_| event(&dispatcher)).collect();
+
+        let bytes = write_all(dir.path(), cfg, events, vec![]).await;
+
+        let total = spool_total_bytes(dir.path(), "node-1").unwrap();
+        assert!(total <= one * 3, "spool is {total} bytes, cap {}", one * 3);
+        assert_eq!(bytes.load(Ordering::Relaxed), total);
+        assert!(metrics.spool_retention_deleted.get() >= 4);
+    }
+
+    #[tokio::test]
+    async fn writer_deletes_segments_older_than_retention() {
+        let dir = tempdir().unwrap();
+        let key: Arc<[u8]> = Arc::from(b"testkey".as_slice());
+        let (dispatcher, _rx) = make_dispatcher("node-1", key);
+        // An old sealed segment left by an earlier run.
+        let old = dir
+            .path()
+            .join(format!("{}20200101T000000000Z", segment_prefix("node-1")));
+        std::fs::write(&old, b"{}\n").unwrap();
+        let long_ago = std::time::SystemTime::now() - Duration::from_secs(7200);
+        std::fs::File::options()
+            .write(true)
+            .open(&old)
+            .unwrap()
+            .set_modified(long_ago)
+            .unwrap();
+        let metrics = Arc::new(AuditMetrics::default());
+        let cfg = SpoolConfig {
+            retention: Some(Duration::from_secs(3600)),
+            metrics: Arc::clone(&metrics),
+            ..SpoolConfig::default()
+        };
+
+        write_all(dir.path(), cfg, vec![event(&dispatcher)], vec![]).await;
+
+        assert!(!old.exists(), "segment past retention must be deleted");
+        assert_eq!(metrics.spool_retention_deleted.get(), 1);
     }
 
     #[test]

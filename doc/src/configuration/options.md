@@ -87,11 +87,31 @@ from it.
 | `[auth_plugins]` | `plugins`, `trusted_proxies`, `trusted_header` |
 | `[auth_plugin.<name>]` | `path`, `sha256`, `mode`, capabilities, headers, outbound hosts, provisioning/role bounds, route targets, resource limits, rate limits, concurrency, `valid_since` |
 | `[auth_plugin_identity]` | `driver` |
-| `[audit]` | `enabled` (`true`), `spool_dir` (`/var/lib/keystone/audit`), `node_id` (`$HOSTNAME`, else `unknown-node`; set it, unique per node), `spool_max_segment_bytes` (256 MiB), `spool_max_segment_age_secs` (86400), `spool_max_segments` (unset: keep all), `spool_drain_timeout_secs` (10), `sink` (none) |
+| `[audit]` | `enabled` (`true`), `spool_dir` (`/var/lib/keystone/audit`), `node_id` (`$HOSTNAME`, else `unknown-node`; set it, unique per node), `spool_max_segment_bytes` (256 MiB), `spool_max_segment_age_secs` (86400), `spool_max_segments` (unset: keep all), `spool_max_bytes` (unset), `spool_retention_secs` (unset), `perimeter_channel_capacity` (4096), `critical_channel_capacity` (256), `shipper_batch_size` (500), `shipper_poll_interval_secs` (5), `shipper_initial_backoff_secs` (1), `shipper_max_backoff_secs` (60), `spool_drain_timeout_secs` (10), `sink` (none) |
 
 `[audit] enabled` defaults to `true`. Setting it to `false` skips creating the
 spool directory, spool lock, HMAC key and writer, and discards audit events;
 use it only for development or deployments that do not need an audit trail.
+
+Spool and queue limits:
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `spool_max_segments` | unset | Keep at most this many sealed segments; the oldest are deleted beyond it. |
+| `spool_max_bytes` | unset | Keep sealed segments plus room for one full live segment (`spool_max_segment_bytes`) within this many bytes, deleting the oldest sealed segments first. |
+| `spool_retention_secs` | unset | Delete sealed segments older than this many seconds. |
+| `perimeter_channel_capacity` | `4096` | Capacity of the best-effort perimeter channel; events are dropped and counted when it is full. |
+| `critical_channel_capacity` | `256` | Capacity of the fail-closed critical channel; senders wait when it is full. |
+| `shipper_batch_size` | `500` | Events handed to the sink per call. |
+| `shipper_poll_interval_secs` | `5` | Idle delay between checks for newly sealed segments. |
+| `shipper_initial_backoff_secs` | `1` | First retry delay after a sink failure; doubles up to the maximum. |
+| `shipper_max_backoff_secs` | `60` | Upper bound for the sink retry delay. |
+
+The three spool limits are unset by default, so no audit record is deleted
+unless an operator opts in. They are evaluated at startup and whenever the live
+spool rotates. A segment deleted by a limit was never acknowledged by a sink:
+each deletion is logged at `ERROR` and counted in
+`keystone_audit_spool_retention_deleted_total`.
 
 See [Audit trail](../admin/features/audit.md).
 

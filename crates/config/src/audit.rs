@@ -37,6 +37,30 @@ fn default_spool_drain_timeout_secs() -> u64 {
     10
 }
 
+fn default_perimeter_channel_capacity() -> usize {
+    4096
+}
+
+fn default_critical_channel_capacity() -> usize {
+    256
+}
+
+fn default_shipper_batch_size() -> usize {
+    500
+}
+
+fn default_shipper_poll_interval_secs() -> u64 {
+    5
+}
+
+fn default_shipper_initial_backoff_secs() -> u64 {
+    1
+}
+
+fn default_shipper_max_backoff_secs() -> u64 {
+    60
+}
+
 fn default_spool_max_segment_bytes() -> u64 {
     256 * 1024 * 1024
 }
@@ -98,6 +122,48 @@ pub struct AuditConfig {
     #[serde(default)]
     pub spool_max_segments: Option<usize>,
 
+    /// Keep the spool within this many bytes, counting the sealed segments
+    /// plus room for one full live segment (`spool_max_segment_bytes`); the
+    /// oldest sealed segments are deleted beyond it. Unset (the
+    /// default) applies no size cap. Deletion is logged at `ERROR` and counted
+    /// in `keystone_audit_spool_retention_deleted_total`.
+    #[serde(default)]
+    pub spool_max_bytes: Option<u64>,
+
+    /// Delete sealed segments older than this many seconds. Unset (the
+    /// default) keeps them regardless of age. Deletion is logged at `ERROR`
+    /// and counted like `spool_max_bytes`.
+    #[serde(default)]
+    pub spool_retention_secs: Option<u64>,
+
+    /// Capacity of the best-effort perimeter event channel. Events are dropped
+    /// (and counted) when it is full. Defaults to 4096.
+    #[serde(default = "default_perimeter_channel_capacity")]
+    pub perimeter_channel_capacity: usize,
+
+    /// Capacity of the fail-closed critical event channel. Senders wait when
+    /// it is full. Defaults to 256.
+    #[serde(default = "default_critical_channel_capacity")]
+    pub critical_channel_capacity: usize,
+
+    /// Events handed to the sink per call. Defaults to 500.
+    #[serde(default = "default_shipper_batch_size")]
+    pub shipper_batch_size: usize,
+
+    /// Seconds between checks for newly sealed segments when the shipper is
+    /// idle. Defaults to 5.
+    #[serde(default = "default_shipper_poll_interval_secs")]
+    pub shipper_poll_interval_secs: u64,
+
+    /// First retry delay in seconds after a sink failure; doubles up to
+    /// `shipper_max_backoff_secs`. Defaults to 1.
+    #[serde(default = "default_shipper_initial_backoff_secs")]
+    pub shipper_initial_backoff_secs: u64,
+
+    /// Upper bound in seconds for the sink retry delay. Defaults to 60.
+    #[serde(default = "default_shipper_max_backoff_secs")]
+    pub shipper_max_backoff_secs: u64,
+
     /// Seconds the spool writer may spend writing out already-queued events
     /// after shutdown is requested. Events still queued at the deadline are
     /// dropped and logged at `ERROR`. Defaults to 10.
@@ -119,6 +185,14 @@ impl Default for AuditConfig {
             spool_max_segment_bytes: default_spool_max_segment_bytes(),
             spool_max_segment_age_secs: default_spool_max_segment_age_secs(),
             spool_max_segments: None,
+            spool_max_bytes: None,
+            spool_retention_secs: None,
+            perimeter_channel_capacity: default_perimeter_channel_capacity(),
+            critical_channel_capacity: default_critical_channel_capacity(),
+            shipper_batch_size: default_shipper_batch_size(),
+            shipper_poll_interval_secs: default_shipper_poll_interval_secs(),
+            shipper_initial_backoff_secs: default_shipper_initial_backoff_secs(),
+            shipper_max_backoff_secs: default_shipper_max_backoff_secs(),
             spool_drain_timeout_secs: default_spool_drain_timeout_secs(),
             sink: AuditSinkConfig::default(),
         }
@@ -152,5 +226,34 @@ mod tests {
         assert_eq!(cfg.spool_max_segments, Some(4));
         assert_eq!(cfg.spool_drain_timeout_secs, 3);
         assert!(matches!(cfg.sink, AuditSinkConfig::Stdout));
+    }
+
+    #[test]
+    fn defaults_match_previous_hard_coded_values() {
+        let cfg: AuditConfig = serde_json::from_str("{}").expect("empty config parses");
+        assert!(cfg.enabled);
+        assert_eq!(cfg.perimeter_channel_capacity, 4096);
+        assert_eq!(cfg.critical_channel_capacity, 256);
+        assert_eq!(cfg.shipper_batch_size, 500);
+        assert_eq!(cfg.shipper_poll_interval_secs, 5);
+        assert_eq!(cfg.shipper_initial_backoff_secs, 1);
+        assert_eq!(cfg.shipper_max_backoff_secs, 60);
+        assert_eq!(cfg.spool_max_bytes, None);
+        assert_eq!(cfg.spool_retention_secs, None);
+    }
+
+    #[test]
+    fn limits_are_configurable() {
+        let cfg: AuditConfig = serde_json::from_str(
+            r#"{"spool_max_bytes": 1048576, "spool_retention_secs": 3600,
+                "perimeter_channel_capacity": 8, "critical_channel_capacity": 2,
+                "shipper_batch_size": 10}"#,
+        )
+        .expect("config parses");
+        assert_eq!(cfg.spool_max_bytes, Some(1_048_576));
+        assert_eq!(cfg.spool_retention_secs, Some(3600));
+        assert_eq!(cfg.perimeter_channel_capacity, 8);
+        assert_eq!(cfg.critical_channel_capacity, 2);
+        assert_eq!(cfg.shipper_batch_size, 10);
     }
 }
