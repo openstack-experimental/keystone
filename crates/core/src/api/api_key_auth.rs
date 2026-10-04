@@ -573,6 +573,7 @@ async fn hydrate_ephemeral_context(
     let ctx = openstack_keystone_core_types::auth::SecurityContext::try_from(auth_result)?;
 
     let vsc = ValidatedSecurityContext::new_for_scope(ctx, scope, state).await?;
+    crate::audit_context::record_initiator(crate::cadf_hook::build_initiator_from_vsc(&vsc));
     Ok(ApiKeyAuth(vsc))
 }
 
