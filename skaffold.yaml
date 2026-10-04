@@ -360,11 +360,15 @@ profiles:
         tryImportMissing: true
 
       artifacts:
+        # Built through tools/ci-build-image.sh so the layers can be cached
+        # in a remote registry between CI runs (BUILDCACHE_REF env).
         - image: keystone-rs
           context: .
-          docker:
-            dockerfile: tools/Dockerfile.skaffold
-            buildArgs: {}
+          custom:
+            buildCommand: ./tools/ci-build-image.sh
+            dependencies:
+              dockerfile:
+                path: tools/Dockerfile.skaffold
     verify:
       - name: "github"
         container:

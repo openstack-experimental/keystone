@@ -223,6 +223,17 @@ jobs:
         with:
           driver: docker-container
 
+      # Registry cache for the keystone image layers (see
+      # tools/ci-build-image.sh). Fork pull requests have no write access to
+      # GHCR, so they import the cache only.
+      - name: Log in to GHCR for the build cache
+        if: github.event.pull_request.head.repo.fork != true
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Wait for Cluster Ready
         run: |
           # Wait up to 60 seconds for the node to be ready
@@ -231,9 +242,10 @@ jobs:
 
       - name: Deploy the development stack
         env:
-          # This tells the underlying Docker Buildx to use GHA for cache
-          # mode=max ensures all intermediate layers (like Cargo dependencies) are saved
           BUILDKIT_STEP_LOG_MAX_SIZE: 10485760
+          # Layer cache (incl. compiled cargo dependencies) shared between runs
+          BUILDCACHE_REF: ${{ env.REGISTRY }}/${{ github.repository }}-buildcache:skaffold
+          BUILDCACHE_PUSH: ${{ github.event.pull_request.head.repo.fork != true }}
         run: |
           export BUILDX_NO_DEFAULT_ATTESTATIONS=1
           # first build artifacts preparing metadata file
