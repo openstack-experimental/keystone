@@ -370,46 +370,37 @@ Captures access attempts at the boundary.
 **Error sanitization** - Exhaustive match prevents silent PII leakage:
 
 ```rust
-fn error_variant_name(error: &KeystoneApiError) -> String {
+// Excerpts of `crates/keystone/src/audit.rs`. Both matches have no wildcard
+// arm, so a new `KeystoneApiError` / `AuthenticationError` variant does not
+// compile until it is classified.
+pub fn error_variant_name(error: &KeystoneApiError) -> String {
     match error {
         KeystoneApiError::Unauthorized { source, .. }
-        | KeystoneApiError::Forbidden { source, .. } => {
-            source.downcast_ref::<AuthenticationError>()
-                .map(|e| sanitize_authentication_error(e).to_string())
-                .unwrap_or_else(|| "Unauthorized".to_string())
-        }
+        | KeystoneApiError::Forbidden { source, .. } => source
+            .downcast_ref::<AuthenticationError>()
+            .map(|e| sanitize_authentication_error(e).to_string())
+            .unwrap_or_else(|| "Unauthorized".to_string()),
+        KeystoneApiError::UnauthorizedNoContext => "Unauthorized".to_string(),
         KeystoneApiError::NotFound { .. } => "NotFound".to_string(),
-        KeystoneApiError::Conflict { .. } => "Conflict".to_string(),
-        KeystoneApiError::BadRequest { .. } => "BadRequest".to_string(),
-        KeystoneApiError::RateLimited { .. } => "RateLimited".to_string(),
-        KeystoneApiError::Gone { .. } => "Gone".to_string(),
-        KeystoneApiError::InternalServerError => "InternalServerError".to_string(),
-        KeystoneApiError::ServiceUnavailable => "ServiceUnavailable".to_string(),
-        KeystoneApiError::GatewayTimeout => "GatewayTimeout".to_string(),
-        e => e.type_name().unwrap_or("UnknownError").to_string(),
+        KeystoneApiError::Conflict(_) => "Conflict".to_string(),
+        KeystoneApiError::BadRequest(_) => "BadRequest".to_string(),
+        KeystoneApiError::InvalidToken => "InvalidToken".to_string(),
+        KeystoneApiError::TooManyRequests { .. } => "TooManyRequests".to_string(),
+        KeystoneApiError::ServiceUnavailable(_) => "ServiceUnavailable".to_string(),
+        // ... every remaining variant (about two dozen) is listed explicitly.
     }
 }
 
-fn sanitize_authentication_error(e: &AuthenticationError) -> &'static str {
+pub fn sanitize_authentication_error(e: &AuthenticationError) -> &'static str {
     match e {
-        AuthenticationError::DomainDisabled(_) => "DomainDisabled",
-        AuthenticationError::ProjectDisabled(_) => "ProjectDisabled",
-        AuthenticationError::TrustorUserDisabled(_) => "TrustorUserDisabled",
         AuthenticationError::UserDisabled(_) => "UserDisabled",
         AuthenticationError::UserLocked(_) => "UserLocked",
-        AuthenticationError::UserPasswordExpired(_) => "UserPasswordExpired",
+        AuthenticationError::UserNameOrPasswordWrong => "UserNameOrPasswordWrong",
+        AuthenticationError::Ec2SignatureInvalid => "Ec2SignatureInvalid",
         AuthenticationError::Provider { source, .. } => {
-            extract_provider_name(source).unwrap_or("ProviderError")
+            extract_provider_name(source.as_ref()).unwrap_or("ProviderError")
         }
-        AuthenticationError::Validation(_) => "ValidationError",
-        AuthenticationError::StructBuilder { .. } => "StructBuilderError",
-        AuthenticationError::TokenExpired(_) => "TokenExpired",
-        AuthenticationError::TokenRevoked(_) => "TokenRevoked",
-        AuthenticationError::AuthCredentialNotFound(_) => "AuthCredentialNotFound",
-        AuthenticationError::AuthCredentialExpired(_) => "AuthCredentialExpired",
-        AuthenticationError::AuthCredentialMalformed(_) => "AuthCredentialMalformed",
-        AuthenticationError::PrincipalNotUnique(_) => "PrincipalNotUnique",
-        AuthenticationError::InvalidAuthMethod(_) => "InvalidAuthMethod",
+        // ... all ~40 variants map to stable literals.
     }
 }
 
@@ -511,42 +502,25 @@ impl EventDispatcher {
 **Audit-Before-Commit (Fail-Closed Transaction Safety):**
 
 ```rust
-macro_rules! audited_op {
-    ( dispatcher: $dispatcher:expr, ctx: $ctx:expr, event: $event:expr,
-      operation: $op:expr, error_variant: $err_variant:path ) => {{
-        let event = $event;
-        // Pre-audit (Attempt): fails if dispatcher dead
-        $dispatcher.emit_critical($ctx, &event, &AuditOutcome::Attempt).await
-            .map_err(|e| $err_variant { source: e })?;
-        let result = $op.await;
-        // Post-audit: use emit_critical. If channel full, write compensating
-        // local JSONL log to guarantee dual-delivery path to SIEM.
-        let outcome = match &result {
-            Ok(_) => AuditOutcome::Success,
-            Err(e) => AuditOutcome::Failure {
-                reason: error_variant_name(e).to_string() }
-        };
-        if $dispatcher.emit_critical($ctx, &event, &outcome)
-            .await.is_err()
-        {
-            // Fallback: local compensating log (structured JSONL, independent ship)
-            // Includes operation and resource ID for forensic SIEM lookup.
-            error!(
-                correlation_id = %$ctx.correlation_id().to_string(),
-                outcome = ?outcome,
-                event_operation = ?$event.operation,
-                event_resource = ?$event.payload,
-                "post-audit channel full — compensating local log written"
-            );
-            $dispatcher.postaudit_dropped_count.fetch_add(1, Ordering::Relaxed);
-        }
-        result
-    }};
+// Shape of the macro (`crates/core/src/events.rs`); see its rustdoc for the
+// full contract.
+audited_op! {
+    dispatcher: &self.events,
+    ctx: vsc,                         // &ValidatedSecurityContext
+    event: Event::new(Operation::Delete, EventPayload::User { id }),
+    operation: self.backend.delete_user(state, id),
+    on_audit_error: |e| ProviderError::AuditDispatchFailed { source: e },
+    // optional: reason: |e| "StaticReason"
 }
 ```
 
-**Provider usage:**
-`audited_op! { dispatcher: ..., ctx: ..., event: ..., operation: ..., error_variant: ProviderError::AuditDispatchFailed }`
+Behaviour: (1) emit the `Attempt` record on the critical channel and return
+`on_audit_error(..)` without running the operation if that fails (fail-closed);
+(2) run the operation; (3) emit `Success`, or `Failure` whose reason is a
+`&'static str` variant name from the error's `strum::IntoStaticStr` derive
+(never formatted from error data). If the post-audit record cannot be queued, an
+`ERROR` log is written and `keystone_audit_postaudit_dropped_total` is
+incremented.
 
 **Coverage:** every state-changing provider method is wrapped in `audited_op!`
 (through `audited_if_ctx!`, which runs the operation unaudited-but-emitted when
@@ -675,6 +649,27 @@ groups:
 ```
 
 ---
+
+## Implementation status
+
+| Area | Status |
+| --- | --- |
+| Framework: `AuditDispatcher`, HMAC signing, spool, replay | Implemented |
+| Spool segments, quarantine of tampered files, writer lock | Implemented |
+| Downstream sink and segment acknowledgement | Implemented (`stdout` sink; a segment is deleted only after the sink accepted it; a network sink is tracked separately) |
+| Shutdown drain (`spool_drain_timeout_secs`) | Implemented |
+| Metrics (`keystone_audit_*`) and alert rules | Implemented; counters, except the gauges named in the metric list |
+| Perimeter events: login handlers | Implemented (token, EC2, OAuth2 token, federation JWT/OIDC) |
+| Perimeter completion record for the other authentication surfaces | Implemented by the request middleware (path allowlist) |
+| `Auth`-extractor ingress event for every request | **Not implemented, by design**: only the completion record exists, to keep the perimeter channel bounded |
+| Provider auditing: `audited_op!` / `audited_if_ctx!` | Implemented, enforced by a coverage test over the provider services |
+| Initiator from the authenticated principal; request audit context | Implemented |
+| Wire format | CADF-inspired Keystone schema (see above), version `1.1` |
+| Signing-key rotation | Key versions are stamped and old versions verify; operator-driven rotation is not automated |
+
+Phase numbers in code comments ("Phase 4" metrics, "Phase 5.x" vectors and
+integration tests) refer to follow-up work after the three phases above; it
+is described in the Observability section and covered by the test suites.
 
 ## Related ADRs
 

@@ -6,6 +6,10 @@
 - Keep OPA enabled in production and treat the policy bundle as trusted code.
 - Store Fernet, credential, OAuth2 signing, audit, and distributed-storage keys
   as secrets; never print their contents during verification.
+- Keep the audit spool directory (`[audit] spool_dir`) readable and writable by
+  the Keystone user only, keep `hmac-key.bin` at mode `0600`, and back it up
+  like the Fernet keys. Investigate every `*.quarantine-*` file; Keystone never
+  deletes one. See [Audit trail](features/audit.md).
 - Keep `insecure_allow_null_key = false` except during a controlled migration.
 - Use PKCS#11 or TPM KEK protection and authenticated transport for production
   distributed storage.
