@@ -107,6 +107,15 @@ fn verify_hmac_vectors() {
             "HMAC verification failed for vector '{}'",
             v.description
         );
+
+        // A record must be written back exactly as it was read, in whichever
+        // layout it arrived: legacy lines stay legacy, DSP0262 stay DSP0262.
+        assert_eq!(
+            serde_json::to_value(&event).unwrap(),
+            v.event,
+            "re-serialization changed vector '{}'",
+            v.description
+        );
     }
 
     println!("verified {} HMAC vectors", vectors.len());
@@ -160,6 +169,10 @@ fn hmac_roundtrip_deterministic_payload() {
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
     let obj = parsed.as_object().unwrap();
     assert!(obj.contains_key("signature"));
+    for key in ["typeURI", "eventType", "eventTime", "tags", "attachments"] {
+        assert!(obj.contains_key(key), "missing DSP0262 key {key}");
+    }
+    assert!(!obj.contains_key("event_time"));
     assert!(obj.contains_key("action"));
     assert!(obj.contains_key("outcome"));
     assert!(obj.contains_key("initiator"));
@@ -167,7 +180,7 @@ fn hmac_roundtrip_deterministic_payload() {
     assert!(obj.contains_key("observer"));
 
     // Signature in the vector file must match the computed signature.
-    let expected = "6298c98d015ecc5801b3261b5f2103dfa0c9050992941ec10dc4027be2a84398";
+    let expected = "1548cf972b1991ea9af863abb9a3a04156306bca913e0671fd95cbaf630fca09";
     assert_eq!(
         event.signature(),
         expected,

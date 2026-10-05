@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Private by design — callers obtain a `CadfEvent` only via
 /// `CadfEventPayload::sign()`.
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct CadfEventPayload {
     pub(crate) id: String,
     pub(crate) seq: u64,
@@ -40,6 +40,245 @@ pub struct CadfEventPayload {
     pub(crate) initiator: Initiator,
     pub(crate) target: Target,
     pub(crate) observer: Observer,
+    /// The record was read from a line written in the pre-DSP0262 layout. Such
+    /// a record keeps its original form so that its signature still verifies.
+    pub(crate) legacy: bool,
+}
+
+/// DSP0262 `typeURI` of an event record.
+const EVENT_TYPE_URI: &str = "http://schemas.dmtf.org/cloud/audit/1.0/event";
+/// `typeURI` given to every initiator.
+const INITIATOR_TYPE_URI: &str = "service/security/account/user";
+/// `typeURI` given to the observer.
+const OBSERVER_TYPE_URI: &str = "service/security/keystone";
+/// Tag prefix carrying the correlation id.
+const CORRELATION_TAG: &str = "correlation_id:";
+/// Name of the attachment carrying the fields DSP0262 has no place for.
+const INTEGRITY_ATTACHMENT: &str = "integrity";
+
+/// Error for a record that is neither a DSP0262 record nor a legacy one.
+#[derive(Debug, thiserror::Error)]
+#[error("malformed audit record: {0}")]
+pub(crate) struct WireError(String);
+
+fn wire_err(what: &str) -> WireError {
+    WireError(what.to_string())
+}
+
+impl CadfEventPayload {
+    /// The pre-DSP0262 layout, used only to verify legacy records.
+    fn legacy_value(&self) -> Result<serde_json::Value, serde_json::Error> {
+        serde_json::to_value(LegacyPayload {
+            id: &self.id,
+            seq: self.seq,
+            boot_session_id: &self.boot_session_id,
+            hmac_key_version: self.hmac_key_version,
+            version: &self.version,
+            domain: &self.domain,
+            correlation_id: &self.correlation_id,
+            event_time: &self.event_time,
+            action: &self.action,
+            outcome: &self.outcome,
+            outcome_reason: &self.outcome_reason,
+            initiator: &self.initiator,
+            target: &self.target,
+            observer: &self.observer,
+        })
+    }
+
+    /// The record as it is signed and written: DSP0262 names, the correlation
+    /// id in `tags` and the integrity fields in an `attachments` entry.
+    pub(crate) fn to_wire_value(&self) -> Result<serde_json::Value, serde_json::Error> {
+        use serde_json::{Value, json};
+        if self.legacy {
+            return self.legacy_value();
+        }
+        let mut initiator = serde_json::to_value(&self.initiator)?;
+        if let Value::Object(map) = &mut initiator {
+            map.insert("typeURI".into(), json!(INITIATOR_TYPE_URI));
+        }
+        let mut event = json!({
+            "typeURI": EVENT_TYPE_URI,
+            "eventType": "activity",
+            "id": self.id,
+            "eventTime": self.event_time,
+            "action": self.action,
+            "outcome": self.outcome,
+            "initiator": initiator,
+            "target": {"id": self.target.id, "typeURI": self.target.type_uri},
+            "observer": {"id": self.observer.id, "typeURI": OBSERVER_TYPE_URI},
+            "tags": [format!("{CORRELATION_TAG}{}", self.correlation_id)],
+            "attachments": [{
+                "name": INTEGRITY_ATTACHMENT,
+                "contentType": "application/json",
+                "content": {
+                    "seq": self.seq,
+                    "boot_session_id": self.boot_session_id,
+                    "hmac_key_version": self.hmac_key_version,
+                    "version": self.version,
+                    "domain": self.domain,
+                    "observer_node_id": self.observer.node_id,
+                },
+            }],
+        });
+        if let (Some(reason), Value::Object(map)) = (&self.outcome_reason, &mut event) {
+            map.insert(
+                "reason".into(),
+                json!({"reasonType": "keystone", "reasonCode": reason}),
+            );
+        }
+        Ok(event)
+    }
+
+    /// Parse a record in either layout.
+    pub(crate) fn from_wire_value(value: serde_json::Value) -> Result<Self, WireError> {
+        if value.get("eventTime").is_none() {
+            let legacy: LegacyOwnedPayload =
+                serde_json::from_value(value).map_err(|e| WireError(e.to_string()))?;
+            return Ok(Self {
+                id: legacy.id,
+                seq: legacy.seq,
+                boot_session_id: legacy.boot_session_id,
+                hmac_key_version: legacy.hmac_key_version,
+                version: legacy.version,
+                domain: legacy.domain,
+                correlation_id: legacy.correlation_id,
+                event_time: legacy.event_time,
+                action: legacy.action,
+                outcome: legacy.outcome,
+                outcome_reason: legacy.outcome_reason,
+                initiator: legacy.initiator,
+                target: legacy.target,
+                observer: legacy.observer,
+                legacy: true,
+            });
+        }
+        let text = |v: &serde_json::Value, key: &str| -> Result<String, WireError> {
+            v.get(key)
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| wire_err(&format!("missing `{key}`")))
+        };
+        let correlation_id = value
+            .get("tags")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|tags| {
+                tags.iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .find_map(|t| t.strip_prefix(CORRELATION_TAG))
+            })
+            .ok_or_else(|| wire_err("missing correlation id tag"))?
+            .to_string();
+        let integrity = value
+            .get("attachments")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|a| {
+                a.iter().find(|a| {
+                    a.get("name").and_then(serde_json::Value::as_str) == Some(INTEGRITY_ATTACHMENT)
+                })
+            })
+            .and_then(|a| a.get("content"))
+            .ok_or_else(|| wire_err("missing integrity attachment"))?;
+        let number = |key: &str| -> Result<u64, WireError> {
+            integrity
+                .get(key)
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| wire_err(&format!("missing integrity `{key}`")))
+        };
+        let initiator: Initiator = serde_json::from_value(
+            value
+                .get("initiator")
+                .cloned()
+                .ok_or_else(|| wire_err("missing `initiator`"))?,
+        )
+        .map_err(|e| WireError(e.to_string()))?;
+        let target = value
+            .get("target")
+            .ok_or_else(|| wire_err("missing `target`"))?;
+        let observer = value
+            .get("observer")
+            .ok_or_else(|| wire_err("missing `observer`"))?;
+        Ok(Self {
+            id: text(&value, "id")?,
+            seq: number("seq")?,
+            boot_session_id: text(integrity, "boot_session_id")?,
+            hmac_key_version: number("hmac_key_version")?,
+            version: text(integrity, "version")?,
+            domain: text(integrity, "domain")?,
+            correlation_id,
+            event_time: text(&value, "eventTime")?,
+            action: text(&value, "action")?,
+            outcome: text(&value, "outcome")?,
+            outcome_reason: value
+                .get("reason")
+                .and_then(|r| r.get("reasonCode"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+            initiator,
+            target: Target {
+                id: text(target, "id")?,
+                type_uri: text(target, "typeURI")?,
+            },
+            observer: Observer {
+                node_id: text(integrity, "observer_node_id")?,
+                id: text(observer, "id")?,
+            },
+            legacy: false,
+        })
+    }
+}
+
+impl Serialize for CadfEventPayload {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.to_wire_value()
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for CadfEventPayload {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        Self::from_wire_value(value).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Borrowed pre-DSP0262 layout.
+#[derive(Serialize)]
+struct LegacyPayload<'a> {
+    id: &'a str,
+    seq: u64,
+    boot_session_id: &'a str,
+    hmac_key_version: u64,
+    version: &'a str,
+    domain: &'a str,
+    correlation_id: &'a str,
+    event_time: &'a str,
+    action: &'a str,
+    outcome: &'a str,
+    outcome_reason: &'a Option<String>,
+    initiator: &'a Initiator,
+    target: &'a Target,
+    observer: &'a Observer,
+}
+
+/// Owned pre-DSP0262 layout.
+#[derive(Deserialize)]
+struct LegacyOwnedPayload {
+    id: String,
+    seq: u64,
+    boot_session_id: String,
+    hmac_key_version: u64,
+    version: String,
+    domain: String,
+    correlation_id: String,
+    event_time: String,
+    action: String,
+    outcome: String,
+    outcome_reason: Option<String>,
+    initiator: Initiator,
+    target: Target,
+    observer: Observer,
 }
 
 impl CadfEventPayload {
@@ -77,6 +316,7 @@ impl CadfEventPayload {
             initiator,
             target,
             observer,
+            legacy: false,
         }
     }
 
@@ -157,13 +397,40 @@ pub fn sanitize_action(action: &str) -> String {
 /// 4. Compute HMAC-SHA256 with the key identified by `hmac_key_version`.
 ///
 /// Cross-language test vectors live in `tests/audit/hmac_vectors.jsonl`.
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct CadfEvent {
-    #[serde(flatten)]
     pub(crate) event: CadfEventPayload,
     // pub(crate): external callers must use the `signature()` getter; direct
     // mutation is intentionally prevented outside this crate.
     pub(crate) signature: String,
+}
+
+impl Serialize for CadfEvent {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut value = self
+            .event
+            .to_wire_value()
+            .map_err(serde::ser::Error::custom)?;
+        if let Some(map) = value.as_object_mut() {
+            map.insert("signature".into(), self.signature.clone().into());
+        }
+        value.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for CadfEvent {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut value = serde_json::Value::deserialize(deserializer)?;
+        let signature = value
+            .as_object_mut()
+            .and_then(|map| map.remove("signature"))
+            .and_then(|s| s.as_str().map(str::to_string))
+            .ok_or_else(|| serde::de::Error::custom("missing `signature`"))?;
+        Ok(Self {
+            event: CadfEventPayload::from_wire_value(value).map_err(serde::de::Error::custom)?,
+            signature,
+        })
+    }
 }
 
 impl CadfEvent {
@@ -457,6 +724,27 @@ mod tests {
                 id: format!("service/security/keystone/{}", dispatcher.node_id()),
             },
         )
+    }
+
+    #[test]
+    fn wire_form_uses_dsp0262_names_and_round_trips() {
+        let key: Arc<[u8]> = Arc::from(b"test-key-32-bytes-0123456789abcd".as_slice());
+        let (dispatcher, _rx) = make_dispatcher("test-node", Arc::clone(&key));
+        let event = make_payload(&dispatcher).sign(&dispatcher);
+
+        let json = serde_json::to_value(&event).unwrap();
+        for legacy in ["event_time", "correlation_id", "outcome_reason", "seq"] {
+            assert!(json.get(legacy).is_none(), "{legacy} must not be top-level");
+        }
+        assert_eq!(json["tags"][0], "correlation_id:req-corr");
+        assert_eq!(json["attachments"][0]["content"]["seq"], event.seq());
+        assert_eq!(json["target"]["typeURI"], "data/security/identity/user");
+
+        let parsed: CadfEvent = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(parsed.correlation_id(), "req-corr");
+        assert_eq!(parsed.seq(), event.seq());
+        assert!(dispatcher.verify_hmac(&parsed, &key));
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), json);
     }
 
     #[test]

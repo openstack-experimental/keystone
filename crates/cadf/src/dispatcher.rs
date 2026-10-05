@@ -386,7 +386,9 @@ pub(crate) fn compute_hmac_sha256(payload: &CadfEventPayload, key: &[u8]) -> Str
 /// `Initiator.host` is omitted, not null'd, when absent).
 fn jcs_canonical(payload: &CadfEventPayload) -> String {
     #[allow(clippy::expect_used)]
-    let value = serde_json::to_value(payload).expect("CadfEventPayload is always serializable");
+    let value = payload
+        .to_wire_value()
+        .expect("CadfEventPayload is always serializable");
     sort_json_keys(value).to_string()
 }
 

@@ -228,7 +228,7 @@ pub fn with_request_address(initiator: Initiator) -> Initiator {
 
 fn outcome_str(outcome: &AuditOutcome) -> &'static str {
     match outcome {
-        AuditOutcome::Attempt => "attempt",
+        AuditOutcome::Attempt => "pending",
         AuditOutcome::Success => "success",
         AuditOutcome::Failure { .. } => "failure",
     }
@@ -484,7 +484,7 @@ mod tests {
         .unwrap();
 
         let attempt = rx.critical.try_recv().unwrap();
-        assert_eq!(attempt.payload().outcome(), "attempt");
+        assert_eq!(attempt.payload().outcome(), "pending");
         assert_eq!(attempt.payload().action(), "delete");
         assert_eq!(
             attempt.payload().initiator().id(),

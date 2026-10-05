@@ -20,7 +20,7 @@ the RFC 8785 (JCS) canonical form and HMAC-SHA256 in pure Python, so the
 
 Usage:
     tools/audit_vectors.py verify      # check every vector (exit 1 on mismatch)
-    tools/audit_vectors.py generate    # append the missing v1.1 vectors
+    tools/audit_vectors.py generate    # append the missing vectors (legacy v1.1 and DSP0262)
 
 The event fields used by the vectors are strings, integers and objects only,
 for which ``json.dumps(sort_keys=True, separators=(",", ":"),
@@ -79,6 +79,83 @@ HOST_CASES = {
 }
 
 
+def wire_event(n: int, initiator: dict, reason: str | None) -> dict:
+    """A record in the DSP0262 layout.
+
+    Correlation id is a ``tags`` entry; the fields DSP0262 has no place for are
+    carried in the ``integrity`` attachment.
+    """
+    event = {
+        "typeURI": "http://schemas.dmtf.org/cloud/audit/1.0/event",
+        "eventType": "activity",
+        "id": f"test-node:550e8400-e29b-41d4-a716-{n:012x}",
+        "eventTime": "2026-06-16T00:00:00+00:00",
+        "action": "authenticate",
+        "outcome": "failure",
+        "initiator": {**initiator, "typeURI": "service/security/account/user"},
+        "target": {"id": "keystone", "typeURI": "service/security/keystone/auth"},
+        "observer": {
+            "id": "service/security/keystone/test-node",
+            "typeURI": "service/security/keystone",
+        },
+        "tags": [f"correlation_id:req-{n:032x}"],
+        "attachments": [
+            {
+                "name": "integrity",
+                "contentType": "application/json",
+                "content": {
+                    "seq": n,
+                    "boot_session_id": "00000000-0000-0000-0000-000000000001",
+                    "hmac_key_version": 1,
+                    "version": "1.1",
+                    "domain": initiator.get("domain_id") or "unknown",
+                    "observer_node_id": "test-node",
+                },
+            }
+        ],
+    }
+    if reason is not None:
+        event["reason"] = {"reasonType": "keystone", "reasonCode": reason}
+    return event
+
+
+WIRE_CASES = {
+    "dsp0262_failure_with_reason_and_host": ("Unauthorized", {"id": "AKIAABCDEFGHIJKLMNOP", "address": "203.0.113.9"}),
+    "dsp0262_success_without_reason_or_host": (None, None),
+    "dsp0262_pending_with_host_address": (None, {"address": "203.0.113.9"}),
+}
+
+
+def generate_wire() -> list[dict]:
+    key = bytes.fromhex(KEY_HEX)
+    out = []
+    for i, (name, (reason, host)) in enumerate(WIRE_CASES.items(), start=20):
+        initiator = {
+            "domain_id": "0123456789abcdef0123456789abcdef",
+            "id": "unknown",
+            "project_id": None,
+        }
+        if host is not None:
+            initiator["host"] = host
+        event = wire_event(i, initiator, reason)
+        if name.startswith("dsp0262_success"):
+            event["outcome"] = "success"
+        if name.startswith("dsp0262_pending"):
+            event["outcome"] = "pending"
+        event["signature"] = sign(event, key)
+        body = {k: v for k, v in event.items() if k != "signature"}
+        out.append(
+            {
+                "description": name,
+                "key_hex": KEY_HEX,
+                "canonical": jcs(body),
+                "expected_signature": event["signature"],
+                "event": event,
+            }
+        )
+    return out
+
+
 def generate() -> list[dict]:
     key = bytes.fromhex(KEY_HEX)
     out = []
@@ -130,7 +207,7 @@ def main() -> int:
         return verify()
     if cmd == "generate":
         have = {v["description"] for v in load()}
-        new = [v for v in generate() if v["description"] not in have]
+        new = [v for v in generate() + generate_wire() if v["description"] not in have]
         with VECTORS.open("a") as f:
             for v in new:
                 f.write(json.dumps(v, separators=(",", ":"), ensure_ascii=False) + "\n")

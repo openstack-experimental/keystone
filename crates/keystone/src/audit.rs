@@ -295,7 +295,8 @@ pub fn is_authentication_surface(method: &axum::http::Method, path: &str) -> boo
 /// The CADF `(outcome, reason)` of an HTTP status.
 ///
 /// `401`/`403` and server errors are failures, any other `4xx` (rate limits,
-/// malformed requests) is a `client_error` (ADR 0022), the rest a success.
+/// malformed requests) is a `failure` whose reason names the client cause (ADR
+/// 0022), the rest a success.
 #[must_use]
 pub fn status_outcome(status: axum::http::StatusCode) -> (&'static str, Option<OutcomeReason>) {
     use axum::http::StatusCode;
@@ -303,11 +304,10 @@ pub fn status_outcome(status: axum::http::StatusCode) -> (&'static str, Option<O
         s if s.as_u16() < 400 => ("success", None),
         StatusCode::UNAUTHORIZED => ("failure", Some(OutcomeReason::literal("Unauthorized"))),
         StatusCode::FORBIDDEN => ("failure", Some(OutcomeReason::literal("Forbidden"))),
-        StatusCode::TOO_MANY_REQUESTS => (
-            "client_error",
-            Some(OutcomeReason::literal("TooManyRequests")),
-        ),
-        s if s.is_client_error() => ("client_error", Some(OutcomeReason::literal("ClientError"))),
+        StatusCode::TOO_MANY_REQUESTS => {
+            ("failure", Some(OutcomeReason::literal("TooManyRequests")))
+        }
+        s if s.is_client_error() => ("failure", Some(OutcomeReason::literal("ClientError"))),
         _ => ("failure", Some(OutcomeReason::literal("ServerError"))),
     }
 }
@@ -886,12 +886,8 @@ mod tests {
         for (code, outcome, reason) in [
             (StatusCode::UNAUTHORIZED, "failure", "Unauthorized"),
             (StatusCode::FORBIDDEN, "failure", "Forbidden"),
-            (
-                StatusCode::TOO_MANY_REQUESTS,
-                "client_error",
-                "TooManyRequests",
-            ),
-            (StatusCode::BAD_REQUEST, "client_error", "ClientError"),
+            (StatusCode::TOO_MANY_REQUESTS, "failure", "TooManyRequests"),
+            (StatusCode::BAD_REQUEST, "failure", "ClientError"),
             (StatusCode::INTERNAL_SERVER_ERROR, "failure", "ServerError"),
         ] {
             let (o, r) = status_outcome(code);

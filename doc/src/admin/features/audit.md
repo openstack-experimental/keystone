@@ -8,7 +8,7 @@ the design is in [ADR 0023](../../adr/0023-audit.md).
 
 | Kind | Records | When |
 | --- | --- | --- |
-| Perimeter | `authenticate` (success, failure, `client_error`) | Login and token-issuing handlers (token, EC2, OAuth2 token, federation JWT/OIDC), plus one completion record for the other authentication surfaces: token validation and revocation (`/v3/auth/tokens`), WebAuthn, Kubernetes auth, API-key (SCIM), vendordata, and requests rejected early (for example `429`). With `[audit] perimeter_all_requests = true` every request gets such a record. Best effort: records are dropped, and counted, if the in-memory channel is full. |
+| Perimeter | `authenticate` (success, failure) | Login and token-issuing handlers (token, EC2, OAuth2 token, federation JWT/OIDC), plus one completion record for the other authentication surfaces: token validation and revocation (`/v3/auth/tokens`), WebAuthn, Kubernetes auth, API-key (SCIM), vendordata, and requests rejected early (for example `429`). With `[audit] perimeter_all_requests = true` every request gets such a record. Best effort: records are dropped, and counted, if the in-memory channel is full. |
 | Provider | `create`, `update`, `delete`, `enable`, `disable`, `revoke`, ... | Every state-changing provider operation writes an `attempt` record **before** the change and a `success`/`failure` record after it. If the `attempt` record cannot be queued the operation is **not performed** (fail-closed). |
 
 Ordinary validated-token requests to resource endpoints are not recorded at the
@@ -20,45 +20,64 @@ secret re-hash of an API key, and janitor housekeeping.
 
 ## Record format
 
-Records are JSON lines in a CADF-inspired Keystone schema, version `1.1`:
+Records are JSON lines using the DSP0262 (CADF) key names:
 
 ```json
 {
-  "action": "delete",
-  "boot_session_id": "9a1c3f0e-6c0b-4c5d-8f55-2f2c3b6d2a10",
-  "correlation_id": "req-3f0c7a3e5b3d4d0f9a52f1c8f1f1e0aa",
-  "domain": "0123456789abcdef0123456789abcdef",
-  "event_time": "2026-06-16T10:15:00+00:00",
-  "hmac_key_version": 1,
+  "typeURI": "http://schemas.dmtf.org/cloud/audit/1.0/event",
+  "eventType": "activity",
   "id": "keystone-0:550e8400-e29b-41d4-a716-446655440000",
+  "eventTime": "2026-06-16T10:15:00+00:00",
+  "action": "delete",
+  "outcome": "failure",
+  "reason": {"reasonType": "keystone", "reasonCode": "Conflict"},
   "initiator": {
+    "typeURI": "service/security/account/user",
     "domain_id": "0123456789abcdef0123456789abcdef",
     "host": {"address": "203.0.113.9"},
     "id": "fedcba9876543210fedcba9876543210",
     "project_id": null
   },
-  "observer": {"id": "service/security/keystone/keystone-0", "node_id": "keystone-0"},
-  "outcome": "failure",
-  "outcome_reason": "Conflict",
-  "seq": 42,
-  "signature": "<hex HMAC-SHA256>",
-  "target": {"id": "0123456789abcdef0123456789abcdef", "type_uri": "data/security/identity/user"},
-  "version": "1.1"
+  "target": {"id": "0123456789abcdef0123456789abcdef", "typeURI": "data/security/identity/user"},
+  "observer": {"id": "service/security/keystone/keystone-0", "typeURI": "service/security/keystone"},
+  "tags": ["correlation_id:req-3f0c7a3e5b3d4d0f9a52f1c8f1f1e0aa"],
+  "attachments": [{
+    "name": "integrity",
+    "contentType": "application/json",
+    "content": {
+      "seq": 42,
+      "boot_session_id": "9a1c3f0e-6c0b-4c5d-8f55-2f2c3b6d2a10",
+      "hmac_key_version": 1,
+      "version": "1.1",
+      "domain": "0123456789abcdef0123456789abcdef",
+      "observer_node_id": "keystone-0"
+    }
+  }],
+  "signature": "<hex HMAC-SHA256>"
 }
 ```
 
-* `outcome` is `attempt` (provider record written before the change, CADF
-  `pending`), `success`, `failure`, or `client_error` (a rejected request such
-  as a rate limit).
-* `outcome_reason` is a fixed vocabulary word (an error variant name such as
-  `Conflict` or `UserLocked`), never error text.
+Spool files written by earlier releases use a snake_case layout (`event_time`,
+`outcome_reason`, `correlation_id`, flat `seq` and `hmac_key_version`). They
+remain readable and verifiable as they are; tell the two apart by the presence
+of `eventTime`.
+
+* `outcome` is `pending` (provider record written before the change; `attempt`
+  in earlier releases), `success` or `failure`. A rejected request such as a
+  rate limit is a `failure` whose `reason.reasonCode` is `TooManyRequests` or
+  `ClientError` (`client_error` in earlier releases).
+* `reason.reasonCode` is a fixed vocabulary word (an error variant name such as
+  `Conflict` or `UserLocked`), never error text. The `reason` key is omitted
+  when there is none.
 * `action` is a lowercase verb or a `/`-separated name such as
   `oauth2/refresh_reuse_detected`.
 * `initiator.host` carries the client address and, for pre-authentication
   failures, a non-secret identifier such as the EC2 access key id. It is
   **omitted** when empty, whereas `project_id` and `domain_id` are `null`.
-* `correlation_id` is the server-generated `x-openstack-request-id`; a
-  client-supplied value is discarded.
+* The correlation id is the `correlation_id:` tag: the server-generated
+  `x-openstack-request-id`; a client-supplied value is discarded.
+* The `integrity` attachment carries the sequence number, boot session, key
+  version, schema version, the initiator's domain and the observer node.
 * Records contain identifiers only: no passwords, tokens, secrets or free text.
 
 ## The spool
@@ -86,7 +105,7 @@ disk for `spool_max_segments * spool_max_segment_bytes`.
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `spool_dir` | `/var/lib/keystone/audit` | Spool and key directory. Make it writable by the Keystone user only (for example mode `0700`); Keystone does not change the directory mode. |
-| `node_id` | `$HOSTNAME`, else `unknown-node` | Identifies the node in `observer.node_id` and file names. **Must be unique per node**; set it explicitly. `unknown-node` is a placeholder, not a valid production value. |
+| `node_id` | `$HOSTNAME`, else `unknown-node` | Identifies the node in the `integrity` attachment and file names. **Must be unique per node**; set it explicitly. `unknown-node` is a placeholder, not a valid production value. |
 | `spool_max_segment_bytes` | 256 MiB | Seal the live file at this size. |
 | `spool_max_segment_age_secs` | 86400 | Seal the live file after this age. |
 | `spool_max_segments` | unset (keep all) | Keep at most this many sealed segments. |
@@ -102,7 +121,7 @@ its own signing key from it with HKDF-SHA256 and the info string
 attributed to another node. Back the file up with the same care as the Fernet
 keys: without it the spool cannot be verified, with it an attacker can forge
 records. The key version in use is exported as `keystone_audit_hmac_key_version`
-and stamped on every record (`hmac_key_version`), so old records stay
+and stamped on every record (`hmac_key_version` in the `integrity` attachment), so old records stay
 verifiable; automated rotation is not available yet.
 
 ## Verifying records in a SIEM
@@ -116,8 +135,8 @@ verifiable; automated rotation is not available yet.
 Cache every key version you have seen. Reference vectors, including the `host`
 cases, are in `tests/audit/hmac_vectors.jsonl`, and
 `tools/audit_vectors.py verify` is an independent Python implementation of the
-procedure. Cross-check with `outcome`: an `attempt` with no `success`/`failure`
-for the same `correlation_id` and target within a few minutes means the process
+procedure. Cross-check with `outcome`: a `pending` record with no `success`/`failure`
+for the same correlation id and target within a few minutes means the process
 died or the post-record was lost.
 
 ## Monitoring

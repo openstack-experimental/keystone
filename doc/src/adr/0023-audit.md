@@ -39,28 +39,36 @@ cannot be used for policy enforcement before it is fully resolved, using an
 externally immutable `ValidatedSecurityContext` with read-only getters. This
 design prevents PII leaks while maintaining zero-trust guarantees.
 
-### Wire format: CADF-inspired Keystone schema
+### Wire format: DSP0262 names
 
-The emitted JSON is a **CADF-inspired Keystone schema**, not a literal
-DSP0262 serialization. It keeps the CADF data model (initiator, target,
-observer, action, outcome, `host`) but uses snake_case keys and a flat layout
-so the signed canonical form stays small and stable. A SIEM that expects
-literal CADF needs a translation layer; the mapping is:
+The emitted JSON uses the DSP0262 (DMTF CADF) key names, with no format
+version change: records are told apart by their shape (`eventTime` present),
+not by a version. Fields the standard has no place for are carried in the
+standard extension points instead of new top-level keys:
 
-| Keystone field | DSP0262 / pycadf |
+| Record content | DSP0262 location |
 | --- | --- |
-| `event_time` | `eventTime` |
-| `target.type_uri`, `initiator` / `observer` (no type) | `typeURI` (initiator `service/security/account/user`) |
-| `correlation_id` | `attachments` / `tags` (request id) |
-| `outcome: "attempt"` | `pending` (pre-commit record of a fail-closed provider operation; Keystone only) |
-| `outcome: "client_error"` | `failure` with a client-side cause (perimeter records of rejected requests such as `429`) |
-| `domain` | the initiator's domain id, `unknown` when there is none (system actors) |
+| event time | `eventTime` |
+| record kind | `typeURI` (`http://schemas.dmtf.org/cloud/audit/1.0/event`) and `eventType` (`activity`) |
+| target / initiator / observer type | `typeURI` (initiator `service/security/account/user`, observer `service/security/keystone`) |
+| `outcome_reason` | `reason`: `{"reasonType": "keystone", "reasonCode": "<variant>"}`, omitted when there is none |
+| `outcome` pre-commit record of a fail-closed provider operation | `pending` |
+| rejected requests such as `429` | `failure`, with a client-side `reasonCode` (`TooManyRequests`, `ClientError`) |
+| correlation (request) id | `tags` entry `correlation_id:<id>` |
+| `seq`, `boot_session_id`, `hmac_key_version`, `version`, `domain`, observer node | `attachments` entry named `integrity` (`contentType` `application/json`); `domain` is the initiator's domain id, `unknown` when there is none |
 | `action` | one shared style: lowercase `[a-z0-9_-]` words joined by `/` (e.g. `create`, `oauth2/refresh_reuse_detected`, `wasm_plugin/<host_function>`); applied to every record by `CadfEventPayload::new` |
 
-Renaming the wire keys to the DSP0262 spelling would be a breaking change of
-the signed canonical form and is deliberately not done; if it is ever needed
-it is a `version: "2.0"` format and the version field already lets a verifier
-tell them apart. `seq` is serialized as a JSON number; RFC 8785 numbers are
+`initiator.project_id` and `initiator.domain_id` remain Keystone extension
+keys on the initiator (`null` when absent).
+
+Records written before this change use the earlier snake_case layout
+(`event_time`, `outcome_reason`, `correlation_id`, `type_uri`, flat
+`seq`/`boot_session_id`/`hmac_key_version`/`version`/`domain`, outcome
+`attempt`/`client_error`). Their signature was computed over that layout, so
+Keystone reads them back, keeps them in that form and verifies them against
+it; a verifier distinguishes the two layouts by the presence of `eventTime`.
+The signature of a DSP0262 record covers the new layout, exactly as written.
+`seq` is serialized as a JSON number; RFC 8785 numbers are
 IEEE-754 doubles, so a verifier that canonicalizes it MUST use a 64-bit
 integer type (values above 2^53 are not reachable in practice: the counter
 is per boot session). Cross-language vectors, including the v1.1 `host`
@@ -358,7 +366,7 @@ Captures access attempts at the boundary.
    authenticated initiator in the request audit context; after the handler
    returns, the middleware emits one perimeter record with the HTTP status
    mapped to an outcome (`2xx/3xx` success, `401`/`403`/`5xx` failure, other
-   `4xx` including `429` `client_error`) and a static reason. It applies only
+   `4xx` including `429` `failure` with a client reason) and a static reason. It applies only
    to an explicit allowlist of authentication surfaces (`/v3|v4/auth/tokens`,
    `/v3/ec2tokens`, `/v4/auth/passkey`, `/v4/vendordata`, `/SCIM/v2`,
    `POST /v4/k8s_auth/{id}/auth`), so ordinary validated-token traffic does
@@ -580,7 +588,7 @@ startup: `state.event_dispatcher.subscribe_audit(CadfAuditHook).await`.
 - **Attempt Reconciliation:** SIEM treats an `Attempt` with no corresponding
   `Success`/`Failure` within 300s as `outcome: unknown` and triggers a warning
   alert. Loki query:
-  `sum_over_time({app="keystone"} | cadf_outcome="attempt" [10m]) -   sum_over_time({app="keystone"} | cadf_outcome=~"success|failure" [10m]) > 0`
+  `sum_over_time({app="keystone"} | cadf_outcome="pending" [10m]) -   sum_over_time({app="keystone"} | cadf_outcome=~"success|failure" [10m]) > 0`
 - **Authenticated Principal Boundary:** the initiator of a post-authentication
   failure comes only from the authentication result's principal
   (`build_initiator_from_principal`). Partial context failure = authorization
@@ -665,7 +673,7 @@ groups:
 | Ingress record for every request | Opt-in: `[audit] perimeter_all_requests = true` adds the completion record to every request (default `false`, to keep the perimeter channel bounded). Not a separate event from the `Auth` extractor |
 | Provider auditing: `audited_op!` / `audited_if_ctx!` | Implemented, enforced by a coverage test over the provider services |
 | Initiator from the authenticated principal; request audit context | Implemented |
-| Wire format | CADF-inspired Keystone schema (see above), version `1.1` |
+| Wire format | DSP0262 key names, integrity fields in an `attachments` entry (see above); schema version `1.1` |
 | Signing-key rotation | Key versions are stamped and old versions verify; operator-driven rotation is not automated |
 
 Phase numbers in code comments ("Phase 4" metrics, "Phase 5.x" vectors and
@@ -678,7 +686,7 @@ is described in the Observability section and covered by the test suites.
 - **0017:** `ValidatedSecurityContext` in hooks. `correlation_id()`,
   `verified_token()` for partial context.
 - **0020:** Mapping engine errors sanitized via `error_variant_name()`.
-- **0022:** Rate-limiting. 429 produces `outcome: "client_error"`. Audit drop
+- **0022:** Rate-limiting. 429 produces `outcome: "failure"` with reason `TooManyRequests`. Audit drop
   alerts correlated with rate limiter health.
 
 ---

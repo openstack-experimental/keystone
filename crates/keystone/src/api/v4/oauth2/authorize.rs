@@ -382,7 +382,7 @@ pub(super) async fn authorize(
         "authorize",
         build_initiator_unknown(),
         &client.client_id,
-        "attempt",
+        "pending",
         None,
     );
 
