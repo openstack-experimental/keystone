@@ -28,6 +28,8 @@
 use hkdf::Hkdf;
 use sha2::Sha256;
 
+use crate::ServiceIdentity;
+
 /// Derive a 32-byte HMAC signing key for the given node from a root KEK.
 ///
 /// `kek` MUST be at least 32 bytes of uniform random key material.
@@ -36,8 +38,8 @@ use sha2::Sha256;
 ///
 /// Panics if `kek` is shorter than 32 bytes (SHA-256 output size), since
 /// the PRK is too short to be used as HKDF pseudo-random key material.
-pub fn derive_audit_hmac_key(kek: &[u8], node_id: &str) -> [u8; 32] {
-    let info = format!("keystone-audit-hmac-v1:{node_id}");
+pub fn derive_audit_hmac_key(service: &ServiceIdentity, kek: &[u8], node_id: &str) -> [u8; 32] {
+    let info = service.kdf_info(node_id);
     // Expand-only: KEK is already uniform random, Extract is a no-op
     // security-wise (same justification as ADR 0016-v2 §3.1).
     #[allow(clippy::expect_used)]
@@ -53,19 +55,20 @@ pub fn derive_audit_hmac_key(kek: &[u8], node_id: &str) -> [u8; 32] {
 mod tests {
     use super::*;
 
+    const SERVICE: ServiceIdentity = ServiceIdentity::new("keystone");
     const KEK: &[u8] = b"test-kek-32-bytes-0123456789abcd";
 
     #[test]
     fn different_nodes_yield_different_keys() {
-        let k1 = derive_audit_hmac_key(KEK, "node-1");
-        let k2 = derive_audit_hmac_key(KEK, "node-2");
+        let k1 = derive_audit_hmac_key(&SERVICE, KEK, "node-1");
+        let k2 = derive_audit_hmac_key(&SERVICE, KEK, "node-2");
         assert_ne!(k1, k2, "distinct node IDs must produce distinct keys");
     }
 
     #[test]
     fn derivation_is_deterministic() {
-        let k1 = derive_audit_hmac_key(KEK, "node-1");
-        let k2 = derive_audit_hmac_key(KEK, "node-1");
+        let k1 = derive_audit_hmac_key(&SERVICE, KEK, "node-1");
+        let k2 = derive_audit_hmac_key(&SERVICE, KEK, "node-1");
         assert_eq!(k1, k2, "same inputs must always yield the same key");
     }
 
@@ -75,7 +78,7 @@ mod tests {
         // verification. Regenerate with:
         //   cargo test -p cadf kdf::tests::known_vector --
         // --nocapture
-        let key = derive_audit_hmac_key(KEK, "keystone-node-1");
+        let key = derive_audit_hmac_key(&SERVICE, KEK, "keystone-node-1");
         let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(
             hex,

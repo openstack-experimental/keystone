@@ -19,13 +19,14 @@
 //! `openstack-keystone-metrics`, so they can be scraped by any
 //! Prometheus-compatible collector.
 //!
-//! Metric names match the alert rules in `deploy/prometheus/alert_rules.yaml`.
+//! For the `keystone` service the metric names match the alert rules in
+//! `deploy/prometheus/alert_rules.yaml`.
 
 use std::fmt;
 
 use openstack_keystone_metrics::{Counter, LabeledCounter, write_metric_header};
 
-use crate::AuditDispatcher;
+use crate::{AuditDispatcher, ServiceIdentity};
 
 /// Counters bumped by the spool writer, verifier and segment shipper.
 ///
@@ -70,7 +71,8 @@ impl fmt::Debug for AuditMetrics {
 
 /// Serialise the audit metrics as Prometheus text format.
 ///
-/// Output is valid for Prometheus text format version 0.0.4 and contains:
+/// Metric names are `{service}_audit_*`; the list below is for the `keystone`
+/// service. Output is valid for Prometheus text format version 0.0.4 and contains:
 /// - `keystone_audit_dropped_total`: perimeter events dropped (channel full)
 /// - `keystone_audit_postaudit_dropped_total`: post-audit outcomes lost
 /// - `keystone_audit_events_total`: events accepted into a channel (drops are
@@ -84,132 +86,143 @@ impl fmt::Debug for AuditMetrics {
 /// - `keystone_audit_shipped_events_total{result}`
 /// - `keystone_audit_sink_errors_total`
 /// - `keystone_audit_spool_retention_deleted_total`
-pub fn format_prometheus_text(dispatcher: &AuditDispatcher) -> String {
+pub fn format_prometheus_text(dispatcher: &AuditDispatcher, service: &ServiceIdentity) -> String {
     let m = dispatcher.metrics();
     let mut out = String::new();
 
     write_metric_header(
         &mut out,
-        "keystone_audit_dropped_total",
+        &service.metric_name("dropped_total"),
         "Total perimeter audit events dropped because the best-effort channel was full.",
         "counter",
     );
     out.push_str(&format!(
-        "keystone_audit_dropped_total {}\n",
+        "{} {}\n",
+        service.metric_name("dropped_total"),
         dispatcher.dropped_count()
     ));
 
     write_metric_header(
         &mut out,
-        "keystone_audit_postaudit_dropped_total",
+        &service.metric_name("postaudit_dropped_total"),
         "Post-audit outcome records (Success/Failure) that could not be recorded after the \
          operation ran; compensating local log entries were written.",
         "counter",
     );
     out.push_str(&format!(
-        "keystone_audit_postaudit_dropped_total {}\n",
+        "{} {}\n",
+        service.metric_name("postaudit_dropped_total"),
         dispatcher.postaudit_dropped_count()
     ));
 
     write_metric_header(
         &mut out,
-        "keystone_audit_events_total",
-        "Audit events accepted into the perimeter or critical channel. Dropped events are \
-         counted in keystone_audit_dropped_total instead.",
+        &service.metric_name("events_total"),
+        &format!(
+            "Audit events accepted into the perimeter or critical channel. Dropped events are \
+             counted in {} instead.",
+            service.metric_name("dropped_total")
+        ),
         "counter",
     );
     out.push_str(&format!(
-        "keystone_audit_events_total {}\n",
+        "{} {}\n",
+        service.metric_name("events_total"),
         dispatcher.events_total()
     ));
 
     write_metric_header(
         &mut out,
-        "keystone_audit_channel_depth",
+        &service.metric_name("channel_depth"),
         "Audit events queued in a channel, waiting for the spool writer.",
         "gauge",
     );
     let (perimeter, critical) = dispatcher.channel_depths();
+    let depth = service.metric_name("channel_depth");
     out.push_str(&format!(
-        "keystone_audit_channel_depth{{channel=\"perimeter\"}} {perimeter}\n\
-         keystone_audit_channel_depth{{channel=\"critical\"}} {critical}\n"
+        "{depth}{{channel=\"perimeter\"}} {perimeter}\n\
+         {depth}{{channel=\"critical\"}} {critical}\n"
     ));
 
     write_metric_header(
         &mut out,
-        "keystone_audit_hmac_key_version",
+        &service.metric_name("hmac_key_version"),
         "Version of the HMAC key currently signing audit events.",
         "gauge",
     );
     out.push_str(&format!(
-        "keystone_audit_hmac_key_version {}\n",
+        "{} {}\n",
+        service.metric_name("hmac_key_version"),
         dispatcher.hmac_key_version()
     ));
 
     write_metric_header(
         &mut out,
-        "keystone_audit_spool_bytes",
+        &service.metric_name("spool_bytes"),
         "Bytes held on disk by the audit spool (live file plus sealed segments).",
         "gauge",
     );
     out.push_str(&format!(
-        "keystone_audit_spool_bytes {}\n",
+        "{} {}\n",
+        service.metric_name("spool_bytes"),
         dispatcher.spool_bytes()
     ));
 
     write_metric_header(
         &mut out,
-        "keystone_audit_spool_write_failures_total",
+        &service.metric_name("spool_write_failures_total"),
         "Audit events the spool writer failed to append to the spool; each is lost.",
         "counter",
     );
     m.spool_write_failures
-        .write_line(&mut out, "keystone_audit_spool_write_failures_total");
+        .write_line(&mut out, &service.metric_name("spool_write_failures_total"));
 
     write_metric_header(
         &mut out,
-        "keystone_audit_spool_quarantined_total",
+        &service.metric_name("spool_quarantined_total"),
         "Spool segments quarantined because of tampered or unparsable lines.",
         "counter",
     );
     m.spool_quarantined
-        .write_line(&mut out, "keystone_audit_spool_quarantined_total");
+        .write_line(&mut out, &service.metric_name("spool_quarantined_total"));
 
     write_metric_header(
         &mut out,
-        "keystone_audit_spool_verified_total",
+        &service.metric_name("spool_verified_total"),
         "Lines checked when a sealed spool segment was verified at startup.",
         "counter",
     );
     m.spool_verified
-        .write_lines(&mut out, "keystone_audit_spool_verified_total");
+        .write_lines(&mut out, &service.metric_name("spool_verified_total"));
 
     write_metric_header(
         &mut out,
-        "keystone_audit_shipped_events_total",
+        &service.metric_name("shipped_events_total"),
         "Events handed to the audit sink; result=skipped counts unparsable spool lines.",
         "counter",
     );
     m.shipped_events
-        .write_lines(&mut out, "keystone_audit_shipped_events_total");
+        .write_lines(&mut out, &service.metric_name("shipped_events_total"));
 
     write_metric_header(
         &mut out,
-        "keystone_audit_sink_errors_total",
+        &service.metric_name("sink_errors_total"),
         "Failed attempts to deliver a batch to the audit sink.",
         "counter",
     );
     m.sink_errors
-        .write_line(&mut out, "keystone_audit_sink_errors_total");
+        .write_line(&mut out, &service.metric_name("sink_errors_total"));
 
     write_metric_header(
         &mut out,
-        "keystone_audit_spool_retention_deleted_total",
+        &service.metric_name("spool_retention_deleted_total"),
         "Sealed spool segments deleted unacknowledged by the size, age or count limits.",
         "counter",
     );
-    m.spool_retention_deleted
-        .write_line(&mut out, "keystone_audit_spool_retention_deleted_total");
+    m.spool_retention_deleted.write_line(
+        &mut out,
+        &service.metric_name("spool_retention_deleted_total"),
+    );
 
     out
 }
@@ -220,6 +233,8 @@ mod tests {
 
     use super::*;
     use crate::{CadfEventPayload, Initiator, Observer, Target};
+
+    const SERVICE: ServiceIdentity = ServiceIdentity::new("keystone");
 
     fn event(dispatcher: &AuditDispatcher) -> crate::CadfEvent {
         CadfEventPayload::new(
@@ -246,7 +261,7 @@ mod tests {
     #[test]
     fn every_series_has_help_and_type() {
         let dispatcher = AuditDispatcher::noop();
-        let text = format_prometheus_text(&dispatcher);
+        let text = format_prometheus_text(&dispatcher, &SERVICE);
         for name in [
             "keystone_audit_dropped_total",
             "keystone_audit_postaudit_dropped_total",
@@ -270,9 +285,18 @@ mod tests {
     }
 
     #[test]
+    fn metric_names_use_the_service_prefix() {
+        let dispatcher = AuditDispatcher::noop();
+        let text = format_prometheus_text(&dispatcher, &ServiceIdentity::new("glance"));
+        assert!(text.contains("# TYPE glance_audit_dropped_total counter"));
+        assert!(text.contains("counted in glance_audit_dropped_total instead."));
+        assert!(!text.contains("keystone"));
+    }
+
+    #[test]
     fn format_zero_values() {
         let dispatcher = AuditDispatcher::noop();
-        let text = format_prometheus_text(&dispatcher);
+        let text = format_prometheus_text(&dispatcher, &SERVICE);
         assert!(text.contains("keystone_audit_dropped_total 0"));
         assert!(text.contains("keystone_audit_postaudit_dropped_total 0"));
         assert!(text.contains("keystone_audit_events_total 0"));
@@ -293,7 +317,7 @@ mod tests {
         for _ in 0..4100 {
             d.dispatch(event(&d));
         }
-        let text = format_prometheus_text(&d);
+        let text = format_prometheus_text(&d, &SERVICE);
         assert!(
             text.contains("keystone_audit_events_total 4096\n"),
             "{text}"
@@ -313,7 +337,7 @@ mod tests {
         m.spool_verified.inc(["invalid"]);
         m.shipped_events.add(["shipped"], 9);
         m.sink_errors.inc();
-        let text = format_prometheus_text(&d);
+        let text = format_prometheus_text(&d, &SERVICE);
         assert!(text.contains("keystone_audit_spool_write_failures_total 2\n"));
         assert!(text.contains("keystone_audit_spool_quarantined_total 1\n"));
         assert!(text.contains("keystone_audit_spool_verified_total{result=\"verified\"} 5\n"));

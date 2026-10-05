@@ -42,6 +42,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::ServiceIdentity;
 use crate::kdf::derive_audit_hmac_key;
 use crate::spool::HmacKeyStore;
 
@@ -121,21 +122,27 @@ impl HmacKeyring {
     }
 
     /// The per-node signing key for `version`, if that version is known.
-    pub fn node_key(&self, version: u64, node_id: &str) -> Option<[u8; 32]> {
+    pub fn node_key(
+        &self,
+        service: &ServiceIdentity,
+        version: u64,
+        node_id: &str,
+    ) -> Option<[u8; 32]> {
         self.keks
             .get(&version)
-            .map(|kek| derive_audit_hmac_key(kek, node_id))
+            .map(|kek| derive_audit_hmac_key(service, kek, node_id))
     }
 
     /// The per-node signing key for the current version.
-    pub fn current_node_key(&self, node_id: &str) -> [u8; 32] {
-        derive_audit_hmac_key(&self.current_kek, node_id)
+    pub fn current_node_key(&self, service: &ServiceIdentity, node_id: &str) -> [u8; 32] {
+        derive_audit_hmac_key(service, &self.current_kek, node_id)
     }
 
     /// A [`HmacKeyStore`] resolving every version for `node_id`.
-    pub fn key_store(&self, node_id: &str) -> NodeKeyStore {
+    pub fn key_store(&self, service: &ServiceIdentity, node_id: &str) -> NodeKeyStore {
         NodeKeyStore {
             keyring: self.clone(),
+            service: *service,
             node_id: node_id.to_string(),
         }
     }
@@ -289,13 +296,14 @@ fn random_kek(path: &Path) -> Result<[u8; KEK_LEN], KeyringError> {
 /// Resolves any known key version to the per-node signing key.
 pub struct NodeKeyStore {
     keyring: HmacKeyring,
+    service: ServiceIdentity,
     node_id: String,
 }
 
 impl HmacKeyStore for NodeKeyStore {
     fn get_key(&self, version: u64) -> Option<Arc<[u8]>> {
         self.keyring
-            .node_key(version, &self.node_id)
+            .node_key(&self.service, version, &self.node_id)
             .map(|key| Arc::from(key.as_slice()))
     }
 }
@@ -303,6 +311,8 @@ impl HmacKeyStore for NodeKeyStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SERVICE: ServiceIdentity = ServiceIdentity::new("keystone");
     use std::os::unix::fs::PermissionsExt;
 
     #[test]
@@ -317,8 +327,8 @@ mod tests {
 
         let reloaded = HmacKeyring::load_or_create(&path).unwrap();
         assert_eq!(
-            created.current_node_key("n"),
-            reloaded.current_node_key("n")
+            created.current_node_key(&SERVICE, "n"),
+            reloaded.current_node_key(&SERVICE, "n")
         );
     }
 
@@ -332,8 +342,8 @@ mod tests {
         assert_eq!(keyring.versions(), vec![1]);
         // Same key as the pre-keyring releases derived.
         assert_eq!(
-            keyring.current_node_key("n"),
-            derive_audit_hmac_key(&[7u8; 32], "n")
+            keyring.current_node_key(&SERVICE, "n"),
+            derive_audit_hmac_key(&SERVICE, &[7u8; 32], "n")
         );
         // The file is left untouched until a rotation.
         assert_eq!(std::fs::read(&path).unwrap(), vec![7u8; 32]);
@@ -353,12 +363,18 @@ mod tests {
         assert_eq!(keyring.versions(), vec![1, 2, 3]);
         // Version 1 is still the legacy key, so old events stay verifiable.
         assert_eq!(
-            keyring.node_key(1, "n").unwrap(),
-            derive_audit_hmac_key(&[7u8; 32], "n")
+            keyring.node_key(&SERVICE, 1, "n").unwrap(),
+            derive_audit_hmac_key(&SERVICE, &[7u8; 32], "n")
         );
-        assert_ne!(keyring.node_key(2, "n"), keyring.node_key(3, "n"));
-        assert_eq!(keyring.key_store("n").get_key(2).unwrap().len(), 32);
-        assert!(keyring.key_store("n").get_key(9).is_none());
+        assert_ne!(
+            keyring.node_key(&SERVICE, 2, "n"),
+            keyring.node_key(&SERVICE, 3, "n")
+        );
+        assert_eq!(
+            keyring.key_store(&SERVICE, "n").get_key(2).unwrap().len(),
+            32
+        );
+        assert!(keyring.key_store(&SERVICE, "n").get_key(9).is_none());
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
     }

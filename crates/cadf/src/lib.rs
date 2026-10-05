@@ -25,6 +25,7 @@
 #![deny(clippy::unwrap_used)]
 
 pub mod dispatcher;
+pub mod identity;
 pub mod kdf;
 pub mod keyring;
 pub mod metrics;
@@ -39,6 +40,7 @@ pub use dispatcher::{
     AuditChannelDead, AuditChannelReceivers, AuditDispatcher, DEFAULT_CRITICAL_CHANNEL_CAPACITY,
     DEFAULT_PERIMETER_CHANNEL_CAPACITY,
 };
+pub use identity::ServiceIdentity;
 pub use kdf::derive_audit_hmac_key;
 pub use keyring::{HmacKeyring, KeyringError, NodeKeyStore};
 pub use sink::{

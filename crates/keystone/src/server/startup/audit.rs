@@ -31,9 +31,14 @@ use crate::config::AuditSinkConfig;
 use crate::config::Config;
 use cadf::spool::{SpoolLock, run_spool_writer, seal_previous_spool, verify_sealed_spool};
 use cadf::{
-    AuditDispatcher, AuditSink, HmacKeyring, ShipperConfig, SpoolConfig, StdoutSink,
-    run_raw_segment_shipper, run_segment_shipper,
+    AuditDispatcher, AuditSink, HmacKeyring, ServiceIdentity, ShipperConfig, SpoolConfig,
+    StdoutSink, run_raw_segment_shipper, run_segment_shipper,
 };
+
+/// Identity under which Keystone writes audit records: the HKDF label of the
+/// per-node signing key and the `keystone_audit_*` metric prefix derive from
+/// it, so it must not change without a key migration and alert-rule update.
+pub const AUDIT_SERVICE: ServiceIdentity = ServiceIdentity::new("keystone");
 
 /// How often the running server checks the keyring file for a rotation made
 /// by `keystone-manage audit rotate-hmac-key`.
@@ -64,7 +69,11 @@ async fn run_key_reloader(
             Ok(Ok(Some(keyring))) if keyring.current_version() > active_version => {
                 let version = keyring.current_version();
                 dispatcher.refresh_hmac_key(
-                    Arc::from(keyring.current_node_key(&node_id).as_slice()),
+                    Arc::from(
+                        keyring
+                            .current_node_key(&AUDIT_SERVICE, &node_id)
+                            .as_slice(),
+                    ),
                     version,
                 );
                 info!(
@@ -166,10 +175,9 @@ fn build_syslog_sink(
              in clear text and can be read or altered in transit"
         );
     }
-    let mut cfg = SyslogSinkConfig::new(endpoint, node_id);
+    let mut cfg = SyslogSinkConfig::new(endpoint, node_id, app_name);
     cfg.tls = tls;
     cfg.ca_file = ca_file;
-    cfg.app_name = app_name;
     cfg.connect_timeout = Duration::from_secs(connect_timeout_secs);
     cfg.write_timeout = Duration::from_secs(write_timeout_secs);
     let sink = SyslogSink::new(cfg).wrap_err("invalid audit syslog sink configuration")?;
@@ -237,11 +245,14 @@ pub async fn init(
     let hmac_key_version = keyring.current_version();
 
     // Per-node signing key:
-    //   HKDF-Expand(KEK, info="keystone-audit-hmac-v1:{node_id}", L=32)
+    //   HKDF-Expand(KEK, info="{service}-audit-hmac-v1:{node_id}", L=32)
     // Per ADR 0023 / ADR 0016-v2 §3.1: per-node derivation ensures a
     // compromised node cannot forge records attributed to other nodes.
-    let audit_hmac_key: Arc<[u8]> =
-        Arc::from(keyring.current_node_key(node_id.as_str()).as_slice());
+    let audit_hmac_key: Arc<[u8]> = Arc::from(
+        keyring
+            .current_node_key(&AUDIT_SERVICE, node_id.as_str())
+            .as_slice(),
+    );
 
     let (audit_dispatcher, audit_receivers) = AuditDispatcher::with_capacities(
         node_id.as_str(),
@@ -276,7 +287,7 @@ pub async fn init(
     let verification = sealed.map(|segment| {
         // Every key version in the keyring, so segments signed before a
         // rotation still verify.
-        let key_store = keyring.key_store(node_id.as_str());
+        let key_store = keyring.key_store(&AUDIT_SERVICE, node_id.as_str());
         let dispatcher = Arc::clone(&audit_dispatcher);
         let node_id = node_id.clone();
         spawn_blocking(move || {
@@ -622,7 +633,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("audit.keyring");
         let keyring = HmacKeyring::load_or_create(&path).unwrap();
-        let key: Arc<[u8]> = Arc::from(keyring.current_node_key("test-node").as_slice());
+        let key: Arc<[u8]> = Arc::from(
+            keyring
+                .current_node_key(&AUDIT_SERVICE, "test-node")
+                .as_slice(),
+        );
         let (dispatcher, _rx) = AuditDispatcher::new(
             "test-node",
             Uuid::new_v4().to_string(),
@@ -647,7 +662,7 @@ mod tests {
         let event = test_event(&dispatcher);
         assert_eq!(event.payload().hmac_key_version(), 2);
         let rotated = HmacKeyring::load(&path).unwrap().unwrap();
-        let store = rotated.key_store("test-node");
+        let store = rotated.key_store(&AUDIT_SERVICE, "test-node");
         let key = store.get_key(2).unwrap();
         assert!(dispatcher.verify_hmac(&event, &key));
 

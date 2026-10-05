@@ -67,14 +67,18 @@ pub struct SyslogSinkConfig {
 }
 
 impl SyslogSinkConfig {
-    /// A plain-TCP configuration with the default `app_name` and timeouts.
-    pub fn new(endpoint: impl Into<String>, hostname: impl Into<String>) -> Self {
+    /// A plain-TCP configuration with the default timeouts.
+    pub fn new(
+        endpoint: impl Into<String>,
+        hostname: impl Into<String>,
+        app_name: impl Into<String>,
+    ) -> Self {
         Self {
             endpoint: endpoint.into(),
             tls: false,
             ca_file: None,
             hostname: hostname.into(),
-            app_name: "keystone".to_string(),
+            app_name: app_name.into(),
             connect_timeout: Duration::from_secs(10),
             write_timeout: Duration::from_secs(30),
         }
@@ -365,7 +369,12 @@ mod tests {
         });
 
         let d = dispatcher();
-        let sink = SyslogSink::new(SyslogSinkConfig::new(addr.to_string(), "node-1")).unwrap();
+        let sink = SyslogSink::new(SyslogSinkConfig::new(
+            addr.to_string(),
+            "node-1",
+            "keystone",
+        ))
+        .unwrap();
         sink.write_batch(&[event(&d, "create"), event(&d, "delete")])
             .await
             .expect("delivery succeeds");
@@ -387,7 +396,12 @@ mod tests {
             buf
         });
 
-        let sink = SyslogSink::new(SyslogSinkConfig::new(addr.to_string(), "node-1")).unwrap();
+        let sink = SyslogSink::new(SyslogSinkConfig::new(
+            addr.to_string(),
+            "node-1",
+            "keystone",
+        ))
+        .unwrap();
         sink.write_lines("raft-audit", &["{\"record\":{}}".to_string()])
             .await
             .expect("delivery succeeds");
@@ -411,7 +425,12 @@ mod tests {
             l.local_addr().unwrap()
         };
         let d = dispatcher();
-        let sink = SyslogSink::new(SyslogSinkConfig::new(addr.to_string(), "node-1")).unwrap();
+        let sink = SyslogSink::new(SyslogSinkConfig::new(
+            addr.to_string(),
+            "node-1",
+            "keystone",
+        ))
+        .unwrap();
         let err = sink.write_batch(&[event(&d, "create")]).await.unwrap_err();
         assert!(matches!(err, SinkError::Io(_)), "got {err:?}");
     }
@@ -429,7 +448,7 @@ mod tests {
         });
 
         let d = dispatcher();
-        let mut cfg = SyslogSinkConfig::new(addr.to_string(), "node-1");
+        let mut cfg = SyslogSinkConfig::new(addr.to_string(), "node-1", "keystone");
         cfg.write_timeout = Duration::from_millis(200);
         let sink = SyslogSink::new(cfg).unwrap();
         let batch: Vec<CadfEvent> = (0..40_000).map(|_| event(&d, "create")).collect();
@@ -468,7 +487,7 @@ mod tests {
         });
 
         let d = dispatcher();
-        let mut cfg = SyslogSinkConfig::new(format!("localhost:{port}"), "node-1");
+        let mut cfg = SyslogSinkConfig::new(format!("localhost:{port}"), "node-1", "keystone");
         cfg.tls = true;
         cfg.ca_file = Some(ca_file);
         let sink = SyslogSink::new(cfg).unwrap();
@@ -507,7 +526,7 @@ mod tests {
         });
 
         let d = dispatcher();
-        let mut cfg = SyslogSinkConfig::new(format!("localhost:{port}"), "node-1");
+        let mut cfg = SyslogSinkConfig::new(format!("localhost:{port}"), "node-1", "keystone");
         cfg.tls = true;
         cfg.ca_file = Some(ca_file);
         let sink = SyslogSink::new(cfg).unwrap();
