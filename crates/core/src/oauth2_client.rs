@@ -20,6 +20,7 @@
 pub mod backend;
 pub mod crypto;
 pub mod error;
+pub mod id_token;
 pub mod pkce;
 mod provider_api;
 pub mod service;
@@ -30,6 +31,7 @@ pub mod verify;
 #[cfg(any(test, feature = "mock"))]
 pub use crate::mocks::MockOauth2ClientProvider;
 pub use error::Oauth2ClientProviderError;
+pub use id_token::{IdTokenClaimsError, IdTokenParams, TemplateScope, build_id_token_claims};
 pub use provider_api::Oauth2ClientApi;
 pub use service::Oauth2ClientService;
 pub use token::{build_access_token_claims, hydrate_client_credentials_context};

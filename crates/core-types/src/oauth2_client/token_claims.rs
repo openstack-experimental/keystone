@@ -64,7 +64,7 @@ pub struct IdTokenClaims {
     /// Per-`OAuth2Client` `claims_template` output (ADR 0026 §4, "Claim
     /// Safety"): interpolated `email`, `groups`, `roles`, etc.
     #[serde(flatten)]
-    pub extra_claims: HashMap<String, String>,
+    pub extra_claims: HashMap<String, serde_json::Value>,
 }
 
 /// Minimal `access_token` issued on `authorization_code`/`refresh_token`
@@ -301,7 +301,7 @@ mod tests {
     #[test]
     fn test_id_token_claims_flattens_extra_claims() {
         let mut extra_claims = HashMap::new();
-        extra_claims.insert("email".to_string(), "user@example.com".to_string());
+        extra_claims.insert("email".to_string(), "user@example.com".into());
         let claims = IdTokenClaims {
             iss: "https://ks.example/v4/oauth2/d1".to_string(),
             sub: "user-1".to_string(),

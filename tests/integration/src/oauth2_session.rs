@@ -30,6 +30,7 @@ use tracing_test::traced_test;
 use uuid::Uuid;
 
 use openstack_keystone_core::auth::ExecutionContext;
+use openstack_keystone_core::oauth2_client::{IdTokenParams, TemplateScope, build_id_token_claims};
 use openstack_keystone_core::oauth2_session::backend::Oauth2SessionBackend;
 use openstack_keystone_core::oauth2_session::{
     IssueAuthorizationCodeRequest, IssueRefreshTokenRequest, Oauth2SessionHook,
@@ -345,6 +346,88 @@ async fn test_client_delete_revokes_refresh_families() -> Result<()> {
         assert_eq!(member.revocation_reason.as_deref(), Some("client_revoked"));
     }
 
+    Ok(())
+}
+
+/// Issue #1264: `profile`/`email` scopes populate the standard claims and
+/// the client's `claims_template` is interpolated into the `id_token`.
+#[tokio::test]
+#[traced_test]
+async fn test_id_token_claims_include_profile_email_and_template() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let uid = Uuid::new_v4().simple().to_string();
+    let ctx = ExecutionContext::internal(&state);
+
+    state
+        .provider
+        .get_identity_provider()
+        .create_user(
+            &ctx,
+            UserCreateBuilder::default()
+                .id(&uid)
+                .name("claims-user")
+                .domain_id(domain.id.clone())
+                .enabled(true)
+                .extra(std::collections::HashMap::from([(
+                    "email".to_string(),
+                    serde_json::json!("claims-user@example.com"),
+                )]))
+                .build()?,
+        )
+        .await?;
+
+    let (client, _secret) = state
+        .provider
+        .get_oauth2_client_provider()
+        .create(
+            &ctx,
+            OAuth2ClientResourceCreateBuilder::default()
+                .client_id("")
+                .provider_id(format!("provider-{}", domain.id))
+                .domain_id(domain.id.clone())
+                .token_endpoint_auth_method("client_secret_basic")
+                .grant_types(vec![GrantType::AuthorizationCode])
+                .claims_template(std::collections::HashMap::from([(
+                    "tenant".to_string(),
+                    "${user.domain_id}".to_string(),
+                )]))
+                .build()?,
+            true,
+        )
+        .await?;
+
+    let claims = build_id_token_claims(
+        &state,
+        &client,
+        IdTokenParams {
+            issuer: format!("https://keystone.example.com/v4/oauth2/{}", domain.id),
+            user_id: uid.clone(),
+            client_id: client.client_id.clone(),
+            now: 1_000,
+            lifetime: 900,
+            auth_time: 1_000,
+            nonce: Some("nonce-1".to_string()),
+            amr: vec!["pwd".to_string()],
+            at_hash: None,
+        },
+        &[
+            "openid".to_string(),
+            "profile".to_string(),
+            "email".to_string(),
+        ],
+        &TemplateScope::default(),
+    )
+    .await?;
+
+    // Round-trip through JSON as the signed token would carry it.
+    let value = serde_json::to_value(&claims)?;
+    assert_eq!(value["sub"], uid.as_str());
+    assert_eq!(value["tenant"], domain.id.as_str());
+    assert_eq!(value["email"], "claims-user@example.com");
+    assert_eq!(value["email_verified"], false);
+    assert_eq!(value["name"], "claims-user");
+    assert_eq!(value["preferred_username"], "claims-user");
     Ok(())
 }
 

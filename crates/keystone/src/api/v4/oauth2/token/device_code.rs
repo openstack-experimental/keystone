@@ -19,10 +19,9 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
+use openstack_keystone_core::oauth2_client::{IdTokenParams, TemplateScope, build_id_token_claims};
 use openstack_keystone_core::oauth2_session::{DevicePollOutcome, IssueRefreshTokenRequest};
-use openstack_keystone_core_types::oauth2_client::{
-    GrantType, IdTokenClaims, OidcAccessTokenClaims,
-};
+use openstack_keystone_core_types::oauth2_client::{GrantType, OidcAccessTokenClaims};
 
 use crate::audit::{build_initiator_unknown, emit_oauth2_session_event};
 use crate::keystone::ServiceState;
@@ -147,20 +146,25 @@ pub(super) async fn handle_device_code_grant(
         let access_token = sign_jwt(state, domain_id, &access_claims).await?;
 
         let id_token = if record.scope.iter().any(|s| s == "openid") {
-            let id_claims = IdTokenClaims {
-                iss: issuer,
-                sub: user_id.clone(),
-                aud: client_id.clone(),
-                exp: now + id_lifetime,
-                iat: now,
-                nbf: now,
-                auth_time,
-                nonce: record.nonce.clone(),
-                amr: record.amr.clone(),
-                at_hash: Some(compute_at_hash(&access_token)),
-                token_use: "id".to_string(),
-                extra_claims: Default::default(),
-            };
+            let id_claims = build_id_token_claims(
+                state,
+                &client,
+                IdTokenParams {
+                    issuer,
+                    user_id: user_id.clone(),
+                    client_id: client_id.clone(),
+                    now,
+                    lifetime: id_lifetime,
+                    auth_time,
+                    nonce: record.nonce.clone(),
+                    amr: record.amr.clone(),
+                    at_hash: Some(compute_at_hash(&access_token)),
+                },
+                &record.scope,
+                &TemplateScope::default(),
+            )
+            .await
+            .map_err(id_token_error)?;
             Some(sign_jwt(state, domain_id, &id_claims).await?)
         } else {
             None

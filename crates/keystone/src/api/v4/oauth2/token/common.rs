@@ -99,6 +99,15 @@ pub(super) async fn sign_jwt<T: Serialize>(
     })
 }
 
+/// Map an `id_token` claim construction failure to a token error: never a
+/// partial token (ADR 0026 §4, "Claim Safety").
+pub(super) fn id_token_error(
+    e: openstack_keystone_core::oauth2_client::IdTokenClaimsError,
+) -> Oauth2TokenError {
+    tracing::error!(error = %e, "oauth2 id_token claims construction failed");
+    Oauth2TokenError::internal("token issuance failed")
+}
+
 /// OIDC Core §3.2.2.10 `at_hash`: left half of `SHA-256(access_token)`,
 /// base64url-encoded. Binds an `id_token` to its co-issued `access_token`.
 pub(super) fn compute_at_hash(access_token: &str) -> String {

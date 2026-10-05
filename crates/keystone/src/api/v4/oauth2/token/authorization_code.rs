@@ -20,11 +20,11 @@ use axum::{
 };
 use governor::clock::Clock as _;
 
-use openstack_keystone_core::oauth2_client::pkce;
-use openstack_keystone_core::oauth2_session::IssueRefreshTokenRequest;
-use openstack_keystone_core_types::oauth2_client::{
-    GrantType, IdTokenClaims, OidcAccessTokenClaims,
+use openstack_keystone_core::oauth2_client::{
+    IdTokenParams, TemplateScope, build_id_token_claims, pkce,
 };
+use openstack_keystone_core::oauth2_session::IssueRefreshTokenRequest;
+use openstack_keystone_core_types::oauth2_client::{GrantType, OidcAccessTokenClaims};
 
 use crate::audit::{build_initiator_unknown, emit_oauth2_session_event};
 use crate::keystone::ServiceState;
@@ -175,20 +175,25 @@ pub(super) async fn handle_authorization_code_grant(
         };
         let access_token = sign_jwt(state, domain_id, &access_claims).await?;
 
-        let id_claims = IdTokenClaims {
-            iss: issuer,
-            sub: record.user_id.clone(),
-            aud: client_id.clone(),
-            exp: now + id_lifetime,
-            iat: now,
-            nbf: now,
-            auth_time: record.auth_time,
-            nonce: record.nonce.clone(),
-            amr: record.amr.clone(),
-            at_hash: Some(compute_at_hash(&access_token)),
-            token_use: "id".to_string(),
-            extra_claims: Default::default(),
-        };
+        let id_claims = build_id_token_claims(
+            state,
+            &client,
+            IdTokenParams {
+                issuer,
+                user_id: record.user_id.clone(),
+                client_id: client_id.clone(),
+                now,
+                lifetime: id_lifetime,
+                auth_time: record.auth_time,
+                nonce: record.nonce.clone(),
+                amr: record.amr.clone(),
+                at_hash: Some(compute_at_hash(&access_token)),
+            },
+            &record.scope,
+            &TemplateScope::default(),
+        )
+        .await
+        .map_err(id_token_error)?;
         let id_token = sign_jwt(state, domain_id, &id_claims).await?;
         Ok::<_, Oauth2TokenError>((access_token, id_token))
     }
@@ -388,6 +393,57 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_eq!(json_body(response).await["error"], "invalid_scope");
+    }
+
+    #[tokio::test]
+    async fn test_authorization_code_id_token_has_profile_email_and_template() {
+        let mut client = public_authz_code_client().await;
+        client.claims_template = std::collections::HashMap::from([(
+            "tenant".to_string(),
+            "${user.domain_id}".to_string(),
+        )]);
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_get_by_client_id()
+            .returning(move |_, _| Ok(Some(client.clone())));
+
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_redeem_authorization_code()
+            .returning(|_, _| {
+                Ok(Some(sample_authz_code(vec![
+                    "openid".to_string(),
+                    "profile".to_string(),
+                    "email".to_string(),
+                ])))
+            });
+
+        let mut user = refresh_user(true, "domain-1");
+        user.extra
+            .insert("email".to_string(), serde_json::json!("u@example.com"));
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock)
+            .mock_oauth2_session(session_mock)
+            .mock_identity(refresh_identity_mock(Some(user)))
+            .mock_oauth2_key(ok_key_mock());
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(request(&authz_code_form(PKCE_VERIFIER)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        let claims = jwt_claims(body["id_token"].as_str().unwrap());
+        assert_eq!(claims["sub"], "user-1");
+        assert_eq!(claims["tenant"], "domain-1");
+        assert_eq!(claims["email"], "u@example.com");
+        assert_eq!(claims["email_verified"], false);
+        assert!(claims.get("name").is_some());
     }
 
     #[tokio::test]

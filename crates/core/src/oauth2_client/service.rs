@@ -39,7 +39,7 @@ const BACKEND_NAME: &str = "raft";
 /// `OpenStackScope` (ADR 0026 §4, "Claim Safety"). A `claims_template` key
 /// colliding with one of these is rejected at save time so a client cannot
 /// override a baseline claim via `#[serde(flatten)]`.
-const RESERVED_CLAIM_NAMES: &[&str] = &[
+pub(crate) const RESERVED_CLAIM_NAMES: &[&str] = &[
     "sub",
     "iss",
     "aud",
@@ -87,12 +87,17 @@ fn oauth2_client_event(operation: Operation, domain_id: &str, provider_id: &str)
 fn validate_claims_template(
     claims_template: &std::collections::HashMap<String, String>,
 ) -> Result<(), Oauth2ClientProviderError> {
-    for key in claims_template.keys() {
+    for (key, template) in claims_template {
         if RESERVED_CLAIM_NAMES.contains(&key.as_str()) {
             return Err(Oauth2ClientProviderError::Validation(format!(
                 "claims_template key `{key}` collides with a reserved claim name"
             )));
         }
+        super::id_token::validate_template(template).map_err(|reason| {
+            Oauth2ClientProviderError::Validation(format!(
+                "claims_template value for `{key}` is invalid: {reason}"
+            ))
+        })?;
     }
     Ok(())
 }
