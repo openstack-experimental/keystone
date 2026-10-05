@@ -1308,6 +1308,215 @@ mod tests {
         assert!(success, "Config did not update after file change");
     }
 
+    /// Overlay precedence is part of the python-keystone compatibility
+    /// contract: `OS_*` env beats the site-vars file, which beats the main
+    /// config file.
+    #[test]
+    #[serial]
+    fn test_overlay_precedence_env_over_site_vars_over_file() {
+        let mut site_vars_file = NamedTempFile::with_suffix(".toml").unwrap();
+        write!(
+            site_vars_file,
+            r#"
+    [database]
+    connection = "from-site-vars"
+    [api_policy]
+    opa_base_url = "http://site-vars/"
+            "#
+        )
+        .unwrap();
+        let mut cfg_file = NamedTempFile::new().unwrap();
+        write!(
+            cfg_file,
+            r#"
+    [auth]
+    methods = []
+    [database]
+    connection = "from-file"
+    [api_policy]
+    opa_base_url = "http://file/"
+    [identity]
+    max_password_length = 77
+            "#
+        )
+        .unwrap();
+
+        temp_env::with_vars(
+            [
+                (
+                    "KEYSTONE_SITE_VARS_FILE",
+                    Some(site_vars_file.path().as_os_str()),
+                ),
+                (
+                    "OS_API_POLICY__OPA_BASE_URL",
+                    Some(std::ffi::OsStr::new("http://env/")),
+                ),
+            ],
+            || {
+                let cfg = block_on_config_new(cfg_file.path().to_path_buf()).unwrap();
+                // env > site-vars > file
+                assert_eq!("http://env/", cfg.api_policy.opa_base_url.to_string());
+                // site-vars > file
+                assert_eq!(cfg.database.connection.expose_secret(), "from-site-vars");
+                // untouched file value survives the overlays
+                assert_eq!(77, cfg.identity.max_password_length);
+            },
+        );
+    }
+
+    /// A reload that fails to parse keeps serving the last-known-good
+    /// configuration and does not notify listeners; a later valid edit
+    /// recovers.
+    #[tokio::test]
+    #[parallel]
+    async fn test_invalid_reload_retains_last_known_good() {
+        let dir = tempdir().unwrap();
+        let config_path = setup_files(dir.path());
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        let manager = ConfigManager::watched(config_path.clone())
+            .await
+            .expect("Should initialize");
+        let mut rx = manager.notify_tx.subscribe();
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        // `[auth]` is required: a file without it cannot be loaded.
+        fs::write(
+            &config_path,
+            r#"
+    [database]
+    connection = "broken"
+    "#,
+        )
+        .unwrap();
+
+        // Wait well past the notify + debounce window.
+        sleep(Duration::from_millis(1500)).await;
+        assert_eq!(
+            manager
+                .config
+                .read()
+                .await
+                .database
+                .connection
+                .expose_secret(),
+            "foo",
+            "invalid reload must keep the last-known-good config"
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "invalid reload must not notify listeners"
+        );
+
+        // Recovery: a valid edit is picked up and announced.
+        fs::write(
+            &config_path,
+            r#"
+    [auth]
+    methods = []
+    [database]
+    connection = "recovered"
+    "#,
+        )
+        .unwrap();
+        timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("listeners must be notified after a valid reload")
+            .expect("notify channel open");
+        assert_eq!(
+            manager
+                .config
+                .read()
+                .await
+                .database
+                .connection
+                .expose_secret(),
+            "recovered"
+        );
+    }
+
+    /// A burst of file events must neither wedge the watcher (the notify
+    /// callback uses `try_send` to avoid deadlocking notify's single event
+    /// thread) nor lose the final state: after the burst settles the manager
+    /// serves the last written value.
+    #[tokio::test]
+    #[parallel]
+    async fn test_event_burst_converges_to_last_write() {
+        let dir = tempdir().unwrap();
+        let config_path = setup_files(dir.path());
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        let manager = ConfigManager::watched(config_path.clone())
+            .await
+            .expect("Should initialize");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        for i in 0..50 {
+            fs::write(
+                &config_path,
+                format!("[auth]\nmethods = []\n[database]\nconnection = \"burst-{i}\"\n"),
+            )
+            .unwrap();
+        }
+
+        let mut converged = false;
+        for _ in 0..25 {
+            sleep(Duration::from_millis(200)).await;
+            if manager
+                .config
+                .read()
+                .await
+                .database
+                .connection
+                .expose_secret()
+                == "burst-49"
+            {
+                converged = true;
+                break;
+            }
+        }
+        assert!(converged, "manager did not converge to the last write");
+    }
+
+    /// `shutdown()` on a watched manager stops the watcher, is idempotent and
+    /// leaves the last loaded config readable.
+    #[tokio::test]
+    #[parallel]
+    async fn test_watched_shutdown_is_idempotent() {
+        let dir = tempdir().unwrap();
+        let config_path = setup_files(dir.path());
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        let manager = ConfigManager::watched(config_path.clone())
+            .await
+            .expect("Should initialize");
+
+        timeout(Duration::from_secs(5), manager.shutdown())
+            .await
+            .expect("first shutdown completes");
+        timeout(Duration::from_secs(5), manager.shutdown())
+            .await
+            .expect("second shutdown completes");
+
+        // The watcher is gone: later edits are not applied.
+        fs::write(
+            &config_path,
+            "[auth]\nmethods = []\n[database]\nconnection = \"after\"\n",
+        )
+        .unwrap();
+        sleep(Duration::from_millis(1200)).await;
+        assert_eq!(
+            manager
+                .config
+                .read()
+                .await
+                .database
+                .connection
+                .expose_secret(),
+            "foo"
+        );
+    }
+
     #[tokio::test]
     #[parallel]
     async fn test_reload_on_cert_change() {
