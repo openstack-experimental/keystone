@@ -271,3 +271,64 @@ async fn callback_inner(
     )
         .into_response())
 }
+
+#[cfg(test)]
+mod tests {
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode, header},
+    };
+    use serde_json::json;
+    use tower::ServiceExt;
+    use tower_http::trace::TraceLayer;
+
+    use super::openapi_router;
+    use crate::federation::MockFederationProvider;
+    use crate::provider::Provider;
+
+    /// An unknown auth state is rejected before any IdP is known: the single
+    /// perimeter record carries an `unknown` initiator without a host.
+    #[tokio::test]
+    async fn test_callback_with_unknown_state_emits_failure_event() {
+        let mut federation_mock = MockFederationProvider::default();
+        federation_mock
+            .expect_get_auth_state()
+            .returning(|_, _| Ok(None));
+        let (state, mut receivers) =
+            openstack_keystone_core::api::tests::get_mocked_state_with_audit(
+                Provider::mocked_builder().mock_federation(federation_mock),
+                true,
+                openstack_keystone_config::Config::default(),
+            )
+            .await;
+
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri("/oidc/callback")
+                    .method("POST")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&json!({"state": "missing", "code": "c"})).unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let event = receivers
+            .perimeter
+            .try_recv()
+            .expect("perimeter audit event should have been emitted");
+        assert_eq!(event.payload().outcome(), "failure");
+        let initiator = event.payload().initiator();
+        assert_eq!(initiator.id(), "unknown");
+        assert!(initiator.host().is_none());
+        assert!(receivers.perimeter.try_recv().is_err(), "exactly one event");
+    }
+}

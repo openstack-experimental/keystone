@@ -249,3 +249,57 @@ async fn login_inner(
     )
         .into_response())
 }
+
+#[cfg(test)]
+mod tests {
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode, header},
+    };
+    use tower::ServiceExt;
+    use tower_http::trace::TraceLayer;
+
+    use super::openapi_router;
+    use crate::provider::Provider;
+
+    async fn login_without_bearer(uri: &str) -> (StatusCode, Option<cadf::CadfEvent>) {
+        let (state, mut receivers) =
+            openstack_keystone_core::api::tests::get_mocked_state_with_audit(
+                Provider::mocked_builder(),
+                true,
+                openstack_keystone_config::Config::default(),
+            )
+            .await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let response = api
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .method("POST")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        (response.status(), receivers.perimeter.try_recv().ok())
+    }
+
+    /// A rejected login still leaves exactly one perimeter record, with an
+    /// unknown initiator, a `failure` outcome and the IdP as `host.id`.
+    #[tokio::test]
+    async fn test_rejected_login_emits_failure_event_with_idp_host() {
+        let (status, event) = login_without_bearer("/identity_providers/idp-1/jwt").await;
+        assert!(status.is_client_error(), "got {status}");
+
+        let event = event.expect("perimeter audit event should have been emitted");
+        assert_eq!(event.payload().action(), "authenticate");
+        assert_eq!(event.payload().outcome(), "failure");
+        let initiator = event.payload().initiator();
+        assert_eq!(initiator.id(), "unknown");
+        assert_eq!(initiator.host().expect("host").id(), Some("idp-1"));
+    }
+}
