@@ -1146,4 +1146,112 @@ mod tests {
         assert_eq!(count1.load(Ordering::SeqCst), 1);
         assert_eq!(count2.load(Ordering::SeqCst), 1);
     }
+
+    /// Audit hook counting its calls and optionally failing.
+    struct CountingHook {
+        calls: Arc<AtomicUsize>,
+        fail: bool,
+    }
+
+    #[async_trait]
+    impl AuditHook for CountingHook {
+        async fn on_auditable_event(
+            &self,
+            _ctx: &ValidatedSecurityContext,
+            _event: &Event,
+            _outcome: &AuditOutcome,
+        ) -> Result<(), AuditDispatchError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if self.fail {
+                Err(AuditDispatchError::HookFailed {
+                    description: "injected test failure",
+                })
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    /// One failing audit hook must not stop the others from recording the
+    /// event, while the operation is still refused.
+    #[tokio::test]
+    async fn emit_critical_runs_every_hook_when_one_fails() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let dispatcher = EventDispatcher::new(4);
+        for fail in [false, true, false] {
+            dispatcher
+                .subscribe_audit(Arc::new(CountingHook {
+                    calls: Arc::clone(&calls),
+                    fail,
+                }))
+                .await;
+        }
+
+        let result = dispatcher
+            .emit_critical(&make_vsc(), &make_event(), &AuditOutcome::Attempt)
+            .await;
+
+        assert!(matches!(result, Err(AuditDispatchError::HookFailed { .. })));
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    /// Every subscribed audit hook sees the event, and each subscription gets
+    /// its own id.
+    #[tokio::test]
+    async fn subscribe_audit_registers_independent_hooks() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let dispatcher = EventDispatcher::new(4);
+        let first = dispatcher
+            .subscribe_audit(Arc::new(CountingHook {
+                calls: Arc::clone(&calls),
+                fail: false,
+            }))
+            .await;
+        let second = dispatcher
+            .subscribe_audit(Arc::new(CountingHook {
+                calls: Arc::clone(&calls),
+                fail: false,
+            }))
+            .await;
+        assert_ne!(first, second);
+
+        dispatcher
+            .emit_critical(&make_vsc(), &make_event(), &AuditOutcome::Success)
+            .await
+            .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    /// Provider hooks are removable: after `unsubscribe` the hook is no longer
+    /// called and a second `unsubscribe` reports it was already gone.
+    #[tokio::test]
+    async fn unsubscribed_provider_hook_is_not_called() {
+        struct Counter(Arc<AtomicUsize>);
+        #[async_trait]
+        impl ProviderHooks for Counter {
+            async fn on_event(&self, _event: &Event) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let calls = Arc::new(AtomicUsize::new(0));
+        let dispatcher = EventDispatcher::new(4);
+        let id = dispatcher
+            .subscribe(Arc::new(Counter(Arc::clone(&calls))))
+            .await;
+
+        dispatcher.emit(make_event()).await;
+        for _ in 0..50 {
+            if calls.load(Ordering::SeqCst) == 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        assert!(dispatcher.unsubscribe(id).await);
+        assert!(!dispatcher.unsubscribe(id).await);
+        dispatcher.emit(make_event()).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
 }

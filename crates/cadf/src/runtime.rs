@@ -773,4 +773,105 @@ mod tests {
         assert!(!sealed.exists(), "acknowledged segment is removed");
         assert!(live.exists(), "the live extra spool is never touched");
     }
+
+    /// Run the service once, queueing `count` events, and stop it again so
+    /// the live spool is left behind for the next start to seal.
+    async fn run_once(cfg: &AuditConfig, count: usize) {
+        let token = CancellationToken::new();
+        let (dispatcher, writer) = init_with(cfg, &token).await.expect("init audit");
+        for _ in 0..count {
+            dispatcher
+                .dispatch_critical(test_event(&dispatcher))
+                .await
+                .expect("critical channel is open");
+        }
+        token.cancel();
+        writer.expect("writer is started").await.unwrap();
+    }
+
+    fn files_with_prefix(dir: &Path, prefix: &str) -> Vec<PathBuf> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with(prefix))
+            })
+            .collect()
+    }
+
+    /// The previous run's spool is sealed (not re-dispatched or truncated)
+    /// and the new run starts on an empty live file.
+    #[tokio::test]
+    async fn init_seals_the_previous_spool_and_starts_fresh() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().to_path_buf());
+        run_once(&cfg, 7).await;
+
+        let token = CancellationToken::new();
+        let (dispatcher, writer) = init_with(&cfg, &token).await.expect("restart");
+        dispatcher
+            .dispatch_critical(test_event(&dispatcher))
+            .await
+            .unwrap();
+        token.cancel();
+        writer.expect("writer is started").await.unwrap();
+
+        let segments = files_with_prefix(tmp.path(), "audit-spool-test-node.jsonl.seg-");
+        assert_eq!(segments.len(), 1, "previous spool is sealed once");
+        let sealed = std::fs::read_to_string(&segments[0]).unwrap();
+        assert_eq!(sealed.lines().count(), 7, "nothing lost or duplicated");
+        let live = std::fs::read_to_string(spool_path(tmp.path(), "test-node")).unwrap();
+        assert_eq!(live.lines().count(), 1, "live spool holds only new events");
+    }
+
+    /// A tampered line in the previous run's spool is detected at startup and
+    /// the segment is left behind under a `.quarantine-` name.
+    #[tokio::test]
+    async fn init_quarantines_a_tampered_previous_spool() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().to_path_buf());
+        run_once(&cfg, 3).await;
+
+        let live = spool_path(tmp.path(), "test-node");
+        let tampered = std::fs::read_to_string(&live)
+            .unwrap()
+            .replace("authenticate", "authenticatx");
+        std::fs::write(&live, tampered).unwrap();
+
+        let token = CancellationToken::new();
+        let (dispatcher, writer) = init_with(&cfg, &token).await.expect("restart");
+        let mut quarantined = Vec::new();
+        for _ in 0..100 {
+            quarantined = files_with_prefix(tmp.path(), "audit-spool-test-node.jsonl.seg-")
+                .into_iter()
+                .filter(|path| path.to_string_lossy().contains(".quarantine-"))
+                .collect();
+            if !quarantined.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        token.cancel();
+        writer.expect("writer is started").await.unwrap();
+
+        assert_eq!(quarantined.len(), 1, "tampered segment is kept, renamed");
+        assert_eq!(dispatcher.metrics().spool_quarantined.get(), 1);
+    }
+
+    /// Only one process may own a spool: a second start on the same
+    /// directory and node id is refused while the first writer runs.
+    #[tokio::test]
+    async fn second_init_on_the_same_spool_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().to_path_buf());
+        let token = CancellationToken::new();
+        let (_dispatcher, writer) = init_with(&cfg, &token).await.expect("first init");
+
+        let second = init_with(&cfg, &CancellationToken::new()).await;
+        assert!(matches!(second, Err(RuntimeError::Lock(_))));
+
+        token.cancel();
+        writer.expect("writer is started").await.unwrap();
+    }
 }
