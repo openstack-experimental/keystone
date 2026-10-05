@@ -11,6 +11,7 @@ homepage.workspace = true
 exclude.workspace = true
 
 [dependencies]
+cadf.workspace = true
 chrono = { workspace = true, features = ["now", "serde"] }
 config = { workspace = true, features = ["async", "ini", "toml"] }
 derive_builder.workspace = true

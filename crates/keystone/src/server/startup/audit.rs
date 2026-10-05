@@ -31,8 +31,8 @@ use crate::config::AuditSinkConfig;
 use crate::config::Config;
 use cadf::spool::{SpoolLock, run_spool_writer, seal_previous_spool, verify_sealed_spool};
 use cadf::{
-    AuditDispatcher, AuditSink, HmacKeyring, ServiceIdentity, ShipperConfig, SpoolConfig,
-    StdoutSink, run_raw_segment_shipper, run_segment_shipper,
+    AuditDispatcher, AuditSink, HmacKeyring, ServiceIdentity, StdoutSink, run_raw_segment_shipper,
+    run_segment_shipper,
 };
 
 /// Identity under which Keystone writes audit records: the HKDF label of the
@@ -139,14 +139,15 @@ fn resolve_path(path: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
 fn check_kek_location(cfg: &openstack_keystone_config::AuditConfig) -> Result<(), Report> {
     let Some(explicit) = &cfg.hmac_kek_file else {
         warn!(
-            path = %cfg.hmac_kek_path().display(),
+            path = %cfg.hmac_kek_path(&AUDIT_SERVICE).display(),
             "audit HMAC key is stored inside spool_dir; set `[audit] hmac_kek_file` to a \
              location that spool writers cannot read"
         );
         return Ok(());
     };
     let key = resolve_path(explicit).wrap_err("cannot resolve [audit] hmac_kek_file")?;
-    let spool = resolve_path(&cfg.spool_dir).wrap_err("cannot resolve [audit] spool_dir")?;
+    let spool = resolve_path(&cfg.spool_dir(&AUDIT_SERVICE))
+        .wrap_err("cannot resolve [audit] spool_dir")?;
     if key.starts_with(&spool) {
         return Err(eyre::eyre!(
             "[audit] hmac_kek_file {} must not be inside spool_dir {}",
@@ -224,9 +225,9 @@ pub async fn init(
         return Ok((AuditDispatcher::disabled(audit_cfg.node_id.as_str()), None));
     }
     audit_cfg.validate_node_id().map_err(|e| eyre::eyre!(e))?;
-    let spool_dir = audit_cfg.spool_dir.clone();
+    let spool_dir = audit_cfg.spool_dir(&AUDIT_SERVICE);
     let node_id = audit_cfg.node_id.clone();
-    let kek_path = audit_cfg.hmac_kek_path();
+    let kek_path = audit_cfg.hmac_kek_path(&AUDIT_SERVICE);
     check_kek_location(&audit_cfg)?;
     std::fs::create_dir_all(&spool_dir).wrap_err("failed to create audit spool directory")?;
 
@@ -266,15 +267,7 @@ pub async fn init(
     // One writer drains both QoS channels. It owns the spool lock: it runs
     // until shutdown is requested or the dispatcher is dropped, so the lock
     // lives as long as the spool is in use.
-    let spool_cfg = SpoolConfig {
-        max_segment_bytes: audit_cfg.spool_max_segment_bytes,
-        max_segment_age: Duration::from_secs(audit_cfg.spool_max_segment_age_secs),
-        max_segments: audit_cfg.spool_max_segments,
-        max_bytes: audit_cfg.spool_max_bytes,
-        retention: audit_cfg.spool_retention_secs.map(Duration::from_secs),
-        drain_timeout: Duration::from_secs(audit_cfg.spool_drain_timeout_secs),
-        metrics: Arc::clone(audit_dispatcher.metrics()),
-    };
+    let spool_cfg = audit_cfg.spool_config(Arc::clone(audit_dispatcher.metrics()));
     let spool_bytes = audit_dispatcher.spool_bytes_handle();
     let writer_dir = spool_dir.clone();
     let writer_node_id = node_id.clone();
@@ -299,6 +292,7 @@ pub async fn init(
         })
     });
 
+    let shipper_cfg = audit_cfg.shipper_config(Arc::clone(audit_dispatcher.metrics()));
     let sink: Option<Arc<dyn AuditSink>> = match audit_cfg.sink {
         AuditSinkConfig::None => None,
         AuditSinkConfig::Stdout => Some(Arc::new(StdoutSink)),
@@ -313,22 +307,11 @@ pub async fn init(
             endpoint,
             tls,
             ca_file,
-            app_name,
+            app_name.unwrap_or_else(|| AUDIT_SERVICE.name().to_string()),
             connect_timeout_secs,
             write_timeout_secs,
             node_id.as_str(),
         )?),
-    };
-    // A zero interval or backoff would turn the shipper into a busy loop
-    // against a failing sink, so each is raised to one second and the
-    // ceiling never sits below the starting backoff.
-    let initial_backoff = Duration::from_secs(audit_cfg.shipper_initial_backoff_secs.max(1));
-    let shipper_cfg = ShipperConfig {
-        batch_size: audit_cfg.shipper_batch_size.max(1),
-        poll_interval: Duration::from_secs(audit_cfg.shipper_poll_interval_secs.max(1)),
-        initial_backoff,
-        max_backoff: Duration::from_secs(audit_cfg.shipper_max_backoff_secs).max(initial_backoff),
-        metrics: Arc::clone(audit_dispatcher.metrics()),
     };
     // The raft storage layer keeps its own signed audit spool (ADR 0016-v2
     // §3.1) with a different key hierarchy and record shape. Its sealed
@@ -417,7 +400,7 @@ mod tests {
 
     fn test_config(spool_dir: PathBuf) -> Config {
         let mut cfg = Config::default();
-        cfg.audit.spool_dir = spool_dir;
+        cfg.audit.spool_dir = Some(spool_dir);
         cfg.audit.node_id = "test-node".into();
         cfg
     }
@@ -485,8 +468,12 @@ mod tests {
     async fn init_audit_rejects_wrong_length_kek() {
         let tmp = tempfile::tempdir().unwrap();
         let cfg = test_config(tmp.path().to_path_buf());
-        std::fs::create_dir_all(&cfg.audit.spool_dir).unwrap();
-        std::fs::write(cfg.audit.spool_dir.join("hmac-key.bin"), b"too-short").unwrap();
+        std::fs::create_dir_all(cfg.audit.spool_dir(&AUDIT_SERVICE)).unwrap();
+        std::fs::write(
+            cfg.audit.spool_dir(&AUDIT_SERVICE).join("hmac-key.bin"),
+            b"too-short",
+        )
+        .unwrap();
 
         match init(&cfg, &CancellationToken::new()).await {
             Ok(_) => panic!("expected init_audit to reject a malformed key file"),
@@ -574,7 +561,7 @@ mod tests {
             .expect("disabled audit must not need a writable spool_dir");
         assert!(writer.is_none());
         assert!(!dispatcher.is_enabled());
-        assert!(!cfg.audit.spool_dir.exists());
+        assert!(!cfg.audit.spool_dir(&AUDIT_SERVICE).exists());
         dispatcher
             .dispatch_critical(test_event(&dispatcher))
             .await

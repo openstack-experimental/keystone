@@ -163,7 +163,7 @@ pub(crate) mod test_support {
 
     pub(crate) fn test_config(spool_dir: PathBuf) -> Config {
         let mut cfg = Config::default();
-        cfg.audit.spool_dir = spool_dir;
+        cfg.audit.spool_dir = Some(spool_dir);
         cfg.audit.node_id = "test-node".into();
         cfg
     }

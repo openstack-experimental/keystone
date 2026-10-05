@@ -19,6 +19,7 @@ use color_eyre::{Report, eyre::WrapErr};
 use eyre::Result;
 
 use cadf::HmacKeyring;
+use openstack_keystone::server::startup::audit::AUDIT_SERVICE;
 use openstack_keystone_config::Config;
 
 use crate::PerformAction;
@@ -58,7 +59,7 @@ impl PerformAction for AuditCommand {
 
         match self.command {
             AuditCommands::RotateHmacKey => {
-                let path = config.audit.hmac_kek_path();
+                let path = config.audit.hmac_kek_path(&AUDIT_SERVICE);
                 let version = {
                     let path = path.clone();
                     tokio::task::spawn_blocking(move || HmacKeyring::rotate(&path))
@@ -85,7 +86,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut cfg = Config::default();
         cfg.audit.hmac_kek_file = Some(dir.path().join("audit.keyring"));
-        HmacKeyring::load_or_create(&cfg.audit.hmac_kek_path()).unwrap();
+        HmacKeyring::load_or_create(&cfg.audit.hmac_kek_path(&AUDIT_SERVICE)).unwrap();
 
         let command = || AuditCommand {
             verbose: 0,
@@ -94,7 +95,7 @@ mod tests {
         command().take_action(&cfg).await.unwrap();
         command().take_action(&cfg).await.unwrap();
 
-        let keyring = HmacKeyring::load(&cfg.audit.hmac_kek_path())
+        let keyring = HmacKeyring::load(&cfg.audit.hmac_kek_path(&AUDIT_SERVICE))
             .unwrap()
             .unwrap();
         assert_eq!(keyring.current_version(), 3);

@@ -24,6 +24,7 @@
 
 #![deny(clippy::unwrap_used)]
 
+pub mod config;
 pub mod dispatcher;
 pub mod identity;
 pub mod kdf;
@@ -36,6 +37,7 @@ pub mod spool;
 pub mod syslog;
 pub mod types;
 
+pub use config::{AuditConfig, AuditSinkConfig, UNKNOWN_NODE_ID};
 pub use dispatcher::{
     AuditChannelDead, AuditChannelReceivers, AuditDispatcher, DEFAULT_CRITICAL_CHANNEL_CAPACITY,
     DEFAULT_PERIMETER_CHANNEL_CAPACITY,

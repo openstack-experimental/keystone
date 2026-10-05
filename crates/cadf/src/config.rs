@@ -11,15 +11,23 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Audit framework configuration.
+//! Configuration of the audit framework.
+//!
+//! [`AuditConfig`] is the `[audit]` section of a service's configuration file.
+//! Service-specific defaults (spool directory, syslog `APP-NAME`) derive from
+//! the [`ServiceIdentity`] passed to the accessors instead of being stored
+//! here, so every service gets its own without redefining the struct.
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
 
 use serde::Deserialize;
 
-fn default_syslog_app_name() -> String {
-    "keystone".to_string()
-}
+use crate::ServiceIdentity;
+use crate::metrics::AuditMetrics;
+use crate::sink::ShipperConfig;
+use crate::spool::SpoolConfig;
 
 fn default_syslog_connect_timeout_secs() -> u64 {
     10
@@ -31,10 +39,6 @@ fn default_syslog_write_timeout_secs() -> u64 {
 
 fn default_enabled() -> bool {
     true
-}
-
-fn default_spool_dir() -> PathBuf {
-    PathBuf::from("/var/lib/keystone/audit")
 }
 
 fn default_node_id() -> String {
@@ -106,8 +110,8 @@ pub enum AuditSinkConfig {
     /// Write each event as a JSON line to the process's standard output.
     Stdout,
     /// Send each event as an RFC 5424 syslog message (octet-counted framing,
-    /// RFC 6587) over TCP, optionally wrapped in TLS. Requires Keystone to be
-    /// built with the `audit-syslog` feature.
+    /// RFC 6587) over TCP, optionally wrapped in TLS. Requires the service to
+    /// be built with the `syslog` feature of this crate.
     ///
     /// Delivery is at-least-once: a batch that could not be written is
     /// retried, so the receiver may see an event twice and should deduplicate
@@ -122,9 +126,9 @@ pub enum AuditSinkConfig {
         /// the system trust store.
         #[serde(default)]
         ca_file: Option<PathBuf>,
-        /// `APP-NAME` header field. Defaults to `keystone`.
-        #[serde(default = "default_syslog_app_name")]
-        app_name: String,
+        /// `APP-NAME` header field. Defaults to the service name.
+        #[serde(default)]
+        app_name: Option<String>,
         /// Seconds allowed for connecting (including the TLS handshake).
         /// Defaults to 10.
         #[serde(default = "default_syslog_connect_timeout_secs")]
@@ -135,7 +139,8 @@ pub enum AuditSinkConfig {
     },
 }
 
-/// Configuration for the CADF audit framework (ADR 0023).
+/// Configuration of the audit framework, deserialised from a service's
+/// `[audit]` section (ADR 0023).
 #[derive(Debug, Deserialize, Clone)]
 pub struct AuditConfig {
     /// Enable the audit framework. Defaults to `true`.
@@ -147,18 +152,18 @@ pub struct AuditConfig {
     #[serde(default = "default_enabled")]
     pub enabled: bool,
 
-    /// Directory for per-node JSONL spool files.
-    #[serde(default = "default_spool_dir")]
-    pub spool_dir: PathBuf,
+    /// Directory for per-node JSONL spool files. Defaults to
+    /// `/var/lib/<service>/audit`, see [`AuditConfig::spool_dir`].
+    #[serde(default)]
+    pub spool_dir: Option<PathBuf>,
 
     /// File holding the audit HMAC key-encryption-key(s), created with mode
     /// `0600` if missing. It must NOT be inside `spool_dir`: anyone who can
     /// write the spool must not also be able to read the signing key.
     ///
     /// When unset, the legacy location `<spool_dir>/hmac-key.bin` is used so
-    /// existing deployments keep working; Keystone logs a warning. Set this
-    /// explicitly (for example `/etc/keystone/audit-hmac.keyring`) and rotate
-    /// keys with `keystone-manage audit rotate-hmac-key`.
+    /// existing deployments keep working; the service logs a warning. Set this
+    /// explicitly (for example `/etc/<service>/audit-hmac.keyring`).
     #[serde(default)]
     pub hmac_kek_file: Option<PathBuf>,
 
@@ -243,12 +248,48 @@ pub struct AuditConfig {
 pub const UNKNOWN_NODE_ID: &str = "unknown-node";
 
 impl AuditConfig {
+    /// The spool directory: `spool_dir`, or `/var/lib/<service>/audit`.
+    pub fn spool_dir(&self, service: &ServiceIdentity) -> PathBuf {
+        self.spool_dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(format!("/var/lib/{}/audit", service.name())))
+    }
+
     /// Where the HMAC keyring lives: `hmac_kek_file`, or the legacy
     /// `<spool_dir>/hmac-key.bin` when unset.
-    pub fn hmac_kek_path(&self) -> PathBuf {
+    pub fn hmac_kek_path(&self, service: &ServiceIdentity) -> PathBuf {
         self.hmac_kek_file
             .clone()
-            .unwrap_or_else(|| self.spool_dir.join("hmac-key.bin"))
+            .unwrap_or_else(|| self.spool_dir(service).join("hmac-key.bin"))
+    }
+
+    /// Settings of the spool writer, reporting into `metrics`.
+    pub fn spool_config(&self, metrics: Arc<AuditMetrics>) -> SpoolConfig {
+        SpoolConfig {
+            max_segment_bytes: self.spool_max_segment_bytes,
+            max_segment_age: Duration::from_secs(self.spool_max_segment_age_secs),
+            max_segments: self.spool_max_segments,
+            max_bytes: self.spool_max_bytes,
+            retention: self.spool_retention_secs.map(Duration::from_secs),
+            drain_timeout: Duration::from_secs(self.spool_drain_timeout_secs),
+            metrics,
+        }
+    }
+
+    /// Settings of the segment shipper, reporting into `metrics`.
+    ///
+    /// A zero interval or backoff would turn the shipper into a busy loop
+    /// against a failing sink, so each is raised to one second and the ceiling
+    /// never sits below the starting backoff.
+    pub fn shipper_config(&self, metrics: Arc<AuditMetrics>) -> ShipperConfig {
+        let initial_backoff = Duration::from_secs(self.shipper_initial_backoff_secs.max(1));
+        ShipperConfig {
+            batch_size: self.shipper_batch_size.max(1),
+            poll_interval: Duration::from_secs(self.shipper_poll_interval_secs.max(1)),
+            initial_backoff,
+            max_backoff: Duration::from_secs(self.shipper_max_backoff_secs).max(initial_backoff),
+            metrics,
+        }
     }
 
     /// Reject a `node_id` that cannot safely identify a node.
@@ -280,7 +321,7 @@ impl Default for AuditConfig {
     fn default() -> Self {
         Self {
             enabled: default_enabled(),
-            spool_dir: default_spool_dir(),
+            spool_dir: None,
             hmac_kek_file: None,
             node_id: default_node_id(),
             spool_max_segment_bytes: default_spool_max_segment_bytes(),
@@ -304,10 +345,20 @@ impl Default for AuditConfig {
 mod tests {
     use super::*;
 
+    const SERVICE: ServiceIdentity = ServiceIdentity::new("keystone");
+
     #[test]
     fn defaults_apply_to_an_empty_section() {
         let cfg: AuditConfig = serde_json::from_str("{}").unwrap();
-        assert_eq!(cfg.spool_dir, PathBuf::from("/var/lib/keystone/audit"));
+        assert_eq!(cfg.spool_dir, None);
+        assert_eq!(
+            cfg.spool_dir(&SERVICE),
+            PathBuf::from("/var/lib/keystone/audit")
+        );
+        assert_eq!(
+            cfg.spool_dir(&ServiceIdentity::new("glance")),
+            PathBuf::from("/var/lib/glance/audit")
+        );
         assert_eq!(cfg.spool_max_segment_bytes, 256 * 1024 * 1024);
         assert_eq!(cfg.spool_max_segment_age_secs, 24 * 60 * 60);
         assert_eq!(cfg.spool_max_segments, None);
@@ -322,7 +373,7 @@ mod tests {
                 "spool_drain_timeout_secs": 3, "sink": {"type": "stdout"}}"#,
         )
         .unwrap();
-        assert_eq!(cfg.spool_dir, PathBuf::from("/srv/audit"));
+        assert_eq!(cfg.spool_dir(&SERVICE), PathBuf::from("/srv/audit"));
         assert_eq!(cfg.node_id, "ks-0");
         assert_eq!(cfg.spool_max_segments, Some(4));
         assert_eq!(cfg.spool_drain_timeout_secs, 3);
@@ -355,7 +406,7 @@ mod tests {
                 endpoint: "siem:6514".to_string(),
                 tls: true,
                 ca_file: None,
-                app_name: "keystone".to_string(),
+                app_name: None,
                 connect_timeout_secs: 10,
                 write_timeout_secs: 30,
             }
@@ -365,13 +416,16 @@ mod tests {
     #[test]
     fn kek_path_defaults_to_legacy_location_and_can_be_overridden() {
         let mut cfg = AuditConfig {
-            spool_dir: PathBuf::from("/spool"),
+            spool_dir: Some(PathBuf::from("/spool")),
             ..AuditConfig::default()
         };
-        assert_eq!(cfg.hmac_kek_path(), PathBuf::from("/spool/hmac-key.bin"));
+        assert_eq!(
+            cfg.hmac_kek_path(&SERVICE),
+            PathBuf::from("/spool/hmac-key.bin")
+        );
         cfg.hmac_kek_file = Some(PathBuf::from("/etc/keystone/audit.keyring"));
         assert_eq!(
-            cfg.hmac_kek_path(),
+            cfg.hmac_kek_path(&SERVICE),
             PathBuf::from("/etc/keystone/audit.keyring")
         );
     }
@@ -394,6 +448,37 @@ mod tests {
             cfg.node_id = bad.to_string();
             assert!(cfg.validate_node_id().is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn shipper_config_never_busy_loops() {
+        let cfg = AuditConfig {
+            shipper_batch_size: 0,
+            shipper_poll_interval_secs: 0,
+            shipper_initial_backoff_secs: 0,
+            shipper_max_backoff_secs: 0,
+            ..AuditConfig::default()
+        };
+        let shipper = cfg.shipper_config(Arc::new(AuditMetrics::default()));
+        assert_eq!(shipper.batch_size, 1);
+        assert_eq!(shipper.poll_interval, Duration::from_secs(1));
+        assert_eq!(shipper.initial_backoff, Duration::from_secs(1));
+        assert_eq!(shipper.max_backoff, Duration::from_secs(1));
+    }
+
+    #[test]
+    fn spool_config_follows_the_settings() {
+        let cfg = AuditConfig {
+            spool_max_segments: Some(3),
+            spool_retention_secs: Some(60),
+            spool_drain_timeout_secs: 7,
+            ..AuditConfig::default()
+        };
+        let spool = cfg.spool_config(Arc::new(AuditMetrics::default()));
+        assert_eq!(spool.max_segments, Some(3));
+        assert_eq!(spool.retention, Some(Duration::from_secs(60)));
+        assert_eq!(spool.drain_timeout, Duration::from_secs(7));
+        assert_eq!(spool.max_segment_bytes, 256 * 1024 * 1024);
     }
 
     #[test]

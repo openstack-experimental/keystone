@@ -5245,6 +5245,7 @@ dependencies = [
 name = "openstack-keystone-config"
 version = "0.1.0"
 dependencies = [
+ "cadf",
  "chrono",
  "config",
  "derive_builder",
