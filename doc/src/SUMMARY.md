@@ -131,3 +131,4 @@
     - [Service Delegation](adr/0036-service-delegation.md)
     - [Application-Credential Access-Rule Enforcement](adr/0037-access-rule-enforcement.md)
     - [Unified Limits](adr/0038-unified-limits.md)
+    - [Config Engine and Section Registry](adr/0039-config-engine-and-section-registry.md)
