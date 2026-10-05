@@ -440,9 +440,9 @@ mod tests {
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(json["action"], "purge_expired_sessions");
         assert_eq!(json["outcome"], "partial");
-        assert_eq!(json["outcome_reason"], "session=3,errors=1");
+        assert_eq!(json["reason"]["reasonCode"], "session=3,errors=1");
         assert_eq!(
-            json["target"]["type_uri"],
+            json["target"]["typeURI"],
             "data/security/keystone/oauth2_session"
         );
 
@@ -452,7 +452,7 @@ mod tests {
         emit_maintenance_event(&dispatcher, &clean);
         let json = serde_json::to_value(receivers.perimeter.try_recv().unwrap()).unwrap();
         assert_eq!(json["outcome"], "success");
-        assert_eq!(json["outcome_reason"], "code=2,errors=0");
+        assert_eq!(json["reason"]["reasonCode"], "code=2,errors=0");
 
         // ... and a pass that made no progress at all is `failure`.
         let broken = JanitorReport {
@@ -462,6 +462,6 @@ mod tests {
         emit_maintenance_event(&dispatcher, &broken);
         let json = serde_json::to_value(receivers.perimeter.try_recv().unwrap()).unwrap();
         assert_eq!(json["outcome"], "failure");
-        assert_eq!(json["outcome_reason"], "errors=2");
+        assert_eq!(json["reason"]["reasonCode"], "errors=2");
     }
 }
