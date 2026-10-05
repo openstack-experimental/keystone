@@ -87,6 +87,9 @@
 //!
 //! - `runtime`: [`runtime`] module, the service bootstrap (key load, spool
 //!   lock/seal/verify, writer, shipper, key reload).
+//! - `otel`: [`otel::register`] mirrors the audit metrics onto an OpenTelemetry
+//!   `Meter` through observable instruments that read the existing counters.
+//!   The Prometheus text output ([`metrics`]) is unaffected.
 //! - `syslog`: RFC 5424 syslog sink over TCP, optionally wrapped in TLS.
 //! - `testing`: helpers for the tests of embedding crates.
 //!
@@ -105,6 +108,8 @@ pub mod identity;
 pub mod kdf;
 pub mod keyring;
 pub mod metrics;
+#[cfg(feature = "otel")]
+pub mod otel;
 #[cfg(feature = "runtime")]
 pub mod runtime;
 pub mod sanitize;

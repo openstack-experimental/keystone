@@ -122,6 +122,8 @@ mockall = { version = "0.15" }
 mockall_double = { version = "0.3" }
 nix = { version = "0.31", default-features = false }
 openidconnect = { version = "4.0" }
+opentelemetry = { version = "0.33", default-features = false, features = ["metrics"] }
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["metrics", "testing"] }
 openraft = { version = "=0.10.0-alpha.34" }
 openstack-keystone-api-key-driver-raft = { version = "0.1", path = "crates/api-key-driver-raft/" }
 openstack-keystone-api-types = { version = "0.1", features = ["openapi", "validate", "conv"], path = "crates/api-types" }

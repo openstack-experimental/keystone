@@ -15,6 +15,7 @@ chrono = { workspace = true, features = ["serde", "now"] }
 hmac.workspace = true
 hkdf.workspace = true
 openstack-keystone-metrics.workspace = true
+opentelemetry = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sha2.workspace = true
@@ -34,6 +35,9 @@ testing = []
 # Service bootstrap: KEK load/generate, spool sealing, writer, shipper and
 # key reloader (`cadf::runtime::init`).
 runtime = ["dep:tokio-util"]
+# Mirror the audit metrics onto an OpenTelemetry `Meter`
+# (`cadf::otel::register`). The Prometheus text output is unaffected.
+otel = ["dep:opentelemetry"]
 # RFC 5424 syslog sink over TCP, optionally wrapped in TLS.
 syslog = [
     "dep:rustls",
@@ -44,6 +48,7 @@ syslog = [
 ]
 
 [dev-dependencies]
+opentelemetry_sdk.workspace = true
 rcgen.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
