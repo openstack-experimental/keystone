@@ -23,10 +23,8 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use openstack_keystone_audit::sanitize::sanitize_audit_id;
-use openstack_keystone_audit::{
-    AuditDispatcher, CadfEventPayload, Initiator, Observer, OutcomeReason, Target,
-};
+use cadf::sanitize::sanitize_audit_id;
+use cadf::{AuditDispatcher, CadfEventPayload, Initiator, Observer, OutcomeReason, Target};
 use openstack_keystone_core_types::auth::{PrincipalInfo, ScopeInfo};
 use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
 use uuid::Uuid;
@@ -47,7 +45,7 @@ pub fn map_event_to_action(event: &Event) -> String {
         Operation::Enable => "enable".to_string(),
         Operation::Authenticate => "authenticate".to_string(),
         Operation::Revoke => "revoke".to_string(),
-        Operation::Other(action) => openstack_keystone_audit::types::sanitize_action(action),
+        Operation::Other(action) => cadf::types::sanitize_action(action),
     }
 }
 

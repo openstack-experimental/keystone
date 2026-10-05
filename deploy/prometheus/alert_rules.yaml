@@ -1,7 +1,7 @@
 # Prometheus alert rules for the Keystone audit subsystem (ADR 0023 Phase 4).
 #
 # Metrics are scraped from the /metrics endpoint on each Keystone node.
-# See crates/audit/src/metrics.rs for the exposition format.
+# See crates/cadf/src/metrics.rs for the exposition format.
 ---
 groups:
   - name: keystone_audit

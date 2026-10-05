@@ -1,6 +1,6 @@
 [package]
-name = "openstack-keystone-audit"
-description = "OpenStack Keystone CADF-compliant audit framework"
+name = "cadf"
+description = "CADF-compliant audit framework for OpenStack services"
 version = "0.1.0"
 rust-version.workspace = true
 edition.workspace = true
@@ -14,7 +14,6 @@ async-trait.workspace = true
 chrono = { workspace = true, features = ["serde", "now"] }
 hmac.workspace = true
 hkdf.workspace = true
-openstack-keystone-core-types.workspace = true
 openstack-keystone-metrics.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

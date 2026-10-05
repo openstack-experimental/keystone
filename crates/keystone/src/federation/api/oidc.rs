@@ -33,8 +33,8 @@ use crate::audit::{
 use crate::federation::api::error::OidcError;
 use crate::federation::api::types::*;
 use crate::keystone::ServiceState;
-use openstack_keystone_audit::sanitize::{HostKind, sanitize_initiator_host};
-use openstack_keystone_audit::types::{Host, Initiator};
+use cadf::sanitize::{HostKind, sanitize_initiator_host};
+use cadf::types::{Host, Initiator};
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::auth::AuthenticationResult;
 use openstack_keystone_core_types::mapping::auth::MappingAuthRequest;

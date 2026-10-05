@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use sea_orm::DatabaseConnection;
 
-use openstack_keystone_audit::AuditDispatcher;
+use cadf::AuditDispatcher;
 use openstack_keystone_config::{Config, ConfigManager};
 
 use crate::keystone::{Service, ServiceState};

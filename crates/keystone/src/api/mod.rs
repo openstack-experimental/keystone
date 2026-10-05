@@ -211,7 +211,7 @@ pub(crate) mod tests {
                 sea_orm::DatabaseConnection::default(),
                 provider,
                 std::sync::Arc::new(enforcer),
-                openstack_keystone_audit::AuditDispatcher::noop(),
+                cadf::AuditDispatcher::noop(),
                 None,
             )
             .await

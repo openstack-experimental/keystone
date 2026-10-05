@@ -84,7 +84,7 @@ pub async fn load_auth_plugins(
 /// as Prometheus text exposition format (v0.0.4), one sample per plugin that
 /// has ever failed to load. Empty (no samples, just the `# HELP`/`# TYPE`
 /// header) when every configured plugin has always loaded successfully -
-/// matches `openstack_keystone_audit::metrics::format_prometheus_text`'s
+/// matches `cadf::metrics::format_prometheus_text`'s
 /// style so both can be concatenated into one `/metrics` response body.
 pub fn format_load_failure_metrics(failures: &HashMap<String, u64>) -> String {
     let mut out = String::from(
@@ -114,7 +114,7 @@ starts normally.\n\
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use openstack_keystone_audit::AuditDispatcher;
+    use cadf::AuditDispatcher;
     use openstack_keystone_config::{Config, ConfigManager};
     use openstack_keystone_core::auth_plugin_http::FetchResponse;
     use std::collections::HashMap;

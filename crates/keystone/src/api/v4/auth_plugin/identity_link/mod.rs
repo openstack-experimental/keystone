@@ -109,10 +109,10 @@ mod tests {
     use tower::ServiceExt;
     use tower_http::trace::TraceLayer;
 
+    use cadf::AuditDispatcher;
     use openstack_keystone_api_types::v4::auth_plugin::{
         IdentityLinkCreate, IdentityLinkCreateRequest, IdentityLinkResponse, RevokeAllResponse,
     };
-    use openstack_keystone_audit::AuditDispatcher;
     use openstack_keystone_config::{Config, ConfigManager, DynamicPluginConfig, PluginMode};
     use openstack_keystone_core::api::tests::test_fixture_scoped;
     use openstack_keystone_core_types::identity::{UserResponse, UserResponseBuilder};

@@ -34,8 +34,8 @@ use tempfile::TempDir;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+use cadf::AuditDispatcher;
 use openstack_keystone::plugin_manager::PluginManager;
-use openstack_keystone_audit::AuditDispatcher;
 use openstack_keystone_config::{
     Config, ConfigManager, DistributedStorageConfiguration, KekProvider, TlsConfiguration,
     TlsConfigurationBuilder,

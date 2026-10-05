@@ -23,8 +23,8 @@ use axum::{
 };
 use validator::Validate;
 
+use cadf::Initiator;
 use openstack_keystone_api_types::v3::auth::token::TokenBuilder;
-use openstack_keystone_audit::Initiator;
 use openstack_keystone_core::auth::ValidatedSecurityContext;
 use openstack_keystone_core_types::auth::*;
 
@@ -204,7 +204,7 @@ mod tests {
     use tower_http::trace::TraceLayer;
     use tracing_test::traced_test;
 
-    use openstack_keystone_audit::AuditDispatcher;
+    use cadf::AuditDispatcher;
     use openstack_keystone_config::{
         Config, ConfigManager, Interface, ProxyHeader, RateLimitSection,
     };
@@ -1367,7 +1367,7 @@ mod auth_plugin_http_tests {
     use tower::ServiceExt;
     use tower_http::trace::TraceLayer;
 
-    use openstack_keystone_audit::AuditDispatcher;
+    use cadf::AuditDispatcher;
     use openstack_keystone_config::{Config, ConfigManager, DynamicPluginsSection, PluginMode};
     use openstack_keystone_core::auth_plugin_http::DynamicPluginHttpFetcher;
     use openstack_keystone_core_types::auth::*;

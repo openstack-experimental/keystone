@@ -411,7 +411,7 @@ mod tests {
             provider,
             event_dispatcher: crate::events::EventDispatcher::production(),
 
-            audit_dispatcher: openstack_keystone_audit::AuditDispatcher::noop(),
+            audit_dispatcher: cadf::AuditDispatcher::noop(),
 
             storage: None,
             local_emergency_store: tokio::sync::RwLock::new(None),
@@ -557,7 +557,7 @@ mod tests {
                 .unwrap(),
             event_dispatcher: crate::events::EventDispatcher::production(),
 
-            audit_dispatcher: openstack_keystone_audit::AuditDispatcher::noop(),
+            audit_dispatcher: cadf::AuditDispatcher::noop(),
 
             storage: None,
             local_emergency_store: tokio::sync::RwLock::new(None),
@@ -743,7 +743,7 @@ mod tests {
             provider,
             event_dispatcher: crate::events::EventDispatcher::production(),
 
-            audit_dispatcher: openstack_keystone_audit::AuditDispatcher::noop(),
+            audit_dispatcher: cadf::AuditDispatcher::noop(),
 
             storage: None,
             local_emergency_store: tokio::sync::RwLock::new(None),
@@ -826,7 +826,7 @@ mod tests {
                 .unwrap(),
             event_dispatcher: crate::events::EventDispatcher::production(),
 
-            audit_dispatcher: openstack_keystone_audit::AuditDispatcher::noop(),
+            audit_dispatcher: cadf::AuditDispatcher::noop(),
 
             storage: None,
             local_emergency_store: tokio::sync::RwLock::new(None),
@@ -907,7 +907,7 @@ mod tests {
             provider,
             event_dispatcher: crate::events::EventDispatcher::production(),
 
-            audit_dispatcher: openstack_keystone_audit::AuditDispatcher::noop(),
+            audit_dispatcher: cadf::AuditDispatcher::noop(),
 
             storage: None,
             local_emergency_store: tokio::sync::RwLock::new(None),
@@ -1047,7 +1047,7 @@ mod tests {
             provider,
             event_dispatcher: crate::events::EventDispatcher::production(),
 
-            audit_dispatcher: openstack_keystone_audit::AuditDispatcher::noop(),
+            audit_dispatcher: cadf::AuditDispatcher::noop(),
 
             storage: None,
             local_emergency_store: tokio::sync::RwLock::new(None),
@@ -1139,7 +1139,7 @@ mod tests {
             provider,
             event_dispatcher: crate::events::EventDispatcher::production(),
 
-            audit_dispatcher: openstack_keystone_audit::AuditDispatcher::noop(),
+            audit_dispatcher: cadf::AuditDispatcher::noop(),
 
             storage: None,
             local_emergency_store: tokio::sync::RwLock::new(None),

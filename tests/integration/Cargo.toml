@@ -18,7 +18,7 @@ http-body-util.workspace = true
 inventory.workspace = true
 itertools.workspace = true
 jsonwebtoken.workspace = true
-openstack-keystone-audit = { workspace = true, features = ["testing"] }
+cadf = { workspace = true, features = ["testing"] }
 openstack-keystone-config.workspace = true
 openstack-keystone-api-types = { workspace = true, features = ["builder", "conv"] }
 openstack-keystone-core = { workspace = true, features = ["mock"] }

@@ -29,10 +29,10 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
+use cadf::{CadfEventPayload, Observer, OutcomeReason, Target};
 use governor::clock::Clock;
 use governor::{DefaultDirectRateLimiter, DefaultKeyedRateLimiter, Quota, RateLimiter};
 use hmac::{Hmac, KeyInit, Mac};
-use openstack_keystone_audit::{CadfEventPayload, Observer, OutcomeReason, Target};
 use sha2::Sha256;
 use tokio::sync::Semaphore;
 use uuid::Uuid;
@@ -1055,7 +1055,7 @@ pub fn as_host_functions(host: Arc<CoreHostFunctions>) -> Arc<dyn HostFunctions>
 mod tests {
     use std::collections::HashMap;
 
-    use openstack_keystone_audit::AuditDispatcher;
+    use cadf::AuditDispatcher;
     use openstack_keystone_config::{Config, ConfigManager};
     use openstack_keystone_core_types::identity::UserResponseBuilder;
 
@@ -1098,10 +1098,7 @@ mod tests {
         identity_mock: MockIdentityProvider,
         dpi_mock: MockDynamicPluginIdentityProvider,
         plugin_config_ini: &str,
-    ) -> (
-        CoreHostFunctions,
-        openstack_keystone_audit::AuditChannelReceivers,
-    ) {
+    ) -> (CoreHostFunctions, cadf::AuditChannelReceivers) {
         host_functions_with_provider(
             Provider::mocked_builder()
                 .mock_identity(identity_mock)
@@ -1114,10 +1111,7 @@ mod tests {
     async fn host_functions_with_provider(
         provider: crate::provider::ProviderBuilder,
         plugin_config_ini: &str,
-    ) -> (
-        CoreHostFunctions,
-        openstack_keystone_audit::AuditChannelReceivers,
-    ) {
+    ) -> (CoreHostFunctions, cadf::AuditChannelReceivers) {
         host_functions_with_provider_and_fetcher(
             provider,
             plugin_config_ini,
@@ -1130,10 +1124,7 @@ mod tests {
         provider: crate::provider::ProviderBuilder,
         plugin_config_ini: &str,
         http_fetcher: Arc<dyn DynamicPluginHttpFetcher>,
-    ) -> (
-        CoreHostFunctions,
-        openstack_keystone_audit::AuditChannelReceivers,
-    ) {
+    ) -> (CoreHostFunctions, cadf::AuditChannelReceivers) {
         let mut cfg = Config::default();
         cfg.auth_plugin
             .insert("acme".to_string(), plugin_config(plugin_config_ini));

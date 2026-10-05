@@ -13,7 +13,7 @@ Keystone already exposes a `/metrics` endpoint (`crates/keystone/src/bin/keyston
 scrapers. Today it serves exactly four metrics, each produced by hand-rolled
 Prometheus text-exposition (v0.0.4) formatting functions, deliberately
 avoiding a dependency on the full `prometheus` client crate
-(`crates/audit/src/metrics.rs` doc comment):
+(`crates/cadf/src/metrics.rs` doc comment):
 
 - `keystone_audit_dropped_total` (counter, ADR 0023)
 - `keystone_audit_postaudit_dropped_total` (counter, ADR 0023)
@@ -80,7 +80,7 @@ were built this way specifically to avoid that dependency, and the catalog
 below is a fixed, known-at-compile-time set of series (no dynamic
 metric registration is needed). To avoid re-deriving atomic counters,
 label-escaping, and bucket math in every crate as this catalog grows, factor
-the shared primitives that `crates/audit/src/metrics.rs` and
+the shared primitives that `crates/cadf/src/metrics.rs` and
 `auth_plugin_startup::format_load_failure_metrics` each partially
 reimplement into one internal module (`crates/keystone/src/metrics.rs` or a
 new small `openstack-keystone-metrics` crate if reused outside
@@ -311,7 +311,7 @@ into `metrics_handler`, and ships matching alert rules in
 
 1. **Adopt the `metrics` + `metrics-exporter-prometheus` crates:**
    Rejected for now — the existing hand-rolled approach was a deliberate
-   choice (per `crates/audit/src/metrics.rs`) to avoid the dependency, the
+   choice (per `crates/cadf/src/metrics.rs`) to avoid the dependency, the
    full catalog here is a fixed, compile-time-known set of series (no
    dynamic registration need that would justify a registry crate), and a
    shared internal primitives module gets the same de-duplication benefit

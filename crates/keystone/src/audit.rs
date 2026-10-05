@@ -25,10 +25,8 @@ use axum::http::request::Parts;
 use tower_http::request_id::RequestId;
 use uuid::Uuid;
 
+use cadf::{AuditDispatcher, CadfEventPayload, Initiator, Observer, OutcomeReason, Target};
 use openstack_keystone_api_types::error::KeystoneApiError;
-use openstack_keystone_audit::{
-    AuditDispatcher, CadfEventPayload, Initiator, Observer, OutcomeReason, Target,
-};
 use openstack_keystone_core_types::assignment::AssignmentProviderError;
 use openstack_keystone_core_types::auth::AuthenticationError;
 use openstack_keystone_core_types::catalog::CatalogProviderError;
@@ -932,7 +930,7 @@ mod tests {
         method: &str,
         path: &str,
         handler: axum::routing::MethodRouter,
-    ) -> openstack_keystone_audit::AuditChannelReceivers {
+    ) -> cadf::AuditChannelReceivers {
         use axum::extract::ConnectInfo;
         use tower::ServiceExt;
 

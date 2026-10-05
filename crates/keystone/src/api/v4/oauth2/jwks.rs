@@ -99,7 +99,7 @@ mod tests {
     use tower::ServiceExt;
     use tower_http::trace::TraceLayer;
 
-    use openstack_keystone_audit::AuditDispatcher;
+    use cadf::AuditDispatcher;
     use openstack_keystone_config::{Config, ConfigManager, RateLimitSection};
     use openstack_keystone_core::keystone::Service;
     use openstack_keystone_core::policy::MockPolicy;

@@ -39,7 +39,7 @@ jsonwebtoken = { workspace = true }
 nix = { workspace = true, features = ["socket", "user"] }
 openstack-keystone-api-key-driver-raft.workspace = true
 openstack-keystone-api-types = { workspace = true, features = ["openapi", "validate", "conv"]}
-openstack-keystone-audit.workspace = true
+cadf.workspace = true
 openstack-keystone-appcred-driver-sql.workspace = true
 openstack-keystone-assignment-driver-openfga = { workspace = true, optional = true }
 openstack-keystone-assignment-driver-sql.workspace = true
@@ -116,7 +116,7 @@ toml = { version = "1.1", default-features = false, features = ["parse", "serde"
 rcgen.workspace = true
 http-body-util.workspace = true
 httpmock = { version = "0.8", features = ["http2"] }
-openstack-keystone-audit = { workspace = true, features = ["testing"] }
+cadf = { workspace = true, features = ["testing"] }
 openstack-keystone-core = { workspace = true, features = ["api", "mock"] }
 openstack-keystone-core-types = { workspace = true, features = ["mock"] }
 openstack-keystone-distributed-storage = { workspace = true, features = ["mock"] }
@@ -131,7 +131,7 @@ url.workspace = true
 default = []
 openfga = ["dep:openstack-keystone-assignment-driver-openfga"]
 # RFC 5424 syslog audit sink (`[audit] sink = { type = "syslog", .. }`).
-audit-syslog = ["openstack-keystone-audit/syslog"]
+audit-syslog = ["cadf/syslog"]
 
 [lints]
 workspace = true

@@ -17,7 +17,7 @@
 //! (`keystone_http_requests_total`, `keystone_http_request_duration_seconds`,
 //! `keystone_http_requests_in_flight`), consistent with the project's
 //! decision not to depend on the `prometheus`/`metrics` crates (see
-//! `crates/audit/src/metrics.rs` and
+//! `crates/cadf/src/metrics.rs` and
 //! `doc/src/adr/0031-prometheus-metrics.md`).
 
 use std::sync::Arc;

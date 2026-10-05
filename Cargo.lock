@@ -1055,6 +1055,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d74937895e761d5984206f82ca8ff7725d0fd8021921011921894b41ab1b9f7"
 
 [[package]]
+name = "cadf"
+version = "0.1.0"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "chrono",
+ "hkdf 0.13.0",
+ "hmac 0.13.0",
+ "openstack-keystone-metrics",
+ "rcgen",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "cap-fs-ext"
 version = "3.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4932,6 +4957,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "base64 0.23.1",
+ "cadf",
  "chrono",
  "clap",
  "color-eyre",
@@ -4954,7 +4980,6 @@ dependencies = [
  "openstack-keystone-appcred-driver-sql",
  "openstack-keystone-assignment-driver-openfga",
  "openstack-keystone-assignment-driver-sql",
- "openstack-keystone-audit",
  "openstack-keystone-auth-plugin-identity-driver-raft",
  "openstack-keystone-auth-plugin-runtime",
  "openstack-keystone-catalog-driver-sql",
@@ -5112,40 +5137,14 @@ name = "openstack-keystone-assignment-driver-sql"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "cadf",
  "inventory",
- "openstack-keystone-audit",
  "openstack-keystone-config",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "sea-orm",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "openstack-keystone-audit"
-version = "0.1.0"
-dependencies = [
- "arc-swap",
- "async-trait",
- "chrono",
- "hkdf 0.13.0",
- "hmac 0.13.0",
- "openstack-keystone-core-types",
- "openstack-keystone-metrics",
- "rcgen",
- "rustls",
- "rustls-native-certs",
- "rustls-pki-types",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "tokio-rustls",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -5206,6 +5205,7 @@ name = "openstack-keystone-cli-manage"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "cadf",
  "clap",
  "color-eyre",
  "comfy-table",
@@ -5215,7 +5215,6 @@ dependencies = [
  "inventory",
  "openstack-keystone",
  "openstack-keystone-api-types",
- "openstack-keystone-audit",
  "openstack-keystone-config",
  "openstack-keystone-core",
  "openstack-keystone-credential-driver-sql",
@@ -5282,6 +5281,7 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.23.1",
+ "cadf",
  "chrono",
  "config",
  "crc32fast",
@@ -5296,7 +5296,6 @@ dependencies = [
  "jsonwebtoken",
  "mockall",
  "openstack-keystone-api-types",
- "openstack-keystone-audit",
  "openstack-keystone-auth-plugin-core",
  "openstack-keystone-auth-plugin-runtime",
  "openstack-keystone-config",
@@ -5654,9 +5653,9 @@ name = "openstack-keystone-oauth2-key-driver-raft"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "cadf",
  "chrono",
  "inventory",
- "openstack-keystone-audit",
  "openstack-keystone-config",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
@@ -5925,13 +5924,13 @@ dependencies = [
  "axum",
  "base64 0.23.1",
  "base64urlsafedata",
+ "cadf",
  "chrono",
  "derive_builder",
  "eyre",
  "inventory",
  "mockall",
  "openstack-keystone-api-types",
- "openstack-keystone-audit",
  "openstack-keystone-config",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
@@ -9235,6 +9234,7 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "axum",
+ "cadf",
  "chrono",
  "eyre",
  "http-body-util",
@@ -9243,7 +9243,6 @@ dependencies = [
  "jsonwebtoken",
  "openstack-keystone",
  "openstack-keystone-api-types",
- "openstack-keystone-audit",
  "openstack-keystone-config",
  "openstack-keystone-core",
  "openstack-keystone-core-types",

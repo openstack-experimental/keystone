@@ -29,7 +29,7 @@ use chrono::Utc;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use openstack_keystone_audit::{AuditDispatcher, CadfEventPayload, Initiator, Observer, Target};
+use cadf::{AuditDispatcher, CadfEventPayload, Initiator, Observer, Target};
 use openstack_keystone_core_types::api_key::{ApiClientResource, ApiClientResourceUpdate};
 
 use crate::api_key::ApiKeyProviderError;

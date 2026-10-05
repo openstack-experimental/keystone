@@ -2,7 +2,7 @@
 members = [
   "crates/api-key-driver-raft",
   "crates/api-types",
-  "crates/audit",
+  "crates/cadf",
   "crates/appcred-driver-sql",
   "crates/assignment-driver-sql",
   "crates/assignment-driver-openfga",
@@ -125,7 +125,7 @@ openidconnect = { version = "4.0" }
 openraft = { version = "=0.10.0-alpha.34" }
 openstack-keystone-api-key-driver-raft = { version = "0.1", path = "crates/api-key-driver-raft/" }
 openstack-keystone-api-types = { version = "0.1", features = ["openapi", "validate", "conv"], path = "crates/api-types" }
-openstack-keystone-audit = { version = "0.1.0", path = "crates/audit" }
+cadf = { version = "0.1.0", path = "crates/cadf" }
 openstack-keystone-appcred-driver-sql = { version = "0.1", path = "crates/appcred-driver-sql/" }
 openstack-keystone-assignment-driver-openfga = { version = "0.1", path = "crates/assignment-driver-openfga/" }
 openstack-keystone-assignment-driver-sql = { version = "0.1", path = "crates/assignment-driver-sql/" }

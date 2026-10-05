@@ -29,10 +29,8 @@ use uuid::Uuid;
 
 use crate::config::AuditSinkConfig;
 use crate::config::Config;
-use openstack_keystone_audit::spool::{
-    SpoolLock, run_spool_writer, seal_previous_spool, verify_sealed_spool,
-};
-use openstack_keystone_audit::{
+use cadf::spool::{SpoolLock, run_spool_writer, seal_previous_spool, verify_sealed_spool};
+use cadf::{
     AuditDispatcher, AuditSink, HmacKeyring, ShipperConfig, SpoolConfig, StdoutSink,
     run_raw_segment_shipper, run_segment_shipper,
 };
@@ -161,7 +159,7 @@ fn build_syslog_sink(
     write_timeout_secs: u64,
     node_id: &str,
 ) -> Result<Arc<dyn AuditSink>, Report> {
-    use openstack_keystone_audit::{SyslogSink, SyslogSinkConfig};
+    use cadf::{SyslogSink, SyslogSinkConfig};
     if !tls {
         warn!(
             "audit syslog sink {endpoint} runs without TLS: audit records cross the network \
@@ -402,8 +400,8 @@ pub async fn init(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openstack_keystone_audit::spool::{HmacKeyStore, spool_path};
-    use openstack_keystone_audit::{CadfEvent, CadfEventPayload, Initiator, Observer, Target};
+    use cadf::spool::{HmacKeyStore, spool_path};
+    use cadf::{CadfEvent, CadfEventPayload, Initiator, Observer, Target};
     use std::path::PathBuf;
 
     fn test_config(spool_dir: PathBuf) -> Config {

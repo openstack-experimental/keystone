@@ -27,7 +27,7 @@ use chrono::Utc;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use openstack_keystone_audit::{AuditDispatcher, CadfEventPayload, Initiator, Observer, Target};
+use cadf::{AuditDispatcher, CadfEventPayload, Initiator, Observer, Target};
 
 use crate::keystone::ServiceState;
 use crate::oauth2_key::Oauth2KeyProviderError;

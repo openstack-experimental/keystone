@@ -37,7 +37,7 @@ use openstack_keystone_core_types::mapping::auth::MappingAuthRequest;
 use openstack_keystone_core_types::mapping::resolution::IdentitySource;
 
 use crate::auth::ExecutionContext;
-use openstack_keystone_audit::OutcomeReason;
+use cadf::OutcomeReason;
 
 use crate::auth_plugin::{emit_wasm_plugin_audit, emit_wasm_route_audit};
 use crate::keystone::ServiceState;
@@ -1021,7 +1021,7 @@ mod acceptance_tests {
     use std::process::Command;
     use std::sync::{Arc, Mutex};
 
-    use openstack_keystone_audit::AuditDispatcher;
+    use cadf::AuditDispatcher;
     use openstack_keystone_config::{Config, ConfigManager, DynamicPluginsSection};
     use openstack_keystone_core_types::identity::UserResponseBuilder;
     use sha2::{Digest, Sha256};
@@ -1561,7 +1561,7 @@ mod mapping_acceptance_tests {
     use std::process::Command;
     use std::sync::Arc;
 
-    use openstack_keystone_audit::AuditDispatcher;
+    use cadf::AuditDispatcher;
     use openstack_keystone_config::{Config, ConfigManager, DynamicPluginsSection};
     use openstack_keystone_core_types::auth::{
         AuthenticationContext, AuthenticationResultBuilder, IdentityInfo, PrincipalInfo,
@@ -1814,7 +1814,7 @@ mod route_acceptance_tests {
     use std::process::Command;
     use std::sync::Arc;
 
-    use openstack_keystone_audit::AuditDispatcher;
+    use cadf::AuditDispatcher;
     use openstack_keystone_config::{Config, ConfigManager, DynamicPluginsSection};
     use sha2::{Digest, Sha256};
 

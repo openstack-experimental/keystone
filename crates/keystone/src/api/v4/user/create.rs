@@ -74,8 +74,8 @@ mod tests {
         body::Body,
         http::{self, Request, StatusCode},
     };
+    use cadf::AuditDispatcher;
     use http_body_util::BodyExt;
-    use openstack_keystone_audit::AuditDispatcher;
     use openstack_keystone_config::{Config, ConfigManager};
     use sea_orm::DatabaseConnection;
     use serde_json::{Value, json};

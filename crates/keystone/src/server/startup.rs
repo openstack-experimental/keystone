@@ -156,7 +156,7 @@ pub(crate) mod test_support {
 
     use super::*;
     use crate::config::ConfigManager;
-    use openstack_keystone_audit::AuditDispatcher;
+    use cadf::AuditDispatcher;
     use openstack_keystone_core::keystone::Service;
     use openstack_keystone_core::policy::MockPolicy;
     use openstack_keystone_core::provider::Provider;

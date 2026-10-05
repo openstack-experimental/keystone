@@ -403,7 +403,7 @@ mod tests {
     use sea_orm::{DatabaseBackend, DatabaseConnection, MockDatabase};
     use std::sync::Arc;
 
-    use openstack_keystone_audit::AuditDispatcher;
+    use cadf::AuditDispatcher;
     use openstack_keystone_config::{Config, ConfigManager};
     use openstack_keystone_core::keystone::Service;
     use openstack_keystone_core::policy::MockPolicy;

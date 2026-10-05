@@ -31,7 +31,7 @@ use url::Url;
 use uuid::Uuid;
 use webauthn_authenticator_rs::{AuthenticatorBackend, WebauthnAuthenticator};
 
-use openstack_keystone_audit::AuditDispatcher;
+use cadf::AuditDispatcher;
 use openstack_keystone_config::{
     Config, ConfigManager, DistributedStorageConfiguration, KekProvider, RaftTlsConfiguration,
     RelyingParty, TlsConfiguration, TlsConfigurationBuilder,

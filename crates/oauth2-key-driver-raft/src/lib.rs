@@ -1198,7 +1198,7 @@ mod tests {
                     .build()
                     .unwrap(),
                 std::sync::Arc::new(openstack_keystone_core::policy::MockPolicy::default()),
-                openstack_keystone_audit::AuditDispatcher::noop(),
+                cadf::AuditDispatcher::noop(),
                 None,
             )
             .await
@@ -2419,7 +2419,7 @@ mod tests {
                     .build()
                     .unwrap(),
                 Arc::new(openstack_keystone_core::policy::MockPolicy::default()),
-                openstack_keystone_audit::AuditDispatcher::noop(),
+                cadf::AuditDispatcher::noop(),
                 Some(Arc::new(MockStorage::default())),
             )
             .await

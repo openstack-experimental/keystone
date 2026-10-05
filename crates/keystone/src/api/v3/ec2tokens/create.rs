@@ -21,8 +21,8 @@ use axum::{
 };
 use serde_json::{Value, json};
 
+use cadf::sanitize::{HostKind, sanitize_initiator_host};
 use openstack_keystone_api_types::v3::auth::token::{TokenBuilder, TokenResponse};
-use openstack_keystone_audit::sanitize::{HostKind, sanitize_initiator_host};
 use openstack_keystone_core::api::common::{get_authz_info, get_domain};
 use openstack_keystone_core::credential::ec2_signature::{validate_timestamp, verify_signature};
 use openstack_keystone_core_types::credential::{

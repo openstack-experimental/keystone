@@ -596,7 +596,7 @@ given operation even against its own resources.
 
 Every SCIM write emits a CADF event per ADR 0023's actually-implemented
 `CadfEventPayload`, which carries a single `action: String` (no separate
-`category` field exists in `crates/audit/src/types.rs` — ADR 0021 §5.C's mention
+`category` field exists in `crates/cadf/src/types.rs` — ADR 0021 §5.C's mention
 of a `control` category is unimplemented prose, not a real field, and this ADR
 does not repeat it). The `action` is drawn from the existing `Operation` enum
 (`crates/core-types/src/events.rs`): `Create`/`Update` for writes, `Disable` for

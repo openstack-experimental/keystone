@@ -323,7 +323,7 @@ a parallel HTTP admin surface for one operation.
 **Design gap 2: audit mechanism.** This ADR describes the local audit entry as
 "persisted in the node's local FjallDB partition... HMAC-chained the same way
 as ADR 0023's audit spool," but ADR 0023's actual mechanism
-(`crates/audit/src/spool.rs`, `dispatcher.rs`) is a filesystem JSONL spool with
+(`crates/cadf/src/spool.rs`, `dispatcher.rs`) is a filesystem JSONL spool with
 independent per-event HMAC (a `seq` field, not a hash chain), not a Fjall
 partition. Implemented instead as an ordinary `CadfEvent` through the existing
 `AuditDispatcher`/spool pipeline (`oauth2/local_emergency_key_reconciled` for

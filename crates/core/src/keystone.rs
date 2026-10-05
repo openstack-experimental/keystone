@@ -20,7 +20,7 @@ use sea_orm::DatabaseConnection;
 use tokio::sync::RwLock;
 use tracing::info;
 
-use openstack_keystone_audit::AuditDispatcher;
+use cadf::AuditDispatcher;
 use openstack_keystone_auth_plugin_core::{AuthPluginRuntime, EmptyAuthPluginRuntime};
 use openstack_keystone_config::ConfigManager;
 use openstack_keystone_local_emergency_store::{LeaderlessTracker, LocalEmergencyStore};

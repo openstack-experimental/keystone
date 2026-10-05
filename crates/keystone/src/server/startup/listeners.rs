@@ -224,8 +224,7 @@ pub async fn metrics_handler(
     State(state): State<ServiceState>,
     http_metrics: Option<Extension<Arc<HttpMetrics>>>,
 ) -> impl IntoResponse {
-    let mut body =
-        openstack_keystone_audit::metrics::format_prometheus_text(&state.audit_dispatcher);
+    let mut body = cadf::metrics::format_prometheus_text(&state.audit_dispatcher);
     body.push_str(&crate::auth_plugin_startup::format_load_failure_metrics(
         &*state.auth_plugin_load_failures.read().await,
     ));

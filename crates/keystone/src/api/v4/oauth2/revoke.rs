@@ -43,8 +43,8 @@ use axum::{
 use governor::clock::Clock as _;
 use serde::Deserialize;
 
-use openstack_keystone_audit::OutcomeReason;
-use openstack_keystone_audit::{Initiator, sanitize::sanitize_audit_id};
+use cadf::OutcomeReason;
+use cadf::{Initiator, sanitize::sanitize_audit_id};
 use openstack_keystone_core::oauth2_client::verify_revocable_access_token;
 use openstack_keystone_core_types::oauth2_key::Oauth2KeyProviderError;
 use openstack_keystone_core_types::oauth2_session::RefreshTokenRevocationReason;
@@ -355,7 +355,7 @@ mod tests {
     use tower::ServiceExt;
     use tower_http::trace::TraceLayer;
 
-    use openstack_keystone_audit::AuditDispatcher;
+    use cadf::AuditDispatcher;
     use openstack_keystone_config::{Config, ConfigManager};
     use openstack_keystone_core::keystone::Service;
     use openstack_keystone_core::policy::MockPolicy;

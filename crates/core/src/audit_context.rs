@@ -31,7 +31,7 @@ use std::future::Future;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use openstack_keystone_audit::Initiator;
+use cadf::Initiator;
 
 /// The audit facts of one request.
 #[derive(Clone, Debug, Default)]

@@ -30,7 +30,7 @@
 
 use std::sync::Arc;
 
-use openstack_keystone_audit::{AuditDispatcher, CadfEvent};
+use cadf::{AuditDispatcher, CadfEvent};
 use serde_json::Value;
 
 #[allow(clippy::expect_used)]
@@ -51,7 +51,7 @@ struct Vector {
 
 #[allow(clippy::unwrap_used)]
 fn vectors_path() -> std::path::PathBuf {
-    // CARGO_MANIFEST_DIR is crates/audit; walk up two levels to workspace root.
+    // CARGO_MANIFEST_DIR is crates/cadf; walk up two levels to workspace root.
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     manifest
         .parent()
@@ -117,7 +117,7 @@ fn verify_hmac_vectors() {
 /// signature value (which would require the cross-language vectors above).
 #[test]
 fn hmac_roundtrip_deterministic_payload() {
-    use openstack_keystone_audit::{CadfEventPayload, Initiator, Observer, Target};
+    use cadf::{CadfEventPayload, Initiator, Observer, Target};
 
     let key: Arc<[u8]> = Arc::from(b"test-key-32-bytes-0123456789abcd".as_slice());
     let (dispatcher, _rx) = AuditDispatcher::new(
@@ -176,6 +176,6 @@ fn hmac_roundtrip_deterministic_payload() {
     );
 }
 
-// Tamper-detection test lives in `crates/audit/src/types.rs` as a unit test,
+// Tamper-detection test lives in `crates/cadf/src/types.rs` as a unit test,
 // where it has pub(crate) access to `CadfEvent::signature` to simulate
 // tampering.

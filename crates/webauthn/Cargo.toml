@@ -39,7 +39,7 @@ webauthn-rs-proto.workspace = true
 
 [dev-dependencies]
 axum = { workspace = true, features = ["http2", "tokio"] }
-openstack-keystone-audit = { workspace = true, features = ["testing"] }
+cadf = { workspace = true, features = ["testing"] }
 base64urlsafedata.workspace = true
 mockall.workspace = true
 openstack-keystone-config.workspace = true

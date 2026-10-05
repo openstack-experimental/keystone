@@ -32,7 +32,7 @@ use axum::{
 };
 use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, SameSite};
-use openstack_keystone_audit::OutcomeReason;
+use cadf::OutcomeReason;
 use secrecy::SecretString;
 use serde::Deserialize;
 

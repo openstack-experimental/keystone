@@ -27,7 +27,7 @@ tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
-openstack-keystone-audit = { workspace = true, features = ["testing"] }
+cadf = { workspace = true, features = ["testing"] }
 openstack-keystone-config.workspace = true
 openstack-keystone-core = { workspace = true, features = ["mock"] }
 openstack-keystone-distributed-storage = { workspace = true, features = ["mock"] }

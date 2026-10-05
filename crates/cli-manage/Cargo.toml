@@ -23,7 +23,7 @@ eyre.workspace = true
 futures.workspace = true
 inventory.workspace = true
 openstack-keystone-api-types.workspace = true
-openstack-keystone-audit.workspace = true
+cadf.workspace = true
 openstack-keystone = { version = "0.1", path = "../keystone" }
 openstack-keystone-config.workspace = true
 openstack-keystone-core.workspace = true

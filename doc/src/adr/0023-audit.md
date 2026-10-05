@@ -729,7 +729,7 @@ leaves two producers next to the CADF pipeline described here. The decision is
 to **keep the two signing schemes and record shapes separate, and to share the
 delivery path**.
 
-**Why not fold the forwarder into the `openstack-keystone-audit` spool:**
+**Why not fold the forwarder into the `cadf` spool:**
 
 - **Different trust root.** The storage key is derived from the DEK, rotates
   with every DEK epoch swap on every node and is bound to the HSM/KEK

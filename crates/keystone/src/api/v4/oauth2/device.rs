@@ -29,7 +29,7 @@ use axum::{
 };
 use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, SameSite};
-use openstack_keystone_audit::OutcomeReason;
+use cadf::OutcomeReason;
 use secrecy::SecretString;
 use serde::Deserialize;
 
@@ -597,7 +597,7 @@ mod tests {
     use tower::ServiceExt;
     use tower_http::trace::TraceLayer;
 
-    use openstack_keystone_audit::AuditDispatcher;
+    use cadf::AuditDispatcher;
     use openstack_keystone_config::{Config, ConfigManager};
     use openstack_keystone_core::keystone::Service;
     use openstack_keystone_core::policy::MockPolicy;

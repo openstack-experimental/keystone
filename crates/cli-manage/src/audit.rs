@@ -18,7 +18,7 @@ use clap::{Parser, Subcommand};
 use color_eyre::{Report, eyre::WrapErr};
 use eyre::Result;
 
-use openstack_keystone_audit::HmacKeyring;
+use cadf::HmacKeyring;
 use openstack_keystone_config::Config;
 
 use crate::PerformAction;

@@ -22,7 +22,7 @@ so operators can watch 5xx rate and latency per route without scraping logs.
   `crates/core/src/keystone.rs`'s `Service` struct.
 - No `unwrap()`/`expect()`/`unsafe`; hand-rolled Prometheus text exposition
   (no `prometheus`/`metrics` crate), consistent with
-  `crates/audit/src/metrics.rs`.
+  `crates/cadf/src/metrics.rs`.
 
 ## Module layout
 
@@ -32,7 +32,7 @@ New file `crates/keystone/src/server/http_metrics.rs`, sibling to
 - `HttpMetrics` struct (state)
 - `record_http_metrics` (Axum middleware)
 - `format_prometheus_text` (exposition formatter, same shape as
-  `openstack_keystone_audit::metrics::format_prometheus_text`)
+  `cadf::metrics::format_prometheus_text`)
 
 ## State shape
 

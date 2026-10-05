@@ -25,8 +25,8 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use cadf::AuditDispatcher;
 use eyre::Result;
-use openstack_keystone_audit::AuditDispatcher;
 use openstack_keystone_core::auth::ValidatedSecurityContext;
 use openstack_keystone_core::cadf_hook::CadfAuditHook;
 use openstack_keystone_core::events::{

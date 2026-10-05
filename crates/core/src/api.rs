@@ -29,7 +29,7 @@ pub mod tests {
     use std::sync::Arc;
 
     use crate::auth::ValidatedSecurityContext;
-    use openstack_keystone_audit::AuditDispatcher;
+    use cadf::AuditDispatcher;
     use openstack_keystone_config::{Config, ConfigManager};
     use openstack_keystone_core_types::auth::{
         AuthenticationContext, AuthzInfoBuilder, IdentityInfo, PrincipalInfo, ScopeInfo,
@@ -227,10 +227,7 @@ pub mod tests {
         provider_builder: ProviderBuilder,
         policy_allow: bool,
         config: Config,
-    ) -> (
-        ServiceState,
-        openstack_keystone_audit::AuditChannelReceivers,
-    ) {
+    ) -> (ServiceState, cadf::AuditChannelReceivers) {
         let (dispatcher, receivers) = AuditDispatcher::new(
             "test-node",
             uuid::Uuid::new_v4().to_string(),

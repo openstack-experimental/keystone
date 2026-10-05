@@ -18,8 +18,8 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
+use cadf::OutcomeReason;
 use governor::clock::Clock as _;
-use openstack_keystone_audit::OutcomeReason;
 
 use openstack_keystone_core::oauth2_client::hydrate_client_credentials_context;
 use openstack_keystone_core::oauth2_client::{build_access_token_claims, crypto};
@@ -237,7 +237,7 @@ mod tests {
     use tower::ServiceExt;
     use tower_http::trace::TraceLayer;
 
-    use openstack_keystone_audit::AuditDispatcher;
+    use cadf::AuditDispatcher;
     use openstack_keystone_config::{Config, ConfigManager};
     use openstack_keystone_core::keystone::Service;
     use openstack_keystone_core::policy::MockPolicy;

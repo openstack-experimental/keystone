@@ -17,7 +17,7 @@
 //! ...) needs the same handful of building blocks — an atomic counter, a
 //! fixed-bucket histogram, and label-value escaping — to serialise its
 //! metrics as Prometheus text exposition format (v0.0.4). Rather than
-//! re-deriving those in every crate (as `crates/audit/src/metrics.rs` and
+//! re-deriving those in every crate (as `crates/cadf/src/metrics.rs` and
 //! `auth_plugin_startup::format_load_failure_metrics` each partially did
 //! before this crate existed), they live here once.
 //!
