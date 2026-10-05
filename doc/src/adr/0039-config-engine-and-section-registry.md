@@ -30,8 +30,12 @@ Rejected: a runtime-typed global bag (loses typed core access), an extension
 
 ### Crates
 
+The engine crate is named `oslo-config`, after the Python library whose model
+(modules register their own option groups, one file, live reload) it
+implements.
+
 ```text
-openstack-keystone-config-core   engine, no feature dependencies
+oslo-config                      engine, no feature dependencies
   ^
 openstack-keystone-config        Keystone schema: core sections, ConfigView alias
   ^
@@ -86,7 +90,9 @@ Raw pipeline (file, site-vars, env; prefix parameterized) -> Vault resolution
 Env override, site-vars and Vault therefore apply to driver sections unchanged.
 `ConfigManager<C>` keeps the core struct and the section bag in one snapshot, so
 reload swaps both atomically (last-known-good, deadlock avoidance and Vault
-teardown behaviour are unchanged).
+teardown behaviour are unchanged). Registered sections are re-parsed and
+re-validated on every reload and watched files of driver sections are part of
+the watch set, so a driver section reloads like any core section.
 
 ### Per-domain blocks
 
@@ -106,13 +112,17 @@ dispatch. The same type serves `[openfga]` and `[assignment.backends.<name>]`.
 
 ## Non-goals
 
-No runtime section loading; no change to INI/env/site-vars semantics; no change
-to per-domain assignment semantics or wire format.
+Section *registration* is link-time only (no loading of section types after
+link). This is not a limit on reloading: live reload of the whole
+configuration, driver sections included, works exactly as it does today (see
+Loading). No change to INI/env/site-vars semantics; no change to per-domain
+assignment semantics or wire format.
 
 ## Consequences
 
 - A new driver is one crate with no central-config diff.
-- `core-types` stops depending on the Keystone schema.
+- `core-types` stops depending on the Keystone schema (it depends on
+  `oslo-config` and shared leaf section types only).
 - Plugin interface changes from `&Config` to `&ConfigView` across ~31 files
   (mechanical).
 - Any linked crate can register a section name; same trust level as backend
