@@ -39,6 +39,7 @@ use crate::StoreError;
 use crate::StoreResponse;
 use crate::Violation;
 use crate::audit::{AuditForwarder, AuditRecord, AuditSpoolConfig};
+use crate::grpc::authz::PeerAuthz;
 use crate::grpc::cluster_admin_service::ClusterAdminServiceImpl;
 use crate::grpc::raft_service::RaftServiceImpl;
 use crate::grpc::storage_service::StorageServiceImpl;
@@ -521,21 +522,20 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
         }
     }
 
-    // Extract SPIFFE configuration when the cluster is in SPIFFE mTLS mode
-    // so the admin service interceptor can validate SVID patterns.
-    let (spiffe_trust_domains, spiffe_path_prefix, operator_role, allowed_peer_svids) =
-        if let openstack_keystone_config::RaftTlsConfiguration::Spiffe(spiffe) =
-            &ds_config.tls_configuration
-        {
-            (
-                Some(spiffe.trust_domains.clone()),
-                spiffe.spiffe_path_prefix.clone(),
-                spiffe.operator_role.clone(),
-                spiffe.allowed_peer_svids.clone(),
-            )
-        } else {
-            (None, String::new(), String::new(), Vec::new())
-        };
+    let peer_authz = Arc::new(match &ds_config.tls_configuration {
+        openstack_keystone_config::RaftTlsConfiguration::Spiffe(s) => PeerAuthz::spiffe(
+            s.trust_domains.clone(),
+            s.spiffe_path_prefix.clone(),
+            s.operator_role.clone(),
+            s.allowed_peer_svids.clone(),
+        ),
+        openstack_keystone_config::RaftTlsConfiguration::Tls(_) => {
+            match &ds_config.tls_role_san_prefix {
+                Some(prefix) => PeerAuthz::tls_roles(prefix.clone()),
+                None => PeerAuthz::tls_legacy(),
+            }
+        }
+    });
 
     // ADR 0028: dedicated Fjall keyspace for node-local, quorum-bypass
     // emergency writes, opened off the same database handle the state
@@ -557,10 +557,7 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
         current_dek,
         audit_forwarder,
         pending_rotations,
-        spiffe_trust_domains,
-        spiffe_path_prefix,
-        operator_role,
-        allowed_peer_svids,
+        peer_authz,
         local_emergency_store,
         local_emergency_config,
         ensure_linearizable_retries: ds_config.ensure_linearizable_retries,
@@ -634,15 +631,14 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
                 };
 
                 for entry in expired {
-                    let cmd =
-                        StoreCommand::Transaction(vec![MutationInner::AbortPendingRotation {
-                            rotation_id: entry.rotation_id.clone(),
-                        }]);
-                    let Ok(payload) = crate::pb::api::CommandRequest::try_from(cmd) else {
-                        continue;
-                    };
-                    match storage.write_command_to_storage(payload).await {
-                        Ok(_) => {
+                    match storage
+                        .propose_abort_pending_rotation(&entry.rotation_id)
+                        .await
+                    {
+                        // Lost leadership since the check above: the new
+                        // leader's own sweeper handles it.
+                        Ok(false) => {}
+                        Ok(true) => {
                             storage.audit_forwarder.emit(AuditRecord::now(
                                 "DEK_ROTATION_EMERGENCY_ABORTED",
                                 &entry.initiator,
@@ -738,7 +734,7 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
 /// # Returns
 /// A `Result` containing the `Routes`, or a `StoreError`.
 pub async fn get_app_server(storage: &Storage) -> Result<Routes, StoreError> {
-    let raft_svc_impl = RaftServiceImpl::new(storage.raft.clone());
+    let raft_svc_impl = RaftServiceImpl::new(storage.raft.clone(), storage.peer_authz.clone());
     let cluster_admin_svc_impl = ClusterAdminServiceImpl::new(
         storage.raft.clone(),
         storage.node_id,
@@ -747,15 +743,18 @@ pub async fn get_app_server(storage: &Storage) -> Result<Routes, StoreError> {
         storage.audit_forwarder.clone(),
         storage.pending_rotations.clone(),
         storage.state_machine_store.clone(),
-        storage.spiffe_trust_domains.clone(),
-        storage.spiffe_path_prefix.clone(),
-        storage.operator_role.clone(),
-        storage.allowed_peer_svids.clone(),
+        storage.peer_authz.clone(),
         storage.local_emergency_store.clone(),
         storage.local_emergency_config.clone(),
     );
-    let storage_svc_impl =
-        StorageServiceImpl::new(storage.raft.clone(), storage.state_machine_store.clone());
+    let storage_svc_impl = StorageServiceImpl::new(
+        storage.raft.clone(),
+        storage.state_machine_store.clone(),
+        storage.peer_authz.clone(),
+        storage.audit_forwarder.clone(),
+        storage.current_dek.clone(),
+        storage.node_id,
+    );
 
     let mut router = Routes::builder();
     router
@@ -791,19 +790,8 @@ pub struct Storage {
     pub audit_forwarder: AuditForwarder,
     /// Pending emergency DEK rotations (shared with FjallStateMachine).
     pending_rotations: Arc<Mutex<HashMap<String, crate::store_command::PendingRotation>>>,
-    /// SPIFFE trust domains for SVID pattern validation. `None` in
-    /// TLS-fallback mode — pattern and role checks are skipped.
-    pub spiffe_trust_domains: Option<Vec<String>>,
-    /// SPIFFE path prefix for SVID pattern validation (e.g.
-    /// `/keystone/storage/`). Empty when in TLS-fallback mode — pattern
-    /// checks are skipped.
-    pub spiffe_path_prefix: String,
-    /// SPIFFE role that authorizes sensitive management operations.  Empty when
-    /// in TLS-fallback mode — role checks are skipped.
-    pub operator_role: String,
-    /// Allow-list of SPIFFE SVIDs accepted for peer-to-peer Raft operations.
-    /// Empty list means trust-domain-only validation is used.
-    pub allowed_peer_svids: Vec<String>,
+    /// Peer certificate role resolver shared by the gRPC services.
+    pub(crate) peer_authz: Arc<PeerAuthz>,
     /// ADR 0028 node-local, quorum-bypass emergency write store (Fjall,
     /// never touched by Raft's `apply()`). `pub` (not `pub(crate)`) so the
     /// `keystone` binary can wire it into `core::keystone::Service` at
@@ -1755,6 +1743,26 @@ impl Storage {
         }
     }
 
+    /// Propose `AbortPendingRotation` locally. Only the leader proposes it
+    /// (admin mutations are rejected on the forwarded `command` RPC); on a
+    /// follower this is a no-op (`Ok(false)`) because the leader's own
+    /// sweeper handles it.
+    pub async fn propose_abort_pending_rotation(
+        &self,
+        rotation_id: &str,
+    ) -> Result<bool, StoreError> {
+        let cmd = StoreCommand::Transaction(vec![MutationInner::AbortPendingRotation {
+            rotation_id: rotation_id.to_owned(),
+        }]);
+        let payload = crate::pb::api::CommandRequest::try_from(cmd)
+            .map_err(|e| StoreError::Other(eyre::eyre!("{e}")))?;
+        match self.raft.client_write(payload).await {
+            Ok(_) => Ok(true),
+            Err(RaftError::APIError(ClientWriteError::ForwardToLeader(_))) => Ok(false),
+            Err(other) => Err(other)?,
+        }
+    }
+
     /// Propose a `Quarantine` mutation via Raft, forwarding to the leader if
     /// this node is not currently leader (ADR 0016-v2 §10 invariant 5).
     ///
@@ -1763,12 +1771,84 @@ impl Storage {
     /// Best effort: the local, synchronous quarantine (in-memory block plus
     /// local Fjall marker) already took effect before this is invoked, so a
     /// failure here only delays cluster-wide visibility, not local safety.
+    ///
+    /// A follower forwards through the dedicated `ReportQuarantine` RPC; the
+    /// data-plane `command` RPC rejects admin mutations such as `Quarantine`.
     async fn propose_quarantine(&self, node_id: u64, partition: String) -> Result<(), StoreError> {
-        let cmd = StoreCommand::Transaction(vec![MutationInner::Quarantine { node_id, partition }]);
+        let cmd = StoreCommand::Transaction(vec![MutationInner::Quarantine {
+            node_id,
+            partition: partition.clone(),
+        }]);
         let payload = crate::pb::api::CommandRequest::try_from(cmd)
             .map_err(|e| StoreError::Other(eyre::eyre!("{e}")))?;
-        self.write_command_to_storage(payload).await?;
-        Ok(())
+        match self.raft.client_write(payload).await {
+            Ok(_) => Ok(()),
+            Err(RaftError::APIError(ClientWriteError::ForwardToLeader(ForwardToLeader {
+                leader_id: Some(leader_id),
+                leader_node: Some(leader_node),
+            }))) => {
+                self.report_quarantine_with_forwarding(
+                    node_id,
+                    partition,
+                    leader_id,
+                    leader_node.rpc_addr,
+                )
+                .await
+            }
+            Err(other) => Err(other)?,
+        }
+    }
+
+    /// Send a `ReportQuarantine` to `leader_id`, following `Unavailable`
+    /// leader hints (same retry semantics as [`Self::command_with_forwarding`]).
+    async fn report_quarantine_with_forwarding(
+        &self,
+        node_id: u64,
+        partition: String,
+        leader_id: u64,
+        leader_addr: String,
+    ) -> Result<(), StoreError> {
+        let max_retries = 3;
+        let mut target_id = leader_id;
+        let mut target_addr = leader_addr;
+        let request = crate::pb::api::ReportQuarantineRequest { node_id, partition };
+
+        for _attempt in 0..=max_retries {
+            let channel = self.get_or_create_channel(target_id, target_addr).await?;
+            let mut client = StorageServiceClient::new(channel);
+            match client.report_quarantine(request.clone()).await {
+                Ok(_) => return Ok(()),
+                Err(status) if status.code() == Code::Unavailable => {
+                    let addr = status
+                        .metadata()
+                        .get(LEADER_ENDPOINT_HEADER)
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_string);
+                    let id: Option<u64> = status
+                        .metadata()
+                        .get(LEADER_ID_HEADER)
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::parse)
+                        .transpose()?;
+                    if let (Some(addr), Some(id)) = (addr, id) {
+                        debug!("forwarding quarantine report to leader at {}", addr);
+                        target_addr = addr;
+                        target_id = id;
+                        continue;
+                    }
+                    return Err(eyre!(
+                        "ReportQuarantine unavailable and no leader hint: {}",
+                        status
+                    )
+                    .into());
+                }
+                Err(status) => {
+                    return Err(eyre!("ReportQuarantine failed: {}", status).into());
+                }
+            }
+        }
+
+        Err(eyre!("ReportQuarantine: max retries exceeded").into())
     }
 
     /// Generic retry loop: on `Unavailable` with leader metadata, switch

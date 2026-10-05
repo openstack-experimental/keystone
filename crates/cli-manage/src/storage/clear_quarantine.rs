@@ -48,7 +48,7 @@ pub(super) struct ClearQuarantineCommand {
 #[async_trait]
 impl PerformAction for ClearQuarantineCommand {
     async fn take_action(self, config: &Config) -> Result<(), Report> {
-        let mut client = get_grpc_client(config, self.cluster_addr).await?;
+        let mut client = get_grpc_client(config, self.cluster_addr, false).await?;
 
         client
             .clear_quarantine(pb::raft::ClearQuarantineRequest {

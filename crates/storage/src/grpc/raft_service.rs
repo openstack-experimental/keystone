@@ -12,6 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use std::pin::Pin;
+use std::sync::Arc;
 
 use futures::Stream;
 use futures::StreamExt;
@@ -22,6 +23,7 @@ use tonic::Status;
 use tonic::Streaming;
 use tracing::trace;
 
+use crate::grpc::authz::{PeerAuthz, PeerRole};
 use crate::protobuf as pb;
 use crate::protobuf::raft::VoteRequest;
 use crate::protobuf::raft::VoteResponse;
@@ -44,6 +46,8 @@ use crate::types::*;
 pub struct RaftServiceImpl {
     /// The local Raft node instance that this service operates on.
     pub(crate) raft_node: Raft,
+    /// Peer certificate role enforcement.
+    authz: Arc<PeerAuthz>,
 }
 
 impl RaftServiceImpl {
@@ -51,11 +55,12 @@ impl RaftServiceImpl {
     ///
     /// # Parameters
     /// - `raft_node`: The Raft node instance this service will operate on.
+    /// - `authz`: Peer role resolver; every RPC requires the node role.
     ///
     /// # Returns
     /// A new `RaftServiceImpl` instance.
-    pub fn new(raft_node: Raft) -> Self {
-        Self { raft_node }
+    pub fn new(raft_node: Raft, authz: Arc<PeerAuthz>) -> Self {
+        Self { raft_node, authz }
     }
 }
 
@@ -75,6 +80,7 @@ impl RaftService for RaftServiceImpl {
     /// Nodes vote for candidates based on log completeness and term numbers.
     #[tracing::instrument(level = "trace", skip(self))]
     async fn vote(&self, request: Request<VoteRequest>) -> Result<Response<VoteResponse>, Status> {
+        self.authz.require(&request, &[PeerRole::Node])?;
         let vote_resp = self
             .raft_node
             .vote(
@@ -108,6 +114,7 @@ impl RaftService for RaftServiceImpl {
         &self,
         request: Request<pb::raft::AppendEntriesRequest>,
     ) -> Result<Response<pb::raft::AppendEntriesResponse>, Status> {
+        self.authz.require(&request, &[PeerRole::Node])?;
         let append_resp =
             self.raft_node
                 .append_entries(request.into_inner().try_into().map_err(|e| {
@@ -134,6 +141,7 @@ impl RaftService for RaftServiceImpl {
         &self,
         request: Request<Streaming<pb::raft::SnapshotRequest>>,
     ) -> Result<Response<pb::raft::SnapshotResponse>, Status> {
+        self.authz.require(&request, &[PeerRole::Node])?;
         let mut stream = request.into_inner();
 
         // Get the first chunk which contains metadata
@@ -216,6 +224,7 @@ impl RaftService for RaftServiceImpl {
         &self,
         request: Request<Streaming<pb::raft::AppendEntriesRequest>>,
     ) -> Result<Response<Self::StreamAppendStream>, Status> {
+        self.authz.require(&request, &[PeerRole::Node])?;
         let input = request.into_inner();
 
         // Convert pb stream to openraft AppendEntriesRequest stream

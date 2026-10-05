@@ -105,9 +105,14 @@ enum StorageCommands {
     ReconcileDekLocalEmergency(ReconcileDekLocalEmergencyCommand),
 }
 
+///
+/// With `as_node` the SPIFFE client presents the storage node's own SVID (the
+/// `Node` role); otherwise it presents the workload's sole SVID, which is the
+/// `storage-operator` identity on an operator workload.
 async fn get_grpc_client(
     cfg: &Config,
     addr: Option<Uri>,
+    as_node: bool,
 ) -> Result<ClusterAdminServiceClient<Channel>, Report> {
     let ds = cfg
         .distributed_storage
@@ -118,7 +123,12 @@ async fn get_grpc_client(
 
     let channel = match &ds.tls_configuration {
         RaftTlsConfiguration::Spiffe(spiffe_cfg) => {
-            get_spiffe_grpc_channel(target_addr, &spiffe_cfg.trust_domains).await?
+            get_spiffe_grpc_channel(
+                target_addr,
+                &spiffe_cfg.trust_domains,
+                as_node.then(|| spiffe_cfg.own_svid_path()).as_deref(),
+            )
+            .await?
         }
         RaftTlsConfiguration::Tls(_) => {
             let tls_config = get_client_tls_config(cfg)?;

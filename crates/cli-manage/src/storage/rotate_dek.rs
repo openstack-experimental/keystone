@@ -76,7 +76,7 @@ impl PerformAction for RotateDekCommand {
             ));
         }
 
-        let mut client = get_grpc_client(config, self.cluster_addr).await?;
+        let mut client = get_grpc_client(config, self.cluster_addr, false).await?;
 
         if self.local_quorum_bypass {
             let resp = client

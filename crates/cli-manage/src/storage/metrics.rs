@@ -44,7 +44,7 @@ impl PerformAction for MetricsCommand {
             return Err(eyre!("no distributed_storage configuration"));
         }
 
-        let mut client = get_grpc_client(config, self.cluster_addr).await?;
+        let mut client = get_grpc_client(config, self.cluster_addr, false).await?;
         let metrics = client.metrics(()).await?.into_inner();
 
         let leader = match metrics.current_leader {

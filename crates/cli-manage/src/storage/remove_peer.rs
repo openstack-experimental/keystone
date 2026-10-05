@@ -41,7 +41,7 @@ pub(super) struct RemovePeerCommand {
 impl PerformAction for RemovePeerCommand {
     async fn take_action(self, config: &Config) -> Result<(), Report> {
         if config.distributed_storage.is_some() {
-            let mut client = get_grpc_client(config, None).await?;
+            let mut client = get_grpc_client(config, None, false).await?;
 
             let membership = client
                 .metrics(())

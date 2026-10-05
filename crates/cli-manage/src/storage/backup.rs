@@ -56,7 +56,7 @@ impl PerformAction for BackupCommand {
             return Err(eyre!("no distributed_storage configuration"));
         }
 
-        let mut client = get_grpc_client(config, self.cluster_addr).await?;
+        let mut client = get_grpc_client(config, self.cluster_addr, false).await?;
 
         let mut stream = client
             .backup(pb::raft::BackupRequest {})

@@ -36,7 +36,7 @@ impl PerformAction for InitCommand {
             if let (Some(host), Some(port)) =
                 (cfg.node_cluster_addr.host(), cfg.node_cluster_addr.port())
             {
-                let mut client = get_grpc_client(config, None).await?;
+                let mut client = get_grpc_client(config, None, false).await?;
 
                 client
                     .init(pb::raft::InitRequest {

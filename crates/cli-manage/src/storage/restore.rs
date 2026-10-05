@@ -111,7 +111,7 @@ impl PerformAction for RestoreCommand {
         // a time.
         let stream = file_chunk_stream(file, self.elect, file_size);
 
-        let mut client = get_grpc_client(config, self.cluster_addr).await?;
+        let mut client = get_grpc_client(config, self.cluster_addr, false).await?;
 
         client.restore(stream).await?;
 

@@ -715,14 +715,36 @@ async fn init_spiffe_raft_tls(
 /// Intended for CLI tools that establish a single connection and exit.
 /// The channel uses a [`SpiffeConnector`] so that SPIFFE URI SAN verification
 /// is applied instead of standard hostname verification.
+///
+/// `svid_path` pins the SVID presented to the server (see [`PathSvidPicker`]);
+/// `None` takes whatever the Workload API returns first, which is only
+/// correct for a workload holding a single SVID.
 pub async fn get_spiffe_grpc_channel(
     target_addr: http::Uri,
     trust_domains: &[String],
+    svid_path: Option<&str>,
 ) -> Result<Channel, StoreError> {
-    let source =
-        crate::spiffe_wait::wait_for_spiffe_source("Raft gRPC client channel", X509Source::new())
+    let source = match svid_path {
+        Some(path) => {
+            crate::spiffe_wait::wait_for_spiffe_source(
+                "Raft gRPC client channel",
+                X509SourceBuilder::new()
+                    .picker(PathSvidPicker {
+                        path: path.to_string(),
+                    })
+                    .build(),
+            )
             .await
-            .map_err(StoreError::Other)?;
+        }
+        None => {
+            crate::spiffe_wait::wait_for_spiffe_source(
+                "Raft gRPC client channel",
+                X509Source::new(),
+            )
+            .await
+        }
+    }
+    .map_err(StoreError::Other)?;
 
     let mut rustls_config = mtls_client(source)
         .authorize(

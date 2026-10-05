@@ -48,7 +48,7 @@ pub(super) struct ReconcileDekLocalEmergencyCommand {
 #[async_trait]
 impl PerformAction for ReconcileDekLocalEmergencyCommand {
     async fn take_action(self, config: &Config) -> Result<(), Report> {
-        let mut client = get_grpc_client(config, self.cluster_addr).await?;
+        let mut client = get_grpc_client(config, self.cluster_addr, false).await?;
 
         client
             .reconcile_dek_local_emergency(pb::raft::ReconcileDekLocalEmergencyRequest {

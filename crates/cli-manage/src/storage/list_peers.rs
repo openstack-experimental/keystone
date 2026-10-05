@@ -34,7 +34,7 @@ pub(super) struct ListPeersCommand {}
 impl PerformAction for ListPeersCommand {
     async fn take_action(self, config: &Config) -> Result<(), Report> {
         if config.distributed_storage.is_some() {
-            let mut client = get_grpc_client(config, None).await?;
+            let mut client = get_grpc_client(config, None, false).await?;
 
             let metrics = client.metrics(()).await?.into_inner();
             let membership = metrics.membership.unwrap_or_default();

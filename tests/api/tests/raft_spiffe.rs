@@ -57,7 +57,7 @@ async fn verify_raft_grpc(trust_domains: &[String]) -> Result<()> {
     let grpc_url = RAFT_GRPC_ENDPOINT
         .parse()
         .map_err(|e| eyre!("invalid URI: {e}"))?;
-    let channel = get_spiffe_grpc_channel(grpc_url, trust_domains)
+    let channel = get_spiffe_grpc_channel(grpc_url, trust_domains, None)
         .await
         .map_err(|e| {
             tracing::error!("SPIFFE gRPC channel creation failed: {e}");

@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+pub mod authz;
 pub mod cluster_admin_service;
 pub mod raft_service;
 pub mod storage_service;

@@ -25,6 +25,7 @@ use crate::common::{TlsConfiguration, csv, option_u32_from_str_or_int};
 /// Raft cluster configuration.
 #[derive(Debug, Deserialize, Clone, Validate)]
 #[validate(schema(function = "validate_kek_selection"))]
+#[validate(schema(function = "validate_peer_authz"))]
 pub struct DistributedStorageConfiguration {
     /// Enable development mode.
     ///
@@ -140,6 +141,16 @@ pub struct DistributedStorageConfiguration {
     #[serde(flatten)]
     pub tls_configuration: RaftTlsConfiguration,
 
+    /// URI prefix of the SAN URI that carries the peer role in static-TLS
+    /// mode (e.g. `spiffe://keystone/storage/`); the role follows the prefix
+    /// (`node` or `storage-operator`). Ignored in SPIFFE mode.
+    ///
+    /// Required when `dev_mode = false`. With `dev_mode = true` and no
+    /// prefix every CA-signed peer is accepted for every RPC (legacy
+    /// behaviour, logged as a warning).
+    #[serde(default)]
+    pub tls_role_san_prefix: Option<String>,
+
     /// TPM 2.0 KEK configuration (ADR 0016-v2 §2.5.2). Required when
     /// `kek_provider = "tpm"`.
     #[serde(default)]
@@ -203,6 +214,54 @@ fn validate_kek_selection(
         },
     }
     Ok(())
+}
+
+/// Production peer-authorization requirements (issue #1303): SPIFFE mode
+/// needs an explicit `allowed_peer_svids`; static-TLS mode needs
+/// `tls_role_san_prefix` so roles can be derived from the peer certificate.
+fn validate_peer_authz(
+    cfg: &DistributedStorageConfiguration,
+) -> Result<(), validator::ValidationError> {
+    // Shape checks apply regardless of dev_mode: a malformed prefix or an
+    // operator role colliding with "node" silently breaks role resolution.
+    if let RaftTlsConfiguration::Spiffe(s) = &cfg.tls_configuration {
+        if s.operator_role.is_empty() || s.operator_role == "node" {
+            return Err(
+                validator::ValidationError::new("operator_role_invalid").with_message(
+                    "operator_role must be non-empty and different from \"node\"".into(),
+                ),
+            );
+        }
+        if !(s.spiffe_path_prefix.starts_with('/') && s.spiffe_path_prefix.ends_with('/')) {
+            return Err(
+                validator::ValidationError::new("spiffe_path_prefix_invalid")
+                    .with_message("spiffe_path_prefix must start and end with '/'".into()),
+            );
+        }
+    }
+    if let Some(prefix) = &cfg.tls_role_san_prefix
+        && (prefix.is_empty() || !prefix.ends_with('/'))
+    {
+        return Err(
+            validator::ValidationError::new("tls_role_san_prefix_invalid")
+                .with_message("tls_role_san_prefix must be non-empty and end with '/'".into()),
+        );
+    }
+    if cfg.dev_mode {
+        return Ok(());
+    }
+    match &cfg.tls_configuration {
+        RaftTlsConfiguration::Spiffe(s) if s.allowed_peer_svids.is_empty() => Err(
+            validator::ValidationError::new("allowed_peer_svids_required")
+                .with_message("allowed_peer_svids must be set when dev_mode = false".into()),
+        ),
+        RaftTlsConfiguration::Tls(_) if cfg.tls_role_san_prefix.is_none() => Err(
+            validator::ValidationError::new("tls_role_san_prefix_required").with_message(
+                "tls_role_san_prefix must be set in TLS mode when dev_mode = false".into(),
+            ),
+        ),
+        _ => Ok(()),
+    }
 }
 
 /// Selects which Key Encryption Key provider backs DEK wrap/unwrap (ADR
@@ -407,6 +466,7 @@ impl Default for DistributedStorageConfiguration {
             retry_join_nodes: Vec::new(),
             auto_bootstrap: default_auto_bootstrap(),
             tls_configuration: RaftTlsConfiguration::Tls(TlsConfiguration::default()),
+            tls_role_san_prefix: None,
             tpm: None,
         }
     }
@@ -415,14 +475,15 @@ impl Default for DistributedStorageConfiguration {
 /// Spiffe backed mTLS for the Raft.
 #[derive(Debug, Deserialize, Clone)]
 pub struct SpiffeTls {
-    /// Allow-list of SPIFFE SVIDs that may participate in peer-to-peer Raft
-    /// operations (`metrics`, `init`, `add_learner`, `change_membership`).
-    /// When empty the check falls back to trust-domain-only validation.
+    /// Exact SVIDs outside `spiffe_path_prefix` that are accepted with the
+    /// `node` role. Entries under the prefix resolve by the role convention
+    /// instead. Required (non-empty) when `dev_mode = false`; when empty in
+    /// `dev_mode` only `<spiffe_path_prefix>node` and
+    /// `<spiffe_path_prefix><operator_role>` are accepted.
     ///
     /// Example:
     /// ```yaml
     /// allowed_peer_svids:
-    ///   - spiffe://example.org/ns/default/sa/keystone
     ///   - spiffe://example.org/keystone/storage/node
     /// ```
     #[serde(default)]
@@ -465,8 +526,9 @@ impl SpiffeTls {
     /// The SPIFFE ID path this node presents for Raft peer mTLS.
     ///
     /// A node's process typically matches more than one SPIRE registration
-    /// entry, and Raft peers enforce `allowed_peer_svids` (or the
-    /// `spiffe_path_prefix` fallback) on the SVID each peer presents. In a
+    /// entry, and Raft peers accept only role paths under
+    /// `spiffe_path_prefix` or exact `allowed_peer_svids` entries on the SVID
+    /// each peer presents. In a
     /// homogeneous cluster every node therefore presents one of the SVIDs its
     /// peers allow, so when `allowed_peer_svids` is set the first entry's path
     /// is this node's own identity. When it is empty the registration
@@ -751,6 +813,7 @@ path = /foo
             "path": "/tmp",
             "tls_cert_file": "/tmp/tls.cert",
             "tls_key_file": "/tmp/tls.key",
+            "tls_role_san_prefix": "spiffe://keystone/storage/",
             "kek_provider": "pkcs11",
             "pkcs11": {
                 "pkcs11_module_path": "/usr/lib/softhsm/libsofthsm2.so",
@@ -815,6 +878,7 @@ path = /foo
             "path": "/tmp",
             "tls_cert_file": "/tmp/tls.cert",
             "tls_key_file": "/tmp/tls.key",
+            "tls_role_san_prefix": "spiffe://keystone/storage/",
             "kek_provider": "tpm",
             "tpm": {
                 "tpm_tcti": "swtpm:host=127.0.0.1,port=2321",
@@ -870,5 +934,141 @@ path = /foo
             cfg.tpm_auth_content.unwrap().expose_secret(),
             b"secret-auth".as_slice()
         );
+    }
+
+    fn prod_spiffe_cfg(allowed: &str) -> DistributedStorageConfiguration {
+        let mut v = json!({
+            "node_cluster_addr": "http://1.2.3.4:5678",
+            "node_id": 1,
+            "path": "/tmp",
+            "kek_provider": "pkcs11",
+            "pkcs11": {
+                "pkcs11_module_path": "/m",
+                "pkcs11_slot_label": "t",
+                "pkcs11_key_label": "k",
+                "pkcs11_pin_file": "/p"
+            },
+            "trust_domains": "example.org",
+        });
+        if !allowed.is_empty() {
+            v["allowed_peer_svids"] = json!([allowed]);
+        }
+        serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn test_prod_spiffe_requires_allowed_peer_svids() {
+        let cfg = prod_spiffe_cfg("");
+        let err = validator::Validate::validate(&cfg).unwrap_err();
+        assert!(
+            format!("{err:?}").contains("allowed_peer_svids_required"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn test_prod_spiffe_with_allowed_peer_svids_ok() {
+        let cfg = prod_spiffe_cfg("spiffe://example.org/keystone/storage/node");
+        assert!(validator::Validate::validate(&cfg).is_ok());
+    }
+
+    #[test]
+    fn test_prod_tls_requires_role_san_prefix() {
+        let mut cfg = DistributedStorageConfiguration {
+            dev_mode: false,
+            kek_provider: KekProvider::Tpm,
+            tpm: Some(
+                serde_json::from_value(json!({
+                    "tpm_tcti": "device:/dev/tpmrm0",
+                    "tpm_key_handle": "0x81000001"
+                }))
+                .unwrap(),
+            ),
+            tls_role_san_prefix: None,
+            ..Default::default()
+        };
+        let err = validator::Validate::validate(&cfg).unwrap_err();
+        assert!(
+            format!("{err:?}").contains("tls_role_san_prefix_required"),
+            "{err}"
+        );
+        cfg.tls_role_san_prefix = Some("spiffe://keystone/storage/".into());
+        assert!(validator::Validate::validate(&cfg).is_ok());
+    }
+
+    #[test]
+    fn test_dev_tls_without_role_san_prefix_ok() {
+        let cfg = DistributedStorageConfiguration {
+            dev_mode: true,
+            ..Default::default()
+        };
+        assert!(validator::Validate::validate(&cfg).is_ok());
+    }
+
+    fn spiffe_cfg(
+        dev_mode: bool,
+        operator_role: &str,
+        prefix: &str,
+    ) -> DistributedStorageConfiguration {
+        DistributedStorageConfiguration {
+            dev_mode,
+            tls_configuration: RaftTlsConfiguration::Spiffe(SpiffeTls {
+                allowed_peer_svids: vec!["spiffe://example.org/a".into()],
+                operator_role: operator_role.into(),
+                spiffe_path_prefix: prefix.into(),
+                trust_domains: vec!["example.org".into()],
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn has_code(cfg: &DistributedStorageConfiguration, code: &str) -> bool {
+        cfg.validate()
+            .is_err_and(|e| format!("{e:?}").contains(code))
+    }
+
+    #[test]
+    fn test_peer_authz_defaults_valid() {
+        let cfg = spiffe_cfg(false, "storage-operator", "/keystone/storage/");
+        assert!(!has_code(&cfg, "operator_role_invalid"));
+        assert!(!has_code(&cfg, "spiffe_path_prefix_invalid"));
+    }
+
+    #[test]
+    fn test_operator_role_node_or_empty_rejected() {
+        for dev in [false, true] {
+            for role in ["node", ""] {
+                let cfg = spiffe_cfg(dev, role, "/keystone/storage/");
+                assert!(has_code(&cfg, "operator_role_invalid"), "{dev} {role:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_spiffe_path_prefix_shape_rejected() {
+        for prefix in ["keystone/storage/", "/keystone/storage", "", "/x"] {
+            let cfg = spiffe_cfg(true, "storage-operator", prefix);
+            assert!(has_code(&cfg, "spiffe_path_prefix_invalid"), "{prefix:?}");
+        }
+        let cfg = spiffe_cfg(true, "storage-operator", "/");
+        assert!(!has_code(&cfg, "spiffe_path_prefix_invalid"));
+    }
+
+    #[test]
+    fn test_tls_role_san_prefix_shape_rejected() {
+        for prefix in ["", "spiffe://keystone/storage"] {
+            let cfg = DistributedStorageConfiguration {
+                dev_mode: true,
+                tls_role_san_prefix: Some(prefix.into()),
+                ..Default::default()
+            };
+            assert!(has_code(&cfg, "tls_role_san_prefix_invalid"), "{prefix:?}");
+        }
+        let cfg = DistributedStorageConfiguration {
+            dev_mode: true,
+            tls_role_san_prefix: Some("spiffe://keystone/storage/".into()),
+            ..Default::default()
+        };
+        assert!(!has_code(&cfg, "tls_role_san_prefix_invalid"));
     }
 }

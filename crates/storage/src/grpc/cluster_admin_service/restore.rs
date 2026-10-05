@@ -250,12 +250,7 @@ impl ClusterAdminServiceImpl {
         &self,
         request: Request<Streaming<pb::raft::RestoreChunk>>,
     ) -> Result<Response<pb::raft::AdminResponse>, Status> {
-        let actor = require_operator(
-            &request,
-            self.spiffe_trust_domains.as_deref(),
-            &self.spiffe_path_prefix,
-            &self.operator_role,
-        )?;
+        let actor = require_operator(&request, &self.authz)?;
         trace!(actor, "operator restore requested");
 
         let mut stream = request.into_inner();

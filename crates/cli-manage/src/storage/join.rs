@@ -42,7 +42,7 @@ impl PerformAction for JoinCommand {
             if let (Some(host), Some(port)) =
                 (cfg.node_cluster_addr.host(), cfg.node_cluster_addr.port())
             {
-                let mut client = get_grpc_client(config, Some(self.cluster_addr)).await?;
+                let mut client = get_grpc_client(config, Some(self.cluster_addr), true).await?;
 
                 match client
                     .add_learner(pb::raft::AddLearnerRequest {

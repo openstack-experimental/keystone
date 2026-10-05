@@ -75,21 +75,12 @@ pub struct ClusterAdminServiceImpl {
     pending_rotations: Arc<Mutex<HashMap<String, PendingRotation>>>,
     /// State machine store — used for backup snapshot building and restore.
     sm: Arc<StateMachineStore>,
-    /// SPIFFE trust domains for SVID pattern validation.
-    /// `None` in TLS-fallback mode — pattern and role checks are skipped.
-    spiffe_trust_domains: Option<Vec<String>>,
+    /// Peer certificate role resolver.
+    authz: Arc<PeerAuthz>,
     /// Per-identity rate limiter for RotateDek (ADR 0016-v2 §1: 2/hour).
     rotate_dek_limiter: Arc<IdentityLimiter>,
     /// Per-identity rate limiter for ClearQuarantine (ADR 0016-v2 §1: 10/hour).
     clear_quarantine_limiter: Arc<IdentityLimiter>,
-    /// SPIFFE path prefix for SVID pattern validation. Empty in TLS-fallback.
-    spiffe_path_prefix: String,
-    /// SPIFFE role that authorises sensitive management operations. Empty in
-    /// TLS-fallback mode.
-    operator_role: String,
-    /// Allow-list of SVIDs permitted for peer-to-peer Raft operations.
-    /// When empty falls back to trust-domain-only check.
-    allowed_peer_svids: Vec<String>,
     /// ADR 0028 node-local, quorum-bypass emergency write store.
     local_emergency_store: Arc<dyn LocalEmergencyStore>,
     /// `[local_emergency]` config, snapshotted at storage init.
@@ -156,10 +147,7 @@ impl ClusterAdminServiceImpl {
         audit: AuditForwarder,
         pending_rotations: Arc<Mutex<HashMap<String, PendingRotation>>>,
         sm: Arc<StateMachineStore>,
-        spiffe_trust_domains: Option<Vec<String>>,
-        spiffe_path_prefix: String,
-        operator_role: String,
-        allowed_peer_svids: Vec<String>,
+        authz: Arc<PeerAuthz>,
         local_emergency_store: Arc<dyn LocalEmergencyStore>,
         local_emergency_config: LocalEmergencyProvider,
     ) -> Self {
@@ -171,10 +159,7 @@ impl ClusterAdminServiceImpl {
             audit,
             pending_rotations,
             sm,
-            spiffe_trust_domains,
-            spiffe_path_prefix,
-            operator_role,
-            allowed_peer_svids,
+            authz,
             rotate_dek_limiter: Arc::new(RateLimiter::keyed(Quota::per_hour(ROTATE_DEK_PER_HOUR))),
             clear_quarantine_limiter: Arc::new(RateLimiter::keyed(Quota::per_hour(
                 CLEAR_QUARANTINE_PER_HOUR,
@@ -235,11 +220,7 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
     #[tracing::instrument(level = "trace", skip(self))]
     async fn init(&self, request: Request<pb::raft::InitRequest>) -> Result<Response<()>, Status> {
         trace!("Initializing Raft cluster");
-        check_peer_trust_domain(
-            &request,
-            self.spiffe_trust_domains.as_deref(),
-            &self.allowed_peer_svids,
-        )?;
+        require_peer(&request, &self.authz, &[PeerRole::Operator])?;
         let req = request.into_inner();
 
         // Initialize the cluster
@@ -265,11 +246,7 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         &self,
         request: Request<pb::raft::AddLearnerRequest>,
     ) -> Result<Response<pb::raft::AdminResponse>, Status> {
-        check_peer_trust_domain(
-            &request,
-            self.spiffe_trust_domains.as_deref(),
-            &self.allowed_peer_svids,
-        )?;
+        require_peer(&request, &self.authz, &[PeerRole::Node, PeerRole::Operator])?;
         let req = request.into_inner();
 
         let node = req
@@ -349,11 +326,7 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         &self,
         request: Request<()>,
     ) -> Result<Response<pb::raft::FetchDekResponse>, Status> {
-        check_peer_trust_domain(
-            &request,
-            self.spiffe_trust_domains.as_deref(),
-            &self.allowed_peer_svids,
-        )?;
+        require_peer(&request, &self.authz, &[PeerRole::Node])?;
 
         let (dek_version, wrapped_dek) = self
             .sm
@@ -390,11 +363,7 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         &self,
         request: Request<pb::raft::ChangeMembershipRequest>,
     ) -> Result<Response<pb::raft::AdminResponse>, Status> {
-        check_peer_trust_domain(
-            &request,
-            self.spiffe_trust_domains.as_deref(),
-            &self.allowed_peer_svids,
-        )?;
+        require_peer(&request, &self.authz, &[PeerRole::Operator])?;
         let req = request.into_inner();
 
         trace!(
@@ -425,11 +394,7 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         request: Request<()>,
     ) -> Result<Response<pb::raft::MetricsResponse>, Status> {
         trace!("Collecting metrics");
-        check_peer_trust_domain(
-            &request,
-            self.spiffe_trust_domains.as_deref(),
-            &self.allowed_peer_svids,
-        )?;
+        require_peer(&request, &self.authz, &[PeerRole::Node, PeerRole::Operator])?;
         let metrics = self
             .get_metrics()
             .map_err(|e| Status::internal(format!("Failed to write to store: {}", e)))?;
@@ -564,8 +529,8 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
     ///
     /// # Security
     /// Called peer-to-peer between storage nodes, not by a human operator —
-    /// authenticated the same way as Raft's own inter-node RPCs
-    /// (`check_peer_trust_domain`), not `require_operator`.
+    /// authorized like Raft's own inter-node RPCs
+    /// (`require_peer(.., &[PeerRole::Node])`), not `require_operator`.
     #[tracing::instrument(level = "trace", skip(self))]
     async fn gossip_local_emergency_candidate(
         &self,
@@ -590,12 +555,7 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         &self,
         request: Request<pb::raft::BackupRequest>,
     ) -> Result<Response<Self::BackupStream>, Status> {
-        let actor = require_operator(
-            &request,
-            self.spiffe_trust_domains.as_deref(),
-            &self.spiffe_path_prefix,
-            &self.operator_role,
-        )?;
+        let actor = require_operator(&request, &self.authz)?;
         trace!(actor, "operator backup requested");
 
         // Ensure backup targets the leader to avoid stale data.

@@ -1,0 +1,74 @@
+# Storage operator workload for the skaffold/CI test cluster.
+#
+# `keystone-manage storage promote|list-peers|...` need the `storage-operator`
+# role, which the keystone-rs StatefulSet pods deliberately never hold (see
+# keystone-raft-spiffe-id.yaml). This pod carries the label selected by the
+# `keystone-raft-operator` ClusterSPIFFEID, so its only SVID is
+# spiffe://<td>/keystone/storage/storage-operator and `keystone-manage` run in
+# it authenticates as Operator. It runs no storage node: the settings below
+# only tell the CLI which cluster to talk to and which trust domain to trust.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keystone-storage-operator
+data:
+  site.toml: |
+    [auth]
+    methods = "password"
+    # Required by config parsing; the CLI never connects to it.
+    [database]
+    connection = "postgresql://unused:unused@localhost/unused"
+    [distributed_storage]
+    node_id = 1000
+    node_cluster_addr = "https://keystone-rs-0.keystone-rs-internal.default.svc.cluster.local:8300"
+    node_listener_addr = "0.0.0.0:8300"
+    path = "/tmp/storage"
+    trust_domains = "example.org"
+    allowed_peer_svids = ["spiffe://example.org/keystone/storage/node"]
+    dev_mode = true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keystone-storage-operator
+  labels:
+    app.kubernetes.io/name: keystone-storage-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: keystone-storage-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: keystone-storage-operator
+    spec:
+      serviceAccountName: keystone
+      containers:
+        - name: operator
+          image: keystone-rs
+          command: ["sleep", "infinity"]
+          env:
+            - name: KEYSTONE_SITE_VARS_FILE
+              value: /etc/keystone-operator/site.toml
+            - name: SPIFFE_ENDPOINT_SOCKET
+              value: unix:///run/spire/sockets/spire-agent.sock
+          readinessProbe:
+            exec:
+              command: ["test", "-S", "/run/spire/sockets/spire-agent.sock"]
+            periodSeconds: 2
+          volumeMounts:
+            - mountPath: /etc/keystone-operator
+              name: site
+              readOnly: true
+            - mountPath: /run/spire/sockets
+              name: spiffe-workload-api
+              readOnly: true
+      volumes:
+        - name: site
+          configMap:
+            name: keystone-storage-operator
+        - name: spiffe-workload-api
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true

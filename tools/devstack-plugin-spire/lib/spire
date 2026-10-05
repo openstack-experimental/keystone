@@ -255,9 +255,9 @@ function _spire_register_static_entries {
     # Storage-node identity for keystone-rs's raft gRPC when
     # [distributed_storage] selects SPIFFE mTLS: with no explicit
     # allowed_peer_svids the raft interceptor only accepts peer SVID paths
-    # starting with /keystone/storage/ or /ns/ (raft_grpc.rs), so the
-    # keystone process needs a storage-path SVID alongside its /service/...
-    # ones.
+    # <spiffe_path_prefix>node or <spiffe_path_prefix>storage-operator, so
+    # the keystone process needs the storage-node SVID alongside its
+    # /service/... ones.
     _spire_entry_create_idempotent "spiffe://$SPIRE_TRUST_DOMAIN/keystone/storage/node" "unix:uid:$uid" "spiffe://$SPIRE_TRUST_DOMAIN/keystone/storage/node"
 }
 

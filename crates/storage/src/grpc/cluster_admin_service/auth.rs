@@ -38,191 +38,35 @@ pub(super) const CLEAR_QUARANTINE_PER_HOUR: NonZeroU32 = {
 
 pub(super) type IdentityLimiter = DefaultKeyedRateLimiter<String>;
 
-/// Extract the peer TLS identity from the request: prefers SPIFFE URI SAN,
-/// falls back to CN, or returns `"unknown"` if no peer cert is present.
-pub(super) fn extract_peer_identity<T>(request: &tonic::Request<T>) -> String {
-    let der_bytes: Option<Vec<u8>> = request
-        .peer_certs()
-        .and_then(|certs| certs.first().map(|c| c.as_ref().to_vec()));
-
-    der_bytes
-        .as_deref()
-        .and_then(|der| x509_parser::parse_x509_certificate(der).ok())
-        .and_then(|(_, cert)| {
-            cert.subject_alternative_name()
-                .ok()
-                .flatten()
-                .and_then(|san| {
-                    san.value.general_names.iter().find_map(|n| {
-                        if let x509_parser::extensions::GeneralName::URI(uri) = n {
-                            Some((*uri).to_owned())
-                        } else {
-                            None
-                        }
-                    })
-                })
-                .or_else(|| {
-                    cert.subject()
-                        .iter_common_name()
-                        .next()
-                        .and_then(|a| a.as_str().ok())
-                        .map(str::to_owned)
-                })
-        })
-        .unwrap_or_else(|| "unknown".to_owned())
-}
-
-/// Validates a SPIFFE URI against the
-/// `spiffe://<trust-domain><spiffe_path_prefix><role>` pattern and configured
-/// trust domains. Returns the `<role>` segment.
-///
-/// Errors with `PERMISSION_DENIED` if the URI is malformed, the trust domain is
-/// not in the configured list, or the path does not match.
-pub(super) fn parse_spiffe_storage_id(
-    id: &str,
-    trust_domains: &[String],
-    prefix: &str,
-) -> Result<String, Status> {
-    let rest = id
-        .strip_prefix("spiffe://")
-        .ok_or_else(|| Status::permission_denied("peer identity is not a SPIFFE URI"))?;
-
-    let slash = rest
-        .find('/')
-        .ok_or_else(|| Status::permission_denied("SPIFFE ID is missing a path component"))?;
-    let (domain, path) = rest.split_at(slash);
-
-    if !trust_domains.iter().any(|d| d == domain) {
-        return Err(Status::permission_denied(format!(
-            "SPIFFE trust domain '{domain}' is not in the configured trust domain list"
-        )));
-    }
-
-    // `path` starts with '/', strip the configured prefix to get the role.
-    let role = path
-        .strip_prefix(prefix)
-        .filter(|r| !r.is_empty() && !r.contains('/'))
-        .ok_or_else(|| {
-            Status::permission_denied(format!(
-                "SPIFFE ID '{id}' does not match the required pattern \
-                 spiffe://<trust-domain>{prefix}<role>"
-            ))
-        })?;
-
-    Ok(role.to_owned())
-}
+pub(super) use crate::grpc::authz::{PeerAuthz, PeerRole};
 
 // ---------------------------------------------------------------------------
-// RBAC — operator role enforcement
+// RBAC — role enforcement
 // ---------------------------------------------------------------------------
 
-/// Verifies the peer identity and, in SPIFFE mode, asserts the role matches
-/// the configured operator role (ADR 0016-v2 §1).
-///
-/// In TLS-fallback mode emits a security warning and allows the request
-/// through; network isolation is the compensating control per ADR 0016-v2 §4.2.
+/// Requires the operator role (ADR 0016-v2 §1). Returns the peer identity
+/// (for audit / rate-limit keys only; the role comes from the URI SAN).
 pub(super) fn require_operator<T>(
     request: &tonic::Request<T>,
-    trust_domains: Option<&[String]>,
-    spiffe_path_prefix: &str,
-    operator_role: &str,
+    authz: &PeerAuthz,
 ) -> Result<String, Status> {
-    let identity = extract_peer_identity(request);
-
-    match trust_domains {
-        Some(domains) => {
-            if !identity.starts_with("spiffe://") {
-                return Err(Status::permission_denied(
-                    "SPIFFE mode is active; peer must present a SPIFFE URI SAN",
-                ));
-            }
-            check_svid_ttl(request)?;
-            let role = parse_spiffe_storage_id(&identity, domains, spiffe_path_prefix)?;
-            if role != operator_role {
-                return Err(Status::permission_denied(format!(
-                    "role '{role}' is not authorized for this operation; \
-                     required: '{operator_role}'"
-                )));
-            }
-        }
-        None => {
-            tracing::warn!(
-                identity,
-                "RBAC role check skipped in TLS-fallback mode; \
-                 upgrade to SPIFFE mTLS to enforce operator role-based access \
-                 control (ADR 0016-v2 §4.2)"
-            );
-        }
-    }
-
-    Ok(identity)
+    require_peer(request, authz, &[PeerRole::Operator])
 }
 
-/// Validates the peer's SPIFFE identity for internal Raft operations.
-///
-/// When `allowed_peer_svids` is non-empty, the identity must match one of the
-/// allow-listed SVIDs. Otherwise falls back to trust-domain-only validation.
-///
-/// In TLS-fallback mode (`trust_domains = None`) the check is skipped entirely.
-pub(super) fn check_peer_trust_domain<T>(
+/// Requires one of `allowed` roles. In SPIFFE mode (and only there; keyed
+/// on the configured [`PeerAuthz`] mode, never on the identity string)
+/// also enforces the SVID force-renewal window (ADR 0016-v2 §4.1).
+/// Returns the peer identity.
+pub(super) fn require_peer<T>(
     request: &tonic::Request<T>,
-    trust_domains: Option<&[String]>,
-    allowed_peer_svids: &[String],
+    authz: &PeerAuthz,
+    allowed: &[PeerRole],
 ) -> Result<String, Status> {
-    let identity = extract_peer_identity(request);
-
-    if trust_domains.is_some() && !identity.starts_with("spiffe://") {
-        return Err(Status::permission_denied(
-            "SPIFFE mode is active; peer must present a SPIFFE URI SAN",
-        ));
-    }
-
-    // In SPIFFE mode, enforce the 5-minute force-renewal window (ADR 0016-v2
-    // §4.1).
-    if trust_domains.is_some() {
+    let (identity, _) = authz.require(request, allowed)?;
+    if authz.is_spiffe() {
         check_svid_ttl(request)?;
     }
-
-    if allowed_peer_svids.is_empty() {
-        // Fallback: trust-domain-only check. Skipped entirely in TLS-fallback
-        // mode (`trust_domains = None`), so this branch is a no-op there.
-        if let Some(domains) = trust_domains {
-            parse_spiffe_trust_domain(&identity, domains)?;
-        }
-    } else {
-        // Allow-list check. In TLS-fallback mode this code is unreachable
-        // because `allowed_peer_svids` is always empty when `trust_domains`
-        // is `None` (set in `app.rs`).
-        if !allowed_peer_svids.contains(&identity) {
-            return Err(Status::permission_denied(format!(
-                "SPIFFE ID '{identity}' is not in the allowed peer SVID list"
-            )));
-        }
-    }
-
     Ok(identity)
-}
-
-/// Extract and validate only the SPIFFE trust domain from the peer identity,
-/// returning it on success. Unlike `parse_spiffe_storage_id`, this does not
-/// require a specific path prefix or role.
-pub(super) fn parse_spiffe_trust_domain(id: &str, trust_domains: &[String]) -> Result<(), Status> {
-    let rest = id
-        .strip_prefix("spiffe://")
-        .ok_or_else(|| Status::permission_denied("peer identity is not a SPIFFE URI"))?;
-
-    let slash = rest
-        .find('/')
-        .ok_or_else(|| Status::permission_denied("SPIFFE ID is missing a path component"))?;
-    let (domain, _path) = rest.split_at(slash);
-
-    if !trust_domains.iter().any(|d| d == domain) {
-        return Err(Status::permission_denied(format!(
-            "SPIFFE trust domain '{domain}' is not in the configured trust domain list"
-        )));
-    }
-
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -242,4 +86,78 @@ pub(super) fn check_svid_ttl<T>(request: &tonic::Request<T>) -> Result<(), Statu
         .and_then(|certs| certs.first().map(|c| c.as_ref().to_vec()))
         .ok_or_else(|| Status::permission_denied("no peer certificate presented"))?;
     check_svid_ttl_der(&der, now_unix_secs())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::grpc::authz::{PeerAuthz, PeerRole};
+
+    fn authz() -> PeerAuthz {
+        PeerAuthz::spiffe(
+            vec!["example.org".into()],
+            "/keystone/storage/".into(),
+            "storage-operator".into(),
+            vec![],
+        )
+    }
+
+    #[test]
+    fn require_operator_without_cert_denied() {
+        let req = tonic::Request::new(());
+        let err = require_operator(&req, &authz()).unwrap_err();
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
+    }
+
+    #[test]
+    fn require_peer_without_cert_denied() {
+        let req = tonic::Request::new(());
+        for allowed in [
+            &[PeerRole::Node][..],
+            &[PeerRole::Operator][..],
+            &[PeerRole::Node, PeerRole::Operator][..],
+            &[][..],
+        ] {
+            let err = require_peer(&req, &authz(), allowed).unwrap_err();
+            assert_eq!(err.code(), tonic::Code::PermissionDenied);
+        }
+    }
+
+    #[test]
+    fn role_resolution_matrix() {
+        let authz = authz();
+        let node = authz
+            .role_of_identity("spiffe://example.org/keystone/storage/node")
+            .unwrap();
+        let op = authz
+            .role_of_identity("spiffe://example.org/keystone/storage/storage-operator")
+            .unwrap();
+        assert_eq!(node, PeerRole::Node);
+        assert_eq!(op, PeerRole::Operator);
+        // Node is not an operator; operator is not a node.
+        let id = "spiffe://example.org/keystone/storage/node";
+        assert!(
+            authz
+                .authorize(Some(id), id, &[PeerRole::Operator])
+                .is_err()
+        );
+        let id = "spiffe://example.org/keystone/storage/storage-operator";
+        assert!(authz.authorize(Some(id), id, &[PeerRole::Node]).is_err());
+        assert!(
+            authz
+                .authorize(Some(id), id, &[PeerRole::Node, PeerRole::Operator])
+                .is_ok()
+        );
+    }
+
+    /// A CN-shaped identity without a URI SAN must never yield a role.
+    #[test]
+    fn cn_only_identity_never_authorizes() {
+        let authz = authz();
+        let cn = "spiffe://example.org/keystone/storage/storage-operator";
+        let err = authz
+            .authorize(None, cn, &[PeerRole::Operator])
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
+    }
 }

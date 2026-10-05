@@ -21,12 +21,7 @@ impl ClusterAdminServiceImpl {
         &self,
         request: Request<pb::raft::ClearQuarantineRequest>,
     ) -> Result<Response<()>, Status> {
-        let actor = require_operator(
-            &request,
-            self.spiffe_trust_domains.as_deref(),
-            &self.spiffe_path_prefix,
-            &self.operator_role,
-        )?;
+        let actor = require_operator(&request, &self.authz)?;
         // rate limit - 10 per hour per operator identity.
         self.clear_quarantine_limiter
             .check_key(&actor)
@@ -74,12 +69,7 @@ impl ClusterAdminServiceImpl {
         &self,
         request: Request<pb::raft::RotateDekRequest>,
     ) -> Result<Response<pb::raft::AdminResponse>, Status> {
-        let actor = require_operator(
-            &request,
-            self.spiffe_trust_domains.as_deref(),
-            &self.spiffe_path_prefix,
-            &self.operator_role,
-        )?;
+        let actor = require_operator(&request, &self.authz)?;
         // rate limit - 2 per hour per operator identity.
         self.rotate_dek_limiter.check_key(&actor).map_err(|_| {
             Status::resource_exhausted("RotateDek rate limit exceeded; try again later")
@@ -184,12 +174,7 @@ impl ClusterAdminServiceImpl {
         &self,
         request: Request<pb::raft::ConfirmRotateDekRequest>,
     ) -> Result<Response<pb::raft::AdminResponse>, Status> {
-        let actor = require_operator(
-            &request,
-            self.spiffe_trust_domains.as_deref(),
-            &self.spiffe_path_prefix,
-            &self.operator_role,
-        )?;
+        let actor = require_operator(&request, &self.authz)?;
         let req = request.into_inner();
 
         if req.rotation_id.is_empty() {
@@ -271,12 +256,7 @@ impl ClusterAdminServiceImpl {
         &self,
         request: Request<pb::raft::RotateDekLocalEmergencyRequest>,
     ) -> Result<Response<pb::raft::RotateDekLocalEmergencyResponse>, Status> {
-        let actor = require_operator(
-            &request,
-            self.spiffe_trust_domains.as_deref(),
-            &self.spiffe_path_prefix,
-            &self.operator_role,
-        )?;
+        let actor = require_operator(&request, &self.authz)?;
         let req = request.into_inner();
         if req.justification.trim().is_empty() {
             return Err(Status::invalid_argument(
@@ -348,12 +328,7 @@ impl ClusterAdminServiceImpl {
         &self,
         request: Request<()>,
     ) -> Result<Response<pb::raft::ListDekLocalEmergencyCandidatesResponse>, Status> {
-        require_operator(
-            &request,
-            self.spiffe_trust_domains.as_deref(),
-            &self.spiffe_path_prefix,
-            &self.operator_role,
-        )?;
+        require_operator(&request, &self.authz)?;
 
         let candidates = self
             .local_emergency_store
@@ -381,12 +356,7 @@ impl ClusterAdminServiceImpl {
         &self,
         request: Request<pb::raft::ReconcileDekLocalEmergencyRequest>,
     ) -> Result<Response<pb::raft::AdminResponse>, Status> {
-        let actor = require_operator(
-            &request,
-            self.spiffe_trust_domains.as_deref(),
-            &self.spiffe_path_prefix,
-            &self.operator_role,
-        )?;
+        let actor = require_operator(&request, &self.authz)?;
         let req = request.into_inner();
         let current_version = {
             self.current_dek
@@ -479,11 +449,7 @@ impl ClusterAdminServiceImpl {
         &self,
         request: Request<pb::raft::GossipLocalEmergencyCandidateRequest>,
     ) -> Result<Response<pb::raft::GossipLocalEmergencyCandidateResponse>, Status> {
-        check_peer_trust_domain(
-            &request,
-            self.spiffe_trust_domains.as_deref(),
-            &self.allowed_peer_svids,
-        )?;
+        require_peer(&request, &self.authz, &[PeerRole::Node])?;
         let req = request.into_inner();
         let subsystem = match pb::raft::EmergencySubsystem::try_from(req.subsystem) {
             Ok(pb::raft::EmergencySubsystem::Oauth2SigningKey) => Subsystem::Oauth2SigningKey,

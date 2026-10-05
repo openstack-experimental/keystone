@@ -13,6 +13,14 @@ message ForwardedGetRequest {
   optional string keyspace = 2;
 }
 
+// A node reports a locally-triggered quarantine to the leader.
+message ReportQuarantineRequest {
+  // Raft node id that observed the integrity failure.
+  uint64 node_id = 1;
+  // Quarantined partition (keyspace), 1..=128 bytes.
+  string partition = 2;
+}
+
 // Response from a forwarded read request.
 message ForwardedGetResponse {
   // Retrieved value, already decrypted by the leader.

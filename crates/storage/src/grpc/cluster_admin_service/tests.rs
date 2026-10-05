@@ -14,87 +14,6 @@
 
 use super::*;
 
-const TRUST_DOMAINS: &[&str] = &["example.com", "alt.example.com"];
-const PREFIX: &str = "/keystone/storage/";
-const OPERATOR_ROLE: &str = "storage-operator";
-
-fn domains() -> Vec<String> {
-    TRUST_DOMAINS.iter().map(|s| s.to_string()).collect()
-}
-
-// parse_spiffe_storage_id — valid identities
-
-#[test]
-fn spiffe_id_valid_operator() {
-    let role = parse_spiffe_storage_id(
-        "spiffe://example.com/keystone/storage/storage-operator",
-        &domains(),
-        PREFIX,
-    )
-    .expect("valid SPIFFE ID");
-    assert_eq!(role, OPERATOR_ROLE);
-}
-
-#[test]
-fn spiffe_id_valid_node_role() {
-    let role = parse_spiffe_storage_id(
-        "spiffe://alt.example.com/keystone/storage/node",
-        &domains(),
-        PREFIX,
-    )
-    .expect("valid SPIFFE ID");
-    assert_eq!(role, "node");
-}
-
-// parse_spiffe_storage_id — invalid identities
-
-#[test]
-fn spiffe_id_wrong_trust_domain() {
-    let err = parse_spiffe_storage_id(
-        "spiffe://untrusted.com/keystone/storage/storage-operator",
-        &domains(),
-        PREFIX,
-    )
-    .expect_err("untrusted domain should fail");
-    assert_eq!(err.code(), tonic::Code::PermissionDenied);
-}
-
-#[test]
-fn spiffe_id_wrong_path_prefix() {
-    let err = parse_spiffe_storage_id(
-        "spiffe://example.com/other/service/storage-operator",
-        &domains(),
-        PREFIX,
-    )
-    .expect_err("wrong path prefix should fail");
-    assert_eq!(err.code(), tonic::Code::PermissionDenied);
-}
-
-#[test]
-fn spiffe_id_empty_role() {
-    let err = parse_spiffe_storage_id("spiffe://example.com/keystone/storage/", &domains(), PREFIX)
-        .expect_err("empty role should fail");
-    assert_eq!(err.code(), tonic::Code::PermissionDenied);
-}
-
-#[test]
-fn spiffe_id_extra_path_segment() {
-    let err = parse_spiffe_storage_id(
-        "spiffe://example.com/keystone/storage/storage-operator/extra",
-        &domains(),
-        PREFIX,
-    )
-    .expect_err("extra path segment should fail");
-    assert_eq!(err.code(), tonic::Code::PermissionDenied);
-}
-
-#[test]
-fn spiffe_id_not_a_spiffe_uri() {
-    let err = parse_spiffe_storage_id("https://example.com/foo", &domains(), PREFIX)
-        .expect_err("non-SPIFFE URI should fail");
-    assert_eq!(err.code(), tonic::Code::PermissionDenied);
-}
-
 // Rate limiter — basic token consumption
 
 #[test]
@@ -124,41 +43,6 @@ fn rate_limiter_independent_keys() {
     assert!(limiter.check_key(&key_a).is_err(), "key_a exhausted");
     // key_b is independent and still has capacity.
     assert!(limiter.check_key(&key_b).is_ok(), "key_b unaffected");
-}
-
-// Trust domain only — used for internal cluster operations
-
-#[test]
-fn spiffe_trust_domain_ok_standard_path() {
-    assert!(
-        parse_spiffe_trust_domain(
-            "spiffe://example.com/keystone/storage/storage-operator",
-            &domains(),
-        )
-        .is_ok()
-    );
-}
-
-#[test]
-fn spiffe_trust_domain_ok_arbitrary_path() {
-    assert!(
-        parse_spiffe_trust_domain("spiffe://example.com/ns/default/sa/keystone", &domains(),)
-            .is_ok()
-    );
-}
-
-#[test]
-fn spiffe_trust_domain_wrong_domain() {
-    assert!(parse_spiffe_trust_domain("spiffe://untrusted.example.com/foo", &domains(),).is_err());
-}
-
-#[test]
-fn spiffe_trust_domain_not_spiffe_uri() {
-    assert!(parse_spiffe_trust_domain("foo", &domains(),).is_err());
-}
-#[test]
-fn spiffe_trust_domain_no_path() {
-    assert!(parse_spiffe_trust_domain("spiffe://example.com", &domains(),).is_err());
 }
 
 #[test]

@@ -1,9 +1,55 @@
+# The spire-controller-manager installed by the SPIRE helm chart runs with
+# `className: spire-spire` and `watchClassless: false`, so every
+# ClusterSPIFFEID here MUST set `spec.className`, otherwise it is silently
+# ignored (no entry, no status).
+#
+# Keystone StatefulSet pods: every storage node presents the shared `node`
+# role identity (<spiffe_path_prefix>node). Must match
+# distributed_storage.allowed_peer_svids in the skaffold StatefulSet patch.
 apiVersion: spire.spiffe.io/v1alpha1
 kind: ClusterSPIFFEID
 metadata:
   name: keystone-raft
 spec:
-  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/keystone/storage/{{ .PodSpec.ServiceAccountName }}"
+  className: spire-spire
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/keystone/storage/node"
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: keystone-rs
+  ttl: "1h"
+  dnsNameTemplates:
+    - "k8s-workload"
+---
+# Operator workloads authenticate with the `storage-operator` role. Pods must
+# carry the label below; the identity is never issued to the keystone-rs
+# StatefulSet. The skaffold/CI admin steps (promote, list-peers) run from the
+# keystone-storage-operator Deployment (keystone-storage-operator.yaml).
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: keystone-raft-operator
+spec:
+  className: spire-spire
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/keystone/storage/storage-operator"
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: keystone-storage-operator
+  ttl: "1h"
+  dnsNameTemplates:
+    - "k8s-workload"
+---
+# A non-fallback ClusterSPIFFEID masks the chart's fallback default
+# (`/ns/<ns>/sa/<sa>`) for the pods it selects. Keep that identity for the
+# keystone-rs pods: it is the default SVID of the workload and the
+# `admin_svid` of the admin interface (tools/k8s/keystone/base/conf).
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: keystone-rs-default
+spec:
+  className: spire-spire
+  hint: default
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
   podSelector:
     matchLabels:
       app.kubernetes.io/name: keystone-rs

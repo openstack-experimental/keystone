@@ -21,6 +21,7 @@ primitives and the `KekProvider` trait), and the two production KEK providers,
    - [Nonce Management](#nonce-management)
 5. [Data Tiers and Read Consistency](#data-tiers-and-read-consistency)
 6. [Intra-Cluster Transport (mTLS)](#intra-cluster-transport-mtls)
+   - [Peer Roles](#peer-roles)
 7. [Audit Log](#audit-log)
 8. [Quarantine and GCM Failure Handling](#quarantine-and-gcm-failure-handling)
 9. [DEK Rotation](#dek-rotation)
@@ -333,13 +334,16 @@ trust_domains = "example.org"
 - Nodes reject SVIDs with less than 5 minutes remaining (force-renewal window).
 - If SPIRE is unavailable before the renewal window, the node drains proposals
   and halts — it does **not** fall back to an expired SVID (fail-closed).
-- Incoming SVIDs must match `spiffe://<trust-domain>/keystone/storage/<role>`;
-  mismatches are rejected with `PERMISSION_DENIED` at the gRPC interceptor.
+- Incoming SVIDs are mapped to a role (see [Peer Roles](#peer-roles)); anything
+  that maps to no role is rejected with `PERMISSION_DENIED` at the gRPC
+  interceptor.
 - Each node pins the SVID it presents: the first `allowed_peer_svids` entry's
   path when that list is set (the cluster's shared storage identity), else
   `spiffe://<trust-domain><spiffe_path_prefix>node`. Register that identity in
   SPIRE for every storage workload; if it is missing, storage initialization
   stalls in the SVID source retry loop and the node never becomes ready.
+- `allowed_peer_svids` must be non-empty when `dev_mode = false`; the
+  configuration is rejected otherwise.
 
 ### TLS Fallback Mode
 
@@ -354,6 +358,96 @@ tls_client_ca_file = "/etc/keystone/storage/ca.pem"
 - Leaf certificate validity must not exceed 30 days.
 - `CertExpiryWatchdog` checks remaining validity hourly: WARN at 7 days, ERROR
   at 2 days, configurable shutdown at expiry.
+- The peer role is read from the first URI SAN of the client certificate. Set
+  `tls_role_san_prefix` to the SAN URI prefix; the role name follows it. In TLS
+  mode the role names are fixed to `node` and `storage-operator`;
+  `operator_role` is not honoured:
+
+  ```toml
+  [distributed_storage]
+  tls_role_san_prefix = "spiffe://keystone/storage/"
+  # node cert SAN URI:     spiffe://keystone/storage/node
+  # operator cert SAN URI: spiffe://keystone/storage/storage-operator
+  ```
+
+- Without `tls_role_san_prefix` the configuration is valid only with
+  `dev_mode = true`, where every CA-signed peer is accepted for every RPC
+  (legacy permissive behaviour, a warning is logged). With `dev_mode = false` it
+  is a configuration error.
+- The role is never derived from the certificate CN.
+
+### Peer Roles
+
+Every inter-node and operator RPC is authorised by the role of the calling
+certificate. In SPIFFE mode (`spiffe_path_prefix` defaults to
+`/keystone/storage/`, `operator_role` to `storage-operator`):
+
+| Peer SVID                                          | Role     |
+| -------------------------------------------------- | -------- |
+| `spiffe://<td><spiffe_path_prefix>node`            | Node     |
+| `spiffe://<td><spiffe_path_prefix><operator_role>` | Operator |
+| exact entry of `allowed_peer_svids`                | Node     |
+| anything else (including the former `/ns/` form)   | rejected |
+
+The `/ns/...` SVID fallback has been removed. An `allowed_peer_svids` entry that
+lies under `spiffe_path_prefix` is resolved by the role convention, not by the
+allow-list, so it cannot be used to grant the operator role to an arbitrary
+name.
+
+| RPC                                                                                                                      | Node | Operator |
+| ------------------------------------------------------------------------------------------------------------------------ | ---- | -------- |
+| `RaftService.*`                                                                                                          | yes  | no       |
+| `StorageService.{Command, ForwardedGet, ForwardedPrefix, ForwardedPrefixIndex, ReportQuarantine}`                        | yes  | no       |
+| `ClusterAdmin.{FetchDek, GossipLocalEmergencyCandidate}`                                                                 | yes  | no       |
+| `ClusterAdmin.{AddLearner, Metrics}`                                                                                     | yes  | yes      |
+| `ClusterAdmin.{Init, ChangeMembership}` and all other operator RPCs (backup, restore, rotate DEK, clear quarantine, ...) | no   | yes      |
+
+**Which identity each command uses.** In SPIFFE mode `keystone-manage` takes its
+SVID from the Workload API of the workload it runs in:
+
+- `join` presents the node's own SVID (`allowed_peer_svids[0]`, else
+  `<spiffe_path_prefix>node`) and therefore needs the `Node` role. Run it on the
+  joining node, whose `node_id` and `node_cluster_addr` it announces.
+- Every other subcommand presents the workload's **only** SVID. `list-peers` and
+  `metrics` accept `Node` or `Operator`; `init`, `promote`, `demote`,
+  `remove-peer` and all other operator RPCs need `Operator`. Run these from an
+  operator workload registered as `<spiffe_path_prefix><operator_role>` (and
+  nothing else), not from a storage node: a node holds the `Node` role only, and
+  a workload holding several SVIDs presents an arbitrary one. The workload needs
+  a `distributed_storage` section so the CLI knows `trust_domains` and the
+  cluster address (`node_cluster_addr`; subcommands with a `--cluster-addr`
+  option can override it). The skaffold test cluster does this with the
+  `keystone-storage-operator` Deployment
+  (`tools/k8s/tests/keystone-storage-operator.yaml`).
+- When SPIRE is run by the helm chart's controller-manager, every
+  `ClusterSPIFFEID` must set `spec.className` (default `spire-spire`); classless
+  ones are silently ignored and the workload never receives the SVID.
+
+The data-plane `StorageService.Command` RPC accepts only a `Transaction` made of
+`Set`, `Remove`, `RemoveIndex`, `CreateIfAbsent` and `SetIndex` mutations.
+Restore, DEK install, quarantine and rotation commands are rejected with
+`PERMISSION_DENIED` there; they are proposed in-process only.
+
+> **Upgrade note (breaking change).** Role resolution is stricter than in
+> earlier builds. The role path convention is resolved first: any SVID under
+> `spiffe_path_prefix` must be exactly `<spiffe_path_prefix>node` or
+> `<spiffe_path_prefix><operator_role>`. An SVID such as
+> `spiffe://<td>/keystone/storage/node-1` is under the prefix with an unknown
+> role name and is denied even when listed in `allowed_peer_svids`; re-register
+> it as `<spiffe_path_prefix>node`. `allowed_peer_svids` is only for SVIDs
+> outside the prefix (for example `spiffe://<td>/ns/<namespace>/sa/<sa>`), which
+> must be listed verbatim. Before upgrading, register every storage workload
+> under `<spiffe_path_prefix>node`, and the operator under
+> `<spiffe_path_prefix><operator_role>`. In TLS mode, add the role SAN and set
+> `tls_role_san_prefix`.
+
+#### Rate limits
+
+Per-identity rate limiters (for example `2` DEK rotations per hour, `10`
+`ClearQuarantine` calls per hour, `30` quarantine reports per hour) are held in
+memory on each node. They are **not** replicated through Raft and reset on
+restart. The effective limit across the cluster is therefore per node: an
+operator may start `2` rotations per hour on each node they talk to.
 
 ### NodeId Uniqueness
 
@@ -375,7 +469,18 @@ network connection to the SIEM.
 **Spool line structure** (one JSON object per line):
 
 ```json
-{"record":{"timestamp":1750000000,"event_type":"DEK_ROTATION","actor":"operator@example.org","node_id":1,"dek_version":3,"details":{}},"key_version":3,"hmac":"<hex>"}
+{
+  "record": {
+    "timestamp": 1750000000,
+    "event_type": "DEK_ROTATION",
+    "actor": "operator@example.org",
+    "node_id": 1,
+    "dek_version": 3,
+    "details": {}
+  },
+  "key_version": 3,
+  "hmac": "<hex>"
+}
 ```
 
 **Signature:** `HMAC-SHA256(AuditHmacKey, record_bytes)`, where `record_bytes`
@@ -404,10 +509,10 @@ identity store, but dropped records are counted in
 **Shipping:** when `[audit] sink` is configured (see
 [Configuration options](../../configuration/options.md)), Keystone ships the
 sealed `raft-audit-<node_id>.jsonl.seg-*` segments to that sink verbatim and
-deletes each one after the sink acknowledged it; the live file is not
-touched. Delivery is at-least-once, so receivers should deduplicate. Without a
-sink, an external shipper must tail the spool as before. The records keep their
-own signature scheme described above; they are not CADF events.
+deletes each one after the sink acknowledged it; the live file is not touched.
+Delivery is at-least-once, so receivers should deduplicate. Without a sink, an
+external shipper must tail the spool as before. The records keep their own
+signature scheme described above; they are not CADF events.
 
 **Ordering and failures:** a record is emitted only after the Raft write it
 describes has been attempted. A failed operation produces `<EVENT>_FAILED` with
@@ -446,6 +551,22 @@ keystone-manage storage clear-quarantine --partition <partition>
 
 The clear operation is committed via Raft (so it takes effect cluster-wide) and
 is recorded in the audit log.
+
+### Reporting Quarantine from Followers
+
+A follower that detects a GCM failure asks the leader to commit the quarantine
+marker through the dedicated `StorageService.ReportQuarantine` RPC (Node role).
+The leader validates the report against the current Raft membership, applies a
+rate limit of 30 reports per hour per reporter identity, and writes an audit
+record.
+
+All nodes share the `node` role, so the reported `node_id` is not bound to the
+caller's certificate. A compromised node can therefore report a quarantine for
+the partition of any cluster member. The exposure is bounded by the membership
+check, by the rate limit (which, because every node presents the same identity,
+is effectively one bucket per serving node), and by the audit record. Recovery
+is `ClearQuarantine`, which is operator-only. Binding each node to its own SVID
+is deferred (see ADR 0016-v2 addendum on peer roles).
 
 ---
 
@@ -660,7 +781,11 @@ Each node starts and waits; Raft is not yet initialized.
 
 **Step 2 — Initialize the first node** as a single-node cluster.
 
-Run from node 1's host (node address and ID come from the config file):
+`init` registers the `node_id` and `node_cluster_addr` of the config it runs
+with as the first member, so its config must describe node 1. In SPIFFE mode it
+also needs the `Operator` role (see [CLI Reference](#cli-reference)): run it
+from an operator workload whose `distributed_storage` section carries node 1's
+values:
 
 ```sh
 keystone-manage storage init
@@ -684,7 +809,8 @@ keystone-manage storage join https://10.0.0.1:8310
 
 **Step 4 — Promote learners to voting members.**
 
-Run from any node. Repeat once per learner to promote:
+Run from an operator workload (SPIFFE mode: `storage-operator` SVID). Repeat
+once per learner to promote:
 
 ```sh
 keystone-manage storage promote 2
@@ -701,7 +827,7 @@ To add a new node to a running cluster:
 # 2. On the new node's host, join to an existing cluster member:
 keystone-manage storage join https://10.0.0.1:8310
 
-# 3. Optionally promote to voting member (run from any node):
+# 3. Optionally promote to voting member (run from an operator workload):
 keystone-manage storage promote 4
 ```
 

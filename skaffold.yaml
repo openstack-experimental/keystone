@@ -82,6 +82,7 @@ manifests:
     - tools/k8s/tests/keystone-ca.yaml
     - tools/k8s/tests/keystone-peer-cert.yaml
     - tools/k8s/tests/keystone-raft-spiffe-id.yaml
+    - tools/k8s/tests/keystone-storage-operator.yaml
 deploy:
   statusCheck: true
   statusCheckDeadlineSeconds: 300
@@ -99,8 +100,8 @@ deploy:
             # This command will block Skaffold until the bootstrap job hits 'Completed'
             command: ["kubectl", "wait", "--for=condition=complete", "job/keystone-bootstrap", "--timeout=180s"]
         - host:
-            # Wait for all Raft pods to be ready before join
-            command: ["kubectl", "wait", "--for=condition=ready", "pod", "-l", "app.kubernetes.io/name=keystone-rs", "--timeout=180s"]
+            # Wait for all Raft pods and the storage operator pod to be ready
+            command: ["sh", "-c", "kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=keystone-rs --timeout=180s && kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=keystone-storage-operator --timeout=180s"]
         - host:
             # Join non-zero Raft nodes to the cluster (node 0 initialized by
             # bootstrap). Run from each joining node so its own
@@ -125,7 +126,7 @@ deploy:
                 max_attempts=60
                 attempt=0
                 until [ "$attempt" -ge "$max_attempts" ]; do
-                  OUTPUT=$(kubectl exec keystone-rs-0 -- keystone-manage storage list-peers 2>&1)
+                  OUTPUT=$(kubectl exec deploy/keystone-storage-operator -- keystone-manage storage list-peers 2>&1)
                   FOUND=0
                   for i in $(seq 0 $((REPLICAS - 1))); do
                     if echo "$OUTPUT" | grep -q "keystone-rs-$i.keystone-rs-internal"; then
@@ -148,7 +149,7 @@ deploy:
             # Promote newly-joined learners to voters (ADR 0016-v2 §4.1
             # "Step 4: promote"). Run from node 0 (the leader) so the
             # change_membership RPC is sent to the right node.
-            command: ["sh", "-c", 'REPLICAS=$(kubectl get sts keystone-rs -o jsonpath="{.spec.replicas}"); for i in $(seq 1 $(($REPLICAS - 1))); do kubectl exec keystone-rs-0 -- keystone-manage storage promote $i; done']
+            command: ["sh", "-c", 'REPLICAS=$(kubectl get sts keystone-rs -o jsonpath="{.spec.replicas}"); for i in $(seq 1 $(($REPLICAS - 1))); do kubectl exec deploy/keystone-storage-operator -- keystone-manage storage promote $i; done']
         - host:
             # Verify all replicas are voters before proceeding. Polls
             # list-peers from node 0 and counts rows where the Voter
@@ -161,7 +162,7 @@ deploy:
                 max_attempts=30
                 attempt=0
                 until [ "$attempt" -ge "$max_attempts" ]; do
-                  OUTPUT=$(kubectl exec keystone-rs-0 -- keystone-manage storage list-peers 2>&1)
+                  OUTPUT=$(kubectl exec deploy/keystone-storage-operator -- keystone-manage storage list-peers 2>&1)
                   VOTERS=$(echo "$OUTPUT" | grep -cP '\x{2506}\s+yes\s+\x{2502}' || true)
                   if [ "$VOTERS" -ge "$REPLICAS" ]; then
                     echo "All $REPLICAS replicas confirmed as voters"
@@ -313,7 +314,11 @@ verify:
         - name: "SPIFFE_ENDPOINT_SOCKET"
           value: "unix:///run/spire/sockets/spire-agent.sock"
     executionMode:
-      kubernetesCluster: {}
+      kubernetesCluster:
+        # The Raft gRPC services authorize by SPIFFE role. This pod calls the
+        # cluster admin API, so it takes the `storage-operator` identity (the
+        # keystone-raft-operator ClusterSPIFFEID selects this label).
+        overrides: '{ "metadata": { "labels": { "app.kubernetes.io/name": "keystone-storage-operator" } } }'
 
   - &keycloak
     name: "keycloak"
