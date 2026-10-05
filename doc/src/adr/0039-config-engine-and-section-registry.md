@@ -51,8 +51,12 @@ single-owner sections move to their crate.
 
 ### ConfigSection
 
-The INI section name is bound to the type, so a lookup can fail only as
-"absent", never as a type mismatch:
+The INI section name is bound to the type, so a lookup can never be a type
+mismatch. Absence follows today's serde behaviour: a section type that
+implements `Default` is optional and is materialized from `S::default()` when
+its INI section is missing (the `#[serde(default)]` case); a section type
+without `Default` is required, like `auth` today. The type therefore decides,
+and the driver never handles `Option`:
 
 ```rust
 pub trait ConfigSection: DeserializeOwned + Send + Sync + 'static {
@@ -72,7 +76,9 @@ pub trait ConfigSection: DeserializeOwned + Send + Sync + 'static {
 cannot share one registry). It carries an erased `SectionDescriptor`; a
 `register_backend!` macro generates a non-capturing trampoline that fetches
 `&S` from the view and calls the driver's `build: |s: &S| ...`. A missing
-section for a selected driver is a startup error attributed to the driver.
+section for a selected driver is materialized from the section's default,
+exactly as today; a section type that has no default and is absent is a startup
+error attributed to the driver.
 
 ```rust
 pub struct BackendRegistration<B: ?Sized + 'static> {
@@ -103,7 +109,9 @@ dispatch. The same type serves `[openfga]` and `[assignment.backends.<name>]`.
 
 ### Fail-loud rules
 
-- Driver selected => its section present.
+- Driver selected => its section is materialized: from the INI when present,
+  from `Default` when absent (as today); a required section without `Default`
+  that is absent is an error attributed to the driver.
 - Present section whose driver is not selected, or unclaimed name => warn/error.
 - Duplicate `NAME` across descriptors, and reserved names (`DEFAULT`,
   `database`, `auth`, ...) => startup error.
