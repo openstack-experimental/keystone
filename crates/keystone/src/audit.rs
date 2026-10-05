@@ -225,7 +225,15 @@ pub async fn with_audit_request_context(
         .get::<RequestId>()
         .and_then(|r| r.header_value().to_str().ok())
         .map(str::to_string);
-    let audited = is_authentication_surface(request.method(), request.uri().path());
+    // Opt-in: record every request, not only the authentication surfaces.
+    let audited = is_authentication_surface(request.method(), request.uri().path())
+        || state
+            .config_manager
+            .config
+            .read()
+            .await
+            .audit
+            .perimeter_all_requests;
     let ctx = openstack_keystone_core::audit_context::AuditRequestContext::new(
         client_ip,
         correlation_id.clone(),
@@ -899,13 +907,28 @@ mod tests {
         path: &str,
         handler: axum::routing::MethodRouter,
     ) -> cadf::AuditChannelReceivers {
+        run_completion_with(
+            openstack_keystone_config::Config::default(),
+            method,
+            path,
+            handler,
+        )
+        .await
+    }
+
+    async fn run_completion_with(
+        config: openstack_keystone_config::Config,
+        method: &str,
+        path: &str,
+        handler: axum::routing::MethodRouter,
+    ) -> cadf::AuditChannelReceivers {
         use axum::extract::ConnectInfo;
         use tower::ServiceExt;
 
         let (state, receivers) = openstack_keystone_core::api::tests::get_mocked_state_with_audit(
             openstack_keystone_core::provider::Provider::mocked_builder(),
             true,
-            openstack_keystone_config::Config::default(),
+            config,
         )
         .await;
         let app = axum::Router::new()
@@ -980,6 +1003,23 @@ mod tests {
             }),
         )
         .await;
+        assert!(receivers.perimeter.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn completion_records_ordinary_endpoints_when_opted_in() {
+        use axum::routing::get;
+        let mut config = openstack_keystone_config::Config::default();
+        config.audit.perimeter_all_requests = true;
+        let mut receivers = run_completion_with(
+            config,
+            "GET",
+            "/v3/projects",
+            get(|| async { axum::http::StatusCode::OK }),
+        )
+        .await;
+        let event = receivers.perimeter.try_recv().expect("completion event");
+        assert_eq!(event.payload().outcome(), "success");
         assert!(receivers.perimeter.try_recv().is_err());
     }
 

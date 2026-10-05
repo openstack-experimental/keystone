@@ -87,7 +87,7 @@ from it.
 | `[auth_plugins]` | `plugins`, `trusted_proxies`, `trusted_header` |
 | `[auth_plugin.<name>]` | `path`, `sha256`, `mode`, capabilities, headers, outbound hosts, provisioning/role bounds, route targets, resource limits, rate limits, concurrency, `valid_since` |
 | `[auth_plugin_identity]` | `driver` |
-| `[audit]` | `enabled` (`true`), `spool_dir` (`/var/lib/keystone/audit`), `hmac_kek_file` (unset: `<spool_dir>/hmac-key.bin`), `node_id` (`$HOSTNAME`, else `unknown-node`; set it, unique per node), `spool_max_segment_bytes` (256 MiB), `spool_max_segment_age_secs` (86400), `spool_max_segments` (unset: keep all), `spool_max_bytes` (unset), `spool_retention_secs` (unset), `perimeter_channel_capacity` (4096), `critical_channel_capacity` (256), `shipper_batch_size` (500), `shipper_poll_interval_secs` (5), `shipper_initial_backoff_secs` (1), `shipper_max_backoff_secs` (60), `spool_drain_timeout_secs` (10), `sink` (none) |
+| `[audit]` | `enabled` (`true`), `spool_dir` (`/var/lib/keystone/audit`), `hmac_kek_file` (unset: `<spool_dir>/hmac-key.bin`), `node_id` (`$HOSTNAME`, else `unknown-node`; set it, unique per node), `spool_max_segment_bytes` (256 MiB), `spool_max_segment_age_secs` (86400), `spool_max_segments` (unset: keep all), `spool_max_bytes` (unset), `spool_retention_secs` (unset), `perimeter_all_requests` (`false`), `perimeter_channel_capacity` (4096), `critical_channel_capacity` (256), `shipper_batch_size` (500), `shipper_poll_interval_secs` (5), `shipper_initial_backoff_secs` (1), `shipper_max_backoff_secs` (60), `spool_drain_timeout_secs` (10), `sink` (none) |
 
 `[audit] enabled` defaults to `true`. Setting it to `false` skips creating the
 spool directory, spool lock, HMAC key and writer, and discards audit events;
@@ -118,6 +118,7 @@ Spool and queue limits:
 | `spool_max_segments` | unset | Keep at most this many sealed segments; the oldest are deleted beyond it. |
 | `spool_max_bytes` | unset | Keep sealed segments plus room for one full live segment (`spool_max_segment_bytes`) within this many bytes, deleting the oldest sealed segments first. |
 | `spool_retention_secs` | unset | Delete sealed segments older than this many seconds. |
+| `perimeter_all_requests` | `false` | Also record a perimeter completion event for every request, including ordinary token-authenticated API calls. High volume: size `perimeter_channel_capacity` accordingly and watch the dropped-events counter. |
 | `perimeter_channel_capacity` | `4096` | Capacity of the best-effort perimeter channel; events are dropped and counted when it is full. |
 | `critical_channel_capacity` | `256` | Capacity of the fail-closed critical channel; senders wait when it is full. |
 | `shipper_batch_size` | `500` | Events handed to the sink per call. |

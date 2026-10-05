@@ -8,7 +8,7 @@ the design is in [ADR 0023](../../adr/0023-audit.md).
 
 | Kind | Records | When |
 | --- | --- | --- |
-| Perimeter | `authenticate` (success, failure, `client_error`) | Login and token-issuing handlers (token, EC2, OAuth2 token, federation JWT/OIDC), plus one completion record for the other authentication surfaces: token validation and revocation (`/v3/auth/tokens`), WebAuthn, Kubernetes auth, API-key (SCIM), vendordata, and requests rejected early (for example `429`). Best effort: records are dropped, and counted, if the in-memory channel is full. |
+| Perimeter | `authenticate` (success, failure, `client_error`) | Login and token-issuing handlers (token, EC2, OAuth2 token, federation JWT/OIDC), plus one completion record for the other authentication surfaces: token validation and revocation (`/v3/auth/tokens`), WebAuthn, Kubernetes auth, API-key (SCIM), vendordata, and requests rejected early (for example `429`). With `[audit] perimeter_all_requests = true` every request gets such a record. Best effort: records are dropped, and counted, if the in-memory channel is full. |
 | Provider | `create`, `update`, `delete`, `enable`, `disable`, `revoke`, ... | Every state-changing provider operation writes an `attempt` record **before** the change and a `success`/`failure` record after it. If the `attempt` record cannot be queued the operation is **not performed** (fail-closed). |
 
 Ordinary validated-token requests to resource endpoints are not recorded at the

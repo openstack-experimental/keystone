@@ -662,7 +662,7 @@ groups:
 | Metrics (`keystone_audit_*`) and alert rules | Implemented; counters, except the gauges named in the metric list |
 | Perimeter events: login handlers | Implemented (token, EC2, OAuth2 token, federation JWT/OIDC) |
 | Perimeter completion record for the other authentication surfaces | Implemented by the request middleware (path allowlist) |
-| `Auth`-extractor ingress event for every request | **Not implemented, by design**: only the completion record exists, to keep the perimeter channel bounded |
+| Ingress record for every request | Opt-in: `[audit] perimeter_all_requests = true` adds the completion record to every request (default `false`, to keep the perimeter channel bounded). Not a separate event from the `Auth` extractor |
 | Provider auditing: `audited_op!` / `audited_if_ctx!` | Implemented, enforced by a coverage test over the provider services |
 | Initiator from the authenticated principal; request audit context | Implemented |
 | Wire format | CADF-inspired Keystone schema (see above), version `1.1` |

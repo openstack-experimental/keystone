@@ -204,6 +204,13 @@ pub struct AuditConfig {
     #[serde(default)]
     pub spool_retention_secs: Option<u64>,
 
+    /// Also record a perimeter event for every request authenticated by an
+    /// existing token (the ADR 0023 Phase 2 ingress record), not only the
+    /// authentication endpoints. Defaults to `false`: this is high volume and
+    /// the perimeter channel drops (and counts) events when it is full.
+    #[serde(default)]
+    pub perimeter_all_requests: bool,
+
     /// Capacity of the best-effort perimeter event channel. Events are dropped
     /// (and counted) when it is full. Defaults to 4096.
     #[serde(default = "default_perimeter_channel_capacity")]
@@ -328,6 +335,7 @@ impl Default for AuditConfig {
             spool_max_segment_age_secs: default_spool_max_segment_age_secs(),
             spool_max_segments: None,
             spool_max_bytes: None,
+            perimeter_all_requests: false,
             spool_retention_secs: None,
             perimeter_channel_capacity: default_perimeter_channel_capacity(),
             critical_channel_capacity: default_critical_channel_capacity(),
