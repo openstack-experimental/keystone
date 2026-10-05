@@ -417,7 +417,13 @@ mod tests {
             .mock_oauth2_session(session_mock)
             .mock_identity(refresh_identity_mock(Some(refresh_user(true, "domain-1"))))
             .mock_resource(refresh_resource_mock(Some(true)));
-        let state = get_mocked_state(provider, true, None).await;
+        let (state, mut receivers) =
+            openstack_keystone_core::api::tests::get_mocked_state_with_audit(
+                provider,
+                true,
+                openstack_keystone_config::Config::default(),
+            )
+            .await;
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state);
@@ -429,6 +435,15 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_eq!(json_body(response).await["error"], "invalid_grant");
+
+        // Reuse is audited fail-closed: one record on the critical channel,
+        // targeting the revoked family.
+        let event = receivers
+            .critical
+            .try_recv()
+            .expect("reuse must leave a critical audit record");
+        assert_eq!(event.payload().action(), "oauth2/refresh_reuse_detected");
+        assert_eq!(event.payload().outcome(), "failure");
     }
 
     #[tokio::test]

@@ -313,7 +313,13 @@ mod tests {
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
         let provider = Provider::mocked_builder().mock_oauth2_client(client_mock);
-        let state = get_mocked_state(provider, true, None).await;
+        let (state, mut receivers) =
+            openstack_keystone_core::api::tests::get_mocked_state_with_audit(
+                provider,
+                true,
+                Config::default(),
+            )
+            .await;
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state);
@@ -327,6 +333,14 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(json_body(response).await["error"], "invalid_client");
+
+        let event = receivers
+            .perimeter
+            .try_recv()
+            .expect("a wrong secret must leave a perimeter audit record");
+        assert_eq!(event.payload().action(), "authenticate");
+        assert_eq!(event.payload().outcome(), "failure");
+        assert_eq!(event.payload().initiator().id(), "unknown");
     }
 
     #[tokio::test]
@@ -412,7 +426,13 @@ mod tests {
             .mock_mapping(mapping_mock)
             .mock_resource(resource_mock)
             .mock_oauth2_key(ok_key_mock());
-        let state = get_mocked_state(provider, true, None).await;
+        let (state, mut receivers) =
+            openstack_keystone_core::api::tests::get_mocked_state_with_audit(
+                provider,
+                true,
+                Config::default(),
+            )
+            .await;
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state);
@@ -431,6 +451,13 @@ mod tests {
         // Three dot-separated JWT segments, no signature validation here
         // (that belongs to the downstream middleware's own test suite).
         assert_eq!(access_token.split('.').count(), 3);
+
+        let event = receivers
+            .perimeter
+            .try_recv()
+            .expect("a minted token must leave a perimeter audit record");
+        assert_eq!(event.payload().action(), "authenticate");
+        assert_eq!(event.payload().outcome(), "success");
     }
 
     #[tokio::test]
