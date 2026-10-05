@@ -1006,11 +1006,8 @@ impl HostFunctions for CoreHostFunctions {
         plugin_name: &str,
         request: ProvisionUserRequest,
     ) -> Result<ResolvedIdentityHandle, String> {
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current()
-                .block_on(self.provision_user_async(plugin_name, request))
-        })
-        .map_err(|e| e.to_string())
+        crate::audit_context::block_on_in_scope(self.provision_user_async(plugin_name, request))
+            .map_err(|e| e.to_string())
     }
 
     fn find_user(
@@ -1018,18 +1015,13 @@ impl HostFunctions for CoreHostFunctions {
         plugin_name: &str,
         external_id: String,
     ) -> Result<Option<ResolvedIdentityHandle>, String> {
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current()
-                .block_on(self.find_user_async(plugin_name, external_id))
-        })
-        .map_err(|e| e.to_string())
+        crate::audit_context::block_on_in_scope(self.find_user_async(plugin_name, external_id))
+            .map_err(|e| e.to_string())
     }
 
     fn assign_role(&self, plugin_name: &str, request: AssignRoleRequest) -> Result<(), String> {
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(self.assign_role_async(plugin_name, request))
-        })
-        .map_err(|e| e.to_string())
+        crate::audit_context::block_on_in_scope(self.assign_role_async(plugin_name, request))
+            .map_err(|e| e.to_string())
     }
 
     fn http_fetch(
@@ -1037,10 +1029,8 @@ impl HostFunctions for CoreHostFunctions {
         plugin_name: &str,
         request: HttpFetchRequest,
     ) -> Result<HttpFetchResponse, String> {
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(self.http_fetch_async(plugin_name, request))
-        })
-        .map_err(|e| e.to_string())
+        crate::audit_context::block_on_in_scope(self.http_fetch_async(plugin_name, request))
+            .map_err(|e| e.to_string())
     }
 }
 

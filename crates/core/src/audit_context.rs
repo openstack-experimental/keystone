@@ -127,6 +127,30 @@ pub fn mark_perimeter_emitted() {
     });
 }
 
+/// A handle on the current request's audit context, if a scope is
+/// established. Needed where work leaves the request's task, such as a
+/// synchronous WASM host function that blocks on an async call: task-locals
+/// do not follow into the new runtime context, so the caller re-establishes
+/// the scope with [`AuditRequestContext::scope`].
+#[must_use]
+pub fn current() -> Option<AuditRequestContext> {
+    AUDIT_REQUEST.try_with(Clone::clone).ok()
+}
+
+/// Run `fut` to completion from synchronous code, keeping the calling
+/// request's audit context (if any) established inside it.
+pub fn block_on_in_scope<F: Future>(fut: F) -> F::Output {
+    let ctx = current();
+    tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(async move {
+            match ctx {
+                Some(ctx) => ctx.scope(fut).await,
+                None => fut.await,
+            }
+        })
+    })
+}
+
 /// The current request's correlation ID, if a scope is established.
 #[must_use]
 pub fn correlation_id() -> Option<String> {
@@ -177,5 +201,19 @@ mod tests {
         assert!(completion.perimeter_emitted);
         // Outside a scope recording is a silent no-op.
         record_initiator(Initiator::new("x".to_string(), None, None, None));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn block_on_in_scope_keeps_the_request_context() {
+        let ctx = AuditRequestContext::new(None, Some("req-2".into()));
+        ctx.scope(async {
+            // A synchronous caller (a WASM host function) blocking on async
+            // work must still see the request's correlation ID.
+            let seen = block_on_in_scope(async { correlation_id() });
+            assert_eq!(seen.as_deref(), Some("req-2"));
+        })
+        .await;
+        // Without a scope it still runs, with no context.
+        assert_eq!(block_on_in_scope(async { correlation_id() }), None);
     }
 }
