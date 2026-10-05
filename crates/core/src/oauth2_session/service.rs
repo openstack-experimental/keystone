@@ -99,6 +99,70 @@ impl Oauth2SessionService {
             oauth2_config: config.oauth2.clone(),
         })
     }
+
+    /// Tombstone each of `family_ids` with `reason` and return them.
+    async fn revoke_families(
+        &self,
+        state: &ServiceState,
+        family_ids: Vec<String>,
+        reason: RefreshTokenRevocationReason,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError> {
+        let revoked_at = now();
+        for family_id in &family_ids {
+            self.backend_driver
+                .revoke_refresh_token_family(state, family_id, reason, revoked_at)
+                .await?;
+        }
+        Ok(family_ids)
+    }
+
+    /// Delete every live pre-auth session and device code grant matching
+    /// the predicates and return how many were deleted. Neither record kind
+    /// has an owner index, so the candidates come from the expiry index:
+    /// both are short-lived, which keeps the scan bounded.
+    async fn purge_pending_grants(
+        &self,
+        state: &ServiceState,
+        session_matches: impl Fn(&PreAuthSession) -> bool + Send + Sync,
+        grant_matches: impl Fn(&DeviceCodeGrant) -> bool + Send + Sync,
+    ) -> Result<usize, Oauth2SessionProviderError> {
+        let mut purged = 0;
+        for (_, session_id) in self
+            .backend_driver
+            .list_expired(state, Some("session"), i64::MAX, usize::MAX)
+            .await?
+        {
+            if let Some(session) = self
+                .backend_driver
+                .get_pre_auth_session(state, &session_id)
+                .await?
+                && session_matches(&session)
+            {
+                self.backend_driver
+                    .delete_pre_auth_session(state, &session_id)
+                    .await?;
+                purged += 1;
+            }
+        }
+        for (_, device_code) in self
+            .backend_driver
+            .list_expired(state, Some("device"), i64::MAX, usize::MAX)
+            .await?
+        {
+            if let Some(grant) = self
+                .backend_driver
+                .get_device_code_grant(state, &device_code)
+                .await?
+                && grant_matches(&grant)
+            {
+                self.backend_driver
+                    .take_device_code_grant(state, &device_code)
+                    .await?;
+                purged += 1;
+            }
+        }
+        Ok(purged)
+    }
 }
 
 #[async_trait]
@@ -454,6 +518,67 @@ impl Oauth2SessionApi for Oauth2SessionService {
         Ok(family_ids.len())
     }
 
+    async fn revoke_refresh_token_families_by_user<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: Option<&'a str>,
+        user_id: &str,
+        reason: RefreshTokenRevocationReason,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError> {
+        let family_ids = match domain_id {
+            Some(domain_id) => {
+                self.backend_driver
+                    .list_refresh_families_by_user(state, domain_id, user_id)
+                    .await?
+            }
+            None => {
+                self.backend_driver
+                    .list_refresh_families_by_user_any_domain(state, user_id)
+                    .await?
+            }
+        };
+        self.revoke_families(state, family_ids, reason).await
+    }
+
+    async fn revoke_refresh_token_families_by_domain(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        reason: RefreshTokenRevocationReason,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError> {
+        let family_ids = self
+            .backend_driver
+            .list_refresh_families_by_domain(state, domain_id)
+            .await?;
+        self.revoke_families(state, family_ids, reason).await
+    }
+
+    async fn purge_pending_grants_by_domain(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError> {
+        self.purge_pending_grants(
+            state,
+            |s| s.domain_id == domain_id,
+            |g| g.domain_id == domain_id,
+        )
+        .await
+    }
+
+    async fn purge_pending_grants_by_user(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError> {
+        self.purge_pending_grants(
+            state,
+            |s| s.user_id.as_deref() == Some(user_id),
+            |g| g.user_id.as_deref() == Some(user_id),
+        )
+        .await
+    }
+
     async fn start_device_authorization(
         &self,
         state: &ServiceState,
@@ -692,6 +817,192 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(revoked, 2);
+    }
+
+    #[tokio::test]
+    async fn test_revoke_families_by_user_in_domain_revokes_each_family() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_list_refresh_families_by_user()
+            .withf(|_, domain_id, user_id| domain_id == "domain-1" && user_id == "user-1")
+            .returning(|_, _, _| Ok(vec!["f1".to_string(), "f2".to_string()]));
+        mock.expect_list_refresh_families_by_user_any_domain()
+            .never();
+        mock.expect_revoke_refresh_token_family()
+            .withf(|_, _, reason, _| *reason == RefreshTokenRevocationReason::UserDisabled)
+            .times(2)
+            .returning(|_, _, _, _| Ok(()));
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let revoked = service
+            .revoke_refresh_token_families_by_user(
+                &state,
+                Some("domain-1"),
+                "user-1",
+                RefreshTokenRevocationReason::UserDisabled,
+            )
+            .await
+            .unwrap();
+        assert_eq!(revoked, vec!["f1".to_string(), "f2".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_revoke_families_by_user_without_domain_searches_every_domain() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_list_refresh_families_by_user().never();
+        mock.expect_list_refresh_families_by_user_any_domain()
+            .withf(|_, user_id| user_id == "user-1")
+            .returning(|_, _| Ok(vec!["f1".to_string()]));
+        mock.expect_revoke_refresh_token_family()
+            .withf(|_, family_id, reason, _| {
+                family_id == "f1" && *reason == RefreshTokenRevocationReason::UserDeleted
+            })
+            .times(1)
+            .returning(|_, _, _, _| Ok(()));
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let revoked = service
+            .revoke_refresh_token_families_by_user(
+                &state,
+                None,
+                "user-1",
+                RefreshTokenRevocationReason::UserDeleted,
+            )
+            .await
+            .unwrap();
+        assert_eq!(revoked, vec!["f1".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_revoke_families_by_domain_revokes_each_family() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_list_refresh_families_by_domain()
+            .withf(|_, domain_id| domain_id == "domain-1")
+            .returning(|_, _| Ok(vec!["f1".to_string(), "f2".to_string()]));
+        mock.expect_revoke_refresh_token_family()
+            .withf(|_, _, reason, _| *reason == RefreshTokenRevocationReason::DomainDeleted)
+            .times(2)
+            .returning(|_, _, _, _| Ok(()));
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let revoked = service
+            .revoke_refresh_token_families_by_domain(
+                &state,
+                "domain-1",
+                RefreshTokenRevocationReason::DomainDeleted,
+            )
+            .await
+            .unwrap();
+        assert_eq!(revoked.len(), 2);
+    }
+
+    fn sample_pre_auth_session(
+        session_id: &str,
+        domain_id: &str,
+        user_id: Option<&str>,
+    ) -> PreAuthSession {
+        PreAuthSession {
+            session_id: session_id.to_string(),
+            domain_id: domain_id.to_string(),
+            client_id: "client-1".to_string(),
+            redirect_uri: "https://rp.example/cb".to_string(),
+            scope: vec!["openid".to_string()],
+            state: "state".to_string(),
+            code_challenge: "challenge".to_string(),
+            code_challenge_method: "S256".to_string(),
+            nonce: None,
+            server_side_session_secret: "secret".to_string(),
+            user_id: user_id.map(str::to_string),
+            auth_time: None,
+            consent_granted: None,
+            created_at: now(),
+            expires_at: now() + 600,
+        }
+    }
+
+    /// Backend with sessions `s1` (domain-1, user-1) and `s2` (domain-2,
+    /// unauthenticated) and device grants `d1` (domain-1, unauthenticated)
+    /// and `d2` (domain-2, user-1).
+    fn backend_with_pending_grants() -> MockOauth2SessionBackend {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_list_expired()
+            .withf(|_, kind, before, _| *kind == Some("session") && *before == i64::MAX)
+            .returning(|_, _, _, _| {
+                Ok(vec![
+                    ("session".to_string(), "s1".to_string()),
+                    ("session".to_string(), "s2".to_string()),
+                ])
+            });
+        mock.expect_list_expired()
+            .withf(|_, kind, before, _| *kind == Some("device") && *before == i64::MAX)
+            .returning(|_, _, _, _| {
+                Ok(vec![
+                    ("device".to_string(), "d1".to_string()),
+                    ("device".to_string(), "d2".to_string()),
+                ])
+            });
+        mock.expect_get_pre_auth_session()
+            .returning(|_, session_id| {
+                Ok(Some(match session_id {
+                    "s1" => sample_pre_auth_session("s1", "domain-1", Some("user-1")),
+                    _ => sample_pre_auth_session(session_id, "domain-2", None),
+                }))
+            });
+        mock.expect_get_device_code_grant()
+            .returning(|_, device_code| {
+                let mut grant = sample_device_grant(DeviceGrantStatus::Pending, None);
+                grant.device_code = device_code.to_string();
+                if device_code == "d2" {
+                    grant.domain_id = "domain-2".to_string();
+                    grant.user_id = Some("user-1".to_string());
+                }
+                Ok(Some(grant))
+            });
+        mock
+    }
+
+    #[tokio::test]
+    async fn test_purge_pending_grants_by_domain_deletes_only_that_domain() {
+        let mut mock = backend_with_pending_grants();
+        mock.expect_delete_pre_auth_session()
+            .withf(|_, session_id| session_id == "s1")
+            .times(1)
+            .returning(|_, _| Ok(()));
+        mock.expect_take_device_code_grant()
+            .withf(|_, device_code| device_code == "d1")
+            .times(1)
+            .returning(|_, _| Ok(None));
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let purged = service
+            .purge_pending_grants_by_domain(&state, "domain-1")
+            .await
+            .unwrap();
+        assert_eq!(purged, 2);
+    }
+
+    #[tokio::test]
+    async fn test_purge_pending_grants_by_user_deletes_only_that_user() {
+        let mut mock = backend_with_pending_grants();
+        mock.expect_delete_pre_auth_session()
+            .withf(|_, session_id| session_id == "s1")
+            .times(1)
+            .returning(|_, _| Ok(()));
+        mock.expect_take_device_code_grant()
+            .withf(|_, device_code| device_code == "d2")
+            .times(1)
+            .returning(|_, _| Ok(None));
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let purged = service
+            .purge_pending_grants_by_user(&state, "user-1")
+            .await
+            .unwrap();
+        assert_eq!(purged, 2);
     }
 
     fn sample_refresh_token(spent_at: Option<i64>) -> RefreshToken {

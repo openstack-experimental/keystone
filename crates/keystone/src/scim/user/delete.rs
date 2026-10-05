@@ -113,10 +113,11 @@ pub(super) async fn delete(
         .inc(["cascade"]);
 
     // §6.A step 4: emit a CADF `disable` event. `update_user` above already
-    // audited an `Update`; this is an additional, ADR-mandated `Disable`
-    // event enriching the audit trail for the SCIM deprovisioning
-    // semantics specifically (a judgment call — §9 does not otherwise
-    // define a dedicated disable-audit call site for Identity users).
+    // audited the disable itself; this is an additional, ADR-mandated
+    // `Disable` event marking the end of the SCIM deprovisioning sequence
+    // (a judgment call — §9 does not otherwise define a dedicated
+    // disable-audit call site for Identity users). Subscribers that react
+    // to it (the OAuth2 session hook) are idempotent.
     state
         .event_dispatcher
         .emit(Event::new(

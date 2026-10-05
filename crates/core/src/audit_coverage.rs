@@ -94,6 +94,42 @@ const ALLOW_LIST: &[(&str, &str, &str)] = &[
     ),
     (
         "oauth2_session",
+        "revoke_refresh_token_families_by_user",
+        "called by the OAuth2 session lifecycle hook, which emits a refresh \
+         token family revoked event per family, after the audited user \
+         disable, delete or password change",
+    ),
+    (
+        "oauth2_session",
+        "revoke_refresh_token_families_by_domain",
+        "called by the OAuth2 session lifecycle hook, which emits a refresh \
+         token family revoked event per family, after the audited domain \
+         disable or delete",
+    ),
+    (
+        "oauth2_session",
+        "revoke_families",
+        "private helper of the revoke-by-user and revoke-by-domain methods",
+    ),
+    (
+        "oauth2_session",
+        "purge_pending_grants_by_user",
+        "drops short-lived, not yet redeemed flows after the audited user \
+         disable, delete or password change",
+    ),
+    (
+        "oauth2_session",
+        "purge_pending_grants_by_domain",
+        "drops short-lived, not yet redeemed flows after the audited domain \
+         disable or delete",
+    ),
+    (
+        "oauth2_session",
+        "purge_pending_grants",
+        "private helper of the purge-pending-grants methods",
+    ),
+    (
+        "oauth2_session",
         "purge_expired",
         "janitor housekeeping of expired sessions",
     ),

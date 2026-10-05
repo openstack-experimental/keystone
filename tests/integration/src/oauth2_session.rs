@@ -23,6 +23,8 @@
 //! replaying an already-rotated refresh token must collapse the entire
 //! family.
 
+use std::sync::Arc;
+
 use eyre::Result;
 use tracing_test::traced_test;
 use uuid::Uuid;
@@ -30,12 +32,13 @@ use uuid::Uuid;
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::oauth2_session::backend::Oauth2SessionBackend;
 use openstack_keystone_core::oauth2_session::{
-    IssueAuthorizationCodeRequest, IssueRefreshTokenRequest, RefreshTokenRedemption,
-    StartPreAuthSessionRequest,
+    IssueAuthorizationCodeRequest, IssueRefreshTokenRequest, Oauth2SessionHook,
+    RefreshTokenRedemption, StartPreAuthSessionRequest,
 };
-use openstack_keystone_core_types::identity::UserCreateBuilder;
 use openstack_keystone_core_types::identity::UserPasswordAuthRequestBuilder;
+use openstack_keystone_core_types::identity::{UserCreateBuilder, UserUpdate};
 use openstack_keystone_core_types::oauth2_client::{GrantType, OAuth2ClientResourceCreateBuilder};
+use openstack_keystone_core_types::resource::DomainUpdateBuilder;
 use openstack_keystone_oauth2_session_driver_raft::RaftOauth2SessionBackend;
 
 use crate::common::{get_state, get_state_with_config};
@@ -343,4 +346,187 @@ async fn test_client_delete_revokes_refresh_families() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Wait for the asynchronously dispatched lifecycle hook to tombstone
+/// `family_id`, returning its members.
+async fn wait_for_family_revoked(
+    state: &openstack_keystone_core::keystone::ServiceState,
+    family_id: &str,
+) -> Result<Vec<openstack_keystone_core_types::oauth2_session::RefreshToken>> {
+    for _ in 0..100 {
+        let members = RaftOauth2SessionBackend::default()
+            .list_refresh_token_family(state, family_id)
+            .await?;
+        if !members.is_empty() && members.iter().all(|m| m.revoked_at.is_some()) {
+            return Ok(members);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    eyre::bail!("refresh token family {family_id} was not revoked");
+}
+
+/// Issue #1259: disabling a user through the identity provider must
+/// tombstone its refresh token families, so the next `refresh_token` grant
+/// gets `invalid_grant`, and drop its authenticated pending flows.
+#[tokio::test]
+#[traced_test]
+async fn test_user_disable_revokes_refresh_families() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    state
+        .event_dispatcher
+        .subscribe(Arc::new(Oauth2SessionHook::new(state.clone())))
+        .await;
+    let domain = create_domain!(state)?;
+    let uid = Uuid::new_v4().simple().to_string();
+    let ctx = ExecutionContext::internal(&state);
+    state
+        .provider
+        .get_identity_provider()
+        .create_user(
+            &ctx,
+            UserCreateBuilder::default()
+                .id(&uid)
+                .name("oauth2-lifecycle-user")
+                .domain_id(domain.id.clone())
+                .enabled(true)
+                .build()?,
+        )
+        .await?;
+
+    let session_provider = state.provider.get_oauth2_session_provider();
+    let (root, bearer) = session_provider
+        .issue_refresh_token(
+            &state,
+            IssueRefreshTokenRequest {
+                domain_id: domain.id.clone(),
+                client_id: "client-1".to_string(),
+                user_id: uid.clone(),
+                scope: vec!["openid".to_string()],
+            },
+        )
+        .await?;
+    let session = session_provider
+        .start_pre_auth_session(&state, sample_pre_auth_request(&domain.id))
+        .await?;
+    session_provider
+        .mark_authenticated(&state, &session.session_id, &uid, 1_000)
+        .await?;
+
+    state
+        .provider
+        .get_identity_provider()
+        .update_user(
+            &ctx,
+            &uid,
+            UserUpdate {
+                enabled: Some(false),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    let members = wait_for_family_revoked(&state, &root.family_id).await?;
+    for member in &members {
+        assert_eq!(member.revocation_reason.as_deref(), Some("user_disabled"));
+    }
+    let redemption = session_provider
+        .redeem_refresh_token(&state, &bearer, "client-1", &domain.id)
+        .await?;
+    assert!(matches!(redemption, RefreshTokenRedemption::Invalid));
+    // Purged after the family was revoked by the same hook run.
+    assert!(
+        session_provider
+            .get_pre_auth_session(&state, &session.session_id)
+            .await?
+            .is_none()
+    );
+
+    Ok(())
+}
+
+/// Issue #1259: disabling a domain must tombstone every refresh token
+/// family in it and drop its pending flows, leaving other domains alone.
+#[tokio::test]
+#[traced_test]
+async fn test_domain_disable_revokes_refresh_families() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    state
+        .event_dispatcher
+        .subscribe(Arc::new(Oauth2SessionHook::new(state.clone())))
+        .await;
+    let domain = create_domain!(state)?;
+    let other_domain = create_domain!(state)?;
+
+    let session_provider = state.provider.get_oauth2_session_provider();
+    let issue = |domain_id: String| IssueRefreshTokenRequest {
+        domain_id,
+        client_id: "client-1".to_string(),
+        user_id: Uuid::new_v4().simple().to_string(),
+        scope: vec!["openid".to_string()],
+    };
+    let (root, bearer) = session_provider
+        .issue_refresh_token(&state, issue(domain.id.clone()))
+        .await?;
+    let (other_root, _) = session_provider
+        .issue_refresh_token(&state, issue(other_domain.id.clone()))
+        .await?;
+    let session = session_provider
+        .start_pre_auth_session(&state, sample_pre_auth_request(&domain.id))
+        .await?;
+    let other_session = session_provider
+        .start_pre_auth_session(&state, sample_pre_auth_request(&other_domain.id))
+        .await?;
+
+    state
+        .provider
+        .get_resource_provider()
+        .update_domain(
+            &ExecutionContext::internal(&state),
+            &domain.id,
+            DomainUpdateBuilder::default().enabled(false).build()?,
+        )
+        .await?;
+
+    let members = wait_for_family_revoked(&state, &root.family_id).await?;
+    for member in &members {
+        assert_eq!(member.revocation_reason.as_deref(), Some("domain_disabled"));
+    }
+    let redemption = session_provider
+        .redeem_refresh_token(&state, &bearer, "client-1", &domain.id)
+        .await?;
+    assert!(matches!(redemption, RefreshTokenRedemption::Invalid));
+    assert!(
+        session_provider
+            .get_pre_auth_session(&state, &session.session_id)
+            .await?
+            .is_none()
+    );
+
+    // The other domain is untouched.
+    let other_members = RaftOauth2SessionBackend::default()
+        .list_refresh_token_family(&state, &other_root.family_id)
+        .await?;
+    assert!(other_members.iter().all(|m| m.revoked_at.is_none()));
+    assert!(
+        session_provider
+            .get_pre_auth_session(&state, &other_session.session_id)
+            .await?
+            .is_some()
+    );
+
+    Ok(())
+}
+
+fn sample_pre_auth_request(domain_id: &str) -> StartPreAuthSessionRequest {
+    StartPreAuthSessionRequest {
+        domain_id: domain_id.to_string(),
+        client_id: "client-1".to_string(),
+        redirect_uri: "https://rp.example.com/callback".to_string(),
+        scope: vec!["openid".to_string()],
+        state: "state-xyz".to_string(),
+        code_challenge: "challenge-abc".to_string(),
+        code_challenge_method: "S256".to_string(),
+        nonce: None,
+    }
 }

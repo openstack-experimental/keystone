@@ -233,6 +233,10 @@ pub enum RefreshTokenRevocationReason {
     /// The grant failed after its refresh family was minted, so the bearer
     /// was never delivered.
     IssuanceFailed,
+    /// The owning domain was deleted.
+    DomainDeleted,
+    /// The owning user's password was changed.
+    PasswordChanged,
 }
 
 impl RefreshTokenRevocationReason {
@@ -248,6 +252,8 @@ impl RefreshTokenRevocationReason {
             Self::Operator => "operator",
             Self::RpRevoke => "rp_revoke",
             Self::IssuanceFailed => "issuance_failed",
+            Self::DomainDeleted => "domain_deleted",
+            Self::PasswordChanged => "password_changed",
         }
     }
 }

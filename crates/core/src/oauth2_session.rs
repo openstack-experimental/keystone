@@ -19,8 +19,10 @@
 //! rather than routing through [`crate::auth::ExecutionContext`]'s policy
 //! layer.
 
+pub mod audit;
 pub mod backend;
 pub mod error;
+pub mod hook;
 pub mod janitor;
 pub mod provider_api;
 pub mod service;
@@ -28,6 +30,7 @@ pub mod service;
 #[cfg(any(test, feature = "mock"))]
 pub use crate::mocks::MockOauth2SessionProvider;
 pub use error::Oauth2SessionProviderError;
+pub use hook::Oauth2SessionHook;
 pub use provider_api::{
     DeviceAuthorizationStart, DevicePollOutcome, IssueAuthorizationCodeRequest,
     IssueRefreshTokenRequest, Oauth2SessionApi, RefreshTokenRedemption,

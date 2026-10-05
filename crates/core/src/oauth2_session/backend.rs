@@ -194,6 +194,15 @@ pub trait Oauth2SessionBackend: Send + Sync {
         user_id: &str,
     ) -> Result<Vec<String>, Oauth2SessionProviderError>;
 
+    /// List the refresh token family ids for `user_id` across every domain
+    /// -- backs revocation after the user was deleted, when its domain can
+    /// no longer be looked up.
+    async fn list_refresh_families_by_user_any_domain(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError>;
+
     /// List the refresh token family ids issued to `client_id` -- backs
     /// per-client revocation (e.g. a compromised or deregistered client).
     async fn list_refresh_families_by_client(

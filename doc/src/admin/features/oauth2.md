@@ -305,7 +305,14 @@ migration runbook.
   new version (stored records stay readable in both directions).
 - Revoking a family because its user or domain is no longer valid emits an
   `oauth2/refresh_family_revoked` audit event (family id and reason:
-  `user_deleted`, `user_disabled`, `user_domain_changed`, `domain_disabled`).
+  `user_deleted`, `user_disabled`, `user_domain_changed`, `password_changed`,
+  `domain_disabled`, `domain_deleted`).
+- Disabling or deleting a user, changing a user's password, or disabling or
+  deleting a domain revokes the affected refresh families right away (one
+  audit event per family) and drops pending authorization and device flows
+  for that user or domain, matching the v3 token revocation on the same
+  events. Disabling a user or domain is now audited as `disable` and a
+  password change as `password_change` instead of `update`.
 
 ## Known gaps
 

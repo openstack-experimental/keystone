@@ -364,6 +364,13 @@ impl ResourceApi for ResourceService {
         domain.validate()?;
         self.check_domain_mutable(ctx, domain_id, domain.options.as_ref())
             .await?;
+        // Disabling gets its own operation so subscribers (the OAuth2
+        // session hook) can revoke what the domain's users hold.
+        let operation = if domain.enabled == Some(false) {
+            Operation::Disable
+        } else {
+            Operation::Update
+        };
         let domain = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
             let state = ctx.state();
@@ -372,7 +379,7 @@ impl ResourceApi for ResourceService {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
-                    Operation::Update,
+                    operation,
                     EventPayload::Domain { id: domain_id_clone },
                 ),
                 operation: async {
@@ -388,7 +395,7 @@ impl ResourceApi for ResourceService {
             ctx.state()
                 .event_dispatcher
                 .emit(Event::new(
-                    Operation::Update,
+                    operation,
                     EventPayload::Domain {
                         id: domain.id.clone(),
                     },

@@ -25,7 +25,9 @@ use validator::Validate;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::domain_config::DomainConfigGroupName;
-use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
+use openstack_keystone_core_types::events::{
+    Event, EventPayload, Operation, PASSWORD_CHANGE_OPERATION,
+};
 use openstack_keystone_core_types::identity::*;
 use openstack_keystone_core_types::idmapping::IdMappingEntityType;
 
@@ -1774,6 +1776,17 @@ impl IdentityApi for IdentityService {
             cfg.security_compliance.validate_password(password)?;
         }
         let (backend_driver, local_id) = self.resolve_public_id(ctx, user_id).await?;
+        // Disabling and password changes get their own operation so
+        // subscribers (the OAuth2 session hook) can revoke what the user
+        // holds. A request that does both is reported as a disable, which
+        // revokes the same.
+        let operation = if user.enabled == Some(false) {
+            Operation::Disable
+        } else if user.password.is_some() {
+            Operation::Other(PASSWORD_CHANGE_OPERATION.to_string())
+        } else {
+            Operation::Update
+        };
         let mut user = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &backend_driver;
             let state = ctx.state();
@@ -1781,7 +1794,7 @@ impl IdentityApi for IdentityService {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
-                    Operation::Update,
+                    operation,
                     EventPayload::User { id: user_id.to_string() },
                 ),
                 operation: async {
@@ -1796,7 +1809,7 @@ impl IdentityApi for IdentityService {
             ctx.state()
                 .event_dispatcher
                 .emit(Event::new(
-                    Operation::Update,
+                    operation,
                     EventPayload::User {
                         id: user_id.to_string(),
                     },
@@ -1840,7 +1853,7 @@ impl IdentityApi for IdentityService {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
-                    Operation::Update,
+                    Operation::Other(PASSWORD_CHANGE_OPERATION.to_string()),
                     EventPayload::User { id: event_user_id },
                 ),
                 operation: async {
@@ -1855,7 +1868,7 @@ impl IdentityApi for IdentityService {
             ctx.state()
                 .event_dispatcher
                 .emit(Event::new(
-                    Operation::Update,
+                    Operation::Other(PASSWORD_CHANGE_OPERATION.to_string()),
                     EventPayload::User {
                         id: user_id.to_string(),
                     },

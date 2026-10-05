@@ -39,6 +39,10 @@ pub struct Event {
     pub payload: EventPayload,
 }
 
+/// [`Operation::Other`] value of a user's password change (self-service
+/// or administrative), emitted with [`EventPayload::User`].
+pub const PASSWORD_CHANGE_OPERATION: &str = "password_change";
+
 /// CRUD operation type.
 #[derive(Debug, Clone)]
 pub enum Operation {

@@ -102,6 +102,8 @@ fn refresh_user_idx_prefix(domain_id: &str, user_id: &str) -> String {
     format!("oauth2:refresh_user_idx:v1:{domain_id}:{user_id}:")
 }
 
+const REFRESH_USER_IDX_PREFIX: &str = "oauth2:refresh_user_idx:v1:";
+
 /// Secondary index keyed by `client_id` -- lists refresh token families
 /// issued to a client (e.g. to revoke everything on client deregistration).
 fn refresh_client_idx_key(client_id: &str, family_id: &str) -> String {
@@ -574,6 +576,32 @@ impl RaftOauth2SessionBackend {
         Ok(keys
             .into_iter()
             .map(|k| k[prefix.len()..].to_string())
+            .collect())
+    }
+
+    async fn list_refresh_families_by_user_any_domain_impl(
+        &self,
+        storage: &dyn StorageApi,
+        user_id: &str,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError> {
+        // The index is keyed domain first, so a user whose domain is no
+        // longer known is found by scanning the whole user index and
+        // matching the `<user_id>:<family_id>` tail. Parsed from the right:
+        // family ids are UUIDs and user ids never contain `:`, while a
+        // domain id may.
+        let keys = storage
+            .prefix_index(REFRESH_USER_IDX_PREFIX.as_bytes())
+            .await
+            .map_err(store_err)?;
+        Ok(keys
+            .into_iter()
+            .filter_map(|k| {
+                let mut parts = k[REFRESH_USER_IDX_PREFIX.len()..].rsplitn(3, ':');
+                let family_id = parts.next()?;
+                let key_user_id = parts.next()?;
+                parts.next()?;
+                (key_user_id == user_id).then(|| family_id.to_string())
+            })
             .collect())
     }
 
@@ -1051,6 +1079,15 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
             .await
     }
 
+    async fn list_refresh_families_by_user_any_domain(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError> {
+        self.list_refresh_families_by_user_any_domain_impl(self.storage(state)?, user_id)
+            .await
+    }
+
     async fn list_refresh_families_by_client(
         &self,
         state: &ServiceState,
@@ -1522,6 +1559,38 @@ mod tests {
                 .await
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_refresh_families_by_user_any_domain() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_refresh_token_impl(&storage, sample_refresh_create("token-1", "family-1"))
+            .await
+            .unwrap();
+        let mut other_domain = sample_refresh_create("token-2", "family-2");
+        other_domain.domain_id = "domain:with:colons".to_string();
+        backend
+            .create_refresh_token_impl(&storage, other_domain)
+            .await
+            .unwrap();
+        let mut other_user = sample_refresh_create("token-3", "family-3");
+        other_user.user_id = "user-10".to_string();
+        backend
+            .create_refresh_token_impl(&storage, other_user)
+            .await
+            .unwrap();
+
+        let mut families = backend
+            .list_refresh_families_by_user_any_domain_impl(&storage, "user-1")
+            .await
+            .unwrap();
+        families.sort();
+        assert_eq!(
+            families,
+            vec!["family-1".to_string(), "family-2".to_string()]
         );
     }
 

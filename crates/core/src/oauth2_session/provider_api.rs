@@ -287,6 +287,50 @@ pub trait Oauth2SessionApi: Send + Sync {
         reason: RefreshTokenRevocationReason,
     ) -> Result<usize, Oauth2SessionProviderError>;
 
+    /// Revoke every refresh token family `user_id` holds with the given
+    /// `reason` and return the ids of the families revoked. `domain_id`
+    /// narrows the lookup to the user's domain; `None` searches every
+    /// domain (the user was deleted and its domain is no longer known).
+    /// Families that are already revoked are not listed again. Used by the
+    /// user lifecycle hook (disable, delete, password change).
+    async fn revoke_refresh_token_families_by_user<'a>(
+        &self,
+        state: &ServiceState,
+        domain_id: Option<&'a str>,
+        user_id: &str,
+        reason: RefreshTokenRevocationReason,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError>;
+
+    /// Revoke every refresh token family within `domain_id` with the given
+    /// `reason` and return the ids of the families revoked. Used by the
+    /// domain lifecycle hook (disable, delete).
+    async fn revoke_refresh_token_families_by_domain(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        reason: RefreshTokenRevocationReason,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError>;
+
+    /// Delete every pending pre-auth session and device code grant that
+    /// targets `domain_id` and return how many were deleted, so no new
+    /// family can be minted from a flow started before the domain was
+    /// disabled or deleted.
+    async fn purge_pending_grants_by_domain(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError>;
+
+    /// Delete every pending pre-auth session and device code grant already
+    /// authenticated as `user_id` and return how many were deleted, so no
+    /// new family can be minted from a login that preceded the user's
+    /// disable, delete or password change.
+    async fn purge_pending_grants_by_user(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError>;
+
     /// Mint a new RFC 8628 Device Authorization Grant at
     /// `POST /device_authorization` (ADR 0026 §7.C).
     async fn start_device_authorization(

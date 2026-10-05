@@ -449,6 +449,33 @@ mod oauth2_session {
                 reason: RefreshTokenRevocationReason,
             ) -> Result<usize, Oauth2SessionProviderError>;
 
+            async fn revoke_refresh_token_families_by_user<'a>(
+                &self,
+                state: &ServiceState,
+                domain_id: Option<&'a str>,
+                user_id: &str,
+                reason: RefreshTokenRevocationReason,
+            ) -> Result<Vec<String>, Oauth2SessionProviderError>;
+
+            async fn revoke_refresh_token_families_by_domain(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+                reason: RefreshTokenRevocationReason,
+            ) -> Result<Vec<String>, Oauth2SessionProviderError>;
+
+            async fn purge_pending_grants_by_domain(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+            ) -> Result<usize, Oauth2SessionProviderError>;
+
+            async fn purge_pending_grants_by_user(
+                &self,
+                state: &ServiceState,
+                user_id: &str,
+            ) -> Result<usize, Oauth2SessionProviderError>;
+
             async fn start_device_authorization(
                 &self,
                 state: &ServiceState,
