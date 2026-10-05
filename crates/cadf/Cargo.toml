@@ -22,14 +22,18 @@ rustls = { workspace = true, features = ["aws-lc-rs"], optional = true }
 rustls-native-certs = { workspace = true, optional = true }
 rustls-pki-types = { workspace = true, features = ["std"], optional = true }
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync", "rt", "time", "fs", "io-util"] }
+tokio = { workspace = true, features = ["sync", "rt", "time", "fs", "io-util", "macros"] }
 tokio-rustls = { workspace = true, optional = true }
+tokio-util = { workspace = true, optional = true }
 tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
 [features]
 default = []
 testing = []
+# Service bootstrap: KEK load/generate, spool sealing, writer, shipper and
+# key reloader (`cadf::runtime::init`).
+runtime = ["dep:tokio-util"]
 # RFC 5424 syslog sink over TCP, optionally wrapped in TLS.
 syslog = [
     "dep:rustls",

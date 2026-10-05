@@ -39,7 +39,7 @@ jsonwebtoken = { workspace = true }
 nix = { workspace = true, features = ["socket", "user"] }
 openstack-keystone-api-key-driver-raft.workspace = true
 openstack-keystone-api-types = { workspace = true, features = ["openapi", "validate", "conv"]}
-cadf.workspace = true
+cadf = { workspace = true, features = ["runtime"] }
 openstack-keystone-appcred-driver-sql.workspace = true
 openstack-keystone-assignment-driver-openfga = { workspace = true, optional = true }
 openstack-keystone-assignment-driver-sql.workspace = true
