@@ -21,7 +21,8 @@ set -euo pipefail
 : "${IMAGE:?IMAGE is set by skaffold}"
 CONTEXT="${BUILD_CONTEXT:-.}"
 
-args=(--file "${CONTEXT}/tools/Dockerfile.skaffold" --tag "${IMAGE}" --load)
+base_args=(--file "${CONTEXT}/tools/Dockerfile.skaffold" --tag "${IMAGE}" --load)
+args=("${base_args[@]}")
 
 if [[ -n "${BUILDCACHE_REF:-}" ]]; then
   args+=(--cache-from "type=registry,ref=${BUILDCACHE_REF}")
@@ -31,7 +32,16 @@ if [[ -n "${BUILDCACHE_REF:-}" ]]; then
   fi
 fi
 
-docker buildx build "${args[@]}" "${CONTEXT}"
+# Pulling the large cached layers from the registry can fail transiently
+# (e.g. "short read ... unexpected EOF"). Retry once with the cache, then
+# fall back to an uncached build so a flaky cache never fails the job.
+if ! docker buildx build "${args[@]}" "${CONTEXT}"; then
+  echo "buildx build failed, retrying" >&2
+  if ! docker buildx build "${args[@]}" "${CONTEXT}"; then
+    echo "retry failed, building without the registry cache" >&2
+    docker buildx build "${base_args[@]}" "${CONTEXT}"
+  fi
+fi
 
 # The image was loaded into the local docker daemon; skaffold expects it to
 # be pushed when PUSH_IMAGE is true (default-repo is the local registry).
