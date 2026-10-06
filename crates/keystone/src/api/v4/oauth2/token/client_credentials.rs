@@ -18,6 +18,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
+use cadf::Outcome;
 use cadf::OutcomeReason;
 use governor::clock::Clock as _;
 
@@ -121,7 +122,7 @@ pub(super) async fn handle_client_credentials_grant(
             &state.audit_dispatcher,
             correlation_id,
             build_initiator_unknown(),
-            "failure",
+            Outcome::Failure,
             Some(OutcomeReason::literal("ClientAuthenticationFailed")),
         );
         return Err(Oauth2TokenError::invalid_client(
@@ -205,7 +206,7 @@ pub(super) async fn handle_client_credentials_grant(
         &state.audit_dispatcher,
         correlation_id,
         build_initiator_from_vsc(&vsc),
-        "success",
+        Outcome::Success,
         None,
     );
 
@@ -226,6 +227,7 @@ pub(super) async fn handle_client_credentials_grant(
 
 #[cfg(test)]
 mod tests {
+    use cadf::Outcome;
 
     use std::net::SocketAddr;
     use std::sync::Arc;
@@ -339,7 +341,7 @@ mod tests {
             .try_recv()
             .expect("a wrong secret must leave a perimeter audit record");
         assert_eq!(event.payload().action(), "authenticate");
-        assert_eq!(event.payload().outcome(), "failure");
+        assert_eq!(event.payload().outcome(), Outcome::Failure);
         assert_eq!(event.payload().initiator().id(), "unknown");
     }
 
@@ -457,7 +459,7 @@ mod tests {
             .try_recv()
             .expect("a minted token must leave a perimeter audit record");
         assert_eq!(event.payload().action(), "authenticate");
-        assert_eq!(event.payload().outcome(), "success");
+        assert_eq!(event.payload().outcome(), Outcome::Success);
     }
 
     #[tokio::test]

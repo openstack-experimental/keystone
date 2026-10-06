@@ -52,7 +52,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use cadf::{
-    AuditDispatcher, CadfEvent, CadfEventPayload, HmacKeyring, Initiator, Observer,
+    AuditDispatcher, CadfEvent, CadfEventPayload, HmacKeyring, Initiator, Observer, Outcome,
     ServiceIdentity, Target, derive_audit_hmac_key,
 };
 use eyre::{Result, bail, eyre};
@@ -178,10 +178,10 @@ fn find_pair<'a>(
             continue;
         }
         match payload.outcome() {
-            "pending" => {
+            Outcome::Pending => {
                 pending.get_or_insert(event);
             }
-            "success" => {
+            Outcome::Success => {
                 success.get_or_insert(event);
             }
             _ => {}
@@ -295,7 +295,7 @@ async fn find_admin_user_id(admin: &Arc<AsyncOpenStack>) -> Result<String> {
 fn is_admin_login_success(event: &CadfEvent, admin_id: &str) -> bool {
     let payload = event.payload();
     payload.action() == "authenticate"
-        && payload.outcome() == "success"
+        && payload.outcome() == Outcome::Success
         && payload.target().type_uri() == AUTH_TYPE_URI
         && payload.initiator().id() == admin_id
 }
@@ -456,7 +456,7 @@ async fn test_tampered_spool_line_fails_verification() -> Result<()> {
         "req-tamper".to_string(),
         "2026-10-06T00:00:00+00:00".to_string(),
         "delete".to_string(),
-        "success".to_string(),
+        Outcome::Success,
         None,
         Initiator::new("unknown".to_string(), None, None, None),
         Target::new("00000000-0000-0000-0000-000000000000", USER_TYPE_URI),

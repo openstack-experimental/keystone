@@ -55,7 +55,14 @@ pub struct AuditChannelReceivers {
     pub perimeter: mpsc::Receiver<CadfEvent>,
 }
 
-/// Central audit dispatcher.
+/// Central audit dispatcher: signs events and queues them for the spool
+/// writer.
+///
+/// To record something, build a [`CadfEventPayload`], call
+/// [`CadfEventPayload::sign`] with the dispatcher and pass the result to
+/// [`dispatch`](Self::dispatch) (best effort) or
+/// [`dispatch_critical`](Self::dispatch_critical) (fail closed). See the
+/// crate documentation for a complete example.
 pub struct AuditDispatcher {
     /// The per-boot session id stamped into every record this dispatcher
     /// signs.
@@ -162,6 +169,11 @@ impl AuditDispatcher {
 
     /// Best-effort dispatch to the perimeter channel. Drops if full.
     ///
+    /// Never blocks and never fails; use it where losing a record under
+    /// overload is acceptable. Drops are counted in
+    /// [`dropped_count`](Self::dropped_count). A no-op when auditing is
+    /// disabled.
+    ///
     /// Floor-rate logs: at least once per second, and on every 1024th drop.
     pub fn dispatch(&self, event: CadfEvent) {
         if !self.enabled {
@@ -186,7 +198,13 @@ impl AuditDispatcher {
         }
     }
 
-    /// Fail-closed dispatch to the critical channel. Blocks until sent.
+    /// Fail-closed dispatch to the critical channel. Waits for room in the
+    /// queue, so the event is never dropped.
+    ///
+    /// Use it for a record that must exist before the audited action takes
+    /// effect, and abort the action on `Err`. Fails only when the spool
+    /// writer is gone ([`AuditChannelDead`]). A successful no-op when auditing
+    /// is disabled.
     pub async fn dispatch_critical(&self, event: CadfEvent) -> Result<(), AuditChannelDead> {
         if !self.enabled {
             return Ok(());
@@ -474,7 +492,7 @@ mod tests {
             Uuid::new_v4().to_string(),
             chrono::Utc::now().to_rfc3339(),
             "authenticate".to_string(),
-            "success".to_string(),
+            crate::types::Outcome::Success,
             None,
             Initiator::new("unknown".to_string(), None, None, None),
             Target::new("keystone", "service/security/keystone/auth"),

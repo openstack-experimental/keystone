@@ -278,6 +278,7 @@ mod tests {
         body::Body,
         http::{Request, StatusCode, header},
     };
+    use cadf::Outcome;
     use serde_json::json;
     use tower::ServiceExt;
     use tower_http::trace::TraceLayer;
@@ -325,7 +326,7 @@ mod tests {
             .perimeter
             .try_recv()
             .expect("perimeter audit event should have been emitted");
-        assert_eq!(event.payload().outcome(), "failure");
+        assert_eq!(event.payload().outcome(), Outcome::Failure);
         let initiator = event.payload().initiator();
         assert_eq!(initiator.id(), "unknown");
         assert!(initiator.host().is_none());

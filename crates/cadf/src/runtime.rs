@@ -652,7 +652,7 @@ mod tests {
             Uuid::new_v4().to_string(),
             chrono::Utc::now().to_rfc3339(),
             "authenticate".to_string(),
-            "success".to_string(),
+            crate::types::Outcome::Success,
             None,
             Initiator::new("unknown".to_string(), None, None, None),
             Target::new("testsvc", "service/security/testsvc/auth"),

@@ -29,6 +29,7 @@ use axum::{
 };
 use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, SameSite};
+use cadf::Outcome;
 use cadf::OutcomeReason;
 use secrecy::SecretString;
 use serde::Deserialize;
@@ -409,7 +410,7 @@ pub(super) async fn device_login(
                 "authenticate",
                 build_initiator_unknown(),
                 &grant.client_id,
-                "failure",
+                Outcome::Failure,
                 Some(OutcomeReason::literal("InvalidCredentials")),
             );
             return Ok(render_login(
@@ -452,7 +453,7 @@ pub(super) async fn device_login(
         "authenticate",
         build_initiator_unknown(),
         &grant.client_id,
-        "success",
+        Outcome::Success,
         None,
     );
 
@@ -571,7 +572,11 @@ async fn finish_decision(
                 "authorize",
                 build_initiator_unknown(),
                 &grant.client_id,
-                if granted { "success" } else { "failure" },
+                if granted {
+                    Outcome::Success
+                } else {
+                    Outcome::Failure
+                },
                 (!granted).then(|| OutcomeReason::literal("ConsentDenied")),
             );
             render_result(granted, &client_id)

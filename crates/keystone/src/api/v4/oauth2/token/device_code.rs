@@ -19,6 +19,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
+use cadf::Outcome;
 use openstack_keystone_core::oauth2_client::{IdTokenParams, TemplateScope, build_id_token_claims};
 use openstack_keystone_core::oauth2_session::{DevicePollOutcome, IssueRefreshTokenRequest};
 use openstack_keystone_core_types::oauth2_client::{GrantType, OidcAccessTokenClaims};
@@ -186,7 +187,7 @@ pub(super) async fn handle_device_code_grant(
         "authenticate",
         build_initiator_unknown(),
         &client_id,
-        "success",
+        Outcome::Success,
         None,
     );
 

@@ -137,8 +137,8 @@ async fn cadf_hook_labels_attempt_and_success() -> Result<()> {
     let attempt_ev = receivers.critical.recv().await.unwrap();
     let success_ev = receivers.critical.recv().await.unwrap();
 
-    assert_eq!(attempt_ev.payload().outcome(), "pending");
-    assert_eq!(success_ev.payload().outcome(), "success");
+    assert_eq!(attempt_ev.payload().outcome(), cadf::Outcome::Pending);
+    assert_eq!(success_ev.payload().outcome(), cadf::Outcome::Success);
 
     Ok(())
 }

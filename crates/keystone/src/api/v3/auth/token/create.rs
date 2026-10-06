@@ -195,6 +195,7 @@ mod tests {
         extract::ConnectInfo,
         http::{Request, StatusCode, header},
     };
+    use cadf::Outcome;
     use http_body_util::BodyExt; // for `collect`
     use sea_orm::DatabaseConnection;
     use serde_json::json;
@@ -1335,7 +1336,7 @@ mod tests {
         let initiator = event.payload().initiator();
         assert_eq!(initiator.id(), USER_ID);
         assert_eq!(initiator.address(), Some("198.51.100.4"));
-        assert_eq!(event.payload().outcome(), "failure");
+        assert_eq!(event.payload().outcome(), Outcome::Failure);
     }
 }
 

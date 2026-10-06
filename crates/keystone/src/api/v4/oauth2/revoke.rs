@@ -43,8 +43,8 @@ use axum::{
 use governor::clock::Clock as _;
 use serde::Deserialize;
 
-use cadf::OutcomeReason;
 use cadf::{Initiator, sanitize::sanitize_audit_id};
+use cadf::{Outcome, OutcomeReason};
 use openstack_keystone_core::oauth2_client::verify_revocable_access_token;
 use openstack_keystone_core_types::oauth2_key::Oauth2KeyProviderError;
 use openstack_keystone_core_types::oauth2_session::RefreshTokenRevocationReason;
@@ -211,7 +211,7 @@ struct RevokeContext<'a> {
 }
 
 impl RevokeContext<'_> {
-    fn audit(&self, outcome: &str, reason: OutcomeReason) {
+    fn audit(&self, outcome: Outcome, reason: OutcomeReason) {
         emit_oauth2_session_event(
             &self.state.audit_dispatcher,
             self.correlation_id,
@@ -240,7 +240,7 @@ impl RevokeContext<'_> {
 
         // Never act on (or reveal anything about) another client's family.
         if record.client_id != self.client_id || record.domain_id != self.domain_id {
-            self.audit("failure", OutcomeReason::literal("ForeignClient"));
+            self.audit(Outcome::Failure, OutcomeReason::literal("ForeignClient"));
             return Ok(true);
         }
         // Idempotent: an already-tombstoned family keeps its original
@@ -264,7 +264,7 @@ impl RevokeContext<'_> {
             &record.family_id,
             reason.as_str(),
         );
-        self.audit("success", OutcomeReason::literal("RefreshToken"));
+        self.audit(Outcome::Success, OutcomeReason::literal("RefreshToken"));
         Ok(true)
     }
 
@@ -331,11 +331,14 @@ impl RevokeContext<'_> {
                 ),
                 Err(e) => {
                     tracing::error!(error = %e, family_id, "oauth2 revoke: family revocation failed after jti revoked");
-                    self.audit("failure", OutcomeReason::literal("FamilyRevocationFailed"));
+                    self.audit(
+                        Outcome::Failure,
+                        OutcomeReason::literal("FamilyRevocationFailed"),
+                    );
                 }
             }
         }
-        self.audit("success", OutcomeReason::literal("AccessToken"));
+        self.audit(Outcome::Success, OutcomeReason::literal("AccessToken"));
         Ok(true)
     }
 }

@@ -50,8 +50,8 @@ pub struct CadfEventPayload {
     /// Which node recorded the event.
     pub(crate) observer: Observer,
     /// `"success"` or `"error"`.
-    pub(crate) outcome: String,
-    /// Structured reason for an `error` outcome, if any.
+    pub(crate) outcome: Outcome,
+    /// Structured reason for a `failure` outcome, if any.
     pub(crate) outcome_reason: Option<String>,
     /// Per-boot sequence number; filled in at signing.
     pub(crate) seq: u64,
@@ -71,6 +71,52 @@ const OBSERVER_TYPE_URI: &str = "service/security/keystone";
 const CORRELATION_TAG: &str = "correlation_id:";
 /// Name of the attachment carrying the fields DSP0262 has no place for.
 const INTEGRITY_ATTACHMENT: &str = "integrity";
+
+/// DSP0262 `outcome` of an event: a closed vocabulary, so no other value can
+/// reach a signed record.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    /// The action completed.
+    Success,
+    /// The action was rejected or failed; see the outcome reason.
+    Failure,
+    /// The action was started and its result is not yet known.
+    Pending,
+    /// The result could not be determined.
+    Unknown,
+}
+
+impl Outcome {
+    /// The DSP0262 wire value.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Failure => "failure",
+            Self::Pending => "pending",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+impl std::fmt::Display for Outcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Outcome {
+    /// Parse a wire value; anything outside the vocabulary is rejected.
+    fn from_wire(s: &str) -> Result<Self, WireError> {
+        match s {
+            "success" => Ok(Self::Success),
+            "failure" => Ok(Self::Failure),
+            "pending" => Ok(Self::Pending),
+            "unknown" => Ok(Self::Unknown),
+            _ => Err(wire_err("unsupported `outcome`")),
+        }
+    }
+}
 
 /// Error for a record that is not a valid DSP0262 record.
 #[derive(Debug, thiserror::Error)]
@@ -145,7 +191,7 @@ impl CadfEventPayload {
                 id: text(observer, "id")?,
                 node_id: text(integrity, "observer_node_id")?,
             },
-            outcome: text(&value, "outcome")?,
+            outcome: Outcome::from_wire(&text(&value, "outcome")?)?,
             outcome_reason: value
                 .get("reason")
                 .and_then(|r| r.get("reasonCode"))
@@ -178,7 +224,7 @@ impl CadfEventPayload {
             "id": self.id,
             "eventTime": self.event_time,
             "action": self.action,
-            "outcome": self.outcome,
+            "outcome": self.outcome.as_str(),
             "initiator": initiator,
             "target": {"id": self.target.id(), "typeURI": self.target.type_uri()},
             "observer": {"id": self.observer.id(), "typeURI": OBSERVER_TYPE_URI},
@@ -245,8 +291,15 @@ impl CadfEventPayload {
     /// `hmac_key_version` fields are placeholders;
     /// `AuditDispatcher::finalize_event` fills them in when signing.
     ///
+    /// Arguments: a unique record `id`, the record schema `version`, the
+    /// request's `correlation_id`, the RFC 3339 `event_time`, the `action`,
+    /// its [`Outcome`] and optional [`OutcomeReason`], then the
+    /// [`Initiator`], [`Target`] and [`Observer`]. Pass the result to
+    /// [`CadfEventPayload::sign`] and then to the dispatcher; see the crate
+    /// documentation for a complete example.
+    ///
     /// The free-text fields (`id`, `version`, `correlation_id`,
-    /// `event_time`, `outcome`) are reduced to the audit-safe character set
+    /// `event_time`) are reduced to the audit-safe character set
     /// (see [`crate::sanitize::sanitize_audit_value`]); `action` is reduced
     /// to the action vocabulary by [`sanitize_action`].
     #[allow(clippy::too_many_arguments)]
@@ -256,7 +309,7 @@ impl CadfEventPayload {
         correlation_id: String,
         event_time: String,
         action: String,
-        outcome: String,
+        outcome: Outcome,
         outcome_reason: Option<OutcomeReason>,
         initiator: Initiator,
         target: Target,
@@ -275,7 +328,7 @@ impl CadfEventPayload {
             id: sanitize_audit_value(&id),
             initiator,
             observer,
-            outcome: sanitize_audit_value(&outcome),
+            outcome,
             outcome_reason: outcome_reason.map(OutcomeReason::into_string),
             seq: 0,
             target,
@@ -286,14 +339,16 @@ impl CadfEventPayload {
     pub fn observer(&self) -> &Observer {
         &self.observer
     }
-    pub fn outcome(&self) -> &str {
-        &self.outcome
+    pub fn outcome(&self) -> Outcome {
+        self.outcome
     }
     pub fn seq(&self) -> u64 {
         self.seq
     }
 
-    /// Sign this payload via the dispatcher, producing a `CadfEvent`.
+    /// Sign this payload via the dispatcher, producing a `CadfEvent`. The
+    /// result is then submitted with `AuditDispatcher::dispatch` or
+    /// `AuditDispatcher::dispatch_critical`.
     ///
     /// The dispatcher fills `seq`, `boot_session_id`, and `hmac_key_version`,
     /// then computes the HMAC-SHA256 over the JCS-canonical form (RFC 8785).
@@ -740,7 +795,7 @@ mod tests {
             "req-corr".to_string(),
             "2026-06-16T00:00:00+00:00".to_string(),
             "delete".to_string(),
-            "success".to_string(),
+            Outcome::Success,
             None,
             Initiator::new("unknown".to_string(), None, None, None),
             Target::new("some-user-id", "data/security/identity/user"),
@@ -894,7 +949,7 @@ mod tests {
                 "req".to_string(),
                 "2026-06-16T00:00:00+00:00".to_string(),
                 "delete".to_string(),
-                "success".to_string(),
+                Outcome::Success,
                 None,
                 Initiator::new("u".to_string(), None, domain.map(str::to_string), None),
                 Target::new("t", "x"),
@@ -936,7 +991,7 @@ mod tests {
             "req\tcorr".to_string(),
             "2026-06-16T00:00:00+00:00\n".to_string(),
             "delete".to_string(),
-            "success\n".to_string(),
+            Outcome::Success,
             None,
             Initiator::new("unknown".to_string(), None, None, None),
             Target::new("t", "x"),
@@ -946,7 +1001,6 @@ mod tests {
         assert_eq!(payload.version, "1.0");
         assert_eq!(payload.correlation_id(), "reqcorr");
         assert_eq!(payload.event_time, "2026-06-16T00:00:00+00:00");
-        assert_eq!(payload.outcome(), "success");
         // Legit values pass through untouched.
         let payload = CadfEventPayload::new(
             "node-1:550e8400-e29b-41d4-a716-446655440000".to_string(),
@@ -954,7 +1008,7 @@ mod tests {
             "req-00000000000000000000000000000002".to_string(),
             "2026-06-16T00:00:00+00:00".to_string(),
             "oauth2/refresh_family_revoked".to_string(),
-            "success".to_string(),
+            Outcome::Success,
             None,
             Initiator::new("unknown".to_string(), None, None, None),
             Target::new("t", "x"),
@@ -967,7 +1021,23 @@ mod tests {
             "req-00000000000000000000000000000002"
         );
         assert_eq!(payload.event_time, "2026-06-16T00:00:00+00:00");
-        assert_eq!(payload.outcome(), "success");
+        assert_eq!(payload.outcome(), Outcome::Success);
+    }
+
+    #[test]
+    fn outcome_round_trips_and_rejects_values_outside_dsp0262() {
+        for outcome in [
+            Outcome::Success,
+            Outcome::Failure,
+            Outcome::Pending,
+            Outcome::Unknown,
+        ] {
+            assert_eq!(Outcome::from_wire(outcome.as_str()).ok(), Some(outcome));
+            assert_eq!(outcome.to_string(), outcome.as_str());
+        }
+        for bad in ["error", "attempt", "Success", ""] {
+            assert!(Outcome::from_wire(bad).is_err(), "{bad:?} must be rejected");
+        }
     }
 
     #[test]

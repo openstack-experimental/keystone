@@ -25,7 +25,9 @@ use axum::http::request::Parts;
 use tower_http::request_id::RequestId;
 use uuid::Uuid;
 
-use cadf::{AuditDispatcher, CadfEventPayload, Initiator, Observer, OutcomeReason, Target};
+use cadf::{
+    AuditDispatcher, CadfEventPayload, Initiator, Observer, Outcome, OutcomeReason, Target,
+};
 use openstack_keystone_api_types::error::KeystoneApiError;
 use openstack_keystone_core_types::assignment::AssignmentProviderError;
 use openstack_keystone_core_types::auth::AuthenticationError;
@@ -298,17 +300,27 @@ pub fn is_authentication_surface(method: &axum::http::Method, path: &str) -> boo
 /// malformed requests) is a `failure` whose reason names the client cause (ADR
 /// 0022), the rest a success.
 #[must_use]
-pub fn status_outcome(status: axum::http::StatusCode) -> (&'static str, Option<OutcomeReason>) {
+pub fn status_outcome(status: axum::http::StatusCode) -> (Outcome, Option<OutcomeReason>) {
     use axum::http::StatusCode;
     match status {
-        s if s.as_u16() < 400 => ("success", None),
-        StatusCode::UNAUTHORIZED => ("failure", Some(OutcomeReason::literal("Unauthorized"))),
-        StatusCode::FORBIDDEN => ("failure", Some(OutcomeReason::literal("Forbidden"))),
-        StatusCode::TOO_MANY_REQUESTS => {
-            ("failure", Some(OutcomeReason::literal("TooManyRequests")))
-        }
-        s if s.is_client_error() => ("failure", Some(OutcomeReason::literal("ClientError"))),
-        _ => ("failure", Some(OutcomeReason::literal("ServerError"))),
+        s if s.as_u16() < 400 => (Outcome::Success, None),
+        StatusCode::UNAUTHORIZED => (
+            Outcome::Failure,
+            Some(OutcomeReason::literal("Unauthorized")),
+        ),
+        StatusCode::FORBIDDEN => (Outcome::Failure, Some(OutcomeReason::literal("Forbidden"))),
+        StatusCode::TOO_MANY_REQUESTS => (
+            Outcome::Failure,
+            Some(OutcomeReason::literal("TooManyRequests")),
+        ),
+        s if s.is_client_error() => (
+            Outcome::Failure,
+            Some(OutcomeReason::literal("ClientError")),
+        ),
+        _ => (
+            Outcome::Failure,
+            Some(OutcomeReason::literal("ServerError")),
+        ),
     }
 }
 
@@ -316,11 +328,11 @@ pub fn status_outcome(status: axum::http::StatusCode) -> (&'static str, Option<O
 /// reason is the sanitized error variant name, never error data.
 pub fn perimeter_outcome<T>(
     result: &Result<T, KeystoneApiError>,
-) -> (&'static str, Option<OutcomeReason>) {
+) -> (Outcome, Option<OutcomeReason>) {
     match result {
-        Ok(_) => ("success", None),
+        Ok(_) => (Outcome::Success, None),
         Err(e) => (
-            "failure",
+            Outcome::Failure,
             Some(OutcomeReason::variant(&error_variant_name(e))),
         ),
     }
@@ -335,7 +347,7 @@ pub fn emit_perimeter_authenticate_event(
     dispatcher: &Arc<AuditDispatcher>,
     correlation_id: &str,
     initiator: Initiator,
-    outcome: &str,
+    outcome: Outcome,
     outcome_reason: Option<OutcomeReason>,
 ) {
     let node_id = dispatcher.node_id().to_string();
@@ -346,7 +358,7 @@ pub fn emit_perimeter_authenticate_event(
         correlation_id.to_string(),
         chrono::Utc::now().to_rfc3339(),
         "authenticate".to_string(),
-        outcome.to_string(),
+        outcome,
         outcome_reason,
         with_request_address(initiator),
         Target::new("keystone", "service/security/keystone/auth"),
@@ -373,7 +385,7 @@ pub fn emit_oauth2_session_event(
     action: &str,
     initiator: Initiator,
     client_id: &str,
-    outcome: &str,
+    outcome: Outcome,
     outcome_reason: Option<OutcomeReason>,
 ) {
     let node_id = dispatcher.node_id().to_string();
@@ -384,7 +396,7 @@ pub fn emit_oauth2_session_event(
         correlation_id.to_string(),
         chrono::Utc::now().to_rfc3339(),
         action.to_string(),
-        outcome.to_string(),
+        outcome,
         outcome_reason,
         with_request_address(initiator),
         Target::new(client_id, "data/security/keystone/oauth2_client"),
@@ -425,7 +437,7 @@ pub async fn emit_oauth2_refresh_reuse_critical_event(
         correlation_id.to_string(),
         chrono::Utc::now().to_rfc3339(),
         "oauth2/refresh_reuse_detected".to_string(),
-        "failure".to_string(),
+        Outcome::Failure,
         // The family is the target; the revocation reason is a fixed
         // vocabulary.
         Some(OutcomeReason::literal("RefreshTokenReuseDetected")),
@@ -472,7 +484,7 @@ pub fn emit_oauth2_client_revoked_event(
         correlation_id.to_string(),
         chrono::Utc::now().to_rfc3339(),
         "oauth2/client_revoked".to_string(),
-        "success".to_string(),
+        Outcome::Success,
         Some(OutcomeReason::counts(&[(
             "revoked_families",
             revoked_families as u64,
@@ -517,7 +529,7 @@ pub async fn emit_oauth2_emergency_key_rotation_critical_event(
         correlation_id.to_string(),
         chrono::Utc::now().to_rfc3339(),
         "oauth2/emergency_key_rotation".to_string(),
-        "success".to_string(),
+        Outcome::Success,
         // The domain is the target. The new key ID and the revoked JTIs are
         // not part of the signed record (no free text or ID lists in
         // `outcome_reason`); they are logged for the investigation.
@@ -578,7 +590,7 @@ pub async fn emit_oauth2_local_emergency_key_reconciled_event(
         correlation_id.to_string(),
         chrono::Utc::now().to_rfc3339(),
         "oauth2/local_emergency_key_reconciled".to_string(),
-        "success".to_string(),
+        Outcome::Success,
         // The domain is the target; the rotation ID and new key ID are
         // logged, and the rotation ID is also kept in the spool pointer
         // record the caller persists from the returned event ID.
@@ -683,7 +695,7 @@ mod tests {
             "authenticate",
             build_initiator_unknown(),
             "client-1",
-            "success",
+            Outcome::Success,
             None,
         );
     }
@@ -827,12 +839,12 @@ mod tests {
     #[test]
     fn perimeter_outcome_reason_is_the_sanitized_variant_name() {
         let ok: Result<(), KeystoneApiError> = Ok(());
-        assert_eq!(perimeter_outcome(&ok), ("success", None));
+        assert_eq!(perimeter_outcome(&ok), (Outcome::Success, None));
         let err: Result<(), KeystoneApiError> = Err(KeystoneApiError::Conflict(
             "user 4f1c already exists".into(),
         ));
         let (outcome, reason) = perimeter_outcome(&err);
-        assert_eq!(outcome, "failure");
+        assert_eq!(outcome, Outcome::Failure);
         assert_eq!(reason.expect("reason").as_str(), "Conflict");
     }
 
@@ -863,14 +875,22 @@ mod tests {
     #[test]
     fn status_maps_to_outcome() {
         use axum::http::StatusCode;
-        assert_eq!(status_outcome(StatusCode::OK), ("success", None));
-        assert_eq!(status_outcome(StatusCode::NO_CONTENT).0, "success");
+        assert_eq!(status_outcome(StatusCode::OK), (Outcome::Success, None));
+        assert_eq!(status_outcome(StatusCode::NO_CONTENT).0, Outcome::Success);
         for (code, outcome, reason) in [
-            (StatusCode::UNAUTHORIZED, "failure", "Unauthorized"),
-            (StatusCode::FORBIDDEN, "failure", "Forbidden"),
-            (StatusCode::TOO_MANY_REQUESTS, "failure", "TooManyRequests"),
-            (StatusCode::BAD_REQUEST, "failure", "ClientError"),
-            (StatusCode::INTERNAL_SERVER_ERROR, "failure", "ServerError"),
+            (StatusCode::UNAUTHORIZED, Outcome::Failure, "Unauthorized"),
+            (StatusCode::FORBIDDEN, Outcome::Failure, "Forbidden"),
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                Outcome::Failure,
+                "TooManyRequests",
+            ),
+            (StatusCode::BAD_REQUEST, Outcome::Failure, "ClientError"),
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Outcome::Failure,
+                "ServerError",
+            ),
         ] {
             let (o, r) = status_outcome(code);
             assert_eq!(o, outcome);
@@ -938,7 +958,7 @@ mod tests {
         )
         .await;
         let event = receivers.perimeter.try_recv().expect("completion event");
-        assert_eq!(event.payload().outcome(), "failure");
+        assert_eq!(event.payload().outcome(), Outcome::Failure);
         assert_eq!(event.payload().initiator().id(), "unknown");
         assert_eq!(event.payload().initiator().address(), Some("203.0.113.5"));
         assert!(receivers.perimeter.try_recv().is_err());
@@ -962,7 +982,7 @@ mod tests {
         )
         .await;
         let event = receivers.perimeter.try_recv().expect("completion event");
-        assert_eq!(event.payload().outcome(), "success");
+        assert_eq!(event.payload().outcome(), Outcome::Success);
         assert_eq!(
             event.payload().initiator().id(),
             "0123456789abcdef0123456789abcdef"
@@ -997,7 +1017,7 @@ mod tests {
         )
         .await;
         let event = receivers.perimeter.try_recv().expect("completion event");
-        assert_eq!(event.payload().outcome(), "success");
+        assert_eq!(event.payload().outcome(), Outcome::Success);
         assert!(receivers.perimeter.try_recv().is_err());
     }
 

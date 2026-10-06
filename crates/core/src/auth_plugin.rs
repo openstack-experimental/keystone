@@ -29,7 +29,7 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
-use cadf::{CadfEventPayload, Observer, OutcomeReason, Target};
+use cadf::{CadfEventPayload, Observer, Outcome, OutcomeReason, Target};
 use governor::clock::Clock;
 use governor::{DefaultDirectRateLimiter, DefaultKeyedRateLimiter, Quota, RateLimiter};
 use hmac::{Hmac, KeyInit, Mac};
@@ -149,7 +149,7 @@ pub(crate) async fn emit_wasm_plugin_audit(
     correlation_id: Option<&str>,
     plugin_name: &str,
     host_function: &str,
-    outcome: &str,
+    outcome: Outcome,
     outcome_reason: Option<OutcomeReason>,
 ) -> Result<(), ()> {
     let dispatcher = &state.audit_dispatcher;
@@ -166,7 +166,7 @@ pub(crate) async fn emit_wasm_plugin_audit(
             .unwrap_or_else(|| Uuid::new_v4().to_string()),
         chrono::Utc::now().to_rfc3339(),
         format!("wasm_plugin/{host_function}"),
-        outcome.to_string(),
+        outcome,
         outcome_reason,
         crate::cadf_hook::with_request_address(build_initiator_unknown()),
         Target::new(plugin_name, "data/security/identity/wasm-plugin"),
@@ -196,6 +196,7 @@ pub(crate) async fn emit_wasm_route_audit(
     plugin_name: &str,
     requested_methods: &[String],
     decision: &str,
+    outcome: Outcome,
     target_method: Option<&str>,
     reason: Option<OutcomeReason>,
 ) -> Result<(), ()> {
@@ -206,15 +207,7 @@ pub(crate) async fn emit_wasm_route_audit(
         target_method = ?target_method,
         "wasm route plugin decision"
     );
-    emit_wasm_plugin_audit(
-        state,
-        correlation_id,
-        plugin_name,
-        "route",
-        decision,
-        reason,
-    )
-    .await
+    emit_wasm_plugin_audit(state, correlation_id, plugin_name, "route", outcome, reason).await
 }
 
 /// Why a `authenticate` invocation was rejected before ever reaching the
@@ -442,7 +435,7 @@ impl CoreHostFunctions {
         &self,
         plugin_name: &str,
         host_function: &str,
-        outcome: &str,
+        outcome: Outcome,
         outcome_reason: Option<OutcomeReason>,
     ) -> Result<(), DynamicPluginHostError> {
         emit_wasm_plugin_audit(
@@ -465,14 +458,14 @@ impl CoreHostFunctions {
         let result = self.provision_user_inner(plugin_name, &request).await;
         match &result {
             Ok(_) => {
-                self.audit(plugin_name, "provision_user", "success", None)
+                self.audit(plugin_name, "provision_user", Outcome::Success, None)
                     .await?;
             }
             Err(e) => {
                 self.audit(
                     plugin_name,
                     "provision_user",
-                    "failure",
+                    Outcome::Failure,
                     Some(OutcomeReason::variant(
                         &crate::events::AuditReason::audit_reason(e),
                     )),
@@ -578,14 +571,14 @@ impl CoreHostFunctions {
         let result = self.find_user_inner(plugin_name, &external_id).await;
         match &result {
             Ok(_) => {
-                self.audit(plugin_name, "find_user", "success", None)
+                self.audit(plugin_name, "find_user", Outcome::Success, None)
                     .await?;
             }
             Err(e) => {
                 self.audit(
                     plugin_name,
                     "find_user",
-                    "failure",
+                    Outcome::Failure,
                     Some(OutcomeReason::variant(
                         &crate::events::AuditReason::audit_reason(e),
                     )),
@@ -642,14 +635,14 @@ impl CoreHostFunctions {
         let result = self.assign_role_inner(plugin_name, &request).await;
         match &result {
             Ok(()) => {
-                self.audit(plugin_name, "assign_role", "success", None)
+                self.audit(plugin_name, "assign_role", Outcome::Success, None)
                     .await?;
             }
             Err(e) => {
                 self.audit(
                     plugin_name,
                     "assign_role",
-                    "failure",
+                    Outcome::Failure,
                     Some(OutcomeReason::variant(
                         &crate::events::AuditReason::audit_reason(e),
                     )),
@@ -775,7 +768,7 @@ impl CoreHostFunctions {
         match &result {
             Ok(_) => {
                 tracing::info!(plugin = plugin_name, host = %host_only, "wasm plugin http_fetch");
-                self.audit(plugin_name, "http_fetch", "success", None)
+                self.audit(plugin_name, "http_fetch", Outcome::Success, None)
                     .await?;
             }
             Err(e) => {
@@ -783,7 +776,7 @@ impl CoreHostFunctions {
                 self.audit(
                     plugin_name,
                     "http_fetch",
-                    "failure",
+                    Outcome::Failure,
                     Some(OutcomeReason::variant(
                         &crate::events::AuditReason::audit_reason(e),
                     )),

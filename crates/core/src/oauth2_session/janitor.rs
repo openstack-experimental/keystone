@@ -47,7 +47,9 @@ use chrono::Utc;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use cadf::{AuditDispatcher, CadfEventPayload, Initiator, Observer, OutcomeReason, Target};
+use cadf::{
+    AuditDispatcher, CadfEventPayload, Initiator, Observer, Outcome, OutcomeReason, Target,
+};
 
 use crate::keystone::ServiceState;
 use crate::oauth2_session::Oauth2SessionProviderError;
@@ -156,9 +158,9 @@ async fn sweep_kind(state: &ServiceState, kind: &str, before: i64, report: &mut 
 /// Emit one `maintenance` CADF event per pass, carrying the purge counts.
 /// Best-effort, mirroring [`crate::oauth2_key::janitor`]: this is background
 /// housekeeping, not a user-facing request, so there is no real correlation
-/// ID to thread through. The outcome is `success` when nothing failed,
-/// `partial` when some records were purged but some operations failed, and
-/// `failure` when the pass made no progress at all.
+/// ID to thread through. The outcome is `success` when nothing failed and
+/// `failure` otherwise (DSP0262 has no partial outcome); the reason carries
+/// the purge counts, so a partly successful pass stays distinguishable.
 fn emit_maintenance_event(dispatcher: &Arc<AuditDispatcher>, report: &JanitorReport) {
     let node_id = dispatcher.node_id().to_string();
     let event_id = format!("{node_id}:{}", Uuid::new_v4());
@@ -171,11 +173,11 @@ fn emit_maintenance_event(dispatcher: &Arc<AuditDispatcher>, report: &JanitorRep
         .chain(std::iter::once(("errors", report.errors as u64)))
         .collect();
     let outcome = if report.errors == 0 {
-        "success"
-    } else if report.total_purged() > 0 {
-        "partial"
+        Outcome::Success
     } else {
-        "failure"
+        // DSP0262 has no partial outcome; a purge that hit errors is a
+        // failure and the reason counts say how much was still purged.
+        Outcome::Failure
     };
     let payload = CadfEventPayload::new(
         event_id,
@@ -183,7 +185,7 @@ fn emit_maintenance_event(dispatcher: &Arc<AuditDispatcher>, report: &JanitorRep
         correlation_id,
         Utc::now().to_rfc3339(),
         "purge_expired_sessions".to_string(),
-        outcome.to_string(),
+        outcome,
         Some(OutcomeReason::counts(&counts)),
         initiator,
         Target::new(node_id.clone(), "data/security/keystone/oauth2_session"),
@@ -436,7 +438,7 @@ mod tests {
         let event = receivers.perimeter.try_recv().unwrap();
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(json["action"], "purge_expired_sessions");
-        assert_eq!(json["outcome"], "partial");
+        assert_eq!(json["outcome"], "failure");
         assert_eq!(json["reason"]["reasonCode"], "session=3,errors=1");
         assert_eq!(
             json["target"]["typeURI"],

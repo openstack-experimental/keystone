@@ -148,7 +148,7 @@ fn hmac_roundtrip_deterministic_payload() {
         "req-00000000000000000000000000000002".to_string(),
         "2026-06-16T00:00:00+00:00".to_string(),
         "authenticate".to_string(),
-        "success".to_string(),
+        cadf::Outcome::Success,
         None,
         Initiator::new("unknown".to_string(), None, None, None),
         Target::new("keystone", "service/security/keystone/auth"),

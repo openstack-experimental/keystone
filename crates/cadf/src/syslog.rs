@@ -335,7 +335,7 @@ mod tests {
             Uuid::new_v4().to_string(),
             "2026-10-03T20:00:00+00:00".to_string(),
             action.to_string(),
-            "success".to_string(),
+            crate::types::Outcome::Success,
             None,
             Initiator::new("unknown".to_string(), None, None, None),
             Target::new("keystone", "service/security/keystone/auth"),

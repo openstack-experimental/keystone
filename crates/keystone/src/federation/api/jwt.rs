@@ -256,6 +256,7 @@ mod tests {
         body::Body,
         http::{Request, StatusCode, header},
     };
+    use cadf::Outcome;
     use tower::ServiceExt;
     use tower_http::trace::TraceLayer;
 
@@ -297,7 +298,7 @@ mod tests {
 
         let event = event.expect("perimeter audit event should have been emitted");
         assert_eq!(event.payload().action(), "authenticate");
-        assert_eq!(event.payload().outcome(), "failure");
+        assert_eq!(event.payload().outcome(), Outcome::Failure);
         let initiator = event.payload().initiator();
         assert_eq!(initiator.id(), "unknown");
         assert_eq!(initiator.host().expect("host").id(), Some("idp-1"));

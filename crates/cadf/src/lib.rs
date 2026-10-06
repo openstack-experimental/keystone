@@ -86,6 +86,149 @@
 //! With `[audit] enabled = false` a disabled dispatcher is returned and
 //! nothing is written to disk.
 //!
+//! ## Submitting an audit event
+//!
+//! Once the service holds an `Arc<AuditDispatcher>`, recording an event is
+//! three steps: build a [`CadfEventPayload`], sign it with the dispatcher and
+//! hand the signed [`CadfEvent`] to one of the two channels. An event cannot
+//! be dispatched unsigned, because [`CadfEvent`] is only produced by
+//! [`CadfEventPayload::sign`].
+//!
+//! ```
+//! use std::sync::Arc;
+//!
+//! use cadf::{
+//!     AuditDispatcher, CadfEventPayload, Initiator, Observer, Outcome, OutcomeReason, Target,
+//! };
+//!
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), cadf::AuditChannelDead> {
+//! # let key: Arc<[u8]> = Arc::from(b"doc-example-key-0123456789abcdef".as_slice());
+//! # let (dispatcher, mut receivers) =
+//! #     AuditDispatcher::new("node-1", "boot-1".to_string(), key, 1);
+//! let node_id = dispatcher.node_id().to_string();
+//!
+//! let payload = CadfEventPayload::new(
+//!     // Unique record id; prefixing the node id keeps it unique across nodes.
+//!     format!("{node_id}:{}", uuid::Uuid::new_v4()),
+//!     // Record schema version, kept in the signed `integrity` attachment.
+//!     "1.1".to_string(),
+//!     // Request id shared by every record of one request, so they can be
+//!     // joined later.
+//!     "req-0123456789abcdef".to_string(),
+//!     // RFC 3339 time of the event.
+//!     "2026-06-16T00:00:00+00:00".to_string(),
+//!     // Lowercase verb, or `/`-separated name: `create`, `oauth2/refresh`.
+//!     "delete".to_string(),
+//!     Outcome::Failure,
+//!     // Fixed vocabulary word, never error text; `None` when there is none.
+//!     Some(OutcomeReason::literal("Forbidden")),
+//!     // Who acted: opaque ids only, never a user name.
+//!     Initiator::new(
+//!         "user-id".to_string(),
+//!         Some("project-id".to_string()),
+//!         Some("domain-id".to_string()),
+//!         None,
+//!     )
+//!     .with_address(Some("203.0.113.9".to_string())),
+//!     // What was acted on: its id and a `typeURI`.
+//!     Target::new("resource-id", "data/security/myservice/resource"),
+//!     // The node that recorded the event.
+//!     Observer::new(node_id.clone(), format!("service/security/myservice/{node_id}")),
+//! );
+//!
+//! // Signing fills in `seq`, `boot_session_id` and `hmac_key_version`.
+//! let event = payload.sign(&dispatcher);
+//!
+//! // Best effort: never blocks, drops (and counts) the event if the queue is full.
+//! dispatcher.dispatch(event);
+//! # let sent = receivers.perimeter.try_recv().expect("queued");
+//! # assert_eq!(sent.payload().outcome(), Outcome::Failure);
+//! # assert_eq!(sent.payload().correlation_id(), "req-0123456789abcdef");
+//! # assert!(!sent.signature().is_empty());
+//!
+//! // Fail closed: waits for room and errors only if the writer is gone.
+//! # let payload = CadfEventPayload::new(
+//! #     "node-1:2".to_string(), "1.1".to_string(), "req-1".to_string(),
+//! #     "2026-06-16T00:00:00+00:00".to_string(), "delete".to_string(), Outcome::Pending,
+//! #     None, Initiator::system("doc"), Target::new("t", "x"), Observer::new("node-1", "o"),
+//! # );
+//! dispatcher.dispatch_critical(payload.sign(&dispatcher)).await?;
+//! # assert!(receivers.critical.try_recv().is_ok());
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ### Sample record
+//!
+//! The event above is written to the spool, and shipped to the sink, as one
+//! JSON line in the DSP0262 layout (shown wrapped here). The correlation id
+//! is a `tags` entry, and the fields DSP0262 has no place for travel in the
+//! `integrity` attachment; the signature covers everything else in the line.
+//!
+//! ```json
+//! {
+//!   "typeURI": "http://schemas.dmtf.org/cloud/audit/1.0/event",
+//!   "eventType": "activity",
+//!   "id": "node-1:550e8400-e29b-41d4-a716-446655440000",
+//!   "eventTime": "2026-06-16T00:00:00+00:00",
+//!   "action": "delete",
+//!   "outcome": "failure",
+//!   "reason": {"reasonType": "keystone", "reasonCode": "Forbidden"},
+//!   "initiator": {
+//!     "typeURI": "service/security/account/user",
+//!     "id": "user-id",
+//!     "project_id": "project-id",
+//!     "domain_id": "domain-id",
+//!     "host": {"address": "203.0.113.9"}
+//!   },
+//!   "target": {"id": "resource-id", "typeURI": "data/security/myservice/resource"},
+//!   "observer": {"id": "service/security/myservice/node-1", "typeURI": "service/security/keystone"},
+//!   "tags": ["correlation_id:req-0123456789abcdef"],
+//!   "attachments": [{
+//!     "name": "integrity",
+//!     "contentType": "application/json",
+//!     "content": {
+//!       "seq": 42,
+//!       "boot_session_id": "boot-1",
+//!       "hmac_key_version": 1,
+//!       "version": "1.1",
+//!       "domain": "domain-id",
+//!       "observer_node_id": "node-1"
+//!     }
+//!   }],
+//!   "signature": "<hex HMAC-SHA256>"
+//! }
+//! ```
+//!
+//! ### Choosing a channel
+//!
+//! - [`AuditDispatcher::dispatch`] is for high-volume records where losing one
+//!   under overload is better than slowing the service, such as a record for
+//!   every request. It never fails and never waits; drops show up in
+//!   [`AuditDispatcher::dropped_count`] and the drop metric.
+//! - [`AuditDispatcher::dispatch_critical`] is for records that must exist
+//!   before the action takes effect, such as a state change. Await it and
+//!   abort the action on `Err(AuditChannelDead)`. The usual shape is a
+//!   [`Outcome::Pending`] record before the action and a [`Outcome::Success`]
+//!   or [`Outcome::Failure`] record after it; a `pending` record with no
+//!   terminal record means the process died in between.
+//!
+//! With `[audit] enabled = false` both calls are successful no-ops, so callers
+//! need no check of their own.
+//!
+//! ### What goes in a record
+//!
+//! - Every free-text field is reduced to a safe character set when the
+//!   payload is built, so untrusted input cannot forge or break a record. That
+//!   is a floor, not a license: pass identifiers, not user-supplied text.
+//! - [`Outcome`] is the closed DSP0262 set. Put the cause in an
+//!   [`OutcomeReason`], which only accepts a `'static` literal, a sanitized
+//!   error variant name or counters, never an error message.
+//! - Use [`Initiator::system`] for work the service does on its own behalf,
+//!   and [`Initiator::with_address`] / [`Initiator::with_host_id`] for the
+//!   client address and a pre-authentication identity such as an access key id.
+//!
 //! ## Cargo features
 //!
 //! - `runtime`: the `runtime` module, the service bootstrap (key load, spool
@@ -132,4 +275,6 @@ pub use sink::{
 pub use spool::{HmacKeyStore, SpoolConfig, SpoolError};
 #[cfg(feature = "syslog")]
 pub use syslog::{SyslogSink, SyslogSinkConfig};
-pub use types::{CadfEvent, CadfEventPayload, Host, Initiator, Observer, OutcomeReason, Target};
+pub use types::{
+    CadfEvent, CadfEventPayload, Host, Initiator, Observer, Outcome, OutcomeReason, Target,
+};

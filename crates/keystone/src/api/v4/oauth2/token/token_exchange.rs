@@ -18,6 +18,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
+use cadf::Outcome;
 use governor::clock::Clock as _;
 
 use openstack_keystone_core_types::oauth2_client::GrantType;
@@ -124,7 +125,7 @@ pub(super) async fn handle_token_exchange_grant(
         "authenticate",
         build_initiator_from_vsc(&vsc),
         &client_id,
-        "success",
+        Outcome::Success,
         None,
     );
 

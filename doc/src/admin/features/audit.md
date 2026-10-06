@@ -57,10 +57,12 @@ Records are JSON lines using the DSP0262 (CADF) key names:
 }
 ```
 
-* `outcome` is `pending` (provider record written before the change; `attempt`
-  in earlier releases), `success` or `failure`. A rejected request such as a
-  rate limit is a `failure` whose `reason.reasonCode` is `TooManyRequests` or
-  `ClientError` (`client_error` in earlier releases).
+* `outcome` is one of the DSP0262 values `success`, `failure`, `pending`
+  (provider record written before the change) or `unknown`; no other value is
+  written, and a record carrying one is rejected on read. A rejected request
+  such as a rate limit is a `failure` whose `reason.reasonCode` is
+  `TooManyRequests` or `ClientError`. Rate-limited or otherwise denied plugin
+  invocations are likewise a `failure` with the cause in `reason.reasonCode`.
 * `reason.reasonCode` is a fixed vocabulary word (an error variant name such as
   `Conflict` or `UserLocked`), never error text. The `reason` key is omitted
   when there is none.

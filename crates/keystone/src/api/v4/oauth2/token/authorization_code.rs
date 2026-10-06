@@ -18,6 +18,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
+use cadf::Outcome;
 use governor::clock::Clock as _;
 
 use openstack_keystone_core::oauth2_client::{
@@ -212,7 +213,7 @@ pub(super) async fn handle_authorization_code_grant(
         "authenticate",
         build_initiator_unknown(),
         &client.client_id,
-        "success",
+        Outcome::Success,
         None,
     );
 

@@ -18,6 +18,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
+use cadf::Outcome;
 use cadf::OutcomeReason;
 use governor::clock::Clock as _;
 
@@ -120,7 +121,7 @@ pub(super) async fn handle_refresh_token_grant(
                 "authenticate",
                 build_initiator_unknown(),
                 &client_id,
-                "failure",
+                Outcome::Failure,
                 Some(OutcomeReason::literal("ForeignClient")),
             );
             // Same message as an unknown/expired token: must not reveal
@@ -214,7 +215,7 @@ pub(super) async fn handle_refresh_token_grant(
         "authenticate",
         build_initiator_unknown(),
         &client_id,
-        "success",
+        Outcome::Success,
         None,
     );
 
@@ -313,6 +314,7 @@ pub(super) async fn refresh_principal_invalid_reason(
 
 #[cfg(test)]
 mod tests {
+    use cadf::Outcome;
 
     use std::net::SocketAddr;
     use std::sync::Arc;
@@ -443,7 +445,7 @@ mod tests {
             .try_recv()
             .expect("reuse must leave a critical audit record");
         assert_eq!(event.payload().action(), "oauth2/refresh_reuse_detected");
-        assert_eq!(event.payload().outcome(), "failure");
+        assert_eq!(event.payload().outcome(), Outcome::Failure);
     }
 
     #[tokio::test]
