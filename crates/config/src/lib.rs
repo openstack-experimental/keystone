@@ -124,7 +124,6 @@ pub use listener::*;
 pub use local_emergency::*;
 pub use mapping::*;
 pub use oauth2::*;
-pub use openstack_keystone_storage_config::*;
 pub use oslo_config::VaultSection;
 pub use oslo_middleware::*;
 pub use pagination::*;
@@ -193,11 +192,6 @@ pub struct Config {
     /// Global configuration options.
     #[serde(rename = "DEFAULT", default)]
     pub default: DefaultSection,
-
-    /// Distributed storage configuration.
-    #[serde(default)]
-    #[validate(nested)]
-    pub distributed_storage: Option<DistributedStorageConfiguration>,
 
     /// `[domain_config]` section: per-domain configuration resolver sources
     /// (ADR 0034 §2). Unset keys inherit the deprecated `[identity]` switches.
@@ -380,9 +374,6 @@ impl Config {
     }
 
     fn finish_load(mut cfg: Self, ctx: &oslo_config::LoadCtx) -> Result<Self, Report> {
-        if let Some(ref mut ds) = cfg.distributed_storage {
-            ConfigSection::finish(ds, ctx)?;
-        }
         ConfigSection::finish(&mut cfg.database, ctx)?;
         // Compile password regex at load time.
         cfg.security_compliance
@@ -402,9 +393,6 @@ impl Config {
     /// Get the list of all files that should be watched.
     fn get_watch_files(&self) -> HashSet<PathBuf> {
         let mut watched_paths = HashSet::new();
-        if let Some(ds) = &self.distributed_storage {
-            watched_paths.extend(ConfigSection::watch_files(ds));
-        }
         watched_paths.extend(ConfigSection::watch_files(&self.database));
         // Per-domain config files (ADR 0034 §9): watch the directory so an
         // operator's edit to a `keystone.<name>.conf` triggers a reload and the
@@ -494,7 +482,6 @@ impl oslo_config::CoreSchema for Config {
             "credential",
             "database",
             "DEFAULT",
-            "distributed_storage",
             "domain_config",
             "auth_plugins",
             "auth_plugin",
@@ -670,14 +657,8 @@ mod tests {
         write!(
             site_vars_file,
             r#"
-    [distributed_storage]
-    node_id = 1
-    node_cluster_addr = "http://foo:8300"
-    path = "/tmp"
-    type = "tls"
-    tls_key_file = "/foo"
-    tls_cert_file = "/bar"
-    tls_client_ca_file = "/baz"
+    [api_policy]
+    opa_base_url = "http://site-vars:8181"
             "#
         )
         .unwrap();
@@ -698,9 +679,10 @@ mod tests {
                 .unwrap();
 
                 let cfg = block_on_config_new(cfg_file.path().to_path_buf()).unwrap();
-                let ds = cfg.distributed_storage.unwrap();
-                assert_eq!(1, ds.node_id);
-                assert_eq!("http://foo:8300/", ds.node_cluster_addr.to_string());
+                assert_eq!(
+                    "http://site-vars:8181/",
+                    cfg.api_policy.opa_base_url.to_string()
+                );
             },
         );
     }
@@ -1301,78 +1283,6 @@ mod tests {
 
     #[tokio::test]
     #[parallel]
-    async fn test_reload_on_cert_change() {
-        let config_file = NamedTempFile::with_suffix(".conf").unwrap();
-        let mut ca_file = NamedTempFile::new().unwrap();
-        write!(ca_file, "ca").unwrap();
-        let mut cert_file = NamedTempFile::new().unwrap();
-        write!(cert_file, "cert").unwrap();
-        let mut key_file = NamedTempFile::new().unwrap();
-        write!(key_file, "key").unwrap();
-        let mut f = fs::File::create(config_file.path()).unwrap();
-        f.write_all(
-            format!(
-                r#"
-    [auth]
-    methods = []
-    [database]
-    connection = "foo"
-    [distributed_storage]
-    node_cluster_addr = https://localhost:8310
-    node_id = 1
-    path = /keystone/storage
-    dev_mode = true
-    tls_key_file = {:?}
-    tls_cert_file = {:?}
-    tls_client_ca_file = {:?}
-                "#,
-                key_file.path(),
-                cert_file.path(),
-                ca_file.path()
-            )
-            .as_bytes(),
-        )
-        .unwrap();
-        f.sync_all().unwrap();
-        // A tiny delay for a higher probability that FS operations are really
-        // complete.
-        tokio::time::sleep(Duration::from_millis(10)).await;
-
-        let mgr = ConfigManager::watched(config_file.path())
-            .await
-            .expect("Should initialize");
-
-        // Another delay to correlate update the config after the watch thread
-        // is started
-        tokio::time::sleep(Duration::from_millis(10)).await;
-
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(cert_file.path())
-            .unwrap();
-        f.write_all("another cert".as_bytes()).unwrap();
-
-        // Wait for notify + debounce (which was 100ms in our code)
-        // We check a few times for the change to propagate
-        let mut success = false;
-        for _ in 0..10 {
-            sleep(Duration::from_millis(200)).await;
-            let updated = mgr.config.read().await;
-            if let Some(ds) = &updated.distributed_storage
-                && let RaftTlsConfiguration::Tls(data) = &ds.tls_configuration
-                && data.tls_cert_content.as_ref().map(|x| x.expose_secret())
-                    == Some("another cert".as_bytes())
-            {
-                success = true;
-                break;
-            }
-        }
-        assert!(success, "Config did not update after file change");
-    }
-
-    #[tokio::test]
-    #[parallel]
     async fn test_reload_on_db_cert_change() {
         let config_file = NamedTempFile::with_suffix(".conf").unwrap();
         let mut ca_file = NamedTempFile::new().unwrap();
@@ -1453,11 +1363,6 @@ mod tests {
 
     [database]
     connection = "foo"
-
-    [distributed_storage]
-    node_cluster_addr = "https://localhost:8310"
-    node_id = 1
-    path = "/keystone/storage"
 
     [security_compliance]
     password_expires_days = 0
@@ -1573,12 +1478,6 @@ mod tests {
     [database]
     connection = "foo"
 
-    [distributed_storage]
-    node_cluster_addr = "https://localhost:8310"
-    node_id = 1
-    path = "/keystone/storage"
-    dev_mode = true
-
     [api_key]
     trusted_proxies = 10.0.0.0/8,192.168.1.0/24
             "#
@@ -1615,12 +1514,6 @@ mod tests {
     [database]
     connection = "foo"
 
-    [distributed_storage]
-    node_cluster_addr = "https://localhost:8310"
-    node_id = 1
-    path = "/keystone/storage"
-    dev_mode = true
-
     [api_key]
     argon2_memory_kib = 0
     argon2_time_cost = 0
@@ -1653,49 +1546,6 @@ mod tests {
             err_msg.contains("api_key.janitor_tombstone_retention_days"),
             "{}",
             err_msg
-        );
-    }
-
-    #[test]
-    #[serial]
-    fn test_distributed_storage_env_override() {
-        // `Config::new` is async, but this test drives it from the synchronous
-        // `temp_env::with_vars` closure API, so run it to completion on a local
-        // current-thread runtime.
-        temp_env::with_vars(
-            [(
-                "OS_DISTRIBUTED_STORAGE__NODE_CLUSTER_ADDR",
-                Some("http://test/"),
-            )],
-            || {
-                let mut cfg_file = NamedTempFile::new().unwrap();
-                write!(
-                    cfg_file,
-                    r#"
-[auth]
-methods = []
-[database]
-connection = "foo"
-[distributed_storage]
-node_id = 5
-path = /foo
-            "#
-                )
-                .unwrap();
-
-                let cfg = tokio::runtime::Builder::new_current_thread()
-                    .build()
-                    .unwrap()
-                    .block_on(crate::Config::new(cfg_file.path().to_path_buf()))
-                    .unwrap();
-                assert_eq!(
-                    "http://test/",
-                    cfg.distributed_storage
-                        .expect("must be present")
-                        .node_cluster_addr
-                        .to_string()
-                );
-            },
         );
     }
 }

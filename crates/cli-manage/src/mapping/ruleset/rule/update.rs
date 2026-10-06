@@ -21,7 +21,7 @@ use eyre::Result;
 use reqwest::Client;
 
 use openstack_keystone_api_types::v4::mapping::{MappingRule, MappingRuleSet, RuleMutation};
-use openstack_keystone_config::Config;
+use openstack_keystone_config::LoadedConfig;
 
 use crate::PerformAction;
 use crate::common::{ADMIN_BASE_URL, build_admin_client, read_json_file};
@@ -72,7 +72,7 @@ impl UpdateCommand {
 
 #[async_trait]
 impl PerformAction for UpdateCommand {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         let client = build_admin_client(config).await?;
         let ruleset = self.update_with_client(&client, ADMIN_BASE_URL).await?;
         print_ruleset(ruleset);

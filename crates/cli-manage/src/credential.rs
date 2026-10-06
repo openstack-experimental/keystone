@@ -29,7 +29,7 @@ use clap::{Parser, Subcommand};
 use color_eyre::{Report, eyre::WrapErr, eyre::eyre};
 use eyre::Result;
 
-use openstack_keystone_config::Config;
+use openstack_keystone_config::LoadedConfig;
 use openstack_keystone_credential_driver_sql::fernet::FernetKeyRepository;
 use openstack_keystone_credential_driver_sql::{migrate, rotate};
 
@@ -90,7 +90,7 @@ const SUPPORTED_CREDENTIAL_DRIVER: &str = "sql";
 
 #[async_trait]
 impl PerformAction for CredentialCommand {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         setup_logging(self.verbose);
 
         if config.credential.driver != SUPPORTED_CREDENTIAL_DRIVER {
@@ -146,8 +146,8 @@ mod tests {
 
     use super::*;
 
-    fn test_config(db_path: &std::path::Path, key_repo: &std::path::Path) -> Config {
-        let mut cfg = Config::default();
+    fn test_config(db_path: &std::path::Path, key_repo: &std::path::Path) -> LoadedConfig {
+        let mut cfg = LoadedConfig::new(Default::default());
         cfg.database.connection =
             SecretString::from(format!("sqlite://{}?mode=rwc", db_path.display()));
         cfg.credential.key_repository = key_repo.to_path_buf();

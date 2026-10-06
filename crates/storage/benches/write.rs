@@ -20,9 +20,9 @@ use reserve_port::ReservedSocketAddr;
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
-use openstack_keystone_config::{
-    Config, ConfigManager, DistributedStorageConfiguration, KekProvider, TlsConfiguration,
-    TlsConfigurationBuilder,
+use openstack_keystone_config::{TlsConfiguration, TlsConfigurationBuilder};
+use openstack_keystone_distributed_storage::config::{
+    DistributedStorageConfiguration, KekProvider, RaftTlsConfiguration, config_manager,
 };
 use openstack_keystone_distributed_storage::{
     Metadata, StorageApi, StoreDataEnvelope, TypeConfig,
@@ -35,7 +35,7 @@ use openstack_keystone_distributed_storage::{
 #[allow(dead_code)]
 struct InstanceHolder {
     pub node_id: u64,
-    pub config: Config,
+    pub config: DistributedStorageConfiguration,
     storage_dir: TempDir,
     pub storage: Arc<Storage>,
     pub addr: SocketAddr,
@@ -53,9 +53,7 @@ impl InstanceHolder {
             node_listener_addr: addr.clone(),
             node_id: node_id,
             path: db_path,
-            tls_configuration: openstack_keystone_config::RaftTlsConfiguration::Tls(
-                tls_config.clone(),
-            ),
+            tls_configuration: RaftTlsConfiguration::Tls(tls_config.clone()),
             dev_mode: true,
             kek_provider: KekProvider::Env,
             ..Default::default()
@@ -71,13 +69,10 @@ impl InstanceHolder {
             tls_config,
             &addr,
         );
-        let mut config = Config::default();
-        //config.listener.cluster_address = Some(addr);
-        config.distributed_storage = Some(ds_config);
-        let storage = init_storage(&ConfigManager::not_watched(config.clone())).await?;
+        let storage = init_storage(&config_manager(ds_config.clone())).await?;
         Ok(Self {
             node_id,
-            config,
+            config: ds_config,
             storage_dir,
             storage,
             addr,
@@ -86,18 +81,14 @@ impl InstanceHolder {
 }
 
 pub async fn start_raft_app(
-    config: &Config,
+    ds_config: &DistributedStorageConfiguration,
     storage: &Storage,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let ds_config = config
-        .distributed_storage
-        .as_ref()
-        .expect("ds config must be present");
     let addr = ds_config.node_listener_addr.clone();
     let node_id = ds_config.node_id;
 
     let mut server =
-        tonic::transport::Server::builder().tls_config(get_server_tls_config(config)?)?;
+        tonic::transport::Server::builder().tls_config(get_server_tls_config(ds_config)?)?;
 
     let server_future = server
         .add_routes(get_app_server(&storage).await?)

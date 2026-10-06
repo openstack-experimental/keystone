@@ -33,6 +33,8 @@ use tracing::debug;
 
 use openstack_keystone_config::ConfigManager;
 
+use crate::config::{DistributedStorageConfiguration, RaftTlsConfiguration};
+
 use crate::ApiStoreError;
 use crate::StorageApi;
 use crate::StoreError;
@@ -220,9 +222,9 @@ async fn verify_node_id_uniqueness_live(
 /// Build the Key Encryption Key provider selected by `ds_config.kek_provider`
 /// (ADR 0016-v2 §2.1 / §2.5).
 fn build_kek(
-    ds_config: &openstack_keystone_config::DistributedStorageConfiguration,
+    ds_config: &DistributedStorageConfiguration,
 ) -> Result<Arc<dyn KekProvider>, StoreError> {
-    use openstack_keystone_config::KekProvider as KekProviderKind;
+    use crate::config::KekProvider as KekProviderKind;
 
     match ds_config.kek_provider {
         KekProviderKind::Env => {
@@ -259,7 +261,7 @@ fn build_kek(
 /// wanted.
 #[cfg(feature = "pkcs11")]
 fn build_pkcs11_kek(
-    ds_config: &openstack_keystone_config::DistributedStorageConfiguration,
+    ds_config: &DistributedStorageConfiguration,
 ) -> Result<Arc<dyn KekProvider>, StoreError> {
     use secrecy::ExposeSecret;
 
@@ -297,7 +299,7 @@ fn build_pkcs11_kek(
 
 #[cfg(not(feature = "pkcs11"))]
 fn build_pkcs11_kek(
-    _ds_config: &openstack_keystone_config::DistributedStorageConfiguration,
+    _ds_config: &DistributedStorageConfiguration,
 ) -> Result<Arc<dyn KekProvider>, StoreError> {
     Err(StoreError::Other(eyre!(
         "kek_provider = \"pkcs11\" was selected but this build was compiled without the \
@@ -318,7 +320,7 @@ fn build_pkcs11_kek(
 /// asked for.
 #[cfg(feature = "tpm")]
 fn build_tpm_kek(
-    ds_config: &openstack_keystone_config::DistributedStorageConfiguration,
+    ds_config: &DistributedStorageConfiguration,
 ) -> Result<Arc<dyn KekProvider>, StoreError> {
     use secrecy::ExposeSecret;
 
@@ -353,7 +355,7 @@ fn build_tpm_kek(
 
 #[cfg(not(feature = "tpm"))]
 fn build_tpm_kek(
-    _ds_config: &openstack_keystone_config::DistributedStorageConfiguration,
+    _ds_config: &DistributedStorageConfiguration,
 ) -> Result<Arc<dyn KekProvider>, StoreError> {
     Err(StoreError::Other(eyre!(
         "kek_provider = \"tpm\" was selected but this build was compiled without the `tpm` \
@@ -384,8 +386,8 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
         .config
         .read()
         .await
-        .distributed_storage
-        .as_ref()
+        .view()
+        .section::<DistributedStorageConfiguration>()
         .ok_or(StoreError::ConfigMissing)?
         .clone();
 
@@ -439,7 +441,7 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
     // `get_server_tls_config` (network.rs) on every load — including the
     // `init_tls_watcher` call above — so it's checked here on startup and on
     // every subsequent hot-reload, not just once.
-    if let openstack_keystone_config::RaftTlsConfiguration::Tls(tls) = &ds_config.tls_configuration
+    if let RaftTlsConfiguration::Tls(tls) = &ds_config.tls_configuration
         && let Some(cert_content) = tls.tls_cert_content.as_ref()
     {
         use secrecy::ExposeSecret;
@@ -523,18 +525,16 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
     }
 
     let peer_authz = Arc::new(match &ds_config.tls_configuration {
-        openstack_keystone_config::RaftTlsConfiguration::Spiffe(s) => PeerAuthz::spiffe(
+        RaftTlsConfiguration::Spiffe(s) => PeerAuthz::spiffe(
             s.trust_domains.clone(),
             s.spiffe_path_prefix.clone(),
             s.operator_role.clone(),
             s.allowed_peer_svids.clone(),
         ),
-        openstack_keystone_config::RaftTlsConfiguration::Tls(_) => {
-            match &ds_config.tls_role_san_prefix {
-                Some(prefix) => PeerAuthz::tls_roles(prefix.clone()),
-                None => PeerAuthz::tls_legacy(),
-            }
-        }
+        RaftTlsConfiguration::Tls(_) => match &ds_config.tls_role_san_prefix {
+            Some(prefix) => PeerAuthz::tls_roles(prefix.clone()),
+            None => PeerAuthz::tls_legacy(),
+        },
     });
 
     // ADR 0028: dedicated Fjall keyspace for node-local, quorum-bypass

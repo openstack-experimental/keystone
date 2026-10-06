@@ -19,7 +19,7 @@ use eyre::Result;
 use reqwest::{Client, StatusCode, Url};
 
 use openstack_keystone_api_types::v4::mapping::{MappingRuleSet, MappingRuleSetList};
-use openstack_keystone_config::Config;
+use openstack_keystone_config::LoadedConfig;
 
 use crate::PerformAction;
 use crate::common::{ADMIN_BASE_URL, build_admin_client, print_list_table};
@@ -74,7 +74,7 @@ impl ListCommand {
 
 #[async_trait]
 impl PerformAction for ListCommand {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         let client = build_admin_client(config).await?;
         let rulesets = self.list_with_client(&client, ADMIN_BASE_URL).await?;
 

@@ -13,15 +13,19 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Distributed storage configuration
 //!
-//! The `[distributed_storage]` section types, in a leaf crate that depends
-//! only on the configuration engine. The storage crates can use them without
-//! depending on the Keystone schema crate, which re-exports them.
+//! The `[distributed_storage]` section. It is owned by the storage crate and
+//! registered with the configuration engine (ADR 0039), so the Keystone
+//! schema crate does not know about it. Read it with
+//! `view.section::<DistributedStorageConfiguration>()`; it is absent when the
+//! deployment does not configure distributed storage.
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use eyre::{Context, Report};
 use http::Uri;
-use oslo_config::{ConfigError, ConfigSection, LoadCtx};
+use openstack_keystone_config::{ConfigManager, LoadedConfig};
+use oslo_config::{ConfigError, ConfigSection, LoadCtx, SectionBag, register_section};
 use secrecy::SecretSlice;
 use serde::Deserialize;
 use validator::Validate;
@@ -567,6 +571,11 @@ impl ConfigSection for DistributedStorageConfiguration {
         Ok(())
     }
 
+    fn validate_with(&self, _sections: &SectionBag) -> Result<(), ConfigError> {
+        self.validate()
+            .wrap_err("validating [distributed_storage] section")
+    }
+
     fn watch_files(&self) -> Vec<PathBuf> {
         match &self.tls_configuration {
             RaftTlsConfiguration::Tls(tls) => [
@@ -581,6 +590,30 @@ impl ConfigSection for DistributedStorageConfiguration {
             _ => Vec::new(),
         }
     }
+}
+
+register_section!(DistributedStorageConfiguration);
+
+/// Build an unwatched [`ConfigManager`] around a default core configuration
+/// and the given `[distributed_storage]` section.
+///
+/// A manager made with `ConfigManager::not_watched(Config)` has an empty
+/// section bag, so tests and benches that need the section use this instead.
+pub fn config_manager(ds: DistributedStorageConfiguration) -> Arc<ConfigManager> {
+    config_manager_with(openstack_keystone_config::Config::default(), Some(ds))
+}
+
+/// Like [`config_manager`], with a prepared core configuration and an
+/// optional `[distributed_storage]` section.
+pub fn config_manager_with(
+    config: openstack_keystone_config::Config,
+    ds: Option<DistributedStorageConfiguration>,
+) -> Arc<ConfigManager> {
+    let mut sections = SectionBag::default();
+    if let Some(ds) = ds {
+        sections.insert(ds);
+    }
+    ConfigManager::not_watched_loaded(LoadedConfig::with_sections(config, sections))
 }
 
 #[cfg(test)]

@@ -22,7 +22,7 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tonic::transport::Uri;
 
-use openstack_keystone_config::Config;
+use openstack_keystone_config::LoadedConfig;
 use openstack_keystone_distributed_storage::protobuf as pb;
 
 use super::get_grpc_client;
@@ -51,8 +51,8 @@ pub(super) struct BackupCommand {
 
 #[async_trait]
 impl PerformAction for BackupCommand {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
-        if config.distributed_storage.is_none() {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
+        if super::ds_config(config).is_none() {
             return Err(eyre!("no distributed_storage configuration"));
         }
 

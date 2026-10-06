@@ -46,6 +46,7 @@ governor.workspace = true
 fjall = { version = "3.1" }
 futures.workspace = true
 http.workspace = true
+http-serde = "2.1"
 hyper-util = { workspace = true, features = ["tokio"] }
 mockall.workspace = true
 nix = { workspace = true, features = ["process", "resource"] }
@@ -57,12 +58,13 @@ openstack-keystone-storage-api.workspace = true
 openstack-keystone-storage-crypto.workspace = true
 openstack-keystone-storage-crypto-pkcs11 = { workspace = true, optional = true }
 openstack-keystone-storage-crypto-tpm = { workspace = true, optional = true }
+oslo-config.workspace = true
 prost.workspace = true
 rand.workspace = true
 rmp.workspace = true
 rmp-serde = "1.3"
 rustls.workspace = true
-secrecy = { workspace = true }
+secrecy = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 serde_bytes.workspace = true
 serde_json.workspace = true
@@ -78,9 +80,11 @@ tracing.workspace = true
 tokio.workspace = true
 chrono.workspace = true
 uuid.workspace = true
+validator = { workspace = true, features = ["derive"] }
 x509-parser.workspace = true
 
 [dev-dependencies]
+config = { workspace = true, features = ["ini"] }
 criterion = { workspace = true, features = ["async_tokio"] }
 cryptoki = "0.12"
 rcgen.workspace = true

@@ -5232,6 +5232,7 @@ dependencies = [
  "openstack-keystone-token-driver-fernet",
  "openstack-keystone-token-restriction-driver-sql",
  "openstack-keystone-webauthn",
+ "oslo-config",
  "reqwest",
  "rustls",
  "sea-orm",
@@ -5259,12 +5260,10 @@ dependencies = [
  "derive_builder",
  "eyre",
  "http",
- "http-serde",
  "httpmock",
  "ipnet",
  "log",
  "notify",
- "openstack-keystone-storage-config",
  "oslo-config",
  "regex",
  "secrecy",
@@ -5394,6 +5393,7 @@ dependencies = [
  "async-trait",
  "byteorder",
  "chrono",
+ "config",
  "criterion",
  "cryptoki",
  "dashmap",
@@ -5402,6 +5402,7 @@ dependencies = [
  "futures",
  "governor",
  "http",
+ "http-serde",
  "hyper-util",
  "mockall",
  "nix 0.31.3",
@@ -5413,6 +5414,7 @@ dependencies = [
  "openstack-keystone-storage-crypto",
  "openstack-keystone-storage-crypto-pkcs11",
  "openstack-keystone-storage-crypto-tpm",
+ "oslo-config",
  "prost",
  "rand 0.10.2",
  "rcgen",
@@ -5441,6 +5443,7 @@ dependencies = [
  "tracing-subscriber",
  "tracing-test",
  "uuid",
+ "validator",
  "x509-parser 0.18.1",
  "zeroize",
 ]
@@ -5817,22 +5820,6 @@ dependencies = [
  "serde",
  "serde_bytes",
  "thiserror 2.0.20",
-]
-
-[[package]]
-name = "openstack-keystone-storage-config"
-version = "0.1.0"
-dependencies = [
- "config",
- "eyre",
- "http",
- "http-serde",
- "oslo-config",
- "secrecy",
- "serde",
- "serde_json",
- "tempfile",
- "validator",
 ]
 
 [[package]]

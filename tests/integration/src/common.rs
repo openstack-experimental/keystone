@@ -36,13 +36,13 @@ use uuid::Uuid;
 
 use cadf::AuditDispatcher;
 use openstack_keystone::plugin_manager::PluginManager;
-use openstack_keystone_config::{
-    Config, ConfigManager, DistributedStorageConfiguration, KekProvider, LoadedConfig,
-    TlsConfiguration, TlsConfigurationBuilder,
-};
+use openstack_keystone_config::{Config, LoadedConfig, TlsConfiguration, TlsConfigurationBuilder};
 use openstack_keystone_core::policy::MockPolicy;
 use openstack_keystone_core::provider::Provider;
 use openstack_keystone_core::{SqlDriverRegistration, keystone::Service};
+use openstack_keystone_distributed_storage::config::{
+    DistributedStorageConfiguration, KekProvider, RaftTlsConfiguration, config_manager_with,
+};
 
 /// Setup the database schema.
 ///
@@ -172,12 +172,12 @@ pub async fn get_state_with_config(
     ));
     mutate(&mut cfg);
 
+    let mut ds_config: Option<DistributedStorageConfiguration> = None;
     if std::env::var("USE_RAFT").is_ok() {
         let tmp_db_dir = tmp_dir.path().join("certs");
         create_dir(&tmp_db_dir)?;
-        let tls_configuration =
-            openstack_keystone_config::RaftTlsConfiguration::Tls(make_certificates()?);
-        cfg.distributed_storage = Some(DistributedStorageConfiguration {
+        let tls_configuration = RaftTlsConfiguration::Tls(make_certificates()?);
+        ds_config = Some(DistributedStorageConfiguration {
             node_cluster_addr: "http://127.0.0.1:12345".parse()?,
             node_listener_addr: "127.0.0.1:12345".parse()?,
             node_id: 1,
@@ -202,7 +202,7 @@ pub async fn get_state_with_config(
     let provider = Provider::new(&cfg, &plugin_manager, k8s_http_client, nova_http_client)?;
 
     let concrete_storage: Option<Arc<openstack_keystone_distributed_storage::app::Storage>> =
-        if cfg.distributed_storage.is_some() {
+        if ds_config.is_some() {
             // init_storage requires KEYSTONE_ALLOW_ENV_KEK=1 alongside dev_mode
             // before it will use an environment-provided KEK. CI sets both
             // ambiently (tools/raft-env.sh / workflow env), but a bare `cargo
@@ -223,7 +223,7 @@ pub async fn get_state_with_config(
                     std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
                 }
             }
-            let cfg_mgr = ConfigManager::not_watched(cfg.clone());
+            let cfg_mgr = config_manager_with(cfg.clone(), ds_config.clone());
             let storage = openstack_keystone_distributed_storage::app::init_storage(&cfg_mgr)
                 .await
                 .wrap_err("Failed to init storage")?;
@@ -238,7 +238,7 @@ pub async fn get_state_with_config(
 
     let state = Arc::new(
         Service::new(
-            ConfigManager::not_watched(cfg),
+            config_manager_with(cfg, ds_config),
             db,
             provider,
             Arc::new(MockPolicy::default()),

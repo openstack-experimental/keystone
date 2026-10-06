@@ -19,7 +19,7 @@ use eyre::Result;
 use reqwest::{Client, StatusCode};
 
 use openstack_keystone_api_types::v3::endpoint::*;
-use openstack_keystone_config::Config;
+use openstack_keystone_config::LoadedConfig;
 
 use crate::PerformAction;
 use crate::common::{ADMIN_BASE_URL, build_admin_client, print_attribute_table};
@@ -54,7 +54,7 @@ impl ShowCommand {
 
 #[async_trait]
 impl PerformAction for ShowCommand {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         let client = build_admin_client(config).await?;
         let endpoint = self.show_with_client(&client, ADMIN_BASE_URL).await?;
 

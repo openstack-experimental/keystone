@@ -15,11 +15,12 @@
 
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
-use color_eyre::{Report, eyre::OptionExt};
+use color_eyre::{Report, eyre::WrapErr};
 use tonic::transport::{Channel, Uri};
 
-use openstack_keystone_config::{Config, RaftTlsConfiguration};
+use openstack_keystone_config::LoadedConfig;
 use openstack_keystone_distributed_storage::{
+    config::{DistributedStorageConfiguration, RaftTlsConfiguration},
     network::{get_client_tls_config, get_spiffe_grpc_channel},
     protobuf::raft::cluster_admin_service_client::ClusterAdminServiceClient,
 };
@@ -67,7 +68,7 @@ pub struct StorageCommand {
 
 #[async_trait]
 impl PerformAction for StorageCommand {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         match self.command {
             StorageCommands::Backup(e) => e.take_action(config).await,
             StorageCommands::ClearQuarantine(e) => e.take_action(config).await,
@@ -105,19 +106,25 @@ enum StorageCommands {
     ReconcileDekLocalEmergency(ReconcileDekLocalEmergencyCommand),
 }
 
+/// The `[distributed_storage]` section, when configured.
+fn ds_config(cfg: &LoadedConfig) -> Option<&DistributedStorageConfiguration> {
+    cfg.view().section::<DistributedStorageConfiguration>()
+}
+
+/// Connect to the cluster admin gRPC service.
 ///
 /// With `as_node` the SPIFFE client presents the storage node's own SVID (the
 /// `Node` role); otherwise it presents the workload's sole SVID, which is the
 /// `storage-operator` identity on an operator workload.
 async fn get_grpc_client(
-    cfg: &Config,
+    cfg: &LoadedConfig,
     addr: Option<Uri>,
     as_node: bool,
 ) -> Result<ClusterAdminServiceClient<Channel>, Report> {
     let ds = cfg
-        .distributed_storage
-        .as_ref()
-        .ok_or_eyre("distributed storage configuration missing")?;
+        .view()
+        .require::<DistributedStorageConfiguration>()
+        .wrap_err("distributed storage configuration missing")?;
 
     let target_addr = addr.unwrap_or_else(|| ds.node_cluster_addr.clone());
 
@@ -131,7 +138,7 @@ async fn get_grpc_client(
             .await?
         }
         RaftTlsConfiguration::Tls(_) => {
-            let tls_config = get_client_tls_config(cfg)?;
+            let tls_config = get_client_tls_config(ds)?;
             Channel::builder(target_addr)
                 .tls_config(tls_config)?
                 .connect()

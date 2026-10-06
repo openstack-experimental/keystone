@@ -20,7 +20,7 @@ use sea_orm_migration::MigrationTrait;
 use sea_orm_migration::MigratorTrait;
 use tracing::info;
 
-use openstack_keystone_config::Config;
+use openstack_keystone_config::LoadedConfig;
 use openstack_keystone_core::SqlDriverRegistration;
 
 use crate::common::{connect_db, setup_logging};
@@ -108,7 +108,7 @@ enum DbCommands {
 
 #[async_trait]
 impl PerformAction for DbCommand {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         setup_logging(self.verbose);
         let conn = connect_db(config).await?;
 

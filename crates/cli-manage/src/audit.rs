@@ -20,7 +20,7 @@ use eyre::Result;
 
 use cadf::HmacKeyring;
 use openstack_keystone::server::startup::audit::AUDIT_SERVICE;
-use openstack_keystone_config::Config;
+use openstack_keystone_config::LoadedConfig;
 
 use crate::PerformAction;
 use crate::common::setup_logging;
@@ -54,7 +54,7 @@ enum AuditCommands {
 
 #[async_trait]
 impl PerformAction for AuditCommand {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         setup_logging(self.verbose);
 
         match self.command {
@@ -84,7 +84,7 @@ mod tests {
     #[tokio::test]
     async fn rotate_adds_a_version_to_the_configured_keyring() {
         let dir = tempfile::tempdir().unwrap();
-        let mut cfg = Config::default();
+        let mut cfg = LoadedConfig::new(Default::default());
         cfg.audit.hmac_kek_file = Some(dir.path().join("audit.keyring"));
         HmacKeyring::load_or_create(&cfg.audit.hmac_kek_path(&AUDIT_SERVICE)).unwrap();
 
@@ -105,7 +105,7 @@ mod tests {
     #[tokio::test]
     async fn rotate_fails_without_an_existing_keyring() {
         let dir = tempfile::tempdir().unwrap();
-        let mut cfg = Config::default();
+        let mut cfg = LoadedConfig::new(Default::default());
         cfg.audit.hmac_kek_file = Some(dir.path().join("missing.keyring"));
         let command = AuditCommand {
             verbose: 0,

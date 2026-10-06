@@ -25,7 +25,7 @@ use reqwest::{Client, StatusCode};
 use openstack_keystone_api_types::v4::mapping::{
     MappingRuleSet, MappingRuleSetResponse, RuleMutation, RuleMutationsRequest,
 };
-use openstack_keystone_config::Config;
+use openstack_keystone_config::LoadedConfig;
 
 mod delete;
 mod insert;
@@ -44,7 +44,7 @@ pub(super) struct RuleCommand {
 
 #[async_trait]
 impl PerformAction for RuleCommand {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         match self.command {
             RuleCommands::Insert(e) => e.take_action(config).await,
             RuleCommands::Update(e) => e.take_action(config).await,

@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use clap::Parser;
 use color_eyre::Report;
 
-use openstack_keystone_config::Config;
+use openstack_keystone_config::{Config, LoadedConfig};
 
 mod audit;
 mod bootstrap;
@@ -95,14 +95,16 @@ enum Command {
 
 #[async_trait]
 pub trait PerformAction {
-    async fn take_action(self, config: &Config) -> Result<(), Report>;
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report>;
 }
 
 #[allow(clippy::print_stdout)]
 #[tokio::main]
 async fn main() -> Result<(), Report> {
     let args = Args::parse();
-    let cfg = Config::load_all(args.config).await?;
+    // Keep the `[distributed_storage]` section registration linked (ADR 0018).
+    openstack_keystone_distributed_storage::anchor();
+    let cfg = oslo_config::load_snapshot_from::<Config>(args.config).await?;
     match args.command {
         Command::Audit(x) => x.take_action(&cfg).await?,
         Command::Bootstrap(x) => x.take_action(&cfg).await?,

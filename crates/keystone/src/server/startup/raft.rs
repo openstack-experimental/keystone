@@ -24,10 +24,9 @@ use crate::server::listener::raft_grpc;
 /// Start the Raft gRPC listener and join the cluster, when distributed
 /// storage is configured.
 pub async fn start(startup: &Startup, handles: &mut JoinSet<()>) -> Result<(), Report> {
-    let cfg = &startup.cfg;
-    if cfg.distributed_storage.is_none() {
+    let Some(ds_config) = startup.distributed_storage.as_ref() else {
         return Ok(());
-    }
+    };
     let token = &startup.token;
     #[allow(clippy::expect_used)]
     let raft_storage = startup
@@ -36,7 +35,7 @@ pub async fn start(startup: &Startup, handles: &mut JoinSet<()>) -> Result<(), R
         .expect("storage is None")
         .clone();
     let raft_storage_init = raft_storage.clone();
-    let raft_config = cfg.clone();
+    let raft_config = ds_config.clone();
 
     // Signal channel: start_raft_app sends `true` once the gRPC listener is
     // bound. `ensure_raft_initialized` waits for this before calling
@@ -59,7 +58,7 @@ pub async fn start(startup: &Startup, handles: &mut JoinSet<()>) -> Result<(), R
         node_id = raft_storage_init.node_id(),
         "Raft gRPC task spawned, calling ensure_raft_initialized..."
     );
-    raft_grpc::ensure_raft_initialized(raft_storage_init, cfg.clone(), raft_bound_rx).await?;
+    raft_grpc::ensure_raft_initialized(raft_storage_init, ds_config.clone(), raft_bound_rx).await?;
     debug!("Raft initialized and ready");
     Ok(())
 }

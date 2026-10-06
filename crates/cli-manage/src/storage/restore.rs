@@ -22,7 +22,7 @@ use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tonic::transport::Uri;
 
-use openstack_keystone_config::Config;
+use openstack_keystone_config::LoadedConfig;
 use openstack_keystone_distributed_storage::protobuf as pb;
 
 use super::get_grpc_client;
@@ -101,7 +101,7 @@ pub(super) struct RestoreCommand {
 
 #[async_trait]
 impl PerformAction for RestoreCommand {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         let file = File::open(&self.snapshot)
             .await
             .map_err(|e| eyre!("cannot open snapshot file {:?}: {e}", self.snapshot))?;

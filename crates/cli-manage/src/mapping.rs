@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use clap::{Parser, Subcommand};
 use color_eyre::Report;
 
-use openstack_keystone_config::Config;
+use openstack_keystone_config::LoadedConfig;
 
 pub(crate) mod ruleset;
 
@@ -37,7 +37,7 @@ pub struct MappingCommand {
 
 #[async_trait]
 impl PerformAction for MappingCommand {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         match self.command {
             MappingCommands::Ruleset(e) => e.take_action(config).await,
         }

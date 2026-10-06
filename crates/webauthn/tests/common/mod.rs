@@ -32,14 +32,14 @@ use uuid::Uuid;
 use webauthn_authenticator_rs::{AuthenticatorBackend, WebauthnAuthenticator};
 
 use cadf::AuditDispatcher;
-use openstack_keystone_config::{
-    Config, ConfigManager, DistributedStorageConfiguration, KekProvider, RaftTlsConfiguration,
-    RelyingParty, TlsConfiguration, TlsConfigurationBuilder,
-};
+use openstack_keystone_config::{Config, RelyingParty, TlsConfiguration, TlsConfigurationBuilder};
 use openstack_keystone_core::SqlDriverRegistration;
 use openstack_keystone_core::keystone::Service;
 use openstack_keystone_core::policy::{MockPolicy, PolicyEvaluationResult};
 use openstack_keystone_core::provider::{Provider, ProviderBuilder};
+use openstack_keystone_distributed_storage::config::{
+    DistributedStorageConfiguration, KekProvider, RaftTlsConfiguration, config_manager_with,
+};
 use openstack_keystone_webauthn::{
     api::{init_extension_state, types::CombinedExtensionState},
     types::*,
@@ -145,9 +145,10 @@ pub async fn get_state(
         name: Some("keystone".into()),
     });
     cfg.auth.methods = vec!["application_credential".into(), "password".into()];
+    let mut ds_config = None;
     if std::env::var("DATABASE_URL").is_err() {
         let tls_configuration = make_certificates()?;
-        cfg.distributed_storage = Some(DistributedStorageConfiguration {
+        ds_config = Some(DistributedStorageConfiguration {
             node_cluster_addr: "http://127.0.0.1:12345".parse()?,
             node_listener_addr: "127.0.0.1:1234".parse()?,
             node_id: 1,
@@ -174,7 +175,7 @@ pub async fn get_state(
     let storage = Arc::new(openstack_keystone_distributed_storage::mock::MockStorage::default());
     let main_state = Arc::new(
         Service::new(
-            ConfigManager::not_watched(cfg),
+            config_manager_with(cfg, ds_config),
             db,
             provider_builder
                 .unwrap_or(Provider::mocked_builder())

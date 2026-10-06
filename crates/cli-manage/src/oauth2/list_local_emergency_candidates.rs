@@ -17,7 +17,7 @@ use clap::Parser;
 use color_eyre::{Report, eyre::WrapErr, eyre::eyre};
 
 use openstack_keystone_api_types::v4::oauth2_key::ListLocalEmergencyCandidatesResponse;
-use openstack_keystone_config::Config;
+use openstack_keystone_config::LoadedConfig;
 
 use super::get_admin_client;
 use crate::PerformAction;
@@ -39,7 +39,7 @@ pub(super) struct ListLocalEmergencyCandidatesCommand {
 
 #[async_trait]
 impl PerformAction for ListLocalEmergencyCandidatesCommand {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         let client = get_admin_client(config).await?;
 
         let res = client
@@ -107,7 +107,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_take_action_rejects_missing_admin_interface_config() {
-        let cfg = Config::default();
+        let cfg = LoadedConfig::new(Default::default());
         let command = ListLocalEmergencyCandidatesCommand {
             domain: "domain-1".to_string(),
         };

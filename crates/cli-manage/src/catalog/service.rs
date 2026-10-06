@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use clap::{Parser, Subcommand};
 use color_eyre::Report;
 
-use openstack_keystone_config::Config;
+use openstack_keystone_config::LoadedConfig;
 
 pub(crate) mod create;
 mod delete;
@@ -40,7 +40,7 @@ pub(super) struct ServiceCommand {
 
 #[async_trait]
 impl PerformAction for ServiceCommand {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         match self.command {
             ServiceCommands::Create(e) => e.take_action(config).await,
             ServiceCommands::Show(e) => e.take_action(config).await,

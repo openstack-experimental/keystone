@@ -45,12 +45,13 @@ use rcgen::{
     Issuer, KeyPair, KeyUsagePurpose, SanType,
 };
 
-use openstack_keystone_config::{
-    Config, ConfigManager, DistributedStorageConfiguration, KekProvider, Pkcs11KekConfiguration,
-    RaftTlsConfiguration, TlsConfiguration, TlsConfigurationBuilder,
-};
+use openstack_keystone_config::{TlsConfiguration, TlsConfigurationBuilder};
 use openstack_keystone_distributed_storage::TypeConfig;
 use openstack_keystone_distributed_storage::app::init_storage;
+use openstack_keystone_distributed_storage::config::{
+    DistributedStorageConfiguration, KekProvider, Pkcs11KekConfiguration, RaftTlsConfiguration,
+    config_manager,
+};
 use openstack_keystone_distributed_storage::{
     DataTier, Metadata, StorageApi, StoreDataEnvelope, StoreError,
 };
@@ -287,12 +288,9 @@ async fn test_pkcs11_backed_cluster_write_read_inner(module: PathBuf) -> Result<
         tls_configuration,
         module,
     );
-    let config = Config {
-        distributed_storage: Some(ds_config),
-        ..Default::default()
-    };
+    let config = ds_config;
 
-    let storage = init_storage(&ConfigManager::not_watched(config))
+    let storage = init_storage(&config_manager(config))
         .await
         .expect("init_storage with a real SoftHSM2-backed KEK");
 
@@ -380,11 +378,8 @@ async fn test_pkcs11_backed_cluster_restart_reopens_token_inner(module: PathBuf)
         // node rather than a conflicting one — a bare "127.0.0.1:0"
         // placeholder (fine for a test that never restarts) would not.
         let rpc_addr = ds_config.node_listener_addr.to_string();
-        let config = Config {
-            distributed_storage: Some(ds_config),
-            ..Default::default()
-        };
-        let storage = init_storage(&ConfigManager::not_watched(config))
+        let config = ds_config;
+        let storage = init_storage(&config_manager(config))
             .await
             .expect("first init_storage");
 
@@ -427,11 +422,8 @@ async fn test_pkcs11_backed_cluster_restart_reopens_token_inner(module: PathBuf)
         tls_configuration,
         module,
     );
-    let config_restart = Config {
-        distributed_storage: Some(ds_config_restart),
-        ..Default::default()
-    };
-    let storage_restart = init_storage(&ConfigManager::not_watched(config_restart))
+    let config_restart = ds_config_restart;
+    let storage_restart = init_storage(&config_manager(config_restart))
         .await
         .expect("restart must reopen the same SoftHSM2 token and unwrap the persisted DEK");
 

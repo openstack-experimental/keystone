@@ -18,7 +18,7 @@ use clap::{Parser, Subcommand};
 use color_eyre::Report;
 
 use openstack_keystone_api_types::v4::mapping::MappingRuleSet;
-use openstack_keystone_config::Config;
+use openstack_keystone_config::LoadedConfig;
 
 use crate::common::print_attribute_table;
 
@@ -70,7 +70,7 @@ pub(super) struct RulesetCommand {
 
 #[async_trait]
 impl PerformAction for RulesetCommand {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         match self.command {
             RulesetCommands::Create(e) => e.take_action(config).await,
             RulesetCommands::Show(e) => e.take_action(config).await,

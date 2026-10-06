@@ -18,7 +18,7 @@ use async_trait::async_trait;
 use clap::Parser;
 use color_eyre::{Report, eyre::eyre};
 
-use openstack_keystone_config::Config;
+use openstack_keystone_config::LoadedConfig;
 use openstack_keystone_distributed_storage::protobuf as pb;
 
 use super::get_grpc_client;
@@ -37,8 +37,8 @@ pub(super) struct DemoteCommand {
 
 #[async_trait]
 impl PerformAction for DemoteCommand {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
-        if config.distributed_storage.is_some() {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
+        if super::ds_config(config).is_some() {
             let mut client = get_grpc_client(config, None, false).await?;
 
             let membership = client

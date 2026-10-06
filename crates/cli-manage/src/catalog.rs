@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use clap::{Parser, Subcommand};
 use color_eyre::Report;
 
-use openstack_keystone_config::Config;
+use openstack_keystone_config::LoadedConfig;
 
 pub(crate) mod endpoint;
 pub(crate) mod service;
@@ -39,7 +39,7 @@ pub struct CatalogCommand {
 
 #[async_trait]
 impl PerformAction for CatalogCommand {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         match self.command {
             CatalogCommands::Service(e) => e.take_action(config).await,
             CatalogCommands::Endpoint(e) => e.take_action(config).await,

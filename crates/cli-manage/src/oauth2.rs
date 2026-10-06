@@ -19,7 +19,7 @@ use color_eyre::{Report, eyre::WrapErr, eyre::eyre};
 use reqwest::Client;
 use spiffe_rustls::{authorizer, mtls_client};
 
-use openstack_keystone_config::Config;
+use openstack_keystone_config::{Config, LoadedConfig};
 
 mod confirm_rotate_signing_key;
 mod ensure_signing_key;
@@ -43,7 +43,7 @@ pub struct Oauth2Command {
 
 #[async_trait]
 impl PerformAction for Oauth2Command {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         match self.command {
             Oauth2Commands::RotateSigningKey(e) => e.take_action(config).await,
             Oauth2Commands::ConfirmRotateSigningKey(e) => e.take_action(config).await,

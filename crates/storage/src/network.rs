@@ -24,7 +24,6 @@ use openraft::network::{
 };
 use openraft::raft::{StreamAppendError, StreamAppendResult, TransferLeaderRequest};
 use openraft::{AnyError, OptionalSend, RaftNetworkFactory};
-use openstack_keystone_config::RaftTlsConfiguration;
 use secrecy::ExposeSecret;
 use spiffe::{X509Source, X509SourceBuilder};
 use spiffe_rustls::{authorizer, mtls_client};
@@ -33,7 +32,9 @@ use tonic::Status;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity, ServerTlsConfig};
 use tracing::error;
 
-use openstack_keystone_config::{Config, ConfigManager};
+use openstack_keystone_config::ConfigManager;
+
+use crate::config::{DistributedStorageConfiguration, RaftTlsConfiguration};
 
 use crate::StoreError;
 use crate::protobuf as pb;
@@ -581,11 +582,12 @@ pub fn check_svid_ttl_der(der: &[u8], now_secs: i64) -> Result<(), Status> {
 // Static mTLS config helpers (Tls variant of RaftTlsConfiguration)
 // ---------------------------------------------------------------------------
 
-/// Build the tonic [`ClientTlsConfig`] from the Keystone [`Config`].
-pub fn get_client_tls_config(config: &Config) -> Result<ClientTlsConfig, StoreError> {
-    if let Some(ds) = &config.distributed_storage
-        && let RaftTlsConfiguration::Tls(tls) = &ds.tls_configuration
-    {
+/// Build the tonic [`ClientTlsConfig`] from the `[distributed_storage]`
+/// section.
+pub fn get_client_tls_config(
+    ds: &DistributedStorageConfiguration,
+) -> Result<ClientTlsConfig, StoreError> {
+    if let RaftTlsConfiguration::Tls(tls) = &ds.tls_configuration {
         let cert_pem = tls
             .tls_cert_content
             .as_ref()
@@ -614,11 +616,11 @@ pub fn get_client_tls_config(config: &Config) -> Result<ClientTlsConfig, StoreEr
     }
 }
 
-/// Build tonic [`ServerTlsConfig`] from the Keystone [`Config`].
-pub fn get_server_tls_config(config: &Config) -> Result<ServerTlsConfig, StoreError> {
-    if let Some(ds) = &config.distributed_storage
-        && let RaftTlsConfiguration::Tls(tls) = &ds.tls_configuration
-    {
+/// Build tonic [`ServerTlsConfig`] from the `[distributed_storage]` section.
+pub fn get_server_tls_config(
+    ds: &DistributedStorageConfiguration,
+) -> Result<ServerTlsConfig, StoreError> {
+    if let RaftTlsConfiguration::Tls(tls) = &ds.tls_configuration {
         let cert_pem = tls
             .tls_cert_content
             .as_ref()
@@ -761,14 +763,13 @@ pub async fn init_tls_watcher(
 ) -> Result<RaftTlsClient, StoreError> {
     let spiffe_cfg = {
         let cfg = config_manager.config.read().await;
-        if let Some(ds) = &cfg.distributed_storage {
-            if let RaftTlsConfiguration::Spiffe(spiffe_cfg) = &ds.tls_configuration {
-                Some(spiffe_cfg.clone())
-            } else {
-                None
-            }
-        } else {
-            None
+        match cfg
+            .view()
+            .section::<DistributedStorageConfiguration>()
+            .map(|ds| &ds.tls_configuration)
+        {
+            Some(RaftTlsConfiguration::Spiffe(spiffe_cfg)) => Some(spiffe_cfg.clone()),
+            _ => None,
         }
     };
 
@@ -783,7 +784,11 @@ pub async fn init_tls_watcher(
     // Static TLS fallback: load certificates from config files.
     let initial_config = {
         let cfg = config_manager.config.read().await;
-        get_client_tls_config(&cfg)?
+        get_client_tls_config(
+            cfg.view()
+                .section::<DistributedStorageConfiguration>()
+                .ok_or(StoreError::TlsConfigMissing)?,
+        )?
     };
 
     let (tx, rx) = watch::channel(initial_config);
@@ -793,7 +798,11 @@ pub async fn init_tls_watcher(
     tokio::spawn(async move {
         while reload_rx.recv().await.is_ok() {
             let cfg = cm_clone.config.read().await;
-            match get_client_tls_config(&cfg) {
+            let Some(ds) = cfg.view().section::<DistributedStorageConfiguration>() else {
+                error!("failed to reload TLS certificates: [distributed_storage] is gone");
+                continue;
+            };
+            match get_client_tls_config(ds) {
                 Ok(new_config) => {
                     let _ = tx.send(new_config);
                 }

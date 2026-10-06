@@ -25,6 +25,7 @@ use tokio_util::sync::CancellationToken;
 use crate::config::Config;
 use cadf::runtime::ExtraSegmentSource;
 use cadf::{AuditDispatcher, ServiceIdentity};
+use openstack_keystone_distributed_storage::config::DistributedStorageConfiguration;
 
 /// Identity under which Keystone writes audit records: the HKDF label of the
 /// per-node signing key and the `keystone_audit_*` metric prefix derive from
@@ -39,11 +40,10 @@ pub const AUDIT_SERVICE: ServiceIdentity = ServiceIdentity::new("keystone");
 /// configuration covers both producers.
 pub async fn init(
     cfg: &Config,
+    ds: Option<&DistributedStorageConfiguration>,
     token: &CancellationToken,
 ) -> Result<(Arc<AuditDispatcher>, Option<JoinHandle<()>>), Report> {
-    let extra_sources = cfg
-        .distributed_storage
-        .as_ref()
+    let extra_sources = ds
         .map(|ds| ExtraSegmentSource {
             dir: ds
                 .audit_spool_dir
@@ -77,7 +77,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let cfg = test_config(tmp.path().to_path_buf());
         let token = CancellationToken::new();
-        let (dispatcher, writer) = init(&cfg, &token).await.expect("init audit");
+        let (dispatcher, writer) = init(&cfg, None, &token).await.expect("init audit");
         assert!(cfg.audit.hmac_kek_path(&AUDIT_SERVICE).exists());
         token.cancel();
         super::super::shutdown::await_audit_writer(writer, &cfg).await;
@@ -104,14 +104,13 @@ mod tests {
         let mut cfg = test_config(tmp.path().join("spool"));
         cfg.audit.sink = AuditSinkConfig::Stdout;
         cfg.audit.shipper_poll_interval_secs = 1;
-        cfg.distributed_storage =
-            Some(openstack_keystone_config::DistributedStorageConfiguration {
-                node_id: 7,
-                audit_spool_dir: Some(raft_spool.clone()),
-                ..Default::default()
-            });
+        let ds = DistributedStorageConfiguration {
+            node_id: 7,
+            audit_spool_dir: Some(raft_spool.clone()),
+            ..Default::default()
+        };
         let token = CancellationToken::new();
-        let (_dispatcher, writer) = init(&cfg, &token).await.unwrap();
+        let (_dispatcher, writer) = init(&cfg, Some(&ds), &token).await.unwrap();
 
         for _ in 0..100 {
             if !sealed.exists() {

@@ -22,7 +22,7 @@ use eyre::Result;
 use openstack_keystone_api_types::v4::mapping::{
     MappingRule, MappingRuleSet, RuleMutation, RulePosition,
 };
-use openstack_keystone_config::Config;
+use openstack_keystone_config::LoadedConfig;
 use reqwest::Client;
 
 use crate::PerformAction;
@@ -92,7 +92,7 @@ impl InsertCommand {
 
 #[async_trait]
 impl PerformAction for InsertCommand {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         let client = build_admin_client(config).await?;
         let ruleset = self.insert_with_client(&client, ADMIN_BASE_URL).await?;
         print_ruleset(ruleset);

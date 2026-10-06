@@ -15,12 +15,14 @@
 use std::sync::Arc;
 
 use color_eyre::eyre::{Report, Result};
-use openstack_keystone_config::RaftTlsConfiguration;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
 use tonic::service::InterceptorLayer;
 
+use openstack_keystone_distributed_storage::config::{
+    DistributedStorageConfiguration, RaftTlsConfiguration,
+};
 use openstack_keystone_distributed_storage::{
     app::{Storage, get_app_server},
     grpc::authz::{PeerAuthz, PeerRole},
@@ -28,7 +30,6 @@ use openstack_keystone_distributed_storage::{
 };
 use openstack_keystone_storage_api::StorageApi;
 
-use crate::config::Config;
 use crate::server::listener::spiffe_common;
 
 /// Validate the SPIFFE ID of the peer certificate and resolve its storage role.
@@ -102,13 +103,11 @@ impl tonic::service::Interceptor for SpiffeIdInterceptor {
 /// cannot replicate back to it.
 pub async fn start_raft_app(
     storage: Arc<Storage>,
-    config: Config,
+    ds: DistributedStorageConfiguration,
     cancel_token: CancellationToken,
     bound_signal: tokio::sync::watch::Sender<bool>,
 ) -> Result<(), Report> {
-    let Some(ds) = &config.distributed_storage else {
-        return Ok(());
-    };
+    let ds = &ds;
 
     let storage_app = get_app_server(&storage).await?;
 
@@ -210,7 +209,7 @@ pub async fn start_raft_app(
 
         RaftTlsConfiguration::Tls(_) => {
             let mut server =
-                tonic::transport::Server::builder().tls_config(get_server_tls_config(&config)?)?;
+                tonic::transport::Server::builder().tls_config(get_server_tls_config(ds)?)?;
             let tonic_router = server.add_routes(storage_app);
 
             tracing::info!("Starting distributed storage at {:?}", grpc_addr);
@@ -236,12 +235,10 @@ pub async fn start_raft_app(
 /// replication traffic from the leader.
 pub async fn ensure_raft_initialized(
     storage: Arc<Storage>,
-    config: Config,
+    ds: DistributedStorageConfiguration,
     mut listener_bound: tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), Report> {
-    let Some(ds) = &config.distributed_storage else {
-        return Ok(());
-    };
+    let ds = &ds;
 
     let node_id = storage.node_id();
     let my_cluster_addr = ds.node_cluster_addr.to_string();

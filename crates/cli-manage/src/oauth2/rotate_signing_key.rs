@@ -19,7 +19,7 @@ use color_eyre::{Report, eyre::WrapErr, eyre::eyre};
 use openstack_keystone_api_types::v4::oauth2_key::{
     RotateSigningKeyRequest, RotateSigningKeyResponse,
 };
-use openstack_keystone_config::Config;
+use openstack_keystone_config::LoadedConfig;
 
 use super::get_admin_client;
 use crate::PerformAction;
@@ -66,7 +66,7 @@ pub(super) struct RotateSigningKeyCommand {
 
 #[async_trait]
 impl PerformAction for RotateSigningKeyCommand {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         if self.local_quorum_bypass && self.justification.is_none() {
             return Err(eyre!(
                 "--justification is required when --local-quorum-bypass is set"
@@ -175,7 +175,7 @@ mod tests {
         // `Config` with no `[interface_admin]` section (the default) must
         // fail fast with a clear error rather than attempting SPIFFE mTLS
         // setup against a nonexistent socket.
-        let cfg = Config::default();
+        let cfg = LoadedConfig::new(Default::default());
         let command = RotateSigningKeyCommand {
             domain: "domain-1".to_string(),
             emergency: false,
@@ -217,7 +217,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_take_action_rejects_local_quorum_bypass_without_justification() {
-        let cfg = Config::default();
+        let cfg = LoadedConfig::new(Default::default());
         let command = RotateSigningKeyCommand {
             domain: "domain-1".to_string(),
             emergency: false,

@@ -18,7 +18,7 @@ use clap::Parser;
 use color_eyre::{Report, eyre::eyre};
 use tonic::transport::Uri;
 
-use openstack_keystone_config::Config;
+use openstack_keystone_config::LoadedConfig;
 use openstack_keystone_distributed_storage::protobuf as pb;
 
 use super::get_grpc_client;
@@ -37,8 +37,8 @@ pub(super) struct JoinCommand {
 
 #[async_trait]
 impl PerformAction for JoinCommand {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
-        if let Some(cfg) = &config.distributed_storage {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
+        if let Some(cfg) = super::ds_config(config) {
             if let (Some(host), Some(port)) =
                 (cfg.node_cluster_addr.host(), cfg.node_cluster_addr.port())
             {

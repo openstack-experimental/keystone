@@ -84,10 +84,14 @@ fn main() {
             continue;
         }
 
-        // Only anchor driver crates and webauthn. A crate outside this list that
-        // registers a config section (ADR 0039) must be added here and to the
-        // `assert_registered` call in `server/startup.rs`.
-        if !key.contains("-driver-") && !key.starts_with("openstack-keystone-webauthn") {
+        // Only anchor driver crates, webauthn and the distributed storage. A
+        // crate outside this list that registers a config section (ADR 0039)
+        // must be added here and to the `assert_registered` call in
+        // `server/startup.rs`.
+        if !key.contains("-driver-")
+            && !key.starts_with("openstack-keystone-webauthn")
+            && key != "openstack-keystone-distributed-storage"
+        {
             continue;
         }
 

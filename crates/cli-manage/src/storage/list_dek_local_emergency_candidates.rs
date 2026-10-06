@@ -17,7 +17,7 @@ use clap::Parser;
 use color_eyre::Report;
 use tonic::transport::Uri;
 
-use openstack_keystone_config::Config;
+use openstack_keystone_config::LoadedConfig;
 
 use super::get_grpc_client;
 use crate::PerformAction;
@@ -39,7 +39,7 @@ pub(super) struct ListDekLocalEmergencyCandidatesCommand {
 
 #[async_trait]
 impl PerformAction for ListDekLocalEmergencyCandidatesCommand {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         let mut client = get_grpc_client(config, self.cluster_addr, false).await?;
 
         let resp = client

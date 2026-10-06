@@ -17,7 +17,7 @@ use clap::Parser;
 use color_eyre::Report;
 use tonic::transport::Uri;
 
-use openstack_keystone_config::Config;
+use openstack_keystone_config::LoadedConfig;
 use openstack_keystone_distributed_storage::protobuf as pb;
 
 use super::get_grpc_client;
@@ -44,7 +44,7 @@ pub(super) struct ConfirmRotateDekCommand {
 
 #[async_trait]
 impl PerformAction for ConfirmRotateDekCommand {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         let mut client = get_grpc_client(config, self.cluster_addr, false).await?;
 
         client

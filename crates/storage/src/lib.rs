@@ -27,9 +27,16 @@ use fjall::Database;
 use openraft::RaftTypeConfig;
 use openstack_keystone_storage_crypto::{DekEpoch, KekProvider, LockedKey, generate_dek};
 
+/// Linkage anchor - see ADR-0018. Referenced by the `keystone` crate's
+/// `build.rs`-generated `_ANCHORS` static so the linker keeps the
+/// `[distributed_storage]` section registration (ADR 0039) in the binary.
+#[allow(dead_code)]
+pub fn anchor() {}
+
 pub mod api;
 pub mod app;
 pub mod audit;
+pub mod config;
 pub mod grpc;
 pub mod local_emergency;
 #[cfg(feature = "mock")]

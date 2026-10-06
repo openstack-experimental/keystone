@@ -24,7 +24,7 @@ use clap::{Parser, Subcommand};
 use color_eyre::{Report, eyre::WrapErr};
 use eyre::Result;
 
-use openstack_keystone_config::Config;
+use openstack_keystone_config::{Config, LoadedConfig};
 use openstack_keystone_token_driver_fernet::utils::FernetUtils;
 
 use crate::PerformAction;
@@ -67,7 +67,7 @@ fn utils_from(config: &Config) -> FernetUtils {
 
 #[async_trait]
 impl PerformAction for TokenCommand {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         setup_logging(self.verbose);
 
         let utils = utils_from(config);
@@ -98,8 +98,8 @@ impl PerformAction for TokenCommand {
 mod tests {
     use super::*;
 
-    fn test_config(key_repo: &std::path::Path) -> Config {
-        let mut cfg = Config::default();
+    fn test_config(key_repo: &std::path::Path) -> LoadedConfig {
+        let mut cfg = LoadedConfig::new(Default::default());
         cfg.fernet_tokens.key_repository = key_repo.to_path_buf();
         cfg
     }

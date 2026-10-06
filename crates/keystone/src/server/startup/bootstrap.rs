@@ -27,7 +27,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 use super::{Startup, audit, debug_elapsed};
-use crate::config::{Config, ConfigManager, ListenerConfig, LoadedConfig, RaftTlsConfiguration};
+use crate::config::{Config, ConfigManager, ListenerConfig, LoadedConfig};
 use crate::db_spiffe;
 use crate::k8s_auth_client::KeystoneK8sHttpClient;
 use crate::keystone::Service as KeystoneServiceState;
@@ -37,6 +37,9 @@ use crate::provider::Provider;
 use openstack_keystone_core::error::KeystoneError;
 use openstack_keystone_core::keystone::{ServiceState, SpiffeHealthStatus};
 use openstack_keystone_credential_driver_sql::fernet::FernetKeyRepository;
+use openstack_keystone_distributed_storage::config::{
+    DistributedStorageConfiguration, RaftTlsConfiguration,
+};
 use openstack_keystone_distributed_storage::{
     StorageApi, app::Storage, spiffe_wait::wait_for_spiffe_source,
 };
@@ -69,8 +72,12 @@ pub async fn run(
     debug!("Policy enforcer started.");
     debug_elapsed(startup_timer, "policy_enforcer");
 
+    let ds_config = cfg
+        .view()
+        .section::<DistributedStorageConfiguration>()
+        .cloned();
     debug!("Initializing distributed storage...");
-    let concrete_storage = init_storage(&cfg_mgr, &cfg).await?;
+    let concrete_storage = init_storage(&cfg_mgr, ds_config.as_ref()).await?;
     debug_elapsed(startup_timer, "init_storage");
 
     let storage_for_service: Option<Arc<dyn StorageApi>> = concrete_storage
@@ -79,7 +86,7 @@ pub async fn run(
         .map(|s| s as Arc<dyn StorageApi>);
 
     debug!("Initializing audit dispatcher (KEK, spool seal)...");
-    let (audit_dispatcher, audit_writer) = audit::init(&cfg, &token).await?;
+    let (audit_dispatcher, audit_writer) = audit::init(&cfg, ds_config.as_ref(), &token).await?;
     debug_elapsed(startup_timer, "init_audit");
 
     debug!("Creating service state...");
@@ -97,12 +104,13 @@ pub async fn run(
     debug_elapsed(startup_timer, "ServiceState creation");
 
     wire_local_emergency_store(&state, &concrete_storage).await;
-    spawn_spiffe_health(&state, &cfg, &token);
+    spawn_spiffe_health(&state, &cfg, ds_config.as_ref(), &token);
     spawn_db_spiffe_writer(&cfg, &token);
     debug_elapsed(startup_timer, "bootstrap");
 
     Ok(Startup {
         cfg: cfg.core,
+        distributed_storage: ds_config,
         token,
         state,
         concrete_storage,
@@ -170,9 +178,9 @@ fn init_http_clients(cfg: &Config) -> Result<(K8sHttpClient, NovaHttpClient), Re
 /// `[distributed_storage]` is configured.
 async fn init_storage(
     cfg_mgr: &Arc<ConfigManager>,
-    cfg: &Config,
+    ds: Option<&DistributedStorageConfiguration>,
 ) -> Result<Option<Arc<Storage>>, Report> {
-    if cfg.distributed_storage.is_none() {
+    if ds.is_none() {
         return Ok(None);
     }
     let storage = openstack_keystone_distributed_storage::app::init_storage(cfg_mgr)
@@ -207,8 +215,13 @@ async fn wire_local_emergency_store(state: &ServiceState, storage: &Option<Arc<S
 /// `spiffe` crate stays out of `openstack-keystone-core`, so a closure
 /// capturing the `X509Source` is handed over, mapped down to `core`'s
 /// spiffe-crate-free [`SpiffeHealthStatus`].
-fn spawn_spiffe_health(state: &ServiceState, cfg: &Config, token: &CancellationToken) {
-    if !spiffe_mtls_configured(cfg) {
+fn spawn_spiffe_health(
+    state: &ServiceState,
+    cfg: &Config,
+    ds: Option<&DistributedStorageConfiguration>,
+    token: &CancellationToken,
+) {
+    if !spiffe_mtls_configured(cfg, ds) {
         return;
     }
     let state = Arc::clone(state);
@@ -286,7 +299,7 @@ fn spawn_db_spiffe_writer(cfg: &Config, token: &CancellationToken) {
 
 /// Returns `true` if this deployment has SPIFFE mTLS configured on at least
 /// one interface (internal REST, admin UDS, or the Raft gRPC listener).
-fn spiffe_mtls_configured(cfg: &Config) -> bool {
+fn spiffe_mtls_configured(cfg: &Config, ds: Option<&DistributedStorageConfiguration>) -> bool {
     let internal_spiffe = matches!(
         cfg.interface_internal.as_ref().map(|i| &i.listener),
         Some(ListenerConfig::Spiffe(_))
@@ -295,9 +308,7 @@ fn spiffe_mtls_configured(cfg: &Config) -> bool {
     // so its mere presence is enough.
     let admin_spiffe = cfg.interface_admin.is_some();
     let raft_spiffe = matches!(
-        cfg.distributed_storage
-            .as_ref()
-            .map(|ds| &ds.tls_configuration),
+        ds.map(|ds| &ds.tls_configuration),
         Some(RaftTlsConfiguration::Spiffe(_))
     );
     internal_spiffe || admin_spiffe || raft_spiffe

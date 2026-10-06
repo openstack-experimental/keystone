@@ -36,11 +36,11 @@ use tempfile::TempDir;
 
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity, Uri};
 
-use openstack_keystone_config::{
-    Config, ConfigManager, DistributedStorageConfiguration, KekProvider, TlsConfiguration,
-    TlsConfigurationBuilder,
-};
+use openstack_keystone_config::{TlsConfiguration, TlsConfigurationBuilder};
 use openstack_keystone_distributed_storage::app::{Storage, get_app_server, init_storage};
+use openstack_keystone_distributed_storage::config::{
+    DistributedStorageConfiguration, KekProvider, RaftTlsConfiguration, config_manager,
+};
 use openstack_keystone_distributed_storage::network::{
     get_client_tls_config, get_server_tls_config,
 };
@@ -120,10 +120,7 @@ async fn test_kek_gating_production_mode_rejected_inner() -> Result<()> {
     let mut ds_config = get_ds_config(101, storage_dir.path().to_path_buf(), tls_configuration);
     ds_config.dev_mode = false;
 
-    let config = Config {
-        distributed_storage: Some(ds_config),
-        ..Default::default()
-    };
+    let config = ds_config;
 
     // SAFETY: no concurrent env readers; test is `#[serial_test::serial]`.
     unsafe {
@@ -131,7 +128,7 @@ async fn test_kek_gating_production_mode_rejected_inner() -> Result<()> {
         std::env::remove_var("KEYSTONE_ALLOW_ENV_KEK");
     }
 
-    let result = init_storage(&ConfigManager::not_watched(config)).await;
+    let result = init_storage(&config_manager(config)).await;
     assert!(
         result.is_err(),
         "init_storage must refuse to start with dev_mode=false (no production KekProvider exists)"
@@ -159,10 +156,7 @@ async fn test_kek_gating_dev_mode_requires_allow_env_kek_inner() -> Result<()> {
     let ds_config = get_ds_config(102, storage_dir.path().to_path_buf(), tls_configuration);
     // dev_mode is true via get_ds_config, but KEYSTONE_ALLOW_ENV_KEK is unset.
 
-    let config = Config {
-        distributed_storage: Some(ds_config),
-        ..Default::default()
-    };
+    let config = ds_config;
 
     // SAFETY: no concurrent env readers; test is `#[serial_test::serial]`.
     unsafe {
@@ -170,7 +164,7 @@ async fn test_kek_gating_dev_mode_requires_allow_env_kek_inner() -> Result<()> {
         std::env::remove_var("KEYSTONE_ALLOW_ENV_KEK");
     }
 
-    let result = init_storage(&ConfigManager::not_watched(config)).await;
+    let result = init_storage(&config_manager(config)).await;
     assert!(
         result.is_err(),
         "init_storage must refuse to start with dev_mode=true but KEYSTONE_ALLOW_ENV_KEK unset"
@@ -197,10 +191,7 @@ async fn test_quarantine_committed_via_raft_inner() -> Result<()> {
     let tls_configuration = make_certificates()?;
     let ds_config = get_ds_config(103, storage_dir.path().to_path_buf(), tls_configuration);
 
-    let config = Config {
-        distributed_storage: Some(ds_config),
-        ..Default::default()
-    };
+    let config = ds_config;
 
     // SAFETY: no concurrent env readers; test is `#[serial_test::serial]`.
     unsafe {
@@ -208,7 +199,7 @@ async fn test_quarantine_committed_via_raft_inner() -> Result<()> {
         std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
     }
 
-    let storage = init_storage(&ConfigManager::not_watched(config)).await?;
+    let storage = init_storage(&config_manager(config)).await?;
 
     // Bootstrap as a single-node cluster (no gRPC server needed — the Raft
     // handle is local).
@@ -294,10 +285,7 @@ async fn test_abort_pending_rotation_via_raft_inner() -> Result<()> {
     let tls_configuration = make_certificates()?;
     let ds_config = get_ds_config(104, storage_dir.path().to_path_buf(), tls_configuration);
 
-    let config = Config {
-        distributed_storage: Some(ds_config),
-        ..Default::default()
-    };
+    let config = ds_config;
 
     // SAFETY: no concurrent env readers; test is `#[serial_test::serial]`.
     unsafe {
@@ -305,7 +293,7 @@ async fn test_abort_pending_rotation_via_raft_inner() -> Result<()> {
         std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
     }
 
-    let storage = init_storage(&ConfigManager::not_watched(config)).await?;
+    let storage = init_storage(&config_manager(config)).await?;
 
     storage
         .initialize(
@@ -394,15 +382,9 @@ async fn test_propose_abort_pending_rotation_leader_only_inner() -> Result<()> {
 
     // Uninitialized node: not leader, must not forward anywhere.
     let follower_dir = tempfile::TempDir::new().unwrap();
-    let follower_config = Config {
-        distributed_storage: Some(get_ds_config(
-            105,
-            follower_dir.path().to_path_buf(),
-            make_certificates()?,
-        )),
-        ..Default::default()
-    };
-    let follower = init_storage(&ConfigManager::not_watched(follower_config)).await?;
+    let follower_config =
+        get_ds_config(105, follower_dir.path().to_path_buf(), make_certificates()?);
+    let follower = init_storage(&config_manager(follower_config)).await?;
     assert!(!follower.propose_abort_pending_rotation("nope").await?);
 
     // Single-node leader commits it.
@@ -413,15 +395,8 @@ async fn test_propose_abort_pending_rotation_leader_only_inner() -> Result<()> {
         std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
     }
     let leader_dir = tempfile::TempDir::new().unwrap();
-    let leader_config = Config {
-        distributed_storage: Some(get_ds_config(
-            106,
-            leader_dir.path().to_path_buf(),
-            make_certificates()?,
-        )),
-        ..Default::default()
-    };
-    let leader = init_storage(&ConfigManager::not_watched(leader_config)).await?;
+    let leader_config = get_ds_config(106, leader_dir.path().to_path_buf(), make_certificates()?);
+    let leader = init_storage(&config_manager(leader_config)).await?;
     leader
         .initialize(
             [(
@@ -477,10 +452,7 @@ async fn test_emergency_dek_rotation_preserves_data_across_restart_inner() -> Re
     let tls_configuration = make_certificates()?;
     let ds_config = get_ds_config(105, storage_dir.path().to_path_buf(), tls_configuration);
 
-    let config = Config {
-        distributed_storage: Some(ds_config),
-        ..Default::default()
-    };
+    let config = ds_config;
 
     // SAFETY: no concurrent env readers; test is `#[serial_test::serial]`.
     unsafe {
@@ -488,7 +460,7 @@ async fn test_emergency_dek_rotation_preserves_data_across_restart_inner() -> Re
         std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
     }
 
-    let storage = init_storage(&ConfigManager::not_watched(config.clone())).await?;
+    let storage = init_storage(&config_manager(config.clone())).await?;
     storage
         .initialize(
             [(
@@ -647,7 +619,7 @@ async fn test_emergency_dek_rotation_preserves_data_across_restart_inner() -> Re
         std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
     }
 
-    let storage2 = init_storage(&ConfigManager::not_watched(config.clone())).await?;
+    let storage2 = init_storage(&config_manager(config.clone())).await?;
     for _ in 0..50 {
         if storage2.current_leader() == Some(105) {
             break;
@@ -769,12 +741,9 @@ async fn test_live_uniqueness_check_detects_conflict_inner() -> Result<()> {
         storage_dir_a.path().to_path_buf(),
         tls_configuration.clone(),
     );
-    let config_a = Config {
-        distributed_storage: Some(ds_config_a),
-        ..Default::default()
-    };
+    let config_a = ds_config_a;
 
-    let storage_a = init_storage(&ConfigManager::not_watched(config_a.clone())).await?;
+    let storage_a = init_storage(&config_manager(config_a.clone())).await?;
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let stg_a = storage_a.clone();
@@ -782,7 +751,7 @@ async fn test_live_uniqueness_check_detects_conflict_inner() -> Result<()> {
     let _srv = std::thread::spawn(move || {
         let mut rt = AsyncRuntimeOf::<TypeConfig>::new(1);
         rt.block_on(async {
-            let ds = cfg_a.distributed_storage.as_ref().expect("ds config");
+            let ds = &cfg_a;
             let tls = get_server_tls_config(&cfg_a).unwrap();
             let mut s = tonic::transport::Server::builder().tls_config(tls).unwrap();
             let serve = s
@@ -797,16 +766,8 @@ async fn test_live_uniqueness_check_detects_conflict_inner() -> Result<()> {
     TypeConfig::sleep(Duration::from_millis(200)).await;
 
     let tls_client_config = get_client_tls_config(&config_a)?;
-    let mut admin_client = new_admin_client(
-        config_a
-            .distributed_storage
-            .as_ref()
-            .unwrap()
-            .node_cluster_addr
-            .clone(),
-        &tls_client_config,
-    )
-    .await?;
+    let mut admin_client =
+        new_admin_client(config_a.node_cluster_addr.clone(), &tls_client_config).await?;
     admin_client
         .init(pb::raft::InitRequest {
             nodes: vec![new_node(200)],
@@ -825,10 +786,7 @@ async fn test_live_uniqueness_check_detects_conflict_inner() -> Result<()> {
         tls_configuration,
     );
     ds_config_b.retry_join_nodes = vec![(200, get_addr(200).to_string())];
-    let config_b = Config {
-        distributed_storage: Some(ds_config_b),
-        ..Default::default()
-    };
+    let config_b = ds_config_b;
 
     // from_env() removes KEYSTONE_DEV_KEK after reading it, so it must be
     // re-set before every init_storage call in this process.
@@ -836,7 +794,7 @@ async fn test_live_uniqueness_check_detects_conflict_inner() -> Result<()> {
         std::env::set_var("KEYSTONE_DEV_KEK", TEST_KEK_HEX);
         std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
     }
-    let result = init_storage(&ConfigManager::not_watched(config_b)).await;
+    let result = init_storage(&config_manager(config_b)).await;
 
     // Clean up node A's server before asserting, so a failure doesn't leak
     // the thread/port into subsequent tests.
@@ -886,10 +844,7 @@ async fn test_live_uniqueness_check_proceeds_when_no_peer_reachable_inner() -> R
     // must fail, exercising the "no peer reachable" branch.
     ds_config.retry_join_nodes = vec![(210, "127.0.0.1:21999".to_string())];
 
-    let config = Config {
-        distributed_storage: Some(ds_config),
-        ..Default::default()
-    };
+    let config = ds_config;
 
     // SAFETY: no concurrent env readers; test is `#[serial_test::serial]`.
     unsafe {
@@ -897,14 +852,12 @@ async fn test_live_uniqueness_check_proceeds_when_no_peer_reachable_inner() -> R
         std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
     }
 
-    init_storage(&ConfigManager::not_watched(config))
-        .await
-        .map_err(|e| {
-            eyre::eyre!(
-                "init_storage must proceed (with a warning) when no configured peer is \
+    init_storage(&config_manager(config)).await.map_err(|e| {
+        eyre::eyre!(
+            "init_storage must proceed (with a warning) when no configured peer is \
                  reachable, not refuse to start: {e}"
-            )
-        })?;
+        )
+    })?;
 
     Ok(())
 }
@@ -924,24 +877,19 @@ async fn test_node_restart_inner() -> Result<()> {
         node_listener_addr: "127.0.0.1:21005".parse().expect("valid address"),
         node_id: 1,
         path: storage_dir.path().to_path_buf(),
-        tls_configuration: openstack_keystone_config::RaftTlsConfiguration::Tls(
-            tls_configuration.clone(),
-        ),
+        tls_configuration: RaftTlsConfiguration::Tls(tls_configuration.clone()),
         dev_mode: true,
         kek_provider: KekProvider::Env,
         ..Default::default()
     };
-    let config = Config {
-        distributed_storage: Some(ds_config),
-        ..Default::default()
-    };
+    let config = ds_config;
 
     // SAFETY: no concurrent env reads
     unsafe {
         std::env::set_var("KEYSTONE_DEV_KEK", TEST_KEK_HEX);
         std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
     }
-    let storage = init_storage(&ConfigManager::not_watched(config.clone())).await?;
+    let storage = init_storage(&config_manager(config.clone())).await?;
     assert!(!storage.is_initialized().await?);
 
     // Initialize as single-node cluster
@@ -953,7 +901,7 @@ async fn test_node_restart_inner() -> Result<()> {
     let _srv = std::thread::spawn(move || {
         let mut rt = AsyncRuntimeOf::<TypeConfig>::new(1);
         rt.block_on(async {
-            let ds = cfg.distributed_storage.as_ref().expect("ds config");
+            let ds = &cfg;
             let tls = get_server_tls_config(&cfg).unwrap();
             let mut s = tonic::transport::Server::builder().tls_config(tls).unwrap();
             let serve = s
@@ -969,16 +917,8 @@ async fn test_node_restart_inner() -> Result<()> {
     TypeConfig::sleep(Duration::from_millis(200)).await;
 
     let tls_client_config = get_client_tls_config(&config)?;
-    let mut admin_client = new_admin_client(
-        config
-            .distributed_storage
-            .as_ref()
-            .unwrap()
-            .node_cluster_addr
-            .clone(),
-        &tls_client_config,
-    )
-    .await?;
+    let mut admin_client =
+        new_admin_client(config.node_cluster_addr.clone(), &tls_client_config).await?;
 
     admin_client
         .init(pb::raft::InitRequest {
@@ -1015,17 +955,12 @@ async fn test_node_restart_inner() -> Result<()> {
         node_listener_addr: "127.0.0.1:21005".parse().expect("valid address"),
         node_id: 1,
         path: storage_dir.path().to_path_buf(),
-        tls_configuration: openstack_keystone_config::RaftTlsConfiguration::Tls(
-            tls_configuration.clone(),
-        ),
+        tls_configuration: RaftTlsConfiguration::Tls(tls_configuration.clone()),
         dev_mode: true,
         kek_provider: KekProvider::Env,
         ..Default::default()
     };
-    let config_restart = Config {
-        distributed_storage: Some(ds_config_restart),
-        ..Default::default()
-    };
+    let config_restart = ds_config_restart;
 
     // SAFETY: no concurrent env reads
     unsafe {
@@ -1037,7 +972,7 @@ async fn test_node_restart_inner() -> Result<()> {
     // If normalization is broken, this fails with:
     // "FATAL: node_id 1 already registered in cluster at 127.0.0.1:21005;
     //  refusing to start with address https://127.0.0.1:21005/"
-    let storage_restart = init_storage(&ConfigManager::not_watched(config_restart.clone())).await?;
+    let storage_restart = init_storage(&config_manager(config_restart.clone())).await?;
 
     // Verify the storage thinks it's initialized (persisted state is intact)
     assert!(
@@ -1128,13 +1063,7 @@ async fn test_prefix_index_leader_race_concurrent_inner() -> Result<()> {
 
     let tls_client_config = get_client_tls_config(&instance1.config)?;
     let mut admin_client1 = new_admin_client(
-        instance1
-            .config
-            .distributed_storage
-            .as_ref()
-            .unwrap()
-            .node_cluster_addr
-            .clone(),
+        instance1.config.node_cluster_addr.clone(),
         &tls_client_config,
     )
     .await?;
@@ -1311,7 +1240,7 @@ async fn test_prefix_index_leader_race_concurrent_inner() -> Result<()> {
 #[allow(dead_code)]
 struct InstanceHolder {
     pub node_id: u64,
-    pub config: Config,
+    pub config: DistributedStorageConfiguration,
     storage_dir: TempDir,
     pub storage: Arc<Storage>,
 }
@@ -1360,17 +1289,13 @@ impl InstanceHolder {
         make_ds_config: impl FnOnce(PathBuf) -> DistributedStorageConfiguration,
     ) -> Result<Self> {
         let storage_dir = tempfile::TempDir::new().unwrap();
-        let ds_config = make_ds_config(storage_dir.path().to_path_buf());
-        let config = Config {
-            distributed_storage: Some(ds_config),
-            ..Default::default()
-        };
+        let config = make_ds_config(storage_dir.path().to_path_buf());
 
         unsafe {
             std::env::set_var("KEYSTONE_DEV_KEK", TEST_KEK_HEX);
             std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
         }
-        let storage = init_storage(&ConfigManager::not_watched(config.clone())).await?;
+        let storage = init_storage(&config_manager(config.clone())).await?;
         Ok(Self {
             node_id,
             config,
@@ -1420,13 +1345,7 @@ async fn test_cluster_inner() -> Result<()> {
     let tls_client_config = get_client_tls_config(&instance1.config)?;
 
     let mut admin_client1 = new_admin_client(
-        instance1
-            .config
-            .distributed_storage
-            .as_ref()
-            .unwrap()
-            .node_cluster_addr
-            .clone(),
+        instance1.config.node_cluster_addr.clone(),
         &tls_client_config,
     )
     .await?;
@@ -1925,13 +1844,7 @@ async fn test_replication_race_get_by_key_inner() -> Result<()> {
 
     let tls_client_config = get_client_tls_config(&instance1.config)?;
     let mut admin_client1 = new_admin_client(
-        instance1
-            .config
-            .distributed_storage
-            .as_ref()
-            .unwrap()
-            .node_cluster_addr
-            .clone(),
+        instance1.config.node_cluster_addr.clone(),
         &tls_client_config,
     )
     .await?;
@@ -2105,13 +2018,7 @@ async fn test_replication_race_delete_stale_inner() -> Result<()> {
 
     let tls_client_config = get_client_tls_config(&instance1.config)?;
     let mut admin_client1 = new_admin_client(
-        instance1
-            .config
-            .distributed_storage
-            .as_ref()
-            .unwrap()
-            .node_cluster_addr
-            .clone(),
+        instance1.config.node_cluster_addr.clone(),
         &tls_client_config,
     )
     .await?;
@@ -2282,13 +2189,7 @@ async fn test_join_adopts_cluster_dek_inner() -> Result<()> {
 
     let tls_client_config = get_client_tls_config(&instance1.config)?;
     let mut admin_client1 = new_admin_client(
-        instance1
-            .config
-            .distributed_storage
-            .as_ref()
-            .unwrap()
-            .node_cluster_addr
-            .clone(),
+        instance1.config.node_cluster_addr.clone(),
         &tls_client_config,
     )
     .await?;
@@ -2462,13 +2363,7 @@ async fn test_purge_then_join_learner_catches_up_via_snapshot_inner() -> Result<
 
     let tls_client_config = get_client_tls_config(&instance1.config)?;
     let mut admin_client1 = new_admin_client(
-        instance1
-            .config
-            .distributed_storage
-            .as_ref()
-            .unwrap()
-            .node_cluster_addr
-            .clone(),
+        instance1.config.node_cluster_addr.clone(),
         &tls_client_config,
     )
     .await?;
@@ -2613,17 +2508,13 @@ async fn wait_for_leader(client: &mut ClusterAdminServiceClient<Channel>, expect
 }
 
 pub async fn start_raft_app(
-    config: &Config,
+    ds_config: &DistributedStorageConfiguration,
     storage: &Storage,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let ds_config = config
-        .distributed_storage
-        .as_ref()
-        .expect("ds config must be present");
     let http_addr = ds_config.node_listener_addr;
     let node_id = ds_config.node_id;
 
-    let tls_config = get_server_tls_config(config)?;
+    let tls_config = get_server_tls_config(ds_config)?;
     let mut server = tonic::transport::Server::builder().tls_config(tls_config)?;
 
     let server_future = server
@@ -2751,7 +2642,7 @@ fn get_ds_config_with_port(
             .expect("valid address"),
         node_id,
         path: db_path,
-        tls_configuration: openstack_keystone_config::RaftTlsConfiguration::Tls(tls_config.clone()),
+        tls_configuration: RaftTlsConfiguration::Tls(tls_config.clone()),
         dev_mode: true,
         kek_provider: KekProvider::Env,
         ..Default::default()
@@ -2781,11 +2672,7 @@ async fn spawn_stoppable_raft_app(
     let _handle = thread::spawn(move || {
         let mut rt = AsyncRuntimeOf::<TypeConfig>::new(1);
         let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = rt.block_on(async {
-            let ds_config = inst
-                .config
-                .distributed_storage
-                .as_ref()
-                .expect("ds config must be present");
+            let ds_config = &inst.config;
             let tls_config = get_server_tls_config(&inst.config)?;
             let mut server = tonic::transport::Server::builder().tls_config(tls_config)?;
             server
@@ -2813,13 +2700,7 @@ async fn start_single_node_cluster(
 
     let tls_client_config = get_client_tls_config(&instance.config)?;
     let mut admin_client = new_admin_client(
-        instance
-            .config
-            .distributed_storage
-            .as_ref()
-            .unwrap()
-            .node_cluster_addr
-            .clone(),
+        instance.config.node_cluster_addr.clone(),
         &tls_client_config,
     )
     .await?;
@@ -3156,16 +3037,8 @@ async fn test_backup_restore_round_trip_on_fresh_cluster_inner() -> Result<()> {
     );
     spawn_raft_app(&dst).await;
     let dst_tls_client_config = get_client_tls_config(&dst.config)?;
-    let mut dst_admin = new_admin_client(
-        dst.config
-            .distributed_storage
-            .as_ref()
-            .unwrap()
-            .node_cluster_addr
-            .clone(),
-        &dst_tls_client_config,
-    )
-    .await?;
+    let mut dst_admin =
+        new_admin_client(dst.config.node_cluster_addr.clone(), &dst_tls_client_config).await?;
 
     chunks[0].elect = true;
     dst_admin.restore(futures::stream::iter(chunks)).await?;
@@ -3384,12 +3257,7 @@ async fn test_disaster_recovery_elects_exactly_one_leader_inner() -> Result<()> 
     let src1 = Arc::new(InstanceHolder::new_with_port(1, base, tls_configuration.clone()).await?);
     let stop1 = spawn_stoppable_raft_app(&src1).await;
     let mut src_admin = new_admin_client(
-        src1.config
-            .distributed_storage
-            .as_ref()
-            .unwrap()
-            .node_cluster_addr
-            .clone(),
+        src1.config.node_cluster_addr.clone(),
         &get_client_tls_config(&src1.config)?,
     )
     .await?;
@@ -3449,13 +3317,7 @@ async fn test_disaster_recovery_elects_exactly_one_leader_inner() -> Result<()> 
         let tls_client_config = get_client_tls_config(&instance.config)?;
         admins.push(
             new_admin_client(
-                instance
-                    .config
-                    .distributed_storage
-                    .as_ref()
-                    .unwrap()
-                    .node_cluster_addr
-                    .clone(),
+                instance.config.node_cluster_addr.clone(),
                 &tls_client_config,
             )
             .await?,
@@ -3554,10 +3416,10 @@ async fn test_restart_after_live_restore_keeps_displaced_deks_inner() -> Result<
             std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
         }
     };
-    let start = |node_id: u64, config: &Config| {
+    let start = |node_id: u64, config: &DistributedStorageConfiguration| {
         let config = config.clone();
         async move {
-            let storage = init_storage(&ConfigManager::not_watched(config)).await?;
+            let storage = init_storage(&config_manager(config)).await?;
             for _ in 0..50 {
                 if storage.current_leader() == Some(node_id) {
                     break;
@@ -3582,16 +3444,9 @@ async fn test_restart_after_live_restore_keeps_displaced_deks_inner() -> Result<
 
     // --- Source: a backup under its own (version 1) DEK.
     let src_dir = tempfile::TempDir::new()?;
-    let src_config = Config {
-        distributed_storage: Some(get_ds_config(
-            107,
-            src_dir.path().to_path_buf(),
-            tls_configuration.clone(),
-        )),
-        ..Default::default()
-    };
+    let src_config = get_ds_config(107, src_dir.path().to_path_buf(), tls_configuration.clone());
     set_kek_env();
-    let src = init_storage(&ConfigManager::not_watched(src_config)).await?;
+    let src = init_storage(&config_manager(src_config)).await?;
     src.initialize(node(107)).await?;
     for _ in 0..50 {
         if src.current_leader() == Some(107) {
@@ -3616,16 +3471,9 @@ async fn test_restart_after_live_restore_keeps_displaced_deks_inner() -> Result<
 
     // --- Destination: a different version 1 DEK and some local history.
     let dst_dir = tempfile::TempDir::new()?;
-    let dst_config = Config {
-        distributed_storage: Some(get_ds_config(
-            108,
-            dst_dir.path().to_path_buf(),
-            tls_configuration.clone(),
-        )),
-        ..Default::default()
-    };
+    let dst_config = get_ds_config(108, dst_dir.path().to_path_buf(), tls_configuration.clone());
     set_kek_env();
-    let dst = init_storage(&ConfigManager::not_watched(dst_config.clone())).await?;
+    let dst = init_storage(&config_manager(dst_config.clone())).await?;
     dst.initialize(node(108)).await?;
     for _ in 0..50 {
         if dst.current_leader() == Some(108) {

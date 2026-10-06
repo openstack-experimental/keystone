@@ -17,7 +17,7 @@ use clap::Parser;
 use color_eyre::{Report, eyre::WrapErr, eyre::eyre};
 
 use openstack_keystone_api_types::v4::oauth2_key::EnsureSigningKeyResponse;
-use openstack_keystone_config::Config;
+use openstack_keystone_config::LoadedConfig;
 
 use super::get_admin_client;
 use crate::PerformAction;
@@ -42,7 +42,7 @@ pub(super) struct EnsureSigningKeyCommand {
 
 #[async_trait]
 impl PerformAction for EnsureSigningKeyCommand {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         let client = get_admin_client(config).await?;
 
         let res = client
@@ -96,7 +96,7 @@ mod tests {
         // `get_admin_client` is the first thing called, and a `Config`
         // without `[interface_admin]` must error clearly rather than
         // attempting SPIFFE mTLS setup against a nonexistent socket.
-        let cfg = Config::default();
+        let cfg = LoadedConfig::new(Default::default());
         let command = EnsureSigningKeyCommand {
             domain: "domain-1".to_string(),
         };

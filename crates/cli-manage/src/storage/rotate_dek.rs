@@ -17,7 +17,7 @@ use clap::Parser;
 use color_eyre::{Report, eyre::eyre};
 use tonic::transport::Uri;
 
-use openstack_keystone_config::Config;
+use openstack_keystone_config::LoadedConfig;
 use openstack_keystone_distributed_storage::protobuf as pb;
 
 use super::get_grpc_client;
@@ -69,7 +69,7 @@ pub(super) struct RotateDekCommand {
 
 #[async_trait]
 impl PerformAction for RotateDekCommand {
-    async fn take_action(self, config: &Config) -> Result<(), Report> {
+    async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         if self.local_quorum_bypass && self.justification.is_none() {
             return Err(eyre!(
                 "--justification is required when --local-quorum-bypass is set"
@@ -159,7 +159,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_take_action_rejects_local_quorum_bypass_without_justification() {
-        let cfg = Config::default();
+        let cfg = LoadedConfig::new(Default::default());
         let command = RotateDekCommand {
             cluster_addr: None,
             emergency: false,

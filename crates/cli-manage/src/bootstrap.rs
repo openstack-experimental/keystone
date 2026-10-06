@@ -26,7 +26,7 @@ use openstack_keystone_api_types::v3::project::*;
 use openstack_keystone_api_types::v3::role::*;
 use openstack_keystone_api_types::v3::service::*;
 use openstack_keystone_api_types::v3::user::*;
-use openstack_keystone_config::Config;
+use openstack_keystone_config::{Config, LoadedConfig};
 
 use crate::PerformAction;
 use crate::catalog::endpoint::create::CreateCommand as EndpointCreateCommand;
@@ -71,7 +71,7 @@ pub struct BootstrapCommand {
 
 #[async_trait]
 impl PerformAction for BootstrapCommand {
-    async fn take_action(self, config: &Config) -> Result<()> {
+    async fn take_action(self, config: &LoadedConfig) -> Result<()> {
         setup_logging(self.verbose);
 
         // Validate password (may come from --bootstrap-password or
@@ -1000,7 +1000,7 @@ mod tests {
             verbose: 0,
         };
 
-        let result = cmd.take_action(&config).await;
+        let result = cmd.take_action(&LoadedConfig::new(config)).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -1497,7 +1497,7 @@ mod tests {
             verbose: 0,
         };
 
-        let result = cmd.take_action(&config).await;
+        let result = cmd.take_action(&LoadedConfig::new(config)).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
