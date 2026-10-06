@@ -167,7 +167,9 @@ async fn validate_pass_runs() {
         .await
         .err()
         .unwrap();
-    assert!(format!("{err:#}").contains("forbidden"));
+    let rendered = format!("{err:#}");
+    assert!(rendered.contains("forbidden"), "{rendered}");
+    assert!(rendered.contains("[fake_required]"), "{rendered}");
 }
 
 #[tokio::test]
@@ -187,6 +189,7 @@ async fn section_watch_files_collected() {
 fn registry_rules() {
     check_registry(&["default"]).unwrap();
     assert!(check_registry(&["fake_optional"]).is_err());
+    assert!(check_registry(&["Fake_Optional"]).is_err());
     assert_registered(&["fake_optional", "fake_required"]).unwrap();
     assert!(assert_registered(&["missing"]).is_err());
 }
@@ -202,4 +205,16 @@ fn unclaimed_sections_are_reported() {
         unclaimed_sections(&raw, Core::reserved_sections()),
         vec!["fake_misnamed".to_string(), "stray".to_string()]
     );
+}
+
+#[cfg(not(feature = "vault"))]
+#[tokio::test]
+#[serial]
+async fn vault_reference_without_feature_fails_load() {
+    let f = conf("[fake_optional]\nmarker_file = \"vault://kv/data/x#key\"\n");
+    let err = load_snapshot_from::<Core>(f.path().to_path_buf())
+        .await
+        .err()
+        .unwrap();
+    assert!(format!("{err:#}").contains("`vault` feature"), "{err:#}");
 }

@@ -364,11 +364,27 @@ async fn resolve_vault_references(
     Ok(Some(resolved.runtime))
 }
 
-/// Without the `vault` feature references are not resolved.
+/// Without the `vault` feature references cannot be resolved, so a
+/// configuration carrying one is rejected instead of passing the literal
+/// `vault://` string on as the option value.
 #[cfg(not(feature = "vault"))]
 async fn resolve_vault_references(
-    _raw: &mut config::Config,
+    raw: &mut config::Config,
 ) -> Result<Option<vault::VaultRuntime>, Report> {
+    fn has_reference(value: &config::Value) -> bool {
+        match &value.kind {
+            config::ValueKind::String(s) => s.starts_with("vault://"),
+            config::ValueKind::Table(table) => table.values().any(has_reference),
+            config::ValueKind::Array(items) => items.iter().any(has_reference),
+            _ => false,
+        }
+    }
+    if has_reference(&raw.cache) {
+        return Err(eyre::eyre!(
+            "the configuration contains `vault://` references but oslo-config was built \
+             without the `vault` feature"
+        ));
+    }
     Ok(None)
 }
 

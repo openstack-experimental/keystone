@@ -73,6 +73,8 @@ trait ErasedSection: Any + Send + Sync {
     fn as_any(&self) -> &dyn Any;
     /// See [`ConfigSection::finish`].
     fn finish(&mut self, ctx: &LoadCtx) -> Result<(), ConfigError>;
+    /// See [`ConfigSection::NAME`].
+    fn name(&self) -> &'static str;
     /// See [`ConfigSection::validate_with`].
     fn validate_with(&self, sections: &SectionBag) -> Result<(), ConfigError>;
     /// See [`ConfigSection::watch_files`].
@@ -85,6 +87,9 @@ impl<S: ConfigSection> ErasedSection for S {
     }
     fn finish(&mut self, ctx: &LoadCtx) -> Result<(), ConfigError> {
         ConfigSection::finish(self, ctx)
+    }
+    fn name(&self) -> &'static str {
+        S::NAME
     }
     fn validate_with(&self, sections: &SectionBag) -> Result<(), ConfigError> {
         ConfigSection::validate_with(self, sections)
@@ -206,7 +211,10 @@ impl SectionBag {
 pub fn check_registry(reserved: &[&str]) -> Result<(), Report> {
     let mut seen: HashMap<&'static str, TypeId> = HashMap::new();
     for descriptor in inventory::iter::<SectionDescriptor> {
-        if reserved.contains(&descriptor.name) {
+        if reserved
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(descriptor.name))
+        {
             return Err(eyre!(
                 "section [{}] is reserved by the core schema",
                 descriptor.name
@@ -287,7 +295,7 @@ pub(crate) fn load_sections(raw: &config::Config, ctx: &LoadCtx) -> Result<Secti
     for section in bag.sections.values() {
         section
             .validate_with(&bag)
-            .wrap_err("Configuration validation failed")?;
+            .wrap_err_with(|| format!("validating [{}] section", section.name()))?;
     }
     Ok(bag)
 }

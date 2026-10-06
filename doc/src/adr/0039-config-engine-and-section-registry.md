@@ -103,8 +103,13 @@ pub struct BackendRegistration<B: ?Sized + 'static> {
 ### Loading
 
 Raw pipeline (file, site-vars, env; prefix parameterized) -> Vault resolution ->
-core parse -> registered sections of selected drivers -> validation pass. Env
-override, site-vars and Vault therefore apply to driver sections unchanged.
+core parse -> every linked registered section -> validation pass. All linked
+sections are parsed, selected or not, so a malformed section of an unselected
+driver fails the load, as it did with the central schema. Env override,
+site-vars and Vault therefore apply to driver sections unchanged. The `vault`
+cargo feature of `oslo-config` (on by default) gates the resolution; without it
+a configuration that contains a `vault://` reference fails the load instead of
+passing the literal string on.
 `ConfigManager<C>` keeps the core struct and the section bag in one snapshot, so
 reload swaps both atomically (last-known-good, deadlock avoidance and Vault
 teardown behaviour are unchanged). Registered sections are re-parsed and
