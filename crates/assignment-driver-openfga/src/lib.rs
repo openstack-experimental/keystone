@@ -80,7 +80,7 @@ use reqwest::{Client, RequestBuilder, Response, Url};
 use serde_json::{Value, json};
 use tracing::{debug, error, warn};
 
-use openstack_keystone_config::{AssignmentBackendConfig, OpenFGAAssignmentDriver};
+use openstack_keystone_config::AssignmentBackendConfig;
 use openstack_keystone_core::assignment::{AssignmentProviderError, backend::AssignmentBackend};
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::plugin_manager::{
@@ -88,8 +88,11 @@ use openstack_keystone_core::plugin_manager::{
 };
 use openstack_keystone_core_types::assignment::*;
 
+mod config;
 mod types;
 use types::*;
+
+pub use config::{OpenFGAAssignmentDriver, OpenFGAIdTransform};
 
 pub use types::OpenFGADriverError;
 
@@ -111,7 +114,9 @@ inventory::submit! {
         name: "openfga",
         selected: |_| true,
         build: |cfg| {
-            let timeout = cfg.openfga.as_ref().and_then(|c| c.timeout);
+            let timeout = cfg
+                .section::<OpenFGAAssignmentDriver>()
+                .and_then(|c| c.timeout);
             Box::pin(async move {
                 Ok(Arc::new(OpenFGADriver::new(timeout)?) as Arc<dyn AssignmentBackend>)
             })
@@ -127,10 +132,20 @@ inventory::submit! {
             let name = name.to_string();
             Box::pin(async move {
                 match block {
-                    Some(AssignmentBackendConfig::Openfga(driver_cfg)) => Ok(
-                        Arc::new(OpenFGADriver::with_config(*driver_cfg)?)
-                            as Arc<dyn AssignmentBackend>,
-                    ),
+                    Some(AssignmentBackendConfig::Named { driver, config })
+                        if driver == "openfga" =>
+                    {
+                        let driver_cfg = config
+                            .downcast_ref::<OpenFGAAssignmentDriver>()
+                            .cloned()
+                            .ok_or_else(|| {
+                                AssignmentProviderError::NamedBackendMisconfigured(format!(
+                                    "[assignment.backends.{name}] is not an openfga block"
+                                ))
+                            })?;
+                        Ok(Arc::new(OpenFGADriver::with_config(driver_cfg)?)
+                            as Arc<dyn AssignmentBackend>)
+                    }
                     Some(other) => Err(AssignmentProviderError::NamedBackendMisconfigured(
                         format!(
                             "[assignment.backends.{name}] has driver `{}`, not `openfga`",
@@ -219,8 +234,9 @@ impl OpenFGADriver {
             .config
             .read()
             .await
-            .openfga
-            .clone()
+            .sections
+            .get::<OpenFGAAssignmentDriver>()
+            .cloned()
             .map(Arc::new)
             .ok_or(OpenFGADriverError::MissingConfiguration)
     }

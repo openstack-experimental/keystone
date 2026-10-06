@@ -74,21 +74,21 @@ both.) Cross-checks that need the core schema stay in `CoreSchema::finish_load`.
 
 ### Registration
 
-`BackendRegistration<B>` stays non-generic over the section type
-(`inventory::collect!` is per concrete type, so `BackendRegistration<B, S>`
-cannot share one registry). It carries an erased `SectionDescriptor`; a
-`register_backend!` macro generates a non-capturing trampoline that fetches
-`&S` from the view and calls the driver's `build: |s: &S| ...`. A missing
-section for a selected driver is materialized from the section's default,
-exactly as today; a section type that has no default and is absent is a startup
-error attributed to the driver.
+A driver crate registers its section type with `register_section!` (link-time,
+`inventory`, same linkage rule as ADR 0018). `BackendRegistration<B>` stays
+non-generic and its `selected`/`build` hooks receive a `&ConfigView`, so a
+driver reads its own section with `view.section::<S>()` (or `view.require::<S>()`
+for an error naming the missing section) next to the core config. A section
+type with a `Default` is materialized from it when absent
+(`register_section!(S, default)`); one without is absent from the bag, and the
+driver decides whether that is an error. This is exactly the behaviour the
+`Option` fields had.
 
 ```rust
 pub struct BackendRegistration<B: ?Sized + 'static> {
     pub name: &'static str,
-    pub section: Option<SectionDescriptor>,
-    pub selected: fn(&ConfigView) -> bool,
-    pub build: fn(&ConfigView) -> BuildFuture<B>,
+    pub selected: fn(&ConfigView<'_>) -> bool,
+    pub build: fn(&ConfigView<'_>) -> BuildFuture<B>,
 }
 ```
 
@@ -105,10 +105,13 @@ the watch set, so a driver section reloads like any core section.
 
 ### Per-domain blocks
 
-`NamedAssignmentBackendRegistration` carries the driver's `SectionDescriptor`.
-`AssignmentBackendConfig` becomes `Named { driver, config: ParsedSection }`,
-parsed at load time with the driver's own section type and downcast at
-dispatch. The same type serves `[openfga]` and `[assignment.backends.<name>]`.
+`AssignmentBackendConfig` becomes `Sql | Named { driver, config: ParsedSection }`.
+A driver registers the type its blocks are parsed into with
+`register_block!("assignment.backends", "openfga", S)`; the schema deserializes
+the `driver` discriminator and delegates the rest to the registered type at load
+time. The block is downcast to the driver's own type at dispatch, so the same
+type serves `[openfga]` and `[assignment.backends.<name>]`. A block naming a
+driver that is not linked fails the load.
 
 ### Fail-loud rules
 

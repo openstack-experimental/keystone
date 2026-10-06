@@ -13,6 +13,7 @@ exclude.workspace = true
 async-trait.workspace = true
 futures.workspace = true
 inventory.workspace = true
+oslo-config.workspace = true
 openstack-keystone-config.workspace = true
 openstack-keystone-core.workspace = true
 openstack-keystone-core-types.workspace = true
@@ -26,8 +27,10 @@ url.workspace = true
 validator.workspace = true
 
 [dev-dependencies]
+config = { workspace = true, features = ["ini"] }
 eyre.workspace = true
 httpmock.workspace = true
+tempfile.workspace = true
 openstack-keystone-core = { workspace = true, features = ["mock"] }
 serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

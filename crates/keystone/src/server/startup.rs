@@ -84,6 +84,11 @@ pub async fn run() -> Result<(), Report> {
         return args::dump_openapi(dump_format, &openapi);
     }
 
+    // Catch a driver section whose registration the linker dropped (ADR 0018,
+    // ADR 0039) before the configuration is loaded without it.
+    #[cfg(feature = "openfga")]
+    oslo_config::assert_registered(&["openfga"])?;
+
     let cfg_mgr = crate::config::ConfigManager::watched(args.config.clone()).await?;
     let cfg = cfg_mgr.config.read().await.clone();
 

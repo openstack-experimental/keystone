@@ -51,8 +51,8 @@ pub mod vault;
 pub use inventory;
 pub use primitives::*;
 pub use section::{
-    ConfigError, ConfigSection, ConfigView, LoadCtx, Loaded, SectionBag, SectionDescriptor,
-    assert_registered, check_registry,
+    BlockDescriptor, ConfigError, ConfigSection, ConfigView, LoadCtx, Loaded, ParsedSection,
+    SectionBag, SectionDescriptor, assert_registered, check_registry, parse_block,
 };
 pub use vault::VaultSection;
 

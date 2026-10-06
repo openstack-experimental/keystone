@@ -558,6 +558,8 @@ impl DomainConfigApi for DomainConfigService {
 mod tests {
     use serde_json::json;
 
+    use openstack_keystone_config::AssignmentBackendConfig;
+
     use super::*;
     use crate::domain_config::backend::MockDomainConfigBackend;
     use crate::tests::get_mocked_state;
@@ -728,14 +730,15 @@ mod tests {
     /// driver is `openfga`.
     fn config_with_openfga_backend() -> Config {
         let mut config = Config::default();
+        // The driver crate is not linked into `core`'s test binary, so the
+        // block carries an opaque parsed value; only the driver name matters
+        // to the bindable-name check.
         config.assignment.backends.insert(
             "central_fga".to_string(),
-            serde_json::from_value(json!({
-                "driver": "openfga",
-                "api_url": "http://fga.example/",
-                "store_id": "s1",
-            }))
-            .expect("a valid openfga backend block"),
+            AssignmentBackendConfig::Named {
+                driver: "openfga".to_string(),
+                config: oslo_config::ParsedSection::new("opaque".to_string()),
+            },
         );
         config
     }

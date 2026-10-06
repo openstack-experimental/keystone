@@ -261,10 +261,6 @@ pub struct Config {
     #[validate(nested)]
     pub oauth2: Oauth2Provider,
 
-    /// OpenFGA assignment driver configuration.
-    #[serde(default)]
-    pub openfga: Option<OpenFGAAssignmentDriver>,
-
     /// `[oslo_middleware]` configuration (proxy header parsing).
     #[serde(default)]
     pub oslo_middleware: OsloMiddleware,
@@ -520,7 +516,6 @@ impl oslo_config::CoreSchema for Config {
             "local_emergency",
             "mapping",
             "oauth2",
-            "openfga",
             "oslo_middleware",
             "interface_internal",
             "interface_public",

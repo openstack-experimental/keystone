@@ -35,11 +35,13 @@ use eyre::Result;
 use serde_json::{Value, json};
 use tracing_test::traced_test;
 
-use openstack_keystone_config::{AssignmentBackendConfig, Config, OpenFGAAssignmentDriver};
+use openstack_keystone_assignment_driver_openfga::OpenFGAAssignmentDriver;
+use openstack_keystone_config::{AssignmentBackendConfig, Config};
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::domain_config::DomainConfigProviderError;
 use openstack_keystone_core_types::assignment::*;
 use openstack_keystone_core_types::domain_config::{DomainConfig, DomainConfigCreate};
+use oslo_config::ParsedSection;
 
 use crate::common::get_state_with_config;
 use crate::{create_domain, create_role, create_user};
@@ -77,7 +79,10 @@ fn openfga_block_at(
         "role_to_relation": role_to_relation,
     }))
     .expect("valid openfga assignment block");
-    AssignmentBackendConfig::Openfga(Box::new(driver))
+    AssignmentBackendConfig::Named {
+        driver: "openfga".to_string(),
+        config: ParsedSection::new(driver),
+    }
 }
 
 /// A named OpenFGA block at a dead address. Used where the block is only there

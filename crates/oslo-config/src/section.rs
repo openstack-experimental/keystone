@@ -274,6 +274,14 @@ impl<C> Loaded<C> {
         }
     }
 
+    /// Create a snapshot from a core value and a ready made section bag.
+    pub fn with_sections(core: C, sections: SectionBag) -> Self {
+        Self {
+            core,
+            sections: Arc::new(sections),
+        }
+    }
+
     /// Borrow the snapshot as a [`ConfigView`].
     pub fn view(&self) -> ConfigView<'_, C> {
         ConfigView {
@@ -338,4 +346,120 @@ impl<C> Deref for ConfigView<'_, C> {
     fn deref(&self) -> &C {
         self.core
     }
+}
+
+/// A parsed, type erased section value, for blocks whose type is chosen by a
+/// discriminator in the file (e.g. `driver = openfga`) rather than by the
+/// section name. Cheap to clone, comparable and printable, so a reload can
+/// detect changed blocks without knowing their type.
+#[derive(Clone)]
+pub struct ParsedSection {
+    inner: Arc<dyn ErasedBlock>,
+}
+
+trait ErasedBlock: Any + Send + Sync + std::fmt::Debug {
+    fn as_any(&self) -> &dyn Any;
+    fn eq_dyn(&self, other: &dyn Any) -> bool;
+}
+
+impl<S> ErasedBlock for S
+where
+    S: Any + Send + Sync + std::fmt::Debug + PartialEq,
+{
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn eq_dyn(&self, other: &dyn Any) -> bool {
+        other.downcast_ref::<S>().is_some_and(|o| self == o)
+    }
+}
+
+impl ParsedSection {
+    /// Wrap a parsed value.
+    pub fn new<S>(section: S) -> Self
+    where
+        S: Any + Send + Sync + std::fmt::Debug + PartialEq,
+    {
+        Self {
+            inner: Arc::new(section),
+        }
+    }
+
+    /// Borrow the value as its concrete type.
+    pub fn downcast_ref<S: Any>(&self) -> Option<&S> {
+        self.inner.as_any().downcast_ref::<S>()
+    }
+}
+
+impl PartialEq for ParsedSection {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner.eq_dyn(other.inner.as_any())
+    }
+}
+
+impl std::fmt::Debug for ParsedSection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.inner.fmt(f)
+    }
+}
+
+/// Description of a driver specific configuration block selected by a
+/// discriminator, e.g. `[assignment.backends.<name>] driver = openfga`.
+pub struct BlockDescriptor {
+    /// Namespace of the blocks, owned by the schema (e.g.
+    /// `assignment.backends`).
+    pub namespace: &'static str,
+    /// Value of the discriminator (e.g. `openfga`).
+    pub driver: &'static str,
+    parse: fn(config::Value) -> Result<ParsedSection, Report>,
+}
+
+impl BlockDescriptor {
+    /// Describe a block parsed into `S`.
+    pub const fn new<S>(namespace: &'static str, driver: &'static str) -> Self
+    where
+        S: DeserializeOwned + Any + Send + Sync + std::fmt::Debug + PartialEq,
+    {
+        Self {
+            namespace,
+            driver,
+            parse: parse_block_as::<S>,
+        }
+    }
+}
+
+fn parse_block_as<S>(value: config::Value) -> Result<ParsedSection, Report>
+where
+    S: DeserializeOwned + Any + Send + Sync + std::fmt::Debug + PartialEq,
+{
+    Ok(ParsedSection::new(value.try_deserialize::<S>()?))
+}
+
+inventory::collect!(BlockDescriptor);
+
+/// Register the type a `driver` block of `namespace` is parsed into.
+#[macro_export]
+macro_rules! register_block {
+    ($namespace:expr, $driver:expr, $section:ty) => {
+        $crate::inventory::submit! { $crate::BlockDescriptor::new::<$section>($namespace, $driver) }
+    };
+}
+
+/// Parse the block `value` of `namespace` with the type registered for
+/// `driver`.
+///
+/// # Errors
+/// Fails when no type is registered for `driver` (the driver crate is not
+/// linked) or when the block does not fit the registered type.
+pub fn parse_block(
+    namespace: &str,
+    driver: &str,
+    value: config::Value,
+) -> Result<ParsedSection, Report> {
+    let descriptor = inventory::iter::<BlockDescriptor>
+        .into_iter()
+        .find(|d| d.namespace == namespace && d.driver == driver)
+        .ok_or_else(|| eyre!("unknown driver `{driver}` for [{namespace}.*] (is it linked?)"))?;
+    (descriptor.parse)(value)
+        .wrap_err_with(|| format!("parsing a `{driver}` block of [{namespace}.*]"))
 }

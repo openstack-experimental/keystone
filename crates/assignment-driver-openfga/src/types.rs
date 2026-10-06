@@ -30,7 +30,7 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use openstack_keystone_config::{OpenFGAAssignmentDriver, OpenFGAIdTransform};
+use crate::config::{OpenFGAAssignmentDriver, OpenFGAIdTransform};
 use openstack_keystone_core::assignment::AssignmentProviderError;
 use openstack_keystone_core_types::assignment::*;
 
@@ -411,7 +411,7 @@ impl From<OpenFGADriverError> for AssignmentProviderError {
 
 #[cfg(test)]
 mod tests {
-    use openstack_keystone_config::OpenFGAAssignmentDriver;
+    use crate::config::OpenFGAAssignmentDriver;
     use url::Url;
 
     use super::*;

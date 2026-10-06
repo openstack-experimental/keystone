@@ -22,7 +22,9 @@ cadf = { workspace = true, features = ["testing"] }
 openstack-keystone-config.workspace = true
 openstack-keystone-api-types = { workspace = true, features = ["builder", "conv"] }
 openstack-keystone-core = { workspace = true, features = ["mock"] }
+openstack-keystone-assignment-driver-openfga.workspace = true
 openstack-keystone-core-types = { workspace = true, features = ["mock"] }
+oslo-config.workspace = true
 openstack-keystone-credential-driver-sql = { version = "0.1", path = "../../crates/credential-driver-sql/", features = ["test-support"] }
 openstack-keystone-identity-driver-sql = { version = "0.1", path = "../../crates/identity-driver-sql/" }
 openstack-keystone-key-repository.workspace = true

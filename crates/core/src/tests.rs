@@ -33,9 +33,22 @@ pub async fn get_mocked_state(
     config: Option<Config>,
     provider_builder: Option<ProviderBuilder>,
 ) -> ServiceState {
+    get_mocked_state_loaded(
+        openstack_keystone_config::LoadedConfig::new(config.unwrap_or_default()),
+        provider_builder,
+    )
+    .await
+}
+
+/// Like [`get_mocked_state`], but from a full configuration snapshot that
+/// also carries registered (driver) sections.
+pub async fn get_mocked_state_loaded(
+    config: openstack_keystone_config::LoadedConfig,
+    provider_builder: Option<ProviderBuilder>,
+) -> ServiceState {
     Arc::new(
         Service::new(
-            ConfigManager::not_watched(config.unwrap_or_default()),
+            ConfigManager::not_watched_loaded(config),
             DatabaseConnection::default(),
             provider_builder
                 .unwrap_or(Provider::mocked_builder())

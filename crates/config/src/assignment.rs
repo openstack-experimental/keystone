@@ -13,8 +13,8 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::collections::{HashMap, HashSet};
 
-use serde::Deserialize;
-use url::Url;
+use oslo_config::ParsedSection;
+use serde::{Deserialize, Deserializer};
 
 use crate::common::default_sql_driver;
 use crate::pagination::ListLimitConfig;
@@ -84,162 +84,59 @@ impl AssignmentProvider {
 /// driver's full configuration. Kept in server config, never in the API
 /// (ADR 0034 §3): an API-writable driver configuration is a role-minting
 /// escalation.
-#[derive(Debug, Deserialize, Clone, PartialEq)]
-#[serde(tag = "driver", rename_all = "lowercase")]
+///
+/// The driver specific options are parsed by the type the driver crate
+/// registered for its name (`oslo_config::register_block!`), so the schema
+/// does not know the driver option sets.
+#[derive(Debug, Clone, PartialEq)]
 pub enum AssignmentBackendConfig {
     /// A `sql` backend. Carries no parameters beyond the global `[database]`;
     /// rarely needed as an explicit block (an SQL-backed domain with no
     /// mapping already shares the global instance).
     Sql,
-    /// An `openfga` backend with its own store id, model id, API URL and
-    /// bearer token. The full `[openfga]` option set is flattened at the same
-    /// level as `driver = openfga`. Boxed to keep the enum small (the `Sql`
-    /// variant is a unit).
-    Openfga(Box<OpenFGAAssignmentDriver>),
+    /// A block of another driver (e.g. `openfga`) with its own full option
+    /// set, parsed with the driver's own section type.
+    Named {
+        /// The wire name of the driver.
+        driver: String,
+        /// The parsed driver configuration; downcast with
+        /// [`ParsedSection::downcast_ref`].
+        config: ParsedSection,
+    },
 }
 
 impl AssignmentBackendConfig {
     /// The wire name of the block's driver (`"sql"` / `"openfga"`).
-    pub fn driver_name(&self) -> &'static str {
+    pub fn driver_name(&self) -> &str {
         match self {
             Self::Sql => "sql",
-            Self::Openfga(_) => "openfga",
+            Self::Named { driver, .. } => driver,
         }
     }
 }
 
-fn default_user_actor_types() -> Vec<String> {
-    vec!["user".to_string()]
-}
-fn default_group_actor_types() -> Vec<String> {
-    vec!["group".to_string()]
-}
-fn default_project_target_types() -> Vec<String> {
-    vec!["project".to_string()]
-}
-fn default_domain_target_types() -> Vec<String> {
-    vec!["domain".to_string()]
-}
-fn default_system_target_types() -> Vec<String> {
-    vec!["system".to_string()]
-}
-fn default_retry_backoff_ms() -> u64 {
-    100
-}
-fn default_max_concurrency() -> usize {
-    10
-}
+/// Namespace under which drivers register their block types.
+pub const ASSIGNMENT_BACKENDS_NAMESPACE: &str = "assignment.backends";
 
-/// Transform applied between Keystone entity ids and OpenFGA object ids.
-///
-/// Applied to every kind (actors and targets alike).
-#[derive(Debug, Deserialize, Clone, Copy, Default, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-pub enum OpenFGAIdTransform {
-    /// The Keystone id is used verbatim as the OpenFGA object id.
-    #[default]
-    None,
-    /// Keystone stores dashless UUIDs; OpenFGA stores them dashed. The
-    /// Keystone -> OpenFGA direction inserts canonical `8-4-4-4-12` dashes
-    /// into 32-hex ids, the reverse strips every `-`. Non-hex ids (`default`,
-    /// `all`, ...) pass through unchanged in both directions.
-    UuidDashes,
-}
-
-/// OpenFGA assignment driver.
-///
-/// Keystone entities are mapped onto OpenFGA objects purely from this
-/// configuration - no per-entity lookup or reverse-mapping store. Each kind
-/// (`user`, `group`, `project`, `domain`, `system`) has a list of OpenFGA
-/// type names; the first is canonical (used for writes) and every entry is
-/// consulted on reads, checks and deletes.
-#[derive(Deserialize, Clone, PartialEq)]
-pub struct OpenFGAAssignmentDriver {
-    /// Base OpenFGA API url. Must end with `/` for the relative
-    /// `stores/{id}/...` paths to resolve without dropping a path prefix.
-    pub api_url: Url,
-
-    /// Bearer token presented to OpenFGA. Omit for an unauthenticated store.
-    #[serde(default)]
-    pub api_key: Option<String>,
-
-    /// Authorization model id. The store's latest model is used when unset.
-    pub model_id: Option<String>,
-
-    /// OpenFGA store id.
-    pub store_id: String,
-
-    /// Per-request timeout in seconds applied to the OpenFGA HTTP client.
-    pub timeout: Option<u16>,
-
-    /// How many times to retry an OpenFGA request that failed with a transient
-    /// error (connection failure, timeout, HTTP 429 or 5xx). `0` (the default)
-    /// disables retries. 4xx responses other than 429 are never retried.
-    #[serde(default)]
-    pub max_retries: u8,
-
-    /// Base delay in milliseconds before the first retry; doubled on each
-    /// subsequent attempt (exponential backoff). Ignored when `max_retries`
-    /// is `0`.
-    #[serde(default = "default_retry_backoff_ms")]
-    pub retry_backoff_ms: u64,
-
-    /// Maximum number of OpenFGA requests issued concurrently when a single
-    /// operation fans out over multiple actor/target representations, target
-    /// kinds or role relations. `1` forces fully sequential calls. Defaults
-    /// to `10`.
-    #[serde(default = "default_max_concurrency")]
-    pub max_concurrency: usize,
-
-    /// Keystone role id -> OpenFGA relation name.
-    pub role_to_relation: Option<HashMap<String, String>>,
-
-    /// OpenFGA type names a Keystone user may be represented by.
-    #[serde(default = "default_user_actor_types")]
-    pub user_actor_types: Vec<String>,
-
-    /// OpenFGA type names a Keystone group may be represented by.
-    #[serde(default = "default_group_actor_types")]
-    pub group_actor_types: Vec<String>,
-
-    /// OpenFGA type names a Keystone project may be represented by.
-    #[serde(default = "default_project_target_types")]
-    pub project_target_types: Vec<String>,
-
-    /// OpenFGA type names a Keystone domain may be represented by.
-    #[serde(default = "default_domain_target_types")]
-    pub domain_target_types: Vec<String>,
-
-    /// OpenFGA type names a Keystone system scope may be represented by.
-    #[serde(default = "default_system_target_types")]
-    pub system_target_types: Vec<String>,
-
-    /// Id format transform applied between Keystone and OpenFGA.
-    #[serde(default)]
-    pub id_transform: OpenFGAIdTransform,
-}
-
-impl std::fmt::Debug for OpenFGAAssignmentDriver {
-    /// Hand-written so `api_key` (a bearer token) never reaches a log line or a
-    /// panic message. Its presence is still shown; its value is not.
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OpenFGAAssignmentDriver")
-            .field("api_url", &self.api_url)
-            .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
-            .field("model_id", &self.model_id)
-            .field("store_id", &self.store_id)
-            .field("timeout", &self.timeout)
-            .field("max_retries", &self.max_retries)
-            .field("retry_backoff_ms", &self.retry_backoff_ms)
-            .field("max_concurrency", &self.max_concurrency)
-            .field("role_to_relation", &self.role_to_relation)
-            .field("user_actor_types", &self.user_actor_types)
-            .field("group_actor_types", &self.group_actor_types)
-            .field("project_target_types", &self.project_target_types)
-            .field("domain_target_types", &self.domain_target_types)
-            .field("system_target_types", &self.system_target_types)
-            .field("id_transform", &self.id_transform)
-            .finish()
+impl<'de> Deserialize<'de> for AssignmentBackendConfig {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = config::Value::deserialize(deserializer)?;
+        let table = value
+            .clone()
+            .into_table()
+            .map_err(serde::de::Error::custom)?;
+        let driver = table
+            .get("driver")
+            .ok_or_else(|| serde::de::Error::missing_field("driver"))?
+            .clone()
+            .into_string()
+            .map_err(serde::de::Error::custom)?;
+        if driver == "sql" {
+            return Ok(Self::Sql);
+        }
+        let config = oslo_config::parse_block(ASSIGNMENT_BACKENDS_NAMESPACE, &driver, value)
+            .map_err(|err| serde::de::Error::custom(format!("{err:#}")))?;
+        Ok(Self::Named { driver, config })
     }
 }
 
@@ -281,48 +178,6 @@ mod tests {
         assert!(a.domain_specific_drivers_enabled);
     }
 
-    /// Blocking check (ADR 0034 §4): the `config` INI parser must merge a leaf
-    /// `[assignment]` section with the nested `[assignment.backends.<name>]`
-    /// and `[assignment.domains]` sections under the same top-level name.
-    #[test]
-    fn leaf_and_nested_sections_merge() {
-        let a = parse(
-            r#"
-[assignment]
-driver = sql
-domain_specific_drivers_enabled = true
-
-[assignment.backends.central_fga]
-driver = openfga
-api_url = https://openfga.internal:8080/
-store_id = 01ABC
-
-[assignment.domains]
-1111 = central_fga
-2222 = central_fga
-"#,
-        );
-        assert_eq!(a.driver, "sql");
-        assert!(a.domain_specific_drivers_enabled);
-
-        let block = a.backend_block("central_fga").expect("block present");
-        match block {
-            AssignmentBackendConfig::Openfga(cfg) => {
-                assert_eq!(cfg.store_id, "01ABC");
-                assert_eq!(cfg.api_url.as_str(), "https://openfga.internal:8080/");
-            }
-            other => panic!("expected openfga block, got {other:?}"),
-        }
-
-        assert_eq!(a.domains.get("1111"), Some(&"central_fga".to_string()));
-        assert_eq!(a.domains.get("2222"), Some(&"central_fga".to_string()));
-
-        assert_eq!(
-            a.bindable_driver_names(),
-            HashSet::from(["sql".to_string(), "openfga".to_string()])
-        );
-    }
-
     #[test]
     fn sql_backend_block_parses() {
         let a = parse("[assignment.backends.local]\ndriver = sql\n");
@@ -333,21 +188,16 @@ store_id = 01ABC
     }
 
     #[test]
-    fn debug_redacts_the_api_key() {
-        let a = parse(
-            r#"
-[assignment.backends.central_fga]
-driver = openfga
-api_url = https://openfga.internal:8080/
-store_id = 01ABC
-api_key = super-secret-token
-"#,
-        );
-        let rendered = format!("{:?}", a.backend_block("central_fga").unwrap());
-        assert!(
-            !rendered.contains("super-secret-token"),
-            "api_key leaked into Debug output: {rendered}"
-        );
-        assert!(rendered.contains("<redacted>"), "{rendered}");
+    fn unknown_driver_block_is_rejected() {
+        let err = Config::builder()
+            .add_source(File::from_str(
+                "[assignment.backends.x]\ndriver = nope\n",
+                FileFormat::Ini,
+            ))
+            .build()
+            .unwrap()
+            .try_deserialize::<Wrapper>()
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("nope"), "{err:#}");
     }
 }

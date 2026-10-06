@@ -29,6 +29,7 @@ ipnet.workspace = true
 openstack-keystone-api-types = { workspace = true, optional = true }
 openstack-keystone-core-types.workspace = true
 openstack-keystone-config.workspace = true
+oslo-config.workspace = true
 openstack-keystone-key-repository.workspace = true
 openstack-keystone-local-emergency-store.workspace = true
 openstack-keystone-metrics.workspace = true

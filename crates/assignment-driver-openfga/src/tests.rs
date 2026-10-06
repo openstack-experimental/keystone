@@ -24,10 +24,11 @@ use serde_json::json;
 use tracing_test::traced_test;
 use url::Url;
 
-use openstack_keystone_config::{
-    Config, LoadedConfig, OpenFGAAssignmentDriver, OpenFGAIdTransform,
-};
-use openstack_keystone_core::tests::get_mocked_state;
+use openstack_keystone_config::{Config, LoadedConfig};
+use openstack_keystone_core::tests::{get_mocked_state, get_mocked_state_loaded};
+use oslo_config::{ParsedSection, SectionBag};
+
+use crate::config::{OpenFGAAssignmentDriver, OpenFGAIdTransform};
 
 use super::*;
 
@@ -54,11 +55,13 @@ fn driver_config(host: &str) -> OpenFGAAssignmentDriver {
 }
 
 async fn state_with(cfg: OpenFGAAssignmentDriver) -> ServiceState {
-    let config = Config {
-        openfga: Some(cfg),
-        ..Default::default()
-    };
-    get_mocked_state(Some(config), None).await
+    let mut sections = SectionBag::default();
+    sections.insert(cfg);
+    get_mocked_state_loaded(
+        LoadedConfig::with_sections(Config::default(), sections),
+        None,
+    )
+    .await
 }
 
 fn driver() -> OpenFGADriver {
@@ -1445,7 +1448,10 @@ async fn build_named_assignment_backend_builds_the_openfga_block() -> Result<()>
     let mut config = Config::default();
     config.assignment.backends.insert(
         "central_fga".to_string(),
-        AssignmentBackendConfig::Openfga(Box::new(block)),
+        AssignmentBackendConfig::Named {
+            driver: "openfga".to_string(),
+            config: ParsedSection::new(block),
+        },
     );
 
     let state = get_mocked_state(Some(Config::default()), None).await;
