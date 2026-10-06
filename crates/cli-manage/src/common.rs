@@ -33,6 +33,7 @@ use tracing_subscriber::{
 };
 
 use openstack_keystone_config::Config;
+use openstack_keystone_distributed_storage::spiffe_wait::SpiffeIdSvidPicker;
 
 /// Base URL used by [`build_admin_client`]'s Unix-socket-backed client.
 pub const ADMIN_BASE_URL: &str = "https://localhost";
@@ -79,6 +80,24 @@ pub async fn connect_db(config: &Config) -> Result<DatabaseConnection> {
         .wrap_err("Database connection failed")
 }
 
+/// Build the SPIFFE `X509Source` presented to the admin interface.
+///
+/// A pod may hold several SVIDs (e.g. the raft storage node identity next to
+/// the admin one). A bare `X509Source` presents whichever the Workload API
+/// returns first, which may not be `admin_svid` and then every request is
+/// rejected with 401. When `admin_svid` is configured the source is pinned to
+/// it; otherwise (dev environments) the default SVID is used.
+pub(crate) async fn admin_x509_source(admin_svid: Option<&str>) -> Result<spiffe::X509Source> {
+    match admin_svid {
+        Some(id) => spiffe::X509SourceBuilder::new()
+            .picker(SpiffeIdSvidPicker::new(id))
+            .build()
+            .await
+            .wrap_err_with(|| format!("no SVID matching admin_svid `{id}` available")),
+        None => Ok(spiffe::X509Source::new().await?),
+    }
+}
+
 /// Build a `reqwest` client that talks to the admin API over the
 /// SPIFFE-mTLS Unix socket configured in `[interface_admin]`.
 ///
@@ -89,8 +108,7 @@ pub async fn build_admin_client(config: &Config) -> Result<Client> {
     })?;
     let ks_admin_socket = admin_if.listener.socket_path.clone();
 
-    // Fetch X.509 SVID dynamically from SPIFFE
-    let source = spiffe::X509Source::new().await?;
+    let source = admin_x509_source(admin_if.admin_svid.as_deref()).await?;
 
     // Build mTLS ClientConfig with SPIFFE SVID
     let client_config = mtls_client(source.clone())

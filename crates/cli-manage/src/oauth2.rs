@@ -73,7 +73,7 @@ async fn get_admin_client(config: &Config) -> Result<Client, Report> {
         eyre!("admin interface not configured; oauth2 commands require [interface_admin]")
     })?;
 
-    let source = spiffe::X509Source::new().await?;
+    let source = crate::common::admin_x509_source(admin_if.admin_svid.as_deref()).await?;
     let client_config = mtls_client(source.clone())
         .authorize(authorizer::any())
         .build()

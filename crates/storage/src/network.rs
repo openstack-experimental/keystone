@@ -26,8 +26,7 @@ use openraft::raft::{StreamAppendError, StreamAppendResult, TransferLeaderReques
 use openraft::{AnyError, OptionalSend, RaftNetworkFactory};
 use openstack_keystone_config::RaftTlsConfiguration;
 use secrecy::ExposeSecret;
-use spiffe::x509_source::SvidPicker;
-use spiffe::{X509Source, X509SourceBuilder, X509Svid};
+use spiffe::{X509Source, X509SourceBuilder};
 use spiffe_rustls::{authorizer, mtls_client};
 use tokio::sync::watch;
 use tonic::Status;
@@ -41,6 +40,7 @@ use crate::protobuf as pb;
 use crate::protobuf::raft::VoteRequest as PbVoteRequest;
 use crate::protobuf::raft::VoteResponse as PbVoteResponse;
 use crate::protobuf::raft::raft_service_client::RaftServiceClient;
+use crate::spiffe_wait::PathSvidPicker;
 use crate::types::*;
 
 /// Strip a URI scheme (`https://`, `http://`, etc.) from `addr`, returning the
@@ -649,28 +649,6 @@ pub fn get_server_tls_config(config: &Config) -> Result<ServerTlsConfig, StoreEr
 // SPIFFE mTLS helpers (Spiffe variant of RaftTlsConfiguration — ADR 0016-v2)
 // ---------------------------------------------------------------------------
 
-/// Selects the SVID whose SPIFFE ID path exactly matches a configured value.
-///
-/// A storage node's process typically matches more than one SPIRE
-/// registration entry (e.g. devstack registers both `/service/keystone` and
-/// `/keystone/storage/node` under the same `unix:uid` selector). Without a
-/// picker, `X509Source` presents whichever SVID the Workload API happened to
-/// return first, so raft peer connections wouldn't reliably use the storage
-/// node's own identity. `pick_svid` returning `None` fails source
-/// initialization instead of silently presenting the wrong identity.
-#[derive(Debug)]
-struct PathSvidPicker {
-    path: String,
-}
-
-impl SvidPicker for PathSvidPicker {
-    fn pick_svid(&self, svids: &[Arc<X509Svid>]) -> Option<usize> {
-        svids
-            .iter()
-            .position(|svid| svid.spiffe_id().path() == self.path)
-    }
-}
-
 /// Initialize a SPIFFE-backed [`RaftTlsClient`] for Raft peer connections.
 ///
 /// Connects to the SPIRE Workload API and builds a `rustls::ClientConfig` via
@@ -686,9 +664,7 @@ async fn init_spiffe_raft_tls(
     let source = crate::spiffe_wait::wait_for_spiffe_source(
         "Raft peer mTLS client",
         X509SourceBuilder::new()
-            .picker(PathSvidPicker {
-                path: own_svid_path,
-            })
+            .picker(PathSvidPicker::new(own_svid_path))
             .build(),
     )
     .await
@@ -729,9 +705,7 @@ pub async fn get_spiffe_grpc_channel(
             crate::spiffe_wait::wait_for_spiffe_source(
                 "Raft gRPC client channel",
                 X509SourceBuilder::new()
-                    .picker(PathSvidPicker {
-                        path: path.to_string(),
-                    })
+                    .picker(PathSvidPicker::new(path))
                     .build(),
             )
             .await
