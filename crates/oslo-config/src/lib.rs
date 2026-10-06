@@ -28,9 +28,10 @@
 //!   `[api_policy].opa_base_url`.
 //! - Vault references (`vault://mount/path#key`) are resolved on the raw
 //!   configuration before it is deserialized. They need a `[vault]` section
-//!   (`VaultSection`). This is the `vault` cargo feature, enabled by default;
-//!   without it the Vault client dependencies are not built and references
-//!   are left untouched.
+//!   (`VaultSection`), which the engine reads itself: the core schema neither
+//!   declares nor reserves it. This is the `vault` cargo feature, enabled by
+//!   default; without it the Vault client dependencies are not built and a
+//!   configuration that contains a reference fails to load.
 //! - [`ConfigManager`] watches the files and reloads the configuration on
 //!   change, keeping the last-known-good configuration when a reload fails.
 //!
@@ -189,6 +190,8 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
+#[cfg(all(test, feature = "vault"))]
+mod manager_tests;
 mod primitives;
 mod section;
 /// Resolution of `vault://` references and the live Vault state.

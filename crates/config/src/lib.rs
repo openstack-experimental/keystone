@@ -124,7 +124,6 @@ pub use listener::*;
 pub use local_emergency::*;
 pub use mapping::*;
 pub use oauth2::*;
-pub use oslo_config::VaultSection;
 pub use oslo_middleware::*;
 pub use pagination::*;
 pub use policy::*;
@@ -335,10 +334,6 @@ pub struct Config {
     #[serde(default)]
     pub trust: TrustProvider,
 
-    /// Direct Vault bootstrap configuration.
-    #[serde(default)]
-    pub vault: Option<VaultSection>,
-
     /// Vendor data JWT provider configuration (SPIRE integration plan,
     /// Phase 2).
     #[serde(default)]
@@ -350,7 +345,10 @@ pub struct Config {
 }
 
 impl Config {
-    /// Load and parse the config file, resolving any Vault references.
+    /// Load and parse the config file.
+    ///
+    /// The engine resolves `vault://` references from the `[vault]` section,
+    /// which it reads itself; see [`oslo_config`].
     ///
     /// # Parameters
     /// - `path`: Path to the config file
@@ -361,8 +359,9 @@ impl Config {
         oslo_config::load::<Self>(path).await
     }
 
-    /// Load the config file, resolve Vault references and all certificates
-    /// referred, and validate the complete configuration.
+    /// Load the config file, resolve `vault://` references (engine feature,
+    /// see [`oslo_config`]) and all certificates referred, and validate the
+    /// complete configuration.
     ///
     /// # Parameters
     /// - `path`: Path to the config file
@@ -435,7 +434,7 @@ impl TryFrom<config::ConfigBuilder<config::builder::DefaultState>> for Config {
     ///
     /// This is the synchronous construction path used by downstream crates
     /// (and their tests) that assemble configuration in memory rather than
-    /// loading it from a file. It does not resolve Vault references, load
+    /// loading it from a file. It does not resolve `vault://` references, load
     /// referred certificates, or run validation; use [`Config::load_all`] for
     /// the full loading pipeline.
     fn try_from(
@@ -513,7 +512,6 @@ impl oslo_config::CoreSchema for Config {
             "token",
             "token_restriction",
             "trust",
-            "vault",
             "vendordata",
             "webauthn",
         ]
@@ -533,9 +531,7 @@ mod tests {
     use std::fs;
     use std::io::Write;
 
-    use httpmock::MockServer;
     use secrecy::ExposeSecret;
-    use serde_json::json;
     use serial_test::{parallel, serial};
     use tempfile::{NamedTempFile, tempdir};
     use tokio::time::{Duration, sleep, timeout};
@@ -590,9 +586,6 @@ mod tests {
         );
     }
     use config::{File, FileFormat};
-    use oslo_config::vault::tests::{
-        mock_lookup, mock_metadata, mock_renew, mock_revoke, mock_secret,
-    };
 
     // `Config::new` is async, but these tests drive it from the synchronous
     // `temp_env::with_var` closure API, so run it to completion on a local
@@ -736,279 +729,6 @@ mod tests {
         //if let
 
         config_path
-    }
-
-    fn write_vault_config(
-        file: &mut NamedTempFile,
-        server: &MockServer,
-        refresh_interval_seconds: u64,
-    ) {
-        write!(
-            file,
-            r#"
-    [vault]
-    address = {}
-    token = test-token
-    refresh_interval_seconds = {}
-
-    [auth]
-    methods = []
-
-    [database]
-    connection = "vault://secret/keystone/database#password"
-            "#,
-            server.base_url(),
-            refresh_interval_seconds
-        )
-        .unwrap();
-        file.flush().unwrap();
-    }
-
-    #[tokio::test]
-    #[parallel]
-    async fn test_async_loader_resolves_vault_reference() {
-        let server = MockServer::start();
-        let lookup = mock_lookup(&server, false, 60);
-        let metadata = mock_metadata(&server, 4);
-        let secret = mock_secret(
-            &server,
-            4,
-            json!({
-                "password": "environment-value"
-            }),
-        );
-        let mut config_file = NamedTempFile::with_suffix(".conf").unwrap();
-        write!(
-            config_file,
-            r#"
-    [vault]
-    address = {}
-    token = test-token
-
-    [auth]
-    methods = []
-
-    [database]
-    connection = "vault://secret/keystone/database#password"
-            "#,
-            server.base_url()
-        )
-        .unwrap();
-
-        let config = Config::load_all(config_file.path().to_path_buf())
-            .await
-            .unwrap();
-
-        assert_eq!(
-            config.database.connection.expose_secret(),
-            "environment-value"
-        );
-        let vault = config.vault.unwrap();
-        assert_eq!(vault.token.expose_secret(), "test-token");
-        assert_eq!(vault.refresh_interval_seconds, 60);
-        lookup.assert_calls(1);
-        metadata.assert_calls(1);
-        secret.assert_calls(1);
-    }
-
-    #[tokio::test]
-    #[parallel]
-    async fn test_resolved_configuration_error_is_redacted() {
-        let server = MockServer::start();
-        let _lookup = mock_lookup(&server, false, 60);
-        let _metadata = mock_metadata(&server, 1);
-        let _secret = mock_secret(&server, 1, json!({"password": "SUPERSECRET"}));
-        let mut config_file = NamedTempFile::with_suffix(".conf").unwrap();
-        write!(
-            config_file,
-            r#"
-    [vault]
-    address = {}
-    token = test-token
-
-    [DEFAULT]
-    debug = "vault://secret/keystone/database#password"
-
-    [auth]
-    methods = []
-
-    [database]
-    connection = ordinary
-            "#,
-            server.base_url()
-        )
-        .unwrap();
-
-        let error = Config::load_all(config_file.path().to_path_buf())
-            .await
-            .unwrap_err()
-            .to_string();
-        assert_eq!(
-            error,
-            "configuration is invalid after resolving Vault references"
-        );
-        assert!(!error.contains("SUPERSECRET"));
-        assert!(!error.contains("test-token"));
-    }
-
-    #[tokio::test]
-    #[parallel]
-    async fn test_async_loader_fails_closed_without_vault_configuration() {
-        let mut config_file = NamedTempFile::with_suffix(".conf").unwrap();
-        write!(
-            config_file,
-            r#"
-    [auth]
-    methods = []
-    [database]
-    connection = "vault://secret/keystone/database#password"
-            "#
-        )
-        .unwrap();
-
-        let error = Config::load_all(config_file.path().to_path_buf())
-            .await
-            .unwrap_err()
-            .to_string();
-        assert_eq!(
-            error,
-            "Vault references require a [vault] configuration section"
-        );
-    }
-
-    #[tokio::test]
-    #[parallel]
-    async fn test_vault_token_revoked_on_shutdown() {
-        let server = MockServer::start();
-        let _lookup = mock_lookup(&server, false, 60);
-        let _metadata = mock_metadata(&server, 1);
-        let _secret = mock_secret(&server, 1, json!({"password": "version-one"}));
-        let revoke = mock_revoke(&server);
-        let mut config_file = NamedTempFile::with_suffix(".conf").unwrap();
-        write_vault_config(&mut config_file, &server, 60);
-
-        let manager = ConfigManager::watched(config_file.path()).await.unwrap();
-        manager.shutdown().await;
-
-        assert_eq!(revoke.calls(), 1);
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn test_shutdown_without_vault_is_noop() {
-        let mut config_file = NamedTempFile::with_suffix(".conf").unwrap();
-        writeln!(
-            config_file,
-            "[auth]\nmethods = []\n[database]\nconnection = sqlite://\n"
-        )
-        .unwrap();
-
-        let manager = ConfigManager::watched(config_file.path()).await.unwrap();
-        // #[serial] prevents other config tests' notify watchers from firing
-        // spurious parent-directory events that queue into sync_rx, triggering
-        // repeated 500ms debounce sleeps. The biased select! prioritizes
-        // sync_rx.recv() over shutdown.cancelled(), so a flood of events can
-        // delay the shutdown break indefinitely.
-        timeout(Duration::from_secs(10), manager.shutdown())
-            .await
-            .expect("shutdown should not hang for a non-Vault configuration");
-    }
-
-    #[tokio::test]
-    #[parallel]
-    async fn test_vault_version_reload_and_last_known_good_retention() {
-        let server = MockServer::start();
-        let _lookup = mock_lookup(&server, false, 60);
-        let mut metadata = mock_metadata(&server, 1);
-        let mut secret = mock_secret(&server, 1, json!({"password": "version-one"}));
-        let mut config_file = NamedTempFile::with_suffix(".conf").unwrap();
-        write_vault_config(&mut config_file, &server, 1);
-
-        let manager = ConfigManager::watched(config_file.path()).await.unwrap();
-        let mut reloads = manager.notify_tx.subscribe();
-        metadata.delete();
-        secret.delete();
-        let mut metadata = mock_metadata(&server, 2);
-        let mut secret = mock_secret(&server, 2, json!({"password": "version-two"}));
-
-        timeout(Duration::from_secs(4), reloads.recv())
-            .await
-            .expect("Vault version change should trigger a reload")
-            .unwrap();
-        assert_eq!(
-            manager
-                .config
-                .read()
-                .await
-                .database
-                .connection
-                .expose_secret(),
-            "version-two"
-        );
-
-        metadata.delete();
-        secret.delete();
-        let _metadata = mock_metadata(&server, 3);
-        let invalid_secret = mock_secret(&server, 3, json!({"password": 12345}));
-        timeout(Duration::from_secs(4), async {
-            while invalid_secret.calls() == 0 {
-                sleep(Duration::from_millis(50)).await;
-            }
-        })
-        .await
-        .expect("invalid Vault version should be attempted");
-        sleep(Duration::from_millis(100)).await;
-
-        assert!(reloads.try_recv().is_err());
-        assert_eq!(
-            manager
-                .config
-                .read()
-                .await
-                .database
-                .connection
-                .expose_secret(),
-            "version-two"
-        );
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn test_renewable_vault_token_is_renewed_halfway_through_ttl() {
-        let server = MockServer::start();
-        let _lookup = mock_lookup(&server, true, 2);
-        let _metadata = mock_metadata(&server, 1);
-        let _secret = mock_secret(&server, 1, json!({"password": "value"}));
-        let renewal = mock_renew(&server, 2);
-        let mut config_file = NamedTempFile::with_suffix(".conf").unwrap();
-        write_vault_config(&mut config_file, &server, 60);
-
-        let _manager = ConfigManager::watched(config_file.path()).await.unwrap();
-        // The renewal deadline (half_ttl of the 2s lookup TTL = 1s) is set as
-        // an absolute Instant during vault::resolve(), before the
-        // spawned watch-loop task has entered its select!. We need the
-        // task to:
-        // 1. Start and reach its select! loop
-        // 2. Have sleep_until() fire when the 1s deadline passes
-        // 3. Get picked by select! (biased — sync_rx.recv() wins if a notify
-        //    event is queued from spawn-time filesystem activity)
-        //
-        // yield_now() is insufficient on loaded CI runners because it only
-        // gives one scheduling opportunity. A short sleep gives the
-        // executor repeated chances to run the spawned task.
-        // #[serial] prevents other config tests' notify watchers from firing
-        // spurious directory events that fill sync_rx and starve vault_tick via
-        // select! bias.
-        sleep(Duration::from_millis(100)).await;
-
-        timeout(Duration::from_secs(10), async {
-            while renewal.calls() == 0 {
-                sleep(Duration::from_millis(50)).await;
-            }
-        })
-        .await
-        .expect("renewable token should be renewed");
-        assert!(renewal.calls() >= 1);
     }
 
     #[tokio::test]

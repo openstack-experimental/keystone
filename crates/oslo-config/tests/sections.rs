@@ -207,6 +207,16 @@ fn unclaimed_sections_are_reported() {
     );
 }
 
+/// `[vault]` belongs to the engine: the core schema does not have to declare
+/// it and it is not reported as unclaimed.
+#[test]
+#[serial]
+fn vault_section_is_claimed_by_the_engine() {
+    let f = conf("[vault]\naddress = \"http://localhost\"\n");
+    let raw = build_raw::<Core>(f.path().to_path_buf()).unwrap();
+    assert!(unclaimed_sections(&raw, Core::reserved_sections()).is_empty());
+}
+
 #[cfg(not(feature = "vault"))]
 #[tokio::test]
 #[serial]

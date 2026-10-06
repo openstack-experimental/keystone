@@ -206,13 +206,21 @@ impl SectionBag {
     }
 }
 
+/// Sections owned by the engine itself, read from the raw configuration
+/// without a core schema field: `[vault]` (the `vault` feature). Neither the
+/// core schema nor a registered section may claim them, and they are never
+/// reported as unclaimed.
+const ENGINE_RESERVED: &[&str] = &["vault"];
+
 /// Fail on duplicate section names across registrations and on names that
-/// collide with `reserved` (the sections of the core schema).
+/// collide with `reserved` (the sections of the core schema) or with the
+/// sections owned by the engine.
 pub fn check_registry(reserved: &[&str]) -> Result<(), Report> {
     let mut seen: HashMap<&'static str, TypeId> = HashMap::new();
     for descriptor in inventory::iter::<SectionDescriptor> {
         if reserved
             .iter()
+            .chain(ENGINE_RESERVED)
             .any(|name| name.eq_ignore_ascii_case(descriptor.name))
         {
             return Err(eyre!(
@@ -241,6 +249,7 @@ pub fn unclaimed_sections(raw: &config::Config, reserved: &[&str]) -> Vec<String
     let claimed: HashSet<String> = reserved
         .iter()
         .copied()
+        .chain(ENGINE_RESERVED.iter().copied())
         .chain(
             inventory::iter::<SectionDescriptor>
                 .into_iter()

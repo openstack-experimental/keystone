@@ -403,14 +403,12 @@ pub(crate) async fn resolve(
     })
 }
 
-#[cfg(any(test, feature = "test-util"))]
-pub mod tests {
-    #[cfg(test)]
+#[cfg(test)]
+pub(crate) mod tests {
     use config::{File, FileFormat};
     use httpmock::{Method::GET, Method::POST, Mock, MockServer};
     use serde_json::json;
 
-    #[cfg(test)]
     use super::*;
 
     pub fn mock_lookup(server: &MockServer, renewable: bool, ttl: u64) -> Mock<'_> {

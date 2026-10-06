@@ -5257,13 +5257,10 @@ dependencies = [
  "cadf",
  "chrono",
  "config",
- "derive_builder",
  "eyre",
  "http",
- "httpmock",
  "ipnet",
  "log",
- "notify",
  "oslo-config",
  "regex",
  "secrecy",
@@ -5274,12 +5271,10 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
- "tokio-util",
  "tracing",
  "url",
  "url-macro",
  "validator",
- "vaultrs",
 ]
 
 [[package]]

@@ -14,15 +14,12 @@ exclude.workspace = true
 default = ["vault"]
 # Resolution of `vault://` references and the `[vault]` section.
 vault = ["dep:serde_json", "dep:thiserror", "dep:url", "dep:vaultrs"]
-# Expose the Vault mock helpers to the tests of dependent crates.
-test-util = ["vault", "dep:httpmock"]
 
 [dependencies]
 chrono = { workspace = true, features = ["now", "serde"] }
 config = { workspace = true, features = ["async", "ini", "toml"] }
 derive_builder.workspace = true
 eyre.workspace = true
-httpmock = { workspace = true, optional = true }
 inventory.workspace = true
 ipnet = { workspace = true }
 notify = "8.2"
