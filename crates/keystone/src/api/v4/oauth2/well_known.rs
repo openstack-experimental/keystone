@@ -28,11 +28,117 @@ use axum::{
     http::HeaderMap,
     response::IntoResponse,
 };
-use serde_json::json;
+use serde::Serialize;
+use utoipa::ToSchema;
 
 use crate::api::common::PeerAddr;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+
+/// Grant type URN for the OAuth 2.0 device authorization grant (RFC 8628 §3.4).
+const GRANT_TYPE_DEVICE_CODE: &str = "urn:ietf:params:oauth:grant-type:device_code";
+/// Grant type URN for OAuth 2.0 token exchange (RFC 8693).
+const GRANT_TYPE_TOKEN_EXCHANGE: &str = "urn:ietf:params:oauth:grant-type:token-exchange";
+
+fn strings(values: &[&str]) -> Vec<String> {
+    values.iter().map(|v| (*v).to_owned()).collect()
+}
+
+/// OIDC Discovery 1.0 / RFC 8414 / RFC 8628 provider metadata.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct OpenIdConfiguration {
+    /// Authorization endpoint URL.
+    pub authorization_endpoint: String,
+    /// Supported claim types.
+    pub claim_types_supported: Vec<String>,
+    /// Claims that may be present in issued tokens.
+    pub claims_supported: Vec<String>,
+    /// Supported PKCE code challenge methods (RFC 7636).
+    pub code_challenge_methods_supported: Vec<String>,
+    /// Device authorization endpoint URL (RFC 8628 §4).
+    pub device_authorization_endpoint: String,
+    /// Supported grant type identifiers.
+    pub grant_types_supported: Vec<String>,
+    /// JWS algorithms used to sign ID tokens.
+    pub id_token_signing_alg_values_supported: Vec<String>,
+    /// Issuer identifier of the domain.
+    pub issuer: String,
+    /// JWKS document URL.
+    pub jwks_uri: String,
+    /// Whether the `request` parameter is supported.
+    pub request_parameter_supported: bool,
+    /// Whether the `request_uri` parameter is supported.
+    pub request_uri_parameter_supported: bool,
+    /// Supported `response_mode` values.
+    pub response_modes_supported: Vec<String>,
+    /// Supported `response_type` values.
+    pub response_types_supported: Vec<String>,
+    /// Token revocation endpoint URL (RFC 7009).
+    pub revocation_endpoint: String,
+    /// Client authentication methods accepted by the revocation endpoint.
+    pub revocation_endpoint_auth_methods_supported: Vec<String>,
+    /// Supported scope values.
+    pub scopes_supported: Vec<String>,
+    /// Supported subject identifier types.
+    pub subject_types_supported: Vec<String>,
+    /// Token endpoint URL.
+    pub token_endpoint: String,
+    /// Client authentication methods accepted by the token endpoint.
+    pub token_endpoint_auth_methods_supported: Vec<String>,
+}
+
+impl Default for OpenIdConfiguration {
+    fn default() -> Self {
+        Self {
+            authorization_endpoint: String::new(),
+            claim_types_supported: strings(&["normal"]),
+            claims_supported: strings(&[
+                "amr",
+                "at_hash",
+                "aud",
+                "auth_time",
+                "email",
+                "email_verified",
+                "exp",
+                "iat",
+                "iss",
+                "jti",
+                "name",
+                "nonce",
+                "preferred_username",
+                "scope",
+                "sub",
+                "token_use",
+            ]),
+            code_challenge_methods_supported: strings(&["S256"]),
+            device_authorization_endpoint: String::new(),
+            grant_types_supported: strings(&[
+                "authorization_code",
+                "client_credentials",
+                "refresh_token",
+                GRANT_TYPE_DEVICE_CODE,
+                GRANT_TYPE_TOKEN_EXCHANGE,
+            ]),
+            id_token_signing_alg_values_supported: Vec::new(),
+            issuer: String::new(),
+            jwks_uri: String::new(),
+            request_parameter_supported: false,
+            request_uri_parameter_supported: false,
+            response_modes_supported: strings(&["query"]),
+            response_types_supported: strings(&["code"]),
+            revocation_endpoint: String::new(),
+            revocation_endpoint_auth_methods_supported: strings(&["client_secret_basic"]),
+            scopes_supported: strings(&["email", "openid", "openstack:api", "profile"]),
+            subject_types_supported: strings(&["public"]),
+            token_endpoint: String::new(),
+            token_endpoint_auth_methods_supported: strings(&[
+                "client_secret_basic",
+                "client_secret_post",
+                "none",
+            ]),
+        }
+    }
+}
 
 pub(super) async fn base_url(state: &ServiceState, headers: &HeaderMap) -> String {
     // Mirrors the fallback chain used by `api::common::public_base_url`:
@@ -56,7 +162,7 @@ pub(super) async fn base_url(state: &ServiceState, headers: &HeaderMap) -> Strin
         ("domain_id" = String, Path, description = "Domain ID"),
     ),
     responses(
-        (status = OK, description = "OIDC discovery document"),
+        (status = OK, description = "OIDC discovery document", body = OpenIdConfiguration),
         (status = NOT_FOUND, description = "No signing keys provisioned for this domain"),
         (status = TOO_MANY_REQUESTS, description = "Rate limit exceeded"),
     ),
@@ -102,26 +208,16 @@ pub(super) async fn well_known(
         .signing_algorithm
         .to_string();
 
-    let doc = json!({
-        "issuer": issuer,
-        "authorization_endpoint": format!("{issuer}/authorize"),
-        "token_endpoint": format!("{issuer}/token"),
-        "jwks_uri": format!("{issuer}/jwks"),
-        "revocation_endpoint": format!("{issuer}/revoke"),
-        "revocation_endpoint_auth_methods_supported": ["client_secret_basic"],
-        "response_types_supported": ["code"],
-        "subject_types_supported": ["public"],
-        "id_token_signing_alg_values_supported": [signing_algorithm],
-        "grant_types_supported": [
-            "authorization_code",
-            "client_credentials",
-            "refresh_token",
-            "device_code",
-        ],
-        "scopes_supported": ["openid", "profile", "email", "openstack:api"],
-        "token_endpoint_auth_methods_supported": ["client_secret_basic"],
-        "claims_supported": ["sub", "iss", "aud", "exp", "iat", "auth_time", "amr"],
-    });
+    let doc = OpenIdConfiguration {
+        authorization_endpoint: format!("{issuer}/authorize"),
+        device_authorization_endpoint: format!("{issuer}/device_authorization"),
+        id_token_signing_alg_values_supported: vec![signing_algorithm],
+        issuer: issuer.clone(),
+        jwks_uri: format!("{issuer}/jwks"),
+        revocation_endpoint: format!("{issuer}/revoke"),
+        token_endpoint: format!("{issuer}/token"),
+        ..OpenIdConfiguration::default()
+    };
 
     Ok(Json(doc))
 }
@@ -206,7 +302,41 @@ mod tests {
                 "missing required field {field}"
             );
         }
-        assert_eq!(doc["issuer"], "http://localhost/v4/oauth2/domain-1");
+        let issuer = "http://localhost/v4/oauth2/domain-1";
+        assert_eq!(doc["issuer"], issuer);
+        assert_eq!(
+            doc["device_authorization_endpoint"],
+            format!("{issuer}/device_authorization")
+        );
+        assert_eq!(
+            doc["grant_types_supported"],
+            serde_json::json!([
+                "authorization_code",
+                "client_credentials",
+                "refresh_token",
+                "urn:ietf:params:oauth:grant-type:device_code",
+                "urn:ietf:params:oauth:grant-type:token-exchange",
+            ])
+        );
+        assert_eq!(
+            doc["code_challenge_methods_supported"],
+            serde_json::json!(["S256"])
+        );
+        assert_eq!(
+            doc["token_endpoint_auth_methods_supported"],
+            serde_json::json!(["client_secret_basic", "client_secret_post", "none"])
+        );
+        assert_eq!(
+            doc["response_modes_supported"],
+            serde_json::json!(["query"])
+        );
+        assert_eq!(doc["claim_types_supported"], serde_json::json!(["normal"]));
+        assert_eq!(doc["request_parameter_supported"], false);
+        assert_eq!(doc["request_uri_parameter_supported"], false);
+        let claims = doc["claims_supported"].as_array().unwrap();
+        for claim in ["nonce", "at_hash", "jti", "scope", "token_use", "email"] {
+            assert!(claims.iter().any(|c| c == claim), "missing claim {claim}");
+        }
     }
 
     #[tokio::test]

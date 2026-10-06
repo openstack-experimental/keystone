@@ -79,7 +79,30 @@ async fn test_discovery_document_lists_adr0026_endpoints_and_grants() -> Result<
     assert!(grant_types.contains(&"client_credentials"));
     assert!(grant_types.contains(&"authorization_code"));
     assert!(grant_types.contains(&"refresh_token"));
-    assert!(grant_types.contains(&"device_code"));
+    assert_eq!(
+        grant_types,
+        [
+            "authorization_code",
+            "client_credentials",
+            "refresh_token",
+            "urn:ietf:params:oauth:grant-type:device_code",
+            "urn:ietf:params:oauth:grant-type:token-exchange",
+        ]
+    );
+    assert!(
+        doc["device_authorization_endpoint"]
+            .as_str()
+            .unwrap()
+            .ends_with(&format!("/v4/oauth2/{domain_id}/device_authorization"))
+    );
+    assert_eq!(
+        doc["code_challenge_methods_supported"],
+        serde_json::json!(["S256"])
+    );
+    assert_eq!(
+        doc["token_endpoint_auth_methods_supported"],
+        serde_json::json!(["client_secret_basic", "client_secret_post", "none"])
+    );
 
     Ok(())
 }
@@ -89,5 +112,36 @@ async fn test_discovery_document_lists_adr0026_endpoints_and_grants() -> Result<
 async fn test_discovery_document_not_found_for_unprovisioned_domain() -> Result<()> {
     let (status, _doc) = get_well_known("no-such-domain").await?;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_discovery_openidconnect_interop() -> Result<()> {
+    use openidconnect::IssuerUrl;
+    use openidconnect::core::CoreProviderMetadata;
+
+    let domain_name = format!("discovery-interop-{}", Uuid::new_v4().simple());
+    let domain_id = create_test_domain(&domain_name).await?;
+
+    let mut status = StatusCode::NOT_FOUND;
+    for _ in 0..30 {
+        (status, _) = get_well_known(&domain_id).await?;
+        if status == StatusCode::OK {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    assert_eq!(status, StatusCode::OK);
+
+    // The issuer must match what the server publishes: reuse the one from
+    // the live document so `discover_async` validates it against the URL.
+    let (_, doc) = get_well_known(&domain_id).await?;
+    let issuer = IssuerUrl::new(doc["issuer"].as_str().unwrap().to_owned())?;
+    let http_client = openidconnect::reqwest::ClientBuilder::new()
+        .redirect(openidconnect::reqwest::redirect::Policy::none())
+        .build()?;
+    let metadata = CoreProviderMetadata::discover_async(issuer, &http_client).await?;
+    assert!(metadata.token_endpoint().is_some());
     Ok(())
 }

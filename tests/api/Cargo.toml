@@ -28,6 +28,7 @@ hyper.workspace = true
 hyper-util.workspace = true
 openstack-keystone-api-types = { workspace = true, features = ["builder"] }
 openstack-keystone-distributed-storage = { workspace = true }
+openidconnect = { workspace = true }
 openstack_sdk = { version = "0.22", default-features = false, features = ["async", "identity" ] }
 reqwest = { workspace = true, features = ["json", "http2", "multipart", "gzip", "deflate", "cookies"] }
 rustls.workspace = true
