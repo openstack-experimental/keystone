@@ -316,7 +316,10 @@ fn reencrypt_one_blocks_until_concurrent_apply_guard_is_released() {
         .insert(old_epoch.version, old_epoch.clone());
 
     let hold_for = Duration::from_millis(200);
+    let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
     let sm_bg = sm.clone();
+    let released_bg = released.clone();
     let apply_thread = std::thread::spawn(move || {
         // Simulates `apply()` holding the read side of
         // `keyspace_lifecycle` for an entry's whole processing+commit.
@@ -324,24 +327,28 @@ fn reencrypt_one_blocks_until_concurrent_apply_guard_is_released() {
             .keyspace_lifecycle
             .read()
             .unwrap_or_else(|p| p.into_inner());
+        ready_tx.send(()).expect("signal guard acquired");
         std::thread::sleep(hold_for);
+        // Set strictly before the guard drops: if `reencrypt_one` really
+        // waits on the lock, it can only return after this is visible.
+        released_bg.store(true, std::sync::atomic::Ordering::SeqCst);
     });
 
-    // Give the background thread a head start so it reliably acquires
-    // the read guard first.
-    std::thread::sleep(Duration::from_millis(30));
+    // Deterministically wait until the read guard is held.
+    ready_rx
+        .recv()
+        .expect("apply thread must acquire the guard");
 
     let ks = sm.data().clone();
-    let start = Instant::now();
     let outcome = sm.reencrypt_one(&ks, "data", b"k1", &old_epoch);
-    let elapsed = start.elapsed();
+    let was_released = released.load(std::sync::atomic::Ordering::SeqCst);
 
     apply_thread.join().expect("apply thread must not panic");
 
     assert!(
-        elapsed >= hold_for - Duration::from_millis(30),
+        was_released,
         "reencrypt_one must block until the concurrent apply()'s read guard is \
-         released instead of racing ahead of it, elapsed={elapsed:?}"
+         released instead of racing ahead of it"
     );
     assert!(matches!(outcome, ReencryptOutcome::Migrated));
 

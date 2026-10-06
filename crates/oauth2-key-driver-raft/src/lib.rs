@@ -2135,6 +2135,8 @@ mod tests {
             }
         }
 
+        // `try_update` needs Rust 1.99, above our MSRV.
+        #[allow(deprecated)]
         fn take_conflict(&self) -> bool {
             use std::sync::atomic::Ordering;
             self.conflicts
@@ -2143,6 +2145,8 @@ mod tests {
         }
 
         /// Atomically consume one pending interference, if any remain.
+        // `try_update` needs Rust 1.99, above our MSRV.
+        #[allow(deprecated)]
         fn take_interference(&self) -> Option<usize> {
             use std::sync::atomic::Ordering;
             self.interferences
