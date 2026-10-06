@@ -1548,3 +1548,48 @@ async fn send_does_not_retry_client_error() -> Result<()> {
     assert_eq!(m.calls_async().await, 1);
     Ok(())
 }
+
+/// Backends selected by `cfg` as the registry builds them.
+async fn registered_assignment_backends(
+    view: &openstack_keystone_config::ConfigView<'_>,
+) -> eyre::Result<HashMap<String, Arc<dyn AssignmentBackend>>> {
+    let mut backends = HashMap::new();
+    openstack_keystone_core::plugin_manager::register_backends::<dyn AssignmentBackend>(
+        view,
+        &mut backends,
+    )
+    .await?;
+    Ok(backends)
+}
+
+#[tokio::test]
+async fn global_driver_not_selected_needs_no_section() -> Result<()> {
+    let loaded = LoadedConfig::new(Config::default());
+    let backends = registered_assignment_backends(&loaded.view()).await?;
+    assert!(!backends.contains_key("openfga"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn global_driver_selected_without_section_fails_the_build() {
+    let mut config = Config::default();
+    config.assignment.driver = "openfga".into();
+    let loaded = LoadedConfig::new(config);
+    let err = registered_assignment_backends(&loaded.view())
+        .await
+        .err()
+        .expect("a selected driver without its section must not build");
+    assert!(err.to_string().contains("[openfga]"), "{err}");
+}
+
+#[tokio::test]
+async fn global_driver_selected_with_section_builds() -> Result<()> {
+    let mut config = Config::default();
+    config.assignment.driver = "openfga".into();
+    let mut sections = SectionBag::default();
+    sections.insert(driver_config("http://fga:8080/"));
+    let loaded = LoadedConfig::with_sections(config, sections);
+    let backends = registered_assignment_backends(&loaded.view()).await?;
+    assert!(backends.contains_key("openfga"));
+    Ok(())
+}

@@ -554,6 +554,54 @@ mod tests {
     use tokio::time::{Duration, sleep, timeout};
 
     use super::*;
+
+    /// Deserializer that only records the field names a struct asks for.
+    struct FieldProbe(std::cell::RefCell<Vec<&'static str>>);
+
+    impl<'de> serde::Deserializer<'de> for &FieldProbe {
+        type Error = serde::de::value::Error;
+
+        fn deserialize_struct<V: serde::de::Visitor<'de>>(
+            self,
+            _name: &'static str,
+            fields: &'static [&'static str],
+            _visitor: V,
+        ) -> Result<V::Value, Self::Error> {
+            self.0.borrow_mut().extend_from_slice(fields);
+            Err(serde::de::Error::custom("probe"))
+        }
+
+        fn deserialize_any<V: serde::de::Visitor<'de>>(
+            self,
+            _visitor: V,
+        ) -> Result<V::Value, Self::Error> {
+            Err(serde::de::Error::custom("probe"))
+        }
+
+        serde::forward_to_deserialize_any! {
+            bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+            bytes byte_buf option unit unit_struct newtype_struct seq tuple
+            tuple_struct map enum identifier ignored_any
+        }
+    }
+
+    /// `reserved_sections()` mirrors the fields of `Config`; a registered
+    /// section must not be able to claim the name of a core section.
+    #[test]
+    fn reserved_sections_match_config_fields() {
+        use oslo_config::CoreSchema;
+
+        let probe = FieldProbe(Default::default());
+        let _ = <Config as serde::Deserialize>::deserialize(&probe);
+        let mut fields: Vec<&str> = probe.0.into_inner();
+        let mut reserved: Vec<&str> = Config::reserved_sections().to_vec();
+        fields.sort_unstable();
+        reserved.sort_unstable();
+        assert_eq!(
+            reserved, fields,
+            "Config::reserved_sections() is out of sync with the fields of Config"
+        );
+    }
     use config::{File, FileFormat};
     use oslo_config::vault::tests::{
         mock_lookup, mock_metadata, mock_renew, mock_revoke, mock_secret,

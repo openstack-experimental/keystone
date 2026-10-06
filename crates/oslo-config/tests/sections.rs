@@ -19,7 +19,8 @@ use std::path::PathBuf;
 
 use oslo_config::{
     ConfigError, ConfigSection, ConfigView, CoreSchema, LoadCtx, SectionBag, SourceSpec,
-    assert_registered, check_registry, load_snapshot_from, register_section,
+    assert_registered, build_raw, check_registry, load_snapshot_from, register_section,
+    unclaimed_sections,
 };
 use serde::Deserialize;
 use serial_test::serial;
@@ -188,4 +189,17 @@ fn registry_rules() {
     assert!(check_registry(&["fake_optional"]).is_err());
     assert_registered(&["fake_optional", "fake_required"]).unwrap();
     assert!(assert_registered(&["missing"]).is_err());
+}
+
+#[test]
+#[serial]
+fn unclaimed_sections_are_reported() {
+    let f = conf(
+        "[default]\ndebug = true\n[fake_optional]\ntimeout = 1\n[fake_misnamed]\ntimeout = 1\n[stray]\na = 1\n",
+    );
+    let raw = build_raw::<Core>(f.path().to_path_buf()).unwrap();
+    assert_eq!(
+        unclaimed_sections(&raw, Core::reserved_sections()),
+        vec!["fake_misnamed".to_string(), "stray".to_string()]
+    );
 }

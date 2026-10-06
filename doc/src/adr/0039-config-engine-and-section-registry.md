@@ -4,7 +4,8 @@
 
 ## Status
 
-Proposed.
+Accepted. Implementation in progress (#1416): WP-1 to WP-4 for the
+OpenFGA and JWS pilots are done, see Work packages for what remains.
 
 ## Reference
 
@@ -80,9 +81,11 @@ non-generic and its `selected`/`build` hooks receive a `&ConfigView`, so a
 driver reads its own section with `view.section::<S>()` (or `view.require::<S>()`
 for an error naming the missing section) next to the core config. A section
 type with a `Default` is materialized from it when absent
-(`register_section!(S, default)`); one without is absent from the bag, and the
-driver decides whether that is an error. This is exactly the behaviour the
-`Option` fields had.
+(`register_section!(S, default)`); one without is absent from the bag. A driver
+that needs a required section reads it with `view.require::<S>()` in its
+`build`, so selecting the driver without the section fails the startup with an
+error naming the section (OpenFGA does this; its `selected` predicate keeps the
+section optional for deployments that do not select the global driver).
 
 ```rust
 pub struct BackendRegistration<B: ?Sized + 'static> {
@@ -117,12 +120,24 @@ driver that is not linked fails the load.
 
 - Driver selected => its section is materialized: from the INI when present,
   from `Default` when absent (as today); a required section without `Default`
-  that is absent is an error attributed to the driver.
-- Present section whose driver is not selected, or unclaimed name => warn/error.
+  that is absent is a startup error raised by the driver's `build` through
+  `view.require`.
+- Unclaimed top-level section (neither a core section nor a registered one, for
+  example a misspelled `[openfga_typo]`) => warning on every load. It is a
+  warning, not an error, so a reload of a configuration that carries a section
+  of a driver this binary does not link keeps working. A present section whose
+  driver is not selected is not reported.
 - Duplicate `NAME` across descriptors, and reserved names (`DEFAULT`,
   `database`, `auth`, ...) => startup error.
 - Startup assertion that expected section names are registered (catches
-  `anchor()` regressions).
+  `anchor()` regressions). `keystone/build.rs` anchors only `*-driver-*` crates
+  and `webauthn`, so a section registered by any other crate (the first one is
+  `audit`, owned by `cadf`) must, in the same change, expose `anchor()`, be
+  added to the `build.rs` allow-list and be listed in the `assert_registered`
+  call in `server/startup.rs`. Otherwise a linker-stripped registration
+  silently materializes a default section.
+- `CoreSchema::reserved_sections()` mirrors the fields of the core schema; a
+  unit test in the schema crate fails when the two drift apart.
 
 ## Non-goals
 
@@ -136,11 +151,18 @@ assignment semantics or wire format.
 
 - A new driver is one crate with no central-config diff.
 - `core-types` stops depending on the Keystone schema (it depends on
-  `oslo-config` and shared leaf section types only).
+  `oslo-config` and shared leaf section types only). Not yet true: it still
+  imports `Config` and the identity/LDAP/security-compliance types, and
+  `crates/storage` still takes `&Config`/`&ConfigManager`. Both are WP-5.
 - Plugin interface changes from `&Config` to `&ConfigView` across ~31 files
   (mechanical).
 - Any linked crate can register a section name; same trust level as backend
   registration, mitigated by the rules above.
+
+A `ConfigManager` built with `not_watched(Config)` has an empty section bag,
+unlike `watched()` which materializes the registered sections. Tests of a
+driver that requires its section must assemble a `SectionBag` (or use
+`load_snapshot_from`).
 
 ## Work packages
 

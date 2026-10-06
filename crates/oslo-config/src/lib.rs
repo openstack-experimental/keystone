@@ -53,6 +53,7 @@ pub use primitives::*;
 pub use section::{
     BlockDescriptor, ConfigError, ConfigSection, ConfigView, LoadCtx, Loaded, ParsedSection,
     SectionBag, SectionDescriptor, assert_registered, check_registry, parse_block,
+    unclaimed_sections,
 };
 pub use vault::VaultSection;
 
@@ -182,6 +183,13 @@ async fn load_all_with_vault_state<C: CoreSchema>(path: &Path) -> Result<LoadedC
 /// Parse the core schema and the registered sections out of `raw`.
 fn load_snapshot<C: CoreSchema>(raw: config::Config, path: &Path) -> Result<Loaded<C>, Report> {
     check_registry(C::reserved_sections())?;
+    for name in unclaimed_sections(&raw, C::reserved_sections()) {
+        tracing::warn!(
+            section = %name,
+            "configuration section [{name}] is not claimed by the core schema or any \
+             registered section and is ignored (misspelled name or driver not linked?)"
+        );
+    }
     let ctx = LoadCtx {
         config_path: path.to_path_buf(),
     };

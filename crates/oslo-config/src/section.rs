@@ -212,6 +212,38 @@ pub fn check_registry(reserved: &[&str]) -> Result<(), Report> {
     Ok(())
 }
 
+/// Names of the top-level sections of `raw` that neither the core schema
+/// (`reserved`) nor any registered section claims, e.g. a misspelled
+/// `[openfga_typo]`. Only tables count: scalar top-level keys come from
+/// environment variables such as `OS_CLOUD` and are not sections.
+pub fn unclaimed_sections(raw: &config::Config, reserved: &[&str]) -> Vec<String> {
+    let claimed: HashSet<String> = reserved
+        .iter()
+        .copied()
+        .chain(
+            inventory::iter::<SectionDescriptor>
+                .into_iter()
+                .map(|d| d.name),
+        )
+        .map(str::to_lowercase)
+        .collect();
+    let mut unclaimed: Vec<String> = raw
+        .cache
+        .clone()
+        .into_table()
+        .map(|table| {
+            table
+                .into_iter()
+                .filter(|(_, value)| matches!(value.kind, config::ValueKind::Table(_)))
+                .map(|(name, _)| name)
+                .filter(|name| !claimed.contains(&name.to_lowercase()))
+                .collect()
+        })
+        .unwrap_or_default();
+    unclaimed.sort();
+    unclaimed
+}
+
 /// Assert that every name in `expected` is registered. Catches a driver whose
 /// registration was dropped by the linker.
 pub fn assert_registered(expected: &[&str]) -> Result<(), Report> {

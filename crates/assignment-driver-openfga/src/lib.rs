@@ -112,13 +112,15 @@ pub fn anchor() {}
 inventory::submit! {
     BackendRegistration::<dyn AssignmentBackend> {
         name: "openfga",
-        selected: |_| true,
+        // Only the global driver reads the global `[openfga]` section;
+        // per-domain blocks are built by `NamedAssignmentBackendRegistration`.
+        selected: |cfg| cfg.assignment.driver == "openfga",
         build: |cfg| {
-            let timeout = cfg
-                .section::<OpenFGAAssignmentDriver>()
-                .and_then(|c| c.timeout);
+            // Fail the startup when the driver is selected without its
+            // section instead of failing every request later.
+            let timeout = cfg.require::<OpenFGAAssignmentDriver>().map(|c| c.timeout);
             Box::pin(async move {
-                Ok(Arc::new(OpenFGADriver::new(timeout)?) as Arc<dyn AssignmentBackend>)
+                Ok(Arc::new(OpenFGADriver::new(timeout?)?) as Arc<dyn AssignmentBackend>)
             })
         },
     }
