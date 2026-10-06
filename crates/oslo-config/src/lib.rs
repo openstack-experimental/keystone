@@ -343,6 +343,9 @@ pub async fn load<C: CoreSchema>(path: PathBuf) -> Result<C, Report> {
 
 /// Load the config file, resolve Vault references and everything the schema
 /// refers to ([`CoreSchema::finish_load`]).
+///
+/// Like [`load_snapshot_from`], this one-shot loader does not report unclaimed
+/// sections.
 pub async fn load_all<C: CoreSchema>(path: PathBuf) -> Result<C, Report> {
     Ok(load_all_with_vault_state::<C>(&path, false)
         .await?

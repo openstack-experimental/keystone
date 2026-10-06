@@ -230,6 +230,35 @@ async fn watched_reports_unclaimed_sections() {
     assert!(logs_contain("section [stray] is not claimed"));
 }
 
+/// Every reload of the watching manager reports unclaimed sections again.
+#[tokio::test]
+#[serial]
+#[tracing_test::traced_test]
+async fn watched_reports_unclaimed_sections_on_reload() {
+    // A private directory: the manager watches the parent of the file.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("keystone.conf");
+    std::fs::write(&path, "[default]\ndebug = true\n").unwrap();
+    let manager = ConfigManager::<Core>::watched(path.clone()).await.unwrap();
+    assert!(!logs_contain("is not claimed"));
+
+    let mut reloads = manager.notify_tx.subscribe();
+    // The watches are registered by the spawned watch loop; give it time to
+    // arm them before the file changes.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    std::fs::write(
+        &path,
+        "[default]\ndebug = true\n[stray_after_reload]\na = 1\n",
+    )
+    .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), reloads.recv())
+        .await
+        .expect("file change should trigger a reload")
+        .unwrap();
+    manager.shutdown().await;
+    assert!(logs_contain("section [stray_after_reload] is not claimed"));
+}
+
 /// One-shot loaders skip the unclaimed-section warning: a one-shot binary
 /// (e.g. `keystone-manage`) legitimately links fewer sections than the
 /// server, so a section of an unlinked driver must not be reported there.

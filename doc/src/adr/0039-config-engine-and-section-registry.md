@@ -109,12 +109,12 @@ driver fails the load, as it did with the central schema. Env override,
 site-vars and Vault therefore apply to driver sections unchanged. The `vault`
 cargo feature of `oslo-config` (on by default) gates the resolution; without it
 a configuration that contains a `vault://` reference fails the load instead of
-passing the literal string on.
-`ConfigManager<C>` keeps the core struct and the section bag in one snapshot, so
-reload swaps both atomically (last-known-good, deadlock avoidance and Vault
-teardown behaviour are unchanged). Registered sections are re-parsed and
-re-validated on every reload and watched files of driver sections are part of
-the watch set, so a driver section reloads like any core section.
+passing the literal string on. `ConfigManager<C>` keeps the core struct and the
+section bag in one snapshot, so reload swaps both atomically (last-known-good,
+deadlock avoidance and Vault teardown behaviour are unchanged). Registered
+sections are re-parsed and re-validated on every reload and watched files of
+driver sections are part of the watch set, so a driver section reloads like any
+core section.
 
 Vault token lifecycle: the live runtime is created with the initial load,
 replaced on every reload, and revoked on `ConfigManager::shutdown`. A runtime
@@ -142,13 +142,13 @@ driver that is not linked fails the load.
   example a misspelled `[openfga_typo]`) => warning on every load of the
   watching manager (server startup and each reload). One-shot loaders
   (`load_snapshot_from`, e.g. `keystone-manage`) skip the warning: their
-  link-time claim set is smaller than the server's (`keystone-manage` does not
-  link the token or assignment drivers), so a valid `[jws_tokens]` or
-  `[openfga]` section would be reported as unclaimed; a misspelling still
-  surfaces on the server's next load. It is a warning, not an error, so a
-  reload of a configuration that carries a section of a driver this binary does
-  not link keeps working. A present section whose driver is not selected is not
-  reported.
+  link-time claim set is smaller than the server's (`keystone-manage` links
+  neither the JWS token driver nor the OpenFGA assignment driver), so a valid
+  `[jws_tokens]` or `[openfga]` section would be reported as unclaimed; a
+  misspelling still surfaces on the server's next load. It is a warning, not an
+  error, so a reload of a configuration that carries a section of a driver this
+  binary does not link keeps working. A present section whose driver is not
+  selected is not reported.
 - Duplicate `NAME` across descriptors, and reserved names (`DEFAULT`,
   `database`, `auth`, ...) => startup error.
 - Startup assertion that expected section names are registered (catches
