@@ -49,7 +49,8 @@ const SEVERITY_INFORMATIONAL: u8 = 6;
 /// Options for [`SyslogSink`].
 #[derive(Debug, Clone)]
 pub struct SyslogSinkConfig {
-    /// `host:port` of the syslog receiver.
+    /// `host:port` of the syslog receiver; IPv6 literals are bracketed
+    /// (`[::1]:6514`).
     pub endpoint: String,
     /// Wrap the connection in TLS. The server certificate is verified against
     /// `ca_file` when set, otherwise against the system trust store.
@@ -93,18 +94,11 @@ pub struct SyslogSink {
 
 impl SyslogSink {
     /// Build the sink, loading the trust roots and validating the endpoint.
+    /// An endpoint that cannot possibly connect is refused here, for TLS and
+    /// plain TCP alike, rather than at the first delivery.
     pub fn new(cfg: SyslogSinkConfig) -> Result<Self, SinkError> {
+        let (host, _port) = split_endpoint(&cfg.endpoint)?;
         let tls = if cfg.tls {
-            let host = cfg
-                .endpoint
-                .rsplit_once(':')
-                .map(|(host, _)| host.trim_matches(['[', ']']))
-                .ok_or_else(|| {
-                    SinkError::Delivery(format!(
-                        "syslog endpoint `{}` must be host:port",
-                        cfg.endpoint
-                    ))
-                })?;
             let server_name = ServerName::try_from(host.to_string()).map_err(|e| {
                 SinkError::Delivery(format!("invalid syslog TLS server name `{host}`: {e}"))
             })?;
@@ -158,6 +152,45 @@ impl SyslogSink {
         })??;
         Ok(())
     }
+}
+
+/// Splits `endpoint` into its host and port. IPv6 literals must be
+/// bracketed (`[::1]:6514`); a bare `host:port` must not contain a second
+/// colon. The port must be in `1..=65535`.
+fn split_endpoint(endpoint: &str) -> Result<(&str, u16), SinkError> {
+    let (host, port) = if let Some(rest) = endpoint.strip_prefix('[') {
+        let (host, rest) = rest
+            .split_once(']')
+            .ok_or_else(|| invalid_endpoint(endpoint))?;
+        (
+            host,
+            rest.strip_prefix(':')
+                .ok_or_else(|| invalid_endpoint(endpoint))?,
+        )
+    } else {
+        let (host, port) = endpoint
+            .rsplit_once(':')
+            .ok_or_else(|| invalid_endpoint(endpoint))?;
+        if host.contains(':') {
+            return Err(invalid_endpoint(endpoint));
+        }
+        (host, port)
+    };
+    if host.is_empty() {
+        return Err(invalid_endpoint(endpoint));
+    }
+    let port = port
+        .parse::<u16>()
+        .ok()
+        .filter(|&port| port != 0)
+        .ok_or_else(|| invalid_endpoint(endpoint))?;
+    Ok((host, port))
+}
+
+fn invalid_endpoint(endpoint: &str) -> SinkError {
+    SinkError::Delivery(format!(
+        "syslog endpoint `{endpoint}` must be `host:port` or `[ipv6]:port`"
+    ))
 }
 
 #[async_trait]
@@ -497,6 +530,107 @@ mod tests {
         assert!(frames[0].contains(" authenticate - {"));
     }
 
+    /// A receiver addressed by an IP literal must work over TLS: the server
+    /// name resolves to an IP and must match the certificate's IP SAN.
+    #[tokio::test]
+    async fn delivers_over_tls_to_an_ip_literal_endpoint() {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let mut params = rcgen::CertificateParams::new(vec!["siem".to_string()]).unwrap();
+        params
+            .subject_alt_names
+            .push(rcgen::SanType::IpAddress("127.0.0.1".parse().unwrap()));
+        let cert = params.self_signed(&key_pair).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let ca_file = dir.path().join("ca.pem");
+        std::fs::write(&ca_file, cert.pem()).unwrap();
+
+        let server_config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![cert.der().clone()],
+                rustls::pki_types::PrivateKeyDer::try_from(key_pair.serialize_der()).unwrap(),
+            )
+            .unwrap();
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_config));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let receiver = tokio::spawn(async move {
+            let (conn, _) = listener.accept().await.unwrap();
+            let mut tls = acceptor.accept(conn).await.unwrap();
+            let mut buf = Vec::new();
+            tls.read_to_end(&mut buf).await.unwrap();
+            buf
+        });
+
+        let d = dispatcher();
+        let mut cfg = SyslogSinkConfig::new(format!("127.0.0.1:{port}"), "node-1", "keystone");
+        cfg.tls = true;
+        cfg.ca_file = Some(ca_file);
+        let sink = SyslogSink::new(cfg).unwrap();
+        sink.write_batch(&[event(&d, "authenticate")])
+            .await
+            .expect("TLS delivery to an IP endpoint succeeds");
+
+        let frames = parse_frames(&receiver.await.unwrap());
+        assert_eq!(frames.len(), 1);
+        assert!(frames[0].contains(" authenticate - {"));
+    }
+
+    /// The bracketed form `[ipv6]:port` must work over TLS as well.
+    #[tokio::test]
+    async fn delivers_over_tls_to_a_bracketed_ipv6_endpoint() {
+        let listener = match TcpListener::bind("[::1]:0").await {
+            Ok(listener) => listener,
+            Err(e) => {
+                eprintln!("skipping: no IPv6 loopback in this environment: {e}");
+                return;
+            }
+        };
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let mut params = rcgen::CertificateParams::new(vec!["siem".to_string()]).unwrap();
+        params
+            .subject_alt_names
+            .push(rcgen::SanType::IpAddress(std::net::IpAddr::V6(
+                "::1".parse().unwrap(),
+            )));
+        let cert = params.self_signed(&key_pair).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let ca_file = dir.path().join("ca.pem");
+        std::fs::write(&ca_file, cert.pem()).unwrap();
+
+        let server_config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![cert.der().clone()],
+                rustls::pki_types::PrivateKeyDer::try_from(key_pair.serialize_der()).unwrap(),
+            )
+            .unwrap();
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_config));
+        let port = listener.local_addr().unwrap().port();
+        let receiver = tokio::spawn(async move {
+            let (conn, _) = listener.accept().await.unwrap();
+            let mut tls = acceptor.accept(conn).await.unwrap();
+            let mut buf = Vec::new();
+            tls.read_to_end(&mut buf).await.unwrap();
+            buf
+        });
+
+        let d = dispatcher();
+        let mut cfg = SyslogSinkConfig::new(format!("[::1]:{port}"), "node-1", "keystone");
+        cfg.tls = true;
+        cfg.ca_file = Some(ca_file);
+        let sink = SyslogSink::new(cfg).unwrap();
+        sink.write_batch(&[event(&d, "authenticate")])
+            .await
+            .expect("TLS delivery to a bracketed IPv6 endpoint succeeds");
+
+        let frames = parse_frames(&receiver.await.unwrap());
+        assert_eq!(frames.len(), 1);
+        assert!(frames[0].contains(" authenticate - {"));
+    }
+
     #[tokio::test]
     async fn tls_rejects_untrusted_server() {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
@@ -528,5 +662,75 @@ mod tests {
         cfg.ca_file = Some(ca_file);
         let sink = SyslogSink::new(cfg).unwrap();
         assert!(sink.write_batch(&[event(&d, "create")]).await.is_err());
+    }
+
+    #[test]
+    fn split_endpoint_parses_host_and_port() {
+        assert_eq!(
+            split_endpoint("siem.example.com:6514").unwrap(),
+            ("siem.example.com", 6514)
+        );
+        assert_eq!(split_endpoint("127.0.0.1:514").unwrap(), ("127.0.0.1", 514));
+        assert_eq!(split_endpoint("[::1]:6514").unwrap(), ("::1", 6514));
+        assert_eq!(
+            split_endpoint("[2001:db8::1]:1").unwrap(),
+            ("2001:db8::1", 1)
+        );
+        assert_eq!(split_endpoint("siem:65535").unwrap(), ("siem", 65535));
+        for bad in [
+            "siem",       // no port
+            "siem:",      // empty port
+            "siem:port",  // non-numeric port
+            "siem:0",     // port 0
+            "siem:65536", // port out of range
+            "::1:6514",   // unbracketed IPv6 literal
+            ":6514",      // empty host
+            "[::1]",      // bracketed host without :port
+            "[]:6514",    // empty bracketed host
+            "[::1]:",     // bracketed host with empty port
+        ] {
+            assert!(split_endpoint(bad).is_err(), "{bad:?} must be rejected");
+        }
+    }
+
+    /// Endpoints that would only fail at connect time must be refused when
+    /// the sink is built, for TLS and plain TCP alike.
+    #[test]
+    fn new_rejects_endpoints_that_cannot_connect() {
+        for endpoint in [
+            "siem",
+            "siem:",
+            "siem:port",
+            "siem:0",
+            "siem:65536",
+            "::1:6514",
+            ":6514",
+            "[::1]",
+            "[]:6514",
+        ] {
+            for tls in [false, true] {
+                let mut cfg = SyslogSinkConfig::new(endpoint, "node-1", "keystone");
+                cfg.tls = tls;
+                assert!(
+                    SyslogSink::new(cfg).is_err(),
+                    "`{endpoint}` (tls={tls}) must be rejected"
+                );
+            }
+        }
+        for endpoint in [
+            "siem.example.com:6514",
+            "127.0.0.1:514",
+            "[::1]:6514",
+            "[2001:db8::1]:1",
+        ] {
+            for tls in [false, true] {
+                let mut cfg = SyslogSinkConfig::new(endpoint, "node-1", "keystone");
+                cfg.tls = tls;
+                assert!(
+                    SyslogSink::new(cfg).is_ok(),
+                    "`{endpoint}` (tls={tls}) must be accepted"
+                );
+            }
+        }
     }
 }
