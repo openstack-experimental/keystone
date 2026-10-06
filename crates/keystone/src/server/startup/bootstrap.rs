@@ -27,7 +27,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 use super::{Startup, audit, debug_elapsed};
-use crate::config::{Config, ConfigManager, ListenerConfig, RaftTlsConfiguration};
+use crate::config::{Config, ConfigManager, ListenerConfig, LoadedConfig, RaftTlsConfiguration};
 use crate::db_spiffe;
 use crate::k8s_auth_client::KeystoneK8sHttpClient;
 use crate::keystone::Service as KeystoneServiceState;
@@ -45,7 +45,7 @@ use openstack_keystone_token_driver_fernet::utils::FernetUtils;
 /// Build everything up to and including a wired [`ServiceState`].
 pub async fn run(
     cfg_mgr: Arc<ConfigManager>,
-    cfg: Config,
+    cfg: LoadedConfig,
     startup_timer: Instant,
 ) -> Result<Startup, Report> {
     debug!("Checking Fernet key repositories...");
@@ -58,7 +58,7 @@ pub async fn run(
     debug_elapsed(startup_timer, "connect_database");
     let (k8s_http_client, nova_http_client) = init_http_clients(&cfg)?;
 
-    let plugin_manager = crate::plugin_manager::PluginManager::with_config(&cfg)
+    let plugin_manager = crate::plugin_manager::PluginManager::with_config(&cfg.view())
         .await
         .wrap_err("initializing plugin manager")?;
     debug!("Plugin manager initialized.");
@@ -102,7 +102,7 @@ pub async fn run(
     debug_elapsed(startup_timer, "bootstrap");
 
     Ok(Startup {
-        cfg,
+        cfg: cfg.core,
         token,
         state,
         concrete_storage,

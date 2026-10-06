@@ -50,9 +50,9 @@ inventory::submit! {
     // fernet-only deployment, so this driver must not be eagerly built.
     BackendRegistration::<dyn TokenBackend> {
         name: "jws",
-        selected: |cfg: &Config| cfg.token.provider == TokenProviderDriver::Jws,
-        build: |cfg: &Config| Box::pin({
-            let cfg = cfg.clone();
+        selected: |cfg| cfg.token.provider == TokenProviderDriver::Jws,
+        build: |cfg| Box::pin({
+            let cfg = cfg.core.clone();
             async move {
                 let mut provider = JwsTokenProvider::new(cfg);
                 provider.load_keys().await?;

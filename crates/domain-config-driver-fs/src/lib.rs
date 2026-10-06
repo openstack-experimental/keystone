@@ -53,6 +53,8 @@ use arc_swap::ArcSwap;
 use async_trait::async_trait;
 
 use openstack_keystone_config::Config;
+#[cfg(test)]
+use openstack_keystone_config::LoadedConfig;
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::domain_config::backend::DomainConfigBackend;
 use openstack_keystone_core::domain_config::error::DomainConfigProviderError;
@@ -128,7 +130,7 @@ inventory::submit! {
     BackendRegistration::<dyn DomainConfigBackend> {
         name: "fs",
         selected: |_| true,
-        build: |cfg: &Config| {
+        build: |cfg| {
             let backend = FsBackend::new(cfg);
             Box::pin(async move {
                 Ok(Arc::new(backend?) as Arc<dyn DomainConfigBackend>)
@@ -355,7 +357,8 @@ mod tests {
             .find(|registration| registration.name == "fs")
             .expect("the filesystem driver registers under `fs`");
 
-        let config = Config::default();
+        let loaded = LoadedConfig::new(Config::default());
+        let config = loaded.view();
         assert!((registration.selected)(&config));
         assert!((registration.build)(&config).await.is_ok());
     }

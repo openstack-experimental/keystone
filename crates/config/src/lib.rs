@@ -471,6 +471,13 @@ impl TryFrom<config::ConfigBuilder<config::builder::DefaultState>> for Config {
     }
 }
 
+/// Read access to the core configuration and the registered sections.
+pub type ConfigView<'a> = oslo_config::ConfigView<'a, Config>;
+
+/// One snapshot of the configuration: the core schema and the registered
+/// sections.
+pub type LoadedConfig = oslo_config::Loaded<Config>;
+
 /// Config Manager supporting config file watch and reload.
 pub type ConfigManager = oslo_config::ConfigManager<Config>;
 

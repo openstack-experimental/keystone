@@ -23,7 +23,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use openstack_keystone_config::Config;
+use openstack_keystone_config::ConfigView;
 use openstack_keystone_core::api_key::ApiKeyProviderError;
 use openstack_keystone_core::api_key::backend::ApiKeyBackend;
 use openstack_keystone_core::application_credential::{
@@ -934,7 +934,7 @@ impl PluginManager {
     ///
     /// # Returns
     /// A new instance of `PluginManager`.
-    pub async fn with_config(config: &Config) -> eyre::Result<Self> {
+    pub async fn with_config(config: &ConfigView<'_>) -> eyre::Result<Self> {
         let mut slf = Self {
             api_key_backends: HashMap::new(),
             application_credential_backends: HashMap::new(),
@@ -993,7 +993,7 @@ impl PluginManager {
 
 #[cfg(test)]
 mod tests {
-    use openstack_keystone_config::Config;
+    use openstack_keystone_config::{Config, LoadedConfig};
     use openstack_keystone_core::plugin_manager::register_backends;
 
     use super::*;
@@ -1005,7 +1005,7 @@ mod tests {
     #[tokio::test]
     async fn registers_both_domain_config_sources() {
         let mut backends: HashMap<String, Arc<dyn DomainConfigBackend>> = HashMap::new();
-        register_backends(&Config::default(), &mut backends)
+        register_backends(&LoadedConfig::new(Config::default()).view(), &mut backends)
             .await
             .expect("domain-config drivers register from the default config");
 

@@ -408,7 +408,7 @@ impl AssignmentService {
         let global = if global_driver_name == prev.global_driver_name {
             prev.global.clone()
         } else {
-            build_global_assignment_backend(&config, &global_driver_name).await?
+            build_global_assignment_backend(&config.view(), &global_driver_name).await?
         };
 
         // Re-wire the resolver from the live configuration (ADR 0034 §9): the
@@ -473,8 +473,12 @@ impl AssignmentService {
             let instance = match reused {
                 Some(existing) => existing.clone(),
                 None => {
-                    build_named_assignment_backend(&config, block_cfg.driver_name(), block_name)
-                        .await?
+                    build_named_assignment_backend(
+                        &config.view(),
+                        block_cfg.driver_name(),
+                        block_name,
+                    )
+                    .await?
                 }
             };
             instances.insert(block_name.clone(), instance);

@@ -24,7 +24,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use secrecy::SecretString;
 
-use openstack_keystone_config::{Config, LdapProvider};
+use openstack_keystone_config::LdapProvider;
 use openstack_keystone_core::auth::AuthenticationResult;
 use openstack_keystone_core::identity::IdentityProviderError;
 use openstack_keystone_core::identity::backend::IdentityBackend;
@@ -118,10 +118,10 @@ inventory::submit! {
         // Registered whenever it is the global driver, or whenever per-domain
         // drivers are on: with `domain_specific_drivers_enabled` a domain's
         // stored config may select `ldap` even though the global driver is not.
-        selected: |cfg: &Config| {
+        selected: |cfg| {
             cfg.identity.driver == "ldap" || cfg.identity.domain_specific_drivers_enabled
         },
-        build: |cfg: &Config| {
+        build: |cfg| {
             let ldap_cfg = cfg.ldap.clone();
             Box::pin(async move {
                 Ok(Arc::new(LdapBackend::new(&ldap_cfg).await?) as Arc<dyn IdentityBackend>)

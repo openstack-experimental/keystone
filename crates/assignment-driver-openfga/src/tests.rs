@@ -24,7 +24,9 @@ use serde_json::json;
 use tracing_test::traced_test;
 use url::Url;
 
-use openstack_keystone_config::{Config, OpenFGAAssignmentDriver, OpenFGAIdTransform};
+use openstack_keystone_config::{
+    Config, LoadedConfig, OpenFGAAssignmentDriver, OpenFGAIdTransform,
+};
 use openstack_keystone_core::tests::get_mocked_state;
 
 use super::*;
@@ -1454,9 +1456,10 @@ async fn build_named_assignment_backend_builds_the_openfga_block() -> Result<()>
         })
         .await;
 
-    let backend = build_named_assignment_backend(&config, "openfga", "central_fga")
-        .await
-        .expect("the block builds");
+    let backend =
+        build_named_assignment_backend(&LoadedConfig::new(config).view(), "openfga", "central_fga")
+            .await
+            .expect("the block builds");
     assert!(
         backend
             .check_grant(&state, &user_project_assignment("a", "role_id", "t"))
@@ -1470,7 +1473,13 @@ async fn build_named_assignment_backend_builds_the_openfga_block() -> Result<()>
 async fn build_named_assignment_backend_rejects_a_missing_block() {
     use openstack_keystone_core::plugin_manager::build_named_assignment_backend;
 
-    match build_named_assignment_backend(&Config::default(), "openfga", "nope").await {
+    match build_named_assignment_backend(
+        &LoadedConfig::new(Config::default()).view(),
+        "openfga",
+        "nope",
+    )
+    .await
+    {
         Err(AssignmentProviderError::NamedBackendMisconfigured(msg)) => {
             assert!(
                 msg.contains("[assignment.backends.nope] is not defined"),
@@ -1494,7 +1503,9 @@ async fn build_named_assignment_backend_rejects_a_non_openfga_block() {
         .backends
         .insert("central".to_string(), AssignmentBackendConfig::Sql);
 
-    match build_named_assignment_backend(&config, "openfga", "central").await {
+    match build_named_assignment_backend(&LoadedConfig::new(config).view(), "openfga", "central")
+        .await
+    {
         Err(AssignmentProviderError::NamedBackendMisconfigured(msg)) => assert!(
             msg.contains("[assignment.backends.central] has driver `sql`, not `openfga`"),
             "{msg}"

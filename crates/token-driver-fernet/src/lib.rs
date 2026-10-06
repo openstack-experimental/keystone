@@ -587,8 +587,8 @@ inventory::submit! {
     BackendRegistration::<dyn TokenBackend> {
         name: "fernet",
         selected: |_| true,
-        build: |cfg: &Config| Box::pin({
-            let cfg = cfg.clone();
+        build: |cfg| Box::pin({
+            let cfg = cfg.core.clone();
             async move {
                 let mut provider = FernetTokenProvider::new(cfg);
                 provider.load_keys().await?;

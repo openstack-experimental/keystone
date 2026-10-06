@@ -24,6 +24,7 @@ use std::any::{Any, TypeId};
 use std::collections::{HashMap, HashSet};
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use eyre::{Report, WrapErr, eyre};
 use serde::de::DeserializeOwned;
@@ -251,8 +252,17 @@ pub(crate) fn load_sections(raw: &config::Config, ctx: &LoadCtx) -> Result<Secti
 pub struct Loaded<C> {
     /// The core schema.
     pub core: C,
-    /// The registered sections.
-    pub sections: SectionBag,
+    /// The registered sections, shared between clones of the snapshot.
+    pub sections: Arc<SectionBag>,
+}
+
+impl<C: Clone> Clone for Loaded<C> {
+    fn clone(&self) -> Self {
+        Self {
+            core: self.core.clone(),
+            sections: Arc::clone(&self.sections),
+        }
+    }
 }
 
 impl<C> Loaded<C> {
@@ -260,7 +270,7 @@ impl<C> Loaded<C> {
     pub fn new(core: C) -> Self {
         Self {
             core,
-            sections: SectionBag::default(),
+            sections: Arc::new(SectionBag::default()),
         }
     }
 

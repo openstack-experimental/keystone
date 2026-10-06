@@ -187,7 +187,10 @@ fn load_snapshot<C: CoreSchema>(raw: config::Config, path: &Path) -> Result<Load
     };
     let sections = section::load_sections(&raw, &ctx)?;
     let core = from_raw::<C>(raw).and_then(|c| c.finish_load(&ctx))?;
-    Ok(Loaded { core, sections })
+    Ok(Loaded {
+        core,
+        sections: Arc::new(sections),
+    })
 }
 
 struct LoadedConfig<C> {

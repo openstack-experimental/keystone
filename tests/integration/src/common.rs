@@ -37,8 +37,8 @@ use uuid::Uuid;
 use cadf::AuditDispatcher;
 use openstack_keystone::plugin_manager::PluginManager;
 use openstack_keystone_config::{
-    Config, ConfigManager, DistributedStorageConfiguration, KekProvider, TlsConfiguration,
-    TlsConfigurationBuilder,
+    Config, ConfigManager, DistributedStorageConfiguration, KekProvider, LoadedConfig,
+    TlsConfiguration, TlsConfigurationBuilder,
 };
 use openstack_keystone_core::policy::MockPolicy;
 use openstack_keystone_core::provider::Provider;
@@ -190,7 +190,7 @@ pub async fn get_state_with_config(
         cfg.k8s_auth.driver = "raft".to_string();
     }
 
-    let plugin_manager = PluginManager::with_config(&cfg).await?;
+    let plugin_manager = PluginManager::with_config(&LoadedConfig::new(cfg.clone()).view()).await?;
     let k8s_http_client =
         Arc::new(openstack_keystone::k8s_auth_client::MockK8sHttpClient::default());
     let nova_http_client: Arc<dyn openstack_keystone_core::nova_client::NovaHttpClient> = Arc::new(
