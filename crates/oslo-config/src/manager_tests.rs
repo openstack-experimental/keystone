@@ -71,6 +71,21 @@ impl CoreSchema for Core {
     }
 }
 
+/// A configuration file in a private directory.
+///
+/// The manager watches the parent directory of the file. Keeping it private
+/// stops unrelated filesystem activity (other tests, the shared temp dir) from
+/// triggering reloads, which would keep resetting the Vault renewal deadline.
+/// The directory must outlive the file handle.
+fn private_conf() -> (tempfile::TempDir, NamedTempFile) {
+    let dir = tempfile::tempdir().unwrap();
+    let file = tempfile::Builder::new()
+        .suffix(".conf")
+        .tempfile_in(dir.path())
+        .unwrap();
+    (dir, file)
+}
+
 fn write_vault_config(
     file: &mut NamedTempFile,
     server: &MockServer,
@@ -109,7 +124,7 @@ async fn test_async_loader_resolves_vault_reference() {
             "password": "environment-value"
         }),
     );
-    let mut config_file = NamedTempFile::with_suffix(".conf").unwrap();
+    let (_dir, mut config_file) = private_conf();
     write!(
         config_file,
         r#"
@@ -146,7 +161,7 @@ async fn test_resolved_configuration_error_is_redacted() {
     let _lookup = mock_lookup(&server, false, 60);
     let _metadata = mock_metadata(&server, 1);
     let _secret = mock_secret(&server, 1, json!({"password": "SUPERSECRET"}));
-    let mut config_file = NamedTempFile::with_suffix(".conf").unwrap();
+    let (_dir, mut config_file) = private_conf();
     write!(
         config_file,
         r#"
@@ -181,7 +196,7 @@ connection = ordinary
 #[tokio::test]
 #[parallel]
 async fn test_async_loader_fails_closed_without_vault_configuration() {
-    let mut config_file = NamedTempFile::with_suffix(".conf").unwrap();
+    let (_dir, mut config_file) = private_conf();
     write!(
         config_file,
         r#"
@@ -210,7 +225,7 @@ async fn test_vault_token_revoked_on_shutdown() {
     let _metadata = mock_metadata(&server, 1);
     let _secret = mock_secret(&server, 1, json!({"password": "version-one"}));
     let revoke = mock_revoke(&server);
-    let mut config_file = NamedTempFile::with_suffix(".conf").unwrap();
+    let (_dir, mut config_file) = private_conf();
     write_vault_config(&mut config_file, &server, 60);
 
     let manager = ConfigManager::<Core>::watched(config_file.path())
@@ -224,7 +239,7 @@ async fn test_vault_token_revoked_on_shutdown() {
 #[tokio::test]
 #[serial]
 async fn test_shutdown_without_vault_is_noop() {
-    let mut config_file = NamedTempFile::with_suffix(".conf").unwrap();
+    let (_dir, mut config_file) = private_conf();
     writeln!(config_file, "[database]\nconnection = sqlite://\n").unwrap();
 
     let manager = ConfigManager::<Core>::watched(config_file.path())
@@ -247,7 +262,7 @@ async fn test_vault_version_reload_and_last_known_good_retention() {
     let _lookup = mock_lookup(&server, false, 60);
     let mut metadata = mock_metadata(&server, 1);
     let mut secret = mock_secret(&server, 1, json!({"password": "version-one"}));
-    let mut config_file = NamedTempFile::with_suffix(".conf").unwrap();
+    let (_dir, mut config_file) = private_conf();
     write_vault_config(&mut config_file, &server, 1);
 
     let manager = ConfigManager::<Core>::watched(config_file.path())
@@ -308,7 +323,7 @@ async fn test_renewable_vault_token_is_renewed_halfway_through_ttl() {
     let _metadata = mock_metadata(&server, 1);
     let _secret = mock_secret(&server, 1, json!({"password": "value"}));
     let renewal = mock_renew(&server, 2);
-    let mut config_file = NamedTempFile::with_suffix(".conf").unwrap();
+    let (_dir, mut config_file) = private_conf();
     write_vault_config(&mut config_file, &server, 60);
 
     let _manager = ConfigManager::<Core>::watched(config_file.path())
