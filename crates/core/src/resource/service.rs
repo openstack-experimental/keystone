@@ -498,6 +498,17 @@ impl ResourceApi for ResourceService {
                 },
                 on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
             }?;
+
+            // `audited_op!` only reaches the `AuditHook` subscribers; the
+            // `ProviderHooks` (e.g. `LimitHook`) need their own event, as
+            // in the internal branch below.
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Delete,
+                    EventPayload::Domain { id: id.to_string() },
+                ))
+                .await;
         } else {
             self.backend_driver.delete_domain(ctx.state(), id).await?;
 
@@ -554,6 +565,17 @@ impl ResourceApi for ResourceService {
                 },
                 on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
             }?;
+
+            // `audited_op!` only reaches the `AuditHook` subscribers; the
+            // `ProviderHooks` (e.g. `LimitHook`) need their own event, as
+            // in the internal branch below.
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Delete,
+                    EventPayload::Project { id: id.to_string() },
+                ))
+                .await;
         } else {
             self.backend_driver.delete_project(ctx.state(), id).await?;
 
@@ -879,6 +901,84 @@ mod tests {
             count.load(Ordering::SeqCst),
             1,
             "ProviderHooks must be notified for domain creation through the authenticated path"
+        );
+    }
+
+    /// Same as for the creation: the authenticated deletion must notify the
+    /// `ProviderHooks` (e.g. `LimitHook` removing the limits).
+    #[tokio::test]
+    async fn test_delete_project_with_authenticated_context_notifies_provider_hooks() {
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock
+            .expect_delete_credentials_for_project()
+            .returning(|_, _| Ok(()));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_credential(credential_mock)),
+        )
+        .await;
+        let count = Arc::new(AtomicUsize::new(0));
+        state
+            .event_dispatcher
+            .subscribe(Arc::new(CountingHook {
+                count: Arc::clone(&count),
+            }))
+            .await;
+        let mut backend = MockResourceBackend::default();
+        backend.expect_get_project().returning(|_, _| Ok(None));
+        backend.expect_delete_project().returning(|_, _| Ok(()));
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        let vsc = make_vsc();
+        let ctx = ExecutionContext::from_auth(&state, &vsc);
+        provider.delete_project(&ctx, "pid").await.unwrap();
+
+        // `emit()` spawns the hook dispatch; give it a beat to run.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            1,
+            "ProviderHooks must be notified for project deletion through the authenticated path"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_domain_with_authenticated_context_notifies_provider_hooks() {
+        let mut idmapping = MockIdMappingProvider::default();
+        idmapping
+            .expect_delete_mappings_for_domain()
+            .returning(|_, _| Ok(()));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_idmapping(idmapping)),
+        )
+        .await;
+        let count = Arc::new(AtomicUsize::new(0));
+        state
+            .event_dispatcher
+            .subscribe(Arc::new(CountingHook {
+                count: Arc::clone(&count),
+            }))
+            .await;
+        let mut backend = MockResourceBackend::default();
+        backend.expect_get_domain().returning(|_, _| Ok(None));
+        backend.expect_delete_domain().returning(|_, _| Ok(()));
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        let vsc = make_vsc();
+        let ctx = ExecutionContext::from_auth(&state, &vsc);
+        provider.delete_domain(&ctx, "did").await.unwrap();
+
+        // `emit()` spawns the hook dispatch; give it a beat to run.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            1,
+            "ProviderHooks must be notified for domain deletion through the authenticated path"
         );
     }
 
