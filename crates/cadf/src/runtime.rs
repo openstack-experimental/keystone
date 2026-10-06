@@ -42,7 +42,7 @@ use crate::{
 };
 
 /// How often the running service checks the keyring file for a rotation made
-/// out of process (for example `keystone-manage audit rotate-hmac-key`).
+/// out of process (for example by an operator tool).
 pub const KEY_RELOAD_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Errors raised while bootstrapping the audit runtime.
@@ -100,7 +100,7 @@ pub enum RuntimeError {
 /// A directory of sealed segments written by another producer in the same
 /// process, shipped verbatim through the configured sink.
 ///
-/// Keystone uses this for the raft storage audit spool (ADR 0016-v2 §3.1),
+/// The storage layer uses this for the raft audit spool (ADR 0016-v2 §3.1),
 /// which has its own key hierarchy and record shape.
 #[derive(Clone, Debug)]
 pub struct ExtraSegmentSource {

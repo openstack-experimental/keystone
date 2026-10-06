@@ -62,7 +62,7 @@ pub enum SpoolError {
 /// Advisory exclusive lock on a node's audit spool, held for the lifetime of
 /// the value (released on drop or process exit).
 ///
-/// Guards against two Keystone processes sharing one `spool_dir`/`node_id`,
+/// Guards against two processes sharing one `spool_dir`/`node_id`,
 /// which would interleave appends and replay each other's events. The lock is
 /// taken on a sidecar `audit-spool-{node_id}.lock` file rather than the spool
 /// itself, because the spool is renamed during replay.

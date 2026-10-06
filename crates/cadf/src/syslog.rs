@@ -57,7 +57,7 @@ pub struct SyslogSinkConfig {
     pub tls: bool,
     /// PEM bundle of CA certificates trusted for the receiver.
     pub ca_file: Option<PathBuf>,
-    /// `HOSTNAME` field of every message (the Keystone node id).
+    /// `HOSTNAME` field of every message (the node id).
     pub hostname: String,
     /// `APP-NAME` field of every message.
     pub app_name: String,

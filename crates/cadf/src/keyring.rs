@@ -65,7 +65,7 @@ pub enum KeyringError {
          refusing to overwrite it"
     )]
     Invalid { path: PathBuf, reason: String },
-    #[error("audit key file {0} does not exist; start Keystone once to create it")]
+    #[error("audit key file {0} does not exist; start the service once to create it")]
     Missing(PathBuf),
 }
 

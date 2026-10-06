@@ -16,7 +16,7 @@
 //! The derivation formula is:
 //!
 //! ```text
-//! HKDF-Expand(KEK, info = "keystone-audit-hmac-v1:" ++ node_id_utf8, L = 32)
+//! HKDF-Expand(KEK, info = "{service_name}-audit-hmac-v1:" ++ node_id_utf8, L = 32)
 //! ```
 //!
 //! `KEK` is the root key material (≥ 32 uniform random bytes).  The

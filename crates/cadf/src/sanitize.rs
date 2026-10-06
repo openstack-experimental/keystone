@@ -32,7 +32,7 @@ pub enum HostKind {
 /// Sanitize a resource / principal UUID for use in audit records.
 ///
 /// Strips everything except hex digits and hyphens, caps at 64 characters,
-/// then accepts either of the two UUID renderings Keystone actually produces:
+/// then accepts either of the two UUID renderings the service actually produces:
 /// canonical hyphenated (len 36, hyphens at positions 8/13/18/23, 32 hex
 /// digits) or simple/no-hyphen (`Uuid::simple()`, exactly 32 hex digits, no
 /// hyphens) — which is the format `Uuid::new_v4().simple()` produces and is
@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn thirty_two_hex_chars_but_not_uuid_shape_still_passes() {
         // Any 32-char pure-hex string is accepted as "simple UUID" shaped;
-        // this is intentional since Keystone doesn't validate UUID version
+        // this is intentional since the service doesn't validate UUID version
         // bits elsewhere either.
         let id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         assert_eq!(sanitize_audit_id(id), id);
