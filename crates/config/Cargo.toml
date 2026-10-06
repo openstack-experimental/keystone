@@ -21,6 +21,7 @@ http-serde = "2.1"
 ipnet = { workspace = true }
 log.workspace = true
 oslo-config.workspace = true
+openstack-keystone-storage-config.workspace = true
 notify = "8.2"
 regex.workspace = true
 secrecy = { workspace = true, features = ["serde"] }

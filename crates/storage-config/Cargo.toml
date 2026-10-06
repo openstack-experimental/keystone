@@ -1,0 +1,28 @@
+[package]
+name = "openstack-keystone-storage-config"
+description = "OpenStack Keystone distributed storage configuration"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+exclude.workspace = true
+
+[dependencies]
+eyre.workspace = true
+http.workspace = true
+http-serde = "2.1"
+oslo-config.workspace = true
+secrecy = { workspace = true, features = ["serde"] }
+serde = { workspace = true, features = ["derive"] }
+validator = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+config = { workspace = true, features = ["ini"] }
+serde_json.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -5264,6 +5264,7 @@ dependencies = [
  "ipnet",
  "log",
  "notify",
+ "openstack-keystone-storage-config",
  "oslo-config",
  "regex",
  "secrecy",
@@ -5816,6 +5817,22 @@ dependencies = [
  "serde",
  "serde_bytes",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "openstack-keystone-storage-config"
+version = "0.1.0"
+dependencies = [
+ "config",
+ "eyre",
+ "http",
+ "http-serde",
+ "oslo-config",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "validator",
 ]
 
 [[package]]

@@ -67,7 +67,6 @@ mod common;
 mod credential;
 mod database;
 mod default;
-mod distributed_storage;
 mod domain_config;
 mod ec2;
 mod federation;
@@ -111,7 +110,6 @@ pub use common::*;
 pub use credential::*;
 pub use database::*;
 pub use default::*;
-pub use distributed_storage::*;
 pub use domain_config::*;
 pub use ec2::*;
 pub use federation::*;
@@ -126,6 +124,7 @@ pub use listener::*;
 pub use local_emergency::*;
 pub use mapping::*;
 pub use oauth2::*;
+pub use openstack_keystone_storage_config::*;
 pub use oslo_config::VaultSection;
 pub use oslo_middleware::*;
 pub use pagination::*;
@@ -1606,6 +1605,49 @@ mod tests {
             err_msg.contains("api_key.janitor_tombstone_retention_days"),
             "{}",
             err_msg
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_distributed_storage_env_override() {
+        // `Config::new` is async, but this test drives it from the synchronous
+        // `temp_env::with_vars` closure API, so run it to completion on a local
+        // current-thread runtime.
+        temp_env::with_vars(
+            [(
+                "OS_DISTRIBUTED_STORAGE__NODE_CLUSTER_ADDR",
+                Some("http://test/"),
+            )],
+            || {
+                let mut cfg_file = NamedTempFile::new().unwrap();
+                write!(
+                    cfg_file,
+                    r#"
+[auth]
+methods = []
+[database]
+connection = "foo"
+[distributed_storage]
+node_id = 5
+path = /foo
+            "#
+                )
+                .unwrap();
+
+                let cfg = tokio::runtime::Builder::new_current_thread()
+                    .build()
+                    .unwrap()
+                    .block_on(crate::Config::new(cfg_file.path().to_path_buf()))
+                    .unwrap();
+                assert_eq!(
+                    "http://test/",
+                    cfg.distributed_storage
+                        .expect("must be present")
+                        .node_cluster_addr
+                        .to_string()
+                );
+            },
         );
     }
 }
