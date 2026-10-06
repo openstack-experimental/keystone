@@ -13,9 +13,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Sanitization helpers for audit field values.
 //!
-//! All functions in this module are `pub(crate)` — consumers of the audit
-//! crate construct typed values via the public builder API; raw sanitization
-//! is an implementation detail.
+//! The typed constructors (`Target::new`, `Observer::new`,
+//! `CadfEventPayload::new`) apply [`sanitize_audit_value`] internally, so
+//! values that reach the wire through them are already reduced. Emitters that
+//! construct untyped values apply the raw helpers directly;
+//! [`sanitize_audit_id`] adds the stricter UUID-or-`"unknown"` rule on top.
 
 /// Kind of pre-auth identity signal carried in `Initiator.host`.
 pub enum HostKind {

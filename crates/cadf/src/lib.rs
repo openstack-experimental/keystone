@@ -85,7 +85,7 @@
 //!
 //! ## Cargo features
 //!
-//! - `runtime`: [`runtime`] module, the service bootstrap (key load, spool
+//! - `runtime`: the `runtime` module, the service bootstrap (key load, spool
 //!   lock/seal/verify, writer, shipper, key reload).
 //! - `syslog`: RFC 5424 syslog sink over TCP, optionally wrapped in TLS.
 //! - `testing`: helpers for the tests of embedding crates.

@@ -87,7 +87,7 @@ impl AuditDispatcher {
     /// Create a dispatcher for deployments with auditing disabled
     /// (`[audit] enabled = false`).
     ///
-    /// Unlike [`AuditDispatcher::noop`] this never reports a dead channel:
+    /// Unlike `AuditDispatcher::noop` this never reports a dead channel:
     /// both [`dispatch`](Self::dispatch) and
     /// [`dispatch_critical`](Self::dispatch_critical) succeed and discard the
     /// event, so fail-closed provider auditing does not reject operations.

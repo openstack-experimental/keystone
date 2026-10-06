@@ -230,7 +230,7 @@ pub struct SpoolWriter {
 /// Open the spool writer: create the directory, seed the `spool_bytes` gauge
 /// with what is already on disk, open the live spool and enforce retention.
 ///
-/// Called at startup (off the async runtime, see [`crate::runtime::init`]);
+/// Called at startup (off the async runtime, see `crate::runtime::init`);
 /// an error here must fail the service start, because a writer that cannot
 /// open its spool would silently drop every event.
 pub fn start_spool_writer(
