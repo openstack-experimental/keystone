@@ -27,14 +27,34 @@
 /// use cadf::ServiceIdentity;
 ///
 /// const SERVICE: ServiceIdentity = ServiceIdentity::new("keystone");
-/// assert_eq!(SERVICE.metric_name("spool_bytes"), "keystone_audit_spool_bytes");
+/// assert_eq!(
+///     SERVICE.metric_name("spool_bytes"),
+///     "keystone_audit_spool_bytes"
+/// );
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ServiceIdentity {
+    /// The service's stable name, e.g. `"keystone"`.
     name: &'static str,
 }
 
 impl ServiceIdentity {
+    /// HKDF `info` of the per-node signing key:
+    /// `{name}-audit-hmac-v1:{node_id}`.
+    pub(crate) fn kdf_info(&self, node_id: &str) -> String {
+        format!("{}-audit-hmac-v1:{node_id}", self.name)
+    }
+
+    /// Prometheus metric name: `{name}_audit_{suffix}`.
+    pub fn metric_name(&self, suffix: &str) -> String {
+        format!("{}_audit_{suffix}", self.name)
+    }
+
+    /// The service name.
+    pub const fn name(&self) -> &'static str {
+        self.name
+    }
+
     /// Declare the identity of a service.
     ///
     /// # Panics
@@ -58,21 +78,6 @@ impl ServiceIdentity {
             i += 1;
         }
         Self { name }
-    }
-
-    /// The service name.
-    pub const fn name(&self) -> &'static str {
-        self.name
-    }
-
-    /// HKDF `info` of the per-node signing key: `{name}-audit-hmac-v1:{node_id}`.
-    pub(crate) fn kdf_info(&self, node_id: &str) -> String {
-        format!("{}-audit-hmac-v1:{node_id}", self.name)
-    }
-
-    /// Prometheus metric name: `{name}_audit_{suffix}`.
-    pub fn metric_name(&self, suffix: &str) -> String {
-        format!("{}_audit_{suffix}", self.name)
     }
 }
 

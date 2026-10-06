@@ -33,32 +33,32 @@ use crate::{AuditDispatcher, ServiceIdentity};
 /// One instance is owned by the [`AuditDispatcher`] and shared (as an `Arc`)
 /// with the background tasks through `SpoolConfig` and `ShipperConfig`.
 pub struct AuditMetrics {
-    /// Events the spool writer failed to append to the live spool.
-    pub spool_write_failures: Counter,
-    /// Segments renamed to `*.quarantine-*` (tampered or unparsable lines).
-    pub spool_quarantined: Counter,
-    /// Lines checked when a sealed segment is verified at startup, by
-    /// `result` (`verified` or `invalid`).
-    pub spool_verified: LabeledCounter<1>,
     /// Events handed to the sink, by `result` (`shipped` or `skipped` for an
     /// unparsable line).
     pub shipped_events: LabeledCounter<1>,
     /// Failed attempts to deliver a batch to the sink.
     pub sink_errors: Counter,
+    /// Segments renamed to `*.quarantine-*` (tampered or unparsable lines).
+    pub spool_quarantined: Counter,
     /// Sealed segments deleted unacknowledged by the size, age or count
     /// limits.
     pub spool_retention_deleted: Counter,
+    /// Lines checked when a sealed segment is verified at startup, by
+    /// `result` (`verified` or `invalid`).
+    pub spool_verified: LabeledCounter<1>,
+    /// Events the spool writer failed to append to the live spool.
+    pub spool_write_failures: Counter,
 }
 
 impl Default for AuditMetrics {
     fn default() -> Self {
         Self {
-            spool_write_failures: Counter::new(),
-            spool_quarantined: Counter::new(),
-            spool_verified: LabeledCounter::new(["result"]),
             shipped_events: LabeledCounter::new(["result"]),
             sink_errors: Counter::new(),
+            spool_quarantined: Counter::new(),
             spool_retention_deleted: Counter::new(),
+            spool_verified: LabeledCounter::new(["result"]),
+            spool_write_failures: Counter::new(),
         }
     }
 }
@@ -72,7 +72,8 @@ impl fmt::Debug for AuditMetrics {
 /// Serialise the audit metrics as Prometheus text format.
 ///
 /// Metric names are `{service}_audit_*`; the list below is for the `keystone`
-/// service. Output is valid for Prometheus text format version 0.0.4 and contains:
+/// service. Output is valid for Prometheus text format version 0.0.4 and
+/// contains:
 /// - `keystone_audit_dropped_total`: perimeter events dropped (channel full)
 /// - `keystone_audit_postaudit_dropped_total`: post-audit outcomes lost
 /// - `keystone_audit_events_total`: events accepted into a channel (drops are

@@ -57,11 +57,6 @@ Records are JSON lines using the DSP0262 (CADF) key names:
 }
 ```
 
-Spool files written by earlier releases use a snake_case layout (`event_time`,
-`outcome_reason`, `correlation_id`, flat `seq` and `hmac_key_version`). They
-remain readable and verifiable as they are; tell the two apart by the presence
-of `eventTime`.
-
 * `outcome` is `pending` (provider record written before the change; `attempt`
   in earlier releases), `success` or `failure`. A rejected request such as a
   rate limit is a `failure` whose `reason.reasonCode` is `TooManyRequests` or

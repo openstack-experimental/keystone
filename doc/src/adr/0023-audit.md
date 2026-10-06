@@ -61,12 +61,6 @@ standard extension points instead of new top-level keys:
 `initiator.project_id` and `initiator.domain_id` remain Keystone extension
 keys on the initiator (`null` when absent).
 
-Records written before this change use the earlier snake_case layout
-(`event_time`, `outcome_reason`, `correlation_id`, `type_uri`, flat
-`seq`/`boot_session_id`/`hmac_key_version`/`version`/`domain`, outcome
-`attempt`/`client_error`). Their signature was computed over that layout, so
-Keystone reads them back, keeps them in that form and verifies them against
-it; a verifier distinguishes the two layouts by the presence of `eventTime`.
 The signature of a DSP0262 record covers the new layout, exactly as written.
 `seq` is serialized as a JSON number; RFC 8785 numbers are
 IEEE-754 doubles, so a verifier that canonicalizes it MUST use a 64-bit

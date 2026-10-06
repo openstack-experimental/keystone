@@ -51,10 +51,13 @@ const VERIFY_PROGRESS_EVERY: usize = 100_000;
 /// Error variants for spool operations.
 #[derive(Debug, thiserror::Error)]
 pub enum SpoolError {
+    /// An I/O error on the spool.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+    /// A spool line is not valid JSON.
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+    /// The spool is already locked by another process.
     #[error("audit spool {} is locked by another process", .0.display())]
     Locked(PathBuf),
 }
@@ -68,6 +71,7 @@ pub enum SpoolError {
 /// itself, because the spool is renamed during replay.
 #[derive(Debug)]
 pub struct SpoolLock {
+    /// The sidecar file holding the advisory lock; dropped with the lock.
     _file: std::fs::File,
 }
 
@@ -110,39 +114,39 @@ pub(crate) fn segment_prefix(node_id: &str) -> String {
 /// Rotation and retention policy for the spool writer.
 #[derive(Debug, Clone)]
 pub struct SpoolConfig {
-    /// Rotate once the live spool reaches this many bytes.
-    pub max_segment_bytes: u64,
-    /// Rotate once the live spool is this old.
-    pub max_segment_age: Duration,
-    /// Keep at most this many sealed segments, deleting the oldest. `None`
-    /// keeps all of them.
-    pub max_segments: Option<usize>,
+    /// Upper bound on the time spent draining queued events after shutdown
+    /// is requested. Events still queued at the deadline are dropped and
+    /// logged at `ERROR` with their count.
+    pub drain_timeout: Duration,
     /// Keep the sealed segments plus one full live segment
     /// (`max_segment_bytes`) within this many bytes, deleting the oldest
     /// sealed segments first. `None` means no size cap. The live spool itself
     /// is never deleted.
     pub max_bytes: Option<u64>,
+    /// Rotate once the live spool is this old.
+    pub max_segment_age: Duration,
+    /// Rotate once the live spool reaches this many bytes.
+    pub max_segment_bytes: u64,
+    /// Keep at most this many sealed segments, deleting the oldest. `None`
+    /// keeps all of them.
+    pub max_segments: Option<usize>,
+    /// Counters the writer updates (write failures, retention deletions).
+    pub metrics: Arc<AuditMetrics>,
     /// Delete sealed segments older than this (by modification time). `None`
     /// keeps them regardless of age.
     pub retention: Option<Duration>,
-    /// Upper bound on the time spent draining queued events after shutdown
-    /// is requested. Events still queued at the deadline are dropped and
-    /// logged at `ERROR` with their count.
-    pub drain_timeout: Duration,
-    /// Counters the writer updates (write failures, retention deletions).
-    pub metrics: Arc<AuditMetrics>,
 }
 
 impl Default for SpoolConfig {
     fn default() -> Self {
         Self {
-            max_segment_bytes: 256 * 1024 * 1024,
-            max_segment_age: Duration::from_secs(24 * 60 * 60),
-            max_segments: None,
-            max_bytes: None,
-            retention: None,
             drain_timeout: Duration::from_secs(10),
+            max_bytes: None,
+            max_segment_age: Duration::from_secs(24 * 60 * 60),
+            max_segment_bytes: 256 * 1024 * 1024,
+            max_segments: None,
             metrics: Arc::new(AuditMetrics::default()),
+            retention: None,
         }
     }
 }
@@ -216,14 +220,23 @@ pub fn seal_previous_spool(spool_dir: &Path, node_id: &str) -> Result<Option<Pat
 
 /// Appends events to the live spool with a persistent buffered handle.
 pub struct SpoolWriter {
-    dir: PathBuf,
-    node_id: String,
-    path: PathBuf,
+    /// The retention and rotation limits to enforce.
     cfg: SpoolConfig,
-    file: Option<BufWriter<std::fs::File>>,
-    segment_bytes: u64,
-    opened_at: Instant,
+    /// Whether the buffer holds events not yet on disk.
     dirty: bool,
+    /// This node's spool directory.
+    dir: PathBuf,
+    /// The live spool file, buffered and flushed periodically.
+    file: Option<BufWriter<std::fs::File>>,
+    /// The node this spool belongs to.
+    node_id: String,
+    /// When the current segment was opened.
+    opened_at: Instant,
+    /// The live spool file.
+    path: PathBuf,
+    /// Bytes written to the current segment.
+    segment_bytes: u64,
+    /// Shared gauge of the spool's total size in bytes.
     total_bytes: Arc<AtomicU64>,
 }
 
@@ -243,14 +256,14 @@ pub fn start_spool_writer(
     let path = spool_path(&dir, &node_id);
     total_bytes.store(spool_total_bytes(&dir, &node_id)?, Ordering::Relaxed);
     let mut writer = SpoolWriter {
-        dir,
-        node_id,
-        path,
         cfg,
-        file: None,
-        segment_bytes: 0,
-        opened_at: Instant::now(),
         dirty: false,
+        dir,
+        file: None,
+        node_id,
+        opened_at: Instant::now(),
+        path,
+        segment_bytes: 0,
         total_bytes,
     };
     writer.open()?;
@@ -259,23 +272,6 @@ pub fn start_spool_writer(
 }
 
 impl SpoolWriter {
-    fn open(&mut self) -> Result<(), SpoolError> {
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
-        self.segment_bytes = file.metadata()?.len();
-        self.opened_at = Instant::now();
-        self.file = Some(BufWriter::new(file));
-        Ok(())
-    }
-
-    fn should_rotate(&self, incoming: u64) -> bool {
-        self.segment_bytes > 0
-            && (self.segment_bytes + incoming > self.cfg.max_segment_bytes
-                || self.opened_at.elapsed() >= self.cfg.max_segment_age)
-    }
-
     /// Append one event. The record (including its newline) is a single
     /// buffer handed to the writer in one `write_all`. `durable` flushes and
     /// fsyncs before returning (used for critical events).
@@ -301,31 +297,6 @@ impl SpoolWriter {
             self.sync()?;
         }
         Ok(())
-    }
-
-    /// Flush the buffer and `fdatasync` the live spool.
-    fn sync(&mut self) -> Result<(), SpoolError> {
-        if let Some(file) = self.file.as_mut() {
-            file.flush()?;
-            file.get_ref().sync_data()?;
-        }
-        self.dirty = false;
-        Ok(())
-    }
-
-    /// Seal the live spool as a segment and start a fresh one.
-    fn rotate(&mut self) -> Result<(), SpoolError> {
-        self.sync()?;
-        self.file = None;
-        let segment = unique_segment_path(&self.dir, &self.node_id);
-        std::fs::rename(&self.path, &segment)?;
-        info!(
-            segment = %segment.display(),
-            size_bytes = self.segment_bytes,
-            "rotated audit spool"
-        );
-        self.open()?;
-        self.enforce_retention()
     }
 
     /// Delete sealed segments that exceed the configured count, total size or
@@ -391,6 +362,48 @@ impl SpoolWriter {
             segments.pop_front();
             sizes.pop_front();
         }
+        Ok(())
+    }
+
+    fn open(&mut self) -> Result<(), SpoolError> {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+        self.segment_bytes = file.metadata()?.len();
+        self.opened_at = Instant::now();
+        self.file = Some(BufWriter::new(file));
+        Ok(())
+    }
+
+    /// Seal the live spool as a segment and start a fresh one.
+    fn rotate(&mut self) -> Result<(), SpoolError> {
+        self.sync()?;
+        self.file = None;
+        let segment = unique_segment_path(&self.dir, &self.node_id);
+        std::fs::rename(&self.path, &segment)?;
+        info!(
+            segment = %segment.display(),
+            size_bytes = self.segment_bytes,
+            "rotated audit spool"
+        );
+        self.open()?;
+        self.enforce_retention()
+    }
+
+    fn should_rotate(&self, incoming: u64) -> bool {
+        self.segment_bytes > 0
+            && (self.segment_bytes + incoming > self.cfg.max_segment_bytes
+                || self.opened_at.elapsed() >= self.cfg.max_segment_age)
+    }
+
+    /// Flush the buffer and `fdatasync` the live spool.
+    fn sync(&mut self) -> Result<(), SpoolError> {
+        if let Some(file) = self.file.as_mut() {
+            file.flush()?;
+            file.get_ref().sync_data()?;
+        }
+        self.dirty = false;
         Ok(())
     }
 }
@@ -531,10 +544,10 @@ fn log_append(
 /// Counts from [`verify_sealed_spool`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VerifyStats {
-    /// Lines that parsed and passed the node-id and HMAC checks.
-    pub verified: usize,
     /// Lines that did not; if non-zero the segment was quarantined.
     pub skipped: usize,
+    /// Lines that parsed and passed the node-id and HMAC checks.
+    pub verified: usize,
 }
 
 /// Reduce the shared spool-bytes gauge by `bytes`, saturating at zero.
@@ -650,7 +663,7 @@ pub fn verify_sealed_spool(
         dec_spool_bytes(&dispatcher.spool_bytes_handle(), size);
     }
     info!(verified, skipped, "audit spool verification complete");
-    Ok(VerifyStats { verified, skipped })
+    Ok(VerifyStats { skipped, verified })
 }
 
 /// Rename a segment to `<segment>.quarantine-<timestamp>`.
@@ -1044,8 +1057,8 @@ mod tests {
         assert_eq!(
             stats,
             VerifyStats {
-                verified: 5,
-                skipped: 0
+                skipped: 0,
+                verified: 5
             }
         );
         assert_eq!(live_lines(dir.path(), "node-1"), 2);
@@ -1083,8 +1096,8 @@ mod tests {
         assert_eq!(
             stats,
             VerifyStats {
-                verified: 1,
-                skipped: 1
+                skipped: 1,
+                verified: 1
             }
         );
         assert!(!segment.exists());
@@ -1117,8 +1130,8 @@ mod tests {
         assert_eq!(
             stats,
             VerifyStats {
-                verified: 0,
-                skipped: 1
+                skipped: 1,
+                verified: 0
             }
         );
         assert!(!segment.exists());

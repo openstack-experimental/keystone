@@ -54,7 +54,12 @@ pub enum RuntimeError {
 
     /// The signing key file is inside the spool directory.
     #[error("[audit] hmac_kek_file {key} must not be inside spool_dir {spool}")]
-    KeyInsideSpool { key: PathBuf, spool: PathBuf },
+    KeyInsideSpool {
+        /// The signing key file.
+        key: PathBuf,
+        /// The spool directory it sits in.
+        spool: PathBuf,
+    },
 
     /// The HMAC keyring could not be loaded or created.
     #[error("failed to load the audit HMAC keyring")]
@@ -68,14 +73,12 @@ pub enum RuntimeError {
     #[error("{0}")]
     NodeId(String),
 
-    /// A spool limit would destroy or thrash the audit spool.
-    #[error("{0}")]
-    SpoolLimits(String),
-
     /// A path from the configuration could not be resolved.
     #[error("cannot resolve [audit] {option}")]
     ResolvePath {
+        /// The `[audit]` option the path came from.
         option: &'static str,
+        /// The I/O error.
         #[source]
         source: std::io::Error,
     },
@@ -84,14 +87,6 @@ pub enum RuntimeError {
     #[error("failed to seal the previous audit spool")]
     Seal(#[source] SpoolError),
 
-    /// The spool writer could not be opened at startup.
-    #[error("failed to start the audit spool writer")]
-    SpoolWriter(#[source] SpoolError),
-
-    /// A startup step panicked inside its blocking task.
-    #[error("audit startup task failed")]
-    Startup(#[source] tokio::task::JoinError),
-
     /// The configured sink could not be built.
     #[error("invalid audit syslog sink configuration")]
     Sink(#[source] SinkError),
@@ -99,6 +94,18 @@ pub enum RuntimeError {
     /// The configuration asks for a sink this build does not provide.
     #[error("[audit] sink type \"{0}\" requires the `{1}` feature")]
     SinkUnavailable(&'static str, &'static str),
+
+    /// A spool limit would destroy or thrash the audit spool.
+    #[error("{0}")]
+    SpoolLimits(String),
+
+    /// The spool writer could not be opened at startup.
+    #[error("failed to start the audit spool writer")]
+    SpoolWriter(#[source] SpoolError),
+
+    /// A startup step panicked inside its blocking task.
+    #[error("audit startup task failed")]
+    Startup(#[source] tokio::task::JoinError),
 }
 
 /// A directory of sealed segments written by another producer in the same
@@ -123,10 +130,14 @@ pub type AuditRuntime = (Arc<AuditDispatcher>, Option<JoinHandle<()>>);
 /// needs that the dispatcher does not carry, produced by steps that must all
 /// succeed before the service is handed out (see [`init`]).
 struct Prepared {
-    spool_lock: SpoolLock,
-    sealed: Option<PathBuf>,
+    /// The keyring loaded or created at startup.
     keyring: HmacKeyring,
+    /// The previous run's spool, renamed into a sealed segment for shipping.
+    sealed: Option<PathBuf>,
+    /// The configured sink, if one is set.
     sink: Option<Arc<dyn AuditSink>>,
+    /// Held for the lifetime of the pipeline; released on drop.
+    spool_lock: SpoolLock,
 }
 
 /// Switch the dispatcher to a newer key version when the keyring file on disk
@@ -340,10 +351,10 @@ pub async fn init(
     let prelude_node_id = node_id.clone();
     let prelude_kek = kek_path.clone();
     let Prepared {
-        spool_lock,
-        sealed,
         keyring,
+        sealed,
         sink,
+        spool_lock,
     } = spawn_blocking(move || {
         check_kek_location(&prelude_service, &prelude_cfg)?;
         std::fs::create_dir_all(&prelude_dir).map_err(RuntimeError::CreateSpoolDir)?;
@@ -370,10 +381,10 @@ pub async fn init(
             )?),
         };
         Ok(Prepared {
-            spool_lock,
-            sealed,
             keyring,
+            sealed,
             sink,
+            spool_lock,
         })
     })
     .await

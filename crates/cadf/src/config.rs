@@ -117,22 +117,22 @@ pub enum AuditSinkConfig {
     /// retried, so the receiver may see an event twice and should deduplicate
     /// on the event `id`.
     Syslog {
+        /// `APP-NAME` header field. Defaults to the service name.
+        #[serde(default)]
+        app_name: Option<String>,
+        /// PEM bundle of CA certificates trusted for the receiver. Defaults to
+        /// the system trust store.
+        #[serde(default)]
+        ca_file: Option<PathBuf>,
+        /// Seconds allowed for connecting (including the TLS handshake).
+        /// Defaults to 10.
+        #[serde(default = "default_syslog_connect_timeout_secs")]
+        connect_timeout_secs: u64,
         /// `host:port` of the syslog receiver.
         endpoint: String,
         /// Wrap the connection in TLS. Defaults to `false`.
         #[serde(default)]
         tls: bool,
-        /// PEM bundle of CA certificates trusted for the receiver. Defaults to
-        /// the system trust store.
-        #[serde(default)]
-        ca_file: Option<PathBuf>,
-        /// `APP-NAME` header field. Defaults to the service name.
-        #[serde(default)]
-        app_name: Option<String>,
-        /// Seconds allowed for connecting (including the TLS handshake).
-        /// Defaults to 10.
-        #[serde(default = "default_syslog_connect_timeout_secs")]
-        connect_timeout_secs: u64,
         /// Seconds allowed for writing one batch. Defaults to 30.
         #[serde(default = "default_syslog_write_timeout_secs")]
         write_timeout_secs: u64,
@@ -143,6 +143,11 @@ pub enum AuditSinkConfig {
 /// `[audit]` section (ADR 0023).
 #[derive(Debug, Deserialize, Clone)]
 pub struct AuditConfig {
+    /// Capacity of the fail-closed critical event channel. Senders wait when
+    /// it is full. Defaults to 256.
+    #[serde(default = "default_critical_channel_capacity")]
+    pub critical_channel_capacity: usize,
+
     /// Enable the audit framework. Defaults to `true`.
     ///
     /// When `false`, no spool directory, lock, HMAC key or writer is created
@@ -151,11 +156,6 @@ pub struct AuditConfig {
     /// options are ignored.
     #[serde(default = "default_enabled")]
     pub enabled: bool,
-
-    /// Directory for per-node JSONL spool files. Defaults to
-    /// `/var/lib/<service>/audit`, see [`AuditConfig::spool_dir`].
-    #[serde(default)]
-    pub spool_dir: Option<PathBuf>,
 
     /// File holding the audit HMAC key-encryption-key(s), created with mode
     /// `0600` if missing. It must NOT be inside `spool_dir`: anyone who can
@@ -173,37 +173,6 @@ pub struct AuditConfig {
     #[serde(default = "default_node_id")]
     pub node_id: String,
 
-    /// Rotate the live spool into a sealed segment once it reaches this many
-    /// bytes. Defaults to 256 MiB.
-    #[serde(default = "default_spool_max_segment_bytes")]
-    pub spool_max_segment_bytes: u64,
-
-    /// Rotate the live spool into a sealed segment once it is this many
-    /// seconds old, even if it is small. Defaults to 24 hours.
-    #[serde(default = "default_spool_max_segment_age_secs")]
-    pub spool_max_segment_age_secs: u64,
-
-    /// Maximum number of sealed segments to keep; the oldest are deleted
-    /// beyond this. Unset (the default) keeps every segment: audit records are
-    /// never deleted unless the operator opts in, since no downstream sink
-    /// has acknowledged them yet. Deletion is logged at `ERROR`.
-    #[serde(default)]
-    pub spool_max_segments: Option<usize>,
-
-    /// Keep the spool within this many bytes, counting the sealed segments
-    /// plus room for one full live segment (`spool_max_segment_bytes`); the
-    /// oldest sealed segments are deleted beyond it. Unset (the
-    /// default) applies no size cap. Deletion is logged at `ERROR` and counted
-    /// in `keystone_audit_spool_retention_deleted_total`.
-    #[serde(default)]
-    pub spool_max_bytes: Option<u64>,
-
-    /// Delete sealed segments older than this many seconds. Unset (the
-    /// default) keeps them regardless of age. Deletion is logged at `ERROR`
-    /// and counted like `spool_max_bytes`.
-    #[serde(default)]
-    pub spool_retention_secs: Option<u64>,
-
     /// Also record a perimeter event for every request authenticated by an
     /// existing token (the ADR 0023 Phase 2 ingress record), not only the
     /// authentication endpoints. Defaults to `false`: this is high volume and
@@ -216,19 +185,9 @@ pub struct AuditConfig {
     #[serde(default = "default_perimeter_channel_capacity")]
     pub perimeter_channel_capacity: usize,
 
-    /// Capacity of the fail-closed critical event channel. Senders wait when
-    /// it is full. Defaults to 256.
-    #[serde(default = "default_critical_channel_capacity")]
-    pub critical_channel_capacity: usize,
-
     /// Events handed to the sink per call. Defaults to 500.
     #[serde(default = "default_shipper_batch_size")]
     pub shipper_batch_size: usize,
-
-    /// Seconds between checks for newly sealed segments when the shipper is
-    /// idle. Defaults to 5.
-    #[serde(default = "default_shipper_poll_interval_secs")]
-    pub shipper_poll_interval_secs: u64,
 
     /// First retry delay in seconds after a sink failure; doubles up to
     /// `shipper_max_backoff_secs`. Defaults to 1.
@@ -239,48 +198,69 @@ pub struct AuditConfig {
     #[serde(default = "default_shipper_max_backoff_secs")]
     pub shipper_max_backoff_secs: u64,
 
+    /// Seconds between checks for newly sealed segments when the shipper is
+    /// idle. Defaults to 5.
+    #[serde(default = "default_shipper_poll_interval_secs")]
+    pub shipper_poll_interval_secs: u64,
+
+    /// Downstream sink for sealed segments, e.g. `sink = { type = "stdout" }`.
+    /// Defaults to `{ type = "none" }`.
+    #[serde(default)]
+    pub sink: AuditSinkConfig,
+
+    /// Directory for per-node JSONL spool files. Defaults to
+    /// `/var/lib/<service>/audit`, see [`AuditConfig::spool_dir`].
+    #[serde(default)]
+    pub spool_dir: Option<PathBuf>,
+
     /// Seconds the spool writer may spend writing out already-queued events
     /// after shutdown is requested. Events still queued at the deadline are
     /// dropped and logged at `ERROR`. Defaults to 10.
     #[serde(default = "default_spool_drain_timeout_secs")]
     pub spool_drain_timeout_secs: u64,
 
-    /// Downstream sink for sealed segments, e.g. `sink = { type = "stdout" }`.
-    /// Defaults to `{ type = "none" }`.
+    /// Keep the spool within this many bytes, counting the sealed segments
+    /// plus room for one full live segment (`spool_max_segment_bytes`); the
+    /// oldest sealed segments are deleted beyond it. Unset (the
+    /// default) applies no size cap. Deletion is logged at `ERROR` and counted
+    /// in `keystone_audit_spool_retention_deleted_total`.
     #[serde(default)]
-    pub sink: AuditSinkConfig,
+    pub spool_max_bytes: Option<u64>,
+
+    /// Rotate the live spool into a sealed segment once it is this many
+    /// seconds old, even if it is small. Defaults to 24 hours.
+    #[serde(default = "default_spool_max_segment_age_secs")]
+    pub spool_max_segment_age_secs: u64,
+
+    /// Rotate the live spool into a sealed segment once it reaches this many
+    /// bytes. Defaults to 256 MiB.
+    #[serde(default = "default_spool_max_segment_bytes")]
+    pub spool_max_segment_bytes: u64,
+
+    /// Maximum number of sealed segments to keep; the oldest are deleted
+    /// beyond this. Unset (the default) keeps every segment: audit records are
+    /// never deleted unless the operator opts in, since no downstream sink
+    /// has acknowledged them yet. Deletion is logged at `ERROR`.
+    #[serde(default)]
+    pub spool_max_segments: Option<usize>,
+
+    /// Delete sealed segments older than this many seconds. Unset (the
+    /// default) keeps them regardless of age. Deletion is logged at `ERROR`
+    /// and counted like `spool_max_bytes`.
+    #[serde(default)]
+    pub spool_retention_secs: Option<u64>,
 }
 
 /// Node id used when neither `[audit] node_id` nor `HOSTNAME` is available.
 pub const UNKNOWN_NODE_ID: &str = "unknown-node";
 
 impl AuditConfig {
-    /// The spool directory: `spool_dir`, or `/var/lib/<service>/audit`.
-    pub fn spool_dir(&self, service: &ServiceIdentity) -> PathBuf {
-        self.spool_dir
-            .clone()
-            .unwrap_or_else(|| PathBuf::from(format!("/var/lib/{}/audit", service.name())))
-    }
-
     /// Where the HMAC keyring lives: `hmac_kek_file`, or the legacy
     /// `<spool_dir>/hmac-key.bin` when unset.
     pub fn hmac_kek_path(&self, service: &ServiceIdentity) -> PathBuf {
         self.hmac_kek_file
             .clone()
             .unwrap_or_else(|| self.spool_dir(service).join("hmac-key.bin"))
-    }
-
-    /// Settings of the spool writer, reporting into `metrics`.
-    pub fn spool_config(&self, metrics: Arc<AuditMetrics>) -> SpoolConfig {
-        SpoolConfig {
-            max_segment_bytes: self.spool_max_segment_bytes,
-            max_segment_age: Duration::from_secs(self.spool_max_segment_age_secs),
-            max_segments: self.spool_max_segments,
-            max_bytes: self.spool_max_bytes,
-            retention: self.spool_retention_secs.map(Duration::from_secs),
-            drain_timeout: Duration::from_secs(self.spool_drain_timeout_secs),
-            metrics,
-        }
     }
 
     /// Settings of the segment shipper, reporting into `metrics`.
@@ -292,11 +272,31 @@ impl AuditConfig {
         let initial_backoff = Duration::from_secs(self.shipper_initial_backoff_secs.max(1));
         ShipperConfig {
             batch_size: self.shipper_batch_size.max(1),
-            poll_interval: Duration::from_secs(self.shipper_poll_interval_secs.max(1)),
             initial_backoff,
             max_backoff: Duration::from_secs(self.shipper_max_backoff_secs).max(initial_backoff),
             metrics,
+            poll_interval: Duration::from_secs(self.shipper_poll_interval_secs.max(1)),
         }
+    }
+
+    /// Settings of the spool writer, reporting into `metrics`.
+    pub fn spool_config(&self, metrics: Arc<AuditMetrics>) -> SpoolConfig {
+        SpoolConfig {
+            drain_timeout: Duration::from_secs(self.spool_drain_timeout_secs),
+            max_bytes: self.spool_max_bytes,
+            max_segment_age: Duration::from_secs(self.spool_max_segment_age_secs),
+            max_segment_bytes: self.spool_max_segment_bytes,
+            max_segments: self.spool_max_segments,
+            metrics,
+            retention: self.spool_retention_secs.map(Duration::from_secs),
+        }
+    }
+
+    /// The spool directory: `spool_dir`, or `/var/lib/<service>/audit`.
+    pub fn spool_dir(&self, service: &ServiceIdentity) -> PathBuf {
+        self.spool_dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(format!("/var/lib/{}/audit", service.name())))
     }
 
     /// Reject a `node_id` that cannot safely identify a node.
@@ -333,35 +333,35 @@ impl AuditConfig {
         if self.spool_max_segment_bytes == 0 {
             return Err(
                 "[audit] spool_max_segment_bytes must be greater than zero: a zero bound \
-                 makes the spool writer rotate on every event"
+                  makes the spool writer rotate on every event"
                     .to_string(),
             );
         }
         if self.spool_max_segment_age_secs == 0 {
             return Err(
                 "[audit] spool_max_segment_age_secs must be greater than zero: a zero bound \
-                 makes the spool writer rotate on every event"
+                  makes the spool writer rotate on every event"
                     .to_string(),
             );
         }
         if self.spool_max_segments == Some(0) {
             return Err(
                 "[audit] spool_max_segments must not be zero: it would delete every sealed \
-                 segment as soon as it is sealed"
+                  segment as soon as it is sealed"
                     .to_string(),
             );
         }
         if self.spool_max_bytes == Some(0) {
             return Err(
                 "[audit] spool_max_bytes must not be zero: it would delete every sealed \
-                 segment as soon as it is sealed"
+                  segment as soon as it is sealed"
                     .to_string(),
             );
         }
         if self.spool_retention_secs == Some(0) {
             return Err(
                 "[audit] spool_retention_secs must not be zero: it would delete every \
-                 sealed segment as soon as it is sealed"
+                  sealed segment as soon as it is sealed"
                     .to_string(),
             );
         }
@@ -372,24 +372,24 @@ impl AuditConfig {
 impl Default for AuditConfig {
     fn default() -> Self {
         Self {
+            critical_channel_capacity: default_critical_channel_capacity(),
             enabled: default_enabled(),
-            spool_dir: None,
             hmac_kek_file: None,
             node_id: default_node_id(),
-            spool_max_segment_bytes: default_spool_max_segment_bytes(),
-            spool_max_segment_age_secs: default_spool_max_segment_age_secs(),
-            spool_max_segments: None,
-            spool_max_bytes: None,
             perimeter_all_requests: false,
-            spool_retention_secs: None,
             perimeter_channel_capacity: default_perimeter_channel_capacity(),
-            critical_channel_capacity: default_critical_channel_capacity(),
             shipper_batch_size: default_shipper_batch_size(),
-            shipper_poll_interval_secs: default_shipper_poll_interval_secs(),
             shipper_initial_backoff_secs: default_shipper_initial_backoff_secs(),
             shipper_max_backoff_secs: default_shipper_max_backoff_secs(),
-            spool_drain_timeout_secs: default_spool_drain_timeout_secs(),
+            shipper_poll_interval_secs: default_shipper_poll_interval_secs(),
             sink: AuditSinkConfig::default(),
+            spool_dir: None,
+            spool_drain_timeout_secs: default_spool_drain_timeout_secs(),
+            spool_max_bytes: None,
+            spool_max_segment_age_secs: default_spool_max_segment_age_secs(),
+            spool_max_segment_bytes: default_spool_max_segment_bytes(),
+            spool_max_segments: None,
+            spool_retention_secs: None,
         }
     }
 }
@@ -456,11 +456,11 @@ mod tests {
         assert_eq!(
             cfg.sink,
             AuditSinkConfig::Syslog {
+                app_name: None,
+                ca_file: None,
+                connect_timeout_secs: 10,
                 endpoint: "siem:6514".to_string(),
                 tls: true,
-                ca_file: None,
-                app_name: None,
-                connect_timeout_secs: 10,
                 write_timeout_secs: 30,
             }
         );

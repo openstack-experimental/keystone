@@ -48,40 +48,94 @@ pub struct AuditChannelDead;
 
 /// Receivers returned by `AuditDispatcherBuilder::build`.
 pub struct AuditChannelReceivers {
-    pub perimeter: mpsc::Receiver<CadfEvent>,
+    /// Fail-closed events; dropping this receiver makes
+    /// [`AuditDispatcher::dispatch_critical`] fail.
     pub critical: mpsc::Receiver<CadfEvent>,
+    /// Best-effort events; dropped when the channel is full.
+    pub perimeter: mpsc::Receiver<CadfEvent>,
 }
 
 /// Central audit dispatcher.
 pub struct AuditDispatcher {
-    perimeter_sender: mpsc::Sender<CadfEvent>,
-    critical_sender: mpsc::Sender<CadfEvent>,
-    pub(crate) node_id: Arc<str>,
-    hmac_key_and_version: ArcSwap<(Arc<[u8]>, u64)>,
+    /// The per-boot session id stamped into every record this dispatcher
+    /// signs.
     pub(crate) boot_session_id: String,
-    seq_counter: AtomicU64,
+    /// Sender for fail-closed events.
+    critical_sender: mpsc::Sender<CadfEvent>,
+    /// Perimeter events dropped because the channel was full.
     pub(crate) dropped_count: Arc<AtomicU64>,
-    last_drop_log_time: AtomicU64,
-    log_baseline: std::time::Instant,
-    pub(crate) postaudit_dropped_count: Arc<AtomicU64>,
-    pub(crate) events_total: Arc<AtomicU64>,
-    pub(crate) spool_bytes: Arc<AtomicU64>,
     /// When `false` every dispatch is a successful no-op.
     enabled: bool,
+    /// Events accepted into a channel (drops excluded).
+    pub(crate) events_total: Arc<AtomicU64>,
+    /// The current signing key and its version, swapped atomically on
+    /// rotation.
+    hmac_key_and_version: ArcSwap<(Arc<[u8]>, u64)>,
+    /// Microseconds since `log_baseline` of the last drop-log line.
+    last_drop_log_time: AtomicU64,
+    /// When this dispatcher was built; base for floor-rate drop logs.
+    log_baseline: std::time::Instant,
+    /// Shared counters, exported via [`AuditDispatcher::metrics`].
     metrics: Arc<AuditMetrics>,
+    /// This node's id, as stamped in every record's `observer.node_id`.
+    pub(crate) node_id: Arc<str>,
+    /// Sender for best-effort events.
+    perimeter_sender: mpsc::Sender<CadfEvent>,
+    /// Post-audit outcomes lost while shipping foreign segments.
+    pub(crate) postaudit_dropped_count: Arc<AtomicU64>,
+    /// Next per-boot sequence number handed out by
+    /// [`AuditDispatcher::finalize_event`].
+    seq_counter: AtomicU64,
+    /// Shared gauge of this node's spool size in bytes.
+    pub(crate) spool_bytes: Arc<AtomicU64>,
 }
 
 impl AuditDispatcher {
-    /// Create a no-op dispatcher for use in tests.
-    ///
-    /// The channel receivers are dropped immediately; all events dispatched
-    /// will be silently discarded.
-    #[cfg(any(test, feature = "testing"))]
-    pub fn noop() -> Arc<Self> {
-        let key: Arc<[u8]> = Arc::from(b"noop-test-key".as_slice());
-        let (dispatcher, _receivers) =
-            Self::new("noop-node", uuid::Uuid::new_v4().to_string(), key, 0);
-        dispatcher
+    pub fn boot_session_id(&self) -> &str {
+        &self.boot_session_id
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build(
+        enabled: bool,
+        node_id: impl Into<Arc<str>>,
+        boot_session_id: String,
+        hmac_key: Arc<[u8]>,
+        hmac_key_version: u64,
+        perimeter_capacity: usize,
+        critical_capacity: usize,
+    ) -> (Arc<Self>, AuditChannelReceivers) {
+        let (perimeter_tx, perimeter_rx) = mpsc::channel(perimeter_capacity.max(1));
+        let (critical_tx, critical_rx) = mpsc::channel(critical_capacity.max(1));
+        let dispatcher = Arc::new(Self {
+            boot_session_id,
+            critical_sender: critical_tx,
+            dropped_count: Arc::new(AtomicU64::new(0)),
+            enabled,
+            events_total: Arc::new(AtomicU64::new(0)),
+            hmac_key_and_version: ArcSwap::new(Arc::new((hmac_key, hmac_key_version))),
+            last_drop_log_time: AtomicU64::new(0),
+            log_baseline: std::time::Instant::now(),
+            metrics: Arc::new(AuditMetrics::default()),
+            node_id: node_id.into(),
+            perimeter_sender: perimeter_tx,
+            postaudit_dropped_count: Arc::new(AtomicU64::new(0)),
+            seq_counter: AtomicU64::new(0),
+            spool_bytes: Arc::new(AtomicU64::new(0)),
+        });
+        let receivers = AuditChannelReceivers {
+            critical: critical_rx,
+            perimeter: perimeter_rx,
+        };
+        (dispatcher, receivers)
+    }
+
+    /// Events currently queued in the `(perimeter, critical)` channels.
+    pub fn channel_depths(&self) -> (usize, usize) {
+        (
+            self.perimeter_sender.max_capacity() - self.perimeter_sender.capacity(),
+            self.critical_sender.max_capacity() - self.critical_sender.capacity(),
+        )
     }
 
     /// Create a dispatcher for deployments with auditing disabled
@@ -104,107 +158,6 @@ impl AuditDispatcher {
             DEFAULT_CRITICAL_CHANNEL_CAPACITY,
         );
         dispatcher
-    }
-
-    /// Whether events are actually recorded.
-    pub fn is_enabled(&self) -> bool {
-        self.enabled
-    }
-
-    /// Create a new dispatcher. Returns the dispatcher and its two channel
-    /// receivers for the background spool workers.
-    pub fn new(
-        node_id: impl Into<Arc<str>>,
-        boot_session_id: String,
-        hmac_key: Arc<[u8]>,
-        hmac_key_version: u64,
-    ) -> (Arc<Self>, AuditChannelReceivers) {
-        Self::with_capacities(
-            node_id,
-            boot_session_id,
-            hmac_key,
-            hmac_key_version,
-            DEFAULT_PERIMETER_CHANNEL_CAPACITY,
-            DEFAULT_CRITICAL_CHANNEL_CAPACITY,
-        )
-    }
-
-    /// Like [`AuditDispatcher::new`] with explicit channel capacities.
-    ///
-    /// A capacity of `0` is raised to `1` (a Tokio channel needs at least one
-    /// slot).
-    pub fn with_capacities(
-        node_id: impl Into<Arc<str>>,
-        boot_session_id: String,
-        hmac_key: Arc<[u8]>,
-        hmac_key_version: u64,
-        perimeter_capacity: usize,
-        critical_capacity: usize,
-    ) -> (Arc<Self>, AuditChannelReceivers) {
-        Self::build(
-            true,
-            node_id,
-            boot_session_id,
-            hmac_key,
-            hmac_key_version,
-            perimeter_capacity,
-            critical_capacity,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn build(
-        enabled: bool,
-        node_id: impl Into<Arc<str>>,
-        boot_session_id: String,
-        hmac_key: Arc<[u8]>,
-        hmac_key_version: u64,
-        perimeter_capacity: usize,
-        critical_capacity: usize,
-    ) -> (Arc<Self>, AuditChannelReceivers) {
-        let (perimeter_tx, perimeter_rx) = mpsc::channel(perimeter_capacity.max(1));
-        let (critical_tx, critical_rx) = mpsc::channel(critical_capacity.max(1));
-        let dispatcher = Arc::new(Self {
-            perimeter_sender: perimeter_tx,
-            critical_sender: critical_tx,
-            node_id: node_id.into(),
-            hmac_key_and_version: ArcSwap::new(Arc::new((hmac_key, hmac_key_version))),
-            boot_session_id,
-            seq_counter: AtomicU64::new(0),
-            dropped_count: Arc::new(AtomicU64::new(0)),
-            last_drop_log_time: AtomicU64::new(0),
-            log_baseline: std::time::Instant::now(),
-            postaudit_dropped_count: Arc::new(AtomicU64::new(0)),
-            events_total: Arc::new(AtomicU64::new(0)),
-            spool_bytes: Arc::new(AtomicU64::new(0)),
-            enabled,
-            metrics: Arc::new(AuditMetrics::default()),
-        });
-        let receivers = AuditChannelReceivers {
-            perimeter: perimeter_rx,
-            critical: critical_rx,
-        };
-        (dispatcher, receivers)
-    }
-
-    /// Finalize an unsigned payload: fill `seq`, `boot_session_id`,
-    /// `hmac_key_version`, then compute the HMAC signature.
-    ///
-    /// Called by `CadfEventPayload::sign`.
-    pub(crate) fn finalize_event(&self, partial: CadfEventPayload) -> CadfEvent {
-        let guard = self.hmac_key_and_version.load();
-        let (key, version) = guard.as_ref();
-        let completed = CadfEventPayload {
-            seq: self.seq_counter.fetch_add(1, Ordering::SeqCst),
-            boot_session_id: self.boot_session_id.clone(),
-            hmac_key_version: *version,
-            ..partial
-        };
-        let sig = compute_hmac_sha256(&completed, key);
-        CadfEvent {
-            event: completed,
-            signature: sig,
-        }
     }
 
     /// Best-effort dispatch to the perimeter channel. Drops if full.
@@ -246,6 +199,100 @@ impl AuditDispatcher {
         Ok(())
     }
 
+    pub fn dropped_count(&self) -> u64 {
+        self.dropped_count.load(Ordering::Relaxed)
+    }
+
+    /// Events accepted into a channel (drops excluded).
+    pub fn events_total(&self) -> u64 {
+        self.events_total.load(Ordering::Relaxed)
+    }
+
+    /// Finalize an unsigned payload: fill `seq`, `boot_session_id`,
+    /// `hmac_key_version`, then compute the HMAC signature.
+    ///
+    /// Called by `CadfEventPayload::sign`.
+    pub(crate) fn finalize_event(&self, partial: CadfEventPayload) -> CadfEvent {
+        let guard = self.hmac_key_and_version.load();
+        let (key, version) = guard.as_ref();
+        let completed = CadfEventPayload {
+            seq: self.seq_counter.fetch_add(1, Ordering::SeqCst),
+            boot_session_id: self.boot_session_id.clone(),
+            hmac_key_version: *version,
+            ..partial
+        };
+        let sig = compute_hmac_sha256(&completed, key);
+        CadfEvent {
+            event: completed,
+            signature: sig,
+        }
+    }
+
+    /// Version of the HMAC key currently signing events.
+    pub fn hmac_key_version(&self) -> u64 {
+        self.hmac_key_and_version.load().1
+    }
+
+    /// Whether events are actually recorded.
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Counters maintained by the spool writer, verifier and shipper.
+    pub fn metrics(&self) -> &Arc<AuditMetrics> {
+        &self.metrics
+    }
+
+    /// Create a new dispatcher. Returns the dispatcher and its two channel
+    /// receivers for the background spool workers.
+    pub fn new(
+        node_id: impl Into<Arc<str>>,
+        boot_session_id: String,
+        hmac_key: Arc<[u8]>,
+        hmac_key_version: u64,
+    ) -> (Arc<Self>, AuditChannelReceivers) {
+        Self::with_capacities(
+            node_id,
+            boot_session_id,
+            hmac_key,
+            hmac_key_version,
+            DEFAULT_PERIMETER_CHANNEL_CAPACITY,
+            DEFAULT_CRITICAL_CHANNEL_CAPACITY,
+        )
+    }
+
+    pub fn node_id(&self) -> &str {
+        &self.node_id
+    }
+
+    /// Create a no-op dispatcher for use in tests.
+    ///
+    /// The channel receivers are dropped immediately; all events dispatched
+    /// will be silently discarded.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn noop() -> Arc<Self> {
+        let key: Arc<[u8]> = Arc::from(b"noop-test-key".as_slice());
+        let (dispatcher, _receivers) =
+            Self::new("noop-node", uuid::Uuid::new_v4().to_string(), key, 0);
+        dispatcher
+    }
+
+    pub fn postaudit_dropped_count(&self) -> u64 {
+        self.postaudit_dropped_count.load(Ordering::Relaxed)
+    }
+
+    /// Shared handle to the post-audit drop counter, so the provider event
+    /// dispatcher can feed the exported metric.
+    pub fn postaudit_dropped_handle(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.postaudit_dropped_count)
+    }
+
+    /// Record a post-audit outcome loss (called by the CADF hook when the
+    /// critical channel is dead).
+    pub fn record_postaudit_drop(&self) {
+        self.postaudit_dropped_count.fetch_add(1, Ordering::Relaxed);
+    }
+
     /// Rotate the HMAC key.
     ///
     /// MUST be called from a single serialized context (dedicated key-rotation
@@ -272,34 +319,6 @@ impl AuditDispatcher {
             .store(Arc::new((new_key, new_version)));
     }
 
-    pub fn node_id(&self) -> &str {
-        &self.node_id
-    }
-
-    pub fn boot_session_id(&self) -> &str {
-        &self.boot_session_id
-    }
-
-    pub fn dropped_count(&self) -> u64 {
-        self.dropped_count.load(Ordering::Relaxed)
-    }
-
-    pub fn postaudit_dropped_count(&self) -> u64 {
-        self.postaudit_dropped_count.load(Ordering::Relaxed)
-    }
-
-    /// Shared handle to the post-audit drop counter, so the provider event
-    /// dispatcher can feed the exported metric.
-    pub fn postaudit_dropped_handle(&self) -> Arc<AtomicU64> {
-        Arc::clone(&self.postaudit_dropped_count)
-    }
-
-    /// Record a post-audit outcome loss (called by the CADF hook when the
-    /// critical channel is dead).
-    pub fn record_postaudit_drop(&self) {
-        self.postaudit_dropped_count.fetch_add(1, Ordering::Relaxed);
-    }
-
     /// Total bytes in the live spool and sealed segments, maintained by the
     /// spool writer.
     pub fn spool_bytes(&self) -> u64 {
@@ -309,29 +328,6 @@ impl AuditDispatcher {
     /// Shared handle the spool writer keeps up to date.
     pub fn spool_bytes_handle(&self) -> Arc<AtomicU64> {
         Arc::clone(&self.spool_bytes)
-    }
-
-    /// Counters maintained by the spool writer, verifier and shipper.
-    pub fn metrics(&self) -> &Arc<AuditMetrics> {
-        &self.metrics
-    }
-
-    /// Version of the HMAC key currently signing events.
-    pub fn hmac_key_version(&self) -> u64 {
-        self.hmac_key_and_version.load().1
-    }
-
-    /// Events currently queued in the `(perimeter, critical)` channels.
-    pub fn channel_depths(&self) -> (usize, usize) {
-        (
-            self.perimeter_sender.max_capacity() - self.perimeter_sender.capacity(),
-            self.critical_sender.max_capacity() - self.critical_sender.capacity(),
-        )
-    }
-
-    /// Events accepted into a channel (drops excluded).
-    pub fn events_total(&self) -> u64 {
-        self.events_total.load(Ordering::Relaxed)
     }
 
     /// Verify an event's signature using a specific key (for spool replay).
@@ -348,6 +344,29 @@ impl AuditDispatcher {
         };
         mac.update(canonical.as_bytes());
         mac.verify_slice(&signature).is_ok()
+    }
+
+    /// Like [`AuditDispatcher::new`] with explicit channel capacities.
+    ///
+    /// A capacity of `0` is raised to `1` (a Tokio channel needs at least one
+    /// slot).
+    pub fn with_capacities(
+        node_id: impl Into<Arc<str>>,
+        boot_session_id: String,
+        hmac_key: Arc<[u8]>,
+        hmac_key_version: u64,
+        perimeter_capacity: usize,
+        critical_capacity: usize,
+    ) -> (Arc<Self>, AuditChannelReceivers) {
+        Self::build(
+            true,
+            node_id,
+            boot_session_id,
+            hmac_key,
+            hmac_key_version,
+            perimeter_capacity,
+            critical_capacity,
+        )
     }
 }
 

@@ -49,20 +49,20 @@ const SEVERITY_INFORMATIONAL: u8 = 6;
 /// Options for [`SyslogSink`].
 #[derive(Debug, Clone)]
 pub struct SyslogSinkConfig {
+    /// `APP-NAME` field of every message.
+    pub app_name: String,
+    /// PEM bundle of CA certificates trusted for the receiver.
+    pub ca_file: Option<PathBuf>,
+    /// Limit for establishing the connection, including the TLS handshake.
+    pub connect_timeout: Duration,
     /// `host:port` of the syslog receiver; IPv6 literals are bracketed
     /// (`[::1]:6514`).
     pub endpoint: String,
+    /// `HOSTNAME` field of every message (the node id).
+    pub hostname: String,
     /// Wrap the connection in TLS. The server certificate is verified against
     /// `ca_file` when set, otherwise against the system trust store.
     pub tls: bool,
-    /// PEM bundle of CA certificates trusted for the receiver.
-    pub ca_file: Option<PathBuf>,
-    /// `HOSTNAME` field of every message (the node id).
-    pub hostname: String,
-    /// `APP-NAME` field of every message.
-    pub app_name: String,
-    /// Limit for establishing the connection, including the TLS handshake.
-    pub connect_timeout: Duration,
     /// Limit for writing and flushing one batch.
     pub write_timeout: Duration,
 }
@@ -75,12 +75,12 @@ impl SyslogSinkConfig {
         app_name: impl Into<String>,
     ) -> Self {
         Self {
-            endpoint: endpoint.into(),
-            tls: false,
-            ca_file: None,
-            hostname: hostname.into(),
             app_name: app_name.into(),
+            ca_file: None,
             connect_timeout: Duration::from_secs(10),
+            endpoint: endpoint.into(),
+            hostname: hostname.into(),
+            tls: false,
             write_timeout: Duration::from_secs(30),
         }
     }
@@ -88,27 +88,13 @@ impl SyslogSinkConfig {
 
 /// Delivers audit events to a syslog receiver (RFC 5424 over TCP/TLS).
 pub struct SyslogSink {
+    /// The resolved sink settings.
     cfg: SyslogSinkConfig,
+    /// The TLS connector and server name, if TLS is configured.
     tls: Option<(TlsConnector, ServerName<'static>)>,
 }
 
 impl SyslogSink {
-    /// Build the sink, loading the trust roots and validating the endpoint.
-    /// An endpoint that cannot possibly connect is refused here, for TLS and
-    /// plain TCP alike, rather than at the first delivery.
-    pub fn new(cfg: SyslogSinkConfig) -> Result<Self, SinkError> {
-        let (host, _port) = split_endpoint(&cfg.endpoint)?;
-        let tls = if cfg.tls {
-            let server_name = ServerName::try_from(host.to_string()).map_err(|e| {
-                SinkError::Delivery(format!("invalid syslog TLS server name `{host}`: {e}"))
-            })?;
-            Some((TlsConnector::from(client_config(&cfg)?), server_name))
-        } else {
-            None
-        };
-        Ok(Self { cfg, tls })
-    }
-
     async fn deliver(&self, payload: &[u8]) -> Result<(), SinkError> {
         let tcp = timeout(
             self.cfg.connect_timeout,
@@ -132,6 +118,22 @@ impl SyslogSink {
             }
             None => self.write_all(tcp, payload).await,
         }
+    }
+
+    /// Build the sink, loading the trust roots and validating the endpoint.
+    /// An endpoint that cannot possibly connect is refused here, for TLS and
+    /// plain TCP alike, rather than at the first delivery.
+    pub fn new(cfg: SyslogSinkConfig) -> Result<Self, SinkError> {
+        let (host, _port) = split_endpoint(&cfg.endpoint)?;
+        let tls = if cfg.tls {
+            let server_name = ServerName::try_from(host.to_string()).map_err(|e| {
+                SinkError::Delivery(format!("invalid syslog TLS server name `{host}`: {e}"))
+            })?;
+            Some((TlsConnector::from(client_config(&cfg)?), server_name))
+        } else {
+            None
+        };
+        Ok(Self { cfg, tls })
     }
 
     async fn write_all<W: AsyncWrite + Unpin>(

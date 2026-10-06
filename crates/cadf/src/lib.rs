@@ -31,19 +31,19 @@
 //! 1. **Events** ([`types`]): [`CadfEvent`] is a CADF record built from
 //!    [`Initiator`], [`Target`], [`Observer`] and related types. Field values
 //!    are sanitized so that untrusted input cannot forge or break records.
-//! 2. **Signing and dispatch** ([`dispatcher`]): [`AuditDispatcher`] signs every
-//!    event with HMAC-SHA256 and queues it on one of two QoS channels. The
-//!    *critical* channel applies back-pressure so the event is never lost; the
-//!    *perimeter* channel drops (and counts) events under overload so audit
+//! 2. **Signing and dispatch** ([`dispatcher`]): [`AuditDispatcher`] signs
+//!    every event with HMAC-SHA256 and queues it on one of two QoS channels.
+//!    The *critical* channel applies back-pressure so the event is never lost;
+//!    the *perimeter* channel drops (and counts) events under overload so audit
 //!    cannot take the service down.
-//! 3. **Keys** ([`keyring`], [`kdf`]): a persisted, versioned
-//!    [`HmacKeyring`] holds the key-encryption key. The signing key of each
-//!    node is derived from it with HKDF, so a compromised node cannot forge
-//!    records attributed to another node, and rotation only adds versions so
-//!    old records stay verifiable.
+//! 3. **Keys** ([`keyring`], [`kdf`]): a persisted, versioned [`HmacKeyring`]
+//!    holds the key-encryption key. The signing key of each node is derived
+//!    from it with HKDF, so a compromised node cannot forge records attributed
+//!    to another node, and rotation only adds versions so old records stay
+//!    verifiable.
 //! 4. **Spool** ([`spool`]): a single writer appends signed events to a
-//!    per-node spool file guarded by an exclusive lock, seals it on restart
-//!    and verifies sealed segments at rest, giving at-least-once delivery.
+//!    per-node spool file guarded by an exclusive lock, seals it on restart and
+//!    verifies sealed segments at rest, giving at-least-once delivery.
 //! 5. **Sinks** ([`sink`], `syslog`): sealed segments are shipped to an
 //!    [`AuditSink`] ([`StdoutSink`], or an RFC 5424 syslog sink over TCP/TLS
 //!    with the `syslog` feature) and removed once acknowledged.
@@ -62,7 +62,10 @@
 //! use cadf::ServiceIdentity;
 //!
 //! const AUDIT_SERVICE: ServiceIdentity = ServiceIdentity::new("myservice");
-//! assert_eq!(AUDIT_SERVICE.metric_name("events_total"), "myservice_audit_events_total");
+//! assert_eq!(
+//!     AUDIT_SERVICE.metric_name("events_total"),
+//!     "myservice_audit_events_total"
+//! );
 //! ```
 //!
 //! The service reads its `[audit]` section into an [`AuditConfig`] (it

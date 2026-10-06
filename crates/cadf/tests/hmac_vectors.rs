@@ -46,10 +46,14 @@ fn hex_decode(s: &str) -> Vec<u8> {
 
 #[derive(serde::Deserialize)]
 struct Vector {
+    /// What the vector pins.
     description: String,
-    key_hex: String,
-    expected_signature: String,
+    /// The record to sign.
     event: Value,
+    /// The expected hex-encoded HMAC-SHA256 signature.
+    expected_signature: String,
+    /// The per-node signing key, hex-encoded.
+    key_hex: String,
 }
 
 #[allow(clippy::unwrap_used)]
@@ -111,8 +115,7 @@ fn verify_hmac_vectors() {
             v.description
         );
 
-        // A record must be written back exactly as it was read, in whichever
-        // layout it arrived: legacy lines stay legacy, DSP0262 stay DSP0262.
+        // A record must be written back exactly as it was read.
         assert_eq!(
             serde_json::to_value(&event).unwrap(),
             v.event,

@@ -34,9 +34,9 @@ pub enum HostKind {
 /// Sanitize a resource / principal UUID for use in audit records.
 ///
 /// Strips everything except hex digits and hyphens, caps at 64 characters,
-/// then accepts either of the two UUID renderings the service actually produces:
-/// canonical hyphenated (len 36, hyphens at positions 8/13/18/23, 32 hex
-/// digits) or simple/no-hyphen (`Uuid::simple()`, exactly 32 hex digits, no
+/// then accepts either of the two UUID renderings the service actually
+/// produces: canonical hyphenated (len 36, hyphens at positions 8/13/18/23, 32
+/// hex digits) or simple/no-hyphen (`Uuid::simple()`, exactly 32 hex digits, no
 /// hyphens) — which is the format `Uuid::new_v4().simple()` produces and is
 /// used for every resource ID minted across the codebase (projects, users,
 /// roles, tokens, etc.). Returns `"unknown"` for anything that fails both

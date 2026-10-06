@@ -20,7 +20,7 @@ the RFC 8785 (JCS) canonical form and HMAC-SHA256 in pure Python, so the
 
 Usage:
     tools/audit_vectors.py verify      # check every vector (exit 1 on mismatch)
-    tools/audit_vectors.py generate    # append the missing vectors (legacy v1.1 and DSP0262)
+    tools/audit_vectors.py generate    # append the missing vectors
 
 The event fields used by the vectors are strings, integers and objects only,
 for which ``json.dumps(sort_keys=True, separators=(",", ":"),
@@ -44,39 +44,6 @@ def jcs(obj) -> str:
 def sign(event: dict, key: bytes) -> str:
     body = {k: v for k, v in event.items() if k != "signature"}
     return hmac.new(key, jcs(body).encode(), hashlib.sha256).hexdigest()
-
-
-def base_event(n: int, initiator: dict) -> dict:
-    return {
-        "action": "authenticate",
-        "boot_session_id": "00000000-0000-0000-0000-000000000001",
-        "correlation_id": f"req-{n:032x}",
-        "domain": initiator.get("domain_id") or "unknown",
-        "event_time": "2026-06-16T00:00:00+00:00",
-        "hmac_key_version": 1,
-        "id": f"test-node:550e8400-e29b-41d4-a716-{n:012x}",
-        "initiator": initiator,
-        "observer": {
-            "id": "service/security/keystone/test-node",
-            "node_id": "test-node",
-        },
-        "outcome": "failure",
-        "outcome_reason": "Unauthorized",
-        "seq": n,
-        "target": {"id": "keystone", "type_uri": "service/security/keystone/auth"},
-        "version": "1.1",
-    }
-
-
-HOST_CASES = {
-    "v1_1_initiator_host_id_only": {"id": "AKIAABCDEFGHIJKLMNOP"},
-    "v1_1_initiator_host_address_only": {"address": "203.0.113.9"},
-    "v1_1_initiator_host_id_and_address": {
-        "id": "AKIAABCDEFGHIJKLMNOP",
-        "address": "203.0.113.9",
-    },
-    "v1_1_initiator_without_host": None,
-}
 
 
 def wire_event(n: int, initiator: dict, reason: str | None) -> dict:
@@ -156,33 +123,6 @@ def generate_wire() -> list[dict]:
     return out
 
 
-def generate() -> list[dict]:
-    key = bytes.fromhex(KEY_HEX)
-    out = []
-    for i, (name, host) in enumerate(HOST_CASES.items(), start=10):
-        initiator = {
-            "domain_id": "0123456789abcdef0123456789abcdef",
-            "id": "unknown",
-            "project_id": None,
-        }
-        if host is not None:
-            # CADF `host` is omitted entirely, never serialized as null.
-            initiator["host"] = host
-        event = base_event(i, initiator)
-        event["signature"] = sign(event, key)
-        body = {k: v for k, v in event.items() if k != "signature"}
-        out.append(
-            {
-                "description": name,
-                "key_hex": KEY_HEX,
-                "canonical": jcs(body),
-                "expected_signature": event["signature"],
-                "event": event,
-            }
-        )
-    return out
-
-
 def load() -> list[dict]:
     return [json.loads(line) for line in VECTORS.read_text().splitlines() if line.strip()]
 
@@ -207,7 +147,7 @@ def main() -> int:
         return verify()
     if cmd == "generate":
         have = {v["description"] for v in load()}
-        new = [v for v in generate() + generate_wire() if v["description"] not in have]
+        new = [v for v in generate_wire() if v["description"] not in have]
         with VECTORS.open("a") as f:
             for v in new:
                 f.write(json.dumps(v, separators=(",", ":"), ensure_ascii=False) + "\n")

@@ -28,23 +28,37 @@ use crate::sanitize::sanitize_audit_value;
 /// `CadfEventPayload::sign()`.
 #[derive(Clone, Debug)]
 pub struct CadfEventPayload {
-    pub(crate) id: String,
-    pub(crate) seq: u64,
-    pub(crate) boot_session_id: String,
-    pub(crate) hmac_key_version: u64,
-    pub(crate) version: String,
-    pub(crate) domain: String,
-    pub(crate) correlation_id: String,
-    pub(crate) event_time: String,
+    /// The CADF action, reduced to the action vocabulary by
+    /// [`sanitize_action`].
     pub(crate) action: String,
-    pub(crate) outcome: String,
-    pub(crate) outcome_reason: Option<String>,
+    /// The boot/session id of the node that signed the record; filled in at
+    /// signing.
+    pub(crate) boot_session_id: String,
+    /// The request correlation id, also carried as a `tags` entry.
+    pub(crate) correlation_id: String,
+    /// The initiator's domain id, or `"unknown"` for a system actor.
+    pub(crate) domain: String,
+    /// When the event happened, RFC 3339.
+    pub(crate) event_time: String,
+    /// Version of the HMAC key the `signature` was computed with; filled in
+    /// at signing.
+    pub(crate) hmac_key_version: u64,
+    /// The event's UUID.
+    pub(crate) id: String,
+    /// Who acted.
     pub(crate) initiator: Initiator,
-    pub(crate) target: Target,
+    /// Which node recorded the event.
     pub(crate) observer: Observer,
-    /// The record was read from a line written in the pre-DSP0262 layout. Such
-    /// a record keeps its original form so that its signature still verifies.
-    pub(crate) legacy: bool,
+    /// `"success"` or `"error"`.
+    pub(crate) outcome: String,
+    /// Structured reason for an `error` outcome, if any.
+    pub(crate) outcome_reason: Option<String>,
+    /// Per-boot sequence number; filled in at signing.
+    pub(crate) seq: u64,
+    /// The resource the action was on.
+    pub(crate) target: Target,
+    /// The CADF version of the record.
+    pub(crate) version: String,
 }
 
 /// DSP0262 `typeURI` of an event record.
@@ -58,103 +72,21 @@ const CORRELATION_TAG: &str = "correlation_id:";
 /// Name of the attachment carrying the fields DSP0262 has no place for.
 const INTEGRITY_ATTACHMENT: &str = "integrity";
 
-/// Error for a record that is neither a DSP0262 record nor a legacy one.
+/// Error for a record that is not a valid DSP0262 record.
 #[derive(Debug, thiserror::Error)]
 #[error("malformed audit record: {0}")]
-pub(crate) struct WireError(String);
+pub(crate) struct WireError(
+    /// What the record is missing or malformed.
+    String,
+);
 
 fn wire_err(what: &str) -> WireError {
     WireError(what.to_string())
 }
 
 impl CadfEventPayload {
-    /// The pre-DSP0262 layout, used only to verify legacy records.
-    fn legacy_value(&self) -> Result<serde_json::Value, serde_json::Error> {
-        serde_json::to_value(LegacyPayload {
-            id: &self.id,
-            seq: self.seq,
-            boot_session_id: &self.boot_session_id,
-            hmac_key_version: self.hmac_key_version,
-            version: &self.version,
-            domain: &self.domain,
-            correlation_id: &self.correlation_id,
-            event_time: &self.event_time,
-            action: &self.action,
-            outcome: &self.outcome,
-            outcome_reason: &self.outcome_reason,
-            initiator: &self.initiator,
-            target: &self.target,
-            observer: &self.observer,
-        })
-    }
-
-    /// The record as it is signed and written: DSP0262 names, the correlation
-    /// id in `tags` and the integrity fields in an `attachments` entry.
-    pub(crate) fn to_wire_value(&self) -> Result<serde_json::Value, serde_json::Error> {
-        use serde_json::{Value, json};
-        if self.legacy {
-            return self.legacy_value();
-        }
-        let mut initiator = serde_json::to_value(&self.initiator)?;
-        if let Value::Object(map) = &mut initiator {
-            map.insert("typeURI".into(), json!(INITIATOR_TYPE_URI));
-        }
-        let mut event = json!({
-            "typeURI": EVENT_TYPE_URI,
-            "eventType": "activity",
-            "id": self.id,
-            "eventTime": self.event_time,
-            "action": self.action,
-            "outcome": self.outcome,
-            "initiator": initiator,
-            "target": {"id": self.target.id(), "typeURI": self.target.type_uri()},
-            "observer": {"id": self.observer.id(), "typeURI": OBSERVER_TYPE_URI},
-            "tags": [format!("{CORRELATION_TAG}{}", self.correlation_id)],
-            "attachments": [{
-                "name": INTEGRITY_ATTACHMENT,
-                "contentType": "application/json",
-                "content": {
-                    "seq": self.seq,
-                    "boot_session_id": self.boot_session_id,
-                    "hmac_key_version": self.hmac_key_version,
-                    "version": self.version,
-                    "domain": self.domain,
-                    "observer_node_id": self.observer.node_id(),
-                },
-            }],
-        });
-        if let (Some(reason), Value::Object(map)) = (&self.outcome_reason, &mut event) {
-            map.insert(
-                "reason".into(),
-                json!({"reasonType": "keystone", "reasonCode": reason}),
-            );
-        }
-        Ok(event)
-    }
-
-    /// Parse a record in either layout.
+    /// Parse a DSP0262 record.
     pub(crate) fn from_wire_value(value: serde_json::Value) -> Result<Self, WireError> {
-        if value.get("eventTime").is_none() {
-            let legacy: LegacyOwnedPayload =
-                serde_json::from_value(value).map_err(|e| WireError(e.to_string()))?;
-            return Ok(Self {
-                id: legacy.id,
-                seq: legacy.seq,
-                boot_session_id: legacy.boot_session_id,
-                hmac_key_version: legacy.hmac_key_version,
-                version: legacy.version,
-                domain: legacy.domain,
-                correlation_id: legacy.correlation_id,
-                event_time: legacy.event_time,
-                action: legacy.action,
-                outcome: legacy.outcome,
-                outcome_reason: legacy.outcome_reason,
-                initiator: legacy.initiator,
-                target: legacy.target,
-                observer: legacy.observer,
-                legacy: true,
-            });
-        }
         let text = |v: &serde_json::Value, key: &str| -> Result<String, WireError> {
             v.get(key)
                 .and_then(serde_json::Value::as_str)
@@ -201,22 +133,25 @@ impl CadfEventPayload {
             .get("observer")
             .ok_or_else(|| wire_err("missing `observer`"))?;
         Ok(Self {
-            id: text(&value, "id")?,
-            seq: number("seq")?,
-            boot_session_id: text(integrity, "boot_session_id")?,
-            hmac_key_version: number("hmac_key_version")?,
-            version: text(integrity, "version")?,
-            domain: text(integrity, "domain")?,
-            correlation_id,
-            event_time: text(&value, "eventTime")?,
             action: text(&value, "action")?,
+            boot_session_id: text(integrity, "boot_session_id")?,
+            correlation_id,
+            domain: text(integrity, "domain")?,
+            event_time: text(&value, "eventTime")?,
+            hmac_key_version: number("hmac_key_version")?,
+            id: text(&value, "id")?,
+            initiator,
+            observer: Observer {
+                id: text(observer, "id")?,
+                node_id: text(integrity, "observer_node_id")?,
+            },
             outcome: text(&value, "outcome")?,
             outcome_reason: value
                 .get("reason")
                 .and_then(|r| r.get("reasonCode"))
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_string),
-            initiator,
+            seq: number("seq")?,
             // In-crate struct literals on purpose: wire values are kept
             // verbatim so a record round-trips byte-exact — its signature
             // was computed over exactly these values. New events are reduced
@@ -225,12 +160,49 @@ impl CadfEventPayload {
                 id: text(target, "id")?,
                 type_uri: text(target, "typeURI")?,
             },
-            observer: Observer {
-                node_id: text(integrity, "observer_node_id")?,
-                id: text(observer, "id")?,
-            },
-            legacy: false,
+            version: text(integrity, "version")?,
         })
+    }
+
+    /// The record as it is signed and written: DSP0262 names, the correlation
+    /// id in `tags` and the integrity fields in an `attachments` entry.
+    pub(crate) fn to_wire_value(&self) -> Result<serde_json::Value, serde_json::Error> {
+        use serde_json::{Value, json};
+        let mut initiator = serde_json::to_value(&self.initiator)?;
+        if let Value::Object(map) = &mut initiator {
+            map.insert("typeURI".into(), json!(INITIATOR_TYPE_URI));
+        }
+        let mut event = json!({
+            "typeURI": EVENT_TYPE_URI,
+            "eventType": "activity",
+            "id": self.id,
+            "eventTime": self.event_time,
+            "action": self.action,
+            "outcome": self.outcome,
+            "initiator": initiator,
+            "target": {"id": self.target.id(), "typeURI": self.target.type_uri()},
+            "observer": {"id": self.observer.id(), "typeURI": OBSERVER_TYPE_URI},
+            "tags": [format!("{CORRELATION_TAG}{}", self.correlation_id)],
+            "attachments": [{
+                "name": INTEGRITY_ATTACHMENT,
+                "contentType": "application/json",
+                "content": {
+                    "seq": self.seq,
+                    "boot_session_id": self.boot_session_id,
+                    "hmac_key_version": self.hmac_key_version,
+                    "version": self.version,
+                    "domain": self.domain,
+                    "observer_node_id": self.observer.node_id(),
+                },
+            }],
+        });
+        if let (Some(reason), Value::Object(map)) = (&self.outcome_reason, &mut event) {
+            map.insert(
+                "reason".into(),
+                json!({"reasonType": "keystone", "reasonCode": reason}),
+            );
+        }
+        Ok(event)
     }
 }
 
@@ -249,45 +221,26 @@ impl<'de> Deserialize<'de> for CadfEventPayload {
     }
 }
 
-/// Borrowed pre-DSP0262 layout.
-#[derive(Serialize)]
-struct LegacyPayload<'a> {
-    id: &'a str,
-    seq: u64,
-    boot_session_id: &'a str,
-    hmac_key_version: u64,
-    version: &'a str,
-    domain: &'a str,
-    correlation_id: &'a str,
-    event_time: &'a str,
-    action: &'a str,
-    outcome: &'a str,
-    outcome_reason: &'a Option<String>,
-    initiator: &'a Initiator,
-    target: &'a Target,
-    observer: &'a Observer,
-}
-
-/// Owned pre-DSP0262 layout.
-#[derive(Deserialize)]
-struct LegacyOwnedPayload {
-    id: String,
-    seq: u64,
-    boot_session_id: String,
-    hmac_key_version: u64,
-    version: String,
-    domain: String,
-    correlation_id: String,
-    event_time: String,
-    action: String,
-    outcome: String,
-    outcome_reason: Option<String>,
-    initiator: Initiator,
-    target: Target,
-    observer: Observer,
-}
-
 impl CadfEventPayload {
+    pub fn action(&self) -> &str {
+        &self.action
+    }
+    pub fn boot_session_id(&self) -> &str {
+        &self.boot_session_id
+    }
+    pub fn correlation_id(&self) -> &str {
+        &self.correlation_id
+    }
+    pub fn hmac_key_version(&self) -> u64 {
+        self.hmac_key_version
+    }
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+    pub fn initiator(&self) -> &Initiator {
+        &self.initiator
+    }
+
     /// Construct a new unsigned payload. The `seq`, `boot_session_id`, and
     /// `hmac_key_version` fields are placeholders;
     /// `AuditDispatcher::finalize_event` fills them in when signing.
@@ -313,22 +266,31 @@ impl CadfEventPayload {
         // there is none, e.g. a system actor), never a constant.
         let domain = initiator.domain_id().unwrap_or("unknown").to_string();
         Self {
-            id: sanitize_audit_value(&id),
-            seq: 0,
-            boot_session_id: String::new(),
-            hmac_key_version: 0,
-            version: sanitize_audit_value(&version),
-            domain,
-            correlation_id: sanitize_audit_value(&correlation_id),
-            event_time: sanitize_audit_value(&event_time),
             action: sanitize_action(&action),
+            boot_session_id: String::new(),
+            correlation_id: sanitize_audit_value(&correlation_id),
+            domain,
+            event_time: sanitize_audit_value(&event_time),
+            hmac_key_version: 0,
+            id: sanitize_audit_value(&id),
+            initiator,
+            observer,
             outcome: sanitize_audit_value(&outcome),
             outcome_reason: outcome_reason.map(OutcomeReason::into_string),
-            initiator,
+            seq: 0,
             target,
-            observer,
-            legacy: false,
+            version: sanitize_audit_value(&version),
         }
+    }
+
+    pub fn observer(&self) -> &Observer {
+        &self.observer
+    }
+    pub fn outcome(&self) -> &str {
+        &self.outcome
+    }
+    pub fn seq(&self) -> u64 {
+        self.seq
     }
 
     /// Sign this payload via the dispatcher, producing a `CadfEvent`.
@@ -339,37 +301,8 @@ impl CadfEventPayload {
         dispatcher.finalize_event(self)
     }
 
-    // ---- read-only getters used by the spool and HMAC verification paths ----
-
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-    pub fn seq(&self) -> u64 {
-        self.seq
-    }
-    pub fn boot_session_id(&self) -> &str {
-        &self.boot_session_id
-    }
-    pub fn hmac_key_version(&self) -> u64 {
-        self.hmac_key_version
-    }
-    pub fn correlation_id(&self) -> &str {
-        &self.correlation_id
-    }
-    pub fn action(&self) -> &str {
-        &self.action
-    }
-    pub fn outcome(&self) -> &str {
-        &self.outcome
-    }
-    pub fn initiator(&self) -> &Initiator {
-        &self.initiator
-    }
     pub fn target(&self) -> &Target {
         &self.target
-    }
-    pub fn observer(&self) -> &Observer {
-        &self.observer
     }
 }
 
@@ -413,9 +346,11 @@ pub fn sanitize_action(action: &str) -> String {
 /// Cross-language test vectors live in `tests/audit/hmac_vectors.jsonl`.
 #[derive(Clone, Debug)]
 pub struct CadfEvent {
+    /// The signed record body.
     pub(crate) event: CadfEventPayload,
-    // pub(crate): external callers must use the `signature()` getter; direct
-    // mutation is intentionally prevented outside this crate.
+    /// The hex-encoded HMAC-SHA256 of the record's JCS-canonical form.
+    /// `pub(crate)`: external callers must use the `signature()` getter;
+    /// direct mutation is intentionally prevented outside this crate.
     pub(crate) signature: String,
 }
 
@@ -448,11 +383,8 @@ impl<'de> Deserialize<'de> for CadfEvent {
 }
 
 impl CadfEvent {
-    pub fn payload(&self) -> &CadfEventPayload {
-        &self.event
-    }
-    pub fn signature(&self) -> &str {
-        &self.signature
+    pub fn boot_session_id(&self) -> &str {
+        &self.event.boot_session_id
     }
     pub fn correlation_id(&self) -> &str {
         &self.event.correlation_id
@@ -460,11 +392,14 @@ impl CadfEvent {
     pub fn id(&self) -> &str {
         &self.event.id
     }
+    pub fn payload(&self) -> &CadfEventPayload {
+        &self.event
+    }
     pub fn seq(&self) -> u64 {
         self.event.seq
     }
-    pub fn boot_session_id(&self) -> &str {
-        &self.event.boot_session_id
+    pub fn signature(&self) -> &str {
+        &self.signature
     }
 }
 
@@ -491,26 +426,30 @@ impl CadfEvent {
 /// [`Initiator`]'s serialization note for the same rule at the `host` level.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Host {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<String>,
+    /// The client network address the request was received from; omitted
+    /// when absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     address: Option<String>,
+    /// A pre-auth identity signal (EC2 access key, federation idp_id);
+    /// omitted when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
 }
 
 impl Host {
+    pub fn address(&self) -> Option<&str> {
+        self.address.as_deref()
+    }
+
     /// Construct a `Host` carrying only a pre-auth identity signal (`id`).
     pub fn from_id(id: String) -> Self {
         Self {
-            id: Some(id),
             address: None,
+            id: Some(id),
         }
     }
-
     pub fn id(&self) -> Option<&str> {
         self.id.as_deref()
-    }
-    pub fn address(&self) -> Option<&str> {
-        self.address.as_deref()
     }
 }
 
@@ -524,11 +463,37 @@ impl Host {
 /// `[A-Za-z0-9_-]` (at most 64 characters), or a list of `name=count` pairs
 /// whose names are reduced the same way. Identifiers belong in the `target`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OutcomeReason(std::borrow::Cow<'static, str>);
+pub struct OutcomeReason(
+    /// The sanitized reason; borrowed when built from a `'static` literal.
+    std::borrow::Cow<'static, str>,
+);
 
 impl OutcomeReason {
     /// Longest accepted variant name.
     const MAX_VARIANT_LEN: usize = 64;
+
+    /// The reason as a string slice.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// A summary of counters such as `session=3,errors=1`. The values are
+    /// numbers and each name is reduced like a [`variant`](Self::variant)
+    /// name.
+    #[must_use]
+    pub fn counts(pairs: &[(&str, u64)]) -> Self {
+        let rendered = pairs
+            .iter()
+            .map(|(name, value)| format!("{}={value}", Self::variant(name).as_str()))
+            .collect::<Vec<_>>()
+            .join(",");
+        Self(std::borrow::Cow::Owned(rendered))
+    }
+
+    fn into_string(self) -> String {
+        self.0.into_owned()
+    }
 
     /// A fixed, compile-time reason such as `"RouteDenied"`.
     #[must_use]
@@ -553,29 +518,6 @@ impl OutcomeReason {
             Self(std::borrow::Cow::Owned(cleaned))
         }
     }
-
-    /// A summary of counters such as `session=3,errors=1`. The values are
-    /// numbers and each name is reduced like a [`variant`](Self::variant)
-    /// name.
-    #[must_use]
-    pub fn counts(pairs: &[(&str, u64)]) -> Self {
-        let rendered = pairs
-            .iter()
-            .map(|(name, value)| format!("{}={value}", Self::variant(name).as_str()))
-            .collect::<Vec<_>>()
-            .join(",");
-        Self(std::borrow::Cow::Owned(rendered))
-    }
-
-    /// The reason as a string slice.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    fn into_string(self) -> String {
-        self.0.into_owned()
-    }
 }
 
 /// Audit initiator — only opaque identifiers, never PII.
@@ -597,14 +539,33 @@ impl OutcomeReason {
 /// full SIEM verification procedure.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Initiator {
-    id: String,
-    project_id: Option<String>,
+    /// The initiator's domain id, opaque; JSON `null` when absent.
     domain_id: Option<String>,
+    /// Pre-auth identity signals and the client address; omitted when
+    /// absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     host: Option<Host>,
+    /// The initiator's opaque id; never a username or other PII.
+    id: String,
+    /// The initiator's project id, opaque; JSON `null` when absent.
+    project_id: Option<String>,
 }
 
 impl Initiator {
+    /// Convenience passthrough for `host.address`.
+    pub fn address(&self) -> Option<&str> {
+        self.host.as_ref().and_then(Host::address)
+    }
+    pub fn domain_id(&self) -> Option<&str> {
+        self.domain_id.as_deref()
+    }
+    pub fn host(&self) -> Option<&Host> {
+        self.host.as_ref()
+    }
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
     pub fn new(
         id: String,
         project_id: Option<String>,
@@ -612,11 +573,14 @@ impl Initiator {
         host: Option<Host>,
     ) -> Self {
         Self {
-            id,
-            project_id,
             domain_id,
             host,
+            id,
+            project_id,
         }
+    }
+    pub fn project_id(&self) -> Option<&str> {
+        self.project_id.as_deref()
     }
 
     /// An initiator for work the service does on its own behalf (janitors,
@@ -628,6 +592,27 @@ impl Initiator {
     #[must_use]
     pub fn system(component: &'static str) -> Self {
         Self::new(format!("system:{component}"), None, None, None)
+    }
+
+    /// Attach a client IP address to `host.address`, sanitized via
+    /// [`crate::sanitize::sanitize_initiator_address`]. Preserves any
+    /// pre-auth `host.id` signal already set.
+    #[must_use]
+    pub fn with_address(mut self, address: Option<String>) -> Self {
+        let Some(address) = address.and_then(|a| crate::sanitize::sanitize_initiator_address(&a))
+        else {
+            return self;
+        };
+        match &mut self.host {
+            Some(host) => host.address = Some(address),
+            None => {
+                self.host = Some(Host {
+                    address: Some(address),
+                    id: None,
+                })
+            }
+        }
+        self
     }
 
     /// Attach a pre-auth identity signal (EC2 access key, federation IdP) to
@@ -645,44 +630,6 @@ impl Initiator {
         }
         self
     }
-
-    /// Attach a client IP address to `host.address`, sanitized via
-    /// [`crate::sanitize::sanitize_initiator_address`]. Preserves any
-    /// pre-auth `host.id` signal already set.
-    #[must_use]
-    pub fn with_address(mut self, address: Option<String>) -> Self {
-        let Some(address) = address.and_then(|a| crate::sanitize::sanitize_initiator_address(&a))
-        else {
-            return self;
-        };
-        match &mut self.host {
-            Some(host) => host.address = Some(address),
-            None => {
-                self.host = Some(Host {
-                    id: None,
-                    address: Some(address),
-                })
-            }
-        }
-        self
-    }
-
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-    pub fn project_id(&self) -> Option<&str> {
-        self.project_id.as_deref()
-    }
-    pub fn domain_id(&self) -> Option<&str> {
-        self.domain_id.as_deref()
-    }
-    pub fn host(&self) -> Option<&Host> {
-        self.host.as_ref()
-    }
-    /// Convenience passthrough for `host.address`.
-    pub fn address(&self) -> Option<&str> {
-        self.host.as_ref().and_then(Host::address)
-    }
 }
 
 /// Audit target — the resource being acted upon.
@@ -692,16 +639,24 @@ impl Initiator {
 /// newlines, control characters, unbounded values — cannot reach a signed
 /// record.
 ///
-/// `Deserialize` is the wire path for records read back from a spool: it
-/// keeps values verbatim, because a signature was computed over exactly
-/// those values. Build new values with [`Target::new`].
-#[derive(Serialize, Deserialize, Clone, Debug)]
+/// Records read back from a spool keep their values verbatim (see
+/// `CadfEventPayload::from_wire_value`), because a signature was computed
+/// over exactly those values. It is deliberately not `Deserialize`.
+#[derive(Serialize, Clone, Debug)]
 pub struct Target {
+    /// The sanitized resource id.
     id: String,
+    /// The sanitized resource type URI.
     type_uri: String,
 }
 
 impl Target {
+    /// The sanitized resource id.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
     /// Build a target, reducing both values to the audit-safe character set.
     #[must_use]
     pub fn new(id: impl Into<String>, type_uri: impl Into<String>) -> Self {
@@ -709,12 +664,6 @@ impl Target {
             id: sanitize_audit_value(&id.into()),
             type_uri: sanitize_audit_value(&type_uri.into()),
         }
-    }
-
-    /// The sanitized resource id.
-    #[must_use]
-    pub fn id(&self) -> &str {
-        &self.id
     }
 
     /// The sanitized resource type URI.
@@ -729,22 +678,31 @@ impl Target {
 /// Both fields are reduced to the audit-safe character set at construction
 /// time (see [`crate::sanitize::sanitize_audit_value`]).
 ///
-/// `Deserialize` keeps wire values verbatim (see [`Target`]); build new
-/// values with [`Observer::new`].
-#[derive(Serialize, Deserialize, Clone, Debug)]
+/// Not `Deserialize`: wire values are kept verbatim by
+/// `CadfEventPayload::from_wire_value` (see [`Target`]).
+#[derive(Serialize, Clone, Debug)]
 pub struct Observer {
-    node_id: String,
+    /// The sanitized observer identity, e.g.
+    /// `service/security/keystone/<node>`.
     id: String,
+    /// The sanitized node id of the node that recorded the event.
+    node_id: String,
 }
 
 impl Observer {
+    /// The sanitized observer id.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
     /// Build an observer, reducing both values to the audit-safe character
     /// set.
     #[must_use]
     pub fn new(node_id: impl Into<String>, id: impl Into<String>) -> Self {
         Self {
-            node_id: sanitize_audit_value(&node_id.into()),
             id: sanitize_audit_value(&id.into()),
+            node_id: sanitize_audit_value(&node_id.into()),
         }
     }
 
@@ -752,12 +710,6 @@ impl Observer {
     #[must_use]
     pub fn node_id(&self) -> &str {
         &self.node_id
-    }
-
-    /// The sanitized observer id.
-    #[must_use]
-    pub fn id(&self) -> &str {
-        &self.id
     }
 }
 

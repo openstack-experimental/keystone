@@ -13,12 +13,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Downstream audit sinks and the segment shipper (ADR 0023, #1317).
 //!
-//! The spool is the durable buffer in front of the sink. [`run_segment_shipper`]
-//! hands each sealed segment, oldest first, to an [`AuditSink`] in batches.
-//! Only once the sink has accepted every line of a segment is the segment
-//! *acknowledged*, i.e. deleted from the spool. A crash or failure before that
-//! point leaves the segment on disk and it is delivered again, so delivery is
-//! at-least-once; consumers deduplicate on the event `id`.
+//! The spool is the durable buffer in front of the sink.
+//! [`run_segment_shipper`] hands each sealed segment, oldest first, to an
+//! [`AuditSink`] in batches. Only once the sink has accepted every line of a
+//! segment is the segment *acknowledged*, i.e. deleted from the spool. A crash
+//! or failure before that point leaves the segment on disk and it is delivered
+//! again, so delivery is at-least-once; consumers deduplicate on the event
+//! `id`.
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -37,13 +38,15 @@ use crate::types::CadfEvent;
 /// Error returned by an [`AuditSink`].
 #[derive(Debug, thiserror::Error)]
 pub enum SinkError {
-    #[error("sink I/O error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("sink serialization error: {0}")]
-    Json(#[from] serde_json::Error),
     /// Any other delivery failure (e.g. a network sink's transport error).
     #[error("sink delivery failed: {0}")]
     Delivery(String),
+    /// An I/O error while delivering to the sink.
+    #[error("sink I/O error: {0}")]
+    Io(#[from] std::io::Error),
+    /// The batch could not be serialized to JSON.
+    #[error("sink serialization error: {0}")]
+    Json(#[from] serde_json::Error),
 }
 
 /// A destination for audit events.
@@ -106,24 +109,25 @@ impl AuditSink for StdoutSink {
 pub struct ShipperConfig {
     /// Events handed to the sink per call.
     pub batch_size: usize,
-    /// How often to look for newly sealed segments when idle.
-    pub poll_interval: Duration,
     /// First retry delay after a sink failure; doubles up to `max_backoff`.
     pub initial_backoff: Duration,
+    /// Upper bound of the exponential retry backoff.
     pub max_backoff: Duration,
     /// Counters the shipper updates (shipped/skipped events, sink errors,
     /// quarantined segments).
     pub metrics: Arc<AuditMetrics>,
+    /// How often to look for newly sealed segments when idle.
+    pub poll_interval: Duration,
 }
 
 impl Default for ShipperConfig {
     fn default() -> Self {
         Self {
             batch_size: 500,
-            poll_interval: Duration::from_secs(5),
             initial_backoff: Duration::from_secs(1),
             max_backoff: Duration::from_secs(60),
             metrics: Arc::new(AuditMetrics::default()),
+            poll_interval: Duration::from_secs(5),
         }
     }
 }
@@ -142,8 +146,10 @@ enum ShipOutcome {
 /// Failure while shipping a segment; the segment is left in place.
 #[derive(Debug, thiserror::Error)]
 enum ShipError {
+    /// The sink failed to deliver the batch.
     #[error(transparent)]
     Sink(#[from] SinkError),
+    /// The segment could not be read, renamed or removed.
     #[error(transparent)]
     Spool(#[from] SpoolError),
 }
@@ -389,8 +395,8 @@ mod tests {
 
     #[derive(Default)]
     struct RecordingSink {
-        ids: Mutex<Vec<String>>,
         fail_next: Mutex<u32>,
+        ids: Mutex<Vec<String>>,
     }
 
     #[async_trait]
@@ -448,17 +454,17 @@ mod tests {
     fn cfg() -> ShipperConfig {
         ShipperConfig {
             batch_size: 2,
-            poll_interval: Duration::from_millis(10),
             initial_backoff: Duration::from_millis(10),
             max_backoff: Duration::from_millis(20),
             metrics: Arc::new(AuditMetrics::default()),
+            poll_interval: Duration::from_millis(10),
         }
     }
 
     #[derive(Default)]
     struct LineSink {
-        lines: Mutex<Vec<(String, String)>>,
         fail_next: Mutex<u32>,
+        lines: Mutex<Vec<(String, String)>>,
     }
 
     #[async_trait]
