@@ -86,6 +86,7 @@ pub async fn run() -> Result<(), Report> {
 
     // Catch a driver section whose registration the linker dropped (ADR 0018,
     // ADR 0039) before the configuration is loaded without it.
+    oslo_config::assert_registered(&["jws_tokens"])?;
     #[cfg(feature = "openfga")]
     oslo_config::assert_registered(&["openfga"])?;
 

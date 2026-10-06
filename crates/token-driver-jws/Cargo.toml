@@ -16,6 +16,7 @@ openstack-keystone-config.workspace = true
 openstack-keystone-core.workspace = true
 openstack-keystone-core-types.workspace = true
 openstack-keystone-key-repository.workspace = true
+oslo-config.workspace = true
 p256 = { version = "0.14", features = ["ecdsa", "pkcs8"] }
 rsa = "0.9"
 secrecy.workspace = true

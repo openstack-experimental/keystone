@@ -20,11 +20,12 @@
 //! nodes work unchanged. Selected via `[token] provider = jws`.
 use std::path::PathBuf;
 
+use oslo_config::{ConfigSection, register_section};
 use serde::Deserialize;
 
-/// JWS token provider.
+/// `[jws_tokens]` section of the JWS token driver.
 #[derive(Debug, Deserialize, Clone)]
-pub struct JwsTokenProvider {
+pub struct JwsTokensConfig {
     /// Path to the JWS signing keypair, in Python Keystone's
     /// `create_jws_keypair` on-disk layout.
     #[serde(default = "default_jws_key_repository")]
@@ -37,11 +38,19 @@ pub struct JwsTokenProvider {
     pub insecure_allow_null_key: bool,
 }
 
+impl ConfigSection for JwsTokensConfig {
+    const NAME: &'static str = "jws_tokens";
+}
+
+// Optional: a fernet-only deployment has no `[jws_tokens]` section and gets
+// the defaults.
+register_section!(JwsTokensConfig, default);
+
 fn default_jws_key_repository() -> PathBuf {
     PathBuf::from("/etc/keystone/jws-keys/")
 }
 
-impl Default for JwsTokenProvider {
+impl Default for JwsTokensConfig {
     fn default() -> Self {
         Self {
             key_repository: default_jws_key_repository(),
@@ -56,25 +65,73 @@ mod tests {
 
     #[test]
     fn test_default() {
-        let cfg = JwsTokenProvider::default();
+        let cfg = JwsTokensConfig::default();
         assert_eq!(cfg.key_repository, PathBuf::from("/etc/keystone/jws-keys/"));
         assert!(!cfg.insecure_allow_null_key);
     }
 
     #[test]
     fn test_deserialize_defaults_when_empty() {
-        let cfg: JwsTokenProvider = serde_json::from_str("{}").unwrap();
+        let cfg: JwsTokensConfig = serde_json::from_str("{}").unwrap();
         assert_eq!(cfg.key_repository, PathBuf::from("/etc/keystone/jws-keys/"));
         assert!(!cfg.insecure_allow_null_key);
     }
 
     #[test]
     fn test_deserialize_overrides() {
-        let cfg: JwsTokenProvider = serde_json::from_str(
+        let cfg: JwsTokensConfig = serde_json::from_str(
             r#"{"key_repository": "/tmp/jws", "insecure_allow_null_key": true}"#,
         )
         .unwrap();
         assert_eq!(cfg.key_repository, PathBuf::from("/tmp/jws"));
         assert!(cfg.insecure_allow_null_key);
+    }
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use std::io::Write;
+
+    use super::*;
+
+    /// A deployment with no `[jws_tokens]` section still gets the defaults
+    /// through the section registry.
+    #[tokio::test]
+    async fn absent_section_is_materialized_from_default() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(b"[auth]\nmethods = []\n[database]\nconnection = \"foo\"\n")
+            .unwrap();
+        let loaded = oslo_config::load_snapshot_from::<openstack_keystone_config::Config>(
+            file.path().into(),
+        )
+        .await
+        .unwrap();
+        let section = loaded.view().require::<JwsTokensConfig>().unwrap().clone();
+        assert_eq!(
+            section.key_repository,
+            PathBuf::from("/etc/keystone/jws-keys/")
+        );
+    }
+
+    #[tokio::test]
+    async fn section_is_read_from_the_file() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(
+            b"[auth]\nmethods = []\n[database]\nconnection = \"foo\"\n[jws_tokens]\nkey_repository = /tmp/jws\n",
+        )
+        .unwrap();
+        let loaded = oslo_config::load_snapshot_from::<openstack_keystone_config::Config>(
+            file.path().into(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            loaded
+                .view()
+                .require::<JwsTokensConfig>()
+                .unwrap()
+                .key_repository,
+            PathBuf::from("/tmp/jws")
+        );
     }
 }

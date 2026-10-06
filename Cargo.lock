@@ -5901,6 +5901,7 @@ dependencies = [
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "openstack-keystone-key-repository",
+ "oslo-config",
  "p256 0.14.0",
  "rsa",
  "secrecy",

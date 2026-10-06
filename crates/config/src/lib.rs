@@ -75,7 +75,6 @@ mod fernet_token;
 mod identity;
 mod idmapping;
 mod interface;
-mod jws_token;
 mod k8s_auth;
 mod ldap;
 mod limit;
@@ -120,7 +119,6 @@ pub use fernet_token::*;
 pub use identity::*;
 pub use idmapping::*;
 pub use interface::*;
-pub use jws_token::*;
 pub use k8s_auth::*;
 pub use ldap::*;
 pub use limit::*;
@@ -226,10 +224,6 @@ pub struct Config {
     /// Fernet tokens provider configuration.
     #[serde(default)]
     pub fernet_tokens: FernetTokenProvider,
-
-    /// JWS tokens provider configuration (ADR 0026 §10, Phase 0).
-    #[serde(default)]
-    pub jws_tokens: JwsTokenProvider,
 
     /// Identity provider configuration.
     #[serde(default)]
@@ -508,7 +502,6 @@ impl oslo_config::CoreSchema for Config {
             "ec2",
             "federation",
             "fernet_tokens",
-            "jws_tokens",
             "identity",
             "idmapping",
             "k8s_auth",

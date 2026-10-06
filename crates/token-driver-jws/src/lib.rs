@@ -32,9 +32,11 @@ use openstack_keystone_key_repository::asymmetric::{
 };
 
 mod claims;
+mod config;
 pub mod error;
 
 pub use claims::JwsClaims;
+pub use config::JwsTokensConfig;
 pub use error::JwsDriverError;
 pub use openstack_keystone_key_repository::asymmetric::jwt_algorithm;
 
@@ -51,20 +53,19 @@ inventory::submit! {
     BackendRegistration::<dyn TokenBackend> {
         name: "jws",
         selected: |cfg| cfg.token.provider == TokenProviderDriver::Jws,
-        build: |cfg| Box::pin({
-            let cfg = cfg.core.clone();
-            async move {
-                let mut provider = JwsTokenProvider::new(cfg);
+        build: |cfg| {
+            let section = cfg.require::<JwsTokensConfig>().cloned();
+            Box::pin(async move {
+                let mut provider = JwsTokenProvider::new(section?);
                 provider.load_keys().await?;
                 Ok(Arc::new(provider) as Arc<dyn TokenBackend>)
-            }
-        }),
+            })
+        },
     }
 }
 
 /// JWS token provider.
 pub struct JwsTokenProvider {
-    config: Config,
     repo: AsymmetricKeyRepository<FilesystemAsymmetricKeySource>,
     /// Populated by [`Self::load_keys`]: `encode`/`decode` are synchronous
     /// (called on every request) and require it to have already run,
@@ -80,15 +81,10 @@ impl fmt::Debug for JwsTokenProvider {
 
 impl JwsTokenProvider {
     /// Construct a new provider. Call [`Self::load_keys`] before use.
-    pub fn new(config: Config) -> Self {
-        let repo = AsymmetricKeyRepository::new(FilesystemAsymmetricKeySource::new(
-            config.jws_tokens.key_repository.clone(),
-        ));
-        Self {
-            config,
-            repo,
-            active: None,
-        }
+    pub fn new(config: JwsTokensConfig) -> Self {
+        let repo =
+            AsymmetricKeyRepository::new(FilesystemAsymmetricKeySource::new(config.key_repository));
+        Self { repo, active: None }
     }
 
     /// Load (or reload) the active signing keys from the configured key
@@ -109,9 +105,9 @@ impl JwsTokenProvider {
 }
 
 impl TokenBackend for JwsTokenProvider {
-    fn set_config(&mut self, config: Config) {
-        self.config = config;
-    }
+    /// The signing keys are loaded once from the `[jws_tokens]` key
+    /// repository; nothing in the core configuration affects them.
+    fn set_config(&mut self, _config: Config) {}
 
     fn decode(&self, credential: &str) -> Result<TokenPayload, TokenProviderError> {
         let active = self.active().map_err(TokenProviderError::from)?;
@@ -169,15 +165,11 @@ mod tests {
 
     use super::*;
 
-    fn setup_config(dir: &std::path::Path) -> Config {
-        let builder = config::Config::builder()
-            .set_override("auth.methods", "password")
-            .unwrap()
-            .set_override("database.connection", "dummy")
-            .unwrap();
-        let mut config: Config = Config::try_from(builder).expect("can build a valid config");
-        config.jws_tokens.key_repository = dir.to_path_buf();
-        config
+    fn setup_config(dir: &std::path::Path) -> JwsTokensConfig {
+        JwsTokensConfig {
+            key_repository: dir.to_path_buf(),
+            ..Default::default()
+        }
     }
 
     async fn provider_with_keys(dir: &std::path::Path) -> JwsTokenProvider {
