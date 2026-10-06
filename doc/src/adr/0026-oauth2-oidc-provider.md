@@ -1108,10 +1108,20 @@ The Device Authorization Grant introduces a `device_code` redemption path at
 `/token` that is more susceptible to brute-force attacks than credential
 endpoints. To mitigate:
 
-- `device_code` and `user_code` are subject to separate per-IP and
-  per-`user_code` rate limits with exponential backoff.
-- Invalid or expired `device_code` presented at `/token` triggers a mandatory
-  5-minute quiet period before further codes can be issued for that IP.
+- `device_code` polling at `/token` and `user_code` submission at `/device`
+  are each subject to the per-IP limiter (`[rate_limit_global_ip]`), and
+  `/token` additionally to the per-`client_id` limiter. A per-`user_code`
+  limiter with exponential backoff is **not yet implemented** (tracked in
+  #1433); today the `user_code` keyspace and the per-IP limiter are the only
+  brute-force defenses on `/device`.
+- Invalid or expired `device_code` presented at `/token` triggers a quiet
+  period (`[oauth2] device_code_invalid_quiet_period_seconds`, default 300)
+  keyed on `(client_id, device_code)`. Further polls with that pair are
+  answered `429` + `Retry-After` before any storage lookup. The quiet period
+  is node-local and in-memory. Issuance at `/device_authorization` is not
+  blocked per IP; it is bounded only by the generic per-IP limiter
+  (`[rate_limit_global_ip]`, disabled by default), which operators exposing
+  the device flow should enable.
 - When a valid active grant is polled faster than the advertised `interval`, the
   server returns a `slow_down` error response per RFC 8628 §3.5 (not a generic
   penalty error), signaling the client to increase its polling rate.

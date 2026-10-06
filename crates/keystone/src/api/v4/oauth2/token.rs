@@ -202,6 +202,7 @@ pub(super) async fn token(
                 &state,
                 &domain_id,
                 &headers,
+                peer_addr,
                 &form,
                 &oauth2_cfg,
                 &correlation_id.0,

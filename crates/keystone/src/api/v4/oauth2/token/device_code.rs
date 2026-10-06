@@ -19,10 +19,16 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
+use std::sync::LazyLock;
+use std::time::{Duration, Instant};
+
 use cadf::Outcome;
+use dashmap::DashMap;
+use governor::clock::Clock as _;
 use openstack_keystone_core::oauth2_client::{IdTokenParams, TemplateScope, build_id_token_claims};
 use openstack_keystone_core::oauth2_session::{DevicePollOutcome, IssueRefreshTokenRequest};
 use openstack_keystone_core_types::oauth2_client::{GrantType, OidcAccessTokenClaims};
+use sha2::{Digest, Sha256};
 
 use crate::audit::{build_initiator_unknown, emit_oauth2_session_event};
 use crate::keystone::ServiceState;
@@ -30,6 +36,48 @@ use crate::keystone::ServiceState;
 use super::common::*;
 use super::{Oauth2TokenError, TokenForm, TokenResponse};
 use crate::api::v4::oauth2::well_known::base_url;
+
+/// Upper bound on tracked quiet-period entries, so an attacker spraying
+/// random `device_code` values cannot grow the map without limit. Once full
+/// (after sweeping expired entries) new bad codes simply are not tracked;
+/// the per-IP and per-client limiters still apply to them.
+const QUIET_PERIOD_MAX_ENTRIES: usize = 100_000;
+
+/// `sha256(client_id || 0x00 || device_code)` -> instant until which polls with that code are
+/// refused. Node-local and in-memory on purpose: it only exists to keep
+/// invalid polls away from Raft, and is not security-critical state.
+static QUIET_PERIOD: LazyLock<DashMap<[u8; 32], Instant>> = LazyLock::new(DashMap::new);
+
+/// The `client_id` is part of the key so a poll with a mismatched
+/// `client_id` cannot throttle the legitimate owner of the code.
+fn quiet_period_key(client_id: &str, device_code: &str) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(client_id.as_bytes());
+    hasher.update([0u8]);
+    hasher.update(device_code.as_bytes());
+    hasher.finalize().into()
+}
+
+/// Remaining quiet time for `key`, if it is still in force.
+fn quiet_period_remaining(key: &[u8; 32]) -> Option<Duration> {
+    let until = *QUIET_PERIOD.get(key)?;
+    let remaining = until.checked_duration_since(Instant::now());
+    if remaining.is_none() {
+        QUIET_PERIOD.remove_if(key, |_, u| *u <= Instant::now());
+    }
+    remaining
+}
+
+fn start_quiet_period(key: [u8; 32], period: Duration) {
+    if QUIET_PERIOD.len() >= QUIET_PERIOD_MAX_ENTRIES {
+        let now = Instant::now();
+        QUIET_PERIOD.retain(|_, until| *until > now);
+        if QUIET_PERIOD.len() >= QUIET_PERIOD_MAX_ENTRIES {
+            return;
+        }
+    }
+    QUIET_PERIOD.insert(key, Instant::now() + period);
+}
 
 /// RFC 8628 Device Authorization Grant polling arm (§3.4, §3.5, ADR 0026
 /// §7.C). `client_id` is accepted but not authenticated against a
@@ -43,6 +91,7 @@ pub(super) async fn handle_device_code_grant(
     state: &ServiceState,
     domain_id: &str,
     headers: &HeaderMap,
+    peer_addr: Option<std::net::SocketAddr>,
     form: &TokenForm,
     oauth2_cfg: &openstack_keystone_config::Oauth2Provider,
     correlation_id: &str,
@@ -58,6 +107,37 @@ pub(super) async fn handle_device_code_grant(
         ));
     };
 
+    // Every poll is an unauthenticated Raft read and a `Pending` one is a
+    // write, so throttle on the source IP and the (unverified) client_id
+    // before touching storage (ADR 0026 §7.C), as the refresh arm does.
+    if let Err(retry_after) = state
+        .rate_limiters
+        .check_ip(headers, peer_addr.map(|a| a.ip()))
+    {
+        return Err(Oauth2TokenError::too_many_requests(
+            retry_after.as_secs().max(1),
+        ));
+    }
+    if let Err(not_until) = state.oauth2_token_rate_limiter.check_key(&client_id) {
+        let retry_after = not_until
+            .wait_time_from(state.oauth2_token_rate_limiter.clock().now())
+            .as_secs()
+            .max(1);
+        return Err(Oauth2TokenError::too_many_requests(retry_after));
+    }
+
+    // A code already answered with `invalid_grant`/`expired_token` stays
+    // refused for the configured quiet period, without a storage lookup.
+    let quiet_key = quiet_period_key(&client_id, &device_code);
+    if let Some(remaining) = quiet_period_remaining(&quiet_key) {
+        return Err(Oauth2TokenError::too_many_requests(
+            remaining.as_secs().max(1),
+        ));
+    }
+    let quiet_period = Duration::from_secs(u64::from(
+        oauth2_cfg.device_code_invalid_quiet_period_seconds,
+    ));
+
     let outcome = state
         .provider
         .get_oauth2_session_provider()
@@ -70,11 +150,15 @@ pub(super) async fn handle_device_code_grant(
 
     let record = match outcome {
         DevicePollOutcome::InvalidGrant => {
+            start_quiet_period(quiet_key, quiet_period);
             return Err(Oauth2TokenError::invalid_grant(
                 "device_code is invalid or does not belong to this client_id",
             ));
         }
-        DevicePollOutcome::Expired => return Err(Oauth2TokenError::expired_token()),
+        DevicePollOutcome::Expired => {
+            start_quiet_period(quiet_key, quiet_period);
+            return Err(Oauth2TokenError::expired_token());
+        }
         DevicePollOutcome::SlowDown => return Err(Oauth2TokenError::slow_down()),
         DevicePollOutcome::Pending => return Err(Oauth2TokenError::authorization_pending()),
         DevicePollOutcome::Denied => return Err(Oauth2TokenError::access_denied()),
@@ -200,4 +284,238 @@ pub(super) async fn handle_device_code_grant(
         refresh_token,
     };
     Ok((StatusCode::OK, Json(response)).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+
+    use axum::{extract::ConnectInfo, http::StatusCode};
+    use sea_orm::DatabaseConnection;
+    use tower::ServiceExt;
+    use tower_http::trace::TraceLayer;
+
+    use cadf::AuditDispatcher;
+    use openstack_keystone_config::{Config, ConfigManager};
+    use openstack_keystone_core::keystone::Service;
+    use openstack_keystone_core::oauth2_session::DevicePollOutcome;
+    use openstack_keystone_core::policy::MockPolicy;
+
+    use crate::api::tests::get_mocked_state;
+    use crate::api::v4::oauth2::openapi_router;
+    use crate::api::v4::oauth2::token::test_fixtures::{json_body, request};
+    use crate::oauth2_session::MockOauth2SessionProvider;
+    use crate::provider::Provider;
+
+    fn device_form(device_code: &str) -> String {
+        format!(
+            "grant_type=urn:ietf:params:oauth:grant-type:device_code\
+             &client_id=client-1&device_code={device_code}"
+        )
+    }
+
+    #[tokio::test]
+    async fn test_device_code_rate_limit_returns_429_before_lookup() {
+        let config = Config {
+            oauth2: openstack_keystone_config::Oauth2Provider {
+                token_rate_limit_burst_size: 1,
+                token_rate_limit_replenish_per_minute: 1,
+                ..Default::default()
+            },
+            ..Config::default()
+        };
+
+        let mut session_mock = MockOauth2SessionProvider::default();
+        // Exactly one poll may reach storage: the second is rejected by the
+        // per-client limiter first.
+        session_mock
+            .expect_poll_device_code_grant()
+            .times(1)
+            .returning(|_, _, _| Ok(DevicePollOutcome::Pending));
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_session(session_mock)
+            .build()
+            .unwrap();
+        let state = Arc::new(
+            Service::new(
+                ConfigManager::not_watched(config),
+                DatabaseConnection::default(),
+                provider,
+                Arc::new(MockPolicy::default()),
+                AuditDispatcher::noop(),
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+
+        let client_addr: SocketAddr = "203.0.113.9:1234".parse().unwrap();
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let mut req1 = request(&device_form("rate-limit-code"));
+        req1.extensions_mut().insert(ConnectInfo(client_addr));
+        let resp1 = api.as_service().oneshot(req1).await.unwrap();
+        assert_eq!(resp1.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(resp1).await["error"], "authorization_pending");
+
+        let mut req2 = request(&device_form("rate-limit-code"));
+        req2.extensions_mut().insert(ConnectInfo(client_addr));
+        let resp2 = api.as_service().oneshot(req2).await.unwrap();
+        assert_eq!(resp2.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(resp2.headers().contains_key("retry-after"));
+    }
+
+    #[tokio::test]
+    async fn test_device_code_ip_rate_limit_returns_429_before_lookup() {
+        let config = Config {
+            rate_limit_global_ip: openstack_keystone_config::RateLimitSection {
+                enabled: true,
+                burst_size: 1,
+                replenish_rate_per_second: 1,
+            },
+            ..Config::default()
+        };
+
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_poll_device_code_grant()
+            .times(1)
+            .returning(|_, _, _| Ok(DevicePollOutcome::Pending));
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_session(session_mock)
+            .build()
+            .unwrap();
+        let state = Arc::new(
+            Service::new(
+                ConfigManager::not_watched(config),
+                DatabaseConnection::default(),
+                provider,
+                Arc::new(MockPolicy::default()),
+                AuditDispatcher::noop(),
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+
+        let client_addr: SocketAddr = "203.0.113.10:1234".parse().unwrap();
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let mut req1 = request(&device_form("ip-limit-code"));
+        req1.extensions_mut().insert(ConnectInfo(client_addr));
+        assert_eq!(
+            api.as_service().oneshot(req1).await.unwrap().status(),
+            StatusCode::BAD_REQUEST
+        );
+
+        let mut req2 = request(&device_form("ip-limit-code-2"));
+        req2.extensions_mut().insert(ConnectInfo(client_addr));
+        assert_eq!(
+            api.as_service().oneshot(req2).await.unwrap().status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+    }
+
+    #[test]
+    fn test_quiet_period_key_is_bound_to_client_id() {
+        assert_ne!(
+            super::quiet_period_key("client-a", "code"),
+            super::quiet_period_key("client-b", "code")
+        );
+        // The separator keeps `("ab", "c")` and `("a", "bc")` apart.
+        assert_ne!(
+            super::quiet_period_key("ab", "c"),
+            super::quiet_period_key("a", "bc")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_device_code_quiet_period_after_unknown_code() {
+        let mut session_mock = MockOauth2SessionProvider::default();
+        // The second poll with the same code must be refused without a
+        // storage lookup.
+        session_mock
+            .expect_poll_device_code_grant()
+            .times(1)
+            .returning(|_, _, _| Ok(DevicePollOutcome::InvalidGrant));
+        let provider = Provider::mocked_builder().mock_oauth2_session(session_mock);
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let resp1 = api
+            .as_service()
+            .oneshot(request(&device_form("quiet-unknown-code")))
+            .await
+            .unwrap();
+        assert_eq!(resp1.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(resp1).await["error"], "invalid_grant");
+
+        let resp2 = api
+            .as_service()
+            .oneshot(request(&device_form("quiet-unknown-code")))
+            .await
+            .unwrap();
+        assert_eq!(resp2.status(), StatusCode::TOO_MANY_REQUESTS);
+        let retry_after: u64 = resp2
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse().ok())
+            .unwrap();
+        assert!((1..=300).contains(&retry_after));
+
+        // A different code is unaffected.
+        let mut other = MockOauth2SessionProvider::default();
+        other
+            .expect_poll_device_code_grant()
+            .times(1)
+            .returning(|_, _, _| Ok(DevicePollOutcome::Expired));
+        let provider = Provider::mocked_builder().mock_oauth2_session(other);
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let resp3 = api
+            .as_service()
+            .oneshot(request(&device_form("quiet-other-code")))
+            .await
+            .unwrap();
+        assert_eq!(json_body(resp3).await["error"], "expired_token");
+        let resp4 = api
+            .as_service()
+            .oneshot(request(&device_form("quiet-other-code")))
+            .await
+            .unwrap();
+        assert_eq!(resp4.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn test_device_code_slow_down_does_not_start_quiet_period() {
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_poll_device_code_grant()
+            .times(2)
+            .returning(|_, _, _| Ok(DevicePollOutcome::SlowDown));
+        let provider = Provider::mocked_builder().mock_oauth2_session(session_mock);
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        for _ in 0..2 {
+            let resp = api
+                .as_service()
+                .oneshot(request(&device_form("slow-down-code")))
+                .await
+                .unwrap();
+            assert_eq!(json_body(resp).await["error"], "slow_down");
+        }
+    }
 }

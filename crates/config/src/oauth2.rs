@@ -158,6 +158,14 @@ pub struct Oauth2Provider {
     #[validate(range(min = 1))]
     pub device_code_poll_interval_seconds: u32,
 
+    /// Quiet period, in seconds, during which further `/token` polls
+    /// presenting a `device_code` that was answered with `invalid_grant` or
+    /// `expired_token` are refused with `429` + `Retry-After` before any
+    /// storage lookup (ADR 0026 §7.C).
+    #[serde(default = "default_device_code_invalid_quiet_period_seconds")]
+    #[validate(range(min = 1))]
+    pub device_code_invalid_quiet_period_seconds: u32,
+
     /// Days a revoked (tombstoned) refresh token is retained after its own
     /// `expires_at` before the session janitor purges it. Presenting an
     /// expired token is rejected regardless; retention only keeps the
@@ -240,6 +248,10 @@ fn default_device_code_poll_interval_seconds() -> u32 {
     5
 }
 
+fn default_device_code_invalid_quiet_period_seconds() -> u32 {
+    300
+}
+
 fn default_revoked_family_retention_days() -> u32 {
     30
 }
@@ -267,6 +279,8 @@ impl Default for Oauth2Provider {
             pre_auth_session_lifetime_minutes: default_pre_auth_session_lifetime_minutes(),
             device_code_lifetime_minutes: default_device_code_lifetime_minutes(),
             device_code_poll_interval_seconds: default_device_code_poll_interval_seconds(),
+            device_code_invalid_quiet_period_seconds:
+                default_device_code_invalid_quiet_period_seconds(),
             revoked_family_retention_days: default_revoked_family_retention_days(),
             session_janitor_interval_seconds: default_session_janitor_interval_seconds(),
             list_limit: ListLimitConfig::default(),
@@ -294,6 +308,7 @@ mod tests {
         assert_eq!(cfg.pre_auth_session_lifetime_minutes, 10);
         assert_eq!(cfg.device_code_lifetime_minutes, 10);
         assert_eq!(cfg.device_code_poll_interval_seconds, 5);
+        assert_eq!(cfg.device_code_invalid_quiet_period_seconds, 300);
         assert_eq!(cfg.revoked_family_retention_days, 30);
         assert_eq!(cfg.session_janitor_interval_seconds, 300);
         assert!(cfg.validate().is_ok());
