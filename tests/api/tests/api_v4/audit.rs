@@ -17,19 +17,18 @@
 //! nextest profile), performs real actions, and then reads the audit spool
 //! that server writes:
 //!
-//! 1. Password login as admin — a perimeter record on the best-effort
-//!    channel (`POST /v3/auth/tokens` is an authentication surface, so the
-//!    completion middleware records it even though no provider operation
-//!    runs).
-//! 2. User create + delete — provider records on the fail-closed channel:
-//!    one `pending` line and one terminal line per operation
+//! 1. Password login as admin — a perimeter record on the best-effort channel
+//!    (`POST /v3/auth/tokens` is an authentication surface, so the completion
+//!    middleware records it even though no provider operation runs).
+//! 2. User create + delete — provider records on the fail-closed channel: one
+//!    `pending` line and one terminal line per operation
 //!    (`crates/core/src/identity/service.rs`, `audited_op!`).
 //! 3. API key create + revoke — provider records; the revoke handler
-//!    (`crates/keystone/src/api/v4/api_key/revoke.rs`) has no audit call of
-//!    its own, the record is written in the provider
-//!    (`crates/core/src/api_key/service.rs`) via `audited_if_ctx!`, which
-//!    only audits when an execution context is present, so a mocked handler
-//!    test cannot observe it. A live request is the only way to cover it.
+//!    (`crates/keystone/src/api/v4/api_key/revoke.rs`) has no audit call of its
+//!    own, the record is written in the provider
+//!    (`crates/core/src/api_key/service.rs`) via `audited_if_ctx!`, which only
+//!    audits when an execution context is present, so a mocked handler test
+//!    cannot observe it. A live request is the only way to cover it.
 //!
 //! The spool is written asynchronously and is not fsynced per perimeter
 //! record, so the expected lines are polled for. The test skips (rather
@@ -41,11 +40,11 @@
 //! key derived from the keyring file, exactly as a SIEM would verify it (see
 //! `crates/cadf/tests/hmac_vectors.rs` for the reference procedure).
 //!
-//! `tools/start-api.sh` writes `[audit] spool_dir = /tmp/nextest/keystone/audit`
-//! and `node_id = api-test-node` and leaves `hmac_kek_file` unset, so the
-//! keyring sits at the legacy default `<spool_dir>/hmac-key.bin` (see
-//! `AuditConfig::hmac_kek_path`). `AUDIT_SPOOL_DIR` overrides the spool
-//! directory for manual runs.
+//! `tools/start-api.sh` writes `[audit] spool_dir =
+//! /tmp/nextest/keystone/audit` and `node_id = api-test-node` and leaves
+//! `hmac_kek_file` unset, so the keyring sits at the legacy default
+//! `<spool_dir>/hmac-key.bin` (see `AuditConfig::hmac_kek_path`).
+//! `AUDIT_SPOOL_DIR` overrides the spool directory for manual runs.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

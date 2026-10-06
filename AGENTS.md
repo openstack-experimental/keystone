@@ -34,7 +34,7 @@ You are a coding agent working on the OpenStack Keystone Rust implementation.
 ## Tooling Commands
 
 - **Build**: `cargo build -p <crate>` or `cargo build` (workspace)
-- **Unit tests**: `cargo test -p <crate>`
+- **Unit tests**: `cargo nextest -p <crate>`
 - **Integration tests (raft)**:
   `cargo nextest run -p test_integration --profile raft`
 - **API tests**: `cargo nextest run --profile api -p test_api` (requires SPIRE,

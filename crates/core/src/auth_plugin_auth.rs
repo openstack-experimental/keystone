@@ -57,10 +57,11 @@ pub struct WasmPluginAuthRequest {
     /// Raw public-interface TCP peer address. Internal/admin callers pass
     /// `None` even when their listener records a peer for audit logging.
     pub peer_ip: Option<std::net::IpAddr>,
-    /// The request's server-generated correlation ID (`x-openstack-request-id`),
-    /// so the plugin audit records can be joined with the perimeter event of
-    /// the same login. `None` for callers without a request (tests, internal
-    /// dispatch); the record then gets a fresh ID.
+    /// The request's server-generated correlation ID
+    /// (`x-openstack-request-id`), so the plugin audit records can be
+    /// joined with the perimeter event of the same login. `None` for
+    /// callers without a request (tests, internal dispatch); the record
+    /// then gets a fresh ID.
     pub correlation_id: Option<String>,
 }
 

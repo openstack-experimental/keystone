@@ -16,10 +16,11 @@
 //! ADR 0023 promises that every state-changing provider operation is audited
 //! fail-closed. This test walks the `service.rs` of every provider, finds the
 //! methods whose name says they change state and requires each to contain an
-//! [`audited_op!`](crate::audited_op) or [`audited_if_ctx!`](crate::audited_if_ctx)
-//! call site, or to be listed in [`ALLOW_LIST`] with the reason it is exempt.
-//! A new provider (or a new mutating method) therefore cannot ship unaudited
-//! without a reviewer seeing an explicit exemption.
+//! [`audited_op!`](crate::audited_op) or
+//! [`audited_if_ctx!`](crate::audited_if_ctx) call site, or to be listed in
+//! [`ALLOW_LIST`] with the reason it is exempt. A new provider (or a new
+//! mutating method) therefore cannot ship unaudited without a reviewer seeing
+//! an explicit exemption.
 
 use std::fs;
 use std::path::Path;

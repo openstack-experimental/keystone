@@ -539,7 +539,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let metrics = Arc::new(AuditMetrics::default());
         let mut w = SpoolWriter::open(cfg(dir.path(), 100_000), metrics.clone()).unwrap();
-        // 12_500-byte segments: five 100-byte lines never seal, so seal by hand.
+        // 12_500-byte segments: five 100-byte lines never seal, so seal by
+        // hand.
         for _ in 0..3 {
             w.append(&"z".repeat(99)).unwrap();
             w.seal().unwrap();
