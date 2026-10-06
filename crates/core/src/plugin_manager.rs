@@ -302,9 +302,12 @@ pub trait PluginManagerApi {
 
     /// Every registered assignment backend, keyed by driver name.
     ///
-    /// The assignment provider clones this to seed its per-domain dispatch
-    /// bundle (ADR 0034 §4); with the `openfga` driver crate linked it holds
-    /// both `"sql"` and `"openfga"`.
+    /// The assignment provider resolves the global backend through this map
+    /// (ADR 0034 §4). A driver appears here only when its `selected`
+    /// predicate holds: with the `openfga` driver crate linked, `"openfga"`
+    /// is present only when `[assignment] driver` is `openfga`. Per-domain
+    /// backends are built separately from the named blocks and are not part
+    /// of this map.
     ///
     /// # Returns
     /// - `&HashMap<String, Arc<dyn AssignmentBackend>>` - The registry.

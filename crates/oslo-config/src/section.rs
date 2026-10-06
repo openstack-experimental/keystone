@@ -257,19 +257,17 @@ pub fn unclaimed_sections(raw: &config::Config, reserved: &[&str]) -> Vec<String
         )
         .map(str::to_lowercase)
         .collect();
-    let mut unclaimed: Vec<String> = raw
-        .cache
-        .clone()
-        .into_table()
-        .map(|table| {
-            table
-                .into_iter()
-                .filter(|(_, value)| matches!(value.kind, config::ValueKind::Table(_)))
-                .map(|(name, _)| name)
-                .filter(|name| !claimed.contains(&name.to_lowercase()))
-                .collect()
-        })
-        .unwrap_or_default();
+    // Read the top-level keys of the raw configuration in place; the cache
+    // holds every section, so it must not be cloned for this scan.
+    let mut unclaimed: Vec<String> = match &raw.cache.kind {
+        config::ValueKind::Table(table) => table
+            .iter()
+            .filter(|(_, value)| matches!(value.kind, config::ValueKind::Table(_)))
+            .map(|(name, _)| name.clone())
+            .filter(|name| !claimed.contains(&name.to_lowercase()))
+            .collect(),
+        _ => Vec::new(),
+    };
     unclaimed.sort();
     unclaimed
 }

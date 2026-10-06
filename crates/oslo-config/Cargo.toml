@@ -36,9 +36,12 @@ vaultrs = { workspace = true, optional = true }
 [dev-dependencies]
 httpmock.workspace = true
 serial_test.workspace = true
-tempfile.workspace = true
 temp-env = { workspace = true, features = ["async_closure"] }
+tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# Without `no-env-filter` the `traced_test` macro only captures events from
+# the test crate itself, not the engine's.
+tracing-test = { workspace = true, features = ["no-env-filter"] }
 
 [lints]
 workspace = true

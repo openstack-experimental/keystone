@@ -31,7 +31,10 @@
 //!   (`VaultSection`), which the engine reads itself: the core schema neither
 //!   declares nor reserves it. This is the `vault` cargo feature, enabled by
 //!   default; without it the Vault client dependencies are not built and a
-//!   configuration that contains a reference fails to load.
+//!   configuration that contains a reference fails to load. The watching
+//!   manager keeps the live Vault state (token renewal) and revokes the token
+//!   on shutdown; one-shot loaders resolve the references without keeping the
+//!   state, so their token lives out its TTL.
 //! - [`ConfigManager`] watches the files and reloads the configuration on
 //!   change, keeping the last-known-good configuration when a reload fails.
 //!
@@ -83,9 +86,13 @@
 //! -> registered sections ([`ConfigSection::finish`], then the validation pass
 //! [`ConfigSection::validate_with`]) -> core schema
 //! ([`CoreSchema::finish_load`]). Env override, site-vars and Vault therefore
-//! apply to registered sections exactly like to the core ones. Sections that
-//! are neither reserved by the core schema nor registered are reported with a
-//! warning (a misspelled name or a driver that is not linked).
+//! apply to registered sections exactly like to the core ones. The watching
+//! manager reports with a warning any section that is neither reserved by the
+//! core schema nor registered (a misspelled name or a driver that is not
+//! linked), on the initial load and every reload. One-shot loaders
+//! ([`load_snapshot_from`]) do not: their link-time claim set can
+//! legitimately be smaller than the server's, and a misspelling surfaces on
+//! the server's next load.
 //!
 //! ## Linking
 //!
@@ -337,12 +344,21 @@ pub async fn load<C: CoreSchema>(path: PathBuf) -> Result<C, Report> {
 /// Load the config file, resolve Vault references and everything the schema
 /// refers to ([`CoreSchema::finish_load`]).
 pub async fn load_all<C: CoreSchema>(path: PathBuf) -> Result<C, Report> {
-    Ok(load_all_with_vault_state::<C>(&path).await?.config.core)
+    Ok(load_all_with_vault_state::<C>(&path, false)
+        .await?
+        .config
+        .core)
 }
 
 /// Like [`load_all`] but also materializes the registered sections.
+///
+/// This is the one-shot pipeline (e.g. `keystone-manage`): unlike the
+/// watching [`ConfigManager::watched`], it does not report unclaimed
+/// sections, because the link-time claim set of a one-shot binary can
+/// legitimately be smaller than the server's (a misspelled section still
+/// surfaces on the server's next load).
 pub async fn load_snapshot_from<C: CoreSchema>(path: PathBuf) -> Result<Loaded<C>, Report> {
-    Ok(load_all_with_vault_state::<C>(&path).await?.config)
+    Ok(load_all_with_vault_state::<C>(&path, false).await?.config)
 }
 
 /// Resolve any Vault references in `raw` in place.
@@ -393,9 +409,26 @@ async fn resolve_vault_references(
 
 /// Load the complete snapshot together with the Vault runtime that keeps the
 /// resolved secrets current.
-async fn load_all_with_vault_state<C: CoreSchema>(path: &Path) -> Result<LoadedConfig<C>, Report> {
+///
+/// When `warn_unclaimed` is set, top-level sections that neither the core
+/// schema nor a registered section claim are reported with a warning. The
+/// watching manager sets it; one-shot loaders do not (their link-time claim
+/// set can legitimately be smaller than the server's).
+async fn load_all_with_vault_state<C: CoreSchema>(
+    path: &Path,
+    warn_unclaimed: bool,
+) -> Result<LoadedConfig<C>, Report> {
     let mut raw = build_raw::<C>(path.to_path_buf())?;
     let vault = resolve_vault_references(&mut raw).await?;
+    if warn_unclaimed {
+        for name in unclaimed_sections(&raw, C::reserved_sections()) {
+            tracing::warn!(
+                section = %name,
+                "configuration section [{name}] is not claimed by the core schema or any \
+                 registered section and is ignored (misspelled name or driver not linked?)"
+            );
+        }
+    }
     let parsed = load_snapshot::<C>(raw, path);
     let config = match vault {
         // A configuration that resolved Vault references but then failed to
@@ -409,13 +442,6 @@ async fn load_all_with_vault_state<C: CoreSchema>(path: &Path) -> Result<LoadedC
 /// Parse the core schema and the registered sections out of `raw`.
 fn load_snapshot<C: CoreSchema>(raw: config::Config, path: &Path) -> Result<Loaded<C>, Report> {
     check_registry(C::reserved_sections())?;
-    for name in unclaimed_sections(&raw, C::reserved_sections()) {
-        tracing::warn!(
-            section = %name,
-            "configuration section [{name}] is not claimed by the core schema or any \
-             registered section and is ignored (misspelled name or driver not linked?)"
-        );
-    }
     let ctx = LoadCtx {
         config_path: path.to_path_buf(),
     };
@@ -592,7 +618,7 @@ impl<C: CoreSchema> ConfigManager<C> {
                     }
                     while sync_rx.try_recv().is_ok() {}
                     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    match load_all_with_vault_state::<C>(&config_path).await {
+                    match load_all_with_vault_state::<C>(&config_path, true).await {
                         Ok(loaded) => {
                             Self::apply_loaded(
                                 &manager,
@@ -615,7 +641,7 @@ impl<C: CoreSchema> ConfigManager<C> {
                         error!("Vault token renewal failed; retrying while retaining current configuration");
                     }
                     match runtime.has_new_version().await {
-                        Ok(true) => match load_all_with_vault_state::<C>(&config_path).await {
+                        Ok(true) => match load_all_with_vault_state::<C>(&config_path, true).await {
                             Ok(loaded) => {
                                 Self::apply_loaded(
                                     &manager,
@@ -656,7 +682,7 @@ impl<C: CoreSchema> ConfigManager<C> {
         let (notify_tx, _) = tokio::sync::broadcast::channel(16);
 
         // Initial Load
-        let initial = load_all_with_vault_state::<C>(&config_path).await?;
+        let initial = load_all_with_vault_state::<C>(&config_path, true).await?;
 
         let shutdown = CancellationToken::new();
         let manager = Arc::new(Self {

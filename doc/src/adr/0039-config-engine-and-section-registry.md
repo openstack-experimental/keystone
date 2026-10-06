@@ -116,6 +116,11 @@ teardown behaviour are unchanged). Registered sections are re-parsed and
 re-validated on every reload and watched files of driver sections are part of
 the watch set, so a driver section reloads like any core section.
 
+Vault token lifecycle: the live runtime is created with the initial load,
+replaced on every reload, and revoked on `ConfigManager::shutdown`. A runtime
+that is replaced or dropped without a shutdown (one-shot loaders, the
+predecessor of a reload) is not revoked and its token lives out its TTL.
+
 ### Per-domain blocks
 
 `AssignmentBackendConfig` becomes
@@ -134,10 +139,16 @@ driver that is not linked fails the load.
   that is absent is a startup error raised by the driver's `build` through
   `view.require`.
 - Unclaimed top-level section (neither a core section nor a registered one, for
-  example a misspelled `[openfga_typo]`) => warning on every load. It is a
-  warning, not an error, so a reload of a configuration that carries a section
-  of a driver this binary does not link keeps working. A present section whose
-  driver is not selected is not reported.
+  example a misspelled `[openfga_typo]`) => warning on every load of the
+  watching manager (server startup and each reload). One-shot loaders
+  (`load_snapshot_from`, e.g. `keystone-manage`) skip the warning: their
+  link-time claim set is smaller than the server's (`keystone-manage` does not
+  link the token or assignment drivers), so a valid `[jws_tokens]` or
+  `[openfga]` section would be reported as unclaimed; a misspelling still
+  surfaces on the server's next load. It is a warning, not an error, so a
+  reload of a configuration that carries a section of a driver this binary does
+  not link keeps working. A present section whose driver is not selected is not
+  reported.
 - Duplicate `NAME` across descriptors, and reserved names (`DEFAULT`,
   `database`, `auth`, ...) => startup error.
 - Startup assertion that expected section names are registered (catches

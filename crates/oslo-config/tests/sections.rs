@@ -18,8 +18,8 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use oslo_config::{
-    ConfigError, ConfigSection, ConfigView, CoreSchema, LoadCtx, SectionBag, SourceSpec,
-    assert_registered, build_raw, check_registry, load_snapshot_from, register_section,
+    ConfigError, ConfigManager, ConfigSection, ConfigView, CoreSchema, LoadCtx, SectionBag,
+    SourceSpec, assert_registered, build_raw, check_registry, load_snapshot_from, register_section,
     unclaimed_sections,
 };
 use serde::Deserialize;
@@ -215,6 +215,33 @@ fn vault_section_is_claimed_by_the_engine() {
     let f = conf("[vault]\naddress = \"http://localhost\"\n");
     let raw = build_raw::<Core>(f.path().to_path_buf()).unwrap();
     assert!(unclaimed_sections(&raw, Core::reserved_sections()).is_empty());
+}
+
+/// The watching manager reports unclaimed sections on its initial load.
+#[tokio::test]
+#[serial]
+#[tracing_test::traced_test]
+async fn watched_reports_unclaimed_sections() {
+    let f = conf("[default]\ndebug = true\n[stray]\na = 1\n");
+    let manager = ConfigManager::<Core>::watched(f.path().to_path_buf())
+        .await
+        .unwrap();
+    manager.shutdown().await;
+    assert!(logs_contain("section [stray] is not claimed"));
+}
+
+/// One-shot loaders skip the unclaimed-section warning: a one-shot binary
+/// (e.g. `keystone-manage`) legitimately links fewer sections than the
+/// server, so a section of an unlinked driver must not be reported there.
+#[tokio::test]
+#[serial]
+#[tracing_test::traced_test]
+async fn one_shot_load_reports_no_unclaimed_sections() {
+    let f = conf("[default]\ndebug = true\n[stray]\na = 1\n");
+    let _loaded = load_snapshot_from::<Core>(f.path().to_path_buf())
+        .await
+        .unwrap();
+    assert!(!logs_contain("is not claimed"));
 }
 
 #[cfg(not(feature = "vault"))]
