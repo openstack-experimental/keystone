@@ -379,7 +379,7 @@ impl SpoolWriter {
             };
             std::fs::remove_file(segment)?;
             held = held.saturating_sub(size);
-            self.total_bytes.fetch_sub(size, Ordering::Relaxed);
+            dec_spool_bytes(&self.total_bytes, size);
             self.cfg.metrics.spool_retention_deleted.inc();
             error!(
                 segment = %segment.display(),
@@ -537,6 +537,25 @@ pub struct VerifyStats {
     pub skipped: usize,
 }
 
+/// Reduce the shared spool-bytes gauge by `bytes`, saturating at zero.
+///
+/// The gauge is seeded once when the spool writer starts (see
+/// [`start_spool_writer`]); everything that removes segment bytes — shipper
+/// acks, quarantines, retention deletions — reduces it through this helper.
+/// Saturation keeps a double-accounted size from wrapping the gauge into a
+/// near-2^64 reading.
+pub(crate) fn dec_spool_bytes(spool_bytes: &AtomicU64, bytes: u64) {
+    let mut current = spool_bytes.load(Ordering::Relaxed);
+    loop {
+        let next = current.saturating_sub(bytes);
+        match spool_bytes.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed)
+        {
+            Ok(_) => return,
+            Err(actual) => current = actual,
+        }
+    }
+}
+
 /// Verify a sealed segment at rest.
 ///
 /// For each line: parse as `CadfEvent`, check `observer.node_id` equals
@@ -626,6 +645,9 @@ pub fn verify_sealed_spool(
     if skipped > 0 {
         quarantine_segment(path)?;
         metrics.spool_quarantined.inc();
+        // The writer seeded the gauge with this segment's bytes; a
+        // quarantined copy is no longer shippable spool content.
+        dec_spool_bytes(&dispatcher.spool_bytes_handle(), size);
     }
     info!(verified, skipped, "audit spool verification complete");
     Ok(VerifyStats { verified, skipped })
@@ -1047,6 +1069,15 @@ mod tests {
         writeln!(f, "{{not valid json}}").unwrap();
         let segment = seal_previous_spool(dir.path(), "node-1").unwrap().unwrap();
 
+        // Seed the gauge the way start_spool_writer does at writer startup:
+        // the sealed segment still counts until verification disposes of it.
+        let bytes = dispatcher.spool_bytes_handle();
+        bytes.store(
+            spool_total_bytes(dir.path(), "node-1").unwrap(),
+            Ordering::Relaxed,
+        );
+        assert!(bytes.load(Ordering::Relaxed) > 0);
+
         let stats = verify_sealed_spool(&segment, "node-1", &dispatcher, &key_store(&key)).unwrap();
 
         assert_eq!(
@@ -1063,6 +1094,14 @@ mod tests {
         assert_eq!(metrics.spool_verified.get(["verified"]), 1);
         assert_eq!(metrics.spool_verified.get(["invalid"]), 1);
         assert_eq!(metrics.spool_quarantined.get(), 1);
+        // The quarantined segment's bytes must leave the gauge: it now holds
+        // exactly what is still on disk as live spool or sealed segments.
+        assert_eq!(
+            bytes.load(Ordering::Relaxed),
+            spool_total_bytes(dir.path(), "node-1").unwrap(),
+            "gauge must match what is left on disk"
+        );
+        assert_eq!(bytes.load(Ordering::Relaxed), 0);
     }
 
     #[test]

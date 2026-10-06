@@ -23,7 +23,7 @@
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -31,7 +31,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tracing::{debug, error, info, warn};
 
 use crate::metrics::AuditMetrics;
-use crate::spool::{SpoolError, list_segments, quarantine_segment};
+use crate::spool::{SpoolError, dec_spool_bytes, list_segments, quarantine_segment};
 use crate::types::CadfEvent;
 
 /// Error returned by an [`AuditSink`].
@@ -196,7 +196,7 @@ async fn ship_segment(
         cfg.metrics.shipped_events.add(["skipped"], skipped as u64);
         quarantine_segment(path)?;
         cfg.metrics.spool_quarantined.inc();
-        spool_bytes.fetch_sub(size, Ordering::Relaxed);
+        dec_spool_bytes(spool_bytes, size);
         warn!(segment = %path.display(), shipped, skipped, "segment shipped with unparsable lines and quarantined");
         return Ok(ShipOutcome::Quarantined);
     }
@@ -206,7 +206,7 @@ async fn ship_segment(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(ShipOutcome::Gone),
         Err(e) => return Err(SpoolError::Io(e).into()),
     }
-    spool_bytes.fetch_sub(size, Ordering::Relaxed);
+    dec_spool_bytes(spool_bytes, size);
     info!(segment = %path.display(), events = shipped, size_bytes = size, "audit segment acknowledged by sink");
     Ok(ShipOutcome::Acked)
 }
@@ -378,6 +378,7 @@ async fn ship_pending(
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
+    use std::sync::atomic::Ordering;
 
     use tempfile::tempdir;
     use uuid::Uuid;
