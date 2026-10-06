@@ -12,8 +12,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use crate::common::TlsConfiguration;
+use eyre::{WrapErr, eyre};
+use oslo_config::{ConfigError, ConfigSection, LoadCtx};
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
+use std::path::PathBuf;
 
 /// Database configuration.
 #[derive(Debug, Default, Deserialize, Clone)]
@@ -81,6 +84,39 @@ impl DatabaseSection {
             }
         }
         self.connection.clone()
+    }
+}
+
+impl ConfigSection for DatabaseSection {
+    const NAME: &'static str = "database";
+
+    fn finish(&mut self, _ctx: &LoadCtx) -> Result<(), ConfigError> {
+        self.tls
+            .read_certs()
+            .wrap_err("reading database TLS configuration")?;
+        if self.spiffe_managed
+            && (self.tls.tls_cert_file.is_none()
+                || self.tls.tls_key_file.is_none()
+                || self.tls.tls_client_ca_file.is_none())
+        {
+            return Err(eyre!(
+                "[database] spiffe_managed = true requires tls_cert_file, tls_key_file, \
+                 and tls_client_ca_file to all be set"
+            ));
+        }
+        Ok(())
+    }
+
+    fn watch_files(&self) -> Vec<PathBuf> {
+        [
+            &self.tls.tls_cert_file,
+            &self.tls.tls_key_file,
+            &self.tls.tls_client_ca_file,
+        ]
+        .into_iter()
+        .flatten()
+        .cloned()
+        .collect()
     }
 }
 

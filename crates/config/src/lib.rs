@@ -51,7 +51,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use eyre::{Report, WrapErr, eyre};
+use eyre::{Report, WrapErr};
+use oslo_config::ConfigSection;
 use serde::Deserialize;
 use validator::Validate;
 
@@ -389,36 +390,11 @@ impl Config {
         oslo_config::load_all::<Self>(path).await
     }
 
-    fn finish_load(mut cfg: Self) -> Result<Self, Report> {
+    fn finish_load(mut cfg: Self, ctx: &oslo_config::LoadCtx) -> Result<Self, Report> {
         if let Some(ref mut ds) = cfg.distributed_storage {
-            if let RaftTlsConfiguration::Tls(ref mut tls) = ds.tls_configuration {
-                tls.read_certs()
-                    .wrap_err("reading distributed storage TLS configuration")?;
-            }
-            if let Some(ref mut pkcs11) = ds.pkcs11 {
-                pkcs11
-                    .load_secrets()
-                    .wrap_err("reading distributed storage PKCS#11 configuration")?;
-            }
-            if let Some(ref mut tpm) = ds.tpm {
-                tpm.load_secrets()
-                    .wrap_err("reading distributed storage TPM configuration")?;
-            }
+            ConfigSection::finish(ds, ctx)?;
         }
-        cfg.database
-            .tls
-            .read_certs()
-            .wrap_err("reading database TLS configuration")?;
-        if cfg.database.spiffe_managed
-            && (cfg.database.tls.tls_cert_file.is_none()
-                || cfg.database.tls.tls_key_file.is_none()
-                || cfg.database.tls.tls_client_ca_file.is_none())
-        {
-            return Err(eyre!(
-                "[database] spiffe_managed = true requires tls_cert_file, tls_key_file, \
-                 and tls_client_ca_file to all be set"
-            ));
-        }
+        ConfigSection::finish(&mut cfg.database, ctx)?;
         // Compile password regex at load time.
         cfg.security_compliance
             .compile_regex()
@@ -437,28 +413,10 @@ impl Config {
     /// Get the list of all files that should be watched.
     fn get_watch_files(&self) -> HashSet<PathBuf> {
         let mut watched_paths = HashSet::new();
-        if let Some(ds) = &self.distributed_storage
-            && let RaftTlsConfiguration::Tls(tls) = &ds.tls_configuration
-        {
-            if let Some(crt) = &tls.tls_cert_file {
-                watched_paths.insert(crt.clone());
-            }
-            if let Some(key) = &tls.tls_key_file {
-                watched_paths.insert(key.clone());
-            }
-            if let Some(ca) = &tls.tls_client_ca_file {
-                watched_paths.insert(ca.clone());
-            }
+        if let Some(ds) = &self.distributed_storage {
+            watched_paths.extend(ConfigSection::watch_files(ds));
         }
-        if let Some(crt) = &self.database.tls.tls_cert_file {
-            watched_paths.insert(crt.clone());
-        }
-        if let Some(key) = &self.database.tls.tls_key_file {
-            watched_paths.insert(key.clone());
-        }
-        if let Some(ca) = &self.database.tls.tls_client_ca_file {
-            watched_paths.insert(ca.clone());
-        }
+        watched_paths.extend(ConfigSection::watch_files(&self.database));
         // Per-domain config files (ADR 0034 §9): watch the directory so an
         // operator's edit to a `keystone.<name>.conf` triggers a reload and the
         // `fs` domain-config driver re-scans. Only when it actually exists —
@@ -526,8 +484,62 @@ impl oslo_config::CoreSchema for Config {
         }
     }
 
-    fn finish_load(self) -> Result<Self, Report> {
-        Config::finish_load(self)
+    fn reserved_sections() -> &'static [&'static str] {
+        &[
+            "api_key",
+            "application_credential",
+            "audit",
+            "auth_plugin_identity",
+            "api_policy",
+            "assignment",
+            "auth",
+            "catalog",
+            "limit",
+            "credential",
+            "database",
+            "DEFAULT",
+            "distributed_storage",
+            "domain_config",
+            "auth_plugins",
+            "auth_plugin",
+            "ec2",
+            "federation",
+            "fernet_tokens",
+            "jws_tokens",
+            "identity",
+            "idmapping",
+            "k8s_auth",
+            "ldap",
+            "local_emergency",
+            "mapping",
+            "oauth2",
+            "openfga",
+            "oslo_middleware",
+            "interface_internal",
+            "interface_public",
+            "interface_admin",
+            "rate_limit_global_ip",
+            "rate_limit_trusted_proxies",
+            "interface_metrics",
+            "rate_limit_user_auth",
+            "policy",
+            "resource",
+            "revoke",
+            "role",
+            "scim_realm",
+            "scim_resource",
+            "security_compliance",
+            "token",
+            "token_restriction",
+            "trust",
+            "vault",
+            "vendordata",
+            "webauthn",
+        ]
+    }
+
+    fn finish_load(self, ctx: &oslo_config::LoadCtx) -> Result<Self, Report> {
+        Config::finish_load(self, ctx)
     }
 
     fn watch_files(&self) -> HashSet<PathBuf> {

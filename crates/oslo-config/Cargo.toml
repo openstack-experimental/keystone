@@ -20,6 +20,7 @@ config = { workspace = true, features = ["async", "ini", "toml"] }
 derive_builder.workspace = true
 eyre.workspace = true
 httpmock = { workspace = true, optional = true }
+inventory.workspace = true
 ipnet = { workspace = true }
 notify = "8.2"
 secrecy = { workspace = true, features = ["serde"] }
@@ -34,7 +35,9 @@ vaultrs.workspace = true
 
 [dev-dependencies]
 httpmock.workspace = true
+serial_test.workspace = true
 tempfile.workspace = true
+temp-env = { workspace = true, features = ["async_closure"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]

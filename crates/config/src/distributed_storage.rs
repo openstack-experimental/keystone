@@ -16,6 +16,7 @@ use std::path::PathBuf;
 
 use eyre::{Context, Report};
 use http::Uri;
+use oslo_config::{ConfigError, ConfigSection, LoadCtx};
 use secrecy::SecretSlice;
 use serde::Deserialize;
 use validator::Validate;
@@ -538,6 +539,42 @@ impl SpiffeTls {
             .first()
             .and_then(|svid| spiffe_id_path(svid))
             .unwrap_or_else(|| format!("{}node", self.spiffe_path_prefix))
+    }
+}
+
+impl ConfigSection for DistributedStorageConfiguration {
+    const NAME: &'static str = "distributed_storage";
+
+    fn finish(&mut self, _ctx: &LoadCtx) -> Result<(), ConfigError> {
+        if let RaftTlsConfiguration::Tls(ref mut tls) = self.tls_configuration {
+            tls.read_certs()
+                .wrap_err("reading distributed storage TLS configuration")?;
+        }
+        if let Some(ref mut pkcs11) = self.pkcs11 {
+            pkcs11
+                .load_secrets()
+                .wrap_err("reading distributed storage PKCS#11 configuration")?;
+        }
+        if let Some(ref mut tpm) = self.tpm {
+            tpm.load_secrets()
+                .wrap_err("reading distributed storage TPM configuration")?;
+        }
+        Ok(())
+    }
+
+    fn watch_files(&self) -> Vec<PathBuf> {
+        match &self.tls_configuration {
+            RaftTlsConfiguration::Tls(tls) => [
+                &tls.tls_cert_file,
+                &tls.tls_key_file,
+                &tls.tls_client_ca_file,
+            ]
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect(),
+            _ => Vec::new(),
+        }
     }
 }
 

@@ -45,9 +45,15 @@ use tokio_util::sync::CancellationToken;
 use tracing::error;
 
 mod primitives;
+mod section;
 pub mod vault;
 
+pub use inventory;
 pub use primitives::*;
+pub use section::{
+    ConfigError, ConfigSection, ConfigView, LoadCtx, Loaded, SectionBag, SectionDescriptor,
+    assert_registered, check_registry,
+};
 pub use vault::VaultSection;
 
 /// Where a service reads its raw configuration from.
@@ -74,7 +80,7 @@ pub trait CoreSchema: DeserializeOwned + Send + Sync + 'static {
     /// Post-process a freshly parsed configuration: read the files it refers
     /// to and validate it. Used by the full loading pipeline
     /// ([`load_all`], [`ConfigManager`]) and not by [`load`].
-    fn finish_load(self) -> Result<Self, Report> {
+    fn finish_load(self, _ctx: &LoadCtx) -> Result<Self, Report> {
         Ok(self)
     }
 
@@ -82,6 +88,12 @@ pub trait CoreSchema: DeserializeOwned + Send + Sync + 'static {
     /// to the main configuration file.
     fn watch_files(&self) -> HashSet<PathBuf> {
         HashSet::new()
+    }
+
+    /// Names of the sections of the core schema. Registered sections must not
+    /// reuse them.
+    fn reserved_sections() -> &'static [&'static str] {
+        &[]
     }
 }
 
@@ -125,6 +137,11 @@ pub async fn load<C: CoreSchema>(path: PathBuf) -> Result<C, Report> {
 /// Load the config file, resolve Vault references and everything the schema
 /// refers to ([`CoreSchema::finish_load`]).
 pub async fn load_all<C: CoreSchema>(path: PathBuf) -> Result<C, Report> {
+    Ok(load_all_with_vault_state::<C>(&path).await?.config.core)
+}
+
+/// Like [`load_all`] but also materializes the registered sections.
+pub async fn load_snapshot_from<C: CoreSchema>(path: PathBuf) -> Result<Loaded<C>, Report> {
     Ok(load_all_with_vault_state::<C>(&path).await?.config)
 }
 
@@ -152,7 +169,7 @@ async fn resolve_vault_references(
 async fn load_all_with_vault_state<C: CoreSchema>(path: &Path) -> Result<LoadedConfig<C>, Report> {
     let mut raw = build_raw::<C>(path.to_path_buf())?;
     let vault = resolve_vault_references(&mut raw).await?;
-    let parsed = from_raw::<C>(raw).and_then(C::finish_load);
+    let parsed = load_snapshot::<C>(raw, path);
     let config = match vault {
         // A configuration that resolved Vault references but then failed to
         // build is surfaced distinctly from a plain configuration error.
@@ -162,15 +179,26 @@ async fn load_all_with_vault_state<C: CoreSchema>(path: &Path) -> Result<LoadedC
     Ok(LoadedConfig { config, vault })
 }
 
+/// Parse the core schema and the registered sections out of `raw`.
+fn load_snapshot<C: CoreSchema>(raw: config::Config, path: &Path) -> Result<Loaded<C>, Report> {
+    check_registry(C::reserved_sections())?;
+    let ctx = LoadCtx {
+        config_path: path.to_path_buf(),
+    };
+    let sections = section::load_sections(&raw, &ctx)?;
+    let core = from_raw::<C>(raw).and_then(|c| c.finish_load(&ctx))?;
+    Ok(Loaded { core, sections })
+}
+
 struct LoadedConfig<C> {
-    config: C,
+    config: Loaded<C>,
     vault: Option<vault::VaultRuntime>,
 }
 
 /// Config Manager supporting config file watch and reload.
 pub struct ConfigManager<C> {
     /// The current config.
-    pub config: Arc<RwLock<C>>,
+    pub config: Arc<RwLock<Loaded<C>>>,
     /// Notify listeners that something changed.
     pub notify_tx: tokio::sync::broadcast::Sender<()>,
     /// Signals the background watcher to stop and run its teardown (e.g.
@@ -184,6 +212,17 @@ pub struct ConfigManager<C> {
 impl<C: CoreSchema> ConfigManager<C> {
     /// Initialize the Manager with no watcher.
     pub fn not_watched(config: C) -> Arc<Self> {
+        let (notify_tx, _) = tokio::sync::broadcast::channel(16);
+        Arc::new(Self {
+            config: Arc::new(RwLock::new(Loaded::new(config))),
+            notify_tx,
+            shutdown: CancellationToken::new(),
+            watcher_handle: Mutex::new(None),
+        })
+    }
+
+    /// Initialize the Manager with no watcher from a ready made snapshot.
+    pub fn not_watched_loaded(config: Loaded<C>) -> Arc<Self> {
         let (notify_tx, _) = tokio::sync::broadcast::channel(16);
         Arc::new(Self {
             config: Arc::new(RwLock::new(config)),
@@ -272,7 +311,12 @@ impl<C: CoreSchema> ConfigManager<C> {
             .expect("Failed to create watcher");
         // A global set of watches to prevent deadlock while re-registering the
         // same file.
-        let mut watched_paths = manager.config.read().await.watch_files();
+        let mut watched_paths = {
+            let current = manager.config.read().await;
+            let mut paths = current.core.watch_files();
+            paths.extend(current.section_watch_files());
+            paths
+        };
 
         // Watch the main config
         watched_paths.insert(config_path.clone());
@@ -375,7 +419,9 @@ impl<C: CoreSchema> ConfigManager<C> {
         watcher: &mut RecommendedWatcher,
         watched_paths: &mut HashSet<PathBuf>,
     ) {
-        for watch_candidate in loaded.config.watch_files() {
+        let mut candidates = loaded.config.core.watch_files();
+        candidates.extend(loaded.config.section_watch_files());
+        for watch_candidate in candidates {
             if !watched_paths.contains(&watch_candidate) {
                 let _ = watcher.watch(watch_candidate.as_path(), RecursiveMode::NonRecursive);
                 watched_paths.insert(watch_candidate);

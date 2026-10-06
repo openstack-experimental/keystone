@@ -63,11 +63,14 @@ pub trait ConfigSection: DeserializeOwned + Send + Sync + 'static {
     const NAME: &'static str;
     fn finish(&mut self, _ctx: &LoadCtx) -> Result<(), ConfigError> { Ok(()) }
     fn watch_files(&self) -> Vec<PathBuf> { vec![] }
-    fn validate(&self, _view: &ConfigView) -> Result<(), ConfigError> { Ok(()) }
+    fn validate_with(&self, _sections: &SectionBag) -> Result<(), ConfigError> { Ok(()) }
 }
 ```
 
-`validate` runs in a second pass after all sections are materialized.
+`validate_with` runs in a second pass after all registered sections are
+materialized and sees its siblings through the `SectionBag`. (It is not named
+`validate` to avoid clashing with `validator::Validate` on types that derive
+both.) Cross-checks that need the core schema stay in `CoreSchema::finish_load`.
 
 ### Registration
 

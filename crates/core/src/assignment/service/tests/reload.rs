@@ -117,7 +117,7 @@ async fn a_block_no_bound_domain_maps_to_is_dropped() {
     let named: Arc<dyn AssignmentBackend> = Arc::new(MockAssignmentBackend::default());
     // Live bundle maps d1 → b_sql; the reloaded config drops the mapping.
     let (provider, state) = service_with_named(named, true, resolver_over(Ok(vec!["d1"]))).await;
-    *state.config_manager.config.write().await = config(assignment_section(true, false));
+    state.config_manager.config.write().await.core = config(assignment_section(true, false));
 
     let changed = provider.reload(&state).await.unwrap();
 
@@ -135,7 +135,7 @@ async fn a_block_no_bound_domain_maps_to_is_dropped() {
 async fn turning_the_dispatch_switch_off_drops_every_named_instance() {
     let named: Arc<dyn AssignmentBackend> = Arc::new(MockAssignmentBackend::default());
     let (provider, state) = service_with_named(named, true, resolver_over(Ok(vec!["d1"]))).await;
-    *state.config_manager.config.write().await = config(assignment_section(false, true));
+    state.config_manager.config.write().await.core = config(assignment_section(false, true));
 
     let changed = provider.reload(&state).await.unwrap();
 
@@ -216,7 +216,7 @@ async fn flipping_the_dispatch_switch_on_via_reload_takes_effect() {
     assert!(!provider.bundle.load_full().dispatch_enabled);
 
     // Operator turns per-domain dispatch on; the config reloads.
-    *state.config_manager.config.write().await = config(assignment_section(true, false));
+    state.config_manager.config.write().await.core = config(assignment_section(true, false));
     let changed = provider.reload(&state).await.unwrap();
 
     assert!(changed, "the switch flip must be observable");
