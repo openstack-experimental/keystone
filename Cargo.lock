@@ -1061,6 +1061,7 @@ dependencies = [
  "arc-swap",
  "async-trait",
  "chrono",
+ "getrandom 0.4.3",
  "hkdf 0.13.0",
  "hmac 0.13.0",
  "nix 0.31.3",

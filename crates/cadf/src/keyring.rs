@@ -35,7 +35,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::io::{Read as _, Write as _};
+use std::io::Write as _;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -67,6 +67,8 @@ pub enum KeyringError {
     Invalid { path: PathBuf, reason: String },
     #[error("audit key file {0} does not exist; start the service once to create it")]
     Missing(PathBuf),
+    #[error("cannot generate random key material: {0}")]
+    Random(#[from] getrandom::Error),
 }
 
 fn io_err(path: &Path) -> impl FnOnce(std::io::Error) -> KeyringError + '_ {
@@ -197,7 +199,7 @@ impl HmacKeyring {
         if let Some(existing) = Self::load(path)? {
             return Ok(existing);
         }
-        let keyring = Self::single(random_kek(path)?);
+        let keyring = Self::single(random_kek()?);
         match keyring.write(path, true) {
             Ok(()) => Ok(keyring),
             Err(KeyringError::Io { source, .. })
@@ -218,7 +220,7 @@ impl HmacKeyring {
         let mut keyring =
             Self::load(path)?.ok_or_else(|| KeyringError::Missing(path.to_path_buf()))?;
         let next = keyring.keks.keys().next_back().copied().unwrap_or(0) + 1;
-        let kek = random_kek(path)?;
+        let kek = random_kek()?;
         keyring.keks.insert(next, kek);
         keyring.current = next;
         keyring.current_kek = kek;
@@ -285,11 +287,9 @@ pub(crate) fn decode_hex(s: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
-fn random_kek(path: &Path) -> Result<[u8; KEK_LEN], KeyringError> {
+fn random_kek() -> Result<[u8; KEK_LEN], KeyringError> {
     let mut raw = [0u8; KEK_LEN];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| f.read_exact(&mut raw))
-        .map_err(io_err(path))?;
+    getrandom::fill(&mut raw)?;
     Ok(raw)
 }
 

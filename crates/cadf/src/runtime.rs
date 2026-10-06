@@ -68,6 +68,10 @@ pub enum RuntimeError {
     #[error("{0}")]
     NodeId(String),
 
+    /// A spool limit would destroy or thrash the audit spool.
+    #[error("{0}")]
+    SpoolLimits(String),
+
     /// A path from the configuration could not be resolved.
     #[error("cannot resolve [audit] {option}")]
     ResolvePath {
@@ -320,6 +324,9 @@ pub async fn init(
         return Ok((AuditDispatcher::disabled(audit_cfg.node_id.as_str()), None));
     }
     audit_cfg.validate_node_id().map_err(RuntimeError::NodeId)?;
+    audit_cfg
+        .validate_spool_limits()
+        .map_err(RuntimeError::SpoolLimits)?;
     let spool_dir = audit_cfg.spool_dir(&service);
     let node_id = audit_cfg.node_id.clone();
     let kek_path = audit_cfg.hmac_kek_path(&service);
@@ -803,6 +810,28 @@ mod tests {
             .expect("writer is started")
             .await
             .expect("writer exits");
+    }
+
+    /// Degenerate spool limits must fail the start before anything is
+    /// written to disk.
+    #[tokio::test]
+    async fn init_fails_on_degenerate_spool_limits() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cfg = test_config(tmp.path().join("spool"));
+        cfg.spool_max_segments = Some(0);
+
+        let Err(err) = init_with(&cfg, &CancellationToken::new()).await else {
+            panic!("a zero segment cap must fail the start");
+        };
+        assert!(
+            matches!(err, RuntimeError::SpoolLimits(_)),
+            "got: {}",
+            chain(&err)
+        );
+        assert!(
+            !cfg.spool_dir(&SERVICE).exists(),
+            "a failed start must not create the spool directory"
+        );
     }
 
     /// A rotation done out of process must start signing with the new key

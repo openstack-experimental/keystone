@@ -106,6 +106,7 @@ fernet = { version = "0.2", default-features = false }
 futures = { version = "0.3" }
 futures-util = { version = "0.3" }
 governor = "0.10"
+getrandom = { version = "0.4", features = ["std"] }
 http-body-util = "0.1"
 http = { version = "1.5" }
 httpmock = { version = "0.8", features = ["http2"] }

@@ -322,6 +322,51 @@ impl AuditConfig {
         }
         Ok(())
     }
+
+    /// Reject spool limits that would destroy or thrash the audit spool.
+    ///
+    /// A zero rotation bound makes the writer rotate the live spool on every
+    /// event, and a zero retention bound deletes every sealed segment as
+    /// soon as it is sealed. `None` retention means "keep forever" and is
+    /// always fine, as is a zero drain timeout (drain nothing).
+    pub fn validate_spool_limits(&self) -> Result<(), String> {
+        if self.spool_max_segment_bytes == 0 {
+            return Err(
+                "[audit] spool_max_segment_bytes must be greater than zero: a zero bound \
+                 makes the spool writer rotate on every event"
+                    .to_string(),
+            );
+        }
+        if self.spool_max_segment_age_secs == 0 {
+            return Err(
+                "[audit] spool_max_segment_age_secs must be greater than zero: a zero bound \
+                 makes the spool writer rotate on every event"
+                    .to_string(),
+            );
+        }
+        if self.spool_max_segments == Some(0) {
+            return Err(
+                "[audit] spool_max_segments must not be zero: it would delete every sealed \
+                 segment as soon as it is sealed"
+                    .to_string(),
+            );
+        }
+        if self.spool_max_bytes == Some(0) {
+            return Err(
+                "[audit] spool_max_bytes must not be zero: it would delete every sealed \
+                 segment as soon as it is sealed"
+                    .to_string(),
+            );
+        }
+        if self.spool_retention_secs == Some(0) {
+            return Err(
+                "[audit] spool_retention_secs must not be zero: it would delete every \
+                 sealed segment as soon as it is sealed"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
 }
 
 impl Default for AuditConfig {
@@ -455,6 +500,46 @@ mod tests {
         ] {
             cfg.node_id = bad.to_string();
             assert!(cfg.validate_node_id().is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn spool_limit_validation() {
+        // The defaults are fine; `None` retention means "keep forever" and a
+        // zero drain timeout means "drain nothing".
+        let cfg = AuditConfig::default();
+        assert!(cfg.validate_spool_limits().is_ok());
+
+        let drain_now = AuditConfig {
+            spool_drain_timeout_secs: 0,
+            ..AuditConfig::default()
+        };
+        assert!(drain_now.validate_spool_limits().is_ok());
+
+        let degenerate = [
+            AuditConfig {
+                spool_max_segment_bytes: 0,
+                ..AuditConfig::default()
+            },
+            AuditConfig {
+                spool_max_segment_age_secs: 0,
+                ..AuditConfig::default()
+            },
+            AuditConfig {
+                spool_max_segments: Some(0),
+                ..AuditConfig::default()
+            },
+            AuditConfig {
+                spool_max_bytes: Some(0),
+                ..AuditConfig::default()
+            },
+            AuditConfig {
+                spool_retention_secs: Some(0),
+                ..AuditConfig::default()
+            },
+        ];
+        for cfg in &degenerate {
+            assert!(cfg.validate_spool_limits().is_err());
         }
     }
 
