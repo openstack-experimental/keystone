@@ -129,6 +129,17 @@ impl PrometheusText for RateLimitMetrics {
 mod tests {
     use super::*;
 
+    /// Pins the rendered exposition text (series names, labels, HELP/TYPE and
+    /// bucket layout) against `tests/golden/rate_limit.prom` (ADR 0040).
+    #[test]
+    fn golden_exposition() {
+        let metrics = RateLimitMetrics::new();
+        metrics.record(SCOPE_PER_IP, true);
+        metrics.record(SCOPE_PER_IP, false);
+        metrics.record(SCOPE_PER_USER, true);
+        openstack_keystone_metrics::assert_golden!("rate_limit", metrics.format_prometheus_text());
+    }
+
     #[test]
     fn record_allowed_increments_evaluations_only() {
         let metrics = RateLimitMetrics::new();

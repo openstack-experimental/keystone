@@ -59,6 +59,7 @@ validator.workspace = true
 subtle = "2.6.1"
 
 [dev-dependencies]
+openstack-keystone-metrics = { workspace = true, features = ["golden"] }
 axum = { workspace = true, default-features = false, features = ["json", "tokio"] }
 config = { workspace = true }
 openstack-keystone-auth-plugin-runtime.workspace = true

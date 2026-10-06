@@ -172,6 +172,21 @@ pub fn cache_remove(namespace: &'static str, id: &str) {
 mod tests {
     use super::*;
 
+    /// Pins the rendered exposition text (series names, labels, HELP/TYPE and
+    /// bucket layout) against `tests/golden/request_cache.prom` (ADR 0040).
+    #[test]
+    fn golden_exposition() {
+        let metrics = CacheMetrics::default();
+        metrics.hits_total.inc(["token"]);
+        metrics.hits_total.inc(["token"]);
+        metrics.misses_total.inc(["token"]);
+        metrics.misses_total.inc(["user"]);
+        openstack_keystone_metrics::assert_golden!(
+            "request_cache",
+            metrics.format_prometheus_text()
+        );
+    }
+
     #[tokio::test]
     async fn test_get_set_within_scope() {
         RequestCache::scope(async {

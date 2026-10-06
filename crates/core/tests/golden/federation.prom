@@ -1,0 +1,5 @@
+# HELP keystone_federation_authentications_total Federated authentication volume by identity provider and outcome.
+# TYPE keystone_federation_authentications_total counter
+keystone_federation_authentications_total{idp_id="idp-azure",outcome="success"} 1
+keystone_federation_authentications_total{idp_id="idp-okta",outcome="failure"} 1
+keystone_federation_authentications_total{idp_id="idp-okta",outcome="success"} 1

@@ -124,6 +124,17 @@ mod tests {
     use crate::policy::MockPolicy;
     use crate::provider::Provider;
 
+    /// Pins the rendered exposition text against
+    /// `tests/golden/auth_plugin_load_failure.prom` (ADR 0040).
+    #[test]
+    fn golden_load_failure_exposition() {
+        let failures = HashMap::from([("geoip".to_string(), 2u64), ("a\"b\\c".to_string(), 1u64)]);
+        openstack_keystone_metrics::assert_golden!(
+            "auth_plugin_load_failure",
+            format_load_failure_metrics(&failures)
+        );
+    }
+
     struct UnreachableHttpFetcher;
 
     #[async_trait]

@@ -323,7 +323,11 @@ pub fn format_prometheus_text(metrics: &HttpMetrics) -> String {
         "# HELP keystone_http_requests_total Total HTTP requests by method, route, and status.\n",
     );
     out.push_str("# TYPE keystone_http_requests_total counter\n");
-    for ((method, route, status), count) in metrics.requests_total_iter() {
+    // Sorted by label set: the backing map's iteration order is random per
+    // process, and a stable exposition order keeps scrapes diffable.
+    let mut requests: Vec<_> = metrics.requests_total_iter().collect();
+    requests.sort_by(|a, b| a.0.cmp(&b.0));
+    for ((method, route, status), count) in requests {
         out.push_str(&format!(
             "keystone_http_requests_total{{method=\"{method}\",route=\"{route}\",status=\"{status}\"}} {count}\n"
         ));
@@ -333,7 +337,9 @@ pub fn format_prometheus_text(metrics: &HttpMetrics) -> String {
         "# HELP keystone_http_request_duration_seconds HTTP request latency by method and route.\n",
     );
     out.push_str("# TYPE keystone_http_request_duration_seconds histogram\n");
-    for ((method, route), (buckets, sum, count)) in metrics.duration_seconds_iter() {
+    let mut durations: Vec<_> = metrics.duration_seconds_iter().collect();
+    durations.sort_by(|a, b| a.0.cmp(&b.0));
+    for ((method, route), (buckets, sum, count)) in durations {
         for (bound, cumulative) in buckets {
             let le = if bound.is_infinite() {
                 "+Inf".to_owned()
@@ -461,6 +467,31 @@ mod tests {
             .find(|(iface, _)| *iface == Interface::Public)
             .map(|(_, v)| v);
         assert_eq!(value, Some(1));
+    }
+
+    /// Pins the rendered exposition text against `tests/golden/http.prom`
+    /// (ADR 0040).
+    #[test]
+    fn golden_exposition() {
+        let m = HttpMetrics::new();
+        m.record_request(&Method::GET, "/v3/users", 200, Duration::from_millis(5));
+        m.record_request(&Method::GET, "/v3/users", 200, Duration::from_millis(40));
+        m.record_request(
+            &Method::POST,
+            "/v3/auth/tokens",
+            401,
+            Duration::from_millis(300),
+        );
+        m.record_request(
+            &Method::from_bytes(b"BREW").unwrap(),
+            "/v3/probe",
+            500,
+            Duration::from_secs(6),
+        );
+        m.inc_in_flight(Interface::Public);
+        m.inc_in_flight(Interface::Public);
+        m.inc_in_flight(Interface::Admin);
+        openstack_keystone_metrics::assert_golden!("http", format_prometheus_text(&m));
     }
 
     #[test]

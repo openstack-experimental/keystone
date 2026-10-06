@@ -181,6 +181,20 @@ mod tests {
 
     use super::*;
 
+    /// Pins the rendered exposition text (series names, labels, HELP/TYPE and
+    /// bucket layout) against `tests/golden/policy.prom` (ADR 0040).
+    #[test]
+    fn golden_exposition() {
+        let metrics = PolicyMetrics::new();
+        metrics.decisions_total.inc(["allow"]);
+        metrics.decisions_total.inc(["deny"]);
+        metrics.decisions_total.inc(["error"]);
+        metrics.decision_duration_seconds.record(["http"], 0.01);
+        metrics.decision_duration_seconds.record(["http"], 0.3);
+        metrics.errors_total.inc(["http"]);
+        openstack_keystone_metrics::assert_golden!("policy", metrics.format_prometheus_text());
+    }
+
     fn allowed() -> Result<PolicyEvaluationResult, PolicyError> {
         Ok(PolicyEvaluationResult {
             allow: true,

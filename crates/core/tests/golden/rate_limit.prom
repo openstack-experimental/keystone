@@ -1,0 +1,8 @@
+# HELP keystone_rate_limit_evaluations_total Total rate-limit evaluations by scope and outcome.
+# TYPE keystone_rate_limit_evaluations_total counter
+keystone_rate_limit_evaluations_total{scope="per_ip",outcome="allowed"} 1
+keystone_rate_limit_evaluations_total{scope="per_ip",outcome="rejected"} 1
+keystone_rate_limit_evaluations_total{scope="per_user",outcome="allowed"} 1
+# HELP keystone_rate_limit_rejections_total Total rate-limit rejections (HTTP 429) by scope.
+# TYPE keystone_rate_limit_rejections_total counter
+keystone_rate_limit_rejections_total{scope="per_ip"} 1

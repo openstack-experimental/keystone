@@ -83,6 +83,19 @@ pub static MAPPING_METRICS: LazyLock<MappingMetrics> = LazyLock::new(MappingMetr
 mod tests {
     use super::*;
 
+    /// Pins the rendered exposition text (series names, labels, HELP/TYPE and
+    /// bucket layout) against `tests/golden/mapping.prom` (ADR 0040).
+    #[test]
+    fn golden_exposition() {
+        let metrics = MappingMetrics::default();
+        metrics.evaluations_total.inc([OUTCOME_MATCHED]);
+        metrics.evaluations_total.inc([OUTCOME_NO_MATCH]);
+        metrics.evaluations_total.inc([OUTCOME_ERROR]);
+        metrics.evaluation_duration_seconds.record(0.002);
+        metrics.evaluation_duration_seconds.record(0.7);
+        openstack_keystone_metrics::assert_golden!("mapping", metrics.format_prometheus_text());
+    }
+
     #[test]
     fn records_evaluations_by_outcome() {
         let metrics = MappingMetrics::default();

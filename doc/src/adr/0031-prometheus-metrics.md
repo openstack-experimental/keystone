@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposed
+Proposed. The exposition mechanism ("Exposition mechanism" below) is
+superseded by ADR 0040; the catalog, naming and cardinality rules still apply.
 
 ## Context
 

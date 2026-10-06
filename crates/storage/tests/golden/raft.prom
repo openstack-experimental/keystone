@@ -1,0 +1,32 @@
+# HELP keystone_raft_is_leader Whether this node is the current Raft leader (1) or not (0).
+# TYPE keystone_raft_is_leader gauge
+keystone_raft_is_leader 1
+# HELP keystone_raft_term Current Raft term of this node.
+# TYPE keystone_raft_term gauge
+keystone_raft_term 7
+# HELP keystone_raft_last_log_index Last Raft log index appended to this node's log (tail position).
+# TYPE keystone_raft_last_log_index gauge
+keystone_raft_last_log_index 100
+# HELP keystone_raft_last_applied_index Last Raft log index applied to this node's state machine.
+# TYPE keystone_raft_last_applied_index gauge
+keystone_raft_last_applied_index 95
+# HELP keystone_raft_replication_lag Log entries by which a peer's match index trails this leader's last log index (last_log_index - peer match_index); only populated while this node is leader.
+# TYPE keystone_raft_replication_lag gauge
+keystone_raft_replication_lag{peer_id="2"} 10
+keystone_raft_replication_lag{peer_id="3"} 100
+# HELP keystone_raft_apply_duration_seconds State-machine apply latency (per committed log entry).
+# TYPE keystone_raft_apply_duration_seconds histogram
+keystone_raft_apply_duration_seconds_bucket{le="0.001"} 0
+keystone_raft_apply_duration_seconds_bucket{le="0.005"} 1
+keystone_raft_apply_duration_seconds_bucket{le="0.01"} 1
+keystone_raft_apply_duration_seconds_bucket{le="0.025"} 1
+keystone_raft_apply_duration_seconds_bucket{le="0.05"} 1
+keystone_raft_apply_duration_seconds_bucket{le="0.1"} 1
+keystone_raft_apply_duration_seconds_bucket{le="0.25"} 2
+keystone_raft_apply_duration_seconds_bucket{le="0.5"} 2
+keystone_raft_apply_duration_seconds_bucket{le="1"} 2
+keystone_raft_apply_duration_seconds_bucket{le="2.5"} 2
+keystone_raft_apply_duration_seconds_bucket{le="5"} 2
+keystone_raft_apply_duration_seconds_bucket{le="+Inf"} 2
+keystone_raft_apply_duration_seconds_sum 0.202
+keystone_raft_apply_duration_seconds_count 2

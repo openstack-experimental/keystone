@@ -45,6 +45,7 @@ syslog = [
 ]
 
 [dev-dependencies]
+openstack-keystone-metrics = { workspace = true, features = ["golden"] }
 nix = { workspace = true, features = ["user"] }
 rcgen.workspace = true
 serde = { workspace = true, features = ["derive"] }

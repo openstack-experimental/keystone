@@ -1,0 +1,24 @@
+# HELP keystone_policy_decisions_total Total number of OPA policy decisions, by outcome.
+# TYPE keystone_policy_decisions_total counter
+keystone_policy_decisions_total{outcome="allow"} 1
+keystone_policy_decisions_total{outcome="deny"} 1
+keystone_policy_decisions_total{outcome="error"} 1
+# HELP keystone_policy_decision_duration_seconds OPA policy decision (round-trip) latency in seconds.
+# TYPE keystone_policy_decision_duration_seconds histogram
+keystone_policy_decision_duration_seconds_bucket{transport="http",le="0.001"} 0
+keystone_policy_decision_duration_seconds_bucket{transport="http",le="0.005"} 0
+keystone_policy_decision_duration_seconds_bucket{transport="http",le="0.01"} 1
+keystone_policy_decision_duration_seconds_bucket{transport="http",le="0.025"} 1
+keystone_policy_decision_duration_seconds_bucket{transport="http",le="0.05"} 1
+keystone_policy_decision_duration_seconds_bucket{transport="http",le="0.1"} 1
+keystone_policy_decision_duration_seconds_bucket{transport="http",le="0.25"} 1
+keystone_policy_decision_duration_seconds_bucket{transport="http",le="0.5"} 2
+keystone_policy_decision_duration_seconds_bucket{transport="http",le="1"} 2
+keystone_policy_decision_duration_seconds_bucket{transport="http",le="2.5"} 2
+keystone_policy_decision_duration_seconds_bucket{transport="http",le="5"} 2
+keystone_policy_decision_duration_seconds_bucket{transport="http",le="+Inf"} 2
+keystone_policy_decision_duration_seconds_sum{transport="http"} 0.31
+keystone_policy_decision_duration_seconds_count{transport="http"} 2
+# HELP keystone_policy_errors_total Total number of OPA policy evaluation errors (unreachable OPA, malformed response, or a pre-flight invariant failure), by transport.
+# TYPE keystone_policy_errors_total counter
+keystone_policy_errors_total{transport="http"} 1

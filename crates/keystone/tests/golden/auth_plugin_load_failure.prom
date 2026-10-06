@@ -1,0 +1,4 @@
+# HELP keystone_auth_plugin_load_failure Cumulative count of dynamic auth plugin load failures (missing file, checksum mismatch, compile error), labeled by plugin_name - ADR 0025 section 5. A load failure disables only that plugin; every other auth method still starts normally.
+# TYPE keystone_auth_plugin_load_failure counter
+keystone_auth_plugin_load_failure{plugin_name="a\"b\\c"} 1
+keystone_auth_plugin_load_failure{plugin_name="geoip"} 2

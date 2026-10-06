@@ -33,6 +33,9 @@
 //! those are unbounded and turn `/metrics` into a cardinality-explosion DoS
 //! vector. This module cannot enforce that; callers must.
 
+#[cfg(feature = "golden")]
+pub mod golden;
+
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 

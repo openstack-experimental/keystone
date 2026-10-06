@@ -1,0 +1,33 @@
+[package]
+name = "otel_bench"
+description = "ADR 0040 benchmark: openstack-keystone-metrics vs OpenTelemetry SDK instruments and spans"
+version = "0.1.0"
+rust-version = "1.94"  # MSRV
+edition = "2024"
+publish = false
+
+[package.metadata.dist]
+dist = false
+
+# Standalone crate (excluded from the main workspace, like tests/loadtest) so
+# the OpenTelemetry dependencies do not leak into the workspace lockfile.
+[workspace]
+
+[dependencies]
+openstack-keystone-metrics = { path = "../../crates/metrics" }
+opentelemetry = { version = "0.33", features = ["metrics", "trace"] }
+opentelemetry_sdk = { version = "0.33", features = ["metrics", "trace", "testing", "rt-tokio"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+tracing-opentelemetry = "0.34"
+
+[dev-dependencies]
+criterion = "0.8"
+
+[[bench]]
+name = "metrics"
+harness = false
+
+[[bench]]
+name = "spans"
+harness = false

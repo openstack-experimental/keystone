@@ -288,6 +288,22 @@ pub fn identity_failure_reason(e: &IdentityProviderError) -> &'static str {
 mod tests {
     use super::*;
 
+    /// Pins the rendered exposition text (series names, labels, HELP/TYPE and
+    /// bucket layout) against `tests/golden/auth.prom` (ADR 0040).
+    #[test]
+    fn golden_exposition() {
+        let metrics = AuthMetrics::new();
+        metrics.record_attempt("password", 0.004, None);
+        metrics.record_attempt("password", 0.3, Some("UserNameOrPasswordWrong"));
+        metrics.record_attempt("token", 0.0008, None);
+        metrics.record_attempt("ec2", 6.0, Some("Unauthorized"));
+        metrics.lockouts_total.inc();
+        metrics.plugin_invocations_total.inc(["geoip", "success"]);
+        metrics.plugin_invocations_total.inc(["geoip", "failure"]);
+        metrics.plugin_duration_seconds.record(["geoip"], 0.02);
+        openstack_keystone_metrics::assert_golden!("auth", metrics.format_prometheus_text());
+    }
+
     #[test]
     fn record_attempt_success_increments_only_attempts_and_duration() {
         let metrics = AuthMetrics::new();

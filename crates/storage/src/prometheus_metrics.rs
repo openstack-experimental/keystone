@@ -520,6 +520,18 @@ mod tests {
         metrics
     }
 
+    /// Pins the rendered exposition text against `tests/golden/raft.prom`
+    /// (ADR 0040).
+    #[test]
+    fn golden_exposition() {
+        let m = KeystoneRaftPrometheusMetrics::new();
+        m.apply_duration_seconds.record(0.002);
+        m.apply_duration_seconds.record(0.2);
+        let replication = BTreeMap::from([(2u64, Some(90u64)), (3u64, None)]);
+        let live = metrics_fixture(1, Some(1), 7, Some(100), Some(95), Some(replication));
+        openstack_keystone_metrics::assert_golden!("raft", m.format_prometheus_text(&live, 1));
+    }
+
     #[test]
     fn snapshot_from_sets_leader_and_position_gauges_when_leader() {
         let m = KeystoneRaftPrometheusMetrics::new();

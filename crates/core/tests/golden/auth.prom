@@ -1,0 +1,77 @@
+# HELP keystone_auth_attempts_total Authentication attempts by method and outcome.
+# TYPE keystone_auth_attempts_total counter
+keystone_auth_attempts_total{method="ec2",outcome="failure"} 1
+keystone_auth_attempts_total{method="password",outcome="failure"} 1
+keystone_auth_attempts_total{method="password",outcome="success"} 1
+keystone_auth_attempts_total{method="token",outcome="success"} 1
+# HELP keystone_auth_duration_seconds Authentication latency by method.
+# TYPE keystone_auth_duration_seconds histogram
+keystone_auth_duration_seconds_bucket{method="ec2",le="0.001"} 0
+keystone_auth_duration_seconds_bucket{method="ec2",le="0.005"} 0
+keystone_auth_duration_seconds_bucket{method="ec2",le="0.01"} 0
+keystone_auth_duration_seconds_bucket{method="ec2",le="0.025"} 0
+keystone_auth_duration_seconds_bucket{method="ec2",le="0.05"} 0
+keystone_auth_duration_seconds_bucket{method="ec2",le="0.1"} 0
+keystone_auth_duration_seconds_bucket{method="ec2",le="0.25"} 0
+keystone_auth_duration_seconds_bucket{method="ec2",le="0.5"} 0
+keystone_auth_duration_seconds_bucket{method="ec2",le="1"} 0
+keystone_auth_duration_seconds_bucket{method="ec2",le="2.5"} 0
+keystone_auth_duration_seconds_bucket{method="ec2",le="5"} 0
+keystone_auth_duration_seconds_bucket{method="ec2",le="+Inf"} 1
+keystone_auth_duration_seconds_sum{method="ec2"} 6
+keystone_auth_duration_seconds_count{method="ec2"} 1
+keystone_auth_duration_seconds_bucket{method="password",le="0.001"} 0
+keystone_auth_duration_seconds_bucket{method="password",le="0.005"} 1
+keystone_auth_duration_seconds_bucket{method="password",le="0.01"} 1
+keystone_auth_duration_seconds_bucket{method="password",le="0.025"} 1
+keystone_auth_duration_seconds_bucket{method="password",le="0.05"} 1
+keystone_auth_duration_seconds_bucket{method="password",le="0.1"} 1
+keystone_auth_duration_seconds_bucket{method="password",le="0.25"} 1
+keystone_auth_duration_seconds_bucket{method="password",le="0.5"} 2
+keystone_auth_duration_seconds_bucket{method="password",le="1"} 2
+keystone_auth_duration_seconds_bucket{method="password",le="2.5"} 2
+keystone_auth_duration_seconds_bucket{method="password",le="5"} 2
+keystone_auth_duration_seconds_bucket{method="password",le="+Inf"} 2
+keystone_auth_duration_seconds_sum{method="password"} 0.304
+keystone_auth_duration_seconds_count{method="password"} 2
+keystone_auth_duration_seconds_bucket{method="token",le="0.001"} 1
+keystone_auth_duration_seconds_bucket{method="token",le="0.005"} 1
+keystone_auth_duration_seconds_bucket{method="token",le="0.01"} 1
+keystone_auth_duration_seconds_bucket{method="token",le="0.025"} 1
+keystone_auth_duration_seconds_bucket{method="token",le="0.05"} 1
+keystone_auth_duration_seconds_bucket{method="token",le="0.1"} 1
+keystone_auth_duration_seconds_bucket{method="token",le="0.25"} 1
+keystone_auth_duration_seconds_bucket{method="token",le="0.5"} 1
+keystone_auth_duration_seconds_bucket{method="token",le="1"} 1
+keystone_auth_duration_seconds_bucket{method="token",le="2.5"} 1
+keystone_auth_duration_seconds_bucket{method="token",le="5"} 1
+keystone_auth_duration_seconds_bucket{method="token",le="+Inf"} 1
+keystone_auth_duration_seconds_sum{method="token"} 0.0008
+keystone_auth_duration_seconds_count{method="token"} 1
+# HELP keystone_auth_failures_total Authentication failures by method and sanitized reason.
+# TYPE keystone_auth_failures_total counter
+keystone_auth_failures_total{method="ec2",reason="Unauthorized"} 1
+keystone_auth_failures_total{method="password",reason="UserNameOrPasswordWrong"} 1
+# HELP keystone_auth_lockouts_total PCI-DSS account lockouts (ADR 0010).
+# TYPE keystone_auth_lockouts_total counter
+keystone_auth_lockouts_total 1
+# HELP keystone_auth_plugin_invocations_total Dynamic auth-plugin (ADR 0025) call volume by plugin and outcome.
+# TYPE keystone_auth_plugin_invocations_total counter
+keystone_auth_plugin_invocations_total{plugin_name="geoip",outcome="failure"} 1
+keystone_auth_plugin_invocations_total{plugin_name="geoip",outcome="success"} 1
+# HELP keystone_auth_plugin_duration_seconds Dynamic auth-plugin (ADR 0025) call latency by plugin.
+# TYPE keystone_auth_plugin_duration_seconds histogram
+keystone_auth_plugin_duration_seconds_bucket{plugin_name="geoip",le="0.001"} 0
+keystone_auth_plugin_duration_seconds_bucket{plugin_name="geoip",le="0.005"} 0
+keystone_auth_plugin_duration_seconds_bucket{plugin_name="geoip",le="0.01"} 0
+keystone_auth_plugin_duration_seconds_bucket{plugin_name="geoip",le="0.025"} 1
+keystone_auth_plugin_duration_seconds_bucket{plugin_name="geoip",le="0.05"} 1
+keystone_auth_plugin_duration_seconds_bucket{plugin_name="geoip",le="0.1"} 1
+keystone_auth_plugin_duration_seconds_bucket{plugin_name="geoip",le="0.25"} 1
+keystone_auth_plugin_duration_seconds_bucket{plugin_name="geoip",le="0.5"} 1
+keystone_auth_plugin_duration_seconds_bucket{plugin_name="geoip",le="1"} 1
+keystone_auth_plugin_duration_seconds_bucket{plugin_name="geoip",le="2.5"} 1
+keystone_auth_plugin_duration_seconds_bucket{plugin_name="geoip",le="5"} 1
+keystone_auth_plugin_duration_seconds_bucket{plugin_name="geoip",le="+Inf"} 1
+keystone_auth_plugin_duration_seconds_sum{plugin_name="geoip"} 0.02
+keystone_auth_plugin_duration_seconds_count{plugin_name="geoip"} 1

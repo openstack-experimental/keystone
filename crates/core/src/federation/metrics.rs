@@ -67,6 +67,23 @@ pub static FEDERATION_METRICS: LazyLock<FederationMetrics> =
 mod tests {
     use super::*;
 
+    /// Pins the rendered exposition text (series names, labels, HELP/TYPE and
+    /// bucket layout) against `tests/golden/federation.prom` (ADR 0040).
+    #[test]
+    fn golden_exposition() {
+        let metrics = FederationMetrics::default();
+        metrics
+            .authentications_total
+            .inc(["idp-okta", OUTCOME_SUCCESS]);
+        metrics
+            .authentications_total
+            .inc(["idp-okta", OUTCOME_FAILURE]);
+        metrics
+            .authentications_total
+            .inc(["idp-azure", OUTCOME_SUCCESS]);
+        openstack_keystone_metrics::assert_golden!("federation", metrics.format_prometheus_text());
+    }
+
     #[test]
     fn records_success_and_failure_per_idp() {
         let metrics = FederationMetrics::default();

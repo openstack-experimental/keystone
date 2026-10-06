@@ -194,6 +194,25 @@ pub fn token_failure_reason(e: &TokenProviderError) -> &'static str {
 mod tests {
     use super::*;
 
+    /// Pins the rendered exposition text (series names, labels, HELP/TYPE and
+    /// bucket layout) against `tests/golden/token.prom` (ADR 0040).
+    #[test]
+    fn golden_exposition() {
+        let metrics = TokenMetrics::new();
+        metrics.issued_total.inc(["fernet", "password"]);
+        metrics.issued_total.inc(["fernet", "token"]);
+        metrics.validated_total.inc(["fernet", "success"]);
+        metrics.validated_total.inc(["fernet", "success"]);
+        metrics.validated_total.inc(["fernet", "failure"]);
+        metrics
+            .validation_duration_seconds
+            .record(["fernet"], 0.002);
+        metrics.validation_duration_seconds.record(["fernet"], 0.08);
+        metrics.revoked_total.inc(["user_request"]);
+        metrics.revocation_list_size.set(7);
+        openstack_keystone_metrics::assert_golden!("token", metrics.format_prometheus_text());
+    }
+
     use openstack_keystone_core_types::application_credential::ApplicationCredentialBuilder;
     use openstack_keystone_core_types::auth::AuthenticationError;
 

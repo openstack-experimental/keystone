@@ -57,7 +57,8 @@ default-members = [
   "crates/*",
 ]
 exclude = [
-  "tests/loadtest"
+  "tests/loadtest",
+  "tests/otel-bench"
 ]
 resolver = "3"
 

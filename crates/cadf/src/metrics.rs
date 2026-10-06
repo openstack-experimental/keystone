@@ -253,6 +253,17 @@ mod tests {
         .sign(dispatcher)
     }
 
+    /// Pins the rendered exposition text against `tests/golden/audit.prom`
+    /// (ADR 0040). All series are rendered, with their zero values.
+    #[test]
+    fn golden_exposition() {
+        let dispatcher = AuditDispatcher::noop();
+        openstack_keystone_metrics::assert_golden!(
+            "audit",
+            format_prometheus_text(&dispatcher, &SERVICE)
+        );
+    }
+
     #[test]
     fn every_series_has_help_and_type() {
         let dispatcher = AuditDispatcher::noop();

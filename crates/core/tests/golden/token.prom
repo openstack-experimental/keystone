@@ -1,0 +1,30 @@
+# HELP keystone_token_issued_total Token issuance volume by driver and authentication method.
+# TYPE keystone_token_issued_total counter
+keystone_token_issued_total{driver="fernet",method="password"} 1
+keystone_token_issued_total{driver="fernet",method="token"} 1
+# HELP keystone_token_validated_total Token validation volume by driver and outcome.
+# TYPE keystone_token_validated_total counter
+keystone_token_validated_total{driver="fernet",outcome="failure"} 1
+keystone_token_validated_total{driver="fernet",outcome="success"} 2
+# HELP keystone_token_validation_duration_seconds Token validation latency by driver.
+# TYPE keystone_token_validation_duration_seconds histogram
+keystone_token_validation_duration_seconds_bucket{driver="fernet",le="0.001"} 0
+keystone_token_validation_duration_seconds_bucket{driver="fernet",le="0.005"} 1
+keystone_token_validation_duration_seconds_bucket{driver="fernet",le="0.01"} 1
+keystone_token_validation_duration_seconds_bucket{driver="fernet",le="0.025"} 1
+keystone_token_validation_duration_seconds_bucket{driver="fernet",le="0.05"} 1
+keystone_token_validation_duration_seconds_bucket{driver="fernet",le="0.1"} 2
+keystone_token_validation_duration_seconds_bucket{driver="fernet",le="0.25"} 2
+keystone_token_validation_duration_seconds_bucket{driver="fernet",le="0.5"} 2
+keystone_token_validation_duration_seconds_bucket{driver="fernet",le="1"} 2
+keystone_token_validation_duration_seconds_bucket{driver="fernet",le="2.5"} 2
+keystone_token_validation_duration_seconds_bucket{driver="fernet",le="5"} 2
+keystone_token_validation_duration_seconds_bucket{driver="fernet",le="+Inf"} 2
+keystone_token_validation_duration_seconds_sum{driver="fernet"} 0.082
+keystone_token_validation_duration_seconds_count{driver="fernet"} 2
+# HELP keystone_token_revoked_total Token revocation volume by reason.
+# TYPE keystone_token_revoked_total counter
+keystone_token_revoked_total{reason="user_request"} 1
+# HELP keystone_token_revocation_list_size In-memory/DB revocation-event backlog size.
+# TYPE keystone_token_revocation_list_size gauge
+keystone_token_revocation_list_size 7
