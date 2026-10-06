@@ -101,6 +101,7 @@
 
 pub mod config;
 pub mod dispatcher;
+mod hex;
 pub mod identity;
 pub mod kdf;
 pub mod keyring;

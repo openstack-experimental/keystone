@@ -339,7 +339,7 @@ impl AuditDispatcher {
     /// The comparison is constant-time, and a signature that is not valid hex
     /// of the right length simply fails verification.
     pub fn verify_hmac(&self, event: &CadfEvent, key: &[u8]) -> bool {
-        let Some(signature) = crate::keyring::decode_hex(&event.signature) else {
+        let Some(signature) = crate::hex::decode(&event.signature) else {
             return false;
         };
         let canonical = jcs_canonical(&event.event);
@@ -377,7 +377,7 @@ pub(crate) fn compute_hmac_sha256(payload: &CadfEventPayload, key: &[u8]) -> Str
         .expect("HMAC accepts any key length; keys are always 32-byte HKDF-derived");
     mac.update(canonical.as_bytes());
     let result = mac.finalize();
-    hex::encode(result.into_bytes())
+    crate::hex::encode(result.into_bytes())
 }
 
 /// Serialize `payload` to JCS-canonical JSON (RFC 8785 §3.2.3):
@@ -411,17 +411,7 @@ fn sort_json_keys(value: serde_json::Value) -> serde_json::Value {
     }
 }
 
-// hex encoding helper (avoids an extra crate dependency — inline impl)
-mod hex {
-    pub fn encode(bytes: impl AsRef<[u8]>) -> String {
-        bytes
-            .as_ref()
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect()
-    }
-}
-
+// hex encoding/decoding lives in `crate::hex`, shared with the keyring.
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -43,6 +43,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::ServiceIdentity;
+use crate::hex;
 use crate::kdf::derive_audit_hmac_key;
 use crate::spool::HmacKeyStore;
 
@@ -171,8 +172,8 @@ impl HmacKeyring {
             .map_err(|e| invalid(format!("{} bytes, not JSON: {e}", bytes.len())))?;
         let mut keks = BTreeMap::new();
         for (version, hex_key) in file.keys {
-            let raw =
-                decode_hex(&hex_key).ok_or_else(|| invalid(format!("key {version} is not hex")))?;
+            let raw = hex::decode(&hex_key)
+                .ok_or_else(|| invalid(format!("key {version} is not hex")))?;
             let kek = <[u8; KEK_LEN]>::try_from(raw.as_slice())
                 .map_err(|_| invalid(format!("key {version} is not {KEK_LEN} bytes")))?;
             keks.insert(version, kek);
@@ -236,7 +237,7 @@ impl HmacKeyring {
             keys: self
                 .keks
                 .iter()
-                .map(|(version, kek)| (*version, encode_hex(kek)))
+                .map(|(version, kek)| (*version, hex::encode(kek)))
                 .collect(),
         };
         let json = serde_json::to_vec(&file).map_err(|e| KeyringError::Invalid {
@@ -271,20 +272,6 @@ impl HmacKeyring {
         }
         result.map_err(io_err(path))
     }
-}
-
-fn encode_hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-pub(crate) fn decode_hex(s: &str) -> Option<Vec<u8>> {
-    if !s.is_ascii() || !s.len().is_multiple_of(2) {
-        return None;
-    }
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
-        .collect()
 }
 
 fn random_kek() -> Result<[u8; KEK_LEN], KeyringError> {
