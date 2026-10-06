@@ -358,15 +358,17 @@ pub(crate) async fn resolve(
     })
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
+#[cfg(any(test, feature = "test-util"))]
+pub mod tests {
+    #[cfg(test)]
     use config::{File, FileFormat};
     use httpmock::{Method::GET, Method::POST, Mock, MockServer};
     use serde_json::json;
 
+    #[cfg(test)]
     use super::*;
 
-    pub(crate) fn mock_lookup(server: &MockServer, renewable: bool, ttl: u64) -> Mock<'_> {
+    pub fn mock_lookup(server: &MockServer, renewable: bool, ttl: u64) -> Mock<'_> {
         server.mock(|when, then| {
             when.method(GET).path("/v1/auth/token/lookup-self");
             then.status(200).json_body(json!({
@@ -401,7 +403,7 @@ pub(crate) mod tests {
         })
     }
 
-    pub(crate) fn mock_metadata(server: &MockServer, version: u64) -> Mock<'_> {
+    pub fn mock_metadata(server: &MockServer, version: u64) -> Mock<'_> {
         server.mock(|when, then| {
             when.method(GET)
                 .path("/v1/secret/metadata/keystone/database");
@@ -428,11 +430,7 @@ pub(crate) mod tests {
         })
     }
 
-    pub(crate) fn mock_secret(
-        server: &MockServer,
-        version: u64,
-        data: serde_json::Value,
-    ) -> Mock<'_> {
+    pub fn mock_secret(server: &MockServer, version: u64, data: serde_json::Value) -> Mock<'_> {
         server.mock(|when, then| {
             when.method(GET)
                 .path("/v1/secret/data/keystone/database")
@@ -458,7 +456,7 @@ pub(crate) mod tests {
         })
     }
 
-    pub(crate) fn mock_renew(server: &MockServer, ttl: u64) -> Mock<'_> {
+    pub fn mock_renew(server: &MockServer, ttl: u64) -> Mock<'_> {
         server.mock(|when, then| {
             when.method(POST).path("/v1/auth/token/renew-self");
             then.status(200).json_body(json!({
@@ -485,13 +483,14 @@ pub(crate) mod tests {
         })
     }
 
-    pub(crate) fn mock_revoke(server: &MockServer) -> Mock<'_> {
+    pub fn mock_revoke(server: &MockServer) -> Mock<'_> {
         server.mock(|when, then| {
             when.method(POST).path("/v1/auth/token/revoke-self");
             then.status(204);
         })
     }
 
+    #[cfg(test)]
     fn test_vault(server: &MockServer, refresh_interval_seconds: u64) -> VaultSection {
         VaultSection {
             address: Url::parse(&server.base_url()).unwrap(),

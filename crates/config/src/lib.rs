@@ -49,18 +49,10 @@
 //! }
 //! ```
 use std::collections::{HashMap, HashSet};
-use std::env;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::PathBuf;
 
-use config::{File, FileFormat};
 use eyre::{Report, WrapErr, eyre};
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Deserialize;
-use tokio::sync::{Mutex, RwLock};
-use tokio::task::JoinHandle;
-use tokio_util::sync::CancellationToken;
-use tracing::error;
 use validator::Validate;
 
 mod api_key;
@@ -104,7 +96,6 @@ mod security_compliance;
 mod token;
 mod token_restriction;
 mod trust;
-mod vault;
 mod vendordata;
 mod webauthn;
 
@@ -136,6 +127,7 @@ pub use listener::*;
 pub use local_emergency::*;
 pub use mapping::*;
 pub use oauth2::*;
+pub use oslo_config::VaultSection;
 pub use oslo_middleware::*;
 pub use pagination::*;
 pub use policy::*;
@@ -150,7 +142,6 @@ pub use security_compliance::*;
 pub use token::*;
 pub use token_restriction::*;
 pub use trust::*;
-pub use vault::VaultSection;
 pub use vendordata::*;
 pub use webauthn::*;
 
@@ -375,32 +366,6 @@ pub struct Config {
 }
 
 impl Config {
-    fn build_raw(path: PathBuf) -> Result<config::Config, Report> {
-        let mut builder = config::Config::builder();
-
-        if std::path::Path::new(&path).is_file() {
-            builder = builder.add_source(File::from(path).format(FileFormat::Ini));
-        }
-
-        if let Ok(site_vars_file) = env::var("KEYSTONE_SITE_VARS_FILE") {
-            builder = builder.add_source(File::with_name(&site_vars_file));
-        }
-
-        builder
-            .add_source(
-                config::Environment::with_prefix("OS")
-                    .prefix_separator("_")
-                    .separator("__"),
-            )
-            .build()
-            .wrap_err("Failed to read configuration file")
-    }
-
-    fn from_raw(raw: config::Config) -> Result<Self, Report> {
-        raw.try_deserialize()
-            .wrap_err("Failed to parse configuration file")
-    }
-
     /// Load and parse the config file, resolving any Vault references.
     ///
     /// # Parameters
@@ -409,9 +374,7 @@ impl Config {
     /// # Returns
     /// - `Ok(Self)` if the config was parsed successfully
     pub async fn new(path: PathBuf) -> Result<Self, Report> {
-        let mut raw = Self::build_raw(path)?;
-        Self::resolve_vault_references(&mut raw).await?;
-        Self::from_raw(raw)
+        oslo_config::load::<Self>(path).await
     }
 
     /// Load the config file, resolve Vault references and all certificates
@@ -423,41 +386,7 @@ impl Config {
     /// # Returns
     /// - `Ok(Self)` if the config was parsed successfully
     pub async fn load_all(path: PathBuf) -> Result<Self, Report> {
-        Ok(Self::load_all_with_vault_state(&path).await?.config)
-    }
-
-    /// Resolve any Vault references in `raw` in place.
-    ///
-    /// Returns `Ok(None)` when the configuration contains no Vault references
-    /// (so a plain configuration pays no Vault cost), or `Ok(Some(runtime))`
-    /// with the live [`vault::VaultRuntime`] used to keep the resolved secrets
-    /// current.
-    async fn resolve_vault_references(
-        raw: &mut config::Config,
-    ) -> Result<Option<vault::VaultRuntime>, Report> {
-        if !vault::contains_vault_references(&raw.cache)? {
-            return Ok(None);
-        }
-        raw.get_table("vault")
-            .map_err(|_| vault::VaultConfigError::MissingConfiguration)?;
-        let vault_config: VaultSection = raw
-            .get("vault")
-            .map_err(|_| vault::VaultConfigError::InvalidConfiguration)?;
-        let resolved = vault::resolve(raw, &vault_config).await?;
-        Ok(Some(resolved.runtime))
-    }
-
-    async fn load_all_with_vault_state(path: &Path) -> Result<LoadedConfig, Report> {
-        let mut raw = Self::build_raw(path.to_path_buf())?;
-        let vault = Self::resolve_vault_references(&mut raw).await?;
-        let parsed = Self::from_raw(raw).and_then(Self::finish_load);
-        let config = match vault {
-            // A configuration that resolved Vault references but then failed to
-            // build is surfaced distinctly from a plain configuration error.
-            Some(_) => parsed.map_err(|_| vault::VaultConfigError::ResolvedConfigurationInvalid)?,
-            None => parsed?,
-        };
-        Ok(LoadedConfig { config, vault })
+        oslo_config::load_all::<Self>(path).await
     }
 
     fn finish_load(mut cfg: Self) -> Result<Self, Report> {
@@ -580,233 +509,29 @@ impl TryFrom<config::ConfigBuilder<config::builder::DefaultState>> for Config {
         let raw = builder
             .build()
             .wrap_err("Failed to read configuration file")?;
-        Self::from_raw(raw)
+        oslo_config::from_raw::<Self>(raw)
     }
-}
-
-struct LoadedConfig {
-    config: Config,
-    vault: Option<vault::VaultRuntime>,
 }
 
 /// Config Manager supporting config file watch and reload.
-pub struct ConfigManager {
-    /// The current config.
-    pub config: Arc<RwLock<Config>>,
-    /// Notify listeners that something changed.
-    pub notify_tx: tokio::sync::broadcast::Sender<()>,
-    /// Signals the background watcher to stop and run its teardown (e.g.
-    /// revoking the Vault token) on graceful shutdown.
-    shutdown: CancellationToken,
-    /// Handle to the spawned watcher task, awaited by [`Self::shutdown`] so
-    /// teardown completes before the process exits.
-    watcher_handle: Mutex<Option<JoinHandle<()>>>,
-}
+pub type ConfigManager = oslo_config::ConfigManager<Config>;
 
-impl ConfigManager {
-    /// Initialize the Manager with no watcher.
-    pub fn not_watched(config: Config) -> Arc<Self> {
-        let (notify_tx, _) = tokio::sync::broadcast::channel(16);
-        Arc::new(Self {
-            config: Arc::new(RwLock::new(config)),
-            notify_tx,
-            shutdown: CancellationToken::new(),
-            watcher_handle: Mutex::new(None),
-        })
-    }
-
-    /// Gracefully stop the background watcher.
-    ///
-    /// Cancels the watch loop and awaits its completion. When the
-    /// configuration is Vault-backed, the loop revokes the Vault token as
-    /// part of its teardown before this returns. Safe to call on an
-    /// unwatched manager (no-op) and idempotent across repeated calls.
-    pub async fn shutdown(&self) {
-        self.shutdown.cancel();
-        if let Some(handle) = self.watcher_handle.lock().await.take() {
-            let _ = handle.await;
+impl oslo_config::CoreSchema for Config {
+    fn source() -> oslo_config::SourceSpec {
+        oslo_config::SourceSpec {
+            env_prefix: "OS",
+            env_prefix_separator: "_",
+            env_separator: "__",
+            site_vars_env: "KEYSTONE_SITE_VARS_FILE",
         }
     }
 
-    /// Initializes the config, starts the background watcher,
-    /// and returns the manager for the live state.
-    pub async fn watched(config_path: impl Into<PathBuf>) -> Result<Arc<Self>, Report> {
-        let config_path = config_path.into();
-        let (notify_tx, _) = tokio::sync::broadcast::channel(16);
-
-        // Initial Load
-        let initial = Config::load_all_with_vault_state(&config_path).await?;
-
-        let shutdown = CancellationToken::new();
-        let manager = Arc::new(Self {
-            config: Arc::new(RwLock::new(initial.config)),
-            notify_tx,
-            shutdown: shutdown.clone(),
-            watcher_handle: Mutex::new(None),
-        });
-
-        // Spawn Background Watcher
-        let manager_clone = Arc::clone(&manager);
-        let handle = tokio::spawn(async move {
-            Self::watch_loop(manager_clone, config_path, initial.vault, shutdown).await;
-        });
-        *manager.watcher_handle.lock().await = Some(handle);
-
-        Ok(manager)
+    fn finish_load(self) -> Result<Self, Report> {
+        Config::finish_load(self)
     }
 
-    /// Watch loop for constant watching for the configuration changes and
-    /// corresponding notifications.
-    #[allow(clippy::expect_used)]
-    async fn watch_loop(
-        manager: Arc<Self>,
-        config_path: PathBuf,
-        mut vault_runtime: Option<vault::VaultRuntime>,
-        shutdown: CancellationToken,
-    ) {
-        let (sync_tx, mut sync_rx) = tokio::sync::mpsc::channel(1);
-
-        let mut watcher: RecommendedWatcher =
-            notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-                if let Ok(event) = res {
-                    // Data modifications, name changes (renames/symlink swaps),
-                    // creations, and removals. Removal matters for the
-                    // per-domain config directory (ADR 0034
-                    // §9): deleting a `keystone.<name>.
-                    // conf` must re-scan so the domain's binding
-                    // drops. A spurious removal event on another watched file
-                    // costs one reload that lands on last-known-good.
-                    if event.kind.is_modify() || event.kind.is_create() || event.kind.is_remove() {
-                        // `try_send`, not `blocking_send`: this callback runs
-                        // on notify's single background
-                        // event-loop thread, which also
-                        // services `watch()`/`unwatch()` control requests.
-                        // Blocking here until `sync_rx` is drained can deadlock
-                        // that thread against a concurrent `watcher.watch()`
-                        // call (e.g. while registering the initial watch set)
-                        // that can only be serviced once this send completes.
-                        // A dropped event is harmless: the consumer already
-                        // coalesces any backlog via the `try_recv` drain below.
-                        let _ = sync_tx.try_send(event);
-                    }
-                }
-            })
-            .expect("Failed to create watcher");
-        // A global set of watches to prevent deadlock while re-registering the
-        // same file.
-        let mut watched_paths = manager.config.read().await.get_watch_files();
-
-        // Watch the main config
-        watched_paths.insert(config_path.clone());
-        if let Some(parent) = config_path.parent() {
-            // For K8 it is practical to add a directory watch since the CM is
-            // replaced as a whole without touching the individual
-            // file.
-            watched_paths.insert(parent.to_path_buf());
-        }
-
-        // Register file watches
-        for watch in watched_paths.iter() {
-            let _ = watcher.watch(watch.as_path(), RecursiveMode::NonRecursive);
-        }
-
-        loop {
-            // Only arm the Vault maintenance timer when a Vault runtime is
-            // active; otherwise this branch never fires (rather than parking on
-            // a far-future sentinel deadline).
-            let vault_deadline = vault_runtime
-                .as_ref()
-                .map(vault::VaultRuntime::next_deadline);
-            let vault_tick = async {
-                match vault_deadline {
-                    Some(deadline) => tokio::time::sleep_until(deadline).await,
-                    None => std::future::pending::<()>().await,
-                }
-            };
-            tokio::select! {
-                () = shutdown.cancelled() => {
-                    break;
-                }
-                event = sync_rx.recv() => {
-                    if event.is_none() {
-                        break;
-                    }
-                    while sync_rx.try_recv().is_ok() {}
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    match Config::load_all_with_vault_state(&config_path).await {
-                        Ok(loaded) => {
-                            Self::apply_loaded(
-                                &manager,
-                                loaded,
-                                &mut vault_runtime,
-                                &mut watcher,
-                                &mut watched_paths,
-                            ).await;
-                        }
-                        Err(_) => {
-                            error!("configuration reload failed; retaining last-known-good configuration");
-                        }
-                    }
-                }
-                () = vault_tick => {
-                    let Some(runtime) = &mut vault_runtime else {
-                        continue;
-                    };
-                    if runtime.renew_if_due().await.is_err() {
-                        error!("Vault token renewal failed; retrying while retaining current configuration");
-                    }
-                    match runtime.has_new_version().await {
-                        Ok(true) => match Config::load_all_with_vault_state(&config_path).await {
-                            Ok(loaded) => {
-                                Self::apply_loaded(
-                                    &manager,
-                                    loaded,
-                                    &mut vault_runtime,
-                                    &mut watcher,
-                                    &mut watched_paths,
-                                ).await;
-                            }
-                            Err(_) => {
-                                error!("Vault configuration refresh failed; retaining last-known-good configuration");
-                            }
-                        },
-                        Ok(false) => {}
-                        Err(_) => {
-                            error!("Vault metadata poll failed; retaining last-known-good configuration");
-                        }
-                    }
-                }
-            }
-        }
-
-        // The loop exited (graceful shutdown or the watcher channel closing).
-        // For a Vault-backed configuration, revoke the token so it is
-        // invalidated immediately instead of lingering valid until its TTL
-        // expires.
-        if let Some(runtime) = &vault_runtime
-            && runtime.revoke().await.is_err()
-        {
-            error!("Vault token revocation on shutdown failed");
-        }
-    }
-
-    async fn apply_loaded(
-        manager: &Arc<Self>,
-        loaded: LoadedConfig,
-        vault_runtime: &mut Option<vault::VaultRuntime>,
-        watcher: &mut RecommendedWatcher,
-        watched_paths: &mut HashSet<PathBuf>,
-    ) {
-        for watch_candidate in loaded.config.get_watch_files() {
-            if !watched_paths.contains(&watch_candidate) {
-                let _ = watcher.watch(watch_candidate.as_path(), RecursiveMode::NonRecursive);
-                watched_paths.insert(watch_candidate);
-            }
-        }
-
-        *manager.config.write().await = loaded.config;
-        *vault_runtime = loaded.vault;
-        let _ = manager.notify_tx.send(());
+    fn watch_files(&self) -> HashSet<PathBuf> {
+        self.get_watch_files()
     }
 }
 
@@ -823,7 +548,10 @@ mod tests {
     use tokio::time::{Duration, sleep, timeout};
 
     use super::*;
-    use crate::vault::tests::{mock_lookup, mock_metadata, mock_renew, mock_revoke, mock_secret};
+    use config::{File, FileFormat};
+    use oslo_config::vault::tests::{
+        mock_lookup, mock_metadata, mock_renew, mock_revoke, mock_secret,
+    };
 
     // `Config::new` is async, but these tests drive it from the synchronous
     // `temp_env::with_var` closure API, so run it to completion on a local

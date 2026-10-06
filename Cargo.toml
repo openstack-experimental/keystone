@@ -31,6 +31,7 @@ members = [
   "crates/oauth2-client-driver-raft",
   "crates/oauth2-key-driver-raft",
   "crates/oauth2-session-driver-raft",
+  "crates/oslo-config",
   "crates/password-hashing",
   "crates/policy-store-driver-sql",
   "crates/resource-driver-sql",
@@ -133,6 +134,7 @@ openstack-keystone-assignment-driver-openfga = { version = "0.1", path = "crates
 openstack-keystone-assignment-driver-sql = { version = "0.1", path = "crates/assignment-driver-sql/" }
 openstack-keystone-catalog-driver-sql = { version = "0.1", path = "crates/catalog-driver-sql/" }
 openstack-keystone-config = { version = "0.1.0", path = "crates/config"}
+oslo-config = { version = "0.1.0", path = "crates/oslo-config" }
 openstack-keystone-core = { version = "0.1.0", path = "crates/core" }
 openstack-keystone-core-types = { version = "0.1.0", path = "crates/core-types" }
 openstack-keystone-credential-driver-sql = { version = "0.1", path = "crates/credential-driver-sql/" }
