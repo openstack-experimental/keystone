@@ -11,8 +11,11 @@ homepage.workspace = true
 exclude.workspace = true
 
 [features]
+default = ["vault"]
+# Resolution of `vault://` references and the `[vault]` section.
+vault = ["dep:serde_json", "dep:thiserror", "dep:url", "dep:vaultrs"]
 # Expose the Vault mock helpers to the tests of dependent crates.
-test-util = ["dep:httpmock"]
+test-util = ["vault", "dep:httpmock"]
 
 [dependencies]
 chrono = { workspace = true, features = ["now", "serde"] }
@@ -24,14 +27,14 @@ inventory.workspace = true
 ipnet = { workspace = true }
 notify = "8.2"
 secrecy = { workspace = true, features = ["serde"] }
-serde_json.workspace = true
+serde_json = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
-thiserror.workspace = true
+thiserror = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["fs", "macros", "rt", "sync", "time"] }
 tokio-util.workspace = true
 tracing.workspace = true
-url = { workspace = true, features = ["serde"] }
-vaultrs.workspace = true
+url = { workspace = true, features = ["serde"], optional = true }
+vaultrs = { workspace = true, optional = true }
 
 [dev-dependencies]
 httpmock.workspace = true

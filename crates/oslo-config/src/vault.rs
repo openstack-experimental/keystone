@@ -25,8 +25,10 @@ use url::Url;
 use vaultrs::client::{Client, VaultClient, VaultClientSettingsBuilder};
 use vaultrs::kv2;
 
+/// Default interval of the KV v2 metadata polling.
 const DEFAULT_REFRESH_INTERVAL_SECONDS: u64 = 60;
 
+/// Serde default of [`VaultSection::refresh_interval_seconds`].
 fn default_refresh_interval_seconds() -> u64 {
     DEFAULT_REFRESH_INTERVAL_SECONDS
 }
@@ -36,76 +38,125 @@ fn default_refresh_interval_seconds() -> u64 {
 pub struct VaultSection {
     /// Vault server URL.
     pub address: Url,
-    /// Vault token. Prefer setting this through `OS_VAULT__TOKEN`.
-    pub token: SecretString,
     /// Optional Vault Enterprise namespace.
     #[serde(default)]
     pub namespace: Option<String>,
     /// How often KV v2 metadata is polled for a newer version.
     #[serde(default = "default_refresh_interval_seconds")]
     pub refresh_interval_seconds: u64,
+    /// Vault token. Prefer setting this through `OS_VAULT__TOKEN`.
+    pub token: SecretString,
 }
 
+/// Location of a KV v2 secret.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct SecretPath {
+    /// Mount of the secret engine.
     mount: String,
+    /// Path of the secret within the mount.
     path: String,
 }
 
+/// Parsed `vault://mount/path#key` reference.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct VaultReference {
-    secret: SecretPath,
+    /// Key within the secret data.
     key: String,
+    /// The secret holding the key.
+    secret: SecretPath,
 }
 
+/// Errors of the Vault integration. The messages never carry secret values.
 #[derive(Debug, Error)]
 pub(crate) enum VaultConfigError {
-    #[error("invalid Vault reference")]
-    InvalidReference,
-    #[error("Vault references require a [vault] configuration section")]
-    MissingConfiguration,
-    #[error("invalid [vault] configuration")]
-    InvalidConfiguration,
-    #[error("Vault token must not be empty")]
-    EmptyToken,
-    #[error("Vault refresh_interval_seconds must be greater than zero")]
-    InvalidRefreshInterval,
-    #[error("failed to initialize Vault client")]
-    ClientInitialization,
+    /// The Vault token was rejected.
     #[error("Vault token authentication failed")]
     Authentication,
-    #[error("failed to read referenced Vault secret")]
-    SecretRead,
-    #[error("referenced Vault key was not found")]
-    MissingKey,
-    #[error("referenced Vault value must be a string")]
-    NonStringValue,
+    /// The Vault client could not be built.
+    #[error("failed to initialize Vault client")]
+    ClientInitialization,
+    /// The token in `[vault]` is empty.
+    #[error("Vault token must not be empty")]
+    EmptyToken,
+    /// The `[vault]` section does not deserialize.
+    #[error("invalid [vault] configuration")]
+    InvalidConfiguration,
+    /// A `vault://` reference is malformed.
+    #[error("invalid Vault reference")]
+    InvalidReference,
+    /// `refresh_interval_seconds` is zero.
+    #[error("Vault refresh_interval_seconds must be greater than zero")]
+    InvalidRefreshInterval,
+    /// Reading the KV v2 metadata for the version poll failed.
     #[error("failed to poll Vault secret metadata")]
     MetadataRead,
-    #[error("Vault token renewal failed")]
-    TokenRenewal,
-    #[error("Vault token revocation failed")]
-    TokenRevocation,
+    /// References exist but there is no `[vault]` section.
+    #[error("Vault references require a [vault] configuration section")]
+    MissingConfiguration,
+    /// The referenced key is not in the secret.
+    #[error("referenced Vault key was not found")]
+    MissingKey,
+    /// The referenced value is not a string.
+    #[error("referenced Vault value must be a string")]
+    NonStringValue,
+    /// The configuration does not build after the references are replaced.
     #[error("configuration is invalid after resolving Vault references")]
     ResolvedConfigurationInvalid,
+    /// Reading a referenced secret failed.
+    #[error("failed to read referenced Vault secret")]
+    SecretRead,
+    /// Renewing the Vault token failed.
+    #[error("Vault token renewal failed")]
+    TokenRenewal,
+    /// Revoking the Vault token failed.
+    #[error("Vault token revocation failed")]
+    TokenRevocation,
 }
 
+/// Token renewal schedule.
 #[derive(Debug)]
 struct RenewalState {
+    /// When the token is renewed next.
     next: Instant,
+    /// Lease duration of the token.
     ttl: Duration,
 }
 
 /// Runtime state retained by the configuration manager.
 pub(crate) struct VaultRuntime {
+    /// The authenticated client.
     client: Arc<VaultClient>,
-    secret_versions: HashMap<SecretPath, u64>,
-    refresh_interval: Duration,
+    /// When the metadata is polled next.
     next_poll: Instant,
+    /// Interval of the metadata polling.
+    refresh_interval: Duration,
+    /// Token renewal schedule, `None` for a non renewable token.
     renewal: Option<RenewalState>,
+    /// Versions of the resolved secrets at load time.
+    secret_versions: HashMap<SecretPath, u64>,
 }
 
 impl VaultRuntime {
+    /// Poll the KV v2 metadata and report whether a referenced secret has a
+    /// newer version than the one resolved at load time.
+    pub(crate) async fn has_new_version(&mut self) -> Result<bool, VaultConfigError> {
+        if Instant::now() < self.next_poll {
+            return Ok(false);
+        }
+        self.next_poll = Instant::now() + self.refresh_interval;
+
+        for (secret, current_version) in &self.secret_versions {
+            let metadata = kv2::read_metadata(&*self.client, &secret.mount, &secret.path)
+                .await
+                .map_err(|_| VaultConfigError::MetadataRead)?;
+            if metadata.current_version > *current_version {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// The next moment the maintenance loop must wake up (renewal or poll).
     pub(crate) fn next_deadline(&self) -> Instant {
         self.renewal
             .as_ref()
@@ -113,19 +164,7 @@ impl VaultRuntime {
             .unwrap_or(self.next_poll)
     }
 
-    /// Revoke the Vault token via `auth/token/revoke-self`.
-    ///
-    /// Called during graceful shutdown to invalidate the token (and any
-    /// leases created with it) immediately, rather than leaving it valid
-    /// until its TTL expires. Best-effort: the process is stopping, so a
-    /// failure is surfaced to the caller for logging but cannot be retried.
-    pub(crate) async fn revoke(&self) -> Result<(), VaultConfigError> {
-        self.client
-            .revoke()
-            .await
-            .map_err(|_| VaultConfigError::TokenRevocation)
-    }
-
+    /// Renew the token when its renewal is due.
     pub(crate) async fn renew_if_due(&mut self) -> Result<(), VaultConfigError> {
         let Some(renewal) = &self.renewal else {
             return Ok(());
@@ -154,32 +193,32 @@ impl VaultRuntime {
         }
     }
 
-    pub(crate) async fn has_new_version(&mut self) -> Result<bool, VaultConfigError> {
-        if Instant::now() < self.next_poll {
-            return Ok(false);
-        }
-        self.next_poll = Instant::now() + self.refresh_interval;
-
-        for (secret, current_version) in &self.secret_versions {
-            let metadata = kv2::read_metadata(&*self.client, &secret.mount, &secret.path)
-                .await
-                .map_err(|_| VaultConfigError::MetadataRead)?;
-            if metadata.current_version > *current_version {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+    /// Revoke the Vault token via `auth/token/revoke-self`.
+    ///
+    /// Called during graceful shutdown to invalidate the token (and any
+    /// leases created with it) immediately, rather than leaving it valid
+    /// until its TTL expires. Best-effort: the process is stopping, so a
+    /// failure is surfaced to the caller for logging but cannot be retried.
+    pub(crate) async fn revoke(&self) -> Result<(), VaultConfigError> {
+        self.client
+            .revoke()
+            .await
+            .map_err(|_| VaultConfigError::TokenRevocation)
     }
 }
 
+/// Outcome of resolving the Vault references.
 pub(crate) struct ResolvedVault {
+    /// State to keep the resolved secrets current.
     pub(crate) runtime: VaultRuntime,
 }
 
+/// Half of the lease duration, at least one second: when to renew.
 fn half_ttl(ttl: Duration) -> Duration {
     Duration::from_secs((ttl.as_secs() / 2).max(1))
 }
 
+/// Parse a `vault://mount/path#key` reference.
 fn parse_reference(value: &str) -> Result<VaultReference, VaultConfigError> {
     let url = Url::parse(value).map_err(|_| VaultConfigError::InvalidReference)?;
     if url.scheme() != "vault"
@@ -213,6 +252,8 @@ fn parse_reference(value: &str) -> Result<VaultReference, VaultConfigError> {
     })
 }
 
+/// Collect the Vault references of `value`; the root `[vault]` section is
+/// skipped.
 fn visit_references(
     value: &Value,
     references: &mut HashSet<VaultReference>,
@@ -240,12 +281,14 @@ fn visit_references(
     Ok(())
 }
 
+/// Whether `value` contains any Vault reference.
 pub(crate) fn contains_vault_references(value: &Value) -> Result<bool, VaultConfigError> {
     let mut references = HashSet::new();
     visit_references(value, &mut references, true)?;
     Ok(!references.is_empty())
 }
 
+/// Replace every Vault reference in `value` by the resolved secret value.
 fn replace_references(
     value: &mut Value,
     secrets: &HashMap<SecretPath, HashMap<String, serde_json::Value>>,
@@ -279,6 +322,8 @@ fn replace_references(
     Ok(())
 }
 
+/// Authenticate to Vault, read the referenced secrets and replace the
+/// references in `raw`.
 pub(crate) async fn resolve(
     raw: &mut config::Config,
     vault: &VaultSection,
@@ -350,10 +395,10 @@ pub(crate) async fn resolve(
     Ok(ResolvedVault {
         runtime: VaultRuntime {
             client,
-            secret_versions,
-            refresh_interval,
             next_poll: Instant::now() + refresh_interval,
+            refresh_interval,
             renewal,
+            secret_versions,
         },
     })
 }

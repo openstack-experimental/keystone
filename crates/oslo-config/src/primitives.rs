@@ -22,6 +22,7 @@ use ipnet::IpNet;
 use secrecy::SecretSlice;
 use serde::{Deserialize, Deserializer};
 
+/// Deserialize a comma-separated string into a list of non-empty strings.
 pub fn csv<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
 where
     D: Deserializer<'de>,
@@ -91,6 +92,7 @@ where
     }
 }
 
+/// Serde default of a boolean option that is on unless configured.
 pub fn default_true() -> bool {
     true
 }
@@ -105,40 +107,56 @@ where
     deserializer.deserialize_option(OptionU32Visitor)
 }
 
+/// Visitor of an optional [`U32StrOrIntVisitor`] value.
 struct OptionU32Visitor;
 
 impl<'de> serde::de::Visitor<'de> for OptionU32Visitor {
     type Value = Option<u32>;
 
+    /// Describe the expected value for error messages.
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
         formatter.write_str("an optional u32, either as a string or integer")
     }
 
-    fn visit_unit<E>(self) -> Result<Self::Value, E> {
-        Ok(None)
-    }
-
+    /// A missing value is `None`.
     fn visit_none<E>(self) -> Result<Self::Value, E> {
         Ok(None)
     }
 
+    /// A present value is delegated to [`U32StrOrIntVisitor`].
     fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         deserializer.deserialize_any(U32StrOrIntVisitor).map(Some)
     }
+
+    /// A unit value is `None`.
+    fn visit_unit<E>(self) -> Result<Self::Value, E> {
+        Ok(None)
+    }
 }
 
+/// Visitor accepting a `u32` given as an integer or as a (hex) string.
 struct U32StrOrIntVisitor;
 
 impl<'de> serde::de::Visitor<'de> for U32StrOrIntVisitor {
     type Value = u32;
 
+    /// Describe the expected value for error messages.
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
         formatter.write_str("a u32 as string or integer, optionally 0x-prefixed hex")
     }
 
+    /// A signed integer in the `u32` range.
+    fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        u32::try_from(v).map_err(|_| E::custom(format!("value {} out of range for u32", v)))
+    }
+
+    /// A decimal or `0x` prefixed hexadecimal string.
     fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
     where
         E: serde::de::Error,
@@ -150,14 +168,8 @@ impl<'de> serde::de::Visitor<'de> for U32StrOrIntVisitor {
         }
     }
 
+    /// An unsigned integer in the `u32` range.
     fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
-    where
-        E: serde::de::Error,
-    {
-        u32::try_from(v).map_err(|_| E::custom(format!("value {} out of range for u32", v)))
-    }
-
-    fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
     where
         E: serde::de::Error,
     {
@@ -169,6 +181,16 @@ impl<'de> serde::de::Visitor<'de> for U32StrOrIntVisitor {
 #[derive(Builder, Clone, Debug, Default, Deserialize)]
 #[builder(setter(strip_option, into))]
 pub struct TlsConfiguration {
+    /// The TLS client certificate file content.
+    #[builder(default)]
+    #[serde(skip)]
+    pub tls_cert_content: Option<SecretSlice<u8>>,
+
+    /// Path to the TLS client certificate file.
+    #[builder(default)]
+    #[serde(default)]
+    pub tls_cert_file: Option<PathBuf>,
+
     /// The CA certificate content to validate connections from clients or
     /// peers.
     #[builder(default)]
@@ -180,16 +202,6 @@ pub struct TlsConfiguration {
     #[builder(default)]
     #[serde(default)]
     pub tls_client_ca_file: Option<PathBuf>,
-
-    /// The TLS client certificate file content.
-    #[builder(default)]
-    #[serde(skip)]
-    pub tls_cert_content: Option<SecretSlice<u8>>,
-
-    /// Path to the TLS client certificate file.
-    #[builder(default)]
-    #[serde(default)]
-    pub tls_cert_file: Option<PathBuf>,
 
     /// The TLS certificate key file content.
     #[builder(default)]
@@ -203,6 +215,7 @@ pub struct TlsConfiguration {
 }
 
 impl TlsConfiguration {
+    /// Read the certificate, key and CA files into the `*_content` fields.
     pub fn read_certs(&mut self) -> Result<(), Report> {
         if let Some(crt) = &self.tls_cert_file {
             self.tls_cert_content = Some(

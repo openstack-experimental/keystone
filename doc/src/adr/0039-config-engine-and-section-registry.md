@@ -4,14 +4,12 @@
 
 ## Status
 
-Accepted. Implementation in progress (#1416): WP-1 to WP-4 for the
-OpenFGA and JWS pilots and the WP-5 distributed storage section are done, see
-Work packages for what remains.
+Accepted.
 
 ## Reference
 
-Tracking issue #1416. Builds on ADR 0018 (linker-anchored backend
-registration), ADR 0025, ADR 0033 and ADR 0034.
+Tracking issue #1416. Builds on ADR 0018 (linker-anchored backend registration),
+ADR 0025, ADR 0033 and ADR 0034.
 
 ## Context
 
@@ -20,9 +18,9 @@ overlay, Vault resolution, `ConfigManager` watch/reload) with the Keystone
 schema (~45 sections in one `Config`). Seventeen crates depend on it, including
 `core-types`. Driver config types (OpenFGA, distributed storage) live centrally
 and drivers import them back, so every driver option is a change to the central
-crate. Moving the storage types into the storage crate would create a
-`config` -> `storage` -> `config` cycle while `Config` still has a
-`distributed_storage` field. `BackendRegistration` takes `&Config`, so drivers reach into the
+crate. Moving the storage types into the storage crate would create a `config`
+-> `storage` -> `config` cycle while `Config` still has a `distributed_storage`
+field. `BackendRegistration` takes `&Config`, so drivers reach into the
 monolith.
 
 ## Decision
@@ -34,8 +32,7 @@ Rejected: a runtime-typed global bag (loses typed core access), an extension
 ### Crates
 
 The engine crate is named `oslo-config`, after the Python library whose model
-(modules register their own option groups, one file, live reload) it
-implements.
+(modules register their own option groups, one file, live reload) it implements.
 
 ```text
 oslo-config                      engine, no feature dependencies
@@ -52,10 +49,10 @@ than one crate reads it (e.g. `database`, `identity`, `token`, and
 `LdapProvider`, which `core-types` uses for API-stored domain config). Only
 single-owner sections move to their crate. A section whose owner is a library
 crate rather than a driver (`distributed_storage`, owned by
-`openstack-keystone-distributed-storage`) is registered the same way. It is
-not a section type that every consumer needs from a shared leaf: the schema
-crate drops the field, so the cycle above disappears, and the startup code, the
-raft listener and `keystone-manage` read it with
+`openstack-keystone-distributed-storage`) is registered the same way. It is not
+a section type that every consumer needs from a shared leaf: the schema crate
+drops the field, so the cycle above disappears, and the startup code, the raft
+listener and `keystone-manage` read it with
 `view.section::<DistributedStorageConfiguration>()`.
 
 ### ConfigSection
@@ -86,9 +83,9 @@ both.) Cross-checks that need the core schema stay in `CoreSchema::finish_load`.
 A driver crate registers its section type with `register_section!` (link-time,
 `inventory`, same linkage rule as ADR 0018). `BackendRegistration<B>` stays
 non-generic and its `selected`/`build` hooks receive a `&ConfigView`, so a
-driver reads its own section with `view.section::<S>()` (or `view.require::<S>()`
-for an error naming the missing section) next to the core config. A section
-type with a `Default` is materialized from it when absent
+driver reads its own section with `view.section::<S>()` (or
+`view.require::<S>()` for an error naming the missing section) next to the core
+config. A section type with a `Default` is materialized from it when absent
 (`register_section!(S, default)`); one without is absent from the bag. A driver
 that needs a required section reads it with `view.require::<S>()` in its
 `build`, so selecting the driver without the section fails the startup with an
@@ -105,9 +102,9 @@ pub struct BackendRegistration<B: ?Sized + 'static> {
 
 ### Loading
 
-Raw pipeline (file, site-vars, env; prefix parameterized) -> Vault resolution
--> core parse -> registered sections of selected drivers -> validation pass.
-Env override, site-vars and Vault therefore apply to driver sections unchanged.
+Raw pipeline (file, site-vars, env; prefix parameterized) -> Vault resolution ->
+core parse -> registered sections of selected drivers -> validation pass. Env
+override, site-vars and Vault therefore apply to driver sections unchanged.
 `ConfigManager<C>` keeps the core struct and the section bag in one snapshot, so
 reload swaps both atomically (last-known-good, deadlock avoidance and Vault
 teardown behaviour are unchanged). Registered sections are re-parsed and
@@ -116,8 +113,9 @@ the watch set, so a driver section reloads like any core section.
 
 ### Per-domain blocks
 
-`AssignmentBackendConfig` becomes `Sql | Named { driver, config: ParsedSection }`.
-A driver registers the type its blocks are parsed into with
+`AssignmentBackendConfig` becomes
+`Sql | Named { driver, config: ParsedSection }`. A driver registers the type its
+blocks are parsed into with
 `register_block!("assignment.backends", "openfga", S)`; the schema deserializes
 the `driver` discriminator and delegates the rest to the registered type at load
 time. The block is downcast to the driver's own type at dispatch, so the same
@@ -141,43 +139,37 @@ driver that is not linked fails the load.
   `anchor()` regressions). `keystone/build.rs` anchors only `*-driver-*` crates,
   `webauthn` and `distributed-storage`, so a section registered by any other
   crate (the next one is `audit`, owned by `cadf`) must, in the same change,
-  expose `anchor()`, be added to the `build.rs` allow-list and be listed in
-  the `assert_registered` call in `server/startup.rs`. `keystone-manage` does
-  not use the generated anchors and calls the owner's `anchor()` itself. Otherwise a linker-stripped registration
-  silently materializes a default section.
+  expose `anchor()`, be added to the `build.rs` allow-list and be listed in the
+  `assert_registered` call in `server/startup.rs`. `keystone-manage` does not
+  use the generated anchors and calls the owner's `anchor()` itself. Otherwise a
+  linker-stripped registration silently materializes a default section.
 - `CoreSchema::reserved_sections()` mirrors the fields of the core schema; a
   unit test in the schema crate fails when the two drift apart.
 
 ## Non-goals
 
-Section *registration* is link-time only (no loading of section types after
-link). This is not a limit on reloading: live reload of the whole
-configuration, driver sections included, works exactly as it does today (see
-Loading). No change to INI/env/site-vars semantics; no change to per-domain
-assignment semantics or wire format.
+Section _registration_ is link-time only (no loading of section types after
+link). This is not a limit on reloading: live reload of the whole configuration,
+driver sections included, works exactly as it does today (see Loading). No
+change to INI/env/site-vars semantics; no change to per-domain assignment
+semantics or wire format.
 
 ## Consequences
 
 - A new driver is one crate with no central-config diff.
 - `core-types` stops depending on the Keystone schema (it depends on
   `oslo-config` and shared leaf section types only). Not yet true: it still
-  imports `Config` and the identity/LDAP/security-compliance types. That part
-  of WP-5 remains. `crates/storage` no longer reads `Config` fields: it takes
-  the `[distributed_storage]` section (the ConfigManager only supplies the
-  snapshot and the reload notification).
+  imports `Config` and the identity/LDAP/security-compliance types. That part of
+  WP-5 remains. `crates/storage` no longer reads `Config` fields: it takes the
+  `[distributed_storage]` section (the ConfigManager only supplies the snapshot
+  and the reload notification).
 - Plugin interface changes from `&Config` to `&ConfigView` across ~31 files
   (mechanical).
 - Any linked crate can register a section name; same trust level as backend
   registration, mitigated by the rules above.
 
 A `ConfigManager` built with `not_watched(Config)` has an empty section bag,
-unlike `watched()` which materializes the registered sections. Tests of a
-driver that requires its section must assemble a `SectionBag` (or use
+unlike `watched()` which materializes the registered sections. Tests of a driver
+that requires its section must assemble a `SectionBag` (or use
 `load_snapshot_from`); the storage crate offers `config::config_manager` and
 `config::config_manager_with` for that.
-
-## Work packages
-
-See #1416: WP-1 engine extraction (reload tests first), WP-2 section trait and
-hooks, WP-3 registry + OpenFGA pilot, WP-4 remaining driver sections and
-per-domain blocks, WP-5 storage section (done) and the `core-types` dependency, WP-6 optional multi-service support.

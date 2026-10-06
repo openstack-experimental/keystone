@@ -16,7 +16,7 @@
 //!
 //! The INI section name is bound to the Rust type
 //! ([`ConfigSection::NAME`]) so a lookup by type can never mismatch the name.
-//! A crate registers its section with [`register_section!`]; registration is
+//! A crate registers its section with `register_section!`; registration is
 //! link-time (the same mechanism as the backend registrations), while the
 //! values are (re-)parsed on every load, so registered sections follow
 //! the live reload of the configuration exactly like the core ones.
@@ -55,75 +55,84 @@ pub trait ConfigSection: DeserializeOwned + Send + Sync + 'static {
         Ok(())
     }
 
-    /// Files (or directories) whose change must trigger a reload.
-    fn watch_files(&self) -> Vec<PathBuf> {
-        Vec::new()
-    }
-
     /// Second validation pass, run when all registered sections are
     /// materialized. Sibling registered sections can be read from `sections`.
     fn validate_with(&self, _sections: &SectionBag) -> Result<(), ConfigError> {
         Ok(())
     }
+
+    /// Files (or directories) whose change must trigger a reload.
+    fn watch_files(&self) -> Vec<PathBuf> {
+        Vec::new()
+    }
 }
 
 /// Object safe facade over [`ConfigSection`].
 trait ErasedSection: Any + Send + Sync {
-    fn finish(&mut self, ctx: &LoadCtx) -> Result<(), ConfigError>;
-    fn watch_files(&self) -> Vec<PathBuf>;
-    fn validate_with(&self, sections: &SectionBag) -> Result<(), ConfigError>;
+    /// The section as [`Any`], for downcasting to its concrete type.
     fn as_any(&self) -> &dyn Any;
+    /// See [`ConfigSection::finish`].
+    fn finish(&mut self, ctx: &LoadCtx) -> Result<(), ConfigError>;
+    /// See [`ConfigSection::validate_with`].
+    fn validate_with(&self, sections: &SectionBag) -> Result<(), ConfigError>;
+    /// See [`ConfigSection::watch_files`].
+    fn watch_files(&self) -> Vec<PathBuf>;
 }
 
 impl<S: ConfigSection> ErasedSection for S {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
     fn finish(&mut self, ctx: &LoadCtx) -> Result<(), ConfigError> {
         ConfigSection::finish(self, ctx)
-    }
-    fn watch_files(&self) -> Vec<PathBuf> {
-        ConfigSection::watch_files(self)
     }
     fn validate_with(&self, sections: &SectionBag) -> Result<(), ConfigError> {
         ConfigSection::validate_with(self, sections)
     }
-    fn as_any(&self) -> &dyn Any {
-        self
+    fn watch_files(&self) -> Vec<PathBuf> {
+        ConfigSection::watch_files(self)
     }
 }
 
+/// Function parsing one registered section out of the raw configuration.
 type ParseFn = fn(&config::Config) -> Result<Option<Box<dyn ErasedSection>>, Report>;
 
 /// Type erased description of a registered section.
 pub struct SectionDescriptor {
     /// INI section name.
     pub name: &'static str,
-    type_id: fn() -> TypeId,
+    /// Parser of the section out of the raw configuration.
     parse: ParseFn,
+    /// [`TypeId`] of the section type.
+    type_id: fn() -> TypeId,
 }
 
 impl SectionDescriptor {
-    /// Describe a section that is required: absent in the file means absent
-    /// in the [`SectionBag`].
-    pub const fn required<S: ConfigSection>() -> Self {
-        Self {
-            name: S::NAME,
-            type_id: TypeId::of::<S>,
-            parse: parse_required::<S>,
-        }
-    }
-
     /// Describe a section that is optional: absent in the file means
     /// `S::default()`.
     pub const fn optional<S: ConfigSection + Default>() -> Self {
         Self {
             name: S::NAME,
-            type_id: TypeId::of::<S>,
             parse: parse_optional::<S>,
+            type_id: TypeId::of::<S>,
+        }
+    }
+
+    /// Describe a section that is required: absent in the file means absent
+    /// in the [`SectionBag`].
+    pub const fn required<S: ConfigSection>() -> Self {
+        Self {
+            name: S::NAME,
+            parse: parse_required::<S>,
+            type_id: TypeId::of::<S>,
         }
     }
 }
 
 inventory::collect!(SectionDescriptor);
 
+/// Read the section `S` out of the raw configuration; `None` when it is not
+/// present.
 fn read_section<S: ConfigSection>(raw: &config::Config) -> Result<Option<S>, Report> {
     match raw.get::<S>(S::NAME) {
         Ok(section) => Ok(Some(section)),
@@ -132,12 +141,14 @@ fn read_section<S: ConfigSection>(raw: &config::Config) -> Result<Option<S>, Rep
     }
 }
 
+/// [`ParseFn`] of a required section: `None` when absent.
 fn parse_required<S: ConfigSection>(
     raw: &config::Config,
 ) -> Result<Option<Box<dyn ErasedSection>>, Report> {
     Ok(read_section::<S>(raw)?.map(|s| Box::new(s) as Box<dyn ErasedSection>))
 }
 
+/// [`ParseFn`] of an optional section: `S::default()` when absent.
 fn parse_optional<S: ConfigSection + Default>(
     raw: &config::Config,
 ) -> Result<Option<Box<dyn ErasedSection>>, Report> {
@@ -164,6 +175,7 @@ macro_rules! register_section {
 /// The materialized registered sections, keyed by their Rust type.
 #[derive(Default)]
 pub struct SectionBag {
+    /// The sections by the [`TypeId`] of their type.
     sections: HashMap<TypeId, Box<dyn ErasedSection>>,
 }
 
@@ -180,6 +192,7 @@ impl SectionBag {
         self.sections.insert(TypeId::of::<S>(), Box::new(section));
     }
 
+    /// Files watched by all sections.
     fn watch_files(&self) -> HashSet<PathBuf> {
         self.sections
             .values()
@@ -289,6 +302,7 @@ pub struct Loaded<C> {
 }
 
 impl<C: Clone> Clone for Loaded<C> {
+    /// Clone the core schema; the sections are shared.
     fn clone(&self) -> Self {
         Self {
             core: self.core.clone(),
@@ -306,12 +320,9 @@ impl<C> Loaded<C> {
         }
     }
 
-    /// Create a snapshot from a core value and a ready made section bag.
-    pub fn with_sections(core: C, sections: SectionBag) -> Self {
-        Self {
-            core,
-            sections: Arc::new(sections),
-        }
+    /// Files watched by the registered sections.
+    pub(crate) fn section_watch_files(&self) -> HashSet<PathBuf> {
+        self.sections.watch_files()
     }
 
     /// Borrow the snapshot as a [`ConfigView`].
@@ -322,19 +333,25 @@ impl<C> Loaded<C> {
         }
     }
 
-    pub(crate) fn section_watch_files(&self) -> HashSet<PathBuf> {
-        self.sections.watch_files()
+    /// Create a snapshot from a core value and a ready made section bag.
+    pub fn with_sections(core: C, sections: SectionBag) -> Self {
+        Self {
+            core,
+            sections: Arc::new(sections),
+        }
     }
 }
 
 impl<C> Deref for Loaded<C> {
     type Target = C;
+    /// The core schema.
     fn deref(&self) -> &C {
         &self.core
     }
 }
 
 impl<C> DerefMut for Loaded<C> {
+    /// The core schema.
     fn deref_mut(&mut self) -> &mut C {
         &mut self.core
     }
@@ -345,10 +362,12 @@ impl<C> DerefMut for Loaded<C> {
 pub struct ConfigView<'a, C> {
     /// The core schema.
     pub core: &'a C,
+    /// The registered sections.
     sections: &'a SectionBag,
 }
 
 impl<C> Clone for ConfigView<'_, C> {
+    /// A view is a pair of references, so cloning copies it.
     fn clone(&self) -> Self {
         *self
     }
@@ -361,20 +380,21 @@ impl<'a, C> ConfigView<'a, C> {
         Self { core, sections }
     }
 
-    /// The registered section `S`, if materialized.
-    pub fn section<S: ConfigSection>(&self) -> Option<&'a S> {
-        self.sections.get::<S>()
-    }
-
     /// The registered section `S`, or an error naming the missing section.
     pub fn require<S: ConfigSection>(&self) -> Result<&'a S, ConfigError> {
         self.section::<S>()
             .ok_or_else(|| eyre!("required section [{}] is missing", S::NAME))
     }
+
+    /// The registered section `S`, if materialized.
+    pub fn section<S: ConfigSection>(&self) -> Option<&'a S> {
+        self.sections.get::<S>()
+    }
 }
 
 impl<C> Deref for ConfigView<'_, C> {
     type Target = C;
+    /// The core schema.
     fn deref(&self) -> &C {
         self.core
     }
@@ -384,13 +404,24 @@ impl<C> Deref for ConfigView<'_, C> {
 /// discriminator in the file (e.g. `driver = openfga`) rather than by the
 /// section name. Cheap to clone, comparable and printable, so a reload can
 /// detect changed blocks without knowing their type.
+///
+/// Unlike a registered section, a block is not in the [`SectionBag`] and is
+/// not reachable through [`ConfigView::section`]: the schema stores it in its
+/// own field (e.g. the `Named` variant of a per-domain backend config) and
+/// the driver that owns the type recovers it with [`Self::downcast_ref`].
+/// The same type may be registered both as a section (`register_section!`)
+/// and as a block (`register_block!`).
 #[derive(Clone)]
 pub struct ParsedSection {
+    /// The type erased value.
     inner: Arc<dyn ErasedBlock>,
 }
 
+/// Object safe facade over the value of a [`ParsedSection`].
 trait ErasedBlock: Any + Send + Sync + std::fmt::Debug {
+    /// The value as [`Any`], for downcasting to its concrete type.
     fn as_any(&self) -> &dyn Any;
+    /// Compare with another type erased value.
     fn eq_dyn(&self, other: &dyn Any) -> bool;
 }
 
@@ -407,6 +438,15 @@ where
 }
 
 impl ParsedSection {
+    /// Borrow the value as its concrete type.
+    ///
+    /// Returns `None` when the block was parsed into a different type, which
+    /// means it belongs to another driver. The owning driver should report
+    /// that as a misconfiguration.
+    pub fn downcast_ref<S: Any>(&self) -> Option<&S> {
+        self.inner.as_any().downcast_ref::<S>()
+    }
+
     /// Wrap a parsed value.
     pub fn new<S>(section: S) -> Self
     where
@@ -416,20 +456,17 @@ impl ParsedSection {
             inner: Arc::new(section),
         }
     }
-
-    /// Borrow the value as its concrete type.
-    pub fn downcast_ref<S: Any>(&self) -> Option<&S> {
-        self.inner.as_any().downcast_ref::<S>()
-    }
 }
 
 impl PartialEq for ParsedSection {
+    /// Equal when both hold the same type and the values are equal.
     fn eq(&self, other: &Self) -> bool {
         self.inner.eq_dyn(other.inner.as_any())
     }
 }
 
 impl std::fmt::Debug for ParsedSection {
+    /// Format the wrapped value.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.inner.fmt(f)
     }
@@ -438,11 +475,12 @@ impl std::fmt::Debug for ParsedSection {
 /// Description of a driver specific configuration block selected by a
 /// discriminator, e.g. `[assignment.backends.<name>] driver = openfga`.
 pub struct BlockDescriptor {
+    /// Value of the discriminator (e.g. `openfga`).
+    pub driver: &'static str,
     /// Namespace of the blocks, owned by the schema (e.g.
     /// `assignment.backends`).
     pub namespace: &'static str,
-    /// Value of the discriminator (e.g. `openfga`).
-    pub driver: &'static str,
+    /// Parser of the block value into the registered type.
     parse: fn(config::Value) -> Result<ParsedSection, Report>,
 }
 
@@ -453,13 +491,14 @@ impl BlockDescriptor {
         S: DeserializeOwned + Any + Send + Sync + std::fmt::Debug + PartialEq,
     {
         Self {
-            namespace,
             driver,
+            namespace,
             parse: parse_block_as::<S>,
         }
     }
 }
 
+/// Parse a block value into `S` and wrap it as a [`ParsedSection`].
 fn parse_block_as<S>(value: config::Value) -> Result<ParsedSection, Report>
 where
     S: DeserializeOwned + Any + Send + Sync + std::fmt::Debug + PartialEq,

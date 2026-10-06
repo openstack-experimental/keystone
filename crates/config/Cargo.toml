@@ -19,7 +19,8 @@ eyre.workspace = true
 http.workspace = true
 ipnet = { workspace = true }
 log.workspace = true
-oslo-config.workspace = true
+# `Config` has a `[vault]` section, so the default `vault` feature is needed.
+oslo-config = { workspace = true, features = ["vault"] }
 notify = "8.2"
 regex.workspace = true
 secrecy = { workspace = true, features = ["serde"] }
