@@ -26,7 +26,7 @@ pub mod types;
 #[derive(OpenApi)]
 #[openapi(
     tags(
-        (name="application_credentials", 
+        (name="application_credentials",
         description=r#"Application Credentials are a way to authenticate to the OpenStack Identity service without using a user's password. They are useful for applications that need to interact with OpenStack services.
 "#),
     )
