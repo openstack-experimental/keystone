@@ -68,6 +68,20 @@ pub(super) fn security_headers(mut response: Response) -> Response {
         HeaderName::from_static("x-xss-protection"),
         HeaderValue::from_static("0"),
     );
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    no_store(response)
+}
+
+/// RFC 6749 §5.1: token (and other credential-bearing) responses must not
+/// be stored by browsers or shared caches. Also applied to HTML pages and
+/// redirects since they carry CSRF tokens and authorization codes.
+pub(super) fn no_store(mut response: Response) -> Response {
+    let headers = response.headers_mut();
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
     response
 }
 
@@ -110,4 +124,24 @@ pub(super) fn compute_csrf_token(secret: &str, parts: &[&str]) -> Option<String>
         mac.update(part.as_bytes());
     }
     Some(URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_security_headers_disable_caching_and_referrer() {
+        let response = security_headers(StatusCode::OK.into_response());
+        let headers = response.headers();
+        assert_eq!(headers["cache-control"], "no-store");
+        assert_eq!(headers["pragma"], "no-cache");
+        assert_eq!(headers["referrer-policy"], "no-referrer");
+    }
+
+    #[test]
+    fn test_error_page_has_no_store() {
+        let response = error_page(StatusCode::BAD_REQUEST, "bad");
+        assert_eq!(response.headers()["cache-control"], "no-store");
+    }
 }

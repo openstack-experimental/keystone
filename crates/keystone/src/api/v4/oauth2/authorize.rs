@@ -1119,6 +1119,19 @@ mod tests {
             .unwrap()
     }
 
+    #[test]
+    fn test_render_login_and_consent_headers() {
+        let session = sample_session();
+        for response in [
+            super::render_login("domain-1", &session, None),
+            super::render_consent("domain-1", &session),
+        ] {
+            assert_eq!(response.headers()["cache-control"], "no-store");
+            assert_eq!(response.headers()["pragma"], "no-cache");
+            assert_eq!(response.headers()["referrer-policy"], "no-referrer");
+        }
+    }
+
     fn authenticated_session() -> PreAuthSession {
         PreAuthSession {
             user_id: Some("user-1".to_string()),
@@ -1193,6 +1206,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        // The 303 Location carries the authorization code in the query
+        // string, so it must not be cached.
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(response.headers()["pragma"], "no-cache");
         let location = response
             .headers()
             .get(header::LOCATION)

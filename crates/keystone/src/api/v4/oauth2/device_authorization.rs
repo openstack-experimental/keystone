@@ -32,6 +32,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::oauth2_session::StartDeviceAuthorizationRequest;
 use openstack_keystone_core_types::oauth2_client::GrantType;
 
+use super::html::no_store;
 use super::token::Oauth2TokenError;
 use super::well_known::base_url;
 use crate::api::common::PeerAddr;
@@ -183,7 +184,9 @@ pub(super) async fn device_authorization(
         expires_in: (start.expires_at - now).max(0),
         interval: start.interval,
     };
-    Ok((StatusCode::OK, axum::Json(response)).into_response())
+    Ok(no_store(
+        (StatusCode::OK, axum::Json(response)).into_response(),
+    ))
 }
 
 #[cfg(test)]
@@ -336,6 +339,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(response.headers()["pragma"], "no-cache");
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["device_code"], "device-code-1");

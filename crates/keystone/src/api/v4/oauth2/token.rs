@@ -44,6 +44,8 @@ use crate::api::common::PeerAddr;
 use crate::audit::CorrelationId;
 use crate::keystone::ServiceState;
 
+use super::html::no_store;
+
 use authorization_code::handle_authorization_code_grant;
 use client_credentials::handle_client_credentials_grant;
 pub(super) use common::{authenticate_client, client_credentials_from_parts};
@@ -151,7 +153,7 @@ pub(super) async fn token(
 
     let oauth2_cfg = state.config_manager.config.read().await.oauth2.clone();
 
-    match grant_type {
+    let result = match grant_type {
         "client_credentials" => {
             handle_client_credentials_grant(
                 &state,
@@ -211,7 +213,8 @@ pub(super) async fn token(
         other => Err(Oauth2TokenError::unsupported_grant_type(format!(
             "grant_type `{other}` is not supported"
         ))),
-    }
+    };
+    result.map(no_store)
 }
 
 #[cfg(test)]
@@ -242,6 +245,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(response.headers()["pragma"], "no-cache");
         assert_eq!(json_body(response).await["error"], "invalid_request");
     }
 

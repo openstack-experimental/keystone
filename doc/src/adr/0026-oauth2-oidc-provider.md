@@ -1161,6 +1161,12 @@ in-depth security headers:
   `default-src 'self'` handles XSS. Browser-built-in XSS filters are unreliable
   and can introduce false positives. Document this rationale to prevent
   enterprise scanners from flagging it.)
+- `Cache-Control: no-store` and `Pragma: no-cache` (login/consent forms carry
+  CSRF tokens, redirects carry authorization codes; also set on every
+  `/token`, `/device_authorization` and `/revoke` response, success and
+  error, per RFC 6749 §5.1)
+- `Referrer-Policy: no-referrer` (the RP's `state` and authorization codes
+  must not leak to third-party resources via the `Referer` header)
 
 ### CSRF Token Binding
 

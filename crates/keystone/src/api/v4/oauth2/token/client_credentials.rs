@@ -447,6 +447,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(response.headers()["pragma"], "no-cache");
         let body = json_body(response).await;
         assert_eq!(body["token_type"], "Bearer");
         let access_token = body["access_token"].as_str().unwrap();

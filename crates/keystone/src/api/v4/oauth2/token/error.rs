@@ -20,6 +20,8 @@ use axum::{
 };
 use serde::Serialize;
 
+use crate::api::v4::oauth2::html::no_store;
+
 /// RFC 6749 §5.2 token endpoint error response.
 #[derive(Debug, Serialize)]
 pub(crate) struct Oauth2TokenError {
@@ -143,6 +145,6 @@ impl IntoResponse for Oauth2TokenError {
                 .headers_mut()
                 .insert(header::RETRY_AFTER, retry_after.into());
         }
-        response
+        no_store(response)
     }
 }

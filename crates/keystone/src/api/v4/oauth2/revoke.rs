@@ -57,6 +57,7 @@ use crate::audit::{
 };
 use crate::keystone::ServiceState;
 
+use super::html::no_store;
 use super::token::{Oauth2TokenError, authenticate_client, client_credentials_from_parts};
 
 #[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
@@ -197,7 +198,7 @@ pub(super) async fn revoke(
         tracing::debug!("oauth2 revoke: token not found or not revocable");
     }
 
-    Ok(StatusCode::OK.into_response())
+    Ok(no_store(StatusCode::OK.into_response()))
 }
 
 struct RevokeContext<'a> {
@@ -464,6 +465,8 @@ mod tests {
             .await
             .unwrap();
         let status = response.status();
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(response.headers()["pragma"], "no-cache");
         if status == StatusCode::OK {
             let body = response.into_body().collect().await.unwrap().to_bytes();
             assert!(body.is_empty(), "RFC 7009 success has an empty body");
