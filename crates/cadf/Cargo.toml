@@ -44,6 +44,7 @@ syslog = [
 ]
 
 [dev-dependencies]
+nix = { workspace = true, features = ["user"] }
 rcgen.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

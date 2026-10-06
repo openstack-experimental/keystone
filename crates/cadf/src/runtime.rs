@@ -32,7 +32,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::spool::{SpoolLock, run_spool_writer, seal_previous_spool, verify_sealed_spool};
+use crate::spool::{
+    SpoolLock, run_spool_writer, seal_previous_spool, start_spool_writer, verify_sealed_spool,
+};
 use crate::{
     AuditConfig, AuditDispatcher, AuditSink, AuditSinkConfig, HmacKeyring, KeyringError,
     ServiceIdentity, SinkError, SpoolError, StdoutSink, run_raw_segment_shipper,
@@ -78,6 +80,14 @@ pub enum RuntimeError {
     #[error("failed to seal the previous audit spool")]
     Seal(#[source] SpoolError),
 
+    /// The spool writer could not be opened at startup.
+    #[error("failed to start the audit spool writer")]
+    SpoolWriter(#[source] SpoolError),
+
+    /// A startup step panicked inside its blocking task.
+    #[error("audit startup task failed")]
+    Startup(#[source] tokio::task::JoinError),
+
     /// The configured sink could not be built.
     #[error("invalid audit syslog sink configuration")]
     Sink(#[source] SinkError),
@@ -104,6 +114,16 @@ pub struct ExtraSegmentSource {
 
 /// Running audit pipeline: the dispatcher to emit on and the task to await.
 pub type AuditRuntime = (Arc<AuditDispatcher>, Option<JoinHandle<()>>);
+
+/// Result of the blocking startup prelude: everything the background pipeline
+/// needs that the dispatcher does not carry, produced by steps that must all
+/// succeed before the service is handed out (see [`init`]).
+struct Prepared {
+    spool_lock: SpoolLock,
+    sealed: Option<PathBuf>,
+    keyring: HmacKeyring,
+    sink: Option<Arc<dyn AuditSink>>,
+}
 
 /// Switch the dispatcher to a newer key version when the keyring file on disk
 /// has one, until `shutdown` resolves. Rotation only ever adds versions, so
@@ -279,6 +299,11 @@ fn build_syslog_sink(
 /// `extra_sources` are sealed segments written by other producers in the same
 /// process; they are shipped verbatim through the same sink.
 ///
+/// Every blocking startup step — including opening the spool writer — must
+/// succeed: a `RuntimeError` here means the service must not start, since it
+/// would otherwise run with a silently dead audit pipeline. A failed start
+/// releases the spool lock it took.
+///
 /// Cancelling `token` makes the writer drain already-queued events (bounded
 /// by `[audit] spool_drain_timeout_secs`) and exit; the returned handle
 /// resolves once it has, and the spool lock is released.
@@ -298,19 +323,55 @@ pub async fn init(
     let spool_dir = audit_cfg.spool_dir(&service);
     let node_id = audit_cfg.node_id.clone();
     let kek_path = audit_cfg.hmac_kek_path(&service);
-    check_kek_location(&service, &audit_cfg)?;
-    std::fs::create_dir_all(&spool_dir).map_err(RuntimeError::CreateSpoolDir)?;
 
-    // Exclusive per-node spool lock for the process lifetime; fails fast if
-    // another process already owns this spool_dir/node_id.
-    let spool_lock =
-        SpoolLock::acquire(&spool_dir, node_id.as_str()).map_err(RuntimeError::Lock)?;
+    // Every blocking startup step runs off the async runtime and must
+    // succeed: a service whose spool it cannot open fails to start rather
+    // than run with a silently dead audit pipeline.
+    let prelude_service = service;
+    let prelude_cfg = audit_cfg.clone();
+    let prelude_dir = spool_dir.clone();
+    let prelude_node_id = node_id.clone();
+    let prelude_kek = kek_path.clone();
+    let Prepared {
+        spool_lock,
+        sealed,
+        keyring,
+        sink,
+    } = spawn_blocking(move || {
+        check_kek_location(&prelude_service, &prelude_cfg)?;
+        std::fs::create_dir_all(&prelude_dir).map_err(RuntimeError::CreateSpoolDir)?;
 
-    // Seal the previous run's live spool BEFORE the writer starts, so the
-    // writer begins on a fresh file and nothing reads a file being appended.
-    let sealed = seal_previous_spool(&spool_dir, node_id.as_str()).map_err(RuntimeError::Seal)?;
+        // Exclusive per-node spool lock for the process lifetime; fails fast
+        // if another process already owns this spool_dir/node_id.
+        let spool_lock = SpoolLock::acquire(&prelude_dir, prelude_node_id.as_str())
+            .map_err(RuntimeError::Lock)?;
 
-    let keyring = HmacKeyring::load_or_create(&kek_path).map_err(RuntimeError::Keyring)?;
+        // Seal the previous run's live spool BEFORE the writer starts, so the
+        // writer begins on a fresh file and nothing reads a file being
+        // appended.
+        let sealed = seal_previous_spool(&prelude_dir, prelude_node_id.as_str())
+            .map_err(RuntimeError::Seal)?;
+
+        let keyring = HmacKeyring::load_or_create(&prelude_kek).map_err(RuntimeError::Keyring)?;
+        let sink: Option<Arc<dyn AuditSink>> = match prelude_cfg.sink.clone() {
+            AuditSinkConfig::None => None,
+            AuditSinkConfig::Stdout => Some(Arc::new(StdoutSink)),
+            syslog @ AuditSinkConfig::Syslog { .. } => Some(build_syslog_sink(
+                &prelude_service,
+                syslog,
+                prelude_node_id.as_str(),
+            )?),
+        };
+        Ok(Prepared {
+            spool_lock,
+            sealed,
+            keyring,
+            sink,
+        })
+    })
+    .await
+    .map_err(RuntimeError::Startup)??;
+
     let hmac_key_version = keyring.current_version();
 
     // Per-node signing key:
@@ -335,11 +396,22 @@ pub async fn init(
     // One writer drains both QoS channels. It owns the spool lock: it runs
     // until shutdown is requested or the dispatcher is dropped, so the lock
     // lives as long as the spool is in use.
-    let spool_cfg = audit_cfg.spool_config(Arc::clone(audit_dispatcher.metrics()));
     let spool_bytes = audit_dispatcher.spool_bytes_handle();
     let writer_dir = spool_dir.clone();
     let writer_node_id = node_id.clone();
-    let shutdown = token.clone().cancelled_owned();
+    let writer_cfg = audit_cfg.spool_config(Arc::clone(audit_dispatcher.metrics()));
+    let writer_bytes = Arc::clone(&spool_bytes);
+
+    // The writer must be open before the runtime is handed out. Opening it
+    // here also seeds the spool_bytes gauge from what is on disk, which the
+    // verification and shipper started below may decrement — so it must run
+    // before they do.
+    let writer = spawn_blocking(move || {
+        start_spool_writer(writer_dir, writer_node_id, writer_cfg, writer_bytes)
+    })
+    .await
+    .map_err(RuntimeError::Startup)?
+    .map_err(RuntimeError::SpoolWriter)?;
 
     // Verify the sealed segment at rest in the background: it can be large
     // and must not delay startup. Nothing is re-dispatched. The shipper only
@@ -360,14 +432,10 @@ pub async fn init(
         })
     });
 
+    // `extra_shippers` only ship other producers' sealed segments verbatim:
+    // they never read this node's sealed segments and never touch the
+    // `spool_bytes` gauge, which covers this node's spool only.
     let shipper_cfg = audit_cfg.shipper_config(Arc::clone(audit_dispatcher.metrics()));
-    let sink: Option<Arc<dyn AuditSink>> = match audit_cfg.sink {
-        AuditSinkConfig::None => None,
-        AuditSinkConfig::Stdout => Some(Arc::new(StdoutSink)),
-        syslog @ AuditSinkConfig::Syslog { .. } => {
-            Some(build_syslog_sink(&service, syslog, node_id.as_str())?)
-        }
-    };
     let extra_shippers: Vec<_> = sink
         .iter()
         .flat_map(|sink| {
@@ -416,7 +484,8 @@ pub async fn init(
         KEY_RELOAD_INTERVAL,
         token.clone().cancelled_owned(),
     );
-    let writer = tokio::spawn(async move {
+    let shutdown = token.clone().cancelled_owned();
+    let writer_task = tokio::spawn(async move {
         let _spool_lock = spool_lock;
         tokio::join!(
             reloader,
@@ -424,17 +493,14 @@ pub async fn init(
             run_spool_writer(
                 audit_receivers.perimeter,
                 audit_receivers.critical,
-                writer_dir,
-                writer_node_id,
-                spool_cfg,
-                spool_bytes,
+                writer,
                 shutdown,
             ),
             shipper,
         );
     });
 
-    Ok((audit_dispatcher, Some(writer)))
+    Ok((audit_dispatcher, Some(writer_task)))
 }
 
 /// Drive every future to completion concurrently, without pulling in a
@@ -688,6 +754,55 @@ mod tests {
         assert!(key_file.exists());
         assert!(!tmp.path().join("spool").join("hmac-key.bin").exists());
         drop(writer);
+    }
+
+    /// A spool that the writer cannot open must fail the start (and release
+    /// the lock), not run with a silently dead writer.
+    #[tokio::test]
+    async fn init_fails_when_the_spool_writer_cannot_open() {
+        fn set_mode(path: &Path, mode: u32) {
+            let mut perms = std::fs::metadata(path).unwrap().permissions();
+            std::os::unix::fs::PermissionsExt::set_mode(&mut perms, mode);
+            std::fs::set_permissions(path, perms).unwrap();
+        }
+
+        // Directory permission checks are meaningless for root.
+        if nix::unistd::getuid().as_raw() == 0 {
+            eprintln!("skipping: directory permissions do not bind root");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cfg = test_config(tmp.path().join("spool"));
+        // Keep the keyring out of the spool directory: only the writer's
+        // open should fail below.
+        cfg.hmac_kek_file = Some(tmp.path().join("keys").join("key.bin"));
+        let spool = cfg.spool_dir(&SERVICE);
+        std::fs::create_dir_all(&spool).unwrap();
+        // An existing, writable lock file lets the prelude through; a
+        // non-writable spool directory makes the writer's open fail.
+        std::fs::write(spool.join("audit-spool-test-node.lock"), b"").unwrap();
+        set_mode(&spool, 0o555);
+
+        let Err(err) = init_with(&cfg, &CancellationToken::new()).await else {
+            panic!("a spool the writer cannot open must fail the start");
+        };
+        assert!(
+            matches!(err, RuntimeError::SpoolWriter(_)),
+            "got: {}",
+            chain(&err)
+        );
+
+        // The failed start released the spool lock it took.
+        set_mode(&spool, 0o755);
+        let token = CancellationToken::new();
+        let (_dispatcher, writer) = init_with(&cfg, &token)
+            .await
+            .expect("start succeeds once the spool is writable again");
+        token.cancel();
+        writer
+            .expect("writer is started")
+            .await
+            .expect("writer exits");
     }
 
     /// A rotation done out of process must start signing with the new key

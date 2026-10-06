@@ -1063,6 +1063,7 @@ dependencies = [
  "chrono",
  "hkdf 0.13.0",
  "hmac 0.13.0",
+ "nix 0.31.3",
  "openstack-keystone-metrics",
  "rcgen",
  "rustls",

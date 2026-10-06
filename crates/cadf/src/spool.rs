@@ -215,7 +215,7 @@ pub fn seal_previous_spool(spool_dir: &Path, node_id: &str) -> Result<Option<Pat
 }
 
 /// Appends events to the live spool with a persistent buffered handle.
-struct SpoolWriter {
+pub struct SpoolWriter {
     dir: PathBuf,
     node_id: String,
     path: PathBuf,
@@ -227,32 +227,38 @@ struct SpoolWriter {
     total_bytes: Arc<AtomicU64>,
 }
 
-impl SpoolWriter {
-    fn new(
-        dir: PathBuf,
-        node_id: String,
-        cfg: SpoolConfig,
-        total_bytes: Arc<AtomicU64>,
-    ) -> Result<Self, SpoolError> {
-        std::fs::create_dir_all(&dir)?;
-        let path = spool_path(&dir, &node_id);
-        total_bytes.store(spool_total_bytes(&dir, &node_id)?, Ordering::Relaxed);
-        let mut writer = Self {
-            dir,
-            node_id,
-            path,
-            cfg,
-            file: None,
-            segment_bytes: 0,
-            opened_at: Instant::now(),
-            dirty: false,
-            total_bytes,
-        };
-        writer.open()?;
-        writer.enforce_retention()?;
-        Ok(writer)
-    }
+/// Open the spool writer: create the directory, seed the `spool_bytes` gauge
+/// with what is already on disk, open the live spool and enforce retention.
+///
+/// Called at startup (off the async runtime, see [`crate::runtime::init`]);
+/// an error here must fail the service start, because a writer that cannot
+/// open its spool would silently drop every event.
+pub fn start_spool_writer(
+    dir: PathBuf,
+    node_id: String,
+    cfg: SpoolConfig,
+    total_bytes: Arc<AtomicU64>,
+) -> Result<SpoolWriter, SpoolError> {
+    std::fs::create_dir_all(&dir)?;
+    let path = spool_path(&dir, &node_id);
+    total_bytes.store(spool_total_bytes(&dir, &node_id)?, Ordering::Relaxed);
+    let mut writer = SpoolWriter {
+        dir,
+        node_id,
+        path,
+        cfg,
+        file: None,
+        segment_bytes: 0,
+        opened_at: Instant::now(),
+        dirty: false,
+        total_bytes,
+    };
+    writer.open()?;
+    writer.enforce_retention()?;
+    Ok(writer)
+}
 
+impl SpoolWriter {
     fn open(&mut self) -> Result<(), SpoolError> {
         let file = std::fs::OpenOptions::new()
             .create(true)
@@ -398,6 +404,9 @@ impl SpoolWriter {
 /// to the total size of the live spool and sealed segments (the
 /// `keystone_audit_spool_bytes` gauge).
 ///
+/// The writer must already be open: startup opens it via
+/// [`start_spool_writer`] and fails the service start if it cannot.
+///
 /// The writer stops when both channels are closed (the dispatcher was
 /// dropped) or when `shutdown` resolves. On `shutdown` it closes the channels
 /// and drains what is already queued, critical events first, for at most
@@ -406,20 +415,10 @@ impl SpoolWriter {
 pub async fn run_spool_writer(
     mut perimeter: mpsc::Receiver<CadfEvent>,
     mut critical: mpsc::Receiver<CadfEvent>,
-    spool_dir: PathBuf,
-    node_id: String,
-    cfg: SpoolConfig,
-    spool_bytes: Arc<AtomicU64>,
+    mut writer: SpoolWriter,
     shutdown: impl Future<Output = ()>,
 ) {
-    let drain_timeout = cfg.drain_timeout;
-    let mut writer = match SpoolWriter::new(spool_dir.clone(), node_id, cfg, spool_bytes) {
-        Ok(w) => w,
-        Err(e) => {
-            error!(path = %spool_dir.display(), error = %e, "failed to open audit spool; writer not started");
-            return;
-        }
-    };
+    let drain_timeout = writer.cfg.drain_timeout;
 
     let mut flush_tick = interval(FLUSH_INTERVAL);
     flush_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -707,6 +706,24 @@ mod tests {
         SpoolLock::acquire(dir.path(), "node-1").unwrap();
     }
 
+    /// A live spool path that cannot be opened (a directory) must make the
+    /// start fail, not open a writer that can never write.
+    #[test]
+    fn start_spool_writer_fails_when_the_live_spool_cannot_be_opened() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir_all(spool_path(dir.path(), "node-1")).unwrap();
+        assert!(
+            start_spool_writer(
+                dir.path().to_path_buf(),
+                "node-1".to_string(),
+                SpoolConfig::default(),
+                Arc::new(AtomicU64::new(0)),
+            )
+            .is_err(),
+            "open(O_APPEND) on a directory must fail"
+        );
+    }
+
     fn event(dispatcher: &AuditDispatcher) -> CadfEvent {
         dispatcher.finalize_event(make_payload(dispatcher))
     }
@@ -741,15 +758,13 @@ mod tests {
         let (ptx, prx) = mpsc::channel(1024);
         let (ctx, crx) = mpsc::channel(1024);
         let bytes = Arc::new(AtomicU64::new(0));
-        let task = tokio::spawn(run_spool_writer(
-            prx,
-            crx,
-            dir.to_path_buf(),
-            "node-1".to_string(),
-            cfg,
-            Arc::clone(&bytes),
-            std::future::pending(),
-        ));
+        let writer_bytes = Arc::clone(&bytes);
+        let dir = dir.to_path_buf();
+        let task = tokio::spawn(async move {
+            let writer = start_spool_writer(dir, "node-1".to_string(), cfg, writer_bytes)
+                .expect("a fresh tempdir spool opens");
+            run_spool_writer(prx, crx, writer, std::future::pending()).await
+        });
         for e in critical {
             ctx.send(e).await.unwrap();
         }
@@ -829,17 +844,16 @@ mod tests {
         for e in perimeter {
             ptx.send(e).await.unwrap();
         }
+        let writer = start_spool_writer(
+            dir.to_path_buf(),
+            "node-1".to_string(),
+            cfg,
+            Arc::new(AtomicU64::new(0)),
+        )
+        .expect("a fresh tempdir spool opens");
         tokio::time::timeout(
             Duration::from_secs(10),
-            run_spool_writer(
-                prx,
-                crx,
-                dir.to_path_buf(),
-                "node-1".to_string(),
-                cfg,
-                Arc::new(AtomicU64::new(0)),
-                std::future::ready(()),
-            ),
+            run_spool_writer(prx, crx, writer, std::future::ready(())),
         )
         .await
         .expect("writer returns on shutdown even with live senders");
