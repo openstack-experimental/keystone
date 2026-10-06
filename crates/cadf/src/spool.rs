@@ -586,11 +586,11 @@ pub fn verify_sealed_spool(
             }
         };
 
-        if event.payload().observer().node_id != expected_node_id {
+        if event.payload().observer().node_id() != expected_node_id {
             warn!(
                 line = line_no + 1,
                 event_id = %event.id(),
-                event_node = %event.payload().observer().node_id,
+                event_node = %event.payload().observer().node_id(),
                 expected_node = %expected_node_id,
                 "spool event node_id mismatch (tamper indicator)"
             );
@@ -685,14 +685,11 @@ mod tests {
             "success".to_string(),
             None,
             Initiator::new("unknown".to_string(), None, None, None),
-            Target {
-                id: "keystone".to_string(),
-                type_uri: "service/security/keystone/auth".to_string(),
-            },
-            Observer {
-                node_id: dispatcher.node_id().to_string(),
-                id: format!("service/security/keystone/{}", dispatcher.node_id()),
-            },
+            Target::new("keystone", "service/security/keystone/auth"),
+            Observer::new(
+                dispatcher.node_id(),
+                format!("service/security/keystone/{}", dispatcher.node_id()),
+            ),
         )
     }
 

@@ -349,14 +349,11 @@ pub fn emit_perimeter_authenticate_event(
         outcome.to_string(),
         outcome_reason,
         with_request_address(initiator),
-        Target {
-            id: "keystone".to_string(),
-            type_uri: "service/security/keystone/auth".to_string(),
-        },
-        Observer {
-            node_id: node_id.clone(),
-            id: format!("service/security/keystone/{node_id}"),
-        },
+        Target::new("keystone", "service/security/keystone/auth"),
+        Observer::new(
+            node_id.clone(),
+            format!("service/security/keystone/{node_id}"),
+        ),
     );
     let event = payload.sign(dispatcher);
     dispatcher.dispatch(event);
@@ -390,14 +387,11 @@ pub fn emit_oauth2_session_event(
         outcome.to_string(),
         outcome_reason,
         with_request_address(initiator),
-        Target {
-            id: client_id.to_string(),
-            type_uri: "data/security/keystone/oauth2_client".to_string(),
-        },
-        Observer {
-            node_id: node_id.clone(),
-            id: format!("service/security/keystone/{node_id}"),
-        },
+        Target::new(client_id, "data/security/keystone/oauth2_client"),
+        Observer::new(
+            node_id.clone(),
+            format!("service/security/keystone/{node_id}"),
+        ),
     );
     let event = payload.sign(dispatcher);
     dispatcher.dispatch(event);
@@ -436,14 +430,11 @@ pub async fn emit_oauth2_refresh_reuse_critical_event(
         // vocabulary.
         Some(OutcomeReason::literal("RefreshTokenReuseDetected")),
         with_request_address(initiator),
-        Target {
-            id: family_id.to_string(),
-            type_uri: "data/security/keystone/oauth2_refresh_family".to_string(),
-        },
-        Observer {
-            node_id: node_id.clone(),
-            id: format!("service/security/keystone/{node_id}"),
-        },
+        Target::new(family_id, "data/security/keystone/oauth2_refresh_family"),
+        Observer::new(
+            node_id.clone(),
+            format!("service/security/keystone/{node_id}"),
+        ),
     );
     let event = payload.sign(dispatcher);
     if dispatcher.dispatch_critical(event).await.is_err() {
@@ -487,14 +478,11 @@ pub fn emit_oauth2_client_revoked_event(
             revoked_families as u64,
         )])),
         with_request_address(initiator),
-        Target {
-            id: client_id.to_string(),
-            type_uri: "data/security/keystone/oauth2_client".to_string(),
-        },
-        Observer {
-            node_id: node_id.clone(),
-            id: format!("service/security/keystone/{node_id}"),
-        },
+        Target::new(client_id, "data/security/keystone/oauth2_client"),
+        Observer::new(
+            node_id.clone(),
+            format!("service/security/keystone/{node_id}"),
+        ),
     );
     let event = payload.sign(dispatcher);
     dispatcher.dispatch(event);
@@ -538,14 +526,11 @@ pub async fn emit_oauth2_emergency_key_rotation_critical_event(
             revoked_jtis.len() as u64,
         )])),
         with_request_address(initiator),
-        Target {
-            id: domain_id.to_string(),
-            type_uri: "data/security/keystone/oauth2_signing_key".to_string(),
-        },
-        Observer {
-            node_id: node_id.clone(),
-            id: format!("service/security/keystone/{node_id}"),
-        },
+        Target::new(domain_id, "data/security/keystone/oauth2_signing_key"),
+        Observer::new(
+            node_id.clone(),
+            format!("service/security/keystone/{node_id}"),
+        ),
     );
     let event = payload.sign(dispatcher);
     if dispatcher.dispatch_critical(event).await.is_err() {
@@ -599,14 +584,11 @@ pub async fn emit_oauth2_local_emergency_key_reconciled_event(
         // record the caller persists from the returned event ID.
         None,
         with_request_address(initiator),
-        Target {
-            id: domain_id.to_string(),
-            type_uri: "data/security/keystone/oauth2_signing_key".to_string(),
-        },
-        Observer {
-            node_id: node_id.clone(),
-            id: format!("service/security/keystone/{node_id}"),
-        },
+        Target::new(domain_id, "data/security/keystone/oauth2_signing_key"),
+        Observer::new(
+            node_id.clone(),
+            format!("service/security/keystone/{node_id}"),
+        ),
     );
     let event = payload.sign(dispatcher);
     if dispatcher.dispatch_critical(event).await.is_err() {

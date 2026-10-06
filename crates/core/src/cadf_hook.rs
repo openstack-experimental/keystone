@@ -154,10 +154,7 @@ fn build_target_from_event(event: &Event) -> Target {
             (keystone_id, "data/security/identity/scim-index")
         }
     };
-    Target {
-        id: sanitize_audit_id(raw_id),
-        type_uri: type_uri.to_string(),
-    }
+    Target::new(sanitize_audit_id(raw_id), type_uri)
 }
 
 /// Build an [`Initiator`] from a fully resolved [`ValidatedSecurityContext`].
@@ -278,10 +275,10 @@ impl AuditHook for CadfAuditHook {
             outcome_reason(outcome),
             build_initiator_from_vsc(ctx),
             build_target_from_event(event),
-            Observer {
-                node_id: node_id.clone(),
-                id: format!("service/security/keystone/{node_id}"),
-            },
+            Observer::new(
+                node_id.clone(),
+                format!("service/security/keystone/{node_id}"),
+            ),
         );
         let signed = payload.sign(&self.dispatcher);
         match self.dispatcher.dispatch_critical(signed).await {
@@ -405,8 +402,8 @@ mod tests {
             },
         );
         let target = build_target_from_event(&e);
-        assert_eq!(target.id, "unknown");
-        assert_eq!(target.type_uri, "data/security/identity/user");
+        assert_eq!(target.id(), "unknown");
+        assert_eq!(target.type_uri(), "data/security/identity/user");
     }
 
     #[test]
@@ -548,8 +545,8 @@ mod tests {
             ),
         ] {
             let target = build_target_from_event(&Event::new(Operation::Create, payload));
-            assert_eq!(target.type_uri, type_uri);
-            assert_eq!(target.id, id);
+            assert_eq!(target.type_uri(), type_uri);
+            assert_eq!(target.id(), id);
         }
     }
 

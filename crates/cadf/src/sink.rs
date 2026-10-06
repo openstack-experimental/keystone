@@ -426,14 +426,8 @@ mod tests {
             "success".to_string(),
             None,
             Initiator::new("unknown".to_string(), None, None, None),
-            Target {
-                id: "keystone".to_string(),
-                type_uri: "service/security/keystone/auth".to_string(),
-            },
-            Observer {
-                node_id: "node-1".to_string(),
-                id: "service/security/keystone/node-1".to_string(),
-            },
+            Target::new("keystone", "service/security/keystone/auth"),
+            Observer::new("node-1", "service/security/keystone/node-1"),
         ))
     }
 

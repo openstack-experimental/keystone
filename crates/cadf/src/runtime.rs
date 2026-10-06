@@ -571,14 +571,11 @@ mod tests {
             "success".to_string(),
             None,
             Initiator::new("unknown".to_string(), None, None, None),
-            Target {
-                id: "testsvc".to_string(),
-                type_uri: "service/security/testsvc/auth".to_string(),
-            },
-            Observer {
-                node_id: dispatcher.node_id().to_string(),
-                id: format!("service/security/testsvc/{}", dispatcher.node_id()),
-            },
+            Target::new("testsvc", "service/security/testsvc/auth"),
+            Observer::new(
+                dispatcher.node_id(),
+                format!("service/security/testsvc/{}", dispatcher.node_id()),
+            ),
         )
         .sign(dispatcher)
     }

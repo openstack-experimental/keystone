@@ -169,14 +169,11 @@ pub(crate) async fn emit_wasm_plugin_audit(
         outcome.to_string(),
         outcome_reason,
         crate::cadf_hook::with_request_address(build_initiator_unknown()),
-        Target {
-            id: plugin_name.to_string(),
-            type_uri: "data/security/identity/wasm-plugin".to_string(),
-        },
-        Observer {
-            node_id: node_id.clone(),
-            id: format!("service/security/keystone/{node_id}"),
-        },
+        Target::new(plugin_name, "data/security/identity/wasm-plugin"),
+        Observer::new(
+            node_id.clone(),
+            format!("service/security/keystone/{node_id}"),
+        ),
     );
     let event = payload.sign(dispatcher);
     dispatcher.dispatch_critical(event).await.map_err(|_| ())

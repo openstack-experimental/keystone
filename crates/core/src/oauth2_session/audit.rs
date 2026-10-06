@@ -46,14 +46,11 @@ pub fn emit_oauth2_refresh_family_revoked_event(
         "success".to_string(),
         Some(OutcomeReason::variant(reason)),
         with_request_address(initiator),
-        Target {
-            id: family_id.to_string(),
-            type_uri: "data/security/keystone/oauth2_refresh_family".to_string(),
-        },
-        Observer {
-            node_id: node_id.clone(),
-            id: format!("service/security/keystone/{node_id}"),
-        },
+        Target::new(family_id, "data/security/keystone/oauth2_refresh_family"),
+        Observer::new(
+            node_id.clone(),
+            format!("service/security/keystone/{node_id}"),
+        ),
     );
     let event = payload.sign(dispatcher);
     dispatcher.dispatch(event);

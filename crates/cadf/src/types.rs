@@ -20,6 +20,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::sanitize::sanitize_audit_value;
+
 /// All fields of a CADF event before signing.
 ///
 /// Private by design — callers obtain a `CadfEvent` only via
@@ -105,8 +107,8 @@ impl CadfEventPayload {
             "action": self.action,
             "outcome": self.outcome,
             "initiator": initiator,
-            "target": {"id": self.target.id, "typeURI": self.target.type_uri},
-            "observer": {"id": self.observer.id, "typeURI": OBSERVER_TYPE_URI},
+            "target": {"id": self.target.id(), "typeURI": self.target.type_uri()},
+            "observer": {"id": self.observer.id(), "typeURI": OBSERVER_TYPE_URI},
             "tags": [format!("{CORRELATION_TAG}{}", self.correlation_id)],
             "attachments": [{
                 "name": INTEGRITY_ATTACHMENT,
@@ -117,7 +119,7 @@ impl CadfEventPayload {
                     "hmac_key_version": self.hmac_key_version,
                     "version": self.version,
                     "domain": self.domain,
-                    "observer_node_id": self.observer.node_id,
+                    "observer_node_id": self.observer.node_id(),
                 },
             }],
         });
@@ -215,6 +217,10 @@ impl CadfEventPayload {
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_string),
             initiator,
+            // In-crate struct literals on purpose: wire values are kept
+            // verbatim so a record round-trips byte-exact — its signature
+            // was computed over exactly these values. New events are reduced
+            // by `Target::new` / `Observer::new`.
             target: Target {
                 id: text(target, "id")?,
                 type_uri: text(target, "typeURI")?,
@@ -675,17 +681,79 @@ impl Initiator {
 }
 
 /// Audit target — the resource being acted upon.
+///
+/// Both fields are reduced to the audit-safe character set at construction
+/// time (see [`crate::sanitize::sanitize_audit_value`]), so free text —
+/// newlines, control characters, unbounded values — cannot reach a signed
+/// record.
+///
+/// `Deserialize` is the wire path for records read back from a spool: it
+/// keeps values verbatim, because a signature was computed over exactly
+/// those values. Build new values with [`Target::new`].
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Target {
-    pub id: String,
-    pub type_uri: String,
+    id: String,
+    type_uri: String,
+}
+
+impl Target {
+    /// Build a target, reducing both values to the audit-safe character set.
+    #[must_use]
+    pub fn new(id: impl Into<String>, type_uri: impl Into<String>) -> Self {
+        Self {
+            id: sanitize_audit_value(&id.into()),
+            type_uri: sanitize_audit_value(&type_uri.into()),
+        }
+    }
+
+    /// The sanitized resource id.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// The sanitized resource type URI.
+    #[must_use]
+    pub fn type_uri(&self) -> &str {
+        &self.type_uri
+    }
 }
 
 /// Audit observer — the node that recorded the event.
+///
+/// Both fields are reduced to the audit-safe character set at construction
+/// time (see [`crate::sanitize::sanitize_audit_value`]).
+///
+/// `Deserialize` keeps wire values verbatim (see [`Target`]); build new
+/// values with [`Observer::new`].
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Observer {
-    pub node_id: String,
-    pub id: String,
+    node_id: String,
+    id: String,
+}
+
+impl Observer {
+    /// Build an observer, reducing both values to the audit-safe character
+    /// set.
+    #[must_use]
+    pub fn new(node_id: impl Into<String>, id: impl Into<String>) -> Self {
+        Self {
+            node_id: sanitize_audit_value(&node_id.into()),
+            id: sanitize_audit_value(&id.into()),
+        }
+    }
+
+    /// The sanitized node id.
+    #[must_use]
+    pub fn node_id(&self) -> &str {
+        &self.node_id
+    }
+
+    /// The sanitized observer id.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
 }
 
 #[cfg(test)]
@@ -718,14 +786,11 @@ mod tests {
             "success".to_string(),
             None,
             Initiator::new("unknown".to_string(), None, None, None),
-            Target {
-                id: "some-user-id".to_string(),
-                type_uri: "data/security/identity/user".to_string(),
-            },
-            Observer {
-                node_id: dispatcher.node_id().to_string(),
-                id: format!("service/security/keystone/{}", dispatcher.node_id()),
-            },
+            Target::new("some-user-id", "data/security/identity/user"),
+            Observer::new(
+                dispatcher.node_id(),
+                format!("service/security/keystone/{}", dispatcher.node_id()),
+            ),
         )
     }
 
@@ -875,19 +940,35 @@ mod tests {
                 "success".to_string(),
                 None,
                 Initiator::new("u".to_string(), None, domain.map(str::to_string), None),
-                Target {
-                    id: "t".to_string(),
-                    type_uri: "x".to_string(),
-                },
-                Observer {
-                    node_id: "test-node".to_string(),
-                    id: "o".to_string(),
-                },
+                Target::new("t", "x"),
+                Observer::new("test-node", "o"),
             )
             .sign(&dispatcher)
         };
         assert_eq!(with_domain(Some("d1")).payload().domain, "d1");
         assert_eq!(with_domain(None).payload().domain, "unknown");
+    }
+
+    #[test]
+    fn target_and_observer_new_reduce_to_the_audit_charset() {
+        let t = Target::new("id\nwith\tinjection\x00", "type uri");
+        assert_eq!(t.id(), "idwithinjection");
+        assert_eq!(t.type_uri(), "typeuri");
+        // Legitimate values pass through unchanged.
+        let t = Target::new(
+            "550e8400-e29b-41d4-a716-446655440000",
+            "data/security/identity/user",
+        );
+        assert_eq!(t.id(), "550e8400-e29b-41d4-a716-446655440000");
+        assert_eq!(t.type_uri(), "data/security/identity/user");
+        // Empty becomes "unknown"; values are capped.
+        let t = Target::new("", "a".repeat(300));
+        assert_eq!(t.id(), "unknown");
+        assert_eq!(t.type_uri().len(), 255);
+
+        let o = Observer::new("node 1\n", "service/security/keystone/node 1");
+        assert_eq!(o.node_id(), "node1");
+        assert_eq!(o.id(), "service/security/keystone/node1");
     }
 
     #[test]

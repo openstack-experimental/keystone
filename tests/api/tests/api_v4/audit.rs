@@ -173,8 +173,8 @@ fn find_pair<'a>(
     for event in events {
         let payload = event.payload();
         if payload.action() != action
-            || payload.target().type_uri != type_uri
-            || payload.target().id != target_id
+            || payload.target().type_uri() != type_uri
+            || payload.target().id() != target_id
         {
             continue;
         }
@@ -297,7 +297,7 @@ fn is_admin_login_success(event: &CadfEvent, admin_id: &str) -> bool {
     let payload = event.payload();
     payload.action() == "authenticate"
         && payload.outcome() == "success"
-        && payload.target().type_uri == AUTH_TYPE_URI
+        && payload.target().type_uri() == AUTH_TYPE_URI
         && payload.initiator().id() == admin_id
 }
 
@@ -460,14 +460,8 @@ async fn test_tampered_spool_line_fails_verification() -> Result<()> {
         "success".to_string(),
         None,
         Initiator::new("unknown".to_string(), None, None, None),
-        Target {
-            id: "00000000-0000-0000-0000-000000000000".to_string(),
-            type_uri: USER_TYPE_URI.to_string(),
-        },
-        Observer {
-            node_id: "tamper-node".to_string(),
-            id: "service/security/keystone/tamper-node".to_string(),
-        },
+        Target::new("00000000-0000-0000-0000-000000000000", USER_TYPE_URI),
+        Observer::new("tamper-node", "service/security/keystone/tamper-node"),
     );
     let event = payload.sign(&dispatcher);
     let line = serde_json::to_string(&event)?;
