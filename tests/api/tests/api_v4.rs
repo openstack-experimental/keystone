@@ -17,6 +17,7 @@
 
 mod api_v4 {
     mod api_key;
+    mod audit;
     mod auth;
     mod federation;
     mod identity;

@@ -354,6 +354,9 @@ impl CadfEventPayload {
     pub fn initiator(&self) -> &Initiator {
         &self.initiator
     }
+    pub fn target(&self) -> &Target {
+        &self.target
+    }
     pub fn observer(&self) -> &Observer {
         &self.observer
     }
