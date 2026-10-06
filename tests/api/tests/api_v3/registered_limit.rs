@@ -26,6 +26,7 @@ use http::StatusCode;
 use uuid::Uuid;
 
 use openstack_keystone_api_types::v3::domain::DomainCreateBuilder;
+use openstack_keystone_api_types::v3::region::RegionCreateBuilder;
 use openstack_keystone_api_types::v3::registered_limit::*;
 use openstack_keystone_api_types::v3::service::ServiceCreateBuilder;
 use openstack_sdk::AsyncOpenStack;
@@ -35,6 +36,7 @@ use test_api::common::raw_request;
 use test_api::fixtures::ProjectScopedUser;
 use test_api::guard::{AsyncResourceGuard, ResourceGuard};
 use test_api::limit::*;
+use test_api::region::create_region;
 use test_api::resource::domain::create_domain;
 use test_api::resource::get_system_scope_config;
 use test_api::service::create_service;
@@ -228,6 +230,98 @@ async fn test_registered_limit_not_found() -> Result<()> {
         StatusCode::NOT_FOUND,
         "unknown registered limit",
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_registered_limit_region_and_update() -> Result<()> {
+    let admin = admin_session().await?;
+    let service = fresh_service(&admin).await?;
+    let region = create_region(&admin, RegionCreateBuilder::default().build()?).await?;
+
+    // The same resource globally and for a region is not a duplicate.
+    let mut regional = registered(&service.id, "cores", 2)?;
+    regional.region_id = Some(region.id.clone());
+    let mut created =
+        create_registered_limits(&admin, vec![registered(&service.id, "cores", 1)?, regional])
+            .await?;
+    let regional = created.pop().expect("two created");
+    let global = created.pop().expect("two created");
+    assert_eq!(Some(region.id.clone()), regional.region_id);
+    assert_eq!(None, global.region_id);
+
+    // Filter by region.
+    let by_region = list_registered_limits(&admin, &[("region_id", &region.id)]).await?;
+    assert_eq!(1, by_region.len());
+    assert_eq!(regional.id, by_region[0].id);
+    let by_service = list_registered_limits(&admin, &[("service_id", &service.id)]).await?;
+    assert_eq!(2, by_service.len());
+
+    // Dropping the region would duplicate the global registered limit.
+    assert_status(
+        update_registered_limit(
+            &admin,
+            &regional.id,
+            RegisteredLimitUpdateBuilder::default()
+                .region_id(None)
+                .build()?,
+        )
+        .await,
+        StatusCode::CONFLICT,
+        "region reset collides with the global registered limit",
+    );
+
+    // The description is updated on its own and can be cleared.
+    let updated = update_registered_limit(
+        &admin,
+        &global.id,
+        RegisteredLimitUpdateBuilder::default()
+            .description(Some("new".to_string()))
+            .build()?,
+    )
+    .await?;
+    assert_eq!(Some("new".to_string()), updated.description);
+    assert_eq!(1, updated.default_limit);
+    let cleared = update_registered_limit(
+        &admin,
+        &global.id,
+        RegisteredLimitUpdateBuilder::default()
+            .description(None)
+            .build()?,
+    )
+    .await?;
+    assert_eq!(None, cleared.description);
+
+    // Unknown ID and invalid value.
+    assert_status(
+        update_registered_limit(
+            &admin,
+            "does-not-exist",
+            RegisteredLimitUpdateBuilder::default()
+                .default_limit(1)
+                .build()?,
+        )
+        .await,
+        StatusCode::NOT_FOUND,
+        "unknown registered limit",
+    );
+    assert_status(
+        update_registered_limit(
+            &admin,
+            &global.id,
+            RegisteredLimitUpdateBuilder::default()
+                .default_limit(-2)
+                .build()?,
+        )
+        .await,
+        StatusCode::BAD_REQUEST,
+        "limit below -1",
+    );
+
+    regional.delete().await?;
+    global.delete().await?;
+    region.delete().await?;
+    service.delete().await?;
     Ok(())
 }
 

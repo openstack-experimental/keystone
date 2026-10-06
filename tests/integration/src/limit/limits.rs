@@ -576,6 +576,77 @@ async fn test_strict_two_level() -> Result<()> {
 
 #[traced_test]
 #[tokio::test]
+async fn test_strict_two_level_default_parent() -> Result<()> {
+    let (state, _tmp) = get_state_with_config(|cfg| {
+        cfg.limit.enforcement_model = LimitEnforcementModel::StrictTwoLevel;
+    })
+    .await?;
+    let provider = state.provider.get_limit_provider();
+    let service = setup_service(&state).await?;
+    let domain = create_domain!(state)?;
+    let project = create_project!(state, domain.id.clone())?;
+    provider
+        .create_registered_limits(
+            &exec(&state),
+            vec![registered(&service.id, None, "cores", 10)],
+        )
+        .await?;
+    let project_limit_ref = provider
+        .create_limits(
+            &exec(&state),
+            vec![project_limit(&service.id, None, "cores", &project.id, 8)],
+        )
+        .await?
+        .remove(0);
+
+    // The registered default of the parent applies while the domain has
+    // no limit of its own: the project limit can not be raised over it.
+    assert!(matches!(
+        provider
+            .update_limit(
+                &exec(&state),
+                &project_limit_ref.id,
+                LimitUpdate {
+                    resource_limit: Some(11),
+                    ..Default::default()
+                }
+            )
+            .await,
+        Err(LimitProviderError::InvalidLimit(_))
+    ));
+    // Up to the default is fine.
+    provider
+        .update_limit(
+            &exec(&state),
+            &project_limit_ref.id,
+            LimitUpdate {
+                resource_limit: Some(10),
+                ..Default::default()
+            },
+        )
+        .await?;
+    // The domain limit may be set to the value of the project limit, but
+    // not under it.
+    assert!(matches!(
+        provider
+            .create_limits(
+                &exec(&state),
+                vec![domain_limit(&service.id, None, "cores", &domain.id, 9)]
+            )
+            .await,
+        Err(LimitProviderError::InvalidLimit(_))
+    ));
+    provider
+        .create_limits(
+            &exec(&state),
+            vec![domain_limit(&service.id, None, "cores", &domain.id, 10)],
+        )
+        .await?;
+    Ok(())
+}
+
+#[traced_test]
+#[tokio::test]
 async fn test_strict_two_level_regions_are_isolated() -> Result<()> {
     let (state, _tmp) = get_state_with_config(|cfg| {
         cfg.limit.enforcement_model = LimitEnforcementModel::StrictTwoLevel;

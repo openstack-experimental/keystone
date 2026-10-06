@@ -30,6 +30,7 @@ use uuid::Uuid;
 use openstack_keystone_api_types::v3::domain::{Domain, DomainCreateBuilder};
 use openstack_keystone_api_types::v3::limit::*;
 use openstack_keystone_api_types::v3::project::{Project, ProjectCreateBuilder};
+use openstack_keystone_api_types::v3::region::RegionCreateBuilder;
 use openstack_keystone_api_types::v3::registered_limit::*;
 use openstack_keystone_api_types::v3::service::{Service, ServiceCreateBuilder};
 use openstack_sdk::AsyncOpenStack;
@@ -39,6 +40,7 @@ use test_api::common::raw_request;
 use test_api::fixtures::ProjectScopedUser;
 use test_api::guard::{AsyncResourceGuard, ResourceGuard};
 use test_api::limit::*;
+use test_api::region::create_region;
 use test_api::resource::domain::create_domain;
 use test_api::resource::get_system_scope_config;
 use test_api::resource::project::create_project;
@@ -327,7 +329,171 @@ async fn test_limit_model() -> Result<()> {
         model.name
     );
     assert!(!model.description.is_empty());
+
+    // HEAD answers like GET without a body.
+    let token = admin
+        .get_auth_token()
+        .ok_or_eyre("admin session has a token")?;
+    let rsp = raw_request(
+        http::Method::HEAD,
+        "v3/limits/model",
+        Some(token.expose_secret()),
+        None,
+    )
+    .await?;
+    assert_eq!(StatusCode::OK, rsp.status());
+    let rsp = raw_request(http::Method::HEAD, "v3/limits/model", None, None).await?;
+    assert_eq!(StatusCode::UNAUTHORIZED, rsp.status());
     Ok(())
+}
+
+#[tokio::test]
+async fn test_limit_region_and_update() -> Result<()> {
+    let world = World::new().await?;
+    let project = world.project().await?;
+    let region = create_region(&world.admin, RegionCreateBuilder::default().build()?).await?;
+    let regional_registered = create_registered_limits(
+        &world.admin,
+        vec![
+            RegisteredLimitCreateBuilder::default()
+                .service_id(world.service.id.clone())
+                .resource_name("cores")
+                .region_id(region.id.clone())
+                .default_limit(10)
+                .build()?,
+        ],
+    )
+    .await?;
+
+    // Global and regional limits of the same resource do not collide.
+    let mut regional = world.project_limit(&project.id, 3)?;
+    regional.region_id = Some(region.id.clone());
+    let created = create_limits(
+        &world.admin,
+        vec![world.project_limit(&project.id, 4)?, regional],
+    )
+    .await?;
+    assert_eq!(2, created.len());
+    let by_region = list_limits(&world.admin, &[("region_id", &region.id)]).await?;
+    assert_eq!(1, by_region.len());
+    assert_eq!(Some(region.id.clone()), by_region[0].region_id);
+    assert_eq!(3, by_region[0].resource_limit);
+    let by_project = list_limits(&world.admin, &[("project_id", &project.id)]).await?;
+    assert_eq!(2, by_project.len());
+    let by_resource = list_limits(
+        &world.admin,
+        &[("project_id", &project.id), ("resource_name", "cores")],
+    )
+    .await?;
+    assert_eq!(2, by_resource.len());
+
+    // Only the description changes, the value stays.
+    let updated = update_limit(
+        &world.admin,
+        &created[0].id,
+        LimitUpdateBuilder::default()
+            .description(Some("only descr".to_string()))
+            .build()?,
+    )
+    .await?;
+    assert_eq!(Some("only descr".to_string()), updated.description);
+    assert_eq!(created[0].resource_limit, updated.resource_limit);
+
+    // Unknown ID.
+    assert_status(
+        update_limit(
+            &world.admin,
+            "does-not-exist",
+            LimitUpdateBuilder::default().resource_limit(1).build()?,
+        )
+        .await,
+        StatusCode::NOT_FOUND,
+        "unknown limit",
+    );
+    assert_status(
+        delete_limit(&world.admin, "does-not-exist").await,
+        StatusCode::NOT_FOUND,
+        "unknown limit",
+    );
+    // Invalid value.
+    assert_status(
+        update_limit(
+            &world.admin,
+            &created[0].id,
+            LimitUpdateBuilder::default().resource_limit(-2).build()?,
+        )
+        .await,
+        StatusCode::BAD_REQUEST,
+        "limit below -1",
+    );
+
+    for guard in created {
+        guard.delete().await?;
+    }
+    for guard in regional_registered {
+        guard.delete().await?;
+    }
+    region.delete().await?;
+    project.delete().await?;
+    world.cleanup().await?;
+    Ok(())
+}
+
+/// Deleting the project or the domain removes the limits that belong to it.
+#[tokio::test]
+async fn test_limit_removed_with_project_and_domain() -> Result<()> {
+    let world = World::new().await?;
+    let project = world.project().await?;
+    let project_id = project.id.clone();
+    let project_limit = create_limits(&world.admin, vec![world.project_limit(&project.id, 1)?])
+        .await?
+        .pop()
+        .expect("one limit created");
+    let domain_limit = create_limits(
+        &world.admin,
+        vec![
+            LimitCreateBuilder::default()
+                .service_id(world.service.id.clone())
+                .resource_name("cores")
+                .resource_limit(5)
+                .domain_id(world.domain.id.clone())
+                .build()?,
+        ],
+    )
+    .await?
+    .pop()
+    .expect("one limit created");
+
+    project.delete().await?;
+    wait_until_empty(&world.admin, "project_id", &project_id).await?;
+    // The limit of the sibling domain stays.
+    assert_eq!(
+        1,
+        list_limits(&world.admin, &[("domain_id", &world.domain.id)])
+            .await?
+            .len()
+    );
+
+    let domain_id = world.domain.id.clone();
+    world.domain.delete().await?;
+    wait_until_empty(&world.admin, "domain_id", &domain_id).await?;
+    // The limits are gone already, release the guards without a delete.
+    project_limit.into_inner();
+    domain_limit.into_inner();
+    world.registered.delete().await?;
+    world.service.delete().await?;
+    Ok(())
+}
+
+/// The cleanup is event driven, poll until it has run.
+async fn wait_until_empty(admin: &Arc<AsyncOpenStack>, key: &'static str, id: &str) -> Result<()> {
+    for _ in 0..50 {
+        if list_limits(admin, &[(key, id)]).await?.is_empty() {
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    eyre::bail!("limits of {key}={id} were not removed")
 }
 
 /// A project scoped member sees the limits of its own project only.
