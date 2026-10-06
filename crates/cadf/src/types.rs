@@ -291,6 +291,11 @@ impl CadfEventPayload {
     /// Construct a new unsigned payload. The `seq`, `boot_session_id`, and
     /// `hmac_key_version` fields are placeholders;
     /// `AuditDispatcher::finalize_event` fills them in when signing.
+    ///
+    /// The free-text fields (`id`, `version`, `correlation_id`,
+    /// `event_time`, `outcome`) are reduced to the audit-safe character set
+    /// (see [`crate::sanitize::sanitize_audit_value`]); `action` is reduced
+    /// to the action vocabulary by [`sanitize_action`].
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: String,
@@ -308,16 +313,16 @@ impl CadfEventPayload {
         // there is none, e.g. a system actor), never a constant.
         let domain = initiator.domain_id().unwrap_or("unknown").to_string();
         Self {
-            id,
+            id: sanitize_audit_value(&id),
             seq: 0,
             boot_session_id: String::new(),
             hmac_key_version: 0,
-            version,
+            version: sanitize_audit_value(&version),
             domain,
-            correlation_id,
-            event_time,
+            correlation_id: sanitize_audit_value(&correlation_id),
+            event_time: sanitize_audit_value(&event_time),
             action: sanitize_action(&action),
-            outcome,
+            outcome: sanitize_audit_value(&outcome),
             outcome_reason: outcome_reason.map(OutcomeReason::into_string),
             initiator,
             target,
@@ -969,6 +974,48 @@ mod tests {
         let o = Observer::new("node 1\n", "service/security/keystone/node 1");
         assert_eq!(o.node_id(), "node1");
         assert_eq!(o.id(), "service/security/keystone/node1");
+    }
+
+    #[test]
+    fn payload_new_reduces_free_text_fields() {
+        let payload = CadfEventPayload::new(
+            "test-node:\n1\r".to_string(),
+            "1.0\n".to_string(),
+            "req\tcorr".to_string(),
+            "2026-06-16T00:00:00+00:00\n".to_string(),
+            "delete".to_string(),
+            "success\n".to_string(),
+            None,
+            Initiator::new("unknown".to_string(), None, None, None),
+            Target::new("t", "x"),
+            Observer::new("n", "o"),
+        );
+        assert_eq!(payload.id(), "test-node:1");
+        assert_eq!(payload.version, "1.0");
+        assert_eq!(payload.correlation_id(), "reqcorr");
+        assert_eq!(payload.event_time, "2026-06-16T00:00:00+00:00");
+        assert_eq!(payload.outcome(), "success");
+        // Legit values pass through untouched.
+        let payload = CadfEventPayload::new(
+            "node-1:550e8400-e29b-41d4-a716-446655440000".to_string(),
+            "1.1".to_string(),
+            "req-00000000000000000000000000000002".to_string(),
+            "2026-06-16T00:00:00+00:00".to_string(),
+            "oauth2/refresh_family_revoked".to_string(),
+            "success".to_string(),
+            None,
+            Initiator::new("unknown".to_string(), None, None, None),
+            Target::new("t", "x"),
+            Observer::new("n", "o"),
+        );
+        assert_eq!(payload.id(), "node-1:550e8400-e29b-41d4-a716-446655440000");
+        assert_eq!(payload.version, "1.1");
+        assert_eq!(
+            payload.correlation_id(),
+            "req-00000000000000000000000000000002"
+        );
+        assert_eq!(payload.event_time, "2026-06-16T00:00:00+00:00");
+        assert_eq!(payload.outcome(), "success");
     }
 
     #[test]
