@@ -20,6 +20,38 @@ the feature guide for constraints and safe production values.
 The public interface is enabled by default. Internal and admin interfaces are
 optional. The metrics listener defaults to `0.0.0.0:8099`.
 
+## Telemetry
+
+| Section | Options |
+| --- | --- |
+| `[otel]` | `enabled`, `traces_enabled`, `metrics_enabled`, `endpoint`, `protocol`, `headers`, `timeout`, `insecure`, `service_name`, `resource_attributes`, `sampler`, `sampling_rate`, `span_level`, `metrics_interval`, `include_user_ids`, `include_client_address`, `legacy_http_attributes`, `response_traceparent` |
+| `[oslo_middleware_tracing]` | `enabled`, `otlp_endpoint`, `otlp_protocol`, `service_name`, `sampling_rate`, `insecure` |
+
+Telemetry is off by default. `[oslo_middleware_tracing]` is an alias that
+accepts the options of `oslo.middleware`'s tracing middleware and drives traces
+only; where an option is set in both sections `[otel]` wins and a warning is
+logged at startup. `protocol` is `http/protobuf` (default, endpoint
+`http://localhost:4318`) or `grpc` (`http://localhost:4317`). `headers` and
+`resource_attributes` are comma separated `name=value` lists; `headers` may
+carry credentials and is never logged. Request spans are named after the route template (for example
+`GET /v3/users/{user_id}`). `include_user_ids` is `false` by default because
+spans leave the host: it gates the authenticated user, project and domain ids
+and the raw request path, which contains resource ids. `include_client_address`
+is separate and also `false` by default: it adds the caller's IP as
+`client.address`. Anything these options add can be removed again in the
+collector. `response_traceparent`
+echoes the trace context in responses, and `legacy_http_attributes` adds the
+`http.method` family of names that `oslo.middleware` emits.
+`insecure` applies to `grpc` only, as in `oslo.middleware`. `span_level`
+(default `info`) is the most verbose span exported. A malformed value fails
+startup even while telemetry is disabled.
+
+Export needs a build with the `otel` cargo feature (`otlp-grpc` adds the gRPC
+transport). Without it the options are validated but nothing is exported, and
+startup logs a warning. Traces and metrics are exported in the background and
+never block requests; if the pipeline cannot be built, Keystone logs it and
+starts without telemetry.
+
 ## Authentication, Tokens, and Security
 
 | Section | Options |

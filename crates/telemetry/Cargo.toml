@@ -1,0 +1,70 @@
+[package]
+name = "openstack-keystone-telemetry"
+description = "OpenTelemetry configuration and setup for Keystone (ADR 0040)"
+version = "0.1.0"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+# OTLP export (ADR 0040). Off by default: configuration is parsed and
+# validated either way, but nothing is exported without it.
+#
+# `otel` is the usual switch: traces and metrics over OTLP/HTTP (protobuf).
+# `otlp-grpc` adds the gRPC transport (tonic); enable it next to `otel`.
+default = []
+otel = ["otlp-http"]
+otlp-http = [
+  "sdk",
+  "opentelemetry-otlp/http-proto",
+  "opentelemetry-otlp/reqwest-blocking-client",
+  "opentelemetry-otlp/reqwest-rustls",
+]
+otlp-grpc = [
+  "sdk",
+  "opentelemetry-otlp/grpc-tonic",
+  "opentelemetry-otlp/tls-aws-lc",
+  "opentelemetry-otlp/tls-webpki-roots",
+]
+# Internal: the SDK, the tracing bridge and the signal features.
+sdk = [
+  "dep:http",
+  "dep:opentelemetry",
+  "dep:opentelemetry-otlp",
+  "dep:opentelemetry_sdk",
+  "dep:tracing",
+  "dep:tracing-opentelemetry",
+  "dep:tracing-subscriber",
+  "opentelemetry-otlp/trace",
+  "opentelemetry-otlp/metrics",
+  "opentelemetry_sdk/trace",
+  "opentelemetry_sdk/metrics",
+]
+
+[dependencies]
+http = { workspace = true, optional = true }
+inventory.workspace = true
+opentelemetry = { workspace = true, optional = true, features = ["trace", "metrics"] }
+opentelemetry-otlp = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+oslo-config.workspace = true
+secrecy.workspace = true
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
+tracing = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+url.workspace = true
+
+[dev-dependencies]
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
+eyre.workspace = true
+openstack-keystone-config.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+
+[lints]
+workspace = true

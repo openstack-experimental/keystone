@@ -108,12 +108,32 @@ pub fn client_ip() -> Option<IpAddr> {
 /// Record who the current request authenticated as, for the completion
 /// record. A no-op outside an established scope.
 pub fn record_initiator(initiator: Initiator) {
+    record_principal_on_span(&initiator);
     let _ = AUDIT_REQUEST.try_with(|ctx| {
         ctx.completion
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .initiator = Some(initiator);
     });
+}
+
+/// Put the authenticated user, project and domain on the current request span
+/// (ADR 0040). The span declares these fields only when `[otel]
+/// include_user_ids` is on; recording into a span without them is a no-op, so
+/// the ids never reach an exporter otherwise. The pre-authentication
+/// `unknown` placeholder is not an identity.
+fn record_principal_on_span(initiator: &Initiator) {
+    if initiator.id() == "unknown" {
+        return;
+    }
+    let span = tracing::Span::current();
+    span.record("openstack.user_id", initiator.id());
+    if let Some(project_id) = initiator.project_id() {
+        span.record("openstack.project_id", project_id);
+    }
+    if let Some(domain_id) = initiator.domain_id() {
+        span.record("openstack.domain_id", domain_id);
+    }
 }
 
 /// Note that a handler emitted its own perimeter record for the current

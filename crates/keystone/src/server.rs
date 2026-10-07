@@ -18,4 +18,5 @@ pub mod http_metrics;
 pub mod listener;
 pub mod proxy_headers;
 pub mod request_cache;
+pub mod request_span;
 pub mod startup;

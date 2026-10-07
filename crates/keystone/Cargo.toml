@@ -75,6 +75,7 @@ openstack-keystone-revoke-driver-sql.workspace = true
 openstack-keystone-role-driver-sql.workspace = true
 openstack-keystone-scim-driver-raft.workspace = true
 openstack-keystone-token-driver-fernet.workspace = true
+openstack-keystone-telemetry.workspace = true
 openstack-keystone-token-driver-jws.workspace = true
 openstack-keystone-token-restriction-driver-sql.workspace = true
 openstack-keystone-trust-driver-sql.workspace = true
@@ -135,6 +136,10 @@ default = []
 openfga = ["dep:openstack-keystone-assignment-driver-openfga"]
 # RFC 5424 syslog audit sink (`[audit] sink = { type = "syslog", .. }`).
 audit-syslog = ["cadf/syslog"]
+# OTLP trace and metric export (`[otel]`, ADR 0040), over OTLP/HTTP.
+otel = ["openstack-keystone-telemetry/otel"]
+# Adds the OTLP/gRPC transport (`[otel] protocol = grpc`); use with `otel`.
+otlp-grpc = ["openstack-keystone-telemetry/otlp-grpc"]
 
 [lints]
 workspace = true
