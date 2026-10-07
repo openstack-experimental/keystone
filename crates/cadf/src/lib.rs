@@ -201,6 +201,11 @@
 //! }
 //! ```
 //!
+//! Events built with [`CadfEventPayload::with_oauth2_context`] carry an
+//! additional `oauth2` attachment (`{"client_id", "grant_type"}`) after the
+//! `integrity` one; it is signed like the rest of the record, so readers
+//! must find attachments by `name`, not by position.
+//!
 //! ### Choosing a channel
 //!
 //! - [`AuditDispatcher::dispatch`] is for high-volume records where losing one
@@ -208,8 +213,8 @@
 //!   every request. It never fails and never waits; drops show up in
 //!   [`AuditDispatcher::dropped_count`] and the drop metric.
 //! - [`AuditDispatcher::dispatch_critical`] is for records that must exist
-//!   before the action takes effect, such as a state change. Await it and
-//!   abort the action on `Err(AuditChannelDead)`. The usual shape is a
+//!   before the action takes effect, such as a state change. Await it and abort
+//!   the action on `Err(AuditChannelDead)`. The usual shape is a
 //!   [`Outcome::Pending`] record before the action and a [`Outcome::Success`]
 //!   or [`Outcome::Failure`] record after it; a `pending` record with no
 //!   terminal record means the process died in between.
@@ -219,15 +224,15 @@
 //!
 //! ### What goes in a record
 //!
-//! - Every free-text field is reduced to a safe character set when the
-//!   payload is built, so untrusted input cannot forge or break a record. That
-//!   is a floor, not a license: pass identifiers, not user-supplied text.
+//! - Every free-text field is reduced to a safe character set when the payload
+//!   is built, so untrusted input cannot forge or break a record. That is a
+//!   floor, not a license: pass identifiers, not user-supplied text.
 //! - [`Outcome`] is the closed DSP0262 set. Put the cause in an
 //!   [`OutcomeReason`], which only accepts a `'static` literal, a sanitized
 //!   error variant name or counters, never an error message.
-//! - Use [`Initiator::system`] for work the service does on its own behalf,
-//!   and [`Initiator::with_address`] / [`Initiator::with_host_id`] for the
-//!   client address and a pre-authentication identity such as an access key id.
+//! - Use [`Initiator::system`] for work the service does on its own behalf, and
+//!   [`Initiator::with_address`] / [`Initiator::with_host_id`] for the client
+//!   address and a pre-authentication identity such as an access key id.
 //!
 //! ## Cargo features
 //!

@@ -28,8 +28,9 @@ use openstack_keystone_core_types::oauth2_client::{GrantType, OidcAccessTokenCla
 use openstack_keystone_core_types::oauth2_session::{RefreshToken, RefreshTokenRevocationReason};
 
 use crate::audit::{
-    build_initiator_unknown, emit_oauth2_refresh_family_revoked_event,
-    emit_oauth2_refresh_reuse_critical_event, emit_oauth2_session_event,
+    Oauth2Grant, build_initiator_from_user_id, build_initiator_unknown, emit_oauth2_grant_event,
+    emit_oauth2_refresh_family_revoked_event, emit_oauth2_refresh_reuse_critical_event,
+    emit_oauth2_session_event,
 };
 use crate::keystone::ServiceState;
 
@@ -209,12 +210,15 @@ pub(super) async fn handle_refresh_token_grant(
     };
     let access_token = sign_jwt(state, domain_id, &access_claims).await?;
 
-    emit_oauth2_session_event(
+    emit_oauth2_grant_event(
         &state.audit_dispatcher,
         correlation_id,
         "authenticate",
-        build_initiator_unknown(),
-        &client_id,
+        build_initiator_from_user_id(&record.user_id, domain_id),
+        Oauth2Grant {
+            client_id: &client_id,
+            grant_type: "refresh_token",
+        },
         Outcome::Success,
         None,
     );

@@ -380,11 +380,14 @@ pub trait Oauth2SessionApi: Send + Sync {
 
     /// Poll a device code grant from the `/token` handler (RFC 8628 §3.4):
     /// validates ownership, expiry, and the minimum poll interval, and
-    /// redeems (deletes) the grant on success. See [`DevicePollOutcome`].
+    /// redeems (deletes) the grant on success. The grant must belong to both
+    /// `client_id` and `domain_id`, else it is `InvalidGrant`. See
+    /// [`DevicePollOutcome`].
     async fn poll_device_code_grant(
         &self,
         state: &ServiceState,
         device_code: &str,
+        domain_id: &str,
         client_id: &str,
     ) -> Result<DevicePollOutcome, Oauth2SessionProviderError>;
 

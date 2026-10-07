@@ -20,7 +20,9 @@ use base64::{
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
+use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::oauth2_client::crypto;
+use openstack_keystone_core_types::oauth2_client::{GrantType, OAuth2ClientResource};
 use openstack_keystone_key_repository::asymmetric::{jwt_algorithm, to_encoding_key};
 
 use crate::keystone::ServiceState;
@@ -129,8 +131,8 @@ pub(in crate::api::v4::oauth2) async fn authenticate_client(
     domain_id: &str,
     client_id: &str,
     client_secret: Option<&str>,
-) -> Result<openstack_keystone_core_types::oauth2_client::OAuth2ClientResource, Oauth2TokenError> {
-    let exec = openstack_keystone_core::auth::ExecutionContext::internal(state);
+) -> Result<OAuth2ClientResource, Oauth2TokenError> {
+    let exec = ExecutionContext::internal(state);
     let client = state
         .provider
         .get_oauth2_client_provider()
@@ -180,6 +182,46 @@ pub(in crate::api::v4::oauth2) async fn authenticate_client(
         }
     }
 
+    Ok(client)
+}
+
+/// Validate a client for the `device_code` grant: registered in
+/// `domain_id`, enabled, not deleted, and holding the `device_code`
+/// grant type. Unlike [`authenticate_client`], no `client_secret` is
+/// required: device-flow clients are overwhelmingly public/native
+/// applications (ADR 0026 §7.C), matching `/device_authorization`'s own
+/// posture. Shared by `/device_authorization` (grant creation) and the
+/// `device_code` token arm (redemption); the token arm must run this
+/// *before* `poll_device_code_grant`, which fetch-and-deletes an
+/// `Authorized` grant, so a client that is not entitled to redeem cannot
+/// burn the grant (the user can retry once the client is fixed).
+pub(in crate::api::v4::oauth2) async fn validate_device_code_client(
+    state: &ServiceState,
+    domain_id: &str,
+    client_id: &str,
+) -> Result<OAuth2ClientResource, Oauth2TokenError> {
+    let exec = ExecutionContext::internal(state);
+    let client = state
+        .provider
+        .get_oauth2_client_provider()
+        .get_by_client_id(&exec, client_id)
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "oauth2 client lookup failed");
+            Oauth2TokenError::internal("client lookup failed")
+        })?;
+    let Some(client) =
+        client.filter(|c| c.domain_id == domain_id && c.enabled && c.deleted_at.is_none())
+    else {
+        return Err(Oauth2TokenError::invalid_client(
+            "unknown or disabled client",
+        ));
+    };
+    if !client.grant_types.contains(&GrantType::DeviceCode) {
+        return Err(Oauth2TokenError::unauthorized_client(
+            "client is not authorized to use the device_code grant",
+        ));
+    }
     Ok(client)
 }
 

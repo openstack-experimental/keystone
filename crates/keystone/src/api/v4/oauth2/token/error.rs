@@ -47,6 +47,11 @@ impl Oauth2TokenError {
         }
     }
 
+    /// The RFC 6749 §5.2 `error` code, a fixed vocabulary word.
+    pub(crate) fn error_code(&self) -> &'static str {
+        self.error
+    }
+
     pub(crate) fn invalid_request(description: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, "invalid_request", description)
     }

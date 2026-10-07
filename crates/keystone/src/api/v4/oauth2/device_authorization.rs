@@ -28,12 +28,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::oauth2_session::StartDeviceAuthorizationRequest;
-use openstack_keystone_core_types::oauth2_client::GrantType;
 
 use super::html::no_store;
-use super::token::Oauth2TokenError;
+use super::token::{Oauth2TokenError, validate_device_code_client};
 use super::well_known::base_url;
 use crate::api::common::PeerAddr;
 use crate::keystone::ServiceState;
@@ -99,28 +97,7 @@ pub(super) async fn device_authorization(
         ));
     };
 
-    let exec = ExecutionContext::internal(&state);
-    let client = state
-        .provider
-        .get_oauth2_client_provider()
-        .get_by_client_id(&exec, &client_id)
-        .await
-        .map_err(|e| {
-            tracing::warn!(error = %e, "oauth2 client lookup failed");
-            Oauth2TokenError::internal("client lookup failed")
-        })?;
-    let Some(client) =
-        client.filter(|c| c.domain_id == domain_id && c.enabled && c.deleted_at.is_none())
-    else {
-        return Err(Oauth2TokenError::invalid_client(
-            "unknown or disabled client",
-        ));
-    };
-    if !client.grant_types.contains(&GrantType::DeviceCode) {
-        return Err(Oauth2TokenError::unauthorized_client(
-            "client is not authorized to use the device_code grant",
-        ));
-    }
+    let client = validate_device_code_client(&state, &domain_id, &client_id).await?;
 
     let requested_scope: Vec<String> = form
         .scope

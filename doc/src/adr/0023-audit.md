@@ -56,6 +56,7 @@ standard extension points instead of new top-level keys:
 | rejected requests such as `429` | `failure`, with a client-side `reasonCode` (`TooManyRequests`, `ClientError`) |
 | correlation (request) id | `tags` entry `correlation_id:<id>` |
 | `seq`, `boot_session_id`, `hmac_key_version`, `version`, `domain`, observer node | `attachments` entry named `integrity` (`contentType` `application/json`); `domain` is the initiator's domain id, `unknown` when there is none |
+| OAuth2 `client_id` and `grant_type` of a token-endpoint event | optional `attachments` entry named `oauth2` (`contentType` `application/json`, `content` `{"client_id", "grant_type"}`), present only on those events and covered by the signature; the `integrity` entry stays first. Consumers must look entries up by `name`, not by position |
 | `action` | one shared style: lowercase `[a-z0-9_-]` words joined by `/` (e.g. `create`, `oauth2/refresh_reuse_detected`, `wasm_plugin/<host_function>`); applied to every record by `CadfEventPayload::new` |
 
 `initiator.project_id` and `initiator.domain_id` remain Keystone extension

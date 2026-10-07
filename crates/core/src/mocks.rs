@@ -514,6 +514,7 @@ mod oauth2_session {
                 &self,
                 state: &ServiceState,
                 device_code: &str,
+                domain_id: &str,
                 client_id: &str,
             ) -> Result<DevicePollOutcome, Oauth2SessionProviderError>;
 

@@ -66,6 +66,13 @@ Records are JSON lines using the DSP0262 (CADF) key names:
 * `reason.reasonCode` is a fixed vocabulary word (an error variant name such as
   `Conflict` or `UserLocked`), never error text. The `reason` key is omitted
   when there is none.
+* OAuth2 token-endpoint records (`authenticate` for the `authorization_code`,
+  `refresh_token` and `device_code` grants) carry a second `attachments`
+  entry, `oauth2`, with `content` `{"client_id": "...", "grant_type": "..."}`.
+  It is covered by the signature. Look attachments up by `name`, never by
+  position. A rejected `device_code` client is a `failure` whose
+  `reason.reasonCode` is the OAuth2 error (`invalid_client`,
+  `unauthorized_client`).
 * `action` is a lowercase verb or a `/`-separated name such as
   `oauth2/refresh_reuse_detected`.
 * `initiator.host` carries the client address and, for pre-authentication

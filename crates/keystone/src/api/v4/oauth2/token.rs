@@ -48,7 +48,9 @@ use super::html::no_store;
 
 use authorization_code::handle_authorization_code_grant;
 use client_credentials::handle_client_credentials_grant;
-pub(super) use common::{authenticate_client, client_credentials_from_parts};
+pub(super) use common::{
+    authenticate_client, client_credentials_from_parts, validate_device_code_client,
+};
 use device_code::handle_device_code_grant;
 pub(super) use error::Oauth2TokenError;
 use refresh_token::handle_refresh_token_grant;

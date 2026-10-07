@@ -680,6 +680,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
         &self,
         state: &ServiceState,
         device_code: &str,
+        domain_id: &str,
         client_id: &str,
     ) -> Result<DevicePollOutcome, Oauth2SessionProviderError> {
         let Some(record) = self
@@ -689,7 +690,9 @@ impl Oauth2SessionApi for Oauth2SessionService {
         else {
             return Ok(DevicePollOutcome::InvalidGrant);
         };
-        if record.client_id != client_id {
+        // Checked before anything is stamped or consumed, so a poll through
+        // the wrong domain's endpoint cannot burn the grant.
+        if record.client_id != client_id || record.domain_id != domain_id {
             return Ok(DevicePollOutcome::InvalidGrant);
         }
 
@@ -1573,7 +1576,28 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .poll_device_code_grant(&state, "device-code-1", "wrong-client")
+            .poll_device_code_grant(&state, "device-code-1", "domain-1", "wrong-client")
+            .await
+            .unwrap();
+        assert!(matches!(result, DevicePollOutcome::InvalidGrant));
+    }
+
+    #[tokio::test]
+    async fn test_poll_device_code_grant_foreign_domain_is_invalid_grant() {
+        // No `take_*`/`mark_*` expectation: a wrong-domain poll must not
+        // consume or stamp the grant.
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_get_device_code_grant().returning(|_, _| {
+            Ok(Some(sample_device_grant(
+                DeviceGrantStatus::Authorized,
+                None,
+            )))
+        });
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let result = service
+            .poll_device_code_grant(&state, "device-code-1", "other-domain", "client-1")
             .await
             .unwrap();
         assert!(matches!(result, DevicePollOutcome::InvalidGrant));
@@ -1590,7 +1614,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .poll_device_code_grant(&state, "device-code-1", "client-1")
+            .poll_device_code_grant(&state, "device-code-1", "domain-1", "client-1")
             .await
             .unwrap();
         assert!(matches!(result, DevicePollOutcome::Pending));
@@ -1611,7 +1635,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .poll_device_code_grant(&state, "device-code-1", "client-1")
+            .poll_device_code_grant(&state, "device-code-1", "domain-1", "client-1")
             .await
             .unwrap();
         assert!(matches!(result, DevicePollOutcome::SlowDown));
@@ -1626,7 +1650,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .poll_device_code_grant(&state, "device-code-1", "client-1")
+            .poll_device_code_grant(&state, "device-code-1", "domain-1", "client-1")
             .await
             .unwrap();
         assert!(matches!(result, DevicePollOutcome::Denied));
@@ -1651,7 +1675,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .poll_device_code_grant(&state, "device-code-1", "client-1")
+            .poll_device_code_grant(&state, "device-code-1", "domain-1", "client-1")
             .await
             .unwrap();
         assert!(matches!(result, DevicePollOutcome::Authorized(_)));
@@ -1670,7 +1694,7 @@ mod tests {
         let state = get_mocked_state(None, None).await;
 
         let result = service
-            .poll_device_code_grant(&state, "device-code-1", "client-1")
+            .poll_device_code_grant(&state, "device-code-1", "domain-1", "client-1")
             .await
             .unwrap();
         assert!(matches!(result, DevicePollOutcome::Expired));

@@ -71,7 +71,7 @@ async fn test_device_grant_full_flow_issues_grant_on_poll() -> Result<()> {
 
     // Polling before the verification page completes: still pending.
     let pending = session_provider
-        .poll_device_code_grant(&state, &start.device_code, "device-client-1")
+        .poll_device_code_grant(&state, &start.device_code, &domain.id, "device-client-1")
         .await?;
     assert!(matches!(pending, DevicePollOutcome::Pending));
 
@@ -114,7 +114,7 @@ async fn test_device_grant_full_flow_issues_grant_on_poll() -> Result<()> {
     // POST /token (device_code) equivalent: authorized poll redeems the
     // grant exactly once.
     let outcome = session_provider
-        .poll_device_code_grant(&state, &start.device_code, "device-client-1")
+        .poll_device_code_grant(&state, &start.device_code, &domain.id, "device-client-1")
         .await?;
     match outcome {
         DevicePollOutcome::Authorized(record) => {
@@ -126,7 +126,7 @@ async fn test_device_grant_full_flow_issues_grant_on_poll() -> Result<()> {
     // A second poll of the same (now-deleted) device_code is no longer a
     // known grant.
     let after_redeem = session_provider
-        .poll_device_code_grant(&state, &start.device_code, "device-client-1")
+        .poll_device_code_grant(&state, &start.device_code, &domain.id, "device-client-1")
         .await?;
     assert!(matches!(after_redeem, DevicePollOutcome::InvalidGrant));
 
@@ -159,7 +159,7 @@ async fn test_device_grant_expired_code_is_rejected_on_poll() -> Result<()> {
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
     let outcome = session_provider
-        .poll_device_code_grant(&state, &start.device_code, "device-client-1")
+        .poll_device_code_grant(&state, &start.device_code, &domain.id, "device-client-1")
         .await?;
     assert!(matches!(outcome, DevicePollOutcome::Expired));
 
@@ -209,7 +209,7 @@ async fn test_device_grant_denied_consent_is_reported_on_poll() -> Result<()> {
         .await?;
 
     let outcome = session_provider
-        .poll_device_code_grant(&state, &start.device_code, "device-client-1")
+        .poll_device_code_grant(&state, &start.device_code, &domain.id, "device-client-1")
         .await?;
     assert!(matches!(outcome, DevicePollOutcome::Denied));
 
@@ -237,14 +237,14 @@ async fn test_device_grant_poll_faster_than_interval_is_slow_down() -> Result<()
 
     // First poll stamps `last_polled_at`.
     let first = session_provider
-        .poll_device_code_grant(&state, &start.device_code, "device-client-1")
+        .poll_device_code_grant(&state, &start.device_code, &domain.id, "device-client-1")
         .await?;
     assert!(matches!(first, DevicePollOutcome::Pending));
 
     // Immediate second poll, well inside the 60s interval, must be
     // throttled rather than treated as a fresh pending poll.
     let second = session_provider
-        .poll_device_code_grant(&state, &start.device_code, "device-client-1")
+        .poll_device_code_grant(&state, &start.device_code, &domain.id, "device-client-1")
         .await?;
     assert!(matches!(second, DevicePollOutcome::SlowDown));
 

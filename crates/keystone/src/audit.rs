@@ -177,8 +177,8 @@ pub fn extract_provider_name(
 // the original names so existing callers in this crate don't need to change
 // their import paths.
 pub use openstack_keystone_core::cadf_hook::{
-    build_initiator_from_principal, build_initiator_from_vsc, build_initiator_unknown,
-    with_request_address,
+    build_initiator_from_principal, build_initiator_from_user_id, build_initiator_from_vsc,
+    build_initiator_unknown, with_request_address,
 };
 
 /// The client IP for the audit trail, resolved through the operator's
@@ -388,9 +388,61 @@ pub fn emit_oauth2_session_event(
     outcome: Outcome,
     outcome_reason: Option<OutcomeReason>,
 ) {
+    let payload = oauth2_payload(
+        dispatcher,
+        correlation_id,
+        action,
+        initiator,
+        client_id,
+        outcome,
+        outcome_reason,
+    );
+    dispatcher.dispatch(payload.sign(dispatcher));
+}
+
+/// The OAuth2 client and grant type a token-endpoint event is about.
+#[derive(Clone, Copy, Debug)]
+pub struct Oauth2Grant<'a> {
+    pub client_id: &'a str,
+    pub grant_type: &'a str,
+}
+
+/// Like [`emit_oauth2_session_event`], additionally recording the OAuth2
+/// `client_id` and `grant_type` in an `oauth2` attachment of the event.
+pub fn emit_oauth2_grant_event(
+    dispatcher: &Arc<AuditDispatcher>,
+    correlation_id: &str,
+    action: &str,
+    initiator: Initiator,
+    grant: Oauth2Grant<'_>,
+    outcome: Outcome,
+    outcome_reason: Option<OutcomeReason>,
+) {
+    let payload = oauth2_payload(
+        dispatcher,
+        correlation_id,
+        action,
+        initiator,
+        grant.client_id,
+        outcome,
+        outcome_reason,
+    )
+    .with_oauth2_context(grant.client_id, grant.grant_type);
+    dispatcher.dispatch(payload.sign(dispatcher));
+}
+
+fn oauth2_payload(
+    dispatcher: &Arc<AuditDispatcher>,
+    correlation_id: &str,
+    action: &str,
+    initiator: Initiator,
+    client_id: &str,
+    outcome: Outcome,
+    outcome_reason: Option<OutcomeReason>,
+) -> CadfEventPayload {
     let node_id = dispatcher.node_id().to_string();
     let event_id = format!("{}:{}", node_id, Uuid::new_v4());
-    let payload = CadfEventPayload::new(
+    CadfEventPayload::new(
         event_id,
         "1.1".to_string(),
         correlation_id.to_string(),
@@ -404,9 +456,7 @@ pub fn emit_oauth2_session_event(
             node_id.clone(),
             format!("service/security/keystone/{node_id}"),
         ),
-    );
-    let event = payload.sign(dispatcher);
-    dispatcher.dispatch(event);
+    )
 }
 
 /// Emit the critical `oauth2/refresh_reuse_detected` CADF event (ADR 0026
@@ -1061,5 +1111,70 @@ mod tests {
         assert_eq!(extract_provider_name(&identity), Some("Identity"));
         let other = std::io::Error::other("alice@example.com");
         assert_eq!(extract_provider_name(&other), None);
+    }
+
+    #[test]
+    fn build_initiator_from_user_id_carries_user_and_domain() {
+        let i = build_initiator_from_user_id(
+            "0123456789abcdef0123456789abcdef",
+            "fedcba9876543210fedcba9876543210",
+        );
+        assert_eq!(i.id(), "0123456789abcdef0123456789abcdef");
+        assert_eq!(i.domain_id(), Some("fedcba9876543210fedcba9876543210"));
+    }
+
+    #[test]
+    fn emit_oauth2_grant_event_records_initiator_and_grant_type() {
+        const USER: &str = "0123456789abcdef0123456789abcdef";
+        const DOMAIN: &str = "fedcba9876543210fedcba9876543210";
+        let key: Arc<[u8]> = Arc::from(b"test-key-32-bytes-0123456789abcd".as_slice());
+        let (dispatcher, mut rx) =
+            AuditDispatcher::new("node-a", "boot-1".to_string(), key.clone(), 1);
+        emit_oauth2_grant_event(
+            &dispatcher,
+            "req-1",
+            "authenticate",
+            build_initiator_from_user_id(USER, DOMAIN),
+            Oauth2Grant {
+                client_id: "client-1",
+                grant_type: "device_code",
+            },
+            Outcome::Success,
+            None,
+        );
+        let event = rx.perimeter.try_recv().expect("event dispatched");
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["initiator"]["id"], USER);
+        assert_eq!(json["initiator"]["domain_id"], DOMAIN);
+        assert_eq!(json["target"]["id"], "client-1");
+        assert_eq!(json["attachments"][1]["name"], "oauth2");
+        assert_eq!(json["attachments"][1]["content"]["client_id"], "client-1");
+        assert_eq!(
+            json["attachments"][1]["content"]["grant_type"],
+            "device_code"
+        );
+        assert!(dispatcher.verify_hmac(&event, &key));
+    }
+
+    #[test]
+    fn emit_oauth2_session_event_has_no_oauth2_attachment() {
+        let (dispatcher, mut rx) = AuditDispatcher::new(
+            "node-a",
+            "boot-1".to_string(),
+            Arc::from(b"test-key-32-bytes-0123456789abcd".as_slice()),
+            1,
+        );
+        emit_oauth2_session_event(
+            &dispatcher,
+            "req-1",
+            "authenticate",
+            build_initiator_unknown(),
+            "client-1",
+            Outcome::Success,
+            None,
+        );
+        let event = rx.perimeter.try_recv().expect("event dispatched");
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["attachments"].as_array().unwrap().len(), 1);
     }
 }

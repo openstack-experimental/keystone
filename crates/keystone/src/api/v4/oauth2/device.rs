@@ -45,7 +45,9 @@ use super::html::{
     ConsentTemplate, LoginTemplate, error_page, security_headers, too_many_requests,
 };
 use crate::api::common::PeerAddr;
-use crate::audit::{CorrelationId, build_initiator_unknown, emit_oauth2_session_event};
+use crate::audit::{
+    CorrelationId, build_initiator_from_user_id, build_initiator_unknown, emit_oauth2_session_event,
+};
 use crate::keystone::ServiceState;
 
 const DEVICE_COOKIE_NAME: &str = "keystone_oauth2_device_code";
@@ -451,7 +453,7 @@ pub(super) async fn device_login(
         &state.audit_dispatcher,
         &correlation_id.0,
         "authenticate",
-        build_initiator_unknown(),
+        build_initiator_from_user_id(&user_id, &grant.domain_id),
         &grant.client_id,
         Outcome::Success,
         None,
@@ -570,7 +572,12 @@ async fn finish_decision(
                 &state.audit_dispatcher,
                 correlation_id,
                 "authorize",
-                build_initiator_unknown(),
+                grant
+                    .user_id
+                    .as_deref()
+                    .map_or_else(build_initiator_unknown, |user_id| {
+                        build_initiator_from_user_id(user_id, &grant.domain_id)
+                    }),
                 &grant.client_id,
                 if granted {
                     Outcome::Success
