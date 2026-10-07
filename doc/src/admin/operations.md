@@ -38,7 +38,9 @@ become ready, which it cannot do without a quorum.
 audit event, drop, queue-depth, spool, sink and key-version series
 (`keystone_audit_*`, listed in ADR 0023 §Observability; ready-made alert rules
 are in `deploy/prometheus/alert_rules.yaml`) and dynamic-auth-plugin load
-failures.
+failures, and HTTP, authentication, policy, token, rate-limit and cache
+series. The same data can be pushed over OTLP; see
+[OpenTelemetry](features/opentelemetry.md).
 
 With distributed storage enabled, `/metrics` also exports the per-node
 `keystone_raft_*` series (alert rules in the `keystone_raft` group of the same

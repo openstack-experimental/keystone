@@ -65,6 +65,7 @@
   - [LDAP Identity Backend](admin/features/ldap.md)
   - [Dynamic Authentication Plugins](admin/features/auth-plugins.md)
   - [Audit trail](admin/features/audit.md)
+  - [OpenTelemetry](admin/features/opentelemetry.md)
 
 ---
 

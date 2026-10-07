@@ -23,6 +23,7 @@ mod api_v4 {
     mod identity;
     mod mapping;
     mod oauth2;
+    mod observability;
     mod role;
     mod role_assignment;
     mod scim_realm;

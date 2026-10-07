@@ -13,8 +13,8 @@ managing Keystone-NG.
 - [Fernet tokens](tokens/fernet.md) and
   [distributed storage](storage/distributed.md) provide dedicated runbooks.
 - Feature guides cover passkeys, federation, OAuth2/OIDC, SCIM and its API
-  keys, Kubernetes authentication, identity mapping, LDAP, and dynamic auth
-  plugins.
+  keys, Kubernetes authentication, identity mapping, LDAP, dynamic auth
+  plugins, the audit trail, and OpenTelemetry export.
 
 Client requests and authentication flows belong in the
 [user documentation](../user/index.md). Implementation and test guidance belongs

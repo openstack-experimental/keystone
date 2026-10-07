@@ -208,8 +208,8 @@ they are follow-up work, not a blocker.
    helper moved to `openstack-keystone-telemetry` (`golden` feature), and the
    benchmark keeps only the span cases, since the comparison needs the removed
    crate.
-8. Operator documentation, including migration from
-   `[oslo_middleware_tracing]` and a collector example.
+8. Operator documentation (`admin/features/opentelemetry.md`), including
+   migration from `[oslo_middleware_tracing]` and a collector example.
 
 ## Benchmark
 

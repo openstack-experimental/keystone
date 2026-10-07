@@ -182,9 +182,24 @@ echo "2Rlc-npWYOGqqG1zM-bmfBj2apLacLXhIbBsdyqQ0zg=" > "${STATE_DIR}"/etc/fernet-
 
 tools/start-spire.sh
 
-cargo build --bins
+# Opt-in OpenTelemetry export (ADR 0040): with KEYSTONE_TEST_OTLP_ENDPOINT set
+# (CI points it at a Jaeger service container) the server is built with the
+# `otel` feature and exports traces to it. Metrics stay on the /metrics scrape.
+OTEL_FEATURES=()
+OTEL_ENV=()
+if [ -n "${KEYSTONE_TEST_OTLP_ENDPOINT:-}" ]; then
+    OTEL_FEATURES=(--features openstack-keystone/otel)
+    OTEL_ENV=(
+        OS_OTEL__ENABLED=true
+        OS_OTEL__METRICS_ENABLED=false
+        OS_OTEL__ENDPOINT="$KEYSTONE_TEST_OTLP_ENDPOINT"
+        OS_OTEL__SAMPLING_RATE=1.0
+    )
+fi
 
-KEYSTONE_DEV_KEK=4242424242424242424242424242424242424242424242424242424242424242 KEYSTONE_ALLOW_ENV_KEK=1 SPIFFE_ENDPOINT_SOCKET=$SPIFFE_ENDPOINT_SOCKET ./target/debug/keystone --config "$CONFIG_FILE" &
+cargo build --bins ${OTEL_FEATURES[@]+"${OTEL_FEATURES[@]}"}
+
+env ${OTEL_ENV[@]+"${OTEL_ENV[@]}"} KEYSTONE_DEV_KEK=4242424242424242424242424242424242424242424242424242424242424242 KEYSTONE_ALLOW_ENV_KEK=1 SPIFFE_ENDPOINT_SOCKET=$SPIFFE_ENDPOINT_SOCKET ./target/debug/keystone --config "$CONFIG_FILE" &
 AXUM_PID=$!
 echo "✅ Keystone server is started and running in the background!"
 
