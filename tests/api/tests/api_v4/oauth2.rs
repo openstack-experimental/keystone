@@ -20,3 +20,4 @@ mod introspect;
 mod jwks_revocation;
 mod revoke;
 mod token_device_grant;
+mod userinfo;

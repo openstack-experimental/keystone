@@ -109,6 +109,11 @@ pub enum TokenVerificationError {
     /// structural rejection above (ADR §6 step 4).
     #[error("token_use `{0}` is not `access`")]
     WrongTokenUse(String),
+
+    /// The token's `scope` does not contain the scope required by the
+    /// endpoint it was presented to (e.g. `openid` for `/userinfo`).
+    #[error("token scope does not include `{0}`")]
+    InsufficientScope(String),
 }
 
 fn auth_method_str(ctx: &DelegationContext) -> &'static str {
@@ -221,6 +226,67 @@ pub fn verify_openstack_access_token(
     }
 
     enforce_delegation_invariants(&claims)?;
+
+    Ok(claims)
+}
+
+/// Verify an OIDC access token ([`OidcAccessTokenClaims`]) presented to the
+/// `/userinfo` endpoint (OIDC Core §5.3), given an already-fetched
+/// [`JwkSet`] and JTI revocation set.
+///
+/// Enforces the signature (configured algorithm only), `iss` allowlist,
+/// `exp`/`nbf`, `token_use == "access"`, `jti` not revoked and the `openid`
+/// scope. `aud` is the (unknown to the caller) `client_id`, so it is not
+/// validated here: the caller must resolve `claims.aud` to a registered
+/// client of the domain. OpenStack access tokens (`aud` ==
+/// `openstack-apis:{domain_id}`) carry no `scope` claim and are therefore
+/// structurally rejected.
+///
+/// # Errors
+/// See [`TokenVerificationError`] for each rejection reason.
+pub fn verify_oidc_access_token(
+    token: &str,
+    jwks: &JwkSet,
+    expected_algorithm: SigningAlgorithm,
+    expected_issuers: &[String],
+    revoked_jtis: &HashSet<String>,
+) -> Result<OidcAccessTokenClaims, TokenVerificationError> {
+    let header = decode_header(token)?;
+    let expected_alg = jwt_algorithm(expected_algorithm);
+    if header.alg != expected_alg {
+        return Err(TokenVerificationError::AlgorithmMismatch {
+            actual: header.alg,
+            expected: expected_alg,
+        });
+    }
+
+    let kid = header.kid.ok_or(TokenVerificationError::MissingKeyId)?;
+    let jwk = jwks
+        .find(&kid)
+        .ok_or_else(|| TokenVerificationError::UnknownKeyId(kid.clone()))?;
+    let decoding_key = DecodingKey::from_jwk(jwk)?;
+
+    let mut validation = Validation::new(expected_alg);
+    validation.set_required_spec_claims(&["exp", "iat", "nbf", "iss", "aud", "sub"]);
+    validation.validate_aud = false;
+    validation.validate_nbf = true;
+
+    let claims = decode::<OidcAccessTokenClaims>(token, &decoding_key, &validation)?.claims;
+
+    if !expected_issuers.iter().any(|iss| iss == &claims.iss) {
+        return Err(TokenVerificationError::UntrustedIssuer(claims.iss));
+    }
+    if claims.token_use != "access" {
+        return Err(TokenVerificationError::WrongTokenUse(claims.token_use));
+    }
+    if revoked_jtis.contains(&claims.jti) {
+        return Err(TokenVerificationError::Revoked(claims.jti));
+    }
+    if !claims.scope.split_whitespace().any(|s| s == "openid") {
+        return Err(TokenVerificationError::InsufficientScope(
+            "openid".to_string(),
+        ));
+    }
 
     Ok(claims)
 }
@@ -472,6 +538,112 @@ mod tests {
         )
         .unwrap();
         (token, jwk, material.kid)
+    }
+
+    fn oidc_claims(now: i64) -> OidcAccessTokenClaims {
+        OidcAccessTokenClaims {
+            iss: ISSUER.to_string(),
+            sub: "user-1".to_string(),
+            aud: "client-1".to_string(),
+            exp: now + 900,
+            iat: now,
+            nbf: now,
+            jti: "jti-1".to_string(),
+            scope: "openid profile".to_string(),
+            token_use: "access".to_string(),
+            sid: None,
+        }
+    }
+
+    fn verify_oidc(
+        token: &str,
+        jwks: &JwkSet,
+        revoked: &[&str],
+    ) -> Result<OidcAccessTokenClaims, TokenVerificationError> {
+        verify_oidc_access_token(
+            token,
+            jwks,
+            SigningAlgorithm::Es256,
+            &[ISSUER.to_string()],
+            &revoked.iter().map(|s| s.to_string()).collect(),
+        )
+    }
+
+    #[test]
+    fn test_oidc_access_token_ok() {
+        let (token, jwks, _) = sign(&oidc_claims(chrono::Utc::now().timestamp()));
+        let claims = verify_oidc(&token, &jwks, &[]).unwrap();
+        assert_eq!(claims.sub, "user-1");
+        assert_eq!(claims.aud, "client-1");
+    }
+
+    #[test]
+    fn test_oidc_access_token_expired() {
+        let (token, jwks, _) = sign(&oidc_claims(chrono::Utc::now().timestamp() - 7200));
+        assert!(matches!(
+            verify_oidc(&token, &jwks, &[]),
+            Err(TokenVerificationError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn test_oidc_access_token_revoked() {
+        let (token, jwks, _) = sign(&oidc_claims(chrono::Utc::now().timestamp()));
+        assert!(matches!(
+            verify_oidc(&token, &jwks, &["jti-1"]),
+            Err(TokenVerificationError::Revoked(_))
+        ));
+    }
+
+    #[test]
+    fn test_oidc_access_token_wrong_issuer_and_token_use() {
+        let now = chrono::Utc::now().timestamp();
+        let mut claims = oidc_claims(now);
+        claims.iss = "https://evil.example/v4/oauth2/domain-1".to_string();
+        let (token, jwks, _) = sign(&claims);
+        assert!(matches!(
+            verify_oidc(&token, &jwks, &[]),
+            Err(TokenVerificationError::UntrustedIssuer(_))
+        ));
+
+        let mut claims = oidc_claims(now);
+        claims.token_use = "id".to_string();
+        let (token, jwks, _) = sign(&claims);
+        assert!(matches!(
+            verify_oidc(&token, &jwks, &[]),
+            Err(TokenVerificationError::WrongTokenUse(_))
+        ));
+    }
+
+    #[test]
+    fn test_oidc_access_token_requires_openid_scope() {
+        let mut claims = oidc_claims(chrono::Utc::now().timestamp());
+        claims.scope = "profile email".to_string();
+        let (token, jwks, _) = sign(&claims);
+        assert!(matches!(
+            verify_oidc(&token, &jwks, &[]),
+            Err(TokenVerificationError::InsufficientScope(_))
+        ));
+    }
+
+    #[test]
+    fn test_oidc_access_token_rejects_openstack_token() {
+        let (token, jwks, _) = sign(&valid_claims(chrono::Utc::now().timestamp()));
+        assert!(matches!(
+            verify_oidc(&token, &jwks, &[]),
+            Err(TokenVerificationError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn test_oidc_access_token_foreign_key() {
+        let now = chrono::Utc::now().timestamp();
+        let (token, _, _) = sign(&oidc_claims(now));
+        let (_, other_jwks, _) = sign(&oidc_claims(now));
+        assert!(matches!(
+            verify_oidc(&token, &other_jwks, &[]),
+            Err(TokenVerificationError::UnknownKeyId(_))
+        ));
     }
 
     #[test]

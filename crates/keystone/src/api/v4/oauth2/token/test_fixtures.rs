@@ -170,7 +170,7 @@ pub(in crate::api::v4::oauth2) async fn json_body(response: axum::response::Resp
     serde_json::from_slice(&body).unwrap()
 }
 
-pub(super) fn refresh_user(
+pub(in crate::api::v4::oauth2) fn refresh_user(
     enabled: bool,
     domain_id: &str,
 ) -> openstack_keystone_core_types::identity::UserResponse {
@@ -184,7 +184,7 @@ pub(super) fn refresh_user(
         .unwrap()
 }
 
-pub(super) fn refresh_identity_mock(
+pub(in crate::api::v4::oauth2) fn refresh_identity_mock(
     user: Option<openstack_keystone_core_types::identity::UserResponse>,
 ) -> MockIdentityProvider {
     let mut mock = MockIdentityProvider::default();
@@ -211,7 +211,8 @@ pub(super) fn refresh_resource_mock(enabled: Option<bool>) -> MockResourceProvid
     mock
 }
 
-pub(super) async fn public_authz_code_client() -> provider_types::OAuth2ClientResource {
+pub(in crate::api::v4::oauth2) async fn public_authz_code_client()
+-> provider_types::OAuth2ClientResource {
     provider_types::OAuth2ClientResource {
         client_id: "client-1".into(),
         provider_id: "provider-1".into(),

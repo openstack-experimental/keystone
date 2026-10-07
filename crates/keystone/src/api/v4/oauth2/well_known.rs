@@ -92,6 +92,11 @@ pub struct OpenIdConfiguration {
     pub token_endpoint: String,
     /// Client authentication methods accepted by the token endpoint.
     pub token_endpoint_auth_methods_supported: Vec<String>,
+    /// UserInfo endpoint URL (OIDC Core §5.3).
+    pub userinfo_endpoint: String,
+    /// JWS algorithms the UserInfo response may be signed with; `none`
+    /// means a plain JSON response.
+    pub userinfo_signing_alg_values_supported: Vec<String>,
 }
 
 impl Default for OpenIdConfiguration {
@@ -148,6 +153,8 @@ impl Default for OpenIdConfiguration {
                 "client_secret_post",
                 "none",
             ]),
+            userinfo_endpoint: String::new(),
+            userinfo_signing_alg_values_supported: strings(&["none"]),
         }
     }
 }
@@ -255,6 +262,7 @@ pub(super) async fn well_known(
         introspection_endpoint: format!("{issuer}/introspect"),
         revocation_endpoint: format!("{issuer}/revoke"),
         token_endpoint: format!("{issuer}/token"),
+        userinfo_endpoint: format!("{issuer}/userinfo"),
         ..OpenIdConfiguration::default()
     };
 
@@ -337,6 +345,8 @@ mod tests {
             "response_types_supported",
             "subject_types_supported",
             "id_token_signing_alg_values_supported",
+            "userinfo_endpoint",
+            "userinfo_signing_alg_values_supported",
         ] {
             assert!(
                 !doc.get(field).unwrap().is_null(),

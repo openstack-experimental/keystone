@@ -344,6 +344,41 @@ pub async fn post_introspect_form(
     Ok((status, body))
 }
 
+/// `GET`/`POST /v4/oauth2/{domain_id}/userinfo` (OIDC Core §5.3). Returns the
+/// status, the `WWW-Authenticate` header (if any) and the JSON body (`Null`
+/// when empty).
+pub async fn call_userinfo(
+    domain_id: &str,
+    post: bool,
+    bearer: Option<&str>,
+) -> Result<(StatusCode, Option<String>, serde_json::Value)> {
+    let base_url: url::Url = env::var("KEYSTONE_URL")?.parse()?;
+    let url = base_url.join(&format!("v4/oauth2/{domain_id}/userinfo"))?;
+    let client = Client::new();
+    let mut req = if post {
+        client.post(url)
+    } else {
+        client.get(url)
+    };
+    if let Some(token) = bearer {
+        req = req.bearer_auth(token);
+    }
+    let rsp = req.send().await?;
+    let status = rsp.status();
+    let www_authenticate = rsp
+        .headers()
+        .get(reqwest::header::WWW_AUTHENTICATE)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let text = rsp.text().await?;
+    let body = if text.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::from_str(&text)?
+    };
+    Ok((status, www_authenticate, body))
+}
+
 /// Poll `/token` with `grant_type=urn:ietf:params:oauth:grant-type:device_code`
 /// (RFC 8628 §3.4).
 pub async fn poll_device_token(

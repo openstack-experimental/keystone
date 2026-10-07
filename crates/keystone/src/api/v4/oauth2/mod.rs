@@ -38,6 +38,7 @@ mod local_emergency_key;
 mod revoke;
 mod rotate_signing_key;
 mod token;
+mod userinfo;
 mod well_known;
 
 use crate::keystone::ServiceState;
@@ -59,6 +60,7 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .routes(routes!(token::token))
         .routes(routes!(revoke::revoke))
         .routes(routes!(introspect::introspect))
+        .routes(routes!(userinfo::userinfo_get, userinfo::userinfo_post))
         .routes(routes!(authorize::authorize))
         .routes(routes!(authorize::authorize_login))
         .routes(routes!(authorize::authorize_consent))
