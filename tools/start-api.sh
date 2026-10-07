@@ -146,6 +146,10 @@ plugins = mapper,router,hacked_appcred_handler
 path = ${PLUGIN_WASM}
 sha256 = ${PLUGIN_SHA256}
 mode = mapping
+# The live suite shares one source address; lift the plugin invocation
+# limits so the concurrent suite does not trip 429s.
+invocation_rate_limit_per_source_per_minute = 100000
+invocation_rate_limit_per_minute = 100000
 
 [auth_plugin.router]
 path = ${PLUGIN_WASM}
@@ -153,6 +157,10 @@ sha256 = ${PLUGIN_SHA256}
 mode = route
 inspect_methods = application_credential
 route_targets = hacked_appcred_handler
+# The live suite shares one source address; lift the plugin invocation
+# limits so the concurrent suite does not trip 429s.
+invocation_rate_limit_per_source_per_minute = 100000
+invocation_rate_limit_per_minute = 100000
 
 [auth_plugin.hacked_appcred_handler]
 path = ${PLUGIN_WASM}
@@ -163,6 +171,10 @@ provision_domain_id = d
 # The live suite runs concurrently; provisioning through host callbacks can
 # exceed the production default under dev-container load.
 timeout_ms = 5000
+# The live suite shares one source address; lift the plugin invocation
+# limits so the concurrent suite does not trip 429s.
+invocation_rate_limit_per_source_per_minute = 100000
+invocation_rate_limit_per_minute = 100000
 
 EOF
 

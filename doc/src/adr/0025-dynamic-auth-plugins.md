@@ -986,8 +986,8 @@ memory_limit_mb = 32
 # Per-(plugin, source-IP) bucket, checked before the plugin-wide bucket below
 # (§7 "Invocation Rate Limiting & Concurrency") - keeps one anonymous caller
 # from exhausting this method's shared budget for everyone else.
-invocation_rate_limit_per_source_per_minute = 20
-invocation_rate_limit_per_minute = 300
+invocation_rate_limit_per_source_per_minute = 600
+invocation_rate_limit_per_minute = 6000
 max_concurrent_invocations = 16
 
 # route-mode example: Terraform's OpenStack provider always sends
@@ -1364,7 +1364,7 @@ writes (`shadow_registry_creation_rate_limit`, `shadow_registry_auth_rate_limit`
    the cap is saturated is rejected the same way as (1)/(2) rather than queued,
    to avoid building an unbounded backlog of pending authentications under load.
 
-Defaults are conservative and layered (§5 example: 20/min per source, 300/min
+Defaults are conservative and layered (§5 example: 600/min per source, 6000/min
 per plugin, 16 concurrent) and all three are per-plugin, not global, so one
 plugin's traffic cannot starve another's budget.
 

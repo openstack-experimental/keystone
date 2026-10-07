@@ -233,11 +233,11 @@ fn default_memory_limit_mb() -> u32 {
 }
 
 fn default_rate_limit_per_source_per_minute() -> u32 {
-    20
+    600
 }
 
 fn default_rate_limit_per_minute() -> u32 {
-    300
+    6000
 }
 
 fn default_max_concurrent_invocations() -> u32 {
