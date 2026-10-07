@@ -286,7 +286,9 @@ impl FjallStateMachine {
             keyspace_lifecycle: Arc::new(RwLock::new(())),
             ephemeral: DashMap::new(),
             raft_prometheus_metrics: Arc::new(
-                crate::prometheus_metrics::KeystoneRaftPrometheusMetrics::new(),
+                crate::prometheus_metrics::KeystoneRaftPrometheusMetrics::new(
+                    &openstack_keystone_telemetry::metrics::meter(),
+                ),
             ),
             audit: std::sync::OnceLock::new(),
             write_rate_threshold: Arc::new(AtomicU32::new(DEFAULT_WRITE_RATE_THRESHOLD)),
@@ -328,9 +330,7 @@ impl FjallStateMachine {
         }
     }
 
-    /// This node's ADR 0031 Raft Prometheus metrics. Shared (via `Arc`)
-    /// with `app::Storage`, which reads it to render `/metrics` output
-    /// alongside a fresh `openraft::RaftMetrics` snapshot.
+    /// This node's ADR 0031 Raft Prometheus metrics.
     pub fn raft_prometheus_metrics(
         &self,
     ) -> &Arc<crate::prometheus_metrics::KeystoneRaftPrometheusMetrics> {

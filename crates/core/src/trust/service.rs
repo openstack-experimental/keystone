@@ -336,7 +336,7 @@ impl TrustApi for TrustService {
         // `"expired_trust"` (there is no separate automatic-expiry
         // revocation path today; expiry is checked passively at validation
         // time via the token's own `expires_at`).
-        crate::token::TOKEN_METRICS.revoked_total.inc(["cascade"]);
+        crate::token::TOKEN_METRICS.record_revoked("cascade");
 
         Ok(())
     }

@@ -493,6 +493,31 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
     )
     .await?;
 
+    // ADR 0031 / 0040 metrics: the Raft gauges read the live openraft
+    // metrics on every collection; the audit spool exposes its atomics.
+    {
+        let meter = openstack_keystone_telemetry::metrics::meter();
+        let metrics_rx = raft.metrics();
+        crate::prometheus_metrics::register_gauges(&meter, ds_config.node_id, move || {
+            metrics_rx.borrow_watched().clone()
+        });
+        audit_forwarder.register_metrics(&meter);
+
+        // Node state is read when metrics are collected. The registration
+        // lives as long as the process, so it must not keep the database
+        // open: hold the state machine and the nonce manager weakly.
+        let state_machine = Arc::downgrade(&state_machine_store);
+        let nonce = Arc::downgrade(&log_nonce);
+        crate::prometheus_metrics::register_node_status(&meter, move || {
+            let mut status = state_machine.upgrade()?.node_status();
+            let nonce = nonce.upgrade()?;
+            let nonce = nonce.lock().unwrap_or_else(|p| p.into_inner());
+            status.log_nonce_counter = Some(nonce.counter());
+            status.log_nonce_remaining = Some(nonce.remaining());
+            Some(status)
+        });
+    }
+
     // Refuse to start if our node_id is already in the cluster under a
     // different address.
     let rpc_addr = ds_config.node_cluster_addr.to_string();
@@ -1328,10 +1353,6 @@ impl StorageApi for Storage {
         })
     }
 
-    fn format_prometheus_metrics(&self) -> String {
-        self.format_raft_prometheus_metrics()
-    }
-
     async fn keyspace_exists(&self, keyspace: &str) -> Result<bool, ApiStoreError> {
         Ok(self.state_machine_store.keyspace_exists(keyspace))
     }
@@ -1387,35 +1408,6 @@ impl Storage {
     /// Return the current Raft leader node id, if elected.
     pub fn current_leader(&self) -> Option<u64> {
         self.raft.metrics().borrow_watched().current_leader
-    }
-
-    /// Renders this node's `keystone_raft_*` Prometheus metrics (ADR 0031)
-    /// in text-exposition format: reads through to the live `openraft`
-    /// metrics snapshot for the gauges (`is_leader`, `term`,
-    /// `last_log_index`, `last_applied_index`, `replication_lag`) and
-    /// includes the incrementally-recorded `apply_duration_seconds`
-    /// histogram, the node status series (quarantine, DEK lifecycle, log
-    /// nonce counter, snapshot and disk usage) and the audit forwarder
-    /// series. `borrow_watched()` is a cheap, non-blocking watch-channel
-    /// read, so this is safe to call on every `/metrics` scrape.
-    pub fn format_raft_prometheus_metrics(&self) -> String {
-        let metrics_rx = self.raft.metrics();
-        let live = metrics_rx.borrow_watched();
-        let mut out = self
-            .state_machine_store
-            .raft_prometheus_metrics()
-            .format_prometheus_text(&live, self.node_id);
-        drop(live);
-
-        let mut status = self.state_machine_store.node_status();
-        {
-            let nonce = self.log_nonce.lock().unwrap_or_else(|p| p.into_inner());
-            status.log_nonce_counter = Some(nonce.counter());
-            status.log_nonce_remaining = Some(nonce.remaining());
-        }
-        out.push_str(&crate::prometheus_metrics::format_node_status_text(&status));
-        out.push_str(&self.audit_forwarder.format_prometheus_text());
-        out
     }
 
     /// Enumerate current Raft membership peers (excluding self) from the

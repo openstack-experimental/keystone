@@ -1,8 +1,3 @@
-# HELP keystone_mapping_evaluations_total Mapping-engine rule evaluation volume by outcome.
-# TYPE keystone_mapping_evaluations_total counter
-keystone_mapping_evaluations_total{outcome="error"} 1
-keystone_mapping_evaluations_total{outcome="matched"} 1
-keystone_mapping_evaluations_total{outcome="no_match"} 1
 # HELP keystone_mapping_evaluation_duration_seconds Mapping-engine rule evaluation latency.
 # TYPE keystone_mapping_evaluation_duration_seconds histogram
 keystone_mapping_evaluation_duration_seconds_bucket{le="0.001"} 0
@@ -19,3 +14,8 @@ keystone_mapping_evaluation_duration_seconds_bucket{le="5"} 2
 keystone_mapping_evaluation_duration_seconds_bucket{le="+Inf"} 2
 keystone_mapping_evaluation_duration_seconds_sum 0.702
 keystone_mapping_evaluation_duration_seconds_count 2
+# HELP keystone_mapping_evaluations_total Mapping-engine rule evaluation volume by outcome.
+# TYPE keystone_mapping_evaluations_total counter
+keystone_mapping_evaluations_total{outcome="error"} 1
+keystone_mapping_evaluations_total{outcome="matched"} 1
+keystone_mapping_evaluations_total{outcome="no_match"} 1

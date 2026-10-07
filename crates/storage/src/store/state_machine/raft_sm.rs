@@ -1113,8 +1113,7 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                 .map_err(|e| io::Error::other(e.to_string()))?;
 
             self.raft_prometheus_metrics
-                .apply_duration_seconds
-                .record(apply_start.elapsed().as_secs_f64());
+                .record_apply(apply_start.elapsed().as_secs_f64());
 
             if let Some(responder) = responder {
                 pending_responses.push((

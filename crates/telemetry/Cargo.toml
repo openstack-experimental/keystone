@@ -15,6 +15,9 @@ repository.workspace = true
 # `otel` is the usual switch: traces and metrics over OTLP/HTTP (protobuf).
 # `otlp-grpc` adds the gRPC transport (tonic); enable it next to `otel`.
 default = []
+# Test-only helper for pinning rendered exposition text against checked-in
+# golden files (ADR 0040). Enable from `[dev-dependencies]` only.
+golden = []
 otel = ["otlp-http"]
 otlp-http = [
   "sdk",
@@ -28,27 +31,27 @@ otlp-grpc = [
   "opentelemetry-otlp/tls-aws-lc",
   "opentelemetry-otlp/tls-webpki-roots",
 ]
-# Internal: the SDK, the tracing bridge and the signal features.
+# Internal: the OTLP exporters, the tracing bridge and the trace signal. The
+# metrics SDK is not behind a feature: `/metrics` is rendered from it in every
+# build (ADR 0040).
 sdk = [
   "dep:http",
-  "dep:opentelemetry",
   "dep:opentelemetry-otlp",
-  "dep:opentelemetry_sdk",
   "dep:tracing",
   "dep:tracing-opentelemetry",
   "dep:tracing-subscriber",
+  "opentelemetry/trace",
   "opentelemetry-otlp/trace",
   "opentelemetry-otlp/metrics",
   "opentelemetry_sdk/trace",
-  "opentelemetry_sdk/metrics",
 ]
 
 [dependencies]
 http = { workspace = true, optional = true }
 inventory.workspace = true
-opentelemetry = { workspace = true, optional = true, features = ["trace", "metrics"] }
+opentelemetry = { workspace = true, features = ["metrics"] }
 opentelemetry-otlp = { workspace = true, optional = true }
-opentelemetry_sdk = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, features = ["metrics"] }
 oslo-config.workspace = true
 secrecy.workspace = true
 serde = { workspace = true, features = ["derive"] }

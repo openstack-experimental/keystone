@@ -1074,7 +1074,7 @@ dependencies = [
  "hkdf 0.13.0",
  "hmac 0.13.0",
  "nix 0.31.3",
- "openstack-keystone-metrics",
+ "openstack-keystone-telemetry",
  "rcgen",
  "rustls",
  "rustls-native-certs",
@@ -5174,7 +5174,6 @@ dependencies = [
  "openstack-keystone-key-repository",
  "openstack-keystone-limit-driver-sql",
  "openstack-keystone-mapping-driver-raft",
- "openstack-keystone-metrics",
  "openstack-keystone-oauth2-client-driver-raft",
  "openstack-keystone-oauth2-key-driver-raft",
  "openstack-keystone-oauth2-session-driver-raft",
@@ -5480,8 +5479,8 @@ dependencies = [
  "openstack-keystone-core-types",
  "openstack-keystone-key-repository",
  "openstack-keystone-local-emergency-store",
- "openstack-keystone-metrics",
  "openstack-keystone-storage-api",
+ "openstack-keystone-telemetry",
  "oslo-config",
  "p256 0.14.0",
  "percent-encoding",
@@ -5577,11 +5576,11 @@ dependencies = [
  "openraft",
  "openstack-keystone-config",
  "openstack-keystone-local-emergency-store",
- "openstack-keystone-metrics",
  "openstack-keystone-storage-api",
  "openstack-keystone-storage-crypto",
  "openstack-keystone-storage-crypto-pkcs11",
  "openstack-keystone-storage-crypto-tpm",
+ "openstack-keystone-telemetry",
  "oslo-config",
  "prost",
  "rand 0.10.2",
@@ -5822,13 +5821,6 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "openstack-keystone-metrics"
-version = "0.1.0"
-dependencies = [
- "dashmap",
 ]
 
 [[package]]

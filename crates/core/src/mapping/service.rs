@@ -232,17 +232,13 @@ impl MappingService {
             ruleset.domain_id.as_deref(),
             req.rule_name.as_deref(),
         );
-        crate::mapping::metrics::MAPPING_METRICS
-            .evaluation_duration_seconds
-            .record(eval_started.elapsed().as_secs_f64());
         let eval_outcome = match &eval_result {
             Ok(Some(_)) => crate::mapping::metrics::OUTCOME_MATCHED,
             Ok(None) => crate::mapping::metrics::OUTCOME_NO_MATCH,
             Err(_) => crate::mapping::metrics::OUTCOME_ERROR,
         };
         crate::mapping::metrics::MAPPING_METRICS
-            .evaluations_total
-            .inc([eval_outcome]);
+            .record_evaluation(eval_outcome, eval_started.elapsed().as_secs_f64());
         let match_result = eval_result?.ok_or(MappingProviderError::NoMatchingRule)?;
 
         // 4. Resolve identity mode: explicit rule value > source-based default
@@ -1274,14 +1270,8 @@ impl MappingApi for MappingService {
     ) -> Result<AuthenticationResult, MappingProviderError> {
         let result = self.authenticate_by_mapping_internal(exec, req).await;
         if let IdentitySource::Federation { idp_id } = &req.source {
-            let outcome = if result.is_ok() {
-                crate::federation::metrics::OUTCOME_SUCCESS
-            } else {
-                crate::federation::metrics::OUTCOME_FAILURE
-            };
             crate::federation::metrics::FEDERATION_METRICS
-                .authentications_total
-                .inc([idp_id.as_str(), outcome]);
+                .record_authentication(idp_id.as_str(), result.is_ok());
         }
         result
     }

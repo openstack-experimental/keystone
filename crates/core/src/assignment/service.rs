@@ -889,7 +889,7 @@ impl AssignmentApi for AssignmentService {
                 .await?;
             // ADR 0031 "Tokens": revoking a grant cascades revocation of every
             // token carrying that role - `"cascade"`, not a direct user request.
-            crate::token::TOKEN_METRICS.revoked_total.inc(["cascade"]);
+            crate::token::TOKEN_METRICS.record_revoked("cascade");
         }
 
         Ok(())

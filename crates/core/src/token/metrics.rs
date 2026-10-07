@@ -27,8 +27,8 @@
 
 use std::sync::LazyLock;
 
-use openstack_keystone_metrics::{
-    Gauge, LabeledCounter, LabeledHistogram, PrometheusText, write_metric_header,
+use openstack_keystone_telemetry::metrics::{
+    self, CounterVec, GaugeVec, HistogramVec, LATENCY_BUCKETS, Label, Meter,
 };
 
 use openstack_keystone_core_types::auth::AuthenticationContext;
@@ -37,87 +37,88 @@ use openstack_keystone_core_types::token::TokenProviderError;
 /// Process-wide token metrics (ADR 0031).
 pub struct TokenMetrics {
     /// `keystone_token_issued_total{driver,method}` — issuance volume.
-    pub issued_total: LabeledCounter<2>,
+    issued_total: CounterVec<2>,
     /// `keystone_token_validated_total{driver,outcome}` — validation
     /// volume/outcome.
-    pub validated_total: LabeledCounter<2>,
+    validated_total: CounterVec<2>,
     /// `keystone_token_validation_duration_seconds{driver}` — validation
     /// latency.
-    pub validation_duration_seconds: LabeledHistogram<1>,
+    validation_duration_seconds: HistogramVec<1>,
     /// `keystone_token_revoked_total{reason}` — revocation volume.
-    pub revoked_total: LabeledCounter<1>,
+    revoked_total: CounterVec<1>,
     /// `keystone_token_revocation_list_size` — in-memory/DB revocation-event
     /// backlog size. No labels.
-    pub revocation_list_size: Gauge,
+    revocation_list_size: GaugeVec<0>,
 }
 
 impl TokenMetrics {
-    fn new() -> Self {
+    /// Create the instruments on `meter`.
+    pub fn new(meter: &Meter) -> Self {
         Self {
-            issued_total: LabeledCounter::new(["driver", "method"]),
-            validated_total: LabeledCounter::new(["driver", "outcome"]),
-            validation_duration_seconds: LabeledHistogram::new(["driver"]),
-            revoked_total: LabeledCounter::new(["reason"]),
-            revocation_list_size: Gauge::new(),
+            issued_total: CounterVec::new(
+                meter,
+                "keystone_token_issued_total",
+                "Token issuance volume by driver and authentication method.",
+                ["driver", "method"],
+            ),
+            validated_total: CounterVec::new(
+                meter,
+                "keystone_token_validated_total",
+                "Token validation volume by driver and outcome.",
+                ["driver", "outcome"],
+            ),
+            validation_duration_seconds: HistogramVec::new(
+                meter,
+                "keystone_token_validation_duration_seconds",
+                "Token validation latency by driver.",
+                ["driver"],
+                &LATENCY_BUCKETS,
+            ),
+            revoked_total: CounterVec::new(
+                meter,
+                "keystone_token_revoked_total",
+                "Token revocation volume by reason.",
+                ["reason"],
+            ),
+            revocation_list_size: GaugeVec::new(
+                meter,
+                "keystone_token_revocation_list_size",
+                "In-memory/DB revocation-event backlog size.",
+                [],
+            ),
         }
+    }
+
+    /// Counts one issued token. `driver` is the configured token provider
+    /// (`fernet`/`jws`); `method` comes from [`issue_method_label`].
+    pub fn record_issued(&self, driver: &str, method: &'static str) {
+        self.issued_total
+            .inc([Label::bounded(driver), Label::fixed(method)]);
+    }
+
+    /// Records one token validation: its outcome and latency.
+    pub fn record_validation(&self, driver: &str, success: bool, seconds: f64) {
+        let driver = Label::bounded(driver);
+        let outcome = if success { "success" } else { "failure" };
+        self.validated_total.inc([driver, outcome.into()]);
+        self.validation_duration_seconds.record(seconds, [driver]);
+    }
+
+    /// Counts one revocation. `reason` is one of `"user_request"`,
+    /// `"admin"`, `"cascade"`, `"expired_trust"`.
+    pub fn record_revoked(&self, reason: &'static str) {
+        self.revoked_total.inc([Label::fixed(reason)]);
+    }
+
+    /// Sets the current size of the revocation-event backlog.
+    pub fn set_revocation_list_size(&self, size: i64) {
+        self.revocation_list_size.set(size, []);
     }
 }
 
 /// Process-wide [`TokenMetrics`] instance (ADR 0031 "Design pattern").
-pub static TOKEN_METRICS: LazyLock<TokenMetrics> = LazyLock::new(TokenMetrics::new);
-
-impl PrometheusText for TokenMetrics {
-    fn format_prometheus_text(&self) -> String {
-        let mut out = String::new();
-
-        write_metric_header(
-            &mut out,
-            "keystone_token_issued_total",
-            "Token issuance volume by driver and authentication method.",
-            "counter",
-        );
-        self.issued_total
-            .write_lines(&mut out, "keystone_token_issued_total");
-
-        write_metric_header(
-            &mut out,
-            "keystone_token_validated_total",
-            "Token validation volume by driver and outcome.",
-            "counter",
-        );
-        self.validated_total
-            .write_lines(&mut out, "keystone_token_validated_total");
-
-        write_metric_header(
-            &mut out,
-            "keystone_token_validation_duration_seconds",
-            "Token validation latency by driver.",
-            "histogram",
-        );
-        self.validation_duration_seconds
-            .write_lines(&mut out, "keystone_token_validation_duration_seconds");
-
-        write_metric_header(
-            &mut out,
-            "keystone_token_revoked_total",
-            "Token revocation volume by reason.",
-            "counter",
-        );
-        self.revoked_total
-            .write_lines(&mut out, "keystone_token_revoked_total");
-
-        write_metric_header(
-            &mut out,
-            "keystone_token_revocation_list_size",
-            "In-memory/DB revocation-event backlog size.",
-            "gauge",
-        );
-        self.revocation_list_size
-            .write_line(&mut out, "keystone_token_revocation_list_size");
-
-        out
-    }
-}
+pub static TOKEN_METRICS: LazyLock<TokenMetrics> =
+    LazyLock::new(|| TokenMetrics::new(&metrics::meter()));
 
 /// Maps an [`AuthenticationContext`] to the ADR 0031 fixed `method` label
 /// value for `keystone_token_issued_total`, or `None` when the context does
@@ -192,25 +193,31 @@ pub fn token_failure_reason(e: &TokenProviderError) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use openstack_keystone_telemetry::metrics::MetricsPipeline;
+
     use super::*;
+
+    fn fixture() -> (MetricsPipeline, TokenMetrics) {
+        let pipeline = MetricsPipeline::new();
+        let metrics = TokenMetrics::new(&pipeline.meter());
+        (pipeline, metrics)
+    }
 
     /// Pins the rendered exposition text (series names, labels, HELP/TYPE and
     /// bucket layout) against `tests/golden/token.prom` (ADR 0040).
     #[test]
     fn golden_exposition() {
-        let metrics = TokenMetrics::new();
-        metrics.issued_total.inc(["fernet", "password"]);
-        metrics.issued_total.inc(["fernet", "token"]);
-        metrics.validated_total.inc(["fernet", "success"]);
-        metrics.validated_total.inc(["fernet", "success"]);
-        metrics.validated_total.inc(["fernet", "failure"]);
+        let (pipeline, metrics) = fixture();
+        metrics.record_issued("fernet", "password");
+        metrics.record_issued("fernet", "token");
+        metrics.record_validation("fernet", true, 0.002);
+        metrics.record_validation("fernet", true, 0.08);
         metrics
-            .validation_duration_seconds
-            .record(["fernet"], 0.002);
-        metrics.validation_duration_seconds.record(["fernet"], 0.08);
-        metrics.revoked_total.inc(["user_request"]);
-        metrics.revocation_list_size.set(7);
-        openstack_keystone_metrics::assert_golden!("token", metrics.format_prometheus_text());
+            .validated_total
+            .inc(["fernet".into(), "failure".into()]);
+        metrics.record_revoked("user_request");
+        metrics.set_revocation_list_size(7);
+        openstack_keystone_telemetry::assert_golden!("token", pipeline.render());
     }
 
     use openstack_keystone_core_types::application_credential::ApplicationCredentialBuilder;
@@ -218,46 +225,41 @@ mod tests {
 
     #[test]
     fn issued_and_validated_are_labeled_by_driver() {
-        let metrics = TokenMetrics::new();
-        metrics.issued_total.inc(["fernet", "password"]);
-        metrics.validated_total.inc(["fernet", "success"]);
-        metrics.validation_duration_seconds.record(["fernet"], 0.01);
-        assert_eq!(metrics.issued_total.get(["fernet", "password"]), 1);
-        assert_eq!(metrics.validated_total.get(["fernet", "success"]), 1);
+        let (pipeline, metrics) = fixture();
+        metrics.record_issued("fernet", "password");
+        metrics.record_validation("fernet", true, 0.01);
+        let text = pipeline.render();
+        assert!(
+            text.contains("keystone_token_issued_total{driver=\"fernet\",method=\"password\"} 1\n")
+        );
+        assert!(
+            text.contains(
+                "keystone_token_validated_total{driver=\"fernet\",outcome=\"success\"} 1\n"
+            )
+        );
+        assert!(
+            text.contains(
+                "keystone_token_validation_duration_seconds_count{driver=\"fernet\"} 1\n"
+            )
+        );
     }
 
     #[test]
     fn revoked_total_is_labeled_by_reason_only() {
-        let metrics = TokenMetrics::new();
-        metrics.revoked_total.inc(["user_request"]);
-        metrics.revoked_total.inc(["cascade"]);
-        assert_eq!(metrics.revoked_total.get(["user_request"]), 1);
-        assert_eq!(metrics.revoked_total.get(["cascade"]), 1);
-        assert_eq!(metrics.revoked_total.get(["admin"]), 0);
+        let (pipeline, metrics) = fixture();
+        metrics.record_revoked("user_request");
+        metrics.record_revoked("cascade");
+        let text = pipeline.render();
+        assert!(text.contains("keystone_token_revoked_total{reason=\"user_request\"} 1\n"));
+        assert!(text.contains("keystone_token_revoked_total{reason=\"cascade\"} 1\n"));
+        assert!(!text.contains("reason=\"admin\""));
     }
 
     #[test]
     fn revocation_list_size_is_a_plain_gauge() {
-        let metrics = TokenMetrics::new();
-        metrics.revocation_list_size.set(42);
-        assert_eq!(metrics.revocation_list_size.get(), 42);
-    }
-
-    #[test]
-    fn format_prometheus_text_includes_all_series_headers() {
-        let metrics = TokenMetrics::new();
-        metrics.issued_total.inc(["fernet", "password"]);
-        metrics.validated_total.inc(["fernet", "success"]);
-        metrics.validation_duration_seconds.record(["fernet"], 0.01);
-        metrics.revoked_total.inc(["admin"]);
-        metrics.revocation_list_size.set(1);
-        let text = metrics.format_prometheus_text();
-        assert!(text.contains("# TYPE keystone_token_issued_total counter"));
-        assert!(text.contains("# TYPE keystone_token_validated_total counter"));
-        assert!(text.contains("# TYPE keystone_token_validation_duration_seconds histogram"));
-        assert!(text.contains("# TYPE keystone_token_revoked_total counter"));
-        assert!(text.contains("# TYPE keystone_token_revocation_list_size gauge"));
-        assert!(text.contains("keystone_token_revocation_list_size 1"));
+        let (pipeline, metrics) = fixture();
+        metrics.set_revocation_list_size(42);
+        assert!(pipeline.render().contains("# TYPE keystone_token_revocation_list_size gauge\nkeystone_token_revocation_list_size 42\n"));
     }
 
     #[test]

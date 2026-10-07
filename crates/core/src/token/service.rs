@@ -245,13 +245,11 @@ impl TokenService {
         let result = self
             .validate_to_context_inner(ctx, credential, allow_expired, window_seconds)
             .await;
-        let outcome = if result.is_ok() { "success" } else { "failure" };
-        crate::token::TOKEN_METRICS
-            .validated_total
-            .inc([&driver, outcome]);
-        crate::token::TOKEN_METRICS
-            .validation_duration_seconds
-            .record([&driver], start.elapsed().as_secs_f64());
+        crate::token::TOKEN_METRICS.record_validation(
+            &driver,
+            result.is_ok(),
+            start.elapsed().as_secs_f64(),
+        );
         result
     }
 
@@ -527,8 +525,7 @@ impl TokenApi for TokenService {
             crate::token::metrics::issue_method_label(ctx.authentication_context())
         {
             crate::token::TOKEN_METRICS
-                .issued_total
-                .inc([&self.config.token.provider.to_string(), method]);
+                .record_issued(&self.config.token.provider.to_string(), method);
         }
 
         Ok(vsc)

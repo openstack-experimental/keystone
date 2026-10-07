@@ -20,7 +20,6 @@ use utoipa::OpenApi;
 use super::*;
 use crate::api;
 use crate::config::Interface;
-use crate::server::http_metrics::format_prometheus_text as format_http_metrics_text;
 use crate::server::startup::test_support::{test_config, test_startup};
 
 async fn build_test_router(cfg: crate::config::Config) -> (Router, Option<Arc<HttpMetrics>>) {
@@ -83,14 +82,17 @@ async fn build_router_records_http_metrics_when_enabled() {
     let mut cfg = test_config(tmp.path().to_path_buf());
     cfg.interface_metrics.http_requests_enabled = true;
     let (app, http_metrics) = build_test_router(cfg).await;
-    let http_metrics = http_metrics.expect("HttpMetrics must be Some when enabled");
+    assert!(
+        http_metrics.is_some(),
+        "HttpMetrics must be Some when enabled"
+    );
 
     let _ = app
         .oneshot(Request::builder().uri("/v3/").body(Body::empty()).unwrap())
         .await
         .unwrap();
 
-    let text = format_http_metrics_text(&http_metrics);
+    let text = openstack_keystone_telemetry::metrics::render_prometheus();
     // The matched-path template for this route is "/v3" (no trailing slash)
     // even though the request URI is "/v3/": `NormalizePathLayer` trims the
     // trailing slash before the request reaches the inner router.

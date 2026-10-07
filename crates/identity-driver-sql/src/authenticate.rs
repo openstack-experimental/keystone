@@ -103,9 +103,7 @@ pub async fn authenticate_by_password(
         // PCI-DSS account-lockout counter (ADR 0010). No labels - the user
         // identifier stays out of the metric surface, same as everywhere
         // else in this module's audit trail.
-        openstack_keystone_core::auth_metrics::AUTH_METRICS
-            .lockouts_total
-            .inc();
+        openstack_keystone_core::auth_metrics::AUTH_METRICS.record_lockout();
         return Err(AuthenticationError::UserLocked(local_user_entry.user_id.clone()).into());
     }
 

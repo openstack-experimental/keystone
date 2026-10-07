@@ -15,7 +15,7 @@ chrono = { workspace = true, features = ["serde", "now"] }
 getrandom.workspace = true
 hmac.workspace = true
 hkdf.workspace = true
-openstack-keystone-metrics.workspace = true
+openstack-keystone-telemetry.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sha2.workspace = true
@@ -45,7 +45,7 @@ syslog = [
 ]
 
 [dev-dependencies]
-openstack-keystone-metrics = { workspace = true, features = ["golden"] }
+openstack-keystone-telemetry = { workspace = true, features = ["golden"] }
 nix = { workspace = true, features = ["user"] }
 rcgen.workspace = true
 serde = { workspace = true, features = ["derive"] }

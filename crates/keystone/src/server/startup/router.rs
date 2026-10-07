@@ -209,7 +209,8 @@ fn apply_middleware(
 
 /// Add the request-count/latency metrics layer when
 /// `[interface_metrics] http_requests_enabled` is set, returning the shared
-/// [`HttpMetrics`] handle so the `/metrics` scrape handler can render it.
+/// [`HttpMetrics`] handle for the metrics listener, which wraps its own routes
+/// with it.
 async fn attach_http_metrics(
     mut app: Router,
     state: &ServiceState,
@@ -224,7 +225,9 @@ async fn attach_http_metrics(
     {
         return (app, None);
     }
-    let http_metrics = Arc::new(HttpMetrics::new());
+    let http_metrics = Arc::new(HttpMetrics::new(
+        &openstack_keystone_telemetry::metrics::meter(),
+    ));
     // `Router::layer()` applies in reverse call order (last-added is
     // outermost) — `Extension` must be added *after* `from_fn` so it runs
     // first and the extractor inside `record_http_metrics` has something to

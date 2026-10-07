@@ -1,6 +1,6 @@
 [package]
 name = "otel_bench"
-description = "ADR 0040 benchmark: openstack-keystone-metrics vs OpenTelemetry SDK instruments and spans"
+description = "ADR 0040 benchmark: OpenTelemetry span layer cost"
 version = "0.1.0"
 rust-version = "1.94"  # MSRV
 edition = "2024"
@@ -14,7 +14,6 @@ dist = false
 [workspace]
 
 [dependencies]
-openstack-keystone-metrics = { path = "../../crates/metrics" }
 opentelemetry = { version = "0.33", features = ["metrics", "trace"] }
 opentelemetry_sdk = { version = "0.33", features = ["metrics", "trace", "testing", "rt-tokio"] }
 tracing = "0.1"
@@ -23,10 +22,6 @@ tracing-opentelemetry = "0.34"
 
 [dev-dependencies]
 criterion = "0.8"
-
-[[bench]]
-name = "metrics"
-harness = false
 
 [[bench]]
 name = "spans"

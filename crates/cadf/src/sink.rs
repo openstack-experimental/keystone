@@ -190,7 +190,7 @@ async fn ship_segment(
             shipped += batch.len();
             cfg.metrics
                 .shipped_events
-                .add(["shipped"], batch.len() as u64);
+                .add("shipped", batch.len() as u64);
             batch.clear();
         }
         if done {
@@ -199,7 +199,7 @@ async fn ship_segment(
     }
 
     if skipped > 0 {
-        cfg.metrics.shipped_events.add(["skipped"], skipped as u64);
+        cfg.metrics.shipped_events.add("skipped", skipped as u64);
         quarantine_segment(path)?;
         cfg.metrics.spool_quarantined.inc();
         dec_spool_bytes(spool_bytes, size);
@@ -644,8 +644,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(cfg.metrics.shipped_events.get(["shipped"]), 2);
-        assert_eq!(cfg.metrics.shipped_events.get(["skipped"]), 1);
+        assert_eq!(cfg.metrics.shipped_events.get("shipped"), 2);
+        assert_eq!(cfg.metrics.shipped_events.get("skipped"), 1);
         assert_eq!(cfg.metrics.spool_quarantined.get(), 1);
         assert_eq!(sink.ids.lock().unwrap().len(), 2, "valid lines still ship");
         assert!(!seg.exists());
@@ -684,7 +684,7 @@ mod tests {
         }
         assert!(!seg.exists(), "segment acked after the sink recovers");
         assert_eq!(metrics.sink_errors.get(), 2, "one per failed attempt");
-        assert_eq!(metrics.shipped_events.get(["shipped"]), 3);
+        assert_eq!(metrics.shipped_events.get("shipped"), 3);
         tx.send(()).unwrap();
         tokio::time::timeout(Duration::from_secs(5), task)
             .await

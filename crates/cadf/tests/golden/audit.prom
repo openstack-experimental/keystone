@@ -1,35 +1,31 @@
+# HELP keystone_audit_channel_depth Audit events queued in a channel, waiting for the spool writer.
+# TYPE keystone_audit_channel_depth gauge
+keystone_audit_channel_depth{channel="critical"} 0
+keystone_audit_channel_depth{channel="perimeter"} 0
 # HELP keystone_audit_dropped_total Total perimeter audit events dropped because the best-effort channel was full.
 # TYPE keystone_audit_dropped_total counter
 keystone_audit_dropped_total 0
-# HELP keystone_audit_postaudit_dropped_total Post-audit outcome records (Success/Failure) that could not be recorded after the operation ran; compensating local log entries were written.
-# TYPE keystone_audit_postaudit_dropped_total counter
-keystone_audit_postaudit_dropped_total 0
 # HELP keystone_audit_events_total Audit events accepted into the perimeter or critical channel. Dropped events are counted in keystone_audit_dropped_total instead.
 # TYPE keystone_audit_events_total counter
 keystone_audit_events_total 0
-# HELP keystone_audit_channel_depth Audit events queued in a channel, waiting for the spool writer.
-# TYPE keystone_audit_channel_depth gauge
-keystone_audit_channel_depth{channel="perimeter"} 0
-keystone_audit_channel_depth{channel="critical"} 0
 # HELP keystone_audit_hmac_key_version Version of the HMAC key currently signing audit events.
 # TYPE keystone_audit_hmac_key_version gauge
 keystone_audit_hmac_key_version 0
-# HELP keystone_audit_spool_bytes Bytes held on disk by the audit spool (live file plus sealed segments).
-# TYPE keystone_audit_spool_bytes gauge
-keystone_audit_spool_bytes 0
-# HELP keystone_audit_spool_write_failures_total Audit events the spool writer failed to append to the spool; each is lost.
-# TYPE keystone_audit_spool_write_failures_total counter
-keystone_audit_spool_write_failures_total 0
-# HELP keystone_audit_spool_quarantined_total Spool segments quarantined because of tampered or unparsable lines.
-# TYPE keystone_audit_spool_quarantined_total counter
-keystone_audit_spool_quarantined_total 0
-# HELP keystone_audit_spool_verified_total Lines checked when a sealed spool segment was verified at startup.
-# TYPE keystone_audit_spool_verified_total counter
-# HELP keystone_audit_shipped_events_total Events handed to the audit sink; result=skipped counts unparsable spool lines.
-# TYPE keystone_audit_shipped_events_total counter
+# HELP keystone_audit_postaudit_dropped_total Post-audit outcome records (Success/Failure) that could not be recorded after the operation ran; compensating local log entries were written.
+# TYPE keystone_audit_postaudit_dropped_total counter
+keystone_audit_postaudit_dropped_total 0
 # HELP keystone_audit_sink_errors_total Failed attempts to deliver a batch to the audit sink.
 # TYPE keystone_audit_sink_errors_total counter
 keystone_audit_sink_errors_total 0
+# HELP keystone_audit_spool_bytes Bytes held on disk by the audit spool (live file plus sealed segments).
+# TYPE keystone_audit_spool_bytes gauge
+keystone_audit_spool_bytes 0
+# HELP keystone_audit_spool_quarantined_total Spool segments quarantined because of tampered or unparsable lines.
+# TYPE keystone_audit_spool_quarantined_total counter
+keystone_audit_spool_quarantined_total 0
 # HELP keystone_audit_spool_retention_deleted_total Sealed spool segments deleted unacknowledged by the size, age or count limits.
 # TYPE keystone_audit_spool_retention_deleted_total counter
 keystone_audit_spool_retention_deleted_total 0
+# HELP keystone_audit_spool_write_failures_total Audit events the spool writer failed to append to the spool; each is lost.
+# TYPE keystone_audit_spool_write_failures_total counter
+keystone_audit_spool_write_failures_total 0

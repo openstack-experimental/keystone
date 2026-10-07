@@ -26,7 +26,6 @@ use opentelemetry::global;
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_otlp::{ExporterBuildError, MetricExporter, SpanExporter, WithExportConfig};
 use opentelemetry_sdk::Resource;
-use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::{BatchSpanProcessor, Sampler, SdkTracer, SdkTracerProvider};
 use secrecy::ExposeSecret;
@@ -35,6 +34,7 @@ use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::registry::LookupSpan;
 
 use crate::config::{OtlpProtocol, SamplerKind, TelemetrySettings};
+use crate::metrics::{self, AlreadyStarted, PushConfig};
 
 /// Name of the instrumentation scope of Keystone's own spans and metrics.
 const SCOPE: &str = "openstack-keystone";
@@ -54,6 +54,10 @@ pub enum TelemetryInitError {
         #[source]
         source: ExporterBuildError,
     },
+    /// An instrument was created before this ran, so the process-wide
+    /// metrics pipeline exists without OTLP.
+    #[error("starting OTLP metrics: {0}")]
+    MetricsAlreadyStarted(#[from] AlreadyStarted),
 }
 
 /// Failure while flushing and stopping the pipeline.
@@ -70,14 +74,14 @@ pub struct TelemetryShutdownError {
 /// process exits; dropping the guard does it as a best effort.
 pub struct TelemetryGuard {
     tracer_provider: Option<SdkTracerProvider>,
-    meter_provider: Option<SdkMeterProvider>,
+    metrics: bool,
 }
 
 impl std::fmt::Debug for TelemetryGuard {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TelemetryGuard")
             .field("traces", &self.tracer_provider.is_some())
-            .field("metrics", &self.meter_provider.is_some())
+            .field("metrics", &self.metrics)
             .finish()
     }
 }
@@ -108,8 +112,8 @@ impl TelemetryGuard {
                 message: err.to_string(),
             });
         }
-        if let Some(provider) = self.meter_provider.take()
-            && let Err(err) = provider.shutdown()
+        if std::mem::take(&mut self.metrics)
+            && let Err(err) = metrics::shutdown()
         {
             errors.push(TelemetryShutdownError {
                 signal: "metrics",
@@ -142,20 +146,17 @@ pub fn init(
         .traces_enabled
         .then(|| build_tracer_provider(settings, &resource))
         .transpose()?;
-    let meter_provider = settings
-        .metrics_enabled
-        .then(|| build_meter_provider(settings, &resource))
-        .transpose()?;
+    let metrics = settings.metrics_enabled;
+    if metrics {
+        start_metrics(settings, &resource)?;
+    }
 
     if tracer_provider.is_some() {
         global::set_text_map_propagator(TraceContextPropagator::new());
     }
-    if let Some(provider) = &meter_provider {
-        global::set_meter_provider(provider.clone());
-    }
     Ok(TelemetryGuard {
         tracer_provider,
-        meter_provider,
+        metrics,
     })
 }
 
@@ -205,22 +206,25 @@ fn build_tracer_provider(
         .build())
 }
 
-fn build_meter_provider(
+/// Start the process-wide metrics pipeline with the OTLP exporter. Without
+/// `[otel]` metrics the pipeline is created pull-only on first use instead.
+fn start_metrics(
     settings: &TelemetrySettings,
     resource: &Resource,
-) -> Result<SdkMeterProvider, TelemetryInitError> {
+) -> Result<(), TelemetryInitError> {
     let exporter =
         build_metric_exporter(settings).map_err(|source| TelemetryInitError::Exporter {
             signal: "metrics",
             source,
         })?;
-    let reader = PeriodicReader::builder(exporter)
-        .with_interval(settings.metrics_interval)
-        .build();
-    Ok(SdkMeterProvider::builder()
-        .with_resource(resource.clone())
-        .with_reader(reader)
-        .build())
+    metrics::install(
+        resource.clone(),
+        PushConfig {
+            exporter: Box::new(exporter),
+            interval: settings.metrics_interval,
+        },
+    )?;
+    Ok(())
 }
 
 /// Endpoint of one signal over HTTP: the configured base URL plus
@@ -492,10 +496,13 @@ mod tests {
             let span = tracing::info_span!("exported_span", answer = 42);
             let _entered = span.enter();
         });
-        global::meter("test")
-            .u64_counter("keystone_test_total")
-            .build()
-            .add(1, &[KeyValue::new("kind", "x")]);
+        crate::metrics::CounterVec::new(
+            &crate::metrics::meter(),
+            "keystone_test_total",
+            "Test.",
+            ["kind"],
+        )
+        .inc(["x".into()]);
 
         let errors = tokio::task::spawn_blocking(move || guard.shutdown())
             .await
@@ -525,7 +532,7 @@ mod tests {
                 .tracing_layer::<tracing_subscriber::Registry>()
                 .is_some()
         );
-        assert!(guard.meter_provider.is_none());
+        assert!(!guard.metrics);
         let errors = tokio::task::spawn_blocking(move || guard.shutdown())
             .await
             .unwrap();
@@ -563,7 +570,11 @@ mod tests {
     #[test]
     fn shutdown_is_idempotent() {
         let (endpoint, _rx) = collector();
-        let mut guard = init(&settings(&endpoint), "0.0.0-test").unwrap();
+        // The process-wide metrics pipeline can be installed once per
+        // process; `spans_and_metrics_reach_the_collector` owns that.
+        let mut s = settings(&endpoint);
+        s.metrics_enabled = false;
+        let mut guard = init(&s, "0.0.0-test").unwrap();
         assert!(guard.shutdown().is_empty());
         assert!(guard.shutdown().is_empty());
     }
@@ -633,10 +644,14 @@ mod grpc_tests {
     /// `https` endpoint with TLS, inside a runtime as in `keystone`.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn grpc_pipeline_builds_and_shuts_down() {
-        let s = settings(serde_json::json!({
+        let mut s = settings(serde_json::json!({
             "enabled": true, "protocol": "grpc",
             "endpoint": "https://127.0.0.1:1", "metrics_interval": 3600
         }));
+        // The process-wide metrics pipeline is installed once per process
+        // (by the HTTP test); only check that the gRPC exporter builds.
+        assert!(build_metric_exporter(&s).is_ok());
+        s.metrics_enabled = false;
         let mut guard = init(&s, "0.0.0-test").unwrap();
         assert!(
             guard

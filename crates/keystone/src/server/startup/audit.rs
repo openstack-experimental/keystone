@@ -54,7 +54,15 @@ pub async fn init(
         })
         .into_iter()
         .collect();
-    Ok(cadf::runtime::init(&AUDIT_SERVICE, &cfg.audit, extra_sources, token).await?)
+    let (dispatcher, writer) =
+        cadf::runtime::init(&AUDIT_SERVICE, &cfg.audit, extra_sources, token).await?;
+    // Expose the audit series on `/metrics` and over OTLP (ADR 0040).
+    cadf::metrics::register(
+        &dispatcher,
+        &openstack_keystone_telemetry::metrics::meter(),
+        &AUDIT_SERVICE,
+    );
+    Ok((dispatcher, writer))
 }
 
 #[cfg(test)]

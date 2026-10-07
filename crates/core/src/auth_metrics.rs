@@ -35,8 +35,8 @@
 
 use std::sync::LazyLock;
 
-use openstack_keystone_metrics::{
-    Counter, LabeledCounter, LabeledHistogram, PrometheusText, write_metric_header,
+use openstack_keystone_telemetry::metrics::{
+    self, CounterVec, HistogramVec, LATENCY_BUCKETS, Label, Meter,
 };
 
 use openstack_keystone_core_types::assignment::AssignmentProviderError;
@@ -50,33 +50,66 @@ use openstack_keystone_core_types::role::RoleProviderError;
 pub struct AuthMetrics {
     /// `keystone_auth_attempts_total{method,outcome}` — auth volume by
     /// method, `outcome` is `"success"`/`"failure"`.
-    pub attempts_total: LabeledCounter<2>,
+    attempts_total: CounterVec<2>,
     /// `keystone_auth_duration_seconds{method}` — auth latency.
-    pub duration_seconds: LabeledHistogram<1>,
+    duration_seconds: HistogramVec<1>,
     /// `keystone_auth_failures_total{method,reason}` — failure breakdown,
     /// `reason` from [`auth_failure_reason`]/[`identity_failure_reason`].
-    pub failures_total: LabeledCounter<2>,
+    failures_total: CounterVec<2>,
     /// `keystone_auth_lockouts_total` — PCI-DSS account lockouts (ADR 0010).
     /// No labels: the lockout itself already carries no user identifier
     /// onto this metric surface (only the audit trail does).
-    pub lockouts_total: Counter,
+    lockouts_total: CounterVec<0>,
     /// `keystone_auth_plugin_invocations_total{plugin_name,outcome}` — WASM
     /// plugin call volume (ADR 0025).
-    pub plugin_invocations_total: LabeledCounter<2>,
+    plugin_invocations_total: CounterVec<2>,
     /// `keystone_auth_plugin_duration_seconds{plugin_name}` — WASM plugin
     /// call latency (ADR 0025).
-    pub plugin_duration_seconds: LabeledHistogram<1>,
+    plugin_duration_seconds: HistogramVec<1>,
 }
 
 impl AuthMetrics {
-    fn new() -> Self {
+    /// Create the instruments on `meter`.
+    pub fn new(meter: &Meter) -> Self {
         Self {
-            attempts_total: LabeledCounter::new(["method", "outcome"]),
-            duration_seconds: LabeledHistogram::new(["method"]),
-            failures_total: LabeledCounter::new(["method", "reason"]),
-            lockouts_total: Counter::new(),
-            plugin_invocations_total: LabeledCounter::new(["plugin_name", "outcome"]),
-            plugin_duration_seconds: LabeledHistogram::new(["plugin_name"]),
+            attempts_total: CounterVec::new(
+                meter,
+                "keystone_auth_attempts_total",
+                "Authentication attempts by method and outcome.",
+                ["method", "outcome"],
+            ),
+            duration_seconds: HistogramVec::new(
+                meter,
+                "keystone_auth_duration_seconds",
+                "Authentication latency by method.",
+                ["method"],
+                &LATENCY_BUCKETS,
+            ),
+            failures_total: CounterVec::new(
+                meter,
+                "keystone_auth_failures_total",
+                "Authentication failures by method and sanitized reason.",
+                ["method", "reason"],
+            ),
+            lockouts_total: CounterVec::new(
+                meter,
+                "keystone_auth_lockouts_total",
+                "PCI-DSS account lockouts (ADR 0010).",
+                [],
+            ),
+            plugin_invocations_total: CounterVec::new(
+                meter,
+                "keystone_auth_plugin_invocations_total",
+                "Dynamic auth-plugin (ADR 0025) call volume by plugin and outcome.",
+                ["plugin_name", "outcome"],
+            ),
+            plugin_duration_seconds: HistogramVec::new(
+                meter,
+                "keystone_auth_plugin_duration_seconds",
+                "Dynamic auth-plugin (ADR 0025) call latency by plugin.",
+                ["plugin_name"],
+                &LATENCY_BUCKETS,
+            ),
         }
     }
 
@@ -87,85 +120,40 @@ impl AuthMetrics {
     /// `"oauth2"`, `"passkey"`, `"k8s"`, `"api_key"`. `reason` is `None` for
     /// a successful attempt, or `Some(bounded_reason)` for a failed one
     /// (`attempts_total`'s `outcome` label is derived from this, and
-    /// `failures_total` is only incremented when it is `Some`).
+    /// `failures_total` is only incremented when it is `Some`). `reason`
+    /// comes from [`auth_failure_reason`]/[`identity_failure_reason`].
     pub fn record_attempt(&self, method: &str, duration_seconds: f64, reason: Option<&str>) {
         let outcome = if reason.is_some() {
             "failure"
         } else {
             "success"
         };
-        self.attempts_total.inc([method, outcome]);
-        self.duration_seconds.record([method], duration_seconds);
+        let method = Label::bounded(method);
+        self.attempts_total.inc([method, outcome.into()]);
+        self.duration_seconds.record(duration_seconds, [method]);
         if let Some(reason) = reason {
-            self.failures_total.inc([method, reason]);
+            self.failures_total.inc([method, Label::bounded(reason)]);
         }
+    }
+
+    /// Counts one PCI-DSS account lockout.
+    pub fn record_lockout(&self) {
+        self.lockouts_total.inc([]);
+    }
+
+    /// Records one auth-plugin call. `plugin_name` is the operator-configured
+    /// `[auth_plugin.<name>]` section name (ADR 0025).
+    pub fn record_plugin_invocation(&self, plugin_name: &str, success: bool, seconds: f64) {
+        let plugin = Label::bounded(plugin_name);
+        let outcome = if success { "success" } else { "failure" };
+        self.plugin_duration_seconds.record(seconds, [plugin]);
+        self.plugin_invocations_total.inc([plugin, outcome.into()]);
     }
 }
 
 /// Process-wide [`AuthMetrics`] instance (ADR 0031 "Design pattern").
-pub static AUTH_METRICS: LazyLock<AuthMetrics> = LazyLock::new(AuthMetrics::new);
-
-impl PrometheusText for AuthMetrics {
-    fn format_prometheus_text(&self) -> String {
-        let mut out = String::new();
-
-        write_metric_header(
-            &mut out,
-            "keystone_auth_attempts_total",
-            "Authentication attempts by method and outcome.",
-            "counter",
-        );
-        self.attempts_total
-            .write_lines(&mut out, "keystone_auth_attempts_total");
-
-        write_metric_header(
-            &mut out,
-            "keystone_auth_duration_seconds",
-            "Authentication latency by method.",
-            "histogram",
-        );
-        self.duration_seconds
-            .write_lines(&mut out, "keystone_auth_duration_seconds");
-
-        write_metric_header(
-            &mut out,
-            "keystone_auth_failures_total",
-            "Authentication failures by method and sanitized reason.",
-            "counter",
-        );
-        self.failures_total
-            .write_lines(&mut out, "keystone_auth_failures_total");
-
-        write_metric_header(
-            &mut out,
-            "keystone_auth_lockouts_total",
-            "PCI-DSS account lockouts (ADR 0010).",
-            "counter",
-        );
-        self.lockouts_total
-            .write_line(&mut out, "keystone_auth_lockouts_total");
-
-        write_metric_header(
-            &mut out,
-            "keystone_auth_plugin_invocations_total",
-            "Dynamic auth-plugin (ADR 0025) call volume by plugin and outcome.",
-            "counter",
-        );
-        self.plugin_invocations_total
-            .write_lines(&mut out, "keystone_auth_plugin_invocations_total");
-
-        write_metric_header(
-            &mut out,
-            "keystone_auth_plugin_duration_seconds",
-            "Dynamic auth-plugin (ADR 0025) call latency by plugin.",
-            "histogram",
-        );
-        self.plugin_duration_seconds
-            .write_lines(&mut out, "keystone_auth_plugin_duration_seconds");
-
-        out
-    }
-}
+pub static AUTH_METRICS: LazyLock<AuthMetrics> =
+    LazyLock::new(|| AuthMetrics::new(&metrics::meter()));
 
 /// Maps an [`AuthenticationError`] to a bounded, PII-free reason string for
 /// the `keystone_auth_failures_total`/`keystone_token_*` `reason` labels.
@@ -286,81 +274,79 @@ pub fn identity_failure_reason(e: &IdentityProviderError) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use openstack_keystone_telemetry::metrics::MetricsPipeline;
+
     use super::*;
 
     /// Pins the rendered exposition text (series names, labels, HELP/TYPE and
     /// bucket layout) against `tests/golden/auth.prom` (ADR 0040).
     #[test]
     fn golden_exposition() {
-        let metrics = AuthMetrics::new();
+        let pipeline = MetricsPipeline::new();
+        let metrics = AuthMetrics::new(&pipeline.meter());
         metrics.record_attempt("password", 0.004, None);
         metrics.record_attempt("password", 0.3, Some("UserNameOrPasswordWrong"));
         metrics.record_attempt("token", 0.0008, None);
         metrics.record_attempt("ec2", 6.0, Some("Unauthorized"));
-        metrics.lockouts_total.inc();
-        metrics.plugin_invocations_total.inc(["geoip", "success"]);
-        metrics.plugin_invocations_total.inc(["geoip", "failure"]);
-        metrics.plugin_duration_seconds.record(["geoip"], 0.02);
-        openstack_keystone_metrics::assert_golden!("auth", metrics.format_prometheus_text());
+        metrics.record_lockout();
+        metrics.record_plugin_invocation("geoip", true, 0.02);
+        metrics
+            .plugin_invocations_total
+            .inc(["geoip".into(), "failure".into()]);
+        openstack_keystone_telemetry::assert_golden!("auth", pipeline.render());
     }
 
     #[test]
     fn record_attempt_success_increments_only_attempts_and_duration() {
-        let metrics = AuthMetrics::new();
-        metrics.record_attempt("password", 0.01, None);
-        assert_eq!(metrics.attempts_total.get(["password", "success"]), 1);
-        assert_eq!(metrics.attempts_total.get(["password", "failure"]), 0);
-        assert_eq!(metrics.failures_total.get(["password", "anything"]), 0);
+        let pipeline = MetricsPipeline::new();
+        AuthMetrics::new(&pipeline.meter()).record_attempt("password", 0.01, None);
+        let text = pipeline.render();
+        assert!(
+            text.contains(
+                "keystone_auth_attempts_total{method=\"password\",outcome=\"success\"} 1\n"
+            )
+        );
+        assert!(!text.contains("outcome=\"failure\""));
+        assert!(!text.contains("keystone_auth_failures_total{"));
     }
 
     #[test]
     fn record_attempt_failure_increments_failures_with_reason() {
-        let metrics = AuthMetrics::new();
-        metrics.record_attempt("password", 0.02, Some("UserNameOrPasswordWrong"));
-        assert_eq!(metrics.attempts_total.get(["password", "failure"]), 1);
-        assert_eq!(
-            metrics
-                .failures_total
-                .get(["password", "UserNameOrPasswordWrong"]),
-            1
+        let pipeline = MetricsPipeline::new();
+        AuthMetrics::new(&pipeline.meter()).record_attempt(
+            "password",
+            0.02,
+            Some("UserNameOrPasswordWrong"),
         );
+        let text = pipeline.render();
+        assert!(
+            text.contains(
+                "keystone_auth_attempts_total{method=\"password\",outcome=\"failure\"} 1\n"
+            )
+        );
+        assert!(text.contains("keystone_auth_failures_total{method=\"password\",reason=\"UserNameOrPasswordWrong\"} 1\n"));
     }
 
     #[test]
     fn lockouts_total_has_no_labels() {
-        let metrics = AuthMetrics::new();
-        metrics.lockouts_total.inc();
-        assert_eq!(metrics.lockouts_total.get(), 1);
+        let pipeline = MetricsPipeline::new();
+        AuthMetrics::new(&pipeline.meter()).record_lockout();
+        assert!(
+            pipeline
+                .render()
+                .contains("keystone_auth_lockouts_total 1\n")
+        );
     }
 
     #[test]
     fn plugin_invocation_metrics_are_labeled_by_plugin_name() {
-        let metrics = AuthMetrics::new();
-        metrics.plugin_invocations_total.inc(["p1", "success"]);
-        metrics.plugin_duration_seconds.record(["p1"], 0.05);
-        assert_eq!(metrics.plugin_invocations_total.get(["p1", "success"]), 1);
-    }
-
-    #[test]
-    fn format_prometheus_text_includes_all_series_headers() {
-        let metrics = AuthMetrics::new();
-        metrics.record_attempt("password", 0.01, None);
-        metrics.lockouts_total.inc();
-        metrics.plugin_invocations_total.inc(["p", "failure"]);
-        metrics.plugin_duration_seconds.record(["p"], 0.02);
-        let text = metrics.format_prometheus_text();
-        assert!(text.contains("# TYPE keystone_auth_attempts_total counter"));
-        assert!(text.contains("# TYPE keystone_auth_duration_seconds histogram"));
-        assert!(text.contains("# TYPE keystone_auth_failures_total counter"));
-        assert!(text.contains("# TYPE keystone_auth_lockouts_total counter"));
-        assert!(text.contains("# TYPE keystone_auth_plugin_invocations_total counter"));
+        let pipeline = MetricsPipeline::new();
+        AuthMetrics::new(&pipeline.meter()).record_plugin_invocation("p1", true, 0.05);
+        let text = pipeline.render();
+        assert!(text.contains(
+            "keystone_auth_plugin_invocations_total{outcome=\"success\",plugin_name=\"p1\"} 1\n"
+        ));
         assert!(text.contains("# TYPE keystone_auth_plugin_duration_seconds histogram"));
-        assert!(
-            text.contains(
-                "keystone_auth_attempts_total{method=\"password\",outcome=\"success\"} 1"
-            )
-        );
-        assert!(text.contains("keystone_auth_lockouts_total 1"));
     }
 
     #[test]

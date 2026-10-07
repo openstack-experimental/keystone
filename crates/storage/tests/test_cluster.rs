@@ -1113,18 +1113,17 @@ async fn test_readiness_and_metrics_inner() -> Result<()> {
         readiness.issues
     );
 
-    let text = instances[0].storage.format_prometheus_metrics();
-    for line in [
-        "keystone_raft_is_leader 1\n",
-        "keystone_raft_current_leader_id 1\n",
-        "keystone_raft_membership_voters 3\n",
-        "keystone_raft_quarantined_partitions_count 0\n",
-        "keystone_raft_dek_pending_rotation 0\n",
-        "keystone_raft_gcm_failures_total 0\n",
-    ] {
-        assert!(text.contains(line), "missing {line:?} in:\n{text}");
-    }
+    // The nodes of this test share one process, and so one metrics
+    // pipeline: check that the series are exposed, not their per-node
+    // values.
+    let text = openstack_keystone_telemetry::metrics::render_prometheus();
     for name in [
+        "keystone_raft_is_leader ",
+        "keystone_raft_current_leader_id ",
+        "keystone_raft_membership_voters ",
+        "keystone_raft_quarantined_partitions_count ",
+        "keystone_raft_dek_pending_rotation ",
+        "keystone_raft_gcm_failures_total ",
         "keystone_raft_dek_version ",
         "keystone_raft_log_nonce_counter ",
         "keystone_raft_log_nonce_remaining ",
@@ -1134,9 +1133,6 @@ async fn test_readiness_and_metrics_inner() -> Result<()> {
     ] {
         assert!(text.contains(name), "missing {name:?} in:\n{text}");
     }
-    let follower_text = instances[1].storage.format_prometheus_metrics();
-    assert!(follower_text.contains("keystone_raft_is_leader 0\n"));
-    assert!(follower_text.contains("keystone_raft_current_leader_id 1\n"));
 
     Ok(())
 }

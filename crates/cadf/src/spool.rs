@@ -653,8 +653,8 @@ pub fn verify_sealed_spool(
     }
 
     let metrics = dispatcher.metrics();
-    metrics.spool_verified.add(["verified"], verified as u64);
-    metrics.spool_verified.add(["invalid"], skipped as u64);
+    metrics.spool_verified.add("verified", verified as u64);
+    metrics.spool_verified.add("invalid", skipped as u64);
     if skipped > 0 {
         quarantine_segment(path)?;
         metrics.spool_quarantined.inc();
@@ -1104,8 +1104,8 @@ mod tests {
         // Quarantined copies are not listed as sealed segments.
         assert!(list_segments(dir.path(), "node-1").unwrap().is_empty());
         let metrics = dispatcher.metrics();
-        assert_eq!(metrics.spool_verified.get(["verified"]), 1);
-        assert_eq!(metrics.spool_verified.get(["invalid"]), 1);
+        assert_eq!(metrics.spool_verified.get("verified"), 1);
+        assert_eq!(metrics.spool_verified.get("invalid"), 1);
         assert_eq!(metrics.spool_quarantined.get(), 1);
         // The quarantined segment's bytes must leave the gauge: it now holds
         // exactly what is still on disk as live spool or sealed segments.

@@ -18,7 +18,17 @@ use http_body_util::BodyExt as _;
 use tower::ServiceExt as _;
 
 use super::*;
+use crate::server::startup::audit::AUDIT_SERVICE;
 use crate::server::startup::test_support::{test_config, test_state};
+use openstack_keystone_core::keystone::ServiceState;
+
+/// An isolated SDK pipeline with the state's audit dispatcher registered, as
+/// `audit::init` does on the process-wide one.
+fn audit_pipeline(state: &ServiceState) -> Arc<MetricsPipeline> {
+    let pipeline = Arc::new(MetricsPipeline::new());
+    cadf::metrics::register(&state.audit_dispatcher, &pipeline.meter(), &AUDIT_SERVICE);
+    pipeline
+}
 
 #[tokio::test]
 async fn metrics_handler_includes_http_metrics_when_enabled() {
@@ -27,7 +37,8 @@ async fn metrics_handler_includes_http_metrics_when_enabled() {
     cfg.interface_metrics.http_requests_enabled = true;
     let state = test_state(cfg).await;
 
-    let http_metrics = Arc::new(HttpMetrics::new());
+    let pipeline = audit_pipeline(&state);
+    let http_metrics = HttpMetrics::new(&pipeline.meter());
     http_metrics.record_request(
         &axum::http::Method::GET,
         "/v3/probe",
@@ -37,7 +48,7 @@ async fn metrics_handler_includes_http_metrics_when_enabled() {
 
     let app = Router::new()
         .route("/metrics", axum::routing::get(metrics_handler))
-        .layer(Extension(http_metrics))
+        .layer(Extension(pipeline))
         .with_state(state);
 
     let response = app
@@ -64,10 +75,12 @@ async fn metrics_handler_omits_http_metrics_when_disabled() {
     cfg.interface_metrics.http_requests_enabled = false;
     let state = test_state(cfg).await;
 
-    // No `Extension<Arc<HttpMetrics>>` layered at all, matching what
-    // `spawn_metrics` does when the flag is off.
+    // No `HttpMetrics` created at all, matching what `attach_http_metrics`
+    // does when the flag is off.
+    let pipeline = audit_pipeline(&state);
     let app = Router::new()
         .route("/metrics", axum::routing::get(metrics_handler))
+        .layer(Extension(pipeline))
         .with_state(state);
 
     let response = app
@@ -96,13 +109,10 @@ async fn metrics_endpoint_golden() {
     let mut cfg = test_config(tmp.path().to_path_buf());
     cfg.interface_metrics.http_requests_enabled = true;
     let state = test_state(cfg).await;
-    state
-        .auth_plugin_load_failures
-        .write()
-        .await
-        .insert("geoip".to_string(), 1);
 
-    let http_metrics = Arc::new(HttpMetrics::new());
+    let pipeline = audit_pipeline(&state);
+    crate::auth_plugin_startup::LoadFailureMetrics::new(&pipeline.meter()).record("geoip");
+    let http_metrics = HttpMetrics::new(&pipeline.meter());
     http_metrics.record_request(
         &axum::http::Method::GET,
         "/v3/probe",
@@ -112,7 +122,7 @@ async fn metrics_endpoint_golden() {
 
     let app = Router::new()
         .route("/metrics", axum::routing::get(metrics_handler))
-        .layer(Extension(http_metrics))
+        .layer(Extension(pipeline))
         .with_state(state);
 
     let response = app
@@ -131,5 +141,5 @@ async fn metrics_endpoint_golden() {
     );
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let text = String::from_utf8(body.to_vec()).unwrap();
-    openstack_keystone_metrics::assert_golden!("metrics_endpoint", text);
+    openstack_keystone_telemetry::assert_golden!("metrics_endpoint", text);
 }

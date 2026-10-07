@@ -144,14 +144,6 @@ pub struct Service {
     /// loaded plugin.
     pub auth_plugin_limiters: RwLock<HashMap<String, Arc<PluginInvocationLimiter>>>,
 
-    /// Cumulative dynamic auth plugin load failure count, keyed by plugin
-    /// name (ADR 0025 §5: a checksum mismatch, missing file, or compile
-    /// error at load time is never fatal to the process - this is the
-    /// backing counter for the `keystone_auth_plugin_load_failure{plugin_name}`
-    /// metric §5 calls for, incremented by `crates/keystone`'s
-    /// `load_auth_plugins` alongside its `CRITICAL` log line).
-    pub auth_plugin_load_failures: RwLock<HashMap<String, u64>>,
-
     /// Type-erased hook used to observe SPIFFE mTLS material freshness for
     /// the readiness probe (see `crates/keystone/src/api/health.rs`'s
     /// `SpiffeStatus`).
@@ -254,7 +246,6 @@ impl Service {
             core_host_functions: RwLock::new(None),
             rate_limiters,
             auth_plugin_limiters: RwLock::new(HashMap::new()),
-            auth_plugin_load_failures: RwLock::new(HashMap::new()),
             spiffe_health_check: RwLock::new(None),
             shutdown: false,
         })

@@ -19,7 +19,9 @@
 
 use std::sync::LazyLock;
 
-use openstack_keystone_metrics::{Histogram, LabeledCounter, PrometheusText, write_metric_header};
+use openstack_keystone_telemetry::metrics::{
+    self, CounterVec, HistogramVec, LATENCY_BUCKETS, Meter,
+};
 
 /// `outcome` label value: a rule in the ruleset matched the claims.
 pub const OUTCOME_MATCHED: &str = "matched";
@@ -33,107 +35,80 @@ pub const OUTCOME_ERROR: &str = "error";
 pub struct MappingMetrics {
     /// `keystone_mapping_evaluations_total{outcome}` — mapping-engine
     /// evaluation volume.
-    pub evaluations_total: LabeledCounter<1>,
+    evaluations_total: CounterVec<1>,
     /// `keystone_mapping_evaluation_duration_seconds` — mapping-engine
     /// evaluation latency (unlabeled).
-    pub evaluation_duration_seconds: Histogram,
+    evaluation_duration_seconds: HistogramVec<0>,
 }
 
-impl Default for MappingMetrics {
-    fn default() -> Self {
+impl MappingMetrics {
+    /// Create the instruments on `meter`.
+    pub fn new(meter: &Meter) -> Self {
         Self {
-            evaluations_total: LabeledCounter::new(["outcome"]),
-            evaluation_duration_seconds: Histogram::new(),
+            evaluations_total: CounterVec::new(
+                meter,
+                "keystone_mapping_evaluations_total",
+                "Mapping-engine rule evaluation volume by outcome.",
+                ["outcome"],
+            ),
+            evaluation_duration_seconds: HistogramVec::new(
+                meter,
+                "keystone_mapping_evaluation_duration_seconds",
+                "Mapping-engine rule evaluation latency.",
+                [],
+                &LATENCY_BUCKETS,
+            ),
         }
     }
-}
 
-impl PrometheusText for MappingMetrics {
-    fn format_prometheus_text(&self) -> String {
-        let mut out = String::new();
-        write_metric_header(
-            &mut out,
-            "keystone_mapping_evaluations_total",
-            "Mapping-engine rule evaluation volume by outcome.",
-            "counter",
-        );
-        self.evaluations_total
-            .write_lines(&mut out, "keystone_mapping_evaluations_total");
-
-        write_metric_header(
-            &mut out,
-            "keystone_mapping_evaluation_duration_seconds",
-            "Mapping-engine rule evaluation latency.",
-            "histogram",
-        );
-        self.evaluation_duration_seconds.write_lines(
-            &mut out,
-            "keystone_mapping_evaluation_duration_seconds",
-            &[],
-            &[],
-        );
-        out
+    /// Record one rule evaluation: `outcome` is one of the `OUTCOME_*`
+    /// constants of this module.
+    pub fn record_evaluation(&self, outcome: &'static str, seconds: f64) {
+        self.evaluation_duration_seconds.record(seconds, []);
+        self.evaluations_total.inc([outcome.into()]);
     }
 }
 
 /// Process-wide mapping-engine metrics.
-pub static MAPPING_METRICS: LazyLock<MappingMetrics> = LazyLock::new(MappingMetrics::default);
+pub static MAPPING_METRICS: LazyLock<MappingMetrics> =
+    LazyLock::new(|| MappingMetrics::new(&metrics::meter()));
 
 #[cfg(test)]
 mod tests {
+    use openstack_keystone_telemetry::metrics::MetricsPipeline;
+
     use super::*;
 
     /// Pins the rendered exposition text (series names, labels, HELP/TYPE and
     /// bucket layout) against `tests/golden/mapping.prom` (ADR 0040).
     #[test]
     fn golden_exposition() {
-        let metrics = MappingMetrics::default();
-        metrics.evaluations_total.inc([OUTCOME_MATCHED]);
-        metrics.evaluations_total.inc([OUTCOME_NO_MATCH]);
-        metrics.evaluations_total.inc([OUTCOME_ERROR]);
-        metrics.evaluation_duration_seconds.record(0.002);
-        metrics.evaluation_duration_seconds.record(0.7);
-        openstack_keystone_metrics::assert_golden!("mapping", metrics.format_prometheus_text());
+        let pipeline = MetricsPipeline::new();
+        let metrics = MappingMetrics::new(&pipeline.meter());
+        metrics.record_evaluation(OUTCOME_MATCHED, 0.002);
+        metrics.record_evaluation(OUTCOME_NO_MATCH, 0.7);
+        metrics.evaluations_total.inc([OUTCOME_ERROR.into()]);
+        openstack_keystone_telemetry::assert_golden!("mapping", pipeline.render());
     }
 
     #[test]
-    fn records_evaluations_by_outcome() {
-        let metrics = MappingMetrics::default();
-        metrics.evaluations_total.inc([OUTCOME_MATCHED]);
-        metrics.evaluations_total.inc([OUTCOME_MATCHED]);
-        metrics.evaluations_total.inc([OUTCOME_NO_MATCH]);
-        metrics.evaluations_total.inc([OUTCOME_ERROR]);
+    fn records_evaluations_and_duration() {
+        let pipeline = MetricsPipeline::new();
+        let metrics = MappingMetrics::new(&pipeline.meter());
+        metrics.record_evaluation(OUTCOME_MATCHED, 0.01);
+        metrics.record_evaluation(OUTCOME_MATCHED, 0.01);
+        metrics.record_evaluation(OUTCOME_NO_MATCH, 0.01);
 
-        assert_eq!(metrics.evaluations_total.get([OUTCOME_MATCHED]), 2);
-        assert_eq!(metrics.evaluations_total.get([OUTCOME_NO_MATCH]), 1);
-        assert_eq!(metrics.evaluations_total.get([OUTCOME_ERROR]), 1);
-    }
-
-    #[test]
-    fn records_evaluation_duration() {
-        let metrics = MappingMetrics::default();
-        metrics.evaluation_duration_seconds.record(0.002);
-        assert_eq!(metrics.evaluation_duration_seconds.count(), 1);
-    }
-
-    #[test]
-    fn formats_prometheus_text_with_headers() {
-        let metrics = MappingMetrics::default();
-        metrics.evaluations_total.inc([OUTCOME_MATCHED]);
-        metrics.evaluation_duration_seconds.record(0.01);
-
-        let text = metrics.format_prometheus_text();
-        assert!(text.contains("# HELP keystone_mapping_evaluations_total"));
+        let text = pipeline.render();
         assert!(text.contains("# TYPE keystone_mapping_evaluations_total counter"));
-        assert!(text.contains("keystone_mapping_evaluations_total{outcome=\"matched\"} 1"));
-        assert!(text.contains("# HELP keystone_mapping_evaluation_duration_seconds"));
+        assert!(text.contains("keystone_mapping_evaluations_total{outcome=\"matched\"} 2\n"));
+        assert!(text.contains("keystone_mapping_evaluations_total{outcome=\"no_match\"} 1\n"));
         assert!(text.contains("# TYPE keystone_mapping_evaluation_duration_seconds histogram"));
-        assert!(text.contains("keystone_mapping_evaluation_duration_seconds_count 1"));
+        assert!(text.contains("keystone_mapping_evaluation_duration_seconds_count 3\n"));
     }
 
     #[test]
-    fn static_instance_is_reachable() {
-        MAPPING_METRICS.evaluations_total.inc([OUTCOME_MATCHED]);
-        assert!(MAPPING_METRICS.evaluations_total.get([OUTCOME_MATCHED]) >= 1);
+    fn static_instance_records_without_panicking() {
+        MAPPING_METRICS.record_evaluation(OUTCOME_MATCHED, 0.0);
     }
 }

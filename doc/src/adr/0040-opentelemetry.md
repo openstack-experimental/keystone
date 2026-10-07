@@ -154,12 +154,38 @@ callers pass `&str`). It stays type-level: `openstack-keystone-telemetry`
 provides typed attribute helpers that accept only `&'static str` or enum-backed
 label values, never an owned `String`.
 
-`/metrics` is served from a pull reader registered on the same `MeterProvider`
-as the OTLP periodic reader, rendered by a small in-tree encoder with explicit
-series naming (`_total` for counters, `_bucket`/`_sum`/`_count` for histograms).
-`deploy/prometheus/alert_rules.yaml` and ADR 0031 names are preserved, enforced
-by a golden test captured from the current implementation before the migration.
-A third-party Prometheus bridge crate is not used.
+`/metrics` is rendered from the same `MeterProvider` as the OTLP export, by a
+small in-tree encoder with explicit series naming (`_total` for counters,
+`_bucket`/`_sum`/`_count` for histograms; an instrument is registered under
+exactly the name it exposes, `_total` included, so counters that predate the
+convention keep their name). The SDK's pull reader
+(`ManualReader`) is behind an experimental cargo feature in the version used,
+so it is not used. The provider has one stable `PeriodicReader` whose exporter
+renders the Prometheus text into a snapshot on every collection and forwards
+the data to the OTLP exporter when one is configured. A scrape forces a
+collection and reads the snapshot; forced collections are not forwarded, so
+scraping causes no extra OTLP requests.
+`deploy/prometheus/alert_rules.yaml` and ADR 0031 names are preserved,
+enforced by a golden test captured from the current implementation before the
+migration. A third-party Prometheus bridge crate is not used.
+
+The metrics SDK (not the OTLP exporters) is a regular dependency of
+`openstack-keystone-telemetry`, so `/metrics` works in every build and there is
+one code path. The pipeline is process-wide and created pull-only on first use;
+OTLP push needs it to be created by telemetry init, so instruments must not be
+used before init. Differences from the hand-rolled primitives: a series exists
+only after it was first recorded (a series that must read zero is recorded
+with `add(0, ..)`), and a bounded label whose value is chosen at run time
+(`idp_id`) is passed through `Label::bounded`, which marks it for review.
+
+Subsystems that already keep their own state (the audit dispatcher's atomics,
+the live `openraft` metrics) expose it through observable instruments read at
+collection time, so the hot paths do not touch the SDK. The output differs from
+the hand-rolled text in presentation only: label names are sorted, families
+are ordered by name, and a family with no sample yet (the two audit counters
+labelled by `result`) has no `# HELP`/`# TYPE` header. Every series name,
+label and value is unchanged, which the golden files check. The Raft series
+were not served before (the formatter was never called) and now are.
 
 Operators scrape `/metrics` or push OTLP, not both for the same series, or a
 collector that re-exposes Prometheus double counts.
@@ -178,15 +204,20 @@ they are follow-up work, not a blocker.
 5. Metrics, part 1: typed wrappers, the pull reader and encoder, `/metrics` on
    the SDK with one subsystem migrated.
 6. Metrics, part 2: remaining subsystems, grouped by crate.
-7. Remove `openstack-keystone-metrics`; re-run the golden test and benchmark.
+7. Remove `openstack-keystone-metrics`; re-run the golden tests. The golden
+   helper moved to `openstack-keystone-telemetry` (`golden` feature), and the
+   benchmark keeps only the span cases, since the comparison needs the removed
+   crate.
 8. Operator documentation, including migration from
    `[oslo_middleware_tracing]` and a collector example.
 
 ## Benchmark
 
-`tests/otel-bench` (standalone crate, `cargo bench` inside it) compares the
-current primitives with SDK synchronous instruments, and measures the cost of
-the OTel span layer. Run on a shared 4-vCPU cloud VM, criterion, 3 s
+`tests/otel-bench` (standalone crate, `cargo bench` inside it) measured the
+hand-rolled primitives against SDK synchronous instruments before the decision,
+and measures the cost of the OTel span layer. The instrument comparison needs
+`openstack-keystone-metrics`, so it can only be re-run from the commits before
+that crate was removed; the numbers below are the recorded result. Run on a shared 4-vCPU cloud VM, criterion, 3 s
 measurement per case, single run. Treat as indicative: the VM is noisy and the
 contended cases in particular vary between runs. Versions: `opentelemetry` and
 `opentelemetry_sdk` 0.33, `tracing-opentelemetry` 0.34.
@@ -241,9 +272,8 @@ Reading:
   golden test replace them.
 - New dependencies (`opentelemetry`, `opentelemetry_sdk`, an OTLP exporter,
   `tracing-opentelemetry`) behind the `otel` feature. The default build is
-  unchanged until the metrics migration step, after which `/metrics` depends on
-  the SDK and so on the feature; a build without `otel` keeps a minimal
-  in-process path, to be settled in step 5.
+  unchanged except that the metrics SDK, without any exporter, is always
+  compiled in: `/metrics` is served from it in every build.
 - The bounded-label rule moves from a type-level check in one crate to typed
   helpers in another; reviewers still check that label sources are bounded.
 - ADR 0031's "continue hand-rolled exposition" decision is superseded; its

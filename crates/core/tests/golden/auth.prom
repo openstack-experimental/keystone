@@ -55,10 +55,6 @@ keystone_auth_failures_total{method="password",reason="UserNameOrPasswordWrong"}
 # HELP keystone_auth_lockouts_total PCI-DSS account lockouts (ADR 0010).
 # TYPE keystone_auth_lockouts_total counter
 keystone_auth_lockouts_total 1
-# HELP keystone_auth_plugin_invocations_total Dynamic auth-plugin (ADR 0025) call volume by plugin and outcome.
-# TYPE keystone_auth_plugin_invocations_total counter
-keystone_auth_plugin_invocations_total{plugin_name="geoip",outcome="failure"} 1
-keystone_auth_plugin_invocations_total{plugin_name="geoip",outcome="success"} 1
 # HELP keystone_auth_plugin_duration_seconds Dynamic auth-plugin (ADR 0025) call latency by plugin.
 # TYPE keystone_auth_plugin_duration_seconds histogram
 keystone_auth_plugin_duration_seconds_bucket{plugin_name="geoip",le="0.001"} 0
@@ -75,3 +71,7 @@ keystone_auth_plugin_duration_seconds_bucket{plugin_name="geoip",le="5"} 1
 keystone_auth_plugin_duration_seconds_bucket{plugin_name="geoip",le="+Inf"} 1
 keystone_auth_plugin_duration_seconds_sum{plugin_name="geoip"} 0.02
 keystone_auth_plugin_duration_seconds_count{plugin_name="geoip"} 1
+# HELP keystone_auth_plugin_invocations_total Dynamic auth-plugin (ADR 0025) call volume by plugin and outcome.
+# TYPE keystone_auth_plugin_invocations_total counter
+keystone_auth_plugin_invocations_total{outcome="failure",plugin_name="geoip"} 1
+keystone_auth_plugin_invocations_total{outcome="success",plugin_name="geoip"} 1

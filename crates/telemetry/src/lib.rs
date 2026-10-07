@@ -29,6 +29,9 @@
 //! build without the feature still rejects a malformed section.
 
 pub mod config;
+#[cfg(feature = "golden")]
+pub mod golden;
+pub mod metrics;
 #[cfg(feature = "sdk")]
 mod propagation;
 #[cfg(feature = "sdk")]

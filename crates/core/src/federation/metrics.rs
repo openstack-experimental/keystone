@@ -22,7 +22,7 @@
 
 use std::sync::LazyLock;
 
-use openstack_keystone_metrics::{LabeledCounter, PrometheusText, write_metric_header};
+use openstack_keystone_telemetry::metrics::{self, CounterVec, Label, Meter};
 
 /// `outcome` label value for a successful federated authentication.
 pub const OUTCOME_SUCCESS: &str = "success";
@@ -33,118 +33,90 @@ pub const OUTCOME_FAILURE: &str = "failure";
 pub struct FederationMetrics {
     /// `keystone_federation_authentications_total{idp_id,outcome}` — federated
     /// authentication volume.
-    pub authentications_total: LabeledCounter<2>,
+    authentications_total: CounterVec<2>,
 }
 
-impl Default for FederationMetrics {
-    fn default() -> Self {
+impl FederationMetrics {
+    /// Create the instruments on `meter`.
+    pub fn new(meter: &Meter) -> Self {
         Self {
-            authentications_total: LabeledCounter::new(["idp_id", "outcome"]),
+            authentications_total: CounterVec::new(
+                meter,
+                "keystone_federation_authentications_total",
+                "Federated authentication volume by identity provider and outcome.",
+                ["idp_id", "outcome"],
+            ),
         }
     }
-}
 
-impl PrometheusText for FederationMetrics {
-    fn format_prometheus_text(&self) -> String {
-        let mut out = String::new();
-        write_metric_header(
-            &mut out,
-            "keystone_federation_authentications_total",
-            "Federated authentication volume by identity provider and outcome.",
-            "counter",
-        );
+    /// Count one federated authentication against `idp_id`.
+    ///
+    /// `idp_id` is one of the operator-registered identity providers (ADR
+    /// 0031), hence a bounded label; `success` selects the fixed outcome.
+    pub fn record_authentication(&self, idp_id: &str, success: bool) {
+        let outcome = if success {
+            OUTCOME_SUCCESS
+        } else {
+            OUTCOME_FAILURE
+        };
         self.authentications_total
-            .write_lines(&mut out, "keystone_federation_authentications_total");
-        out
+            .inc([Label::bounded(idp_id), outcome.into()]);
     }
 }
 
 /// Process-wide federation metrics.
 pub static FEDERATION_METRICS: LazyLock<FederationMetrics> =
-    LazyLock::new(FederationMetrics::default);
+    LazyLock::new(|| FederationMetrics::new(&metrics::meter()));
 
 #[cfg(test)]
 mod tests {
+    use openstack_keystone_telemetry::metrics::MetricsPipeline;
+
     use super::*;
 
     /// Pins the rendered exposition text (series names, labels, HELP/TYPE and
     /// bucket layout) against `tests/golden/federation.prom` (ADR 0040).
     #[test]
     fn golden_exposition() {
-        let metrics = FederationMetrics::default();
-        metrics
-            .authentications_total
-            .inc(["idp-okta", OUTCOME_SUCCESS]);
-        metrics
-            .authentications_total
-            .inc(["idp-okta", OUTCOME_FAILURE]);
-        metrics
-            .authentications_total
-            .inc(["idp-azure", OUTCOME_SUCCESS]);
-        openstack_keystone_metrics::assert_golden!("federation", metrics.format_prometheus_text());
+        let pipeline = MetricsPipeline::new();
+        let metrics = FederationMetrics::new(&pipeline.meter());
+        metrics.record_authentication("idp-okta", true);
+        metrics.record_authentication("idp-okta", false);
+        metrics.record_authentication("idp-azure", true);
+        openstack_keystone_telemetry::assert_golden!("federation", pipeline.render());
     }
 
     #[test]
     fn records_success_and_failure_per_idp() {
-        let metrics = FederationMetrics::default();
-        metrics
-            .authentications_total
-            .inc(["idp-okta", OUTCOME_SUCCESS]);
-        metrics
-            .authentications_total
-            .inc(["idp-okta", OUTCOME_SUCCESS]);
-        metrics
-            .authentications_total
-            .inc(["idp-okta", OUTCOME_FAILURE]);
-        metrics
-            .authentications_total
-            .inc(["idp-azure", OUTCOME_SUCCESS]);
+        let pipeline = MetricsPipeline::new();
+        let metrics = FederationMetrics::new(&pipeline.meter());
+        metrics.record_authentication("idp-okta", true);
+        metrics.record_authentication("idp-okta", true);
+        metrics.record_authentication("idp-okta", false);
+        metrics.record_authentication("idp-azure", true);
 
-        assert_eq!(
-            metrics
-                .authentications_total
-                .get(["idp-okta", OUTCOME_SUCCESS]),
-            2
-        );
-        assert_eq!(
-            metrics
-                .authentications_total
-                .get(["idp-okta", OUTCOME_FAILURE]),
-            1
-        );
-        assert_eq!(
-            metrics
-                .authentications_total
-                .get(["idp-azure", OUTCOME_SUCCESS]),
-            1
-        );
+        let text = pipeline.render();
+        for expected in [
+            "keystone_federation_authentications_total{idp_id=\"idp-okta\",outcome=\"success\"} 2\n",
+            "keystone_federation_authentications_total{idp_id=\"idp-okta\",outcome=\"failure\"} 1\n",
+            "keystone_federation_authentications_total{idp_id=\"idp-azure\",outcome=\"success\"} 1\n",
+        ] {
+            assert!(text.contains(expected), "{expected} not in {text}");
+        }
     }
 
     #[test]
-    fn formats_prometheus_text_with_header_and_labels() {
-        let metrics = FederationMetrics::default();
-        metrics
-            .authentications_total
-            .inc(["idp-okta", OUTCOME_SUCCESS]);
+    fn has_header_with_help_and_type() {
+        let pipeline = MetricsPipeline::new();
+        FederationMetrics::new(&pipeline.meter()).record_authentication("idp-okta", true);
 
-        let text = metrics.format_prometheus_text();
+        let text = pipeline.render();
         assert!(text.contains("# HELP keystone_federation_authentications_total"));
         assert!(text.contains("# TYPE keystone_federation_authentications_total counter"));
-        assert!(text.contains(
-            "keystone_federation_authentications_total{idp_id=\"idp-okta\",outcome=\"success\"} 1"
-        ));
     }
 
     #[test]
-    fn static_instance_is_reachable_and_independent_per_test_process() {
-        FEDERATION_METRICS
-            .authentications_total
-            .inc(["idp-static", OUTCOME_SUCCESS]);
-        assert!(
-            FEDERATION_METRICS
-                .authentications_total
-                .get(["idp-static", OUTCOME_SUCCESS])
-                >= 1
-        );
+    fn static_instance_records_without_panicking() {
+        FEDERATION_METRICS.record_authentication("idp-static", true);
     }
 }

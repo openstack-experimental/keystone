@@ -23,7 +23,7 @@
 //! production code - only this top-level service crate, which actually
 //! constructs the real `WasmPluginRegistry`, does.
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use openstack_keystone_auth_plugin_runtime::WasmPluginRegistry;
 use openstack_keystone_core::auth_plugin::{
@@ -31,6 +31,7 @@ use openstack_keystone_core::auth_plugin::{
 };
 use openstack_keystone_core::auth_plugin_http::DynamicPluginHttpFetcher;
 use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_telemetry::metrics::{self, CounterVec, Label, Meter};
 
 /// Load every configured dynamic auth plugin against `state`, populating
 /// `state.auth_plugin_registry`/`state.core_host_functions`. Never fails
@@ -51,7 +52,6 @@ pub async fn load_auth_plugins(
 
     let (registry, errors) = WasmPluginRegistry::load(&section, &configs, Some(&host_functions));
     if !errors.is_empty() {
-        let mut failures = state.auth_plugin_load_failures.write().await;
         for (name, err) in &errors {
             tracing::error!(
                 target: "keystone_auth_plugin_load_failure",
@@ -60,12 +60,9 @@ pub async fn load_auth_plugins(
                 "dynamic auth plugin failed to load at startup; this plugin is disabled, \
                  all other auth methods start normally"
             );
-            // Additive, not overwritten: `load_auth_plugins` only runs once
-            // at startup today (ADR §5 - no hot reload), but the counter is
-            // written this way so a future reload path accumulates rather
-            // than silently resetting the metric an operator may be
-            // alerting on.
-            *failures.entry(name.clone()).or_insert(0) += 1;
+            // A counter, so a future reload path accumulates rather than
+            // silently resetting the metric an operator may be alerting on.
+            LOAD_FAILURE_METRICS.record(name);
         }
     }
 
@@ -80,35 +77,37 @@ pub async fn load_auth_plugins(
     *state.auth_plugin_limiters.write().await = limiters;
 }
 
-/// Serialise `keystone_auth_plugin_load_failure{plugin_name}` (ADR 0025 §5)
-/// as Prometheus text exposition format (v0.0.4), one sample per plugin that
-/// has ever failed to load. Empty (no samples, just the `# HELP`/`# TYPE`
-/// header) when every configured plugin has always loaded successfully -
-/// matches `cadf::metrics::format_prometheus_text`'s
-/// style so both can be concatenated into one `/metrics` response body.
-pub fn format_load_failure_metrics(failures: &HashMap<String, u64>) -> String {
-    let mut out = String::from(
-        "# HELP keystone_auth_plugin_load_failure \
-Cumulative count of dynamic auth plugin load failures (missing file, checksum \
-mismatch, compile error), labeled by plugin_name - ADR 0025 section 5. A \
-load failure disables only that plugin; every other auth method still \
-starts normally.\n\
-# TYPE keystone_auth_plugin_load_failure counter\n",
-    );
-    let mut names: Vec<&String> = failures.keys().collect();
-    names.sort();
-    for name in names {
-        let count = failures[name];
-        // Prometheus label-value escaping: a plugin name is an operator-
-        // chosen config-section identifier, not attacker-influenced, but
-        // escaping is cheap and correct regardless.
-        let escaped = name.replace('\\', "\\\\").replace('"', "\\\"");
-        out.push_str(&format!(
-            "keystone_auth_plugin_load_failure{{plugin_name=\"{escaped}\"}} {count}\n"
-        ));
-    }
-    out
+/// `keystone_auth_plugin_load_failure{plugin_name}` (ADR 0025 §5): the
+/// cumulative count of dynamic auth plugin load failures. `plugin_name` is the
+/// operator-chosen `[auth_plugin.<name>]` section name, a bounded label.
+pub struct LoadFailureMetrics {
+    failures: CounterVec<1>,
 }
+
+impl LoadFailureMetrics {
+    /// Create the counter on `meter`.
+    pub fn new(meter: &Meter) -> Self {
+        Self {
+            failures: CounterVec::new(
+                meter,
+                "keystone_auth_plugin_load_failure",
+                "Cumulative count of dynamic auth plugin load failures (missing file, checksum \
+                 mismatch, compile error), labeled by plugin_name - ADR 0025 section 5. A load \
+                 failure disables only that plugin; every other auth method still starts normally.",
+                ["plugin_name"],
+            ),
+        }
+    }
+
+    /// Count one failure to load `plugin_name`.
+    pub fn record(&self, plugin_name: &str) {
+        self.failures.inc([Label::bounded(plugin_name)]);
+    }
+}
+
+/// Process-wide load-failure counter.
+pub static LOAD_FAILURE_METRICS: LazyLock<LoadFailureMetrics> =
+    LazyLock::new(|| LoadFailureMetrics::new(&metrics::meter()));
 
 #[cfg(test)]
 mod tests {
@@ -117,7 +116,7 @@ mod tests {
     use cadf::AuditDispatcher;
     use openstack_keystone_config::{Config, ConfigManager};
     use openstack_keystone_core::auth_plugin_http::FetchResponse;
-    use std::collections::HashMap;
+    use openstack_keystone_telemetry::metrics::MetricsPipeline;
     use std::net::SocketAddr;
 
     use crate::keystone::Service;
@@ -128,11 +127,12 @@ mod tests {
     /// `tests/golden/auth_plugin_load_failure.prom` (ADR 0040).
     #[test]
     fn golden_load_failure_exposition() {
-        let failures = HashMap::from([("geoip".to_string(), 2u64), ("a\"b\\c".to_string(), 1u64)]);
-        openstack_keystone_metrics::assert_golden!(
-            "auth_plugin_load_failure",
-            format_load_failure_metrics(&failures)
-        );
+        let pipeline = MetricsPipeline::new();
+        let metrics = LoadFailureMetrics::new(&pipeline.meter());
+        metrics.record("geoip");
+        metrics.record("geoip");
+        metrics.record("a\"b\\c");
+        openstack_keystone_telemetry::assert_golden!("auth_plugin_load_failure", pipeline.render());
     }
 
     struct UnreachableHttpFetcher;
@@ -237,26 +237,22 @@ mod tests {
         load_auth_plugins(&state, Arc::new(UnreachableHttpFetcher)).await;
 
         assert!(state.auth_plugin_registry.read().await.is_empty());
-        let failures = state.auth_plugin_load_failures.read().await;
-        assert_eq!(failures.get("bad"), Some(&1));
 
-        let text = format_load_failure_metrics(&failures);
-        assert!(text.contains("keystone_auth_plugin_load_failure{plugin_name=\"bad\"} 1"));
+        let text = openstack_keystone_telemetry::metrics::render_prometheus();
+        assert!(
+            text.contains("keystone_auth_plugin_load_failure{plugin_name=\"bad\"} 1"),
+            "{text}"
+        );
     }
 
     #[test]
-    fn test_format_load_failure_metrics_empty() {
-        let text = format_load_failure_metrics(&HashMap::new());
-        assert!(text.contains("# HELP keystone_auth_plugin_load_failure"));
-        assert!(text.contains("# TYPE keystone_auth_plugin_load_failure counter"));
-        assert!(!text.contains("plugin_name="));
-    }
-
-    #[test]
-    fn test_format_load_failure_metrics_escapes_label_value() {
-        let mut failures = HashMap::new();
-        failures.insert("weird\"name\\".to_string(), 3u64);
-        let text = format_load_failure_metrics(&failures);
-        assert!(text.contains("plugin_name=\"weird\\\"name\\\\\""));
+    fn load_failure_label_value_is_escaped() {
+        let pipeline = MetricsPipeline::new();
+        LoadFailureMetrics::new(&pipeline.meter()).record("weird\"name\\");
+        assert!(
+            pipeline
+                .render()
+                .contains("plugin_name=\"weird\\\"name\\\\\"")
+        );
     }
 }

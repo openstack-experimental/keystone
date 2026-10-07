@@ -43,11 +43,12 @@ use std::fs::{self, File, OpenOptions};
 use std::io::Write as _;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use openstack_keystone_metrics::{Counter, Gauge, write_metric_header};
 use openstack_keystone_storage_crypto::AuditHmacKey;
+use openstack_keystone_telemetry::metrics::{Meter, observe_counter, observe_gauge};
 use serde::Serialize;
 use tokio::sync::mpsc;
 
@@ -132,11 +133,30 @@ impl KeyRing {
     }
 }
 
-/// Shared metrics for the audit spool.
+/// Shared metrics for the audit spool: plain atomics the writer updates,
+/// exposed through [`AuditForwarder::register_metrics`].
 #[derive(Default)]
 struct AuditMetrics {
-    spool_bytes: Gauge,
-    dropped_total: Counter,
+    spool_bytes: AtomicI64,
+    dropped_total: AtomicU64,
+}
+
+impl AuditMetrics {
+    fn spool_bytes(&self) -> i64 {
+        self.spool_bytes.load(Ordering::Relaxed)
+    }
+
+    fn dropped_total(&self) -> u64 {
+        self.dropped_total.load(Ordering::Relaxed)
+    }
+
+    fn inc_dropped(&self) {
+        self.dropped_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn set_spool_bytes(&self, bytes: i64) {
+        self.spool_bytes.store(bytes, Ordering::Relaxed);
+    }
 }
 
 /// Background task that signs audit records and appends them to the spool.
@@ -177,7 +197,7 @@ impl AuditForwarder {
     /// `ERROR` — audit emission must not block storage writes.
     pub fn emit(&self, record: AuditRecord) {
         if let Err(e) = self.tx.try_send(record) {
-            self.metrics.dropped_total.inc();
+            self.metrics.inc_dropped();
             tracing::error!(error = %e, "AUDIT: record dropped — writer channel full or closed");
         }
     }
@@ -197,57 +217,59 @@ impl AuditForwarder {
     /// Records dropped since startup (channel overflow or spool write
     /// failure).
     pub fn dropped_total(&self) -> u64 {
-        self.metrics.dropped_total.get()
+        self.metrics.dropped_total()
     }
 
     /// Current total spool size in bytes.
     pub fn spool_bytes(&self) -> i64 {
-        self.metrics.spool_bytes.get()
+        self.metrics.spool_bytes()
     }
 
-    /// Render the audit spool metrics in Prometheus text format.
-    pub fn format_prometheus_text(&self) -> String {
-        let mut out = String::new();
-        write_metric_header(
-            &mut out,
+    /// Expose the audit spool metrics on `meter`.
+    pub fn register_metrics(&self, meter: &Meter) {
+        let metrics = Arc::clone(&self.metrics);
+        observe_gauge(
+            meter,
             "keystone_raft_audit_spool_bytes",
             "Total size of the raft audit spool (live file plus sealed segments).",
-            "gauge",
+            [],
+            move |emit| emit([], u64::try_from(metrics.spool_bytes()).unwrap_or(0)),
         );
-        self.metrics
-            .spool_bytes
-            .write_line(&mut out, "keystone_raft_audit_spool_bytes");
-        write_metric_header(
-            &mut out,
+        let metrics = Arc::clone(&self.metrics);
+        observe_counter(
+            meter,
             "keystone_raft_audit_dropped_total",
             "Audit records dropped (channel overflow or spool write failure).",
-            "counter",
+            [],
+            move |emit| emit([], metrics.dropped_total()),
         );
-        self.metrics
-            .dropped_total
-            .write_line(&mut out, "keystone_raft_audit_dropped_total");
-        write_metric_header(
-            &mut out,
+        // A weak sender: the registration lives as long as the process and
+        // must not keep the writer channel open.
+        let tx = self.tx.downgrade();
+        observe_gauge(
+            meter,
             "keystone_raft_audit_channel_depth",
             "Audit records queued for the spool writer (records are dropped \
              once the channel is full).",
-            "gauge",
+            [],
+            move |emit| {
+                if let Some(tx) = tx.upgrade() {
+                    emit([], (tx.max_capacity().saturating_sub(tx.capacity())) as u64);
+                }
+            },
         );
-        out.push_str(&format!(
-            "keystone_raft_audit_channel_depth {}\n",
-            self.tx.max_capacity().saturating_sub(self.tx.capacity())
-        ));
-        write_metric_header(
-            &mut out,
+        let tx = self.tx.downgrade();
+        observe_gauge(
+            meter,
             "keystone_raft_audit_channel_capacity",
             "Capacity of the audit spool writer channel.",
-            "gauge",
+            [],
+            move |emit| {
+                if let Some(tx) = tx.upgrade() {
+                    emit([], tx.max_capacity() as u64);
+                }
+            },
         );
-        out.push_str(&format!(
-            "keystone_raft_audit_channel_capacity {}\n",
-            self.tx.max_capacity()
-        ));
-        out
     }
 }
 
@@ -316,8 +338,7 @@ impl SpoolWriter {
 
     fn publish_bytes(&self) {
         self.metrics
-            .spool_bytes
-            .set(i64::try_from(self.total_bytes()).unwrap_or(i64::MAX));
+            .set_spool_bytes(i64::try_from(self.total_bytes()).unwrap_or(i64::MAX));
     }
 
     /// Append one line and fsync it before returning.
@@ -400,7 +421,7 @@ async fn forwarder_task(
         let json = match serde_json::to_string(&record) {
             Ok(j) => j,
             Err(e) => {
-                metrics.dropped_total.inc();
+                metrics.inc_dropped();
                 tracing::error!(error = %e, "AUDIT: failed to serialise record");
                 continue;
             }
@@ -413,12 +434,12 @@ async fn forwarder_task(
         let (key_version, hmac) = match signed {
             Some((v, Ok(mac))) => (v, mac),
             Some((_, Err(e))) => {
-                metrics.dropped_total.inc();
+                metrics.inc_dropped();
                 tracing::error!(error = %e, "AUDIT: failed to sign record");
                 continue;
             }
             None => {
-                metrics.dropped_total.inc();
+                metrics.inc_dropped();
                 tracing::error!("AUDIT: no signing key available");
                 continue;
             }
@@ -429,7 +450,7 @@ async fn forwarder_task(
         let line =
             format!(r#"{{"record":{json},"key_version":{key_version},"hmac":"{hmac_hex}"}}"#);
         if let Err(e) = writer.append(&line) {
-            metrics.dropped_total.inc();
+            metrics.inc_dropped();
             tracing::error!(error = %e, event_type = record.event_type, "AUDIT: spool write failed; record lost");
         }
     }
@@ -531,7 +552,9 @@ mod tests {
     async fn prometheus_text_reports_channel_depth_and_capacity() {
         let dir = tempfile::tempdir().unwrap();
         let (fwd, _h) = AuditForwarder::spawn(1, key(1), cfg(dir.path(), 1 << 20)).unwrap();
-        let text = fwd.format_prometheus_text();
+        let pipeline = openstack_keystone_telemetry::metrics::MetricsPipeline::new();
+        fwd.register_metrics(&pipeline.meter());
+        let text = pipeline.render();
         assert!(text.contains("keystone_raft_audit_channel_depth 0\n"));
         assert!(text.contains(&format!(
             "keystone_raft_audit_channel_capacity {CHANNEL_CAPACITY}\n"
@@ -561,7 +584,7 @@ mod tests {
         }
         assert!(w.total_bytes() <= 800 + 100);
         assert_eq!(
-            metrics.spool_bytes.get(),
+            metrics.spool_bytes(),
             i64::try_from(w.total_bytes()).unwrap()
         );
         assert!(!w.sealed.is_empty());
@@ -586,7 +609,7 @@ mod tests {
 
         assert_eq!(w.sealed.len(), 2);
         assert_eq!(w.total_bytes(), 300);
-        assert_eq!(metrics.spool_bytes.get(), 300);
+        assert_eq!(metrics.spool_bytes(), 300);
     }
 
     #[test]
@@ -602,6 +625,6 @@ mod tests {
         let metrics = Arc::new(AuditMetrics::default());
         let w = SpoolWriter::open(cfg(dir.path(), 800), metrics.clone()).unwrap();
         assert_eq!(w.total_bytes(), 500);
-        assert_eq!(metrics.spool_bytes.get(), 500);
+        assert_eq!(metrics.spool_bytes(), 500);
     }
 }

@@ -130,9 +130,7 @@ impl RevokeApi for RevokeService {
         // (`crates/keystone/src/api/v3/auth/token/delete.rs`), the token
         // owner (or an admin) explicitly revoking one specific token -
         // hence the fixed `"user_request"` reason here.
-        crate::token::TOKEN_METRICS
-            .revoked_total
-            .inc(["user_request"]);
+        crate::token::TOKEN_METRICS.record_revoked("user_request");
         Ok(())
     }
 }

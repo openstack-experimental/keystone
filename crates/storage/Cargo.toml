@@ -53,9 +53,9 @@ nix = { workspace = true, features = ["process", "resource"] }
 openraft = { workspace = true, features = ["serde", "type-alias"] }
 openstack-keystone-config.workspace = true
 openstack-keystone-local-emergency-store.workspace = true
-openstack-keystone-metrics.workspace = true
 openstack-keystone-storage-api.workspace = true
 openstack-keystone-storage-crypto.workspace = true
+openstack-keystone-telemetry.workspace = true
 openstack-keystone-storage-crypto-pkcs11 = { workspace = true, optional = true }
 openstack-keystone-storage-crypto-tpm = { workspace = true, optional = true }
 oslo-config.workspace = true
@@ -84,7 +84,7 @@ validator = { workspace = true, features = ["derive"] }
 x509-parser.workspace = true
 
 [dev-dependencies]
-openstack-keystone-metrics = { workspace = true, features = ["golden"] }
+openstack-keystone-telemetry = { workspace = true, features = ["golden"] }
 config = { workspace = true, features = ["ini"] }
 criterion = { workspace = true, features = ["async_tokio"] }
 cryptoki = "0.12"

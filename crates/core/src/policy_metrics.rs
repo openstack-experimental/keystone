@@ -37,8 +37,8 @@
 use std::sync::LazyLock;
 use std::time::Duration;
 
-use openstack_keystone_metrics::{
-    LabeledCounter, LabeledHistogram, PrometheusText, write_metric_header,
+use openstack_keystone_telemetry::metrics::{
+    self, CounterVec, HistogramVec, LATENCY_BUCKETS, Label, Meter,
 };
 
 use crate::policy::{PolicyError, PolicyEvaluationResult};
@@ -57,67 +57,71 @@ use crate::policy::{PolicyError, PolicyEvaluationResult};
 ///   "wasm"` instead of introducing a parallel metric.
 pub struct PolicyMetrics {
     /// `keystone_policy_decisions_total{outcome}` -- decision volume.
-    pub decisions_total: LabeledCounter<1>,
+    decisions_total: CounterVec<1>,
     /// `keystone_policy_decision_duration_seconds{transport}` -- OPA
     /// round-trip latency. Recorded for every outcome (allow/deny/error),
     /// not just successful round-trips, so a slow-failing OPA call is
     /// visible too.
-    pub decision_duration_seconds: LabeledHistogram<1>,
+    decision_duration_seconds: HistogramVec<1>,
     /// `keystone_policy_errors_total{transport}` -- OPA-unreachable or
     /// malformed-response errors. A subset of the `error` outcome above;
     /// never incremented for a genuine `deny` decision (see
     /// [`outcome_label`]).
-    pub errors_total: LabeledCounter<1>,
+    errors_total: CounterVec<1>,
 }
 
 impl PolicyMetrics {
-    fn new() -> Self {
+    /// Create the instruments on `meter`.
+    pub fn new(meter: &Meter) -> Self {
         Self {
-            decisions_total: LabeledCounter::new(["outcome"]),
-            decision_duration_seconds: LabeledHistogram::new(["transport"]),
-            errors_total: LabeledCounter::new(["transport"]),
+            decisions_total: CounterVec::new(
+                meter,
+                "keystone_policy_decisions_total",
+                "Total number of OPA policy decisions, by outcome.",
+                ["outcome"],
+            ),
+            decision_duration_seconds: HistogramVec::new(
+                meter,
+                "keystone_policy_decision_duration_seconds",
+                "OPA policy decision (round-trip) latency in seconds.",
+                ["transport"],
+                &LATENCY_BUCKETS,
+            ),
+            errors_total: CounterVec::new(
+                meter,
+                "keystone_policy_errors_total",
+                "Total number of OPA policy evaluation errors (unreachable OPA, \
+                 malformed response, or a pre-flight invariant failure), by transport.",
+                ["transport"],
+            ),
+        }
+    }
+
+    /// Records one policy-enforcement outcome for the given `transport`
+    /// (`"http"` or `"wasm"`), plus the measured `elapsed` round-trip
+    /// duration. See [`outcome_label`] for the allow/deny/error mapping and
+    /// `errors_total` semantics.
+    pub fn record(
+        &self,
+        transport: &'static str,
+        result: &Result<PolicyEvaluationResult, PolicyError>,
+        elapsed: Duration,
+    ) {
+        let outcome = outcome_label(result);
+        let transport = Label::fixed(transport);
+        self.decisions_total.inc([outcome.into()]);
+        self.decision_duration_seconds
+            .record(elapsed.as_secs_f64(), [transport]);
+        if outcome == "error" {
+            self.errors_total.inc([transport]);
         }
     }
 }
 
 /// Process-wide policy metrics, shared by every `PolicyEnforcer`
 /// implementation/call site.
-pub static POLICY_METRICS: LazyLock<PolicyMetrics> = LazyLock::new(PolicyMetrics::new);
-
-impl PrometheusText for PolicyMetrics {
-    fn format_prometheus_text(&self) -> String {
-        let mut out = String::new();
-        write_metric_header(
-            &mut out,
-            "keystone_policy_decisions_total",
-            "Total number of OPA policy decisions, by outcome.",
-            "counter",
-        );
-        self.decisions_total
-            .write_lines(&mut out, "keystone_policy_decisions_total");
-
-        write_metric_header(
-            &mut out,
-            "keystone_policy_decision_duration_seconds",
-            "OPA policy decision (round-trip) latency in seconds.",
-            "histogram",
-        );
-        self.decision_duration_seconds
-            .write_lines(&mut out, "keystone_policy_decision_duration_seconds");
-
-        write_metric_header(
-            &mut out,
-            "keystone_policy_errors_total",
-            "Total number of OPA policy evaluation errors (unreachable OPA, \
-             malformed response, or a pre-flight invariant failure), by transport.",
-            "counter",
-        );
-        self.errors_total
-            .write_lines(&mut out, "keystone_policy_errors_total");
-
-        out
-    }
-}
+pub static POLICY_METRICS: LazyLock<PolicyMetrics> =
+    LazyLock::new(|| PolicyMetrics::new(&metrics::meter()));
 
 /// Derives the `outcome` label from a policy-enforcement `Result`.
 ///
@@ -148,51 +152,37 @@ pub fn outcome_label(result: &Result<PolicyEvaluationResult, PolicyError>) -> &'
 /// round-trip duration. See [`outcome_label`] for the allow/deny/error
 /// mapping and `errors_total` semantics.
 pub fn record_decision(
-    transport: &str,
+    transport: &'static str,
     result: &Result<PolicyEvaluationResult, PolicyError>,
     elapsed: Duration,
 ) {
-    record_decision_on(&POLICY_METRICS, transport, result, elapsed);
-}
-
-/// Same as [`record_decision`], but against a caller-supplied
-/// [`PolicyMetrics`] instance instead of the process-wide static -- used by
-/// unit tests so assertions don't race the shared global across the test
-/// binary's parallel test threads.
-fn record_decision_on(
-    metrics: &PolicyMetrics,
-    transport: &str,
-    result: &Result<PolicyEvaluationResult, PolicyError>,
-    elapsed: Duration,
-) {
-    let outcome = outcome_label(result);
-    metrics.decisions_total.inc([outcome]);
-    metrics
-        .decision_duration_seconds
-        .record([transport], elapsed.as_secs_f64());
-    if outcome == "error" {
-        metrics.errors_total.inc([transport]);
-    }
+    POLICY_METRICS.record(transport, result, elapsed);
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
+    use openstack_keystone_telemetry::metrics::MetricsPipeline;
+
     use super::*;
+
+    fn fixture() -> (MetricsPipeline, PolicyMetrics) {
+        let pipeline = MetricsPipeline::new();
+        let metrics = PolicyMetrics::new(&pipeline.meter());
+        (pipeline, metrics)
+    }
 
     /// Pins the rendered exposition text (series names, labels, HELP/TYPE and
     /// bucket layout) against `tests/golden/policy.prom` (ADR 0040).
     #[test]
     fn golden_exposition() {
-        let metrics = PolicyMetrics::new();
-        metrics.decisions_total.inc(["allow"]);
-        metrics.decisions_total.inc(["deny"]);
-        metrics.decisions_total.inc(["error"]);
-        metrics.decision_duration_seconds.record(["http"], 0.01);
-        metrics.decision_duration_seconds.record(["http"], 0.3);
-        metrics.errors_total.inc(["http"]);
-        openstack_keystone_metrics::assert_golden!("policy", metrics.format_prometheus_text());
+        let (pipeline, metrics) = fixture();
+        metrics.record("http", &allowed(), Duration::from_millis(10));
+        metrics.record("http", &forbidden(), Duration::from_millis(300));
+        metrics.decisions_total.inc(["error".into()]);
+        metrics.errors_total.inc(["http".into()]);
+        openstack_keystone_telemetry::assert_golden!("policy", pipeline.render());
     }
 
     fn allowed() -> Result<PolicyEvaluationResult, PolicyError> {
@@ -240,76 +230,70 @@ mod tests {
 
     #[test]
     fn record_decision_allow_increments_decisions_and_duration_not_errors() {
-        let metrics = PolicyMetrics::new();
-        record_decision_on(&metrics, "http", &allowed(), Duration::from_millis(5));
+        let (pipeline, metrics) = fixture();
+        metrics.record("http", &allowed(), Duration::from_millis(5));
 
-        assert_eq!(metrics.decisions_total.get(["allow"]), 1);
-        assert_eq!(metrics.decisions_total.get(["deny"]), 0);
-        assert_eq!(metrics.decisions_total.get(["error"]), 0);
-        assert_eq!(metrics.errors_total.get(["http"]), 0);
-
-        let mut out = String::new();
-        metrics
-            .decision_duration_seconds
-            .write_lines(&mut out, "keystone_policy_decision_duration_seconds");
+        let text = pipeline.render();
+        assert!(text.contains("keystone_policy_decisions_total{outcome=\"allow\"} 1\n"));
+        assert!(!text.contains("outcome=\"deny\""));
+        assert!(!text.contains("outcome=\"error\""));
+        assert!(!text.contains("keystone_policy_errors_total{"));
         assert!(
-            out.contains("keystone_policy_decision_duration_seconds_count{transport=\"http\"} 1")
+            text.contains(
+                "keystone_policy_decision_duration_seconds_count{transport=\"http\"} 1\n"
+            )
         );
     }
 
     #[test]
     fn record_decision_forbidden_counts_as_deny_not_error() {
-        let metrics = PolicyMetrics::new();
-        record_decision_on(&metrics, "http", &forbidden(), Duration::from_millis(3));
+        let (pipeline, metrics) = fixture();
+        metrics.record("http", &forbidden(), Duration::from_millis(3));
 
-        assert_eq!(metrics.decisions_total.get(["deny"]), 1);
-        assert_eq!(metrics.decisions_total.get(["allow"]), 0);
-        assert_eq!(metrics.decisions_total.get(["error"]), 0);
+        let text = pipeline.render();
+        assert!(text.contains("keystone_policy_decisions_total{outcome=\"deny\"} 1\n"));
         // A genuine OPA `deny` decision is not an infrastructure error.
-        assert_eq!(metrics.errors_total.get(["http"]), 0);
+        assert!(!text.contains("keystone_policy_errors_total{"));
     }
 
     #[test]
     fn record_decision_infra_error_counts_as_error_and_increments_errors_total() {
-        let metrics = PolicyMetrics::new();
-        record_decision_on(&metrics, "http", &scope_drift(), Duration::from_millis(1));
+        let (pipeline, metrics) = fixture();
+        metrics.record("http", &scope_drift(), Duration::from_millis(1));
 
-        assert_eq!(metrics.decisions_total.get(["error"]), 1);
-        assert_eq!(metrics.decisions_total.get(["allow"]), 0);
-        assert_eq!(metrics.decisions_total.get(["deny"]), 0);
-        assert_eq!(metrics.errors_total.get(["http"]), 1);
+        let text = pipeline.render();
+        assert!(text.contains("keystone_policy_decisions_total{outcome=\"error\"} 1\n"));
+        assert!(text.contains("keystone_policy_errors_total{transport=\"http\"} 1\n"));
     }
 
     #[test]
     fn record_decision_tracks_transport_independently() {
-        let metrics = PolicyMetrics::new();
-        record_decision_on(&metrics, "http", &scope_drift(), Duration::from_millis(1));
-        record_decision_on(&metrics, "wasm", &scope_drift(), Duration::from_millis(1));
+        let (pipeline, metrics) = fixture();
+        metrics.record("http", &scope_drift(), Duration::from_millis(1));
+        metrics.record("wasm", &scope_drift(), Duration::from_millis(1));
 
-        assert_eq!(metrics.errors_total.get(["http"]), 1);
-        assert_eq!(metrics.errors_total.get(["wasm"]), 1);
+        let text = pipeline.render();
+        assert!(text.contains("keystone_policy_errors_total{transport=\"http\"} 1\n"));
+        assert!(text.contains("keystone_policy_errors_total{transport=\"wasm\"} 1\n"));
         // Total decisions are still counted in aggregate by outcome only --
         // no per-transport decisions_total split, matching the ADR's
         // catalog (`decisions_total` is labeled `outcome` only).
-        assert_eq!(metrics.decisions_total.get(["error"]), 2);
+        assert!(text.contains("keystone_policy_decisions_total{outcome=\"error\"} 2\n"));
     }
 
     #[test]
-    fn format_prometheus_text_includes_all_three_series_headers() {
-        let metrics = PolicyMetrics::new();
-        record_decision_on(&metrics, "http", &allowed(), Duration::from_millis(2));
-        let text = metrics.format_prometheus_text();
+    fn has_all_three_series_headers() {
+        let (pipeline, metrics) = fixture();
+        metrics.record("http", &scope_drift(), Duration::from_millis(2));
+        let text = pipeline.render();
 
         assert!(text.contains("# TYPE keystone_policy_decisions_total counter"));
         assert!(text.contains("# TYPE keystone_policy_decision_duration_seconds histogram"));
         assert!(text.contains("# TYPE keystone_policy_errors_total counter"));
-        assert!(text.contains("keystone_policy_decisions_total{outcome=\"allow\"} 1"));
     }
 
     #[test]
-    fn global_policy_metrics_static_is_reachable_and_starts_empty_for_unused_labels() {
-        // Smoke test that the LazyLock initializes without panicking and
-        // that an outcome/transport nothing has recorded yet reads zero.
-        assert_eq!(POLICY_METRICS.decisions_total.get(["allow"]), 0);
+    fn global_policy_metrics_static_records_without_panicking() {
+        record_decision("http", &allowed(), Duration::ZERO);
     }
 }

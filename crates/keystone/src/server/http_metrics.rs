@@ -11,18 +11,14 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # HTTP request metrics (ADR 0031)
+//! # HTTP request metrics (ADR 0031, ADR 0040)
 //!
-//! Hand-rolled Prometheus text exposition for the HTTP request trio
-//! (`keystone_http_requests_total`, `keystone_http_request_duration_seconds`,
-//! `keystone_http_requests_in_flight`), consistent with the project's
-//! decision not to depend on the `prometheus`/`metrics` crates (see
-//! `crates/cadf/src/metrics.rs` and
-//! `doc/src/adr/0031-prometheus-metrics.md`).
+//! The HTTP request trio (`keystone_http_requests_total`,
+//! `keystone_http_request_duration_seconds`,
+//! `keystone_http_requests_in_flight`) on the OpenTelemetry SDK, served on
+//! `/metrics` and, when configured, pushed over OTLP.
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicI64;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use std::time::Instant;
 
@@ -30,18 +26,18 @@ use axum::extract::{Extension, MatchedPath, Request};
 use axum::http::Method;
 use axum::middleware::Next;
 use axum::response::Response;
-use dashmap::DashMap;
 use openstack_keystone_config::Interface;
+use openstack_keystone_telemetry::metrics::{
+    CounterVec, HistogramVec, LATENCY_BUCKETS, Label, Meter, UpDownCounterVec,
+};
 
-/// Bucket upper bounds in seconds, tuned for Keystone's fast auth/token
-/// paths (tighter low end than Prometheus client-library defaults).
-const BUCKET_BOUNDS: [f64; 11] = [
-    0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
+/// Every listener interface, for the zero-initialised in-flight series.
+const INTERFACES: [Interface; 4] = [
+    Interface::Public,
+    Interface::Internal,
+    Interface::Admin,
+    Interface::Metrics,
 ];
-
-/// `((method, route), (bucket_counts, sum_seconds, count))` yielded by
-/// [`HttpMetrics::duration_seconds_iter`].
-type DurationSecondsEntry = ((&'static str, String), (Vec<(f64, u64)>, f64, u64));
 
 /// Maps an [`axum::http::Method`] to a bounded label value for the
 /// `method` Prometheus label: the 9 standard HTTP methods, or the literal
@@ -51,9 +47,8 @@ type DurationSecondsEntry = ((&'static str, String), (Vec<(f64, u64)>, f64, u64)
 /// an unauthenticated client can send arbitrary RFC-token HTTP methods
 /// (hyper's `Method::Extension` accepts any token) straight into this
 /// middleware. Without this bound, each distinct attacker-supplied method
-/// string would mint its own permanent entry in `requests_total` /
-/// `duration_seconds` and its own Prometheus series — unbounded map growth
-/// and unbounded `/metrics` payload size (ADR 0031). Mirrors the `route`
+/// string would mint its own permanent series: unbounded memory growth and
+/// an unbounded `/metrics` payload (ADR 0031). Mirrors the `route`
 /// label's `"unmatched"` fallback for unmatched paths.
 fn method_label(method: &Method) -> &'static str {
     match method.as_str() {
@@ -70,167 +65,79 @@ fn method_label(method: &Method) -> &'static str {
     }
 }
 
-/// Number of [`Interface`] variants; used to size the fixed-array in-flight
-/// gauge storage in [`HttpMetrics`]. Must be kept in sync with the enum
-/// (`interface_index` below matches on all variants exhaustively, so adding
-/// a variant without updating this constant fails to compile).
-const INTERFACE_COUNT: usize = 4;
-
-/// Maps an [`Interface`] to its fixed-array index for the in-flight gauge.
-const fn interface_index(interface: Interface) -> usize {
+fn interface_label(interface: Interface) -> &'static str {
     match interface {
-        Interface::Public => 0,
-        Interface::Internal => 1,
-        Interface::Admin => 2,
-        Interface::Metrics => 3,
+        Interface::Public => "public",
+        Interface::Internal => "internal",
+        Interface::Admin => "admin",
+        Interface::Metrics => "metrics",
     }
 }
 
-/// A fixed-bucket histogram, storing per-bucket counts as `AtomicU64` plus
-/// a sum (as micros, to keep it integer/atomic) and a total count.
-pub struct Histogram {
-    bucket_counts: [AtomicU64; BUCKET_BOUNDS.len()],
-    sum_micros: AtomicU64,
-    count: AtomicU64,
-}
-
-impl Histogram {
-    pub fn new() -> Self {
-        Self {
-            bucket_counts: std::array::from_fn(|_| AtomicU64::new(0)),
-            sum_micros: AtomicU64::new(0),
-            count: AtomicU64::new(0),
-        }
-    }
-
-    pub fn record(&self, value_seconds: f64) {
-        for (bound, counter) in BUCKET_BOUNDS.iter().zip(self.bucket_counts.iter()) {
-            if value_seconds <= *bound {
-                counter.fetch_add(1, Ordering::Relaxed);
-            }
-        }
-        let micros = (value_seconds * 1_000_000.0).round().max(0.0) as u64;
-        self.sum_micros.fetch_add(micros, Ordering::Relaxed);
-        self.count.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// `(upper_bound, cumulative_count)` pairs, ascending, plus a final
-    /// `(f64::INFINITY, total_count)` entry for the `+Inf` bucket.
-    pub fn bucket_counts(&self) -> Vec<(f64, u64)> {
-        let mut out: Vec<(f64, u64)> = BUCKET_BOUNDS
-            .iter()
-            .zip(self.bucket_counts.iter())
-            .map(|(bound, counter)| (*bound, counter.load(Ordering::Relaxed)))
-            .collect();
-        out.push((f64::INFINITY, self.count()));
-        out
-    }
-
-    pub fn sum(&self) -> f64 {
-        self.sum_micros.load(Ordering::Relaxed) as f64 / 1_000_000.0
-    }
-
-    pub fn count(&self) -> u64 {
-        self.count.load(Ordering::Relaxed)
-    }
-}
-
-impl Default for Histogram {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Shared state backing the ADR 0031 HTTP request metric trio. Lives in
-/// `crates/keystone`, not `core` — `core` must stay HTTP-unaware. Reached
-/// by the recording middleware and by `metrics_handler` via
-/// `axum::Extension<Arc<HttpMetrics>>`, never through `ServiceState`.
+/// The HTTP request instruments.
 pub struct HttpMetrics {
-    requests_total: DashMap<(&'static str, String, u16), AtomicU64>,
-    duration_seconds: DashMap<(&'static str, String), Histogram>,
-    /// In-flight gauge, one slot per [`Interface`] variant (indexed via
-    /// [`interface_index`]). `Interface` is a closed 4-variant enum and any
-    /// single listener only ever touches one slot, so a fixed array of
-    /// atomics avoids taking a `DashMap` write-lock (via
-    /// `entry(..).or_insert_with(..)`, which write-locks the shard even
-    /// when the key already exists — it always does here) on every single
-    /// request.
-    in_flight: [AtomicI64; INTERFACE_COUNT],
+    /// `keystone_http_requests_total{method,route,status}`.
+    requests_total: CounterVec<3>,
+    /// `keystone_http_request_duration_seconds{method,route}`.
+    duration_seconds: HistogramVec<2>,
+    /// `keystone_http_requests_in_flight{interface}`.
+    in_flight: UpDownCounterVec<1>,
 }
 
 impl HttpMetrics {
-    pub fn new() -> Self {
-        Self {
-            requests_total: DashMap::new(),
-            duration_seconds: DashMap::new(),
-            in_flight: std::array::from_fn(|_| AtomicI64::new(0)),
+    /// Create the instruments on `meter`. The in-flight series of every
+    /// interface exist from the start, at zero.
+    pub fn new(meter: &Meter) -> Self {
+        let metrics = Self {
+            requests_total: CounterVec::new(
+                meter,
+                "keystone_http_requests_total",
+                "Total HTTP requests by method, route, and status.",
+                ["method", "route", "status"],
+            ),
+            duration_seconds: HistogramVec::new(
+                meter,
+                "keystone_http_request_duration_seconds",
+                "HTTP request latency by method and route.",
+                ["method", "route"],
+                &LATENCY_BUCKETS,
+            ),
+            in_flight: UpDownCounterVec::new(
+                meter,
+                "keystone_http_requests_in_flight",
+                "In-flight HTTP requests by listener interface.",
+                ["interface"],
+            ),
+        };
+        for interface in INTERFACES {
+            metrics
+                .in_flight
+                .add(0, [Label::fixed(interface_label(interface))]);
         }
+        metrics
     }
 
+    /// Record one completed request. `route` is the matched route template
+    /// or `"unmatched"`, never the raw path (ADR 0031).
     pub fn record_request(&self, method: &Method, route: &str, status: u16, elapsed: Duration) {
-        let method = method_label(method);
-
+        let method = Label::fixed(method_label(method));
+        let route = Label::bounded(route);
+        // A status code is one of a small closed set.
+        let status = status.to_string();
         self.requests_total
-            .entry((method, route.to_owned(), status))
-            .or_insert_with(|| AtomicU64::new(0))
-            .fetch_add(1, Ordering::Relaxed);
-
+            .inc([method, route, Label::bounded(&status)]);
         self.duration_seconds
-            .entry((method, route.to_owned()))
-            .or_default()
-            .record(elapsed.as_secs_f64());
+            .record(elapsed.as_secs_f64(), [method, route]);
     }
 
     pub fn inc_in_flight(&self, interface: Interface) {
-        self.in_flight[interface_index(interface)].fetch_add(1, Ordering::Relaxed);
+        self.in_flight
+            .add(1, [Label::fixed(interface_label(interface))]);
     }
 
     pub fn dec_in_flight(&self, interface: Interface) {
-        self.in_flight[interface_index(interface)].fetch_sub(1, Ordering::Relaxed);
-    }
-
-    pub fn requests_total_iter(
-        &self,
-    ) -> impl Iterator<Item = ((&'static str, String, u16), u64)> + '_ {
-        self.requests_total
-            .iter()
-            .map(|entry| (entry.key().clone(), entry.value().load(Ordering::Relaxed)))
-    }
-
-    pub fn duration_seconds_iter(&self) -> impl Iterator<Item = DurationSecondsEntry> + '_ {
-        self.duration_seconds.iter().map(|entry| {
-            let histogram = entry.value();
-            (
-                entry.key().clone(),
-                (
-                    histogram.bucket_counts(),
-                    histogram.sum(),
-                    histogram.count(),
-                ),
-            )
-        })
-    }
-
-    pub fn in_flight_iter(&self) -> impl Iterator<Item = (Interface, i64)> + '_ {
-        [
-            Interface::Public,
-            Interface::Internal,
-            Interface::Admin,
-            Interface::Metrics,
-        ]
-        .into_iter()
-        .map(|interface| {
-            (
-                interface,
-                self.in_flight[interface_index(interface)].load(Ordering::Relaxed),
-            )
-        })
-    }
-}
-
-impl Default for HttpMetrics {
-    fn default() -> Self {
-        Self::new()
+        self.in_flight
+            .add(-1, [Label::fixed(interface_label(interface))]);
     }
 }
 
@@ -305,112 +212,21 @@ pub async fn record_http_metrics(
     response
 }
 
-fn interface_label(interface: Interface) -> &'static str {
-    match interface {
-        Interface::Public => "public",
-        Interface::Internal => "internal",
-        Interface::Admin => "admin",
-        Interface::Metrics => "metrics",
-    }
-}
-
-/// Serialise the HTTP request metric trio as Prometheus text exposition
-/// format (version 0.0.4).
-pub fn format_prometheus_text(metrics: &HttpMetrics) -> String {
-    let mut out = String::new();
-
-    out.push_str(
-        "# HELP keystone_http_requests_total Total HTTP requests by method, route, and status.\n",
-    );
-    out.push_str("# TYPE keystone_http_requests_total counter\n");
-    // Sorted by label set: the backing map's iteration order is random per
-    // process, and a stable exposition order keeps scrapes diffable.
-    let mut requests: Vec<_> = metrics.requests_total_iter().collect();
-    requests.sort_by(|a, b| a.0.cmp(&b.0));
-    for ((method, route, status), count) in requests {
-        out.push_str(&format!(
-            "keystone_http_requests_total{{method=\"{method}\",route=\"{route}\",status=\"{status}\"}} {count}\n"
-        ));
-    }
-
-    out.push_str(
-        "# HELP keystone_http_request_duration_seconds HTTP request latency by method and route.\n",
-    );
-    out.push_str("# TYPE keystone_http_request_duration_seconds histogram\n");
-    let mut durations: Vec<_> = metrics.duration_seconds_iter().collect();
-    durations.sort_by(|a, b| a.0.cmp(&b.0));
-    for ((method, route), (buckets, sum, count)) in durations {
-        for (bound, cumulative) in buckets {
-            let le = if bound.is_infinite() {
-                "+Inf".to_owned()
-            } else {
-                bound.to_string()
-            };
-            out.push_str(&format!(
-                "keystone_http_request_duration_seconds_bucket{{method=\"{method}\",route=\"{route}\",le=\"{le}\"}} {cumulative}\n"
-            ));
-        }
-        out.push_str(&format!(
-            "keystone_http_request_duration_seconds_sum{{method=\"{method}\",route=\"{route}\"}} {sum}\n"
-        ));
-        out.push_str(&format!(
-            "keystone_http_request_duration_seconds_count{{method=\"{method}\",route=\"{route}\"}} {count}\n"
-        ));
-    }
-
-    out.push_str(
-        "# HELP keystone_http_requests_in_flight In-flight HTTP requests by listener interface.\n",
-    );
-    out.push_str("# TYPE keystone_http_requests_in_flight gauge\n");
-    for (interface, value) in metrics.in_flight_iter() {
-        out.push_str(&format!(
-            "keystone_http_requests_in_flight{{interface=\"{}\"}} {value}\n",
-            interface_label(interface)
-        ));
-    }
-
-    out
-}
-
 #[cfg(test)]
 mod tests {
+    use openstack_keystone_telemetry::metrics::MetricsPipeline;
+
     use super::*;
 
-    #[test]
-    fn record_places_value_in_correct_and_higher_buckets() {
-        let h = Histogram::new();
-        h.record(0.02); // falls in 0.025 bucket and every bucket above it
-
-        let counts = h.bucket_counts();
-        let (bound_0_01, count_0_01) = counts[2];
-        assert_eq!(bound_0_01, 0.01);
-        assert_eq!(count_0_01, 0, "0.02 must not count in the 0.01 bucket");
-
-        let (bound_0_025, count_0_025) = counts[3];
-        assert_eq!(bound_0_025, 0.025);
-        assert_eq!(count_0_025, 1, "0.02 must count in the 0.025 bucket");
-
-        let (bound_5, count_5) = counts[10];
-        assert_eq!(bound_5, 5.0);
-        assert_eq!(count_5, 1, "0.02 must count in every bucket above it");
-
-        let (inf_bound, inf_count) = *counts.last().unwrap();
-        assert!(inf_bound.is_infinite());
-        assert_eq!(inf_count, 1);
-    }
-
-    #[test]
-    fn sum_and_count_accumulate() {
-        let h = Histogram::new();
-        h.record(0.1);
-        h.record(0.2);
-        assert_eq!(h.count(), 2);
-        assert!((h.sum() - 0.3).abs() < 1e-9);
+    fn fixture() -> (MetricsPipeline, Arc<HttpMetrics>) {
+        let pipeline = MetricsPipeline::new();
+        let metrics = Arc::new(HttpMetrics::new(&pipeline.meter()));
+        (pipeline, metrics)
     }
 
     #[test]
     fn record_request_increments_matching_counter_only() {
-        let m = HttpMetrics::new();
+        let (pipeline, m) = fixture();
         m.record_request(
             &Method::GET,
             "/v3/users/{user_id}",
@@ -424,56 +240,56 @@ mod tests {
             Duration::from_millis(1),
         );
 
-        let counts: Vec<_> = m.requests_total_iter().collect();
-        assert_eq!(
-            counts.len(),
-            2,
-            "status 200 and 404 must be separate series"
-        );
-        let ok_count = counts
-            .iter()
-            .find(|((method, route, status), _)| {
-                method == &Method::GET && route == "/v3/users/{user_id}" && *status == 200
-            })
-            .map(|(_, c)| *c);
-        assert_eq!(ok_count, Some(1));
+        let text = pipeline.render();
+        assert!(text.contains("keystone_http_requests_total{method=\"GET\",route=\"/v3/users/{user_id}\",status=\"200\"} 1\n"));
+        assert!(text.contains("keystone_http_requests_total{method=\"GET\",route=\"/v3/users/{user_id}\",status=\"404\"} 1\n"));
     }
 
     #[test]
     fn record_request_feeds_duration_histogram_for_route() {
-        let m = HttpMetrics::new();
+        let (pipeline, m) = fixture();
         m.record_request(&Method::GET, "/v3/users", 200, Duration::from_millis(5));
         m.record_request(&Method::GET, "/v3/users", 200, Duration::from_millis(15));
 
-        let durations: Vec<_> = m.duration_seconds_iter().collect();
-        assert_eq!(
-            durations.len(),
-            1,
-            "same (method, route) shares one histogram"
-        );
-        let (_, (_, _sum, count)) = &durations[0];
-        assert_eq!(*count, 2);
+        let text = pipeline.render();
+        assert!(text.contains(
+            "keystone_http_request_duration_seconds_count{method=\"GET\",route=\"/v3/users\"} 2\n"
+        ));
     }
 
     #[test]
     fn in_flight_gauge_increments_and_decrements() {
-        let m = HttpMetrics::new();
+        let (pipeline, m) = fixture();
         m.inc_in_flight(Interface::Public);
         m.inc_in_flight(Interface::Public);
         m.dec_in_flight(Interface::Public);
 
-        let value = m
-            .in_flight_iter()
-            .find(|(iface, _)| *iface == Interface::Public)
-            .map(|(_, v)| v);
-        assert_eq!(value, Some(1));
+        assert!(
+            pipeline
+                .render()
+                .contains("keystone_http_requests_in_flight{interface=\"public\"} 1\n")
+        );
+    }
+
+    #[test]
+    fn in_flight_series_start_at_zero_for_every_interface() {
+        let (pipeline, _m) = fixture();
+        let text = pipeline.render();
+        for interface in ["public", "internal", "admin", "metrics"] {
+            assert!(
+                text.contains(&format!(
+                    "keystone_http_requests_in_flight{{interface=\"{interface}\"}} 0\n"
+                )),
+                "{text}"
+            );
+        }
     }
 
     /// Pins the rendered exposition text against `tests/golden/http.prom`
     /// (ADR 0040).
     #[test]
     fn golden_exposition() {
-        let m = HttpMetrics::new();
+        let (pipeline, m) = fixture();
         m.record_request(&Method::GET, "/v3/users", 200, Duration::from_millis(5));
         m.record_request(&Method::GET, "/v3/users", 200, Duration::from_millis(40));
         m.record_request(
@@ -491,16 +307,16 @@ mod tests {
         m.inc_in_flight(Interface::Public);
         m.inc_in_flight(Interface::Public);
         m.inc_in_flight(Interface::Admin);
-        openstack_keystone_metrics::assert_golden!("http", format_prometheus_text(&m));
+        openstack_keystone_telemetry::assert_golden!("http", pipeline.render());
     }
 
     #[test]
-    fn format_prometheus_text_contains_help_and_type_for_all_three_metrics() {
-        let m = HttpMetrics::new();
+    fn has_help_and_type_for_all_three_metrics() {
+        let (pipeline, m) = fixture();
         m.record_request(&Method::GET, "/v3/users", 200, Duration::from_millis(5));
         m.inc_in_flight(Interface::Public);
 
-        let text = format_prometheus_text(&m);
+        let text = pipeline.render();
         assert!(text.contains("# TYPE keystone_http_requests_total counter"));
         assert!(text.contains("# TYPE keystone_http_request_duration_seconds histogram"));
         assert!(text.contains("# TYPE keystone_http_requests_in_flight gauge"));
@@ -511,13 +327,13 @@ mod tests {
     }
 
     #[test]
-    fn format_prometheus_text_histogram_has_le_buckets_and_inf() {
-        let m = HttpMetrics::new();
+    fn histogram_has_le_buckets_and_inf() {
+        let (pipeline, m) = fixture();
         m.record_request(&Method::GET, "/v3/users", 200, Duration::from_millis(5));
 
-        let text = format_prometheus_text(&m);
+        let text = pipeline.render();
         assert!(text.contains(
-            "keystone_http_request_duration_seconds_bucket{method=\"GET\",route=\"/v3/users\",le=\"+Inf\"}"
+            "keystone_http_request_duration_seconds_bucket{method=\"GET\",route=\"/v3/users\",le=\"+Inf\"} 1"
         ));
         assert!(text.contains(
             "keystone_http_request_duration_seconds_sum{method=\"GET\",route=\"/v3/users\"}"
@@ -534,11 +350,11 @@ mod tests {
         use axum::routing::get;
         use tower::ServiceExt;
 
-        let metrics = Arc::new(HttpMetrics::new());
+        let (pipeline, metrics) = fixture();
         let app: Router = Router::new()
             .route("/v3/widgets/{id}", get(|| async { "ok" }))
             .layer(axum::middleware::from_fn(record_http_metrics))
-            .layer(Extension(metrics.clone()));
+            .layer(Extension(metrics));
 
         let response = app
             .oneshot(
@@ -551,15 +367,12 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), axum::http::StatusCode::OK);
 
-        let counts: Vec<_> = metrics.requests_total_iter().collect();
-        assert_eq!(counts.len(), 1);
-        let ((_, route, status), count) = &counts[0];
-        assert_eq!(
-            route, "/v3/widgets/{id}",
-            "must record the template, not the raw path with the id"
+        let text = pipeline.render();
+        assert!(
+            text.contains("keystone_http_requests_total{method=\"GET\",route=\"/v3/widgets/{id}\",status=\"200\"} 1\n"),
+            "must record the template, not the raw path with the id: {text}"
         );
-        assert_eq!(*status, 200);
-        assert_eq!(*count, 1);
+        assert!(!text.contains("abc-123"));
     }
 
     #[test]
@@ -574,29 +387,21 @@ mod tests {
         // outside the `catch_unwind` — that the gauge was still
         // decremented, proving `Drop::drop` ran during unwind and not just
         // on the ordinary return path.
-        let metrics = HttpMetrics::new();
+        let (pipeline, metrics) = fixture();
+        let public = "keystone_http_requests_in_flight{interface=\"public\"} ";
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _guard = InFlightGuard::new(&metrics, Interface::Public);
-            assert_eq!(
-                metrics
-                    .in_flight_iter()
-                    .find(|(iface, _)| *iface == Interface::Public)
-                    .map(|(_, v)| v),
-                Some(1),
+            assert!(
+                pipeline.render().contains(&format!("{public}1\n")),
                 "constructing the guard must increment the gauge"
             );
             panic!("simulated handler panic while request is in flight");
         }));
 
         assert!(result.is_err(), "the inner closure must have panicked");
-        let value = metrics
-            .in_flight_iter()
-            .find(|(iface, _)| *iface == Interface::Public)
-            .map(|(_, v)| v);
-        assert_eq!(
-            value,
-            Some(0),
+        assert!(
+            pipeline.render().contains(&format!("{public}0\n")),
             "guard's Drop impl must decrement the gauge even when unwinding"
         );
     }
@@ -607,10 +412,10 @@ mod tests {
         use axum::body::Body;
         use tower::ServiceExt;
 
-        let metrics = Arc::new(HttpMetrics::new());
+        let (pipeline, metrics) = fixture();
         let app: Router = Router::new()
             .layer(axum::middleware::from_fn(record_http_metrics))
-            .layer(Extension(metrics.clone()));
+            .layer(Extension(metrics));
 
         let _ = app
             .oneshot(
@@ -622,10 +427,9 @@ mod tests {
             .await
             .unwrap();
 
-        let counts: Vec<_> = metrics.requests_total_iter().collect();
-        assert_eq!(counts.len(), 1);
-        let ((_, route, _), _) = &counts[0];
-        assert_eq!(route, "unmatched");
+        let text = pipeline.render();
+        assert!(text.contains("route=\"unmatched\""));
+        assert!(!text.contains("/does/not/exist"));
     }
 
     #[test]
@@ -649,24 +453,22 @@ mod tests {
 
     #[test]
     fn record_request_collapses_arbitrary_methods_into_a_single_other_series() {
-        let m = HttpMetrics::new();
-        let m1 = Method::from_bytes(b"FOO").unwrap();
-        let m2 = Method::from_bytes(b"BAR").unwrap();
-        let m3 = Method::from_bytes(b"BAZ").unwrap();
+        let (pipeline, m) = fixture();
+        for name in [&b"FOO"[..], b"BAR", b"BAZ"] {
+            m.record_request(
+                &Method::from_bytes(name).unwrap(),
+                "/v3/probe",
+                200,
+                Duration::from_millis(1),
+            );
+        }
 
-        m.record_request(&m1, "/v3/probe", 200, Duration::from_millis(1));
-        m.record_request(&m2, "/v3/probe", 200, Duration::from_millis(1));
-        m.record_request(&m3, "/v3/probe", 200, Duration::from_millis(1));
-
-        let counts: Vec<_> = m.requests_total_iter().collect();
-        assert_eq!(
-            counts.len(),
-            1,
-            "arbitrary attacker-supplied methods must not each mint their own series"
+        let text = pipeline.render();
+        assert!(
+            text.contains("keystone_http_requests_total{method=\"other\",route=\"/v3/probe\",status=\"200\"} 3\n"),
+            "arbitrary attacker-supplied methods must not each mint their own series: {text}"
         );
-        let ((method, _, _), count) = &counts[0];
-        assert_eq!(*method, "other");
-        assert_eq!(*count, 3);
+        assert!(!text.contains("FOO"));
     }
 
     #[tokio::test]
@@ -675,10 +477,10 @@ mod tests {
         use axum::body::Body;
         use tower::ServiceExt;
 
-        let metrics = Arc::new(HttpMetrics::new());
+        let (pipeline, metrics) = fixture();
         let app: Router = Router::new()
             .layer(axum::middleware::from_fn(record_http_metrics))
-            .layer(Extension(metrics.clone()));
+            .layer(Extension(metrics));
 
         let _ = app
             .oneshot(
@@ -691,9 +493,8 @@ mod tests {
             .await
             .unwrap();
 
-        let counts: Vec<_> = metrics.requests_total_iter().collect();
-        assert_eq!(counts.len(), 1);
-        let ((method, _, _), _) = &counts[0];
-        assert_eq!(*method, "other");
+        let text = pipeline.render();
+        assert!(text.contains("method=\"other\""));
+        assert!(!text.contains("WEIRDMETHOD"));
     }
 }

@@ -592,12 +592,4 @@ pub trait StorageApi: Send + Sync {
             issues,
         })
     }
-
-    /// Renders this node's storage metrics in Prometheus text-exposition
-    /// format for the `/metrics` endpoint.
-    ///
-    /// The default implementation renders nothing.
-    fn format_prometheus_metrics(&self) -> String {
-        String::new()
-    }
 }

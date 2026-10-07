@@ -46,7 +46,7 @@
 
 use std::sync::LazyLock;
 
-use openstack_keystone_metrics::{LabeledCounter, PrometheusText, write_metric_header};
+use openstack_keystone_telemetry::metrics::{self, CounterVec, Label, Meter};
 
 /// `scope` label value for [`crate::rate_limit::RateLimitState::check_ip`]
 /// (the `rate_limit_global_ip` limiter, keyed per client IP).
@@ -65,34 +65,46 @@ pub struct RateLimitMetrics {
     /// `keystone_rate_limit_evaluations_total{scope,outcome}` — every
     /// `check_ip`/`check_user` call, labeled by which side of the quota it
     /// landed on.
-    pub evaluations_total: LabeledCounter<2>,
+    evaluations_total: CounterVec<2>,
     /// `keystone_rate_limit_rejections_total{scope}` — the subset of
     /// evaluations that returned `Err` (a 429 was issued to the caller).
-    pub rejections_total: LabeledCounter<1>,
+    rejections_total: CounterVec<1>,
 }
 
 impl RateLimitMetrics {
-    fn new() -> Self {
+    /// Create the instruments on `meter`.
+    pub fn new(meter: &Meter) -> Self {
         Self {
-            evaluations_total: LabeledCounter::new(["scope", "outcome"]),
-            rejections_total: LabeledCounter::new(["scope"]),
+            evaluations_total: CounterVec::new(
+                meter,
+                "keystone_rate_limit_evaluations_total",
+                "Total rate-limit evaluations by scope and outcome.",
+                ["scope", "outcome"],
+            ),
+            rejections_total: CounterVec::new(
+                meter,
+                "keystone_rate_limit_rejections_total",
+                "Total rate-limit rejections (HTTP 429) by scope.",
+                ["scope"],
+            ),
         }
     }
 
-    /// Record one rate-limit check's outcome under `scope`.
+    /// Record one rate-limit check's outcome under `scope` ([`SCOPE_PER_IP`]
+    /// or [`SCOPE_PER_USER`]).
     ///
     /// `allowed` is `true` when the checked function returned `Ok(())`.
     /// Updates `evaluations_total` unconditionally and `rejections_total`
     /// only when `allowed` is `false`.
-    pub fn record(&self, scope: &str, allowed: bool) {
+    pub fn record(&self, scope: &'static str, allowed: bool) {
         let outcome = if allowed {
             OUTCOME_ALLOWED
         } else {
             OUTCOME_REJECTED
         };
-        self.evaluations_total.inc([scope, outcome]);
+        self.evaluations_total.inc([scope.into(), outcome.into()]);
         if !allowed {
-            self.rejections_total.inc([scope]);
+            self.rejections_total.inc([Label::fixed(scope)]);
         }
     }
 }
@@ -100,100 +112,77 @@ impl RateLimitMetrics {
 /// Process-wide singleton, mirroring the other ADR-0031 subsystem statics
 /// (audit, auth-plugin) — `RateLimitState` snapshots are reloadable and
 /// short-lived, so the counters live independently of them.
-pub static RATE_LIMIT_METRICS: LazyLock<RateLimitMetrics> = LazyLock::new(RateLimitMetrics::new);
-
-impl PrometheusText for RateLimitMetrics {
-    fn format_prometheus_text(&self) -> String {
-        let mut out = String::new();
-        write_metric_header(
-            &mut out,
-            "keystone_rate_limit_evaluations_total",
-            "Total rate-limit evaluations by scope and outcome.",
-            "counter",
-        );
-        self.evaluations_total
-            .write_lines(&mut out, "keystone_rate_limit_evaluations_total");
-        write_metric_header(
-            &mut out,
-            "keystone_rate_limit_rejections_total",
-            "Total rate-limit rejections (HTTP 429) by scope.",
-            "counter",
-        );
-        self.rejections_total
-            .write_lines(&mut out, "keystone_rate_limit_rejections_total");
-        out
-    }
-}
+pub static RATE_LIMIT_METRICS: LazyLock<RateLimitMetrics> =
+    LazyLock::new(|| RateLimitMetrics::new(&metrics::meter()));
 
 #[cfg(test)]
 mod tests {
+    use openstack_keystone_telemetry::metrics::MetricsPipeline;
+
     use super::*;
+
+    fn fixture() -> (MetricsPipeline, RateLimitMetrics) {
+        let pipeline = MetricsPipeline::new();
+        let metrics = RateLimitMetrics::new(&pipeline.meter());
+        (pipeline, metrics)
+    }
 
     /// Pins the rendered exposition text (series names, labels, HELP/TYPE and
     /// bucket layout) against `tests/golden/rate_limit.prom` (ADR 0040).
     #[test]
     fn golden_exposition() {
-        let metrics = RateLimitMetrics::new();
+        let (pipeline, metrics) = fixture();
         metrics.record(SCOPE_PER_IP, true);
         metrics.record(SCOPE_PER_IP, false);
         metrics.record(SCOPE_PER_USER, true);
-        openstack_keystone_metrics::assert_golden!("rate_limit", metrics.format_prometheus_text());
+        openstack_keystone_telemetry::assert_golden!("rate_limit", pipeline.render());
     }
 
     #[test]
     fn record_allowed_increments_evaluations_only() {
-        let metrics = RateLimitMetrics::new();
+        let (pipeline, metrics) = fixture();
         metrics.record(SCOPE_PER_IP, true);
-        assert_eq!(metrics.evaluations_total.get([SCOPE_PER_IP, "allowed"]), 1);
-        assert_eq!(metrics.evaluations_total.get([SCOPE_PER_IP, "rejected"]), 0);
-        assert_eq!(metrics.rejections_total.get([SCOPE_PER_IP]), 0);
+        let text = pipeline.render();
+        assert!(text.contains(
+            "keystone_rate_limit_evaluations_total{outcome=\"allowed\",scope=\"per_ip\"} 1\n"
+        ));
+        assert!(!text.contains("outcome=\"rejected\""));
+        assert!(!text.contains("keystone_rate_limit_rejections_total{"));
     }
 
     #[test]
     fn record_rejected_increments_both_counters() {
-        let metrics = RateLimitMetrics::new();
+        let (pipeline, metrics) = fixture();
         metrics.record(SCOPE_PER_USER, false);
-        assert_eq!(
-            metrics.evaluations_total.get([SCOPE_PER_USER, "rejected"]),
-            1
-        );
-        assert_eq!(metrics.rejections_total.get([SCOPE_PER_USER]), 1);
+        let text = pipeline.render();
+        assert!(text.contains(
+            "keystone_rate_limit_evaluations_total{outcome=\"rejected\",scope=\"per_user\"} 1\n"
+        ));
+        assert!(text.contains("keystone_rate_limit_rejections_total{scope=\"per_user\"} 1\n"));
     }
 
     #[test]
     fn scopes_are_independent_series() {
-        let metrics = RateLimitMetrics::new();
+        let (pipeline, metrics) = fixture();
         metrics.record(SCOPE_PER_IP, false);
         metrics.record(SCOPE_PER_USER, true);
-        assert_eq!(metrics.rejections_total.get([SCOPE_PER_IP]), 1);
-        assert_eq!(metrics.rejections_total.get([SCOPE_PER_USER]), 0);
+        let text = pipeline.render();
+        assert!(text.contains("keystone_rate_limit_rejections_total{scope=\"per_ip\"} 1\n"));
+        assert!(!text.contains("keystone_rate_limit_rejections_total{scope=\"per_user\"}"));
     }
 
     #[test]
-    fn format_prometheus_text_contains_both_metric_families() {
-        let metrics = RateLimitMetrics::new();
+    fn has_both_metric_families() {
+        let (pipeline, metrics) = fixture();
         metrics.record(SCOPE_PER_IP, true);
         metrics.record(SCOPE_PER_USER, false);
-        let text = metrics.format_prometheus_text();
+        let text = pipeline.render();
         assert!(text.contains("# TYPE keystone_rate_limit_evaluations_total counter"));
         assert!(text.contains("# TYPE keystone_rate_limit_rejections_total counter"));
-        assert!(text.contains(
-            "keystone_rate_limit_evaluations_total{scope=\"per_ip\",outcome=\"allowed\"} 1"
-        ));
-        assert!(text.contains(
-            "keystone_rate_limit_evaluations_total{scope=\"per_user\",outcome=\"rejected\"} 1"
-        ));
-        assert!(text.contains("keystone_rate_limit_rejections_total{scope=\"per_user\"} 1"));
     }
 
     #[test]
-    fn static_singleton_is_reachable() {
+    fn static_singleton_records_without_panicking() {
         RATE_LIMIT_METRICS.record(SCOPE_PER_IP, true);
-        assert!(
-            RATE_LIMIT_METRICS
-                .evaluations_total
-                .get([SCOPE_PER_IP, "allowed"])
-                >= 1
-        );
     }
 }

@@ -20,7 +20,6 @@ use std::sync::Arc;
 
 use axum::{
     Extension, Router, ServiceExt,
-    extract::State,
     http::{StatusCode, header},
     response::IntoResponse,
 };
@@ -32,10 +31,9 @@ use tracing::{error, info};
 use super::{Startup, router};
 use crate::api;
 use crate::config::{Interface, ListenerConfig};
-use crate::server::http_metrics::format_prometheus_text as format_http_metrics_text;
 use crate::server::http_metrics::{HttpMetrics, record_http_metrics};
 use crate::server::listener::{spiffe_tls, spiffe_tls_uds};
-use openstack_keystone_core::keystone::ServiceState;
+use openstack_keystone_telemetry::metrics::MetricsPipeline;
 
 /// Start the public HTTP REST API listener.
 pub async fn spawn_public(
@@ -216,28 +214,29 @@ pub fn spawn_admin(startup: &Startup, app: Router, handles: &mut JoinSet<()>) {
     });
 }
 
-/// Prometheus scrape endpoint — returns the audit counters, the ADR 0025
-/// `keystone_auth_plugin_load_failure{plugin_name}` counter, (when
-/// enabled) the HTTP request metrics and (when distributed storage is
-/// configured) the `keystone_raft_*` series in text exposition format
-/// (v0.0.4). No authentication required; operators firewall this port.
+/// Prometheus scrape endpoint — returns the series on the OpenTelemetry SDK
+/// (audit, auth, token, policy, HTTP requests when enabled, ... ADR 0040) in
+/// text exposition format (v0.0.4). No authentication required; operators
+/// firewall this port.
+///
+/// The SDK series come from the process-wide pipeline unless a
+/// [`MetricsPipeline`] extension is present (tests).
 pub async fn metrics_handler(
-    State(state): State<ServiceState>,
-    http_metrics: Option<Extension<Arc<HttpMetrics>>>,
+    pipeline: Option<Extension<Arc<MetricsPipeline>>>,
 ) -> impl IntoResponse {
-    let mut body = cadf::metrics::format_prometheus_text(
-        &state.audit_dispatcher,
-        &super::audit::AUDIT_SERVICE,
-    );
-    body.push_str(&crate::auth_plugin_startup::format_load_failure_metrics(
-        &*state.auth_plugin_load_failures.read().await,
-    ));
-    if let Some(Extension(http_metrics)) = http_metrics {
-        body.push_str(&format_http_metrics_text(&http_metrics));
-    }
-    if let Some(storage) = state.storage.as_deref() {
-        body.push_str(&storage.format_prometheus_metrics());
-    }
+    // The SDK collects synchronously; keep it off the async workers.
+    let collected = tokio::task::spawn_blocking(move || match pipeline {
+        Some(Extension(pipeline)) => pipeline.render(),
+        None => openstack_keystone_telemetry::metrics::render_prometheus(),
+    })
+    .await;
+    let body = match collected {
+        Ok(text) => text,
+        Err(err) => {
+            error!("collecting SDK metrics failed: {err}");
+            String::new()
+        }
+    };
     (
         StatusCode::OK,
         [(

@@ -237,19 +237,11 @@ pub async fn authenticate_via_wasm_plugin(
     let invoke_start = std::time::Instant::now();
     let invoke_result =
         tokio::task::block_in_place(|| registry.invoke(plugin_name, "authenticate", &input));
-    crate::auth_metrics::AUTH_METRICS
-        .plugin_duration_seconds
-        .record([plugin_name], invoke_start.elapsed().as_secs_f64());
-    crate::auth_metrics::AUTH_METRICS
-        .plugin_invocations_total
-        .inc([
-            plugin_name,
-            if invoke_result.is_ok() {
-                "success"
-            } else {
-                "failure"
-            },
-        ]);
+    crate::auth_metrics::AUTH_METRICS.record_plugin_invocation(
+        plugin_name,
+        invoke_result.is_ok(),
+        invoke_start.elapsed().as_secs_f64(),
+    );
     let raw_response = match invoke_result {
         Ok(bytes) => bytes,
         Err(e) => {
@@ -568,19 +560,11 @@ pub async fn authenticate_via_wasm_mapping_plugin(
     let invoke_start = std::time::Instant::now();
     let invoke_result =
         tokio::task::block_in_place(|| registry.invoke(plugin_name, "mapping", &input));
-    crate::auth_metrics::AUTH_METRICS
-        .plugin_duration_seconds
-        .record([plugin_name], invoke_start.elapsed().as_secs_f64());
-    crate::auth_metrics::AUTH_METRICS
-        .plugin_invocations_total
-        .inc([
-            plugin_name,
-            if invoke_result.is_ok() {
-                "success"
-            } else {
-                "failure"
-            },
-        ]);
+    crate::auth_metrics::AUTH_METRICS.record_plugin_invocation(
+        plugin_name,
+        invoke_result.is_ok(),
+        invoke_start.elapsed().as_secs_f64(),
+    );
     let raw_response = match invoke_result {
         Ok(bytes) => bytes,
         Err(e) => {
@@ -849,19 +833,11 @@ pub async fn route_via_wasm_plugin(
     let invoke_start = std::time::Instant::now();
     let invoke_result =
         tokio::task::block_in_place(|| registry.invoke(plugin_name, "route", &input));
-    crate::auth_metrics::AUTH_METRICS
-        .plugin_duration_seconds
-        .record([plugin_name], invoke_start.elapsed().as_secs_f64());
-    crate::auth_metrics::AUTH_METRICS
-        .plugin_invocations_total
-        .inc([
-            plugin_name,
-            if invoke_result.is_ok() {
-                "success"
-            } else {
-                "failure"
-            },
-        ]);
+    crate::auth_metrics::AUTH_METRICS.record_plugin_invocation(
+        plugin_name,
+        invoke_result.is_ok(),
+        invoke_start.elapsed().as_secs_f64(),
+    );
     let raw_response = match invoke_result {
         Ok(bytes) => bytes,
         Err(e) => {
