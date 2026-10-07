@@ -131,6 +131,12 @@ impl Oauth2TokenError {
         }
     }
 
+    /// RFC 6749 §5.2 `server_error` served as `503`: the provider is
+    /// misconfigured and cannot answer until an operator fixes it.
+    pub(crate) fn server_error_unavailable(description: impl Into<String>) -> Self {
+        Self::new(StatusCode::SERVICE_UNAVAILABLE, "server_error", description)
+    }
+
     pub(crate) fn internal(description: impl Into<String>) -> Self {
         Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,

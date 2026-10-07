@@ -45,6 +45,7 @@ use crate::audit::CorrelationId;
 use crate::keystone::ServiceState;
 
 use super::html::no_store;
+use super::well_known::ensure_trusted_issuer;
 
 use authorization_code::handle_authorization_code_grant;
 use client_credentials::handle_client_credentials_grant;
@@ -130,6 +131,7 @@ struct TokenResponse {
         (status = BAD_REQUEST, description = "Malformed request, unsupported grant, or invalid scope"),
         (status = UNAUTHORIZED, description = "Invalid client credentials"),
         (status = TOO_MANY_REQUESTS, description = "Rate limit exceeded"),
+        (status = SERVICE_UNAVAILABLE, description = "`public_endpoint` is not configured"),
     ),
     tag = "oauth2"
 )]
@@ -147,6 +149,8 @@ pub(super) async fn token(
     correlation_id: CorrelationId,
     Form(form): Form<TokenForm>,
 ) -> Result<Response, Oauth2TokenError> {
+    ensure_trusted_issuer(&state).await?;
+
     let Some(grant_type) = form.grant_type.as_deref() else {
         return Err(Oauth2TokenError::invalid_request(
             "missing required parameter: grant_type",
@@ -251,6 +255,31 @@ mod tests {
         assert_eq!(response.headers()["cache-control"], "no-store");
         assert_eq!(response.headers()["pragma"], "no-cache");
         assert_eq!(json_body(response).await["error"], "invalid_request");
+    }
+
+    /// Without `public_endpoint` (and without the dev override) the issuer
+    /// cannot be pinned, so `/token` refuses to serve.
+    #[tokio::test]
+    async fn test_unset_public_endpoint_is_service_unavailable() {
+        let state = crate::api::tests::get_mocked_state_with_config(
+            Provider::mocked_builder(),
+            true,
+            None,
+            openstack_keystone_config::Config::default(),
+        )
+        .await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(request("grant_type=client_credentials&client_id=client-1"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(json_body(response).await["error"], "server_error");
     }
 
     #[tokio::test]

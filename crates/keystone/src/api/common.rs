@@ -112,6 +112,36 @@ pub async fn is_https(state: &ServiceState, headers: &axum::http::HeaderMap) -> 
     headers.get(FORWARDED_PROTO).and_then(|h| h.to_str().ok()) == Some("https")
 }
 
+/// Whether the OAuth2 OP may derive its issuer from the request headers.
+///
+/// `true` when `[DEFAULT] public_endpoint` is configured (the issuer is then
+/// pinned and no request header influences it) or when the development-only
+/// `[oauth2] allow_host_header_issuer` override is on.
+pub async fn oauth2_issuer_is_trusted(state: &ServiceState) -> bool {
+    let config = state.config_manager.config.read().await;
+    config.default.public_endpoint.is_some() || config.oauth2.allow_host_header_issuer
+}
+
+/// Whether cookies set by the OAuth2 OP must carry the `Secure` attribute.
+///
+/// When `public_endpoint` is set, its scheme decides regardless of any
+/// request header. Only when it is unset (development override) does this
+/// fall back to [`is_https`].
+pub async fn oauth2_cookie_secure(state: &ServiceState, headers: &axum::http::HeaderMap) -> bool {
+    let public_endpoint = state
+        .config_manager
+        .config
+        .read()
+        .await
+        .default
+        .public_endpoint
+        .clone();
+    match public_endpoint {
+        Some(url) => url.scheme() == "https",
+        None => is_https(state, headers).await,
+    }
+}
+
 /// Get the domain by ID or Name.
 ///
 /// # Arguments
@@ -1076,6 +1106,63 @@ mod tests {
         // always returns false.
         let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
         assert!(!is_https(&state, &headers).await);
+    }
+
+    /// With `public_endpoint` set, the cookie `Secure` flag follows its scheme
+    /// and ignores whatever `X-Forwarded-Proto` the client sent.
+    #[rstest]
+    #[case("https://keystone.example.com", None, true)]
+    #[case("https://keystone.example.com", Some("http"), true)]
+    #[case("http://keystone.example.com", Some("https"), false)]
+    #[tokio::test]
+    async fn test_oauth2_cookie_secure_follows_public_endpoint(
+        #[case] public_endpoint: &str,
+        #[case] forwarded_proto: Option<&str>,
+        #[case] expected: bool,
+    ) {
+        let mut config = Config::default();
+        config.default.public_endpoint = Some(Url::parse(public_endpoint).unwrap());
+        config.oslo_middleware.enable_proxy_headers_parsing = true;
+        let state = crate::api::tests::get_mocked_state_with_config(
+            Provider::mocked_builder(),
+            true,
+            None,
+            config,
+        )
+        .await;
+        let mut headers = axum::http::HeaderMap::new();
+        if let Some(p) = forwarded_proto {
+            headers.insert(FORWARDED_PROTO, p.parse().unwrap());
+        }
+        assert_eq!(oauth2_cookie_secure(&state, &headers).await, expected);
+    }
+
+    /// The issuer is only trusted when pinned by `public_endpoint` or when
+    /// the development override is on.
+    #[rstest]
+    #[case(false, false, false)]
+    #[case(true, false, true)]
+    #[case(false, true, true)]
+    #[tokio::test]
+    async fn test_oauth2_issuer_is_trusted(
+        #[case] with_public_endpoint: bool,
+        #[case] allow_host_header_issuer: bool,
+        #[case] expected: bool,
+    ) {
+        let mut config = Config::default();
+        if with_public_endpoint {
+            config.default.public_endpoint =
+                Some(Url::parse("https://keystone.example.com").unwrap());
+        }
+        config.oauth2.allow_host_header_issuer = allow_host_header_issuer;
+        let state = crate::api::tests::get_mocked_state_with_config(
+            Provider::mocked_builder(),
+            true,
+            None,
+            config,
+        )
+        .await;
+        assert_eq!(oauth2_issuer_is_trusted(&state).await, expected);
     }
 
     #[rstest]

@@ -26,7 +26,7 @@ use axum::{
     Json,
     extract::{Path, State},
     http::HeaderMap,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -34,6 +34,8 @@ use utoipa::ToSchema;
 use crate::api::common::PeerAddr;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+
+use super::token::Oauth2TokenError;
 
 /// Grant type URN for the OAuth 2.0 device authorization grant (RFC 8628 §3.4).
 const GRANT_TYPE_DEVICE_CODE: &str = "urn:ietf:params:oauth:grant-type:device_code";
@@ -140,6 +142,27 @@ impl Default for OpenIdConfiguration {
     }
 }
 
+/// Refuse to serve an issuer-bearing OP response unless the issuer is pinned.
+///
+/// Without `[DEFAULT] public_endpoint` the issuer would follow the request
+/// `Host` header, letting a client pick the `iss` claim, the discovery
+/// document and the device-flow `verification_uri`. Returns the RFC 6749
+/// §5.2 `server_error` (503) unless `public_endpoint` is set or the
+/// development-only `[oauth2] allow_host_header_issuer` override is on.
+pub(super) async fn ensure_trusted_issuer(state: &ServiceState) -> Result<(), Oauth2TokenError> {
+    if crate::api::common::oauth2_issuer_is_trusted(state).await {
+        return Ok(());
+    }
+    tracing::error!(
+        "OAuth2 OP request refused: [DEFAULT] public_endpoint is not set, so the \
+         issuer would be derived from the Host header; configure public_endpoint \
+         (or set [oauth2] allow_host_header_issuer = true for development only)"
+    );
+    Err(Oauth2TokenError::server_error_unavailable(
+        "the OAuth2 provider is not configured with a public endpoint",
+    ))
+}
+
 pub(super) async fn base_url(state: &ServiceState, headers: &HeaderMap) -> String {
     // Mirrors the fallback chain used by `api::common::public_base_url`:
     // `public_endpoint` -> `Host` header + `X-Forwarded-Proto` -> `http://localhost`.
@@ -165,6 +188,7 @@ pub(super) async fn base_url(state: &ServiceState, headers: &HeaderMap) -> Strin
         (status = OK, description = "OIDC discovery document", body = OpenIdConfiguration),
         (status = NOT_FOUND, description = "No signing keys provisioned for this domain"),
         (status = TOO_MANY_REQUESTS, description = "Rate limit exceeded"),
+        (status = SERVICE_UNAVAILABLE, description = "`public_endpoint` is not configured"),
     ),
     tag = "oauth2"
 )]
@@ -179,7 +203,7 @@ pub(super) async fn well_known(
     State(state): State<ServiceState>,
     headers: HeaderMap,
     PeerAddr(peer_addr): PeerAddr,
-) -> Result<impl IntoResponse, KeystoneApiError> {
+) -> Result<Response, KeystoneApiError> {
     if let Err(retry_after) = state
         .rate_limiters
         .check_ip(&headers, peer_addr.map(|addr| addr.ip()))
@@ -187,6 +211,10 @@ pub(super) async fn well_known(
         return Err(KeystoneApiError::TooManyRequests {
             retry_after: retry_after.as_secs(),
         });
+    }
+
+    if let Err(err) = ensure_trusted_issuer(&state).await {
+        return Ok(err.into_response());
     }
 
     // Existence check: 404 for a domain with no provisioned signing keys,
@@ -219,7 +247,7 @@ pub(super) async fn well_known(
         ..OpenIdConfiguration::default()
     };
 
-    Ok(Json(doc))
+    Ok(Json(doc).into_response())
 }
 
 #[cfg(test)]
@@ -402,6 +430,10 @@ mod tests {
                 enabled: true,
                 burst_size: 1,
                 replenish_rate_per_second: 1,
+            },
+            oauth2: openstack_keystone_config::Oauth2Provider {
+                allow_host_header_issuer: true,
+                ..Default::default()
             },
             ..Config::default()
         };

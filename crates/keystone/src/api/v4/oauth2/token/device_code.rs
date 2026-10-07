@@ -354,6 +354,7 @@ mod tests {
             oauth2: openstack_keystone_config::Oauth2Provider {
                 token_rate_limit_burst_size: 1,
                 token_rate_limit_replenish_per_minute: 1,
+                allow_host_header_issuer: true,
                 ..Default::default()
             },
             ..Config::default()
@@ -414,6 +415,10 @@ mod tests {
                 enabled: true,
                 burst_size: 1,
                 replenish_rate_per_second: 1,
+            },
+            oauth2: openstack_keystone_config::Oauth2Provider {
+                allow_host_header_issuer: true,
+                ..Default::default()
             },
             ..Config::default()
         };

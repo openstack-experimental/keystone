@@ -32,7 +32,7 @@ use openstack_keystone_core::oauth2_session::StartDeviceAuthorizationRequest;
 
 use super::html::no_store;
 use super::token::{Oauth2TokenError, validate_device_code_client};
-use super::well_known::base_url;
+use super::well_known::{base_url, ensure_trusted_issuer};
 use crate::api::common::PeerAddr;
 use crate::keystone::ServiceState;
 
@@ -63,6 +63,7 @@ pub(super) struct DeviceAuthorizationResponse {
     responses(
         (status = OK, description = "Device authorization grant issued"),
         (status = BAD_REQUEST, description = "Malformed request, unknown client, or invalid scope"),
+        (status = SERVICE_UNAVAILABLE, description = "`public_endpoint` is not configured"),
     ),
     tag = "oauth2"
 )]
@@ -90,6 +91,8 @@ pub(super) async fn device_authorization(
             retry_after.as_secs().max(1),
         ));
     }
+
+    ensure_trusted_issuer(&state).await?;
 
     let Some(client_id) = form.client_id.clone() else {
         return Err(Oauth2TokenError::invalid_request(
@@ -338,6 +341,10 @@ mod tests {
                 enabled: true,
                 burst_size: 1,
                 replenish_rate_per_second: 1,
+            },
+            oauth2: openstack_keystone_config::Oauth2Provider {
+                allow_host_header_issuer: true,
+                ..Default::default()
             },
             ..Config::default()
         };

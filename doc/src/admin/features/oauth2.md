@@ -52,8 +52,22 @@ code), see the [OAuth2 / OIDC user guide](../../user/features/oauth2.md).
 | `session_janitor_interval_seconds`      | 300     | Interval of the leader-only janitor that purges expired pre-auth sessions, authorization codes, device grants and refresh tokens from Raft.      |
 | `token_rate_limit_burst_size`           | 10      | `/token` rate-limit burst, keyed on unverified `client_id`.                                                                                      |
 | `token_rate_limit_replenish_per_minute` | 60      | `/token` sustained rate after burst is exhausted.                                                                                                |
+| `allow_host_header_issuer`              | `false` | **Development only.** Lets the issuer and cookie `Secure` flag follow the request `Host`/`X-Forwarded-Proto` headers when `[DEFAULT] public_endpoint` is unset. |
 
 Exceeding a rate limit returns `429 Too Many Requests`.
+
+## Production checklist
+
+- **Set `[DEFAULT] public_endpoint`** to the externally visible URL of
+  Keystone (for example `https://keystone.example.com`). It pins the issuer
+  (`iss` claim, discovery `issuer`, `token_endpoint`, `jwks_uri`, the device
+  flow `verification_uri`) so no request header can influence them, and its
+  scheme decides whether the pre-auth and device cookies carry `Secure`
+  (`https` → `Secure`, independent of `X-Forwarded-Proto`). Use `https`.
+- When `public_endpoint` is unset, Keystone logs an error at startup and
+  `/authorize`, `/device_authorization`, `/token` and discovery answer `503`
+  (`server_error`). `[oauth2] allow_host_header_issuer = true` restores the
+  Host-header behaviour and must only be used for local development.
 
 ## Provisioning a domain's signing key
 
@@ -332,6 +346,7 @@ migration runbook.
 | Symptom                                                                       | Likely cause                                                                                                                     |
 | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `/jwks` or `/.well-known/openid-configuration` returns 404                    | Domain has no signing key — run `keystone-manage oauth2 ensure-signing-key --domain <id>`                                        |
+| `503 server_error` on `/authorize`, `/device_authorization`, `/token` or discovery ("issuer mismatch" / issuer differs between environments) | `[DEFAULT] public_endpoint` is not set — set it to the external URL; the issuer is otherwise not pinned and the endpoints refuse to serve |
 | `429` on `/token`                                                             | Rate limit hit — see `token_rate_limit_*` config                                                                                 |
 | `429` on `/authorize`, `/device`, `/device/login`, or `/device_authorization` | Global per-IP limiter hit — see `[rate_limit_global_ip]`                                                                         |
 | `confirm-rotate-signing-key` fails with "rotation not found/expired"          | The 15-minute confirmation window elapsed and the rotation auto-aborted; re-run `rotate-signing-key --emergency`                 |

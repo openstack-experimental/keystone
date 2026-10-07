@@ -57,6 +57,11 @@ debug = true
 use_stderr = false
 log_dir = ${STATE_DIR}
 
+# Dev/test only: derive the OAuth2 issuer from the Host header instead of
+# pinning [DEFAULT] public_endpoint (OAuth2 OP endpoints 503 without one).
+[oauth2]
+allow_host_header_issuer = true
+
 [database]
 connection = ${DATABASE_URL}
 

@@ -189,11 +189,16 @@ pub mod tests {
         policy_allow: bool,
         policy_allow_see_other_domains: Option<bool>,
     ) -> ServiceState {
+        let mut config = Config::default();
+        // Unit tests have no `public_endpoint`; keep the development-only
+        // Host-header issuer working for them. Tests of the production
+        // behaviour pass their own config.
+        config.oauth2.allow_host_header_issuer = true;
         get_mocked_state_with_config(
             provider_builder,
             policy_allow,
             policy_allow_see_other_domains,
-            Config::default(),
+            config,
         )
         .await
     }

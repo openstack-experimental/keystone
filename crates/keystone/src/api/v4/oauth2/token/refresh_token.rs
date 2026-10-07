@@ -424,11 +424,11 @@ mod tests {
             .mock_identity(refresh_identity_mock(Some(refresh_user(true, "domain-1"))))
             .mock_resource(refresh_resource_mock(Some(true)));
         let (state, mut receivers) =
-            openstack_keystone_core::api::tests::get_mocked_state_with_audit(
-                provider,
-                true,
-                openstack_keystone_config::Config::default(),
-            )
+            openstack_keystone_core::api::tests::get_mocked_state_with_audit(provider, true, {
+                let mut config = openstack_keystone_config::Config::default();
+                config.oauth2.allow_host_header_issuer = true;
+                config
+            })
             .await;
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -882,6 +882,10 @@ mod tests {
                 enabled: true,
                 burst_size: 1,
                 replenish_rate_per_second: 1,
+            },
+            oauth2: openstack_keystone_config::Oauth2Provider {
+                allow_host_header_issuer: true,
+                ..Default::default()
             },
             ..Config::default()
         };

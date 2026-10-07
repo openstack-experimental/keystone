@@ -148,8 +148,8 @@ fn verify_csrf_token(session: &PreAuthSession, presented: &str) -> bool {
         .is_some_and(|expected| super::html::constant_time_eq(&expected, presented))
 }
 
-async fn is_https(state: &ServiceState, headers: &HeaderMap) -> bool {
-    crate::api::common::is_https(state, headers).await
+async fn cookie_secure(state: &ServiceState, headers: &HeaderMap) -> bool {
+    crate::api::common::oauth2_cookie_secure(state, headers).await
 }
 
 fn session_cookie(session_id: String, secure: bool) -> Cookie<'static> {
@@ -212,6 +212,7 @@ fn render_consent(domain_id: &str, session: &PreAuthSession) -> Response {
         (status = SEE_OTHER, description = "Redirect back to the client with a code or error"),
         (status = BAD_REQUEST, description = "Malformed request or unregistered redirect_uri"),
         (status = TOO_MANY_REQUESTS, description = "Rate limit exceeded"),
+        (status = SERVICE_UNAVAILABLE, description = "`public_endpoint` is not configured"),
     ),
     tag = "oauth2"
 )]
@@ -234,6 +235,17 @@ pub(super) async fn authorize(
         .check_ip(&headers, peer_addr.map(|a| a.ip()))
     {
         return Ok(too_many_requests(retry_after.as_secs()));
+    }
+
+    if !crate::api::common::oauth2_issuer_is_trusted(&state).await {
+        tracing::error!(
+            "OAuth2 /authorize refused: [DEFAULT] public_endpoint is not set \
+             (set it, or [oauth2] allow_host_header_issuer = true for development only)"
+        );
+        return Ok(error_page(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the OAuth2 provider is not configured with a public endpoint",
+        ));
     }
 
     let Some(response_type) = query.response_type.as_deref() else {
@@ -391,7 +403,7 @@ pub(super) async fn authorize(
 
     let jar = CookieJar::new().add(session_cookie(
         session.session_id.clone(),
-        is_https(&state, &headers).await,
+        cookie_secure(&state, &headers).await,
     ));
     let response = render_login(&domain_id, &session, None);
     Ok((jar, response).into_response())
@@ -955,6 +967,28 @@ mod tests {
         assert!(set_cookie.to_lowercase().contains("httponly"));
         let body = text_body(response).await;
         assert!(body.contains("client-1"));
+    }
+
+    #[tokio::test]
+    async fn test_authorize_unset_public_endpoint_is_service_unavailable() {
+        let state = crate::api::tests::get_mocked_state_with_config(
+            Provider::mocked_builder(),
+            true,
+            None,
+            openstack_keystone_config::Config::default(),
+        )
+        .await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(get_request(&format!("/domain-1/authorize?{AUTHZ_QS}")))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(response.headers().get(header::SET_COOKIE).is_none());
     }
 
     fn sample_session() -> PreAuthSession {

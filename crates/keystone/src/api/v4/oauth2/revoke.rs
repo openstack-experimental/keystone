@@ -51,7 +51,7 @@ use openstack_keystone_core_types::oauth2_session::RefreshTokenRevocationReason;
 use openstack_keystone_key_repository::asymmetric::SigningAlgorithm;
 
 use crate::api::common::PeerAddr;
-use crate::api::v4::oauth2::well_known::base_url;
+use crate::api::v4::oauth2::well_known::{base_url, ensure_trusted_issuer};
 use crate::audit::{
     CorrelationId, emit_oauth2_refresh_family_revoked_event, emit_oauth2_session_event,
 };
@@ -105,6 +105,7 @@ fn client_initiator(
         (status = BAD_REQUEST, description = "Missing `token` parameter"),
         (status = UNAUTHORIZED, description = "Invalid client credentials"),
         (status = TOO_MANY_REQUESTS, description = "Rate limit exceeded"),
+        (status = SERVICE_UNAVAILABLE, description = "`public_endpoint` is not configured"),
     ),
     tag = "oauth2"
 )]
@@ -155,6 +156,11 @@ pub(super) async fn revoke(
             .max(1);
         return Err(Oauth2TokenError::too_many_requests(retry_after));
     }
+
+    // Access-token verification below pins `iss` to the issuer derived
+    // from `base_url`; without a trusted issuer that check is meaningless
+    // and every access token would be silently reported as "unknown".
+    ensure_trusted_issuer(&state).await?;
 
     let oauth2_cfg = state.config_manager.config.read().await.oauth2.clone();
     authenticate_client(
@@ -371,7 +377,7 @@ mod tests {
         ActiveKeys, SigningAlgorithm, generate_keypair, to_encoding_key,
     };
 
-    use crate::api::tests::get_mocked_state;
+    use crate::api::tests::get_mocked_state_with_config;
     use crate::api::v4::oauth2::openapi_router;
     use crate::api::v4::oauth2::token::test_fixtures::confidential_client;
     use crate::oauth2_client::MockOauth2ClientProvider;
@@ -455,7 +461,21 @@ mod tests {
     }
 
     async fn call(provider: ProviderBuilder, body: &str) -> StatusCode {
-        let state = get_mocked_state(provider, true, None).await;
+        call_with_config(provider, body, dev_config()).await
+    }
+
+    fn dev_config() -> Config {
+        Config {
+            oauth2: openstack_keystone_config::Oauth2Provider {
+                allow_host_header_issuer: true,
+                ..Default::default()
+            },
+            ..Config::default()
+        }
+    }
+
+    async fn call_with_config(provider: ProviderBuilder, body: &str, config: Config) -> StatusCode {
+        let state = get_mocked_state_with_config(provider, true, None, config).await;
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
             .with_state(state);
@@ -695,6 +715,15 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_unset_public_endpoint_is_503() {
+        let provider = Provider::mocked_builder().mock_oauth2_key(no_keys_mock());
+        assert_eq!(
+            call_with_config(provider, &form("a"), Config::default()).await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
+
+    #[tokio::test]
     async fn test_rate_limited_by_ip_before_lookup() {
         let config = Config {
             rate_limit_global_ip: openstack_keystone_config::RateLimitSection {
@@ -702,7 +731,7 @@ mod tests {
                 burst_size: 1,
                 replenish_rate_per_second: 1,
             },
-            ..Config::default()
+            ..dev_config()
         };
         let mut client = MockOauth2ClientProvider::default();
         let resource = confidential_client().await;

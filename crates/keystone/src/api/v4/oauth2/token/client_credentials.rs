@@ -316,11 +316,11 @@ mod tests {
             .returning(move |_, _| Ok(Some(client.clone())));
         let provider = Provider::mocked_builder().mock_oauth2_client(client_mock);
         let (state, mut receivers) =
-            openstack_keystone_core::api::tests::get_mocked_state_with_audit(
-                provider,
-                true,
-                Config::default(),
-            )
+            openstack_keystone_core::api::tests::get_mocked_state_with_audit(provider, true, {
+                let mut config = Config::default();
+                config.oauth2.allow_host_header_issuer = true;
+                config
+            })
             .await;
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -429,11 +429,11 @@ mod tests {
             .mock_resource(resource_mock)
             .mock_oauth2_key(ok_key_mock());
         let (state, mut receivers) =
-            openstack_keystone_core::api::tests::get_mocked_state_with_audit(
-                provider,
-                true,
-                Config::default(),
-            )
+            openstack_keystone_core::api::tests::get_mocked_state_with_audit(provider, true, {
+                let mut config = Config::default();
+                config.oauth2.allow_host_header_issuer = true;
+                config
+            })
             .await;
         let mut api = openapi_router()
             .layer(TraceLayer::new_for_http())
@@ -470,6 +470,7 @@ mod tests {
             oauth2: openstack_keystone_config::Oauth2Provider {
                 token_rate_limit_burst_size: 1,
                 token_rate_limit_replenish_per_minute: 1,
+                allow_host_header_issuer: true,
                 ..Default::default()
             },
             ..Config::default()

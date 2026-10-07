@@ -105,8 +105,8 @@ fn verify_csrf_token(grant: &DeviceCodeGrant, presented: &str) -> bool {
         .is_some_and(|expected| super::html::constant_time_eq(&expected, presented))
 }
 
-async fn is_https(state: &ServiceState, headers: &HeaderMap) -> bool {
-    crate::api::common::is_https(state, headers).await
+async fn cookie_secure(state: &ServiceState, headers: &HeaderMap) -> bool {
+    crate::api::common::oauth2_cookie_secure(state, headers).await
 }
 
 fn device_cookie(device_code: String, secure: bool) -> Cookie<'static> {
@@ -292,7 +292,7 @@ pub(super) async fn device_login_code(
     let client_id = client_id_for_display(&state, &grant.client_id).await;
     let jar = jar.add(device_cookie(
         grant.device_code.clone(),
-        is_https(&state, &headers).await,
+        cookie_secure(&state, &headers).await,
     ));
     let response = render_login(&domain_id, &client_id, &grant, None);
     Ok((jar, response).into_response())
@@ -633,6 +633,10 @@ mod tests {
                 enabled: true,
                 burst_size: 1,
                 replenish_rate_per_second: 1,
+            },
+            oauth2: openstack_keystone_config::Oauth2Provider {
+                allow_host_header_issuer: true,
+                ..Default::default()
             },
             ..Config::default()
         };

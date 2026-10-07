@@ -186,6 +186,18 @@ pub struct Oauth2Provider {
     /// `GET /v4/oauth2/{domain_id}/clients` pagination limits.
     #[serde(default)]
     pub list_limit: ListLimitConfig,
+
+    /// Allow the OP to derive its issuer (and the `Secure` cookie attribute)
+    /// from the request `Host` / `X-Forwarded-Proto` headers when
+    /// `[DEFAULT] public_endpoint` is unset.
+    ///
+    /// **Development only.** Left `false`, the OP refuses `/authorize`,
+    /// `/device_authorization`, `/token` and discovery with `503
+    /// server_error` until `public_endpoint` is configured, so a client
+    /// cannot choose the `iss` claim, the discovery document or the device
+    /// flow `verification_uri` through the `Host` header.
+    #[serde(default)]
+    pub allow_host_header_issuer: bool,
 }
 
 fn default_signing_key_rotation_days() -> u32 {
@@ -284,6 +296,7 @@ impl Default for Oauth2Provider {
             revoked_family_retention_days: default_revoked_family_retention_days(),
             session_janitor_interval_seconds: default_session_janitor_interval_seconds(),
             list_limit: ListLimitConfig::default(),
+            allow_host_header_issuer: false,
         }
     }
 }
@@ -311,6 +324,7 @@ mod tests {
         assert_eq!(cfg.device_code_invalid_quiet_period_seconds, 300);
         assert_eq!(cfg.revoked_family_retention_days, 30);
         assert_eq!(cfg.session_janitor_interval_seconds, 300);
+        assert!(!cfg.allow_host_header_issuer);
         assert!(cfg.validate().is_ok());
     }
 

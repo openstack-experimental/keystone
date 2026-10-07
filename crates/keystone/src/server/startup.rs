@@ -28,7 +28,7 @@ use clap::Parser;
 use color_eyre::eyre::{Report, Result};
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info};
+use tracing::{debug, error, info, warn};
 
 use crate::config::Config;
 use openstack_keystone_core::keystone::ServiceState;
@@ -102,6 +102,8 @@ pub async fn run() -> Result<(), Report> {
     let _guard = tracing_init::init(args.verbose, &cfg)?;
     color_eyre::install()?;
 
+    check_oauth2_public_endpoint(&cfg);
+
     info!("Starting Keystone...");
     let startup_timer = Instant::now();
 
@@ -144,6 +146,31 @@ pub async fn run() -> Result<(), Report> {
     startup.token.cancel();
     shutdown::await_audit_writer(startup.audit_writer.take(), &startup.cfg).await;
     Ok(())
+}
+
+/// Log an error when the OAuth2 OP would have to derive its issuer from the
+/// request `Host` header.
+///
+/// Without `[DEFAULT] public_endpoint` the OP endpoints (`/authorize`,
+/// `/device_authorization`, `/token`, discovery) answer `503` unless the
+/// development-only `[oauth2] allow_host_header_issuer` override is on.
+pub(crate) fn check_oauth2_public_endpoint(cfg: &Config) {
+    if cfg.default.public_endpoint.is_some() {
+        return;
+    }
+    if cfg.oauth2.allow_host_header_issuer {
+        warn!(
+            "[oauth2] allow_host_header_issuer is enabled and [DEFAULT] public_endpoint is \
+             not set: the OAuth2 issuer follows the request Host header. Use for \
+             development only."
+        );
+    } else {
+        error!(
+            "[DEFAULT] public_endpoint is not set: the OAuth2 provider endpoints will \
+             answer 503 server_error because the issuer cannot be pinned. Set \
+             public_endpoint to the externally visible https URL."
+        );
+    }
 }
 
 /// Emit a `DEBUG` line with the wall-clock time since `since` for a named
