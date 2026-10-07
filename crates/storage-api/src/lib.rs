@@ -150,6 +150,30 @@ pub struct Node {
     pub rpc_addr: String,
 }
 
+/// Readiness of the storage node to serve traffic.
+///
+/// Returned by [`StorageApi::readiness`]. A node is ready only when it is
+/// initialized and `issues` is empty; every entry in `issues` is a
+/// human-readable reason why this node should not receive traffic right
+/// now (no known leader, applied index lagging the cluster commit index,
+/// quarantined partition, ...). None of these conditions is fatal to the
+/// process: they are reported through the readiness probe, not the
+/// liveness probe, so the node keeps running and recovers on its own.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StorageReadiness {
+    /// Whether the Raft cluster has been initialized on this node.
+    pub initialized: bool,
+    /// Reasons why this node is not ready to serve traffic.
+    pub issues: Vec<String>,
+}
+
+impl StorageReadiness {
+    /// Returns `true` when the node is initialized and has no issues.
+    pub fn is_ready(&self) -> bool {
+        self.initialized && self.issues.is_empty()
+    }
+}
+
 /// Response from a storage write operation.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoreResponse {
@@ -542,4 +566,38 @@ pub trait StorageApi: Send + Sync {
     /// driven by wall-clock time — that should only run on one cluster
     /// member at a time.
     async fn node_id(&self) -> u64;
+
+    /// Reports whether this node is ready to serve traffic.
+    ///
+    /// The default implementation only requires the cluster to be
+    /// initialized and a leader to be known. Raft-backed implementations
+    /// override it with the full set of checks (apply lag, quarantined
+    /// partitions, leader quorum contact).
+    ///
+    /// Conditions in [`StorageReadiness::issues`] are all recoverable: they
+    /// affect only the readiness probe, so the node keeps running and
+    /// recovers on its own. A storage core that has stopped (fatal error,
+    /// panic or shutdown) is unrecoverable and is returned as a
+    /// [`StoreError`] instead — implementations must fail here (e.g.
+    /// through [`Self::is_initialized`]) so the health endpoint can report
+    /// `error` and the liveness probe restarts the process.
+    async fn readiness(&self) -> Result<StorageReadiness, StoreError> {
+        let initialized = self.is_initialized().await?;
+        let mut issues = Vec::new();
+        if initialized && self.current_leader().await.is_none() {
+            issues.push("no raft leader known".to_string());
+        }
+        Ok(StorageReadiness {
+            initialized,
+            issues,
+        })
+    }
+
+    /// Renders this node's storage metrics in Prometheus text-exposition
+    /// format for the `/metrics` endpoint.
+    ///
+    /// The default implementation renders nothing.
+    fn format_prometheus_metrics(&self) -> String {
+        String::new()
+    }
 }

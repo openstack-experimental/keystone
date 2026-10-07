@@ -117,7 +117,8 @@ where
     }
 
     /// The log nonce manager, shared so the automatic DEK rotation can
-    /// watch the counter of the current epoch.
+    /// watch the counter of the current epoch and the
+    /// `keystone_raft_log_nonce_*` metrics can report it.
     pub fn nonce_manager(&self) -> Arc<Mutex<NonceManager>> {
         self.nonce_mgr.clone()
     }

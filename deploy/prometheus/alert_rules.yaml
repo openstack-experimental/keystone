@@ -93,3 +93,92 @@ groups:
           description: >
             Provider operations will block once the channel (256 events by
             default) is full. Check the spool writer and disk latency.
+
+  # Raft distributed storage (GitHub #1306). Series are exported per node
+  # when `[distributed_storage]` is configured; see
+  # crates/storage/src/prometheus_metrics.rs.
+  - name: keystone_raft
+    rules:
+      # A partition was quarantined after repeated AES-GCM failures. Reads
+      # from it are blocked on this node and `/ready` reports not ready.
+      # Follow the "Clearing a Quarantined Partition" runbook.
+      - alert: KeystoneRaftPartitionQuarantined
+        expr: keystone_raft_quarantined_partitions_count > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Raft partition quarantined on {{ $labels.instance }}"
+          description: >
+            Repeated GCM tag verification failures quarantined a storage
+            partition. Investigate disk corruption or tampering before
+            clearing the quarantine.
+
+      # First GCM failure (the runbook's "metric increment" stage).
+      - alert: KeystoneRaftGcmFailures
+        expr: increase(keystone_raft_gcm_failures_total[10m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "AES-GCM verification failures on {{ $labels.instance }}"
+          description: >
+            Encrypted state failed tag verification. Three failures within
+            60 seconds quarantine the partition.
+
+      # `keystone_raft_term` is 0 until the node has observed Raft state,
+      # so a node that started but has not yet joined the cluster (or never
+      # will, if misconfigured) does not page.
+      - alert: KeystoneRaftNoLeader
+        expr: keystone_raft_current_leader_id < 0 and keystone_raft_term > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No Raft leader known on {{ $labels.instance }}"
+          description: >
+            The node is partitioned or the cluster lost quorum; writes and
+            linearizable reads fail.
+
+      - alert: KeystoneRaftApplyLag
+        expr: keystone_raft_apply_lag > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Raft apply lag above 1000 entries on {{ $labels.instance }}"
+          description: >
+            The state machine trails the cluster commit index; the node is
+            not ready and serves no traffic until it catches up.
+
+      # Fewer than 10% of the 2^31 log nonces remain. The node stops
+      # accepting log appends once the counter reaches 2^31.
+      - alert: KeystoneRaftNonceBudgetLow
+        expr: keystone_raft_log_nonce_remaining < 214748364
+        labels:
+          severity: warning
+        annotations:
+          summary: "Log nonce budget below 10% on {{ $labels.instance }}"
+          description: >
+            The log-encryption nonce counter approaches 2^31, after which
+            this node rejects log appends. Plan a DEK rotation per the
+            distributed storage guide.
+
+      # Per-record write version at 90% of the 2^30 limit (invariant 9).
+      - alert: KeystoneRaftWriteRateVersionHigh
+        expr: keystone_raft_write_rate_version_max > 966367641
+        labels:
+          severity: warning
+        annotations:
+          summary: "Per-record write version near limit on {{ $labels.instance }}"
+          description: >
+            A record approaches the 2^30 write limit; rotate the DEK.
+
+      - alert: KeystoneRaftReencryptSkipped
+        expr: keystone_raft_dek_reencrypt_last_skipped > 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "DEK re-encryption left records behind on {{ $labels.instance }}"
+          description: >
+            The last background re-encryption pass skipped records; the
+            retired DEK cannot be dropped until they are migrated.

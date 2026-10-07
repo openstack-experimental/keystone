@@ -997,6 +997,150 @@ async fn test_node_restart_inner() -> Result<()> {
     Ok(())
 }
 
+/// `/ready` checks and `/metrics` series against a live cluster (GitHub
+/// #1306): a single-voter leader stays ready while idle (openraft never
+/// refreshes its quorum-ack time), every member of a three-voter cluster is
+/// ready once it has caught up, and the operational `keystone_raft_*`
+/// series are rendered.
+#[serial_test::serial]
+#[tracing_test::traced_test]
+#[test]
+fn test_readiness_and_metrics() {
+    TypeConfig::run(test_readiness_and_metrics_inner()).unwrap();
+}
+
+const READINESS_PORT_BASE: u16 = 1300;
+
+async fn wait_until_ready(storage: &Storage) -> Vec<String> {
+    let mut issues = Vec::new();
+    for _ in 0..100 {
+        let readiness = storage.readiness().await.expect("readiness");
+        if readiness.is_ready() {
+            return Vec::new();
+        }
+        issues = readiness.issues;
+        TypeConfig::sleep(Duration::from_millis(100)).await;
+    }
+    issues
+}
+
+async fn test_readiness_and_metrics_inner() -> Result<()> {
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+
+    let tls_configuration = make_certificates()?;
+
+    let mut instances = Vec::new();
+    for node_id in 1..=3 {
+        let instance = Arc::new(
+            InstanceHolder::new_with_port(node_id, READINESS_PORT_BASE, tls_configuration.clone())
+                .await?,
+        );
+        let inst = instance.clone();
+        thread::spawn(move || {
+            let mut rt = AsyncRuntimeOf::<TypeConfig>::new(1);
+            let _ = rt.block_on(start_raft_app(&inst.config, &inst.storage));
+        });
+        instances.push(instance);
+    }
+
+    TypeConfig::sleep(Duration::from_millis(200)).await;
+
+    // Uninitialized: not ready, reported as such rather than as an issue.
+    let readiness = instances[0].storage.readiness().await?;
+    assert!(!readiness.initialized);
+    assert!(!readiness.is_ready());
+
+    let tls_client_config = get_client_tls_config(&instances[0].config)?;
+    let mut admin_client1 = new_admin_client(
+        instances[0].config.node_cluster_addr.clone(),
+        &tls_client_config,
+    )
+    .await?;
+    admin_client1
+        .init(pb::raft::InitRequest {
+            nodes: vec![new_node_with_port(1, READINESS_PORT_BASE)],
+        })
+        .await?;
+    wait_for_leader(&mut admin_client1, 1).await;
+
+    // A single-voter leader must stay ready past the quorum-ack window.
+    assert_eq!(
+        wait_until_ready(&instances[0].storage).await,
+        Vec::<String>::new()
+    );
+    TypeConfig::sleep(Duration::from_secs(7)).await;
+    let readiness = instances[0].storage.readiness().await?;
+    assert!(
+        readiness.is_ready(),
+        "idle single-voter leader must stay ready: {:?}",
+        readiness.issues
+    );
+
+    for node_id in [2, 3] {
+        admin_client1
+            .add_learner(pb::raft::AddLearnerRequest {
+                node: Some(new_node_with_port(node_id, READINESS_PORT_BASE)),
+            })
+            .await?;
+    }
+    admin_client1
+        .change_membership(pb::raft::ChangeMembershipRequest {
+            members: vec![1, 2, 3],
+            retain: false,
+        })
+        .await?;
+
+    instances[0]
+        .storage
+        .set_value("readiness".to_string(), make_env("value")?, None, None)
+        .await?;
+
+    for instance in &instances {
+        assert_eq!(
+            wait_until_ready(&instance.storage).await,
+            Vec::<String>::new(),
+            "node {} must become ready",
+            instance.node_id
+        );
+    }
+    // The leader keeps receiving quorum acknowledgements while idle.
+    TypeConfig::sleep(Duration::from_secs(7)).await;
+    let readiness = instances[0].storage.readiness().await?;
+    assert!(
+        readiness.is_ready(),
+        "idle multi-voter leader must stay ready: {:?}",
+        readiness.issues
+    );
+
+    let text = instances[0].storage.format_prometheus_metrics();
+    for line in [
+        "keystone_raft_is_leader 1\n",
+        "keystone_raft_current_leader_id 1\n",
+        "keystone_raft_membership_voters 3\n",
+        "keystone_raft_quarantined_partitions_count 0\n",
+        "keystone_raft_dek_pending_rotation 0\n",
+        "keystone_raft_gcm_failures_total 0\n",
+    ] {
+        assert!(text.contains(line), "missing {line:?} in:\n{text}");
+    }
+    for name in [
+        "keystone_raft_dek_version ",
+        "keystone_raft_log_nonce_counter ",
+        "keystone_raft_log_nonce_remaining ",
+        "keystone_raft_disk_space_bytes ",
+        "keystone_raft_write_rate_version_max ",
+        "keystone_raft_audit_channel_depth ",
+    ] {
+        assert!(text.contains(name), "missing {name:?} in:\n{text}");
+    }
+    let follower_text = instances[1].storage.format_prometheus_metrics();
+    assert!(follower_text.contains("keystone_raft_is_leader 0\n"));
+    assert!(follower_text.contains("keystone_raft_current_leader_id 1\n"));
+
+    Ok(())
+}
+
 /// Regression test for GitHub #1135: intermittent false-negative prefix_index
 /// reads under concurrent load on the leader.
 ///

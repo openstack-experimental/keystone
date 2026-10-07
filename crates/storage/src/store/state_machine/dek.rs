@@ -324,6 +324,7 @@ impl FjallStateMachine {
                 // reading pre-rotation data, but the GCM
                 // failure with the current DEK still counts toward
                 // quarantine threshold.
+                self.raft_prometheus_metrics.gcm_failures_total.inc();
                 let failed = self.quarantine.record_failure(partition);
 
                 // Try retired DEK epochs — legacy records have no recorded
@@ -425,6 +426,9 @@ impl FjallStateMachine {
         } else {
             0
         };
+
+        self.raft_prometheus_metrics
+            .record_write_version(next_version);
 
         // Enforce per-record write rate limit (ADR 0016-v2 §10 / invariant 9).
         let threshold = self.write_rate_threshold();

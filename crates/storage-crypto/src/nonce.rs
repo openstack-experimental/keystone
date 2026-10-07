@@ -52,9 +52,13 @@
 //! ## Rotation threshold
 //!
 //! When the counter approaches `2^31` ([`ROTATION_THRESHOLD`]), a `WARN` is
-//! emitted at 10% remaining ([`NonceManager::rotation_due`] turns true, which
-//! the storage layer uses to trigger an automatic DEK rotation) and
-//! [`CryptoError::NonceExhausted`] is returned when the threshold is reached.
+//! emitted at 10% remaining (at most once per [`WARN_INTERVAL`];
+//! [`NonceManager::rotation_due`] turns true, which the storage layer uses to
+//! trigger an automatic DEK rotation) and [`CryptoError::NonceExhausted`] is
+//! returned when the threshold is reached. The counter is exposed through
+//! [`NonceManager::counter`] and [`NonceManager::remaining`] for monitoring.
+
+use std::time::{Duration, Instant};
 
 use tracing::{error, warn};
 
@@ -70,6 +74,12 @@ pub const ROTATION_THRESHOLD: u32 = 1u32 << 31;
 /// Warn (and request a DEK rotation) when this many counter values remain
 /// before the threshold.
 pub const WARN_REMAINING: u32 = ROTATION_THRESHOLD / 10;
+
+/// Minimum interval between two "approaching rotation threshold" warnings.
+///
+/// Once inside the warning window every log append would otherwise emit a
+/// `WARN`, i.e. potentially thousands of lines per second.
+const WARN_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Persistence back-end used by [`NonceManager`].
 ///
@@ -96,6 +106,8 @@ pub struct NonceManager {
     counter: u32,
     /// End of the currently reserved block (exclusive).
     block_end: u32,
+    /// When the last "approaching rotation threshold" warning was emitted.
+    last_warn: Option<Instant>,
     storage: Box<dyn NoncePersistence>,
 }
 
@@ -115,6 +127,7 @@ impl NonceManager {
             epoch,
             counter: start,
             block_end: start,
+            last_warn: None,
             storage,
         };
 
@@ -161,11 +174,17 @@ impl NonceManager {
             return Err(CryptoError::NonceExhausted);
         }
         let remaining = ROTATION_THRESHOLD - self.counter;
-        if remaining <= WARN_REMAINING {
+        if remaining <= WARN_REMAINING
+            && self
+                .last_warn
+                .is_none_or(|last| last.elapsed() >= WARN_INTERVAL)
+        {
+            self.last_warn = Some(Instant::now());
             warn!(
                 node_id = self.node_id,
                 epoch = self.epoch,
                 counter = self.counter,
+                remaining,
                 threshold = ROTATION_THRESHOLD,
                 "nonce counter approaching rotation threshold — DEK rotation required soon"
             );
@@ -183,6 +202,12 @@ impl NonceManager {
         nonce[..8].copy_from_slice(&self.node_id.to_be_bytes());
         nonce[8..].copy_from_slice(&current.to_be_bytes());
         Ok(nonce)
+    }
+
+    /// Counter values left before [`CryptoError::NonceExhausted`] is
+    /// returned and a DEK rotation becomes mandatory.
+    pub fn remaining(&self) -> u32 {
+        ROTATION_THRESHOLD.saturating_sub(self.counter)
     }
 
     /// Reserve the next block by persisting the new block-end and updating HWM.
@@ -395,6 +420,39 @@ mod tests {
         mgr.counter = ROTATION_THRESHOLD;
         mgr.block_end = ROTATION_THRESHOLD;
         assert!(matches!(mgr.next_nonce(), Err(CryptoError::NonceExhausted)));
+    }
+
+    #[test]
+    fn test_counter_and_remaining() {
+        let mut mgr = make_mgr(3);
+        let start = mgr.counter();
+        assert_eq!(mgr.remaining(), ROTATION_THRESHOLD - start);
+        mgr.next_nonce().expect("nonce");
+        assert_eq!(mgr.counter(), start + 1);
+        assert_eq!(mgr.remaining(), ROTATION_THRESHOLD - start - 1);
+
+        mgr.counter = ROTATION_THRESHOLD;
+        assert_eq!(mgr.remaining(), 0);
+    }
+
+    #[test]
+    fn test_threshold_warning_is_rate_limited() {
+        let mut mgr = make_mgr(5);
+        // Outside the warning window: no warning recorded.
+        mgr.next_nonce().expect("nonce");
+        assert!(mgr.last_warn.is_none());
+
+        // Inside the warning window: the first call warns...
+        mgr.counter = ROTATION_THRESHOLD - WARN_REMAINING;
+        mgr.block_end = mgr.counter + RESERVE_BLOCK;
+        mgr.next_nonce().expect("nonce");
+        let first = mgr.last_warn.expect("warning emitted");
+
+        // ...and subsequent calls within WARN_INTERVAL stay silent.
+        for _ in 0..10 {
+            mgr.next_nonce().expect("nonce");
+        }
+        assert_eq!(mgr.last_warn, Some(first));
     }
 
     #[test]

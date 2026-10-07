@@ -36,10 +36,24 @@
 //! per-operation latency histogram recorded incrementally at the actual
 //! state-machine apply call site (`store::state_machine`), since a snapshot
 //! read can't reconstruct latency after the fact.
+//!
+//! The operational series the operator guide refers to (quarantine, DEK
+//! lifecycle, log nonce counter, snapshot and disk usage; GitHub #1306) are
+//! split in two groups:
+//!
+//! * event counters recorded where the event happens
+//!   (`gcm_failures_total`, `dek_reencrypt_*_total`,
+//!   `write_rate_version_max`), owned by this struct;
+//! * point-in-time state read on every scrape from the state machine and log
+//!   store, passed in as a [`RaftNodeStatus`] and rendered by
+//!   [`format_node_status_text`].
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 
-use openstack_keystone_metrics::{Gauge, Histogram, LabeledGauge, write_metric_header};
+use openstack_keystone_metrics::{
+    Counter, Gauge, Histogram, LabeledGauge, escape_label_value, write_metric_header,
+};
 
 use crate::TypeConfig;
 
@@ -60,6 +74,30 @@ pub struct KeystoneRaftPrometheusMetrics {
     /// the gauges above. `pub` so the apply call site (a different module
     /// in this crate) can record into it directly.
     pub apply_duration_seconds: Histogram,
+    /// Raft leader id as seen by this node; `-1` while no leader is known.
+    current_leader_id: Gauge,
+    /// Number of voters in the effective membership config.
+    membership_voters: Gauge,
+    /// Number of learners in the effective membership config.
+    membership_learners: Gauge,
+    /// Cluster commit index (as reported by the leader) minus this node's
+    /// last applied index.
+    apply_lag: Gauge,
+    /// Last log index included in this node's latest snapshot.
+    snapshot_last_index: Gauge,
+    /// AES-GCM tag verification failures on state reads (the quarantine
+    /// trigger). Incremented on every failure, not only on the one that
+    /// crosses the quarantine threshold.
+    pub gcm_failures_total: Counter,
+    /// Highest per-record write version seen by this node since start
+    /// (ADR 0016-v2 §10 invariant 9).
+    write_rate_version_max: AtomicU32,
+    /// Records re-encrypted under the current DEK by background sweeps.
+    dek_reencrypt_migrated_total: Counter,
+    /// Records the background sweeps skipped (CAS retries exhausted).
+    dek_reencrypt_skipped_total: Counter,
+    /// Records skipped by the most recent sweep pass.
+    dek_reencrypt_last_skipped: Gauge,
 }
 
 impl Default for KeystoneRaftPrometheusMetrics {
@@ -77,7 +115,31 @@ impl KeystoneRaftPrometheusMetrics {
             last_applied_index: Gauge::new(),
             replication_lag: LabeledGauge::new(["peer_id"]),
             apply_duration_seconds: Histogram::new(),
+            current_leader_id: Gauge::new(),
+            membership_voters: Gauge::new(),
+            membership_learners: Gauge::new(),
+            apply_lag: Gauge::new(),
+            snapshot_last_index: Gauge::new(),
+            gcm_failures_total: Counter::new(),
+            write_rate_version_max: AtomicU32::new(0),
+            dek_reencrypt_migrated_total: Counter::new(),
+            dek_reencrypt_skipped_total: Counter::new(),
+            dek_reencrypt_last_skipped: Gauge::new(),
         }
+    }
+
+    /// Records a per-record write version, keeping the maximum.
+    pub fn record_write_version(&self, version: u32) {
+        self.write_rate_version_max
+            .fetch_max(version, Ordering::Relaxed);
+    }
+
+    /// Records the outcome of one background re-encryption pass.
+    pub fn record_reencrypt_report(&self, report: &crate::store::state_machine::ReencryptReport) {
+        self.dek_reencrypt_migrated_total.add(report.migrated);
+        self.dek_reencrypt_skipped_total.add(report.skipped);
+        self.dek_reencrypt_last_skipped
+            .set(i64::try_from(report.skipped).unwrap_or(i64::MAX));
     }
 
     /// Updates the gauges from a live `openraft::RaftMetrics` snapshot.
@@ -114,6 +176,23 @@ impl KeystoneRaftPrometheusMetrics {
         if let Some(replication) = &metrics.replication {
             self.set_replication_lag(replication, last_log_index);
         }
+
+        self.current_leader_id
+            .set(metrics.current_leader.map_or(-1, |id| id as i64));
+        let membership = metrics.membership_config.membership();
+        self.membership_voters
+            .set(membership.voter_ids().count() as i64);
+        self.membership_learners
+            .set(membership.learner_ids().count() as i64);
+        self.apply_lag
+            .set(apply_lag(metrics).map_or(0, |lag| lag as i64));
+        self.snapshot_last_index.set(
+            metrics
+                .snapshot
+                .as_ref()
+                .map(|l| l.index() as i64)
+                .unwrap_or(0),
+        );
     }
 
     fn set_replication_lag(
@@ -206,8 +285,205 @@ impl KeystoneRaftPrometheusMetrics {
             &[],
         );
 
+        let gauges: [(&str, &str, &Gauge); 6] = [
+            (
+                "keystone_raft_current_leader_id",
+                "Raft node id of the leader as seen by this node (-1 when unknown).",
+                &self.current_leader_id,
+            ),
+            (
+                "keystone_raft_membership_voters",
+                "Number of voters in the effective Raft membership.",
+                &self.membership_voters,
+            ),
+            (
+                "keystone_raft_membership_learners",
+                "Number of learners in the effective Raft membership.",
+                &self.membership_learners,
+            ),
+            (
+                "keystone_raft_apply_lag",
+                "Log entries by which this node's last applied index trails the \
+                 cluster commit index reported by the leader.",
+                &self.apply_lag,
+            ),
+            (
+                "keystone_raft_snapshot_last_index",
+                "Last Raft log index included in this node's latest snapshot.",
+                &self.snapshot_last_index,
+            ),
+            (
+                "keystone_raft_dek_reencrypt_last_skipped",
+                "Records skipped by the most recent DEK re-encryption pass.",
+                &self.dek_reencrypt_last_skipped,
+            ),
+        ];
+        for (name, help, gauge) in gauges {
+            write_metric_header(&mut out, name, help, "gauge");
+            gauge.write_line(&mut out, name);
+        }
+
+        write_metric_header(
+            &mut out,
+            "keystone_raft_write_rate_version_max",
+            "Highest per-record write version seen by this node since start \
+             (DEK rotation is required before it reaches 2^30).",
+            "gauge",
+        );
+        out.push_str(&format!(
+            "keystone_raft_write_rate_version_max {}\n",
+            self.write_rate_version_max.load(Ordering::Relaxed)
+        ));
+
+        let counters: [(&str, &str, &Counter); 3] = [
+            (
+                "keystone_raft_gcm_failures_total",
+                "AES-GCM tag verification failures on state reads.",
+                &self.gcm_failures_total,
+            ),
+            (
+                "keystone_raft_dek_reencrypt_migrated_total",
+                "Records re-encrypted under the current DEK by background sweeps.",
+                &self.dek_reencrypt_migrated_total,
+            ),
+            (
+                "keystone_raft_dek_reencrypt_skipped_total",
+                "Records skipped by background DEK re-encryption sweeps.",
+                &self.dek_reencrypt_skipped_total,
+            ),
+        ];
+        for (name, help, counter) in counters {
+            write_metric_header(&mut out, name, help, "counter");
+            counter.write_line(&mut out, name);
+        }
+
         out
     }
+}
+
+/// Log entries by which `last_applied` trails the cluster commit index
+/// reported by the leader, or `None` when the commit index is unknown.
+pub fn apply_lag(metrics: &openraft::RaftMetrics<TypeConfig>) -> Option<u64> {
+    let committed = metrics.cluster_committed.as_ref()?.index();
+    let applied = metrics
+        .last_applied
+        .as_ref()
+        .map(|l| l.index())
+        .unwrap_or(0);
+    Some(committed.saturating_sub(applied))
+}
+
+/// Point-in-time node state read on every `/metrics` scrape (see the module
+/// docs). `None` fields could not be read and are not rendered.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RaftNodeStatus {
+    /// Partitions this node has quarantined (reads blocked).
+    pub quarantined_partitions: Vec<String>,
+    /// Version of the active DEK epoch.
+    pub dek_version: u32,
+    /// Retired DEK epochs still held for decryption / re-encryption.
+    pub dek_retired_epochs: usize,
+    /// Revoked DEK versions (emergency rotations).
+    pub dek_revoked_epochs: usize,
+    /// Emergency DEK rotations staged and awaiting confirmation.
+    pub dek_pending_rotations: usize,
+    /// Next log-encryption nonce counter value.
+    pub log_nonce_counter: Option<u32>,
+    /// Nonce counter values left before DEK rotation is mandatory.
+    pub log_nonce_remaining: Option<u32>,
+    /// Size of the latest snapshot file on disk.
+    pub snapshot_size_bytes: Option<u64>,
+    /// Seconds since the latest snapshot file was written.
+    pub snapshot_age_seconds: Option<u64>,
+    /// Disk space used by the whole Fjall database.
+    pub disk_space_bytes: Option<u64>,
+    /// Disk space used by the Raft log keyspace.
+    pub log_disk_space_bytes: Option<u64>,
+}
+
+/// Renders a [`RaftNodeStatus`] in Prometheus text-exposition format.
+pub fn format_node_status_text(status: &RaftNodeStatus) -> String {
+    let mut out = String::new();
+
+    write_metric_header(
+        &mut out,
+        "keystone_raft_quarantined_partitions",
+        "Partitions quarantined on this node after repeated GCM failures \
+         (1 per quarantined partition).",
+        "gauge",
+    );
+    for partition in &status.quarantined_partitions {
+        out.push_str(&format!(
+            "keystone_raft_quarantined_partitions{{partition=\"{}\"}} 1\n",
+            escape_label_value(partition)
+        ));
+    }
+
+    let gauges: [(&str, &str, Option<u64>); 11] = [
+        (
+            "keystone_raft_quarantined_partitions_count",
+            "Number of partitions quarantined on this node.",
+            Some(status.quarantined_partitions.len() as u64),
+        ),
+        (
+            "keystone_raft_dek_version",
+            "Version of the active data encryption key epoch.",
+            Some(u64::from(status.dek_version)),
+        ),
+        (
+            "keystone_raft_dek_retired_epochs",
+            "Retired DEK epochs still held for decryption and re-encryption.",
+            Some(status.dek_retired_epochs as u64),
+        ),
+        (
+            "keystone_raft_dek_revoked_epochs",
+            "Revoked DEK versions (emergency rotations).",
+            Some(status.dek_revoked_epochs as u64),
+        ),
+        (
+            "keystone_raft_dek_pending_rotation",
+            "Emergency DEK rotations staged and awaiting confirmation.",
+            Some(status.dek_pending_rotations as u64),
+        ),
+        (
+            "keystone_raft_log_nonce_counter",
+            "Next log-encryption nonce counter value of this node.",
+            status.log_nonce_counter.map(u64::from),
+        ),
+        (
+            "keystone_raft_log_nonce_remaining",
+            "Nonce counter values left before a DEK rotation is mandatory (2^31 limit).",
+            status.log_nonce_remaining.map(u64::from),
+        ),
+        (
+            "keystone_raft_snapshot_size_bytes",
+            "Size of the latest snapshot file on disk.",
+            status.snapshot_size_bytes,
+        ),
+        (
+            "keystone_raft_snapshot_age_seconds",
+            "Seconds since the latest snapshot file was written.",
+            status.snapshot_age_seconds,
+        ),
+        (
+            "keystone_raft_disk_space_bytes",
+            "Disk space used by the Fjall database (all keyspaces).",
+            status.disk_space_bytes,
+        ),
+        (
+            "keystone_raft_log_disk_space_bytes",
+            "Disk space used by the Raft log keyspace.",
+            status.log_disk_space_bytes,
+        ),
+    ];
+    for (name, help, value) in gauges {
+        if let Some(value) = value {
+            write_metric_header(&mut out, name, help, "gauge");
+            out.push_str(&format!("{name} {value}\n"));
+        }
+    }
+
+    out
 }
 
 #[cfg(test)]
@@ -319,6 +595,100 @@ mod tests {
         assert!(text.contains("keystone_raft_replication_lag{peer_id=\"2\"} 10\n"));
         assert!(text.contains("# TYPE keystone_raft_apply_duration_seconds histogram"));
         assert!(text.contains("keystone_raft_apply_duration_seconds_count 0\n"));
+    }
+
+    #[test]
+    fn snapshot_from_sets_leader_id_membership_and_apply_lag() {
+        let m = KeystoneRaftPrometheusMetrics::new();
+        let mut live = metrics_fixture(2, Some(1), 7, Some(100), Some(90), None);
+        live.cluster_committed = Some(LogId::new(7, 98));
+        live.snapshot = Some(LogId::new(7, 50));
+        m.snapshot_from(&live, 2);
+
+        assert_eq!(m.current_leader_id.get(), 1);
+        assert_eq!(m.apply_lag.get(), 8);
+        assert_eq!(m.snapshot_last_index.get(), 50);
+        // `new_initial` starts with an empty membership.
+        assert_eq!(m.membership_voters.get(), 0);
+        assert_eq!(m.membership_learners.get(), 0);
+
+        let live = metrics_fixture(2, None, 7, Some(100), Some(90), None);
+        m.snapshot_from(&live, 2);
+        assert_eq!(m.current_leader_id.get(), -1);
+        assert_eq!(m.apply_lag.get(), 0);
+    }
+
+    #[test]
+    fn event_counters_are_rendered() {
+        let m = KeystoneRaftPrometheusMetrics::new();
+        m.gcm_failures_total.inc();
+        m.record_write_version(5);
+        m.record_write_version(3);
+        m.record_reencrypt_report(&crate::store::state_machine::ReencryptReport {
+            migrated: 10,
+            already_current: 2,
+            skipped: 1,
+        });
+        m.record_reencrypt_report(&crate::store::state_machine::ReencryptReport {
+            migrated: 4,
+            already_current: 0,
+            skipped: 0,
+        });
+
+        let live = metrics_fixture(1, None, 0, None, None, None);
+        let text = m.format_prometheus_text(&live, 1);
+
+        assert!(text.contains("keystone_raft_gcm_failures_total 1\n"));
+        assert!(text.contains("keystone_raft_write_rate_version_max 5\n"));
+        assert!(text.contains("keystone_raft_dek_reencrypt_migrated_total 14\n"));
+        assert!(text.contains("keystone_raft_dek_reencrypt_skipped_total 1\n"));
+        assert!(text.contains("keystone_raft_dek_reencrypt_last_skipped 0\n"));
+        assert!(text.contains("keystone_raft_current_leader_id -1\n"));
+        assert!(text.contains("# TYPE keystone_raft_membership_voters gauge"));
+        assert!(text.contains("# TYPE keystone_raft_apply_lag gauge"));
+    }
+
+    #[test]
+    fn node_status_text_renders_all_known_values() {
+        let status = RaftNodeStatus {
+            quarantined_partitions: vec!["data".into(), "x\"y".into()],
+            dek_version: 4,
+            dek_retired_epochs: 2,
+            dek_revoked_epochs: 1,
+            dek_pending_rotations: 1,
+            log_nonce_counter: Some(2048),
+            log_nonce_remaining: Some((1u32 << 31) - 2048),
+            snapshot_size_bytes: Some(4096),
+            snapshot_age_seconds: Some(30),
+            disk_space_bytes: Some(1_000_000),
+            log_disk_space_bytes: Some(200_000),
+        };
+        let text = format_node_status_text(&status);
+
+        assert!(text.contains("keystone_raft_quarantined_partitions{partition=\"data\"} 1\n"));
+        assert!(text.contains("keystone_raft_quarantined_partitions{partition=\"x\\\"y\"} 1\n"));
+        assert!(text.contains("keystone_raft_quarantined_partitions_count 2\n"));
+        assert!(text.contains("keystone_raft_dek_version 4\n"));
+        assert!(text.contains("keystone_raft_dek_retired_epochs 2\n"));
+        assert!(text.contains("keystone_raft_dek_revoked_epochs 1\n"));
+        assert!(text.contains("keystone_raft_dek_pending_rotation 1\n"));
+        assert!(text.contains("keystone_raft_log_nonce_counter 2048\n"));
+        assert!(text.contains("keystone_raft_log_nonce_remaining 2147481600\n"));
+        assert!(text.contains("keystone_raft_snapshot_size_bytes 4096\n"));
+        assert!(text.contains("keystone_raft_snapshot_age_seconds 30\n"));
+        assert!(text.contains("keystone_raft_disk_space_bytes 1000000\n"));
+        assert!(text.contains("keystone_raft_log_disk_space_bytes 200000\n"));
+    }
+
+    #[test]
+    fn node_status_text_omits_unknown_values() {
+        let text = format_node_status_text(&RaftNodeStatus::default());
+
+        assert!(text.contains("# TYPE keystone_raft_quarantined_partitions gauge"));
+        assert!(!text.contains("keystone_raft_quarantined_partitions{"));
+        assert!(text.contains("keystone_raft_quarantined_partitions_count 0\n"));
+        assert!(!text.contains("keystone_raft_log_nonce_counter"));
+        assert!(!text.contains("keystone_raft_snapshot_age_seconds"));
     }
 
     #[test]

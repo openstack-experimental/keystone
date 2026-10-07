@@ -114,3 +114,18 @@ fn clear_removes_quarantine_state() {
     tracker.clear("data");
     assert!(!tracker.is_quarantined("data"));
 }
+
+#[test]
+fn quarantined_partitions_are_listed_sorted() {
+    let tracker = QuarantineTracker {
+        failures: Mutex::new(HashMap::new()),
+        quarantined: Mutex::new(HashSet::new()),
+    };
+    assert!(tracker.quarantined_partitions().is_empty());
+    tracker.force_quarantine("zeta");
+    tracker.force_quarantine("data");
+    assert_eq!(
+        tracker.quarantined_partitions(),
+        vec!["data".to_string(), "zeta".to_string()]
+    );
+}

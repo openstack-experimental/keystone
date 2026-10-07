@@ -19,6 +19,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::keystone::ServiceState;
 use openstack_keystone_core::keystone::SpiffeHealthStatus;
+use openstack_keystone_storage_api::{StorageReadiness, StoreError};
 
 /// The health status.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, ToSchema)]
@@ -320,18 +321,30 @@ async fn check_database(state: &ServiceState) -> DatabaseStatus {
 
 /// Perform Raft storage checks.
 ///
-/// Returns OK when the cluster is initialized.  Leadership status is not
-/// checked: without a leader, writes return \[ForwardToLeader\] and clients
-/// can retry. Blocking the readiness probe on leader election causes
-/// startup-probe failures in k8s when the 1‑second probe fires before the
-/// Raft engine finishes its async step-up (ADR 0016-v2 §4.2).
+/// Reports `warn` (so `/ready` returns `SERVICE_UNAVAILABLE` while `/health`
+/// stays `OK` and the pod is not restarted) when the cluster is not
+/// initialized, or when the node should not receive traffic: no leader is
+/// known, the leader lost quorum contact, the applied index lags the cluster
+/// commit index (snapshot install, catch-up after a partition, or a DEK epoch
+/// not yet applied), or a partition is quarantined. All of these recover on
+/// their own, so they are not fatal to the process.
+///
+/// A Raft core that has stopped (fatal storage error, panic, or shutdown)
+/// cannot recover: `readiness` returns an error for it, which maps to
+/// `error` here so `/health` fails and the liveness probe restarts the pod.
 async fn check_storage(state: &ServiceState) -> RaftStatus {
     let Some(storage) = state.storage.as_deref() else {
         return RaftStatus::skipped();
     };
-    match storage.is_initialized().await {
-        Ok(true) => RaftStatus::ok(),
-        Ok(false) => RaftStatus::warn("storage is not initialized"),
+    raft_status(storage.readiness().await)
+}
+
+/// Maps a storage readiness report to the Raft health component status.
+fn raft_status(readiness: Result<StorageReadiness, StoreError>) -> RaftStatus {
+    match readiness {
+        Ok(readiness) if !readiness.initialized => RaftStatus::warn("storage is not initialized"),
+        Ok(readiness) if readiness.issues.is_empty() => RaftStatus::ok(),
+        Ok(readiness) => RaftStatus::warn(readiness.issues.join("; ")),
         Err(err) => RaftStatus::err(err),
     }
 }
@@ -402,6 +415,38 @@ pub(crate) mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[test]
+    fn raft_status_reflects_storage_readiness() {
+        assert_eq!(
+            raft_status(Ok(StorageReadiness {
+                initialized: true,
+                issues: vec![],
+            })),
+            RaftStatus::ok()
+        );
+        assert_eq!(
+            raft_status(Ok(StorageReadiness {
+                initialized: false,
+                issues: vec![],
+            })),
+            RaftStatus::warn("storage is not initialized")
+        );
+        assert_eq!(
+            raft_status(Ok(StorageReadiness {
+                initialized: true,
+                issues: vec![
+                    "no raft leader known".into(),
+                    "quarantined partitions: data".into()
+                ],
+            })),
+            RaftStatus::warn("no raft leader known; quarantined partitions: data")
+        );
+        assert_eq!(
+            raft_status(Err(StoreError::other("boom"))).status,
+            HealthStatus::Error
+        );
     }
 
     #[test]

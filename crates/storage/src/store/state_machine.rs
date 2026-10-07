@@ -337,6 +337,61 @@ impl FjallStateMachine {
         &self.raft_prometheus_metrics
     }
 
+    /// Point-in-time node state for the `/metrics` endpoint (GitHub
+    /// #1306). The log nonce counter lives in the log store and is left
+    /// unset here.
+    pub fn node_status(&self) -> crate::prometheus_metrics::RaftNodeStatus {
+        let (snapshot_size_bytes, snapshot_age_seconds) = self
+            .latest_snapshot_path()
+            .ok()
+            .flatten()
+            .and_then(|path| fs::metadata(path).ok())
+            .map(|meta| {
+                let age = meta
+                    .modified()
+                    .ok()
+                    .and_then(|m| m.elapsed().ok())
+                    .map(|d| d.as_secs());
+                (Some(meta.len()), age)
+            })
+            .unwrap_or((None, None));
+        let log_disk_space_bytes = self
+            .db
+            .keyspace_exists("logs")
+            .then(|| {
+                self.db
+                    .keyspace("logs", KeyspaceCreateOptions::default)
+                    .ok()
+            })
+            .flatten()
+            .map(|ks| ks.disk_space());
+        crate::prometheus_metrics::RaftNodeStatus {
+            quarantined_partitions: self.quarantined_partitions(),
+            dek_version: self.dek.read().unwrap_or_else(|p| p.into_inner()).version,
+            dek_retired_epochs: self
+                .old_deks
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .len(),
+            dek_revoked_epochs: self
+                .revoked_deks
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .len(),
+            dek_pending_rotations: self
+                .pending_rotations
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .len(),
+            log_nonce_counter: None,
+            log_nonce_remaining: None,
+            snapshot_size_bytes,
+            snapshot_age_seconds,
+            disk_space_bytes: self.db.disk_space().ok(),
+            log_disk_space_bytes,
+        }
+    }
+
     /// The displaced-DEK list, to share with the log store.
     pub fn shadow_deks(&self) -> Arc<Mutex<Vec<Arc<DekEpoch>>>> {
         self.shadow_deks.clone()

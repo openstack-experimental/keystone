@@ -37,6 +37,7 @@ use crate::config::{DistributedStorageConfiguration, RaftTlsConfiguration};
 
 use crate::ApiStoreError;
 use crate::StorageApi;
+use crate::StorageReadiness;
 use crate::StoreError;
 use crate::StoreResponse;
 use crate::Violation;
@@ -822,7 +823,8 @@ pub struct Storage {
     /// Delay (ms) between `ensure_linearizable` retry attempts, from
     /// `[distributed_storage] ensure_linearizable_retry_delay_ms`.
     pub(crate) ensure_linearizable_retry_delay_ms: u64,
-    /// The log store's nonce manager, watched by the automatic DEK rotation.
+    /// The log store's nonce manager, watched by the automatic DEK rotation
+    /// and read for the `keystone_raft_log_nonce_*` metrics.
     log_nonce: Arc<Mutex<NonceManager>>,
     /// `[distributed_storage] dek_rotation_days`; `0` disables the age
     /// trigger of the automatic DEK rotation.
@@ -1302,6 +1304,34 @@ impl StorageApi for Storage {
         self.raft.metrics().borrow_watched().current_leader
     }
 
+    async fn readiness(&self) -> Result<StorageReadiness, ApiStoreError> {
+        let initialized = self.is_initialized().await?;
+        if !initialized {
+            return Ok(StorageReadiness {
+                initialized,
+                issues: Vec::new(),
+            });
+        }
+        let metrics = self.raft.metrics().borrow_watched().clone();
+        let quorum_ack_age = metrics
+            .last_quorum_acked
+            .as_ref()
+            .map(|acked| openraft::Instant::elapsed(&**acked));
+        Ok(StorageReadiness {
+            initialized,
+            issues: crate::readiness::readiness_issues(
+                &metrics,
+                self.node_id,
+                quorum_ack_age,
+                &self.state_machine_store.quarantined_partitions(),
+            ),
+        })
+    }
+
+    fn format_prometheus_metrics(&self) -> String {
+        self.format_raft_prometheus_metrics()
+    }
+
     async fn keyspace_exists(&self, keyspace: &str) -> Result<bool, ApiStoreError> {
         Ok(self.state_machine_store.keyspace_exists(keyspace))
     }
@@ -1364,7 +1394,9 @@ impl Storage {
     /// metrics snapshot for the gauges (`is_leader`, `term`,
     /// `last_log_index`, `last_applied_index`, `replication_lag`) and
     /// includes the incrementally-recorded `apply_duration_seconds`
-    /// histogram. `borrow_watched()` is a cheap, non-blocking watch-channel
+    /// histogram, the node status series (quarantine, DEK lifecycle, log
+    /// nonce counter, snapshot and disk usage) and the audit forwarder
+    /// series. `borrow_watched()` is a cheap, non-blocking watch-channel
     /// read, so this is safe to call on every `/metrics` scrape.
     pub fn format_raft_prometheus_metrics(&self) -> String {
         let metrics_rx = self.raft.metrics();
@@ -1373,6 +1405,15 @@ impl Storage {
             .state_machine_store
             .raft_prometheus_metrics()
             .format_prometheus_text(&live, self.node_id);
+        drop(live);
+
+        let mut status = self.state_machine_store.node_status();
+        {
+            let nonce = self.log_nonce.lock().unwrap_or_else(|p| p.into_inner());
+            status.log_nonce_counter = Some(nonce.counter());
+            status.log_nonce_remaining = Some(nonce.remaining());
+        }
+        out.push_str(&crate::prometheus_metrics::format_node_status_text(&status));
         out.push_str(&self.audit_forwarder.format_prometheus_text());
         out
     }

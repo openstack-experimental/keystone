@@ -330,6 +330,15 @@ fn encrypt_and_store_quarantines_instead_of_silently_overwriting_tampered_record
         sm.is_quarantined("data"),
         "repeated GCM failures against the same partition must quarantine it"
     );
+
+    // Quarantine and GCM failures are visible to monitoring (GitHub #1306).
+    let status = sm.node_status();
+    assert_eq!(status.quarantined_partitions, vec!["data".to_string()]);
+    assert_eq!(status.dek_version, 1);
+    assert_eq!(
+        sm.raft_prometheus_metrics().gcm_failures_total.get(),
+        QUARANTINE_THRESHOLD as u64
+    );
 }
 
 /// A hint naming an epoch that is genuinely gone (not in `old_deks`)

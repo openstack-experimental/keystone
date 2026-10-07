@@ -121,6 +121,19 @@ impl QuarantineTracker {
         })
     }
 
+    /// Partitions this node currently has quarantined, sorted by name.
+    pub(super) fn quarantined_partitions(&self) -> Vec<String> {
+        let mut partitions: Vec<String> = self
+            .quarantined
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .cloned()
+            .collect();
+        partitions.sort();
+        partitions
+    }
+
     pub(super) fn is_quarantined(&self, partition: &str) -> bool {
         self.quarantined
             .lock()
@@ -205,6 +218,7 @@ impl FjallStateMachine {
     /// Records a GCM tag-verification failure and, if the failure count just
     /// crossed the quarantine threshold, persists and signals it.
     pub(super) fn record_quarantine_failure(&self, partition: &str) {
+        self.raft_prometheus_metrics.gcm_failures_total.inc();
         if self.quarantine.record_failure(partition) {
             self.persist_and_signal_quarantine(partition);
         }
@@ -225,5 +239,11 @@ impl FjallStateMachine {
     /// Returns `true` if the given keyspace partition is currently quarantined.
     pub fn is_quarantined(&self, partition: &str) -> bool {
         self.quarantine.is_quarantined(partition)
+    }
+
+    /// Partitions this node currently has quarantined (reads blocked),
+    /// sorted by name.
+    pub fn quarantined_partitions(&self) -> Vec<String> {
+        self.quarantine.quarantined_partitions()
     }
 }

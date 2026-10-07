@@ -277,6 +277,8 @@ impl FjallStateMachine {
             }
 
             let report = self.reencrypt_epoch(&epoch).await;
+            self.raft_prometheus_metrics
+                .record_reencrypt_report(&report);
             tracing::info!(
                 old_version = epoch.version,
                 migrated = report.migrated,

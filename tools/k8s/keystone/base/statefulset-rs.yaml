@@ -6,6 +6,12 @@ metadata:
   name: keystone-rs
 spec:
   replicas: 1
+  # Raft members must be able to start together: `/ready` requires a
+  # known leader, so with the default `OrderedReady` policy a full restart
+  # of a multi-node cluster would wait forever for pod-0 (which cannot
+  # elect a leader alone) before creating pod-1. Note this field is
+  # immutable on an existing StatefulSet.
+  podManagementPolicy: Parallel
   serviceName: keystone-rs-internal
   selector:
     matchLabels:
@@ -63,10 +69,13 @@ spec:
             periodSeconds: 10
             successThreshold: 1
             timeoutSeconds: 1
+          # Startup gates only the liveness probe, so it uses `/health`:
+          # `/ready` waits for a Raft leader and catch-up, which is not a
+          # reason to restart the container.
           startupProbe:
             failureThreshold: 600
             httpGet:
-              path: /ready
+              path: /health
               port: metrics
               scheme: HTTP
             periodSeconds: 1

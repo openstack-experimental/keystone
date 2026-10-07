@@ -226,6 +226,27 @@ impl AuditForwarder {
         self.metrics
             .dropped_total
             .write_line(&mut out, "keystone_raft_audit_dropped_total");
+        write_metric_header(
+            &mut out,
+            "keystone_raft_audit_channel_depth",
+            "Audit records queued for the spool writer (records are dropped \
+             once the channel is full).",
+            "gauge",
+        );
+        out.push_str(&format!(
+            "keystone_raft_audit_channel_depth {}\n",
+            self.tx.max_capacity().saturating_sub(self.tx.capacity())
+        ));
+        write_metric_header(
+            &mut out,
+            "keystone_raft_audit_channel_capacity",
+            "Capacity of the audit spool writer channel.",
+            "gauge",
+        );
+        out.push_str(&format!(
+            "keystone_raft_audit_channel_capacity {}\n",
+            self.tx.max_capacity()
+        ));
         out
     }
 }
@@ -504,6 +525,18 @@ mod tests {
         fwd.emit(AuditRecord::now("A", "op", 1, 9, serde_json::json!({})));
         let lines = wait_for_lines(dir.path(), 1).await;
         assert_eq!(lines[0]["key_version"], 1);
+    }
+
+    #[tokio::test]
+    async fn prometheus_text_reports_channel_depth_and_capacity() {
+        let dir = tempfile::tempdir().unwrap();
+        let (fwd, _h) = AuditForwarder::spawn(1, key(1), cfg(dir.path(), 1 << 20)).unwrap();
+        let text = fwd.format_prometheus_text();
+        assert!(text.contains("keystone_raft_audit_channel_depth 0\n"));
+        assert!(text.contains(&format!(
+            "keystone_raft_audit_channel_capacity {CHANNEL_CAPACITY}\n"
+        )));
+        assert!(text.contains("keystone_raft_audit_dropped_total 0\n"));
     }
 
     #[tokio::test]

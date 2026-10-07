@@ -45,6 +45,7 @@ pub mod network;
 pub mod preflight;
 pub mod prometheus_metrics;
 mod proto_impl;
+pub mod readiness;
 pub mod spiffe_wait;
 mod types;
 pub mod store {
@@ -56,8 +57,8 @@ pub mod store_command;
 
 // Re-export lightweight types from storage-api crate.
 pub use openstack_keystone_storage_api::{
-    DataTier, Metadata, Mutation, Node, StorageApi, StoreDataEnvelope, StoreError as ApiStoreError,
-    StoreResponse, Violation,
+    DataTier, Metadata, Mutation, Node, StorageApi, StorageReadiness, StoreDataEnvelope,
+    StoreError as ApiStoreError, StoreResponse, Violation,
 };
 
 pub use error::StoreError;

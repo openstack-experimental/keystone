@@ -217,9 +217,10 @@ pub fn spawn_admin(startup: &Startup, app: Router, handles: &mut JoinSet<()>) {
 }
 
 /// Prometheus scrape endpoint — returns the audit counters, the ADR 0025
-/// `keystone_auth_plugin_load_failure{plugin_name}` counter, and (when
-/// enabled) the HTTP request metrics in text exposition format (v0.0.4). No
-/// authentication required; operators firewall this port.
+/// `keystone_auth_plugin_load_failure{plugin_name}` counter, (when
+/// enabled) the HTTP request metrics and (when distributed storage is
+/// configured) the `keystone_raft_*` series in text exposition format
+/// (v0.0.4). No authentication required; operators firewall this port.
 pub async fn metrics_handler(
     State(state): State<ServiceState>,
     http_metrics: Option<Extension<Arc<HttpMetrics>>>,
@@ -233,6 +234,9 @@ pub async fn metrics_handler(
     ));
     if let Some(Extension(http_metrics)) = http_metrics {
         body.push_str(&format_http_metrics_text(&http_metrics));
+    }
+    if let Some(storage) = state.storage.as_deref() {
+        body.push_str(&storage.format_prometheus_metrics());
     }
     (
         StatusCode::OK,
