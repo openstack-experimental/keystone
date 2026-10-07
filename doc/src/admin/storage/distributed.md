@@ -30,6 +30,7 @@ primitives and the `KekProvider` trait), and the two production KEK providers,
     - [PKCS#11 and TPM KEK Providers](#pkcs11-and-tpm-kek-providers)
     - [First-Time Cluster Bootstrap](#first-time-cluster-bootstrap)
     - [Adding Nodes](#adding-nodes)
+    - [Kubernetes Reference Deployment](#kubernetes-reference-deployment)
     - [TLS Certificate Management](#tls-certificate-management)
 11. [Operational Runbook](#operational-runbook)
     - [Cluster Metrics](#cluster-metrics)
@@ -890,6 +891,91 @@ keystone-manage storage join https://10.0.0.1:8310
 # 3. Optionally promote to voting member (run from an operator workload):
 keystone-manage storage promote 4
 ```
+
+### Kubernetes Reference Deployment
+
+`tools/k8s/keystone/overlays/production` is the reference for running the Raft
+storage on Kubernetes. The `skaffold` overlay is for development only: it runs
+in dev mode with an environment KEK and keeps the storage on an `emptyDir`.
+
+```sh
+kubectl apply -k tools/k8s/keystone/overlays/production/spire
+kubectl apply -k tools/k8s/keystone/overlays/production
+```
+
+What it sets up, and why:
+
+- **Persistent storage.** `path` (`/storage`) is a `volumeClaimTemplates`
+  volume. It holds the Raft log, the state machine, the wrapped DEK, the nonce
+  high-water mark (`_meta:nonce_hwm`), the quarantine markers and the audit
+  spool. On an `emptyDir` a restarted pod comes back as a new node with the same
+  `node_id` and a new DEK, and the nonce rollback protection is void.
+- **Three voters.** `replicas: 3` and a matching `retry_join_nodes` list. Keep
+  both in sync and use an odd number. `podManagementPolicy: Parallel` starts all
+  members together; rolling updates still replace one pod at a time and wait for
+  it to become ready.
+- **Disruption and placement.** A `PodDisruptionBudget` with
+  `maxUnavailable: 1` keeps a quorum through node drains, required
+  `podAntiAffinity` keeps two members off the same node, and a
+  `topologySpreadConstraints` entry spreads them over zones.
+- **Identities.** The StatefulSet runs under its own `keystone-rs` service
+  account. The `ClusterSPIFFEID` entries in `spire/` bind the
+  `<spiffe_path_prefix>node` identity to that namespace, label **and** service
+  account, so no other workload can become a Raft peer. Operator commands run
+  from the `keystone-storage-operator` Deployment, the only workload holding
+  `<spiffe_path_prefix>storage-operator`. It ships with `replicas: 0`; scale it
+  up for a maintenance window only.
+- **Trust domain.** The SPIRE registrations in `spire/` use
+  `{{ .TrustDomain }}` and adapt to your cluster, but the keystone-side config
+  hardcodes the `example.org` placeholder. Before applying, replace every
+  `example.org` with your SPIRE trust domain in: the init-container heredoc in
+  `statefulset-patch.yaml` (`trust_domains`, `allowed_peer_svids`),
+  `conf/keystone.conf` (`interface_internal.trust_domains`,
+  `interface_admin.trust_domains`, `interface_admin.admin_svid`), and
+  `storage-operator.yaml` (`trust_domains`, `allowed_peer_svids`). A mismatch
+  silently breaks intra-cluster mTLS and admin auth, because SVIDs that do not
+  match the pinned values are rejected.
+- **KEK.** `kek_provider = "pkcs11"` with the token PIN mounted from the
+  `keystone-pkcs11-pin` Secret (create it out of band). The published
+  `ghcr.io/openstack-experimental/keystone:main` image is already built with the
+  PKCS#11 feature (see `.github/workflows/container-publish.yml`), so it works
+  as-is; a self-built image must pass the same feature, e.g.
+  `docker build --build-arg KEYSTONE_FEATURES=openstack-keystone/pkcs11 .`. The
+  image must also contain the vendor's PKCS#11 module and client configuration
+  at `pkcs11_module_path`. For a TPM use `openstack-keystone/tpm` and
+  `kek_provider = "tpm"`; the pod then also needs access to the TPM device
+  (`/dev/tpmrm0`), typically through a device plugin, and the image must link
+  the `libtss2` C libraries because `tss-esapi` has no pure-Rust fallback.
+- **Pre-flight.** The pods run as non-root with all capabilities dropped and a
+  read-only root file system. Keystone sets `RLIMIT_CORE = 0` and
+  `PR_SET_DUMPABLE = 0` itself; neither needs a privilege. The container command
+  raises the `RLIMIT_MEMLOCK` soft limit to the hard limit set by the container
+  runtime. Outside of dev mode the node refuses to start when that is below 64
+  KiB; raise the runtime's default (e.g. `LimitMEMLOCK` of the containerd
+  systemd unit, `default_ulimits` in CRI-O) if it is. `CAP_IPC_LOCK` is not
+  needed and has no effect for a non-root process.
+
+After the first rollout `keystone-rs-0` (`node_id = 0`) has initialized the
+cluster and the other members have joined as learners. Promote them from the
+operator workload:
+
+```sh
+kubectl -n keystone scale deploy/keystone-storage-operator --replicas=1
+kubectl -n keystone exec deploy/keystone-storage-operator -- keystone-manage storage promote 1
+kubectl -n keystone exec deploy/keystone-storage-operator -- keystone-manage storage promote 2
+kubectl -n keystone scale deploy/keystone-storage-operator --replicas=0
+```
+
+`keystone-rs-0` stays the bootstrap node: whenever it starts with an empty
+volume it initializes a new single-node cluster, splitting it off from the
+running one. If its volume is lost, start it with `auto_bootstrap = false` so it
+stays uninitialized, remove the stale member with
+`keystone-manage storage remove-peer 0` from the operator workload, run
+`keystone-manage storage join <address of a live member>` in `keystone-rs-0`
+and promote it again (see [Adding Nodes](#adding-nodes)).
+
+The readiness probe uses `/ready`, which reports whether the storage is
+initialized; it does not yet reflect leadership loss or quarantine.
 
 ### TLS Certificate Management
 

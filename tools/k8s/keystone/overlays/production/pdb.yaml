@@ -1,0 +1,11 @@
+# A 3-voter Raft cluster keeps quorum with one voter down. Never let a
+# voluntary disruption (node drain, cluster upgrade) take out a second one.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: keystone-rs
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: keystone-rs

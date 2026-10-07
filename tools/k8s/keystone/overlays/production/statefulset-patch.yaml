@@ -1,0 +1,164 @@
+# Production settings for the keystone-rs Raft StatefulSet. See
+# doc/src/admin/storage/distributed.md, "Kubernetes reference deployment".
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: keystone-rs
+spec:
+  # Start all members at once: the non-bootstrap nodes retry the join until
+  # keystone-rs-0 is up, and after a full outage no node can become ready
+  # before a quorum is back. Rolling updates still replace one pod at a time.
+  podManagementPolicy: Parallel
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    spec:
+      serviceAccountName: keystone-rs
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        # Never place two Raft members on the same Kubernetes node.
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: keystone-rs
+              topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+        # Spread members over zones where the cluster has them.
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: keystone-rs
+      initContainers:
+        # Render the per-node `[distributed_storage]` section. The node id is
+        # the pod ordinal; keystone-rs-0 (node_id = 0) is the bootstrap node
+        # and initializes the cluster on its very first start. Keep the node
+        # count in `retry_join_nodes` in sync with `replicas`.
+        - name: identity-generator
+          image: keystone-rs
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: raft-config-shared
+              mountPath: /etc/keystone
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              NODE_ID="${POD_NAME##*-}"
+              SVC="keystone-rs-internal.${POD_NAMESPACE}.svc.cluster.local"
+              cat <<EOF > /etc/keystone/site.toml
+              [distributed_storage]
+              node_id = ${NODE_ID}
+              node_cluster_addr = "https://${POD_NAME}.${SVC}:8300"
+              node_listener_addr = "0.0.0.0:8300"
+              path = "/storage"
+              # Placeholder trust domain; replace example.org with your SPIRE
+              # trust domain (the SPIRE registrations in spire/ use
+              # {{ .TrustDomain }} and must match these keystone-side values).
+              trust_domains = "example.org"
+              allowed_peer_svids = ["spiffe://example.org/keystone/storage/node"]
+              retry_join_nodes = "0=https://keystone-rs-0.${SVC}:8300,1=https://keystone-rs-1.${SVC}:8300,2=https://keystone-rs-2.${SVC}:8300"
+              kek_provider = "pkcs11"
+              [distributed_storage.pkcs11]
+              # Vendor PKCS#11 module shipped in (or mounted into) the image.
+              pkcs11_module_path = "/usr/lib/pkcs11/libvendor-pkcs11.so"
+              pkcs11_slot_label = "keystone-storage"
+              pkcs11_key_label = "keystone-kek"
+              pkcs11_pin_file = "/etc/keystone-pkcs11/pin"
+              EOF
+              cat /etc/keystone/site.toml
+      containers:
+        - name: keystone
+          env:
+            - name: KEYSTONE_SITE_VARS_FILE
+              value: /etc/keystone/site.toml
+            - name: SPIFFE_ENDPOINT_SOCKET
+              value: unix:///run/spire/sockets/spire-agent.sock
+          # The storage pre-flight refuses to start outside of dev mode when
+          # the RLIMIT_MEMLOCK soft limit is below 64 KiB. Raise the soft limit
+          # to the hard limit set by the container runtime (no privilege
+          # needed); RLIMIT_CORE and PR_SET_DUMPABLE are set by keystone itself.
+          command: ["/bin/sh", "-c"]
+          args:
+            - ulimit -S -l "$(ulimit -H -l)" || true; exec keystone
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - mountPath: /etc/keystone-pkcs11
+              name: pkcs11-pin
+              readOnly: true
+            - mountPath: /tmp
+              name: tmp
+        - name: opa
+          # OPA with the policies (Dockerfile.opa); the keystone image has
+          # neither.
+          image: keystone-opa
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+        - name: spiffe-helper
+          securityContext:
+            # Same uid as keystone and opa so both can read the key it writes.
+            runAsUser: 65532
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        # Replaced by the volumeClaimTemplate below.
+        - name: raft-storage
+          $patch: delete
+        - name: pkcs11-pin
+          secret:
+            # Create out of band, e.g.
+            # kubectl -n keystone create secret generic keystone-pkcs11-pin --from-file=pin=./pin
+            secretName: keystone-pkcs11-pin
+            defaultMode: 0400
+            optional: false
+        - name: tmp
+          emptyDir: {}
+  # The Raft log, state machine, wrapped DEK, nonce high-water mark,
+  # quarantine markers and the audit spool all live under `path`. They must
+  # survive pod restarts and rescheduling.
+  volumeClaimTemplates:
+    - metadata:
+        name: raft-storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        # storageClassName: fast-ssd
+        resources:
+          requests:
+            storage: 10Gi

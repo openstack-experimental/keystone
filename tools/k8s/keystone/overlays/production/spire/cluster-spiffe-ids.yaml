@@ -1,0 +1,69 @@
+# SPIRE registrations for the production overlay. ClusterSPIFFEIDs are
+# cluster-scoped, so they are applied separately from the namespaced overlay
+# (`kubectl apply -k tools/k8s/keystone/overlays/production/spire`), usually
+# by whoever operates SPIRE.
+#
+# Every entry is bound to the namespace AND the dedicated service account, not
+# only to a pod label: a label alone would hand the identity to any pod anyone
+# can create with that label. When SPIRE is installed by its helm chart the
+# controller-manager ignores entries without `spec.className`.
+#
+# Storage nodes: the shared `node` role identity
+# (<spiffe_path_prefix>node). Must match `allowed_peer_svids` in the
+# StatefulSet patch.
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: keystone-storage-node
+spec:
+  className: spire-spire
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/keystone/storage/node"
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: keystone
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: keystone-rs
+  workloadSelectorTemplates:
+    - "k8s:sa:keystone-rs"
+  ttl: "1h"
+---
+# Default SVID of the keystone-rs pods (the chart's fallback identity is
+# masked by the entry above). It is the `admin_svid` of the admin interface
+# and the identity of the internal SPIFFE interface.
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: keystone-rs-default
+spec:
+  className: spire-spire
+  hint: default
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: keystone
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: keystone-rs
+  workloadSelectorTemplates:
+    - "k8s:sa:keystone-rs"
+  ttl: "1h"
+---
+# Operator workload: the `storage-operator` role, never issued to a storage
+# node.
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: keystone-storage-operator
+spec:
+  className: spire-spire
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/keystone/storage/storage-operator"
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: keystone
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: keystone-storage-operator
+  workloadSelectorTemplates:
+    - "k8s:sa:keystone-storage-operator"
+  ttl: "1h"

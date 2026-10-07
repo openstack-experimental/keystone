@@ -1,3 +1,6 @@
+# Development defaults (single replica, emptyDir storage). Production
+# reference: tools/k8s/keystone/overlays/production and the "Kubernetes
+# Reference Deployment" section of doc/src/admin/storage/distributed.md.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:

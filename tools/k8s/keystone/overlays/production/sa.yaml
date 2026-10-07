@@ -1,0 +1,15 @@
+# Dedicated service accounts. The keystone-rs StatefulSet does not share the
+# `keystone` service account with the bootstrap job or any other workload, and
+# the SPIRE registrations in spire/ additionally require the service account,
+# so no other pod can obtain the storage `node` identity.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: keystone-rs
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: keystone-storage-operator
+automountServiceAccountToken: false

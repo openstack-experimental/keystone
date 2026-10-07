@@ -140,5 +140,10 @@ otel = ["openstack-keystone-telemetry/otel"]
 # Adds the OTLP/gRPC transport (`[otel] protocol = grpc`); use with `otel`.
 otlp-grpc = ["openstack-keystone-telemetry/otlp-grpc"]
 
+# Hardware-backed KEK providers for the distributed storage
+# (`[distributed_storage] kek_provider = "pkcs11" | "tpm"`).
+pkcs11 = ["openstack-keystone-distributed-storage/pkcs11"]
+tpm = ["openstack-keystone-distributed-storage/tpm"]
+
 [lints]
 workspace = true

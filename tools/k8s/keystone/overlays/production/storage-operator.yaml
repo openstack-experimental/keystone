@@ -1,0 +1,105 @@
+# Workload for `keystone-manage storage` operator commands (init, promote,
+# demote, remove-peer, backup, restore, rotate-dek, clear-quarantine, ...).
+#
+# Its only SVID is spiffe://<td>/keystone/storage/storage-operator (see
+# spire/), which the keystone-rs pods never hold. It runs no storage node and
+# never opens the KEK. Keep it scaled to 0 and scale it up only for a
+# maintenance window:
+#
+#   kubectl -n keystone scale deploy/keystone-storage-operator --replicas=1
+#   kubectl -n keystone exec deploy/keystone-storage-operator -- \
+#       keystone-manage storage list-peers
+#   kubectl -n keystone scale deploy/keystone-storage-operator --replicas=0
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keystone-storage-operator
+data:
+  site.toml: |
+    [auth]
+    methods = "password"
+    # Required by config parsing; the CLI never connects to it.
+    [database]
+    connection = "postgresql://unused:unused@localhost/unused"
+    [distributed_storage]
+    node_id = 1000
+    # Default cluster member to talk to; subcommands with --cluster-addr can
+    # override it.
+    node_cluster_addr = "https://keystone-rs-0.keystone-rs-internal.keystone.svc.cluster.local:8300"
+    node_listener_addr = "0.0.0.0:8300"
+    path = "/tmp/storage"
+    # Placeholder trust domain; replace example.org with your SPIRE trust
+    # domain (must match the SPIRE registrations in spire/).
+    trust_domains = "example.org"
+    allowed_peer_svids = ["spiffe://example.org/keystone/storage/node"]
+    # The configuration must name a production KEK provider to validate, but
+    # the CLI never opens the KEK: an empty PIN keeps the token PIN out of
+    # this workload.
+    kek_provider = "pkcs11"
+    [distributed_storage.pkcs11]
+    pkcs11_module_path = "/nonexistent"
+    pkcs11_slot_label = "unused"
+    pkcs11_key_label = "unused"
+    pkcs11_pin_file = "/dev/null"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keystone-storage-operator
+  labels:
+    app.kubernetes.io/name: keystone-storage-operator
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: keystone-storage-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: keystone-storage-operator
+    spec:
+      serviceAccountName: keystone-storage-operator
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: operator
+          image: keystone-rs
+          command: ["sleep", "infinity"]
+          env:
+            - name: KEYSTONE_SITE_VARS_FILE
+              value: /etc/keystone-operator/site.toml
+            - name: SPIFFE_ENDPOINT_SOCKET
+              value: unix:///run/spire/sockets/spire-agent.sock
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          readinessProbe:
+            exec:
+              command: ["test", "-S", "/run/spire/sockets/spire-agent.sock"]
+            periodSeconds: 2
+          volumeMounts:
+            - mountPath: /etc/keystone-operator
+              name: site
+              readOnly: true
+            - mountPath: /run/spire/sockets
+              name: spiffe-workload-api
+              readOnly: true
+            - mountPath: /tmp
+              name: tmp
+      volumes:
+        - name: site
+          configMap:
+            name: keystone-storage-operator
+        - name: spiffe-workload-api
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true
+        - name: tmp
+          emptyDir: {}

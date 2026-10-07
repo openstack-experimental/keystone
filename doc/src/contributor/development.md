@@ -40,6 +40,13 @@ Use `--cleanup=false` when resources must remain after Skaffold exits. The
 repository configuration exposes mixed, Rust-only, and Python-only endpoints;
 consult `skaffold.yaml` for the current modules and profiles.
 
+The Skaffold deployment (`tools/k8s/keystone/overlays/skaffold`) is a
+development setup: it runs the Raft storage in dev mode with an environment
+KEK and keeps nothing across pod restarts. Do not use it as a deployment
+template; the production reference is `tools/k8s/keystone/overlays/production`,
+described in the distributed storage
+[Kubernetes reference deployment](../admin/storage/distributed.md#kubernetes-reference-deployment).
+
 ## OpenStackClient
 
 Point an OpenStackClient cloud entry at the deployment's Rust or mixed endpoint

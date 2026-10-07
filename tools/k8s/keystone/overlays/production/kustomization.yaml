@@ -1,0 +1,52 @@
+# Production reference for the keystone-rs Raft storage cluster:
+# 3 voters on persistent volumes, a PodDisruptionBudget, anti-affinity,
+# dedicated service accounts and SPIFFE identities, the PKCS#11 KEK provider
+# and a hardened, non-root pod spec that passes the storage pre-flight.
+#
+# Walk-through: doc/src/admin/storage/distributed.md, "Kubernetes reference
+# deployment". Apply the SPIRE registrations first:
+#
+#   kubectl apply -k tools/k8s/keystone/overlays/production/spire
+#   kubectl apply -k tools/k8s/keystone/overlays/production
+#
+# The rest of base (database, memcached, keystone-py, bootstrap job, fernet
+# keys) is inherited unchanged and only suitable for evaluation; replace it
+# with your own before going live.
+namespace: keystone
+
+resources:
+  - ../../base
+  - sa.yaml
+  - pdb.yaml
+  - storage-operator.yaml
+
+configMapGenerator:
+  - name: keystone
+    behavior: replace
+    files:
+      - conf/keystone.conf
+
+images:
+  # The published `main` image is built with the PKCS#11 feature (see the
+  # KEYSTONE_FEATURES build argument in .github/workflows/container-publish.yml),
+  # so the overlay's `kek_provider = "pkcs11"` works as-is. A self-built image
+  # must pass the same build argument; a TPM-backed cluster needs
+  # openstack-keystone/tpm instead (see distributed.md).
+  - name: keystone-rs
+    newName: ghcr.io/openstack-experimental/keystone
+    newTag: main
+  - name: keystone-opa
+    newName: ghcr.io/openstack-experimental/keystone-opa
+    newTag: main
+
+# Keep in sync with `retry_join_nodes` in statefulset-patch.yaml. Use an odd
+# number of voters.
+replicas:
+  - name: keystone-rs
+    count: 3
+
+patches:
+  - target:
+      kind: StatefulSet
+      name: keystone-rs
+    path: statefulset-patch.yaml

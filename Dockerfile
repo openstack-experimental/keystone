@@ -35,7 +35,10 @@ COPY tests tests
 COPY Cargo.toml Cargo.toml
 COPY Cargo.lock Cargo.lock
 
-RUN cargo build --release --bins
+# Optional cargo features, e.g. `--build-arg KEYSTONE_FEATURES=openstack-keystone/pkcs11`
+# for the PKCS#11 KEK provider required by production Raft storage.
+ARG KEYSTONE_FEATURES=""
+RUN cargo build --release --bins --features "${KEYSTONE_FEATURES}"
 
 ################
 ##### Runtime
