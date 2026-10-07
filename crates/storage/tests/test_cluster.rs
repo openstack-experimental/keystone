@@ -1765,14 +1765,42 @@ async fn test_cluster_inner() -> Result<()> {
         // linearizability (ADR 0016-v2 §3 / security invariant 4 — no stale
         // reads for sensitive data), so `get_by_key` must fail rather than
         // silently return that possibly-stale copy.
+        //
+        // A removed node may legitimately still know leader 3 (it received
+        // the membership entry and the leader's vote before being dropped).
+        // In that case `ReadIndex` yields ForwardToLeader and the read is
+        // served by the leader, which is linearizable. Whether that happens
+        // depends on timing, so both outcomes are acceptable; what must never
+        // happen is a read from the node's own stale copy. Distinguish the
+        // two by reading a key written after removal: the removed nodes never
+        // replicated it, so only a forwarded read can return it.
+        let post_removal = StoreDataEnvelope {
+            data: rmp_serde::to_vec("written_after_removal")?,
+            metadata: Metadata::with_tier(DataTier::Sensitive),
+        };
+        instance3
+            .storage
+            .set_value("sec:post_removal".to_string(), post_removal, None, None)
+            .await?;
         for instance in &[instance1, instance2] {
-            let result = instance.storage.get_by_key("sec:k1".as_bytes(), None).await;
-            assert!(
-                matches!(result, Err(ApiStoreError::Unavailable(_))),
-                "removed node {} must refuse a non-linearizable local read, got {:?}",
-                instance.node_id,
-                result
-            );
+            let result = instance
+                .storage
+                .get_by_key("sec:post_removal".as_bytes(), None)
+                .await;
+            match result {
+                Err(ApiStoreError::Unavailable(_)) => {}
+                Ok(Some(env)) => assert_eq!(
+                    "written_after_removal",
+                    env.try_deserialize::<String>()?.data,
+                    "removed node {} returned unexpected data",
+                    instance.node_id
+                ),
+                other => panic!(
+                    "removed node {} must refuse the read or forward it to the \
+                     leader, never serve a stale local read, got {:?}",
+                    instance.node_id, other
+                ),
+            }
         }
     }
 
