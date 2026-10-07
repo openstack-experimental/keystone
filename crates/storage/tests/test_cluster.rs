@@ -4313,3 +4313,84 @@ async fn test_follower_quarantine_forwarded_to_leader_inner() -> Result<()> {
 
     Ok(())
 }
+
+/// Automatic DEK rotation (#1301): the leader installs the next version,
+/// records its install time, and a second proposal for an already
+/// installed version is rejected instead of replacing the DEK.
+const AUTO_ROTATION_PORT_BASE: u16 = 1250;
+
+#[serial_test::serial]
+#[tracing_test::traced_test]
+#[test]
+fn test_automatic_dek_rotation() {
+    TypeConfig::run(async {
+        test_automatic_dek_rotation_inner().await.unwrap();
+    });
+}
+
+async fn test_automatic_dek_rotation_inner() -> Result<()> {
+    use openstack_keystone_distributed_storage::app::RotationTrigger;
+    use openstack_keystone_storage_crypto::{EnvKek, KekProvider, generate_dek};
+
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+    let tls_configuration = make_certificates()?;
+
+    let (instance, _admin_client) =
+        start_single_node_cluster(AUTO_ROTATION_PORT_BASE, &tls_configuration).await?;
+    let storage = &instance.storage;
+    storage
+        .set_value("k".into(), make_env("before")?, None, None)
+        .await?;
+
+    let sm = storage.state_machine_store();
+    let (start_version, _) = sm.current_dek_wrapped()?;
+    assert!(
+        sm.dek_installed_at().is_some(),
+        "bootstrap epoch has a time"
+    );
+    assert_eq!(
+        None,
+        storage.automatic_rotation_due(),
+        "a fresh DEK is not due"
+    );
+
+    assert!(
+        storage
+            .rotate_dek_automatically(RotationTrigger::Age { installed_at: 0 })
+            .await?
+    );
+    let (version, _) = sm.current_dek_wrapped()?;
+    assert_eq!(start_version + 1, version);
+    assert!(sm.dek_installed_at().is_some(), "new epoch has a time");
+
+    // A rotation that lost the race for `version` must not replace it.
+    let kek = EnvKek::from_bytes([0u8; 32]); // matches TEST_KEK_HEX
+    let cmd = StoreCommand::Transaction(vec![MutationInner::InstallDek {
+        wrapped_dek: kek.wrap_dek(generate_dek().as_bytes())?,
+        dek_version: version,
+        is_emergency: false,
+    }]);
+    let rsp = storage
+        .raft
+        .client_write(pb::api::CommandRequest::try_from(cmd)?)
+        .await?;
+    assert_eq!(
+        Some("STALE_DEK_VERSION"),
+        rsp.data.violations.first().map(|v| v.r#type.as_str())
+    );
+    let (after, wrapped_after) = sm.current_dek_wrapped()?;
+    assert_eq!(version, after);
+
+    // Data written before the rotations is still readable, and new
+    // writes go under the surviving DEK.
+    let got = storage.get_by_key(b"k", None).await?;
+    assert!(got.is_some());
+    storage
+        .set_value("k".into(), make_env("after")?, None, None)
+        .await?;
+    assert_eq!(wrapped_after, sm.current_dek_wrapped()?.1);
+
+    instance.storage.raft.shutdown().await.ok();
+    Ok(())
+}

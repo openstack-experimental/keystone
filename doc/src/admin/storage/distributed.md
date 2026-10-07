@@ -248,10 +248,12 @@ write, stored as a 4-byte suffix alongside the ciphertext.
 The `tier` byte in the AD cryptographically binds the sensitivity classification
 to the ciphertext — altering the stored tier makes the GCM tag invalid.
 
-**Write rate guard:** If `version >= 2^30` (approximately 1 billion writes per
-record per DEK epoch), further writes to that key are blocked with a
-`WRITE_RATE_EXCEEDED` violation and a CRITICAL log entry is emitted. This
-prevents nonce-space exhaustion within a DEK epoch for pathologically hot keys.
+**Write rate guard:** If `version >= write_rate_threshold` (default `2^30`,
+approximately 1 billion writes per record), further writes to that key are
+blocked with a `WRITE_RATE_EXCEEDED` violation and a CRITICAL log entry is
+emitted; a WARN is logged from 90% of the threshold. The per-record version
+keeps counting across DEK rotations (re-encryption increments it too), so a
+rotation does not lift the block for a record that reached it.
 
 ### Backup Encryption
 
@@ -272,22 +274,34 @@ snapshot and mixed into the nonce derivation alongside `utc_epoch`, so two
 snapshots written within the same wall-clock second (including across a process
 restart, when a sequential in-memory counter would otherwise reset to 0) still
 get distinct nonces; it is stored directly in the header, so decryption reads it
-rather than searching for it. A separate DEK manifest (itself AES-256-GCM
-encrypted with AD bound to the manifest label, epoch, and DEK version) is
-included in the backup bundle alongside the encrypted snapshot.
+rather than searching for it. The header also carries a DEK manifest: the
+current DEK and every retired DEK the snapshot may still need, each wrapped
+under the KEK. A node holding the same KEK can therefore decrypt the backup even
+if it does not know these DEKs yet.
 
 ### Nonce Management
 
 The `NonceManager` (`storage-crypto/src/nonce.rs`) maintains a durable monotonic
 counter for Raft log nonces:
 
-- Persists the counter in Fjall under `_meta:nonce_hwm:<node_id>`.
+- Keeps one counter per DEK epoch, persisted node-locally in Fjall under
+  `_meta:nonce:<node_id>:ctr:<epoch>` with its high-water mark under
+  `_meta:nonce:<node_id>:hwm:<epoch>`. A DEK rotation therefore starts a fresh
+  counter. A counter is never reset, so an epoch that becomes current again
+  (after a restore) continues where it stopped. Snapshot installs and restores
+  keep the node's own counters.
+- Nodes upgraded from the single per-node counter (`_meta:nonce_ctr:<node_id>`)
+  record the epoch current at upgrade time; that epoch and every older one start
+  no lower than the old counter.
 - Reserves blocks of 1024 counts on each flush to absorb node crashes without
   nonce reuse.
 - On startup, validates the recovered counter against the persisted high-water
-  mark; **refuses to start** if the counter ≤ HWM (operator intervention
-  required).
-- Emits a WARN when fewer than 10% of the `2^31` rotation threshold remain.
+  mark; **refuses to start** if the counter is behind the HWM (operator
+  intervention required).
+- Emits a WARN when fewer than 10% of the `2^31` threshold remain. From that
+  point the leader rotates the DEK automatically (see
+  [DEK Rotation](#dek-rotation)). At `2^31` the node can no longer append log
+  entries under that DEK.
 
 ---
 
@@ -307,13 +321,9 @@ Tier 2 and 3 always issue a `ReadIndex` RPC to the current Raft leader before
 reading from the local state machine, ensuring a revoked credential or removed
 group member can never be observed as still-valid on a lagging follower.
 
-Configure local reads for Tier 0/1 data:
-
-```toml
-[distributed_storage]
-local_reads_mode = "local_for_public"   # default
-# local_reads_mode = "linearizable_all" # force ReadIndex for everything
-```
+> **Not implemented:** the local read path for Tier 0/1 and the
+> `local_reads_mode` option that would select it do not exist yet. Every read,
+> whatever its tier, goes through `ReadIndex`.
 
 ---
 
@@ -357,7 +367,8 @@ tls_client_ca_file = "/etc/keystone/storage/ca.pem"
 - Certificates must be signed by a dedicated Keystone Intermediate CA.
 - Leaf certificate validity must not exceed 30 days.
 - `CertExpiryWatchdog` checks remaining validity hourly: WARN at 7 days, ERROR
-  at 2 days, configurable shutdown at expiry.
+  at 2 days. It only logs; it does not shut the node down at expiry. It watches
+  a certificate given inline (`tls_cert_content`), not one given as a file.
 - The peer role is read from the first URI SAN of the client certificate. Set
   `tls_role_san_prefix` to the SAN URI prefix; the role name follows it. In TLS
   mode the role names are fixed to `node` and `storage-operator`;
@@ -572,9 +583,23 @@ is deferred (see ADR 0016-v2 addendum on peer roles).
 
 ## DEK Rotation
 
-DEK rotation is triggered by time (`dek_rotation_days`, default 90 days) or
-volume (log-encrypt counter reaches 2^31). The rotation is a live background
-process with no downtime.
+The Raft leader rotates the DEK automatically when either holds:
+
+- **Age:** the current DEK was installed `dek_rotation_days` ago (default 90;
+  `0` disables this trigger). Each node records when it applied the DEK under
+  `_meta:dek:installed_at`; nodes upgraded from a version that did not record it
+  start the interval at their first start after the upgrade.
+- **Volume:** the leader's log nonce counter for the current DEK has used 90% of
+  its `2^31` space. This trigger cannot be disabled.
+
+The leader checks every 5 minutes and skips the check while an emergency
+rotation waits for its confirmation. An automatic rotation is the same
+`InstallDek` proposal as a manual one and is audited as `DEK_ROTATION` with the
+actor `system:dek-rotation` and the trigger in the details. A rotation proposes
+the next DEK version; when two rotations race for the same version (for example
+an automatic and a manual one), the second is rejected with a
+`STALE_DEK_VERSION` violation and the installed DEK is kept. The rotation is a
+live background process with no downtime.
 
 **Normal rotation:**
 
@@ -598,15 +623,27 @@ rotation is automatically aborted and an audit entry is written. Emergency
 rotations mark the old DEK as `revoked` (not `retired`) — it is never reused for
 any decryption, even for backup archives from that epoch.
 
-**Re-encryption:** A background task re-encrypts all Fjall records under the new
-DEK using optimistic CAS-on-version: it reads the on-disk version, encrypts
-under the new DEK with `version + 1`, and writes only if the on-disk version is
-unchanged. After 3 failed CAS attempts, the key is skipped (it was already
-updated by a concurrent Raft write) and flagged in the post-rotation
-verification report.
+**Re-encryption:** Each node re-encrypts its own Fjall records under the new
+DEK in a background task, keyspace by keyspace in key order. A record is read,
+re-encrypted with `version + 1` and written while `apply()` is excluded from
+that record, so a concurrent Raft write is never reverted. A record that cannot
+be migrated after 3 attempts is skipped and logged at WARN. The sweep runs when
+a rotation is applied and again every 5 minutes for every retired DEK that still
+has records under it, so skipped records are retried without waiting for the
+next rotation. A pass that finds nothing left to migrate marks the retired DEK
+as done (`_meta:dek:reencrypt_done:<version>`). Retired DEKs are kept for
+reading older snapshots and backups.
 
-**Progress:** Progress is checkpointed to `_meta:dek:rotation_progress`. If the
-node restarts mid-rotation, it resumes from the last checkpoint.
+**Progress:** Every 1000 records the sweep checkpoints its position and counts
+to `_meta:dek:rotation_progress:<node_id>:<version>`. After a restart the next
+pass resumes behind the checkpoint, and records skipped before the restart
+still keep the retired DEK from being marked done. The checkpoint is removed
+when a pass completes and is not carried by snapshots.
+
+> **Not implemented:** a post-rotation verification report, the CRITICAL alert
+> for records left unmigrated for 24 hours, and blocking DEK retirement until
+> they are resolved. Skipped records are only visible in the WARN logs and are
+> retried by the periodic sweep.
 
 ---
 
@@ -638,15 +675,13 @@ node_listener_addr = "0.0.0.0:8310"
 # Directory where Fjall database files are stored.
 path = "/var/lib/keystone/storage"
 
-# Read consistency mode for Tier 0/1 data.
-# "local_for_public" (default): serve Tier 0/1 locally, ReadIndex for Tier 2/3.
-# "linearizable_all": require ReadIndex for all tiers.
-local_reads_mode = "local_for_public"
-
-# DEK rotation interval in days (default: 90).
+# Age in days after which the leader rotates the DEK automatically
+# (default: 90). 0 disables the age trigger; the log nonce volume trigger
+# always stays on.
 dek_rotation_days = 90
 
-# Per-record write version threshold before blocking further writes (default: 2^30).
+# Per-record write version at which further writes to the record are
+# rejected (default: 2^30).
 write_rate_threshold = 1073741824
 
 # Selects the production KEK source. "env" (default) is dev-mode only and is
@@ -871,15 +906,17 @@ For a formatted peer table use `list-peers` instead.
 ### Scheduled DEK Rotation
 
 Automatic rotation fires after `dek_rotation_days` (default: 90) or when the
-log-encrypt counter approaches 2^31. Manual rotation:
+leader's log nonce counter for the current DEK reaches 90% of `2^31` (see
+[DEK Rotation](#dek-rotation)). Manual rotation:
 
 ```sh
 keystone-manage storage rotate-dek \
   --cluster-addr https://10.0.0.1:8310
 ```
 
-Monitor the audit log (`event_type = "DEK_ROTATION"`) and the post-rotation
-verification report for any skipped keys.
+Monitor the audit log (`event_type = "DEK_ROTATION"`; automatic rotations use
+the actor `system:dek-rotation`) and the node logs for records the
+re-encryption sweep skipped (`record skipped after exhausting CAS retries`).
 
 ### Emergency DEK Rotation
 
@@ -900,7 +937,7 @@ keystone-manage storage confirm-rotate-dek \
 
 If no confirmation is received within 5 minutes, the rotation aborts
 automatically and is recorded in the audit log. The `dek_rotation_days` timer
-resets after successful completion.
+restarts when the confirmed rotation installs the new DEK.
 
 ### Clearing a Quarantined Partition
 
@@ -943,8 +980,8 @@ AES-256-GCM encrypted bytes to `--output`. The final output includes the
 `snapshot_utc_epoch` and `dek_version` printed on completion for verification.
 
 The snapshot is wrapped in a backup-specific AES-256-GCM envelope with the
-Backup DEK and a DEK manifest. Both are bound to the snapshot timestamp and
-current DEK epoch.
+Backup DEK, bound to the snapshot timestamp and current DEK epoch. Its header
+carries the DEK manifest: the current and retired DEKs, wrapped under the KEK.
 
 **Restore into a running cluster** (the usual case):
 
@@ -998,14 +1035,16 @@ instead, so a node that auto-initialized before the restore arrives restores
 into its own single-node cluster and keeps that membership. `--elect` on an
 initialized node is rejected with `FailedPrecondition`.
 
-The restore command validates the AES-256-GCM backup envelope (AD binding: epoch
-and dek_version), and decrypts it using the Backup DEK from the KMS. The KMS
-must hold the `backup_dek` role key for the DEK epoch encoded in the snapshot.
+The restore validates the AES-256-GCM backup envelope (AD binding: epoch and
+dek_version) and decrypts it with the Backup DEK derived from the DEK epoch the
+backup names, unwrapped from the backup's DEK manifest (or found on the node).
+The restoring cluster therefore needs the KEK the backup's DEKs are wrapped
+under.
 
-**Retired DEK retention:** Retired DEKs must be retained in the KMS for at least
-365 days to allow offline decryption of archived backups. Use a separate
-`backup_dek_offline` KMS role (distinct from the runtime role) with dual-control
-access controls.
+**Retired DEK retention:** Retired DEKs stay in the cluster, wrapped under the
+KEK, and every backup carries the ones it needs, so archived backups remain
+readable as long as the KEK is. There is no separate KMS role for backup or
+retired DEKs; access to archived backups is controlled through the KEK.
 
 ---
 

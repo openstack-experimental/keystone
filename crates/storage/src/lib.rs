@@ -320,6 +320,8 @@ where
     )
     .map_err(|e| io::Error::other(e.to_string()))?;
     let log_store = log_store.with_shadow_deks(sm.shadow_deks());
+    sm.ensure_dek_installed_at()
+        .map_err(|e| io::Error::other(e.to_string()))?;
     let sm = Arc::new(sm);
 
     // Background re-encryption task (ADR 0016-v2 §6 step 5 / §6.2 step 4):

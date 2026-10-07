@@ -204,6 +204,14 @@ impl FjallStateMachine {
                 kept.push((key, value.to_vec()));
             }
         }
+        for prefix in self.node_local_meta_prefixes() {
+            for item in self.meta.prefix(&prefix) {
+                let (key, value) = item
+                    .into_inner()
+                    .map_err(|e| io::Error::other(e.to_string()))?;
+                kept.push((key.to_vec(), value.to_vec()));
+            }
+        }
         if keep_local {
             let displaced = self.displaced_dek_entries()?;
             shadow = shadow_epochs(
@@ -297,6 +305,16 @@ impl FjallStateMachine {
         *self.revoked_deks.lock().unwrap_or_else(|p| p.into_inner()) = new_revoked;
         *self.shadow_deks.lock().unwrap_or_else(|p| p.into_inner()) = shadow;
 
+        // A snapshot built before install times were recorded — e.g. by a
+        // still-running old node during a rolling upgrade — carries no
+        // `META_DEK_INSTALLED_AT`. Without this, the age-based rotation
+        // trigger would stay inert on this node until a later rotation
+        // happened to write the key. The value is replicated (not
+        // node-local), so a current snapshot already carries it and the
+        // call is a no-op there.
+        self.ensure_dek_installed_at()
+            .map_err(|e| io::Error::other(e.to_string()))?;
+
         drop(_lifecycle_guard);
 
         Ok(manifest)
@@ -320,13 +338,27 @@ impl FjallStateMachine {
         keys
     }
 
-    /// Whether an incoming `meta` entry must be dropped because this node
-    /// keeps its own: one of [`Self::node_local_meta_keys`] and, for a
-    /// restore, in-flight restore chunks and displaced-DEK entries.
+    /// `meta` key prefixes whose entries belong to this node and survive a
+    /// snapshot install or restore: the per-epoch log nonce counters.
+    pub(super) fn node_local_meta_prefixes(&self) -> Vec<Vec<u8>> {
+        vec![nonce_meta_prefix(self.node_id).into_bytes()]
+    }
+
+    /// Whether an incoming `meta` entry must be dropped: one this node keeps
+    /// its own of ([`Self::node_local_meta_keys`],
+    /// [`Self::node_local_meta_prefixes`] and, for a restore, in-flight
+    /// restore chunks and displaced-DEK entries), or a re-encryption
+    /// checkpoint, which describes the sending node's sweep and not the
+    /// installed data.
     pub(super) fn is_node_local_meta_key(&self, key: &[u8], keep_raft_state: bool) -> bool {
-        (keep_raft_state
-            && (key.starts_with(RESTORE_STAGE_PREFIX.as_bytes())
-                || key.starts_with(DEK_SHADOW_PREFIX.as_bytes())))
+        key.starts_with(REENCRYPT_PROGRESS_PREFIX.as_bytes())
+            || self
+                .node_local_meta_prefixes()
+                .iter()
+                .any(|p| key.starts_with(p))
+            || (keep_raft_state
+                && (key.starts_with(RESTORE_STAGE_PREFIX.as_bytes())
+                    || key.starts_with(DEK_SHADOW_PREFIX.as_bytes())))
             || self
                 .node_local_meta_keys(keep_raft_state)
                 .iter()

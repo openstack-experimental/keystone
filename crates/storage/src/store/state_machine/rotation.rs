@@ -57,6 +57,19 @@ pub const PENDING_ROTATION_TTL_SECS: u64 = 300;
 /// regardless, for backup decryption (ADR 0016-v2 §7).
 pub(super) const DEK_REENCRYPT_DONE_PREFIX: &str = "_meta:dek:reencrypt_done:";
 
+/// Fjall meta key holding when the current DEK epoch was installed:
+/// `[version_u32_BE; 4] ++ [unix_secs_u64_BE; 8]`. Drives the time-based
+/// automatic rotation (`[distributed_storage] dek_rotation_days`).
+pub(super) const META_DEK_INSTALLED_AT: &[u8] = b"_meta:dek:installed_at";
+
+/// Fjall meta key prefix of a re-encryption sweep checkpoint
+/// (`<prefix><node_id>:<version>`). Each node sweeps its own state, so the
+/// checkpoint is node-scoped and never taken from a snapshot.
+pub(super) const REENCRYPT_PROGRESS_PREFIX: &str = "_meta:dek:rotation_progress:";
+
+/// Records visited between two persisted re-encryption checkpoints.
+pub(super) const REENCRYPT_CHECKPOINT_INTERVAL: u64 = 1000;
+
 /// Maximum number of optimistic-CAS attempts per record during background
 /// re-encryption before the record is left for the next rotation cycle
 /// (ADR 0016-v2 §6 step 5).
@@ -110,6 +123,51 @@ pub struct ReencryptReport {
     pub skipped: u64,
 }
 
+/// Persisted position of an interrupted re-encryption pass over one retired
+/// epoch, with the counts of the part already done.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct ReencryptProgress {
+    /// Keyspace of the last visited record.
+    pub keyspace: String,
+    /// Key of the last visited record.
+    pub key: Vec<u8>,
+    pub migrated: u64,
+    pub already_current: u64,
+    pub skipped: u64,
+}
+
+/// Checkpoint key of `node_id`'s sweep over epoch `version`.
+pub(super) fn reencrypt_progress_key(node_id: u64, version: u32) -> String {
+    format!("{REENCRYPT_PROGRESS_PREFIX}{node_id}:{version}")
+}
+
+/// Seconds since the Unix epoch.
+pub(crate) fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+/// Value of [`META_DEK_INSTALLED_AT`].
+pub(super) fn dek_installed_at_value(version: u32, installed_at: u64) -> Vec<u8> {
+    let mut value = version.to_be_bytes().to_vec();
+    value.extend_from_slice(&installed_at.to_be_bytes());
+    value
+}
+
+/// Violation for a DEK install whose version is not above the current one.
+pub(super) fn stale_dek_version_violation(version: u32, current: u32) -> Option<Violation> {
+    (version <= current).then(|| Violation {
+        r#type: "STALE_DEK_VERSION".to_string(),
+        subject: version.to_string(),
+        description: format!(
+            "DEK version {version} is not newer than the current version {current}; \
+             another rotation committed first"
+        ),
+    })
+}
+
 /// Maximum number of revoked DEK versions tracked in memory.
 ///
 /// Revoked versions accumulate only on emergency rotations.  Exceeding this
@@ -152,6 +210,34 @@ pub fn load_pending_rotations(
 }
 
 impl FjallStateMachine {
+    /// Version of the current DEK epoch.
+    pub(crate) fn current_dek_version(&self) -> u32 {
+        self.dek.read().unwrap_or_else(|p| p.into_inner()).version
+    }
+
+    /// When the current DEK epoch was installed (Unix seconds), if recorded
+    /// for that epoch.
+    pub fn dek_installed_at(&self) -> Option<u64> {
+        let value = self.meta.get(META_DEK_INSTALLED_AT).ok().flatten()?;
+        let version = u32::from_be_bytes(value.get(..4)?.try_into().ok()?);
+        let installed_at = u64::from_be_bytes(value.get(4..12)?.try_into().ok()?);
+        (version == self.current_dek_version()).then_some(installed_at)
+    }
+
+    /// Record the current DEK epoch as installed now unless an install time
+    /// is already known for it: the epoch bootstrapped on first start, and
+    /// nodes that ran before install times were recorded, start their
+    /// rotation interval here.
+    pub fn ensure_dek_installed_at(&self) -> Result<(), StoreError> {
+        if self.dek_installed_at().is_none() {
+            self.meta.insert(
+                META_DEK_INSTALLED_AT,
+                dek_installed_at_value(self.current_dek_version(), unix_now()),
+            )?;
+        }
+        Ok(())
+    }
+
     /// Sweep every retired-but-not-yet-fully-migrated DEK epoch and
     /// re-encrypt whatever records remain under it (ADR 0016-v2 §6 step 5 /
     /// §6.2 step 4).
@@ -323,13 +409,45 @@ impl FjallStateMachine {
     }
 
     /// Re-encrypt every record still under `old_epoch` to the current epoch,
-    /// walking all non-system keyspaces in key-sorted order.
+    /// walking all non-system keyspaces in name and key order.
+    ///
+    /// The position is checkpointed every [`REENCRYPT_CHECKPOINT_INTERVAL`]
+    /// records, so a pass interrupted by a restart resumes where it stopped
+    /// (ADR 0016-v2 §6 "Progress") with the counts of the part already done;
+    /// records skipped before the interruption therefore still keep the
+    /// epoch from being marked fully migrated. The checkpoint is removed
+    /// once the pass completes.
     pub(super) async fn reencrypt_epoch(&self, old_epoch: &DekEpoch) -> ReencryptReport {
-        let mut report = ReencryptReport::default();
+        let progress_key = reencrypt_progress_key(self.node_id, old_epoch.version);
+        let resume = self.load_reencrypt_progress(&progress_key);
+        let mut report = resume
+            .as_ref()
+            .map(|p| ReencryptReport {
+                migrated: p.migrated,
+                already_current: p.already_current,
+                skipped: p.skipped,
+            })
+            .unwrap_or_default();
+        if let Some(p) = &resume {
+            tracing::info!(
+                old_version = old_epoch.version,
+                keyspace = p.keyspace,
+                "DEK rotation: resuming re-encryption pass from checkpoint"
+            );
+        }
 
-        for name in self.db.list_keyspace_names() {
-            let keyspace_name = name.to_string();
-            if REENCRYPT_SKIP_KEYSPACES.contains(&keyspace_name.as_str()) {
+        let mut names: Vec<String> = self
+            .db
+            .list_keyspace_names()
+            .into_iter()
+            .map(|name| name.to_string())
+            .filter(|name| !REENCRYPT_SKIP_KEYSPACES.contains(&name.as_str()))
+            .collect();
+        names.sort();
+
+        let mut since_checkpoint = 0u64;
+        for keyspace_name in names {
+            if resume.as_ref().is_some_and(|p| keyspace_name < p.keyspace) {
                 continue;
             }
             let Ok(ks) = self
@@ -346,6 +464,11 @@ impl FjallStateMachine {
                 .iter()
                 .filter_map(|item| item.into_inner().ok())
                 .map(|(k, _)| k.to_vec())
+                .filter(|k| {
+                    !resume.as_ref().is_some_and(|p| {
+                        p.keyspace == keyspace_name && k.as_slice() <= p.key.as_slice()
+                    })
+                })
                 .collect();
 
             for key in keys {
@@ -366,10 +489,60 @@ impl FjallStateMachine {
                         );
                     }
                 }
+
+                since_checkpoint += 1;
+                if since_checkpoint >= REENCRYPT_CHECKPOINT_INTERVAL {
+                    since_checkpoint = 0;
+                    self.save_reencrypt_progress(
+                        &progress_key,
+                        &ReencryptProgress {
+                            keyspace: keyspace_name.clone(),
+                            key: key.clone(),
+                            migrated: report.migrated,
+                            already_current: report.already_current,
+                            skipped: report.skipped,
+                        },
+                    );
+                }
             }
         }
 
+        if let Err(e) = self.meta.remove(progress_key.as_bytes()) {
+            tracing::warn!(
+                old_version = old_epoch.version,
+                error = %e,
+                "failed to remove re-encryption checkpoint; the next pass resumes from it"
+            );
+        }
         report
+    }
+
+    /// Load a re-encryption checkpoint. An unreadable one is ignored, which
+    /// only costs a pass from the start.
+    pub(super) fn load_reencrypt_progress(&self, key: &str) -> Option<ReencryptProgress> {
+        let value = self.meta.get(key.as_bytes()).ok().flatten()?;
+        match rmp_serde::from_slice(&value) {
+            Ok(progress) => Some(progress),
+            Err(e) => {
+                tracing::warn!(error = %e, "ignoring unreadable re-encryption checkpoint");
+                None
+            }
+        }
+    }
+
+    /// Persist a re-encryption checkpoint. Best effort: a lost checkpoint
+    /// only costs revisiting records on resume.
+    pub(super) fn save_reencrypt_progress(&self, key: &str, progress: &ReencryptProgress) {
+        let saved = rmp_serde::to_vec(progress)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| {
+                self.meta
+                    .insert(key.as_bytes(), bytes)
+                    .map_err(|e| e.to_string())
+            });
+        if let Err(e) = saved {
+            tracing::warn!(error = %e, "failed to persist re-encryption checkpoint");
+        }
     }
 
     /// Attempt to migrate a single record from `old_epoch` to the current

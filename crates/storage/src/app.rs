@@ -20,7 +20,7 @@ use dashmap::DashMap;
 use eyre::eyre;
 use openraft::Config;
 use openraft::async_runtime::WatchReceiver;
-use openstack_keystone_storage_crypto::{DekEpoch, EnvKek, KekProvider};
+use openstack_keystone_storage_crypto::{DekEpoch, EnvKek, KekProvider, NonceManager};
 
 use crate::protobuf as pb;
 use openraft::ReadPolicy;
@@ -57,6 +57,9 @@ use crate::protobuf::raft::cluster_admin_service_client::ClusterAdminServiceClie
 use crate::store_command::*;
 use crate::types::*;
 use openstack_keystone_storage_api::Node;
+
+mod dek_rotation;
+pub use dek_rotation::RotationTrigger;
 
 /// gRPC metadata header used to communicate the leader's endpoint to clients.
 ///
@@ -431,6 +434,8 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
         quarantine_rx,
     ) = crate::new::<crate::TypeConfig, _>(ds_config.path.clone(), ds_config.node_id, kek.clone())
         .await?;
+    state_machine_store.set_write_rate_threshold(ds_config.write_rate_threshold);
+    let log_nonce = log_store.nonce_manager();
     tracing::debug!("Raft stores opened; initializing Raft TLS client...");
     let tls_client = init_tls_watcher(config_manager).await?;
     tracing::debug!("Raft TLS client initialized.");
@@ -562,7 +567,13 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
         local_emergency_config,
         ensure_linearizable_retries: ds_config.ensure_linearizable_retries,
         ensure_linearizable_retry_delay_ms: ds_config.ensure_linearizable_retry_delay_ms,
+        log_nonce,
+        dek_rotation_days: ds_config.dek_rotation_days,
     });
+
+    // Automatic DEK rotation by age and by log nonce volume (ADR 0016-v2
+    // §6). Runs on every node but only the leader proposes.
+    dek_rotation::spawn_dek_rotation_task(&storage);
 
     // Best-effort background forwarding of Raft-committed quarantine events
     // (ADR 0016-v2 §10 invariant 5). The local, synchronous quarantine
@@ -811,6 +822,11 @@ pub struct Storage {
     /// Delay (ms) between `ensure_linearizable` retry attempts, from
     /// `[distributed_storage] ensure_linearizable_retry_delay_ms`.
     pub(crate) ensure_linearizable_retry_delay_ms: u64,
+    /// The log store's nonce manager, watched by the automatic DEK rotation.
+    log_nonce: Arc<Mutex<NonceManager>>,
+    /// `[distributed_storage] dek_rotation_days`; `0` disables the age
+    /// trigger of the automatic DEK rotation.
+    dek_rotation_days: u32,
 }
 
 /// Outcome of the `ensure_linearizable` retry loop.

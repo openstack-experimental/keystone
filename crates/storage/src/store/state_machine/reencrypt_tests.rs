@@ -461,3 +461,120 @@ fn reencrypt_pending_never_loses_a_concurrent_apply_write() {
         .expect("decrypt final record");
     assert_eq!(plaintext, format!("v{WRITES}").into_bytes());
 }
+
+fn record_dek_version(sm: &FjallStateMachine, key: &[u8]) -> Option<u32> {
+    let meta_bytes = sm
+        .meta()
+        .get(meta_key("data", key))
+        .expect("get meta")
+        .expect("meta present");
+    Metadata::unpack(meta_bytes.as_ref())
+        .expect("unpack metadata")
+        .dek_version
+}
+
+/// A pass interrupted after a checkpoint resumes behind it: records up to
+/// the checkpoint are not revisited, the rest are migrated, and the
+/// checkpoint is removed once the pass completes.
+#[test]
+fn reencrypt_pass_resumes_from_checkpoint() {
+    let old_epoch = test_epoch(0x30, 1);
+    let (sm, _td) = make_sm(old_epoch.clone());
+    for key in [b"a", b"b", b"c"] {
+        write_record(&sm, key, b"v");
+    }
+
+    let new_epoch = test_epoch(0x31, 2);
+    *sm.dek.write().unwrap_or_else(|p| p.into_inner()) = new_epoch.clone();
+    sm.old_deks
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert(old_epoch.version, old_epoch.clone());
+
+    let progress_key = reencrypt_progress_key(1, old_epoch.version);
+    sm.save_reencrypt_progress(
+        &progress_key,
+        &ReencryptProgress {
+            keyspace: "data".to_string(),
+            key: b"b".to_vec(),
+            migrated: 2,
+            already_current: 0,
+            skipped: 0,
+        },
+    );
+
+    let report = TypeConfig::run(async { sm.reencrypt_epoch(&old_epoch).await });
+
+    assert_eq!(3, report.migrated, "resumed counts carried over");
+    assert_eq!(Some(old_epoch.version), record_dek_version(&sm, b"a"));
+    assert_eq!(Some(old_epoch.version), record_dek_version(&sm, b"b"));
+    assert_eq!(Some(new_epoch.version), record_dek_version(&sm, b"c"));
+    assert!(
+        sm.meta()
+            .get(progress_key.as_bytes())
+            .expect("get")
+            .is_none(),
+        "checkpoint removed after a completed pass"
+    );
+}
+
+/// Records skipped before an interruption still keep the epoch from being
+/// marked fully migrated, and the following pass starts from the beginning.
+#[test]
+fn reencrypt_skips_before_checkpoint_block_done_marker() {
+    let old_epoch = test_epoch(0x32, 1);
+    let (sm, _td) = make_sm(old_epoch.clone());
+    write_record(&sm, b"a", b"v");
+    write_record(&sm, b"b", b"v");
+
+    let new_epoch = test_epoch(0x33, 2);
+    *sm.dek.write().unwrap_or_else(|p| p.into_inner()) = new_epoch.clone();
+    sm.old_deks
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert(old_epoch.version, old_epoch.clone());
+
+    sm.save_reencrypt_progress(
+        &reencrypt_progress_key(1, old_epoch.version),
+        &ReencryptProgress {
+            keyspace: "data".to_string(),
+            key: b"a".to_vec(),
+            migrated: 0,
+            already_current: 0,
+            skipped: 1,
+        },
+    );
+
+    TypeConfig::run(async { sm.reencrypt_pending().await });
+    let done_key = format!("{DEK_REENCRYPT_DONE_PREFIX}{}", old_epoch.version);
+    assert!(
+        sm.meta().get(done_key.as_bytes()).expect("get").is_none(),
+        "a pass with skipped records must not mark the epoch done"
+    );
+    assert_eq!(Some(old_epoch.version), record_dek_version(&sm, b"a"));
+
+    // The next pass starts over and finishes the epoch.
+    TypeConfig::run(async { sm.reencrypt_pending().await });
+    assert_eq!(Some(new_epoch.version), record_dek_version(&sm, b"a"));
+    assert!(sm.meta().get(done_key.as_bytes()).expect("get").is_some());
+}
+
+/// The install time is recorded once per epoch and only reported for the
+/// current epoch.
+#[test]
+fn dek_installed_at_tracks_current_epoch() {
+    let epoch = test_epoch(0x34, 1);
+    let (sm, _td) = make_sm(epoch);
+    assert_eq!(None, sm.dek_installed_at());
+
+    sm.meta()
+        .insert(META_DEK_INSTALLED_AT, dek_installed_at_value(1, 1234))
+        .expect("insert");
+    sm.ensure_dek_installed_at().expect("ensure");
+    assert_eq!(Some(1234), sm.dek_installed_at(), "known time kept");
+
+    *sm.dek.write().unwrap_or_else(|p| p.into_inner()) = test_epoch(0x35, 2);
+    assert_eq!(None, sm.dek_installed_at(), "time of another epoch");
+    sm.ensure_dek_installed_at().expect("ensure");
+    assert!(sm.dek_installed_at().is_some_and(|t| t > 1234));
+}

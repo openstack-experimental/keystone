@@ -18,6 +18,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -38,6 +39,7 @@ use openraft::storage::EntryResponder;
 use openraft::storage::RaftStateMachine;
 use openraft::storage::Snapshot;
 use openraft::type_config::TypeConfigExt;
+use openstack_keystone_storage_crypto::nonce::nonce_meta_prefix;
 use openstack_keystone_storage_crypto::{
     DekEpoch, KekProvider, LockedKey, backup_decrypt, backup_encrypt, state_decrypt, state_encrypt,
 };
@@ -62,7 +64,7 @@ mod snapshot;
 mod snapshot_file;
 
 pub(crate) use self::restore::MAX_LIVE_RESTORE_SIZE;
-pub(crate) use self::rotation::{DEK_REVOKED_PENDING_PREFIX, DEK_REVOKED_PREFIX};
+pub(crate) use self::rotation::{DEK_REVOKED_PENDING_PREFIX, DEK_REVOKED_PREFIX, unix_now};
 pub use self::rotation::{PENDING_ROTATION_TTL_SECS, ReencryptReport, load_pending_rotations};
 
 use self::quarantine::*;
@@ -73,11 +75,9 @@ use self::snapshot_file::*;
 const KEY_LAST_APPLIED_LOG: &[u8] = b"last_applied_log";
 const KEY_LAST_MEMBERSHIP: &[u8] = b"last_membership";
 
-/// Maximum per-key write version before a DEK rotation is required (ADR 0016-v2
-/// §10).
-const WRITE_RATE_THRESHOLD: u32 = 1u32 << 30;
-/// Warn when per-key write count reaches 90% of the threshold.
-const WRITE_RATE_WARN_THRESHOLD: u32 = WRITE_RATE_THRESHOLD / 10 * 9;
+/// Default maximum per-key write version (ADR 0016-v2 §10); overridden by
+/// `[distributed_storage] write_rate_threshold`.
+pub const DEFAULT_WRITE_RATE_THRESHOLD: u32 = 1u32 << 30;
 
 /// Keyspace names reserved for the state machine's own storage.
 ///
@@ -211,6 +211,9 @@ pub struct FjallStateMachine {
     /// HMAC key on every DEK epoch swap and the apply-side audit records
     /// (ADR 0016-v2 §3.1). Unset in unit tests that do not exercise audit.
     audit: std::sync::OnceLock<crate::audit::AuditForwarder>,
+    /// Per-key write version at which further writes to the key are
+    /// rejected (`[distributed_storage] write_rate_threshold`).
+    write_rate_threshold: Arc<AtomicU32>,
 }
 
 impl FjallStateMachine {
@@ -284,7 +287,22 @@ impl FjallStateMachine {
                 crate::prometheus_metrics::KeystoneRaftPrometheusMetrics::new(),
             ),
             audit: std::sync::OnceLock::new(),
+            write_rate_threshold: Arc::new(AtomicU32::new(DEFAULT_WRITE_RATE_THRESHOLD)),
         })
+    }
+
+    /// Set the per-key write version threshold. Values of `0` are ignored.
+    pub fn set_write_rate_threshold(&self, threshold: u32) {
+        if threshold > 0 {
+            self.write_rate_threshold
+                .store(threshold, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// Current per-key write version threshold.
+    pub(crate) fn write_rate_threshold(&self) -> u32 {
+        self.write_rate_threshold
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Attach the audit forwarder. First call wins; later calls are ignored.

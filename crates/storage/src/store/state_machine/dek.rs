@@ -427,21 +427,23 @@ impl FjallStateMachine {
         };
 
         // Enforce per-record write rate limit (ADR 0016-v2 §10 / invariant 9).
-        if next_version >= WRITE_RATE_THRESHOLD {
+        let threshold = self.write_rate_threshold();
+        if next_version >= threshold {
             let key_str = String::from_utf8_lossy(key).into_owned();
             tracing::error!(
                 key = %key_str,
                 version = next_version,
-                threshold = WRITE_RATE_THRESHOLD,
-                "CRITICAL: per-record write rate threshold reached; DEK rotation required",
+                threshold,
+                "CRITICAL: per-record write rate threshold reached; further writes to the \
+                 record are rejected",
             );
             return Err(StoreError::WriteRateExceeded(key_str, next_version));
-        } else if next_version >= WRITE_RATE_WARN_THRESHOLD {
+        } else if next_version >= threshold / 10 * 9 {
             tracing::warn!(
                 key = %String::from_utf8_lossy(key),
                 version = next_version,
-                threshold = WRITE_RATE_THRESHOLD,
-                "per-record write count at 90% of threshold; schedule DEK rotation",
+                threshold,
+                "per-record write count at 90% of threshold",
             );
         }
 

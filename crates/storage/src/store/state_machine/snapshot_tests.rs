@@ -235,6 +235,14 @@ async fn install_snapshot_keeps_node_local_meta() {
         .meta()
         .insert(b"_meta:nonce_ctr:1", 99u64.to_be_bytes())
         .expect("nonce");
+    leader
+        .meta()
+        .insert(b"_meta:nonce:1:ctr:3", 99u64.to_be_bytes())
+        .expect("epoch nonce");
+    leader
+        .meta()
+        .insert(b"_meta:dek:rotation_progress:1:2", b"leader-progress")
+        .expect("progress");
     let snapshot = leader.build_snapshot().await.expect("build snapshot");
 
     let (mut follower, _td2) = make_sm();
@@ -251,6 +259,14 @@ async fn install_snapshot_keeps_node_local_meta() {
         .insert(b"_meta:nonce_ctr:1", 7u64.to_be_bytes())
         .expect("nonce");
     follower
+        .meta()
+        .insert(b"_meta:nonce:1:ctr:3", 7u64.to_be_bytes())
+        .expect("epoch nonce");
+    follower
+        .meta()
+        .insert(b"_meta:dek:rotation_progress:1:2", b"follower-progress")
+        .expect("progress");
+    follower
         .install_snapshot(&snapshot.meta, snapshot.snapshot)
         .await
         .expect("install snapshot");
@@ -259,6 +275,13 @@ async fn install_snapshot_keeps_node_local_meta() {
     assert_eq!(get(KEY_VOTE), Some(b"follower-vote".to_vec()));
     assert_eq!(get(KEY_PURGED), Some(b"follower-purged".to_vec()));
     assert_eq!(get(b"_meta:nonce_ctr:1"), Some(7u64.to_be_bytes().to_vec()));
+    assert_eq!(
+        get(b"_meta:nonce:1:ctr:3"),
+        Some(7u64.to_be_bytes().to_vec())
+    );
+    // The re-encryption checkpoint described the follower's old data and
+    // the leader's sweep, so neither survives.
+    assert_eq!(get(b"_meta:dek:rotation_progress:1:2"), None);
 }
 
 #[tokio::test]

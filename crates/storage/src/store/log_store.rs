@@ -100,7 +100,8 @@ where
             keyspace: meta.clone(),
             db: db.clone(),
         };
-        let nonce_mgr = NonceManager::new(node_id, Box::new(persistence))?;
+        let epoch = dek.read().unwrap_or_else(|p| p.into_inner()).version;
+        let nonce_mgr = NonceManager::new(node_id, epoch, Box::new(persistence))?;
 
         Ok(Self {
             db,
@@ -113,6 +114,12 @@ where
             nonce_mgr: Arc::new(Mutex::new(nonce_mgr)),
             _p: Default::default(),
         })
+    }
+
+    /// The log nonce manager, shared so the automatic DEK rotation can
+    /// watch the counter of the current epoch.
+    pub fn nonce_manager(&self) -> Arc<Mutex<NonceManager>> {
+        self.nonce_mgr.clone()
     }
 
     /// Shares the state machine's displaced-DEK list with this store.
@@ -155,17 +162,23 @@ where
         index: u64,
         plaintext: &[u8],
     ) -> Result<Vec<u8>, StoreError> {
-        let nonce = self
-            .nonce_mgr
-            .lock()
-            .map_err(|_| StoreError::Other(eyre::eyre!("nonce manager lock poisoned")))?
-            .next_nonce()?;
         let (dek_version, encrypted) = {
             let guard = self
                 .dek
                 .read()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             let version = guard.version;
+            // The nonce counter is scoped to the DEK epoch it encrypts
+            // under; take it while holding the epoch so a concurrent swap
+            // cannot pair one epoch's key with another's counter.
+            let nonce = {
+                let mut mgr = self
+                    .nonce_mgr
+                    .lock()
+                    .map_err(|_| StoreError::Other(eyre::eyre!("nonce manager lock poisoned")))?;
+                mgr.switch_epoch(version)?;
+                mgr.next_nonce()?
+            };
             let enc = log_encrypt(guard.log_dek(), plaintext, term, index, &nonce)?;
             (version, enc)
         };

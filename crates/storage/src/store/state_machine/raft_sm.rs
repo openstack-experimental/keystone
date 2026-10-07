@@ -414,7 +414,8 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                                 subject: k,
                                                 description: format!(
                                                     "write version {v} reached threshold \
-                                                     {WRITE_RATE_THRESHOLD}; DEK rotation required"
+                                                     {}",
+                                                    self.write_rate_threshold()
                                                 ),
                                             });
                                         }
@@ -508,7 +509,8 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                                 subject: k,
                                                 description: format!(
                                                     "write version {v} reached threshold \
-                                                     {WRITE_RATE_THRESHOLD}; DEK rotation required"
+                                                     {}",
+                                                    self.write_rate_threshold()
                                                 ),
                                             });
                                         }
@@ -574,6 +576,16 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                     dek_version,
                                     is_emergency,
                                 } => {
+                                    // An automatic and an operator rotation
+                                    // can race on the same next version;
+                                    // only the first one may install it.
+                                    if let Some(v) = stale_dek_version_violation(
+                                        dek_version,
+                                        self.current_dek_version(),
+                                    ) {
+                                        violations.push(v);
+                                        continue;
+                                    }
                                     let raw_dek = self
                                         .kek
                                         .unwrap_dek(&wrapped_dek)
@@ -588,6 +600,11 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                     let mut persisted = dek_version.to_be_bytes().to_vec();
                                     persisted.extend_from_slice(&wrapped_dek);
                                     batch.insert(&self.meta, META_DEK_CURRENT, persisted);
+                                    batch.insert(
+                                        &self.meta,
+                                        META_DEK_INSTALLED_AT,
+                                        dek_installed_at_value(dek_version, unix_now()),
+                                    );
                                     let old_version = {
                                         let g = self.dek.read().unwrap_or_else(|p| p.into_inner());
                                         g.version
@@ -802,6 +819,26 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                                     .to_string(),
                                             });
                                         }
+                                        Some(ref e)
+                                            if e.dek_version <= self.current_dek_version() =>
+                                        {
+                                            // A rotation committed while this one waited for
+                                            // its confirmation: its version is already taken,
+                                            // so this entry can never be confirmed. It is
+                                            // kept, not removed — the batch does not commit
+                                            // on a violation, so deleting it from the
+                                            // in-memory map without committing the Fjall
+                                            // `meta` delete would leave the two disagreeing
+                                            // (GitHub #1297 item 4). It expires on its own;
+                                            // until then it blocks `CreatePendingRotation`
+                                            // (CONFLICT) and keeps `automatic_rotation_due`
+                                            // suppressed, so a fresh rotation is staged once
+                                            // it expires or after a restart.
+                                            violations.extend(stale_dek_version_violation(
+                                                e.dek_version,
+                                                self.current_dek_version(),
+                                            ));
+                                        }
                                         Some(entry) => {
                                             // Dual-control satisfied — execute
                                             // DEK install.
@@ -830,6 +867,14 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                                 entry.dek_version.to_be_bytes().to_vec();
                                             persisted.extend_from_slice(&entry.wrapped_dek);
                                             batch.insert(&self.meta, META_DEK_CURRENT, persisted);
+                                            batch.insert(
+                                                &self.meta,
+                                                META_DEK_INSTALLED_AT,
+                                                dek_installed_at_value(
+                                                    entry.dek_version,
+                                                    unix_now(),
+                                                ),
+                                            );
                                             let old_version = {
                                                 let g = self
                                                     .dek

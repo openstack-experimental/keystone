@@ -156,16 +156,19 @@ tags must be 16 bytes.
   `[8-byte NodeId BE] ++ [4-byte monotonic counter BE]`. NodeId occupies the
   full 8 bytes (matching the `u64` type in §8) to prevent nonce-space collision
   between nodes that share the same lower 32 bits. The counter is stored durably
-  and increments with a reservation block of 1024 to absorb crashes. On startup,
-  the persisted counter is validated against a separately-stored high-water mark
-  (kept in a dedicated Fjall metadata key `_meta:nonce_hwm:<node_id>`); if the
-  recovered counter is less than or equal to the high-water mark, the node
+  and increments with a reservation block of 1024 to absorb crashes. The
+  counter is scoped to the DEK epoch it encrypts under, so a DEK rotation starts
+  a fresh counter space. On startup, the persisted counter is validated against
+  a separately-stored high-water mark (kept in a dedicated Fjall metadata key
+  `_meta:nonce:<node_id>:hwm:<epoch>`); if the
+  recovered counter is strictly less than the high-water mark, the node
   refuses to start and requires operator intervention, preventing nonce reuse
   from counter corruption. After each reservation block write, the node verifies
   the write by reading back and comparing; if the read-back does not match, the
   node treats it as a fatal storage error and halts, preventing silent nonce
   reuse during a live session. A warning is emitted when remaining counter space
-  drops below 10% of the `2^31` rotation threshold.
+  drops below 10% of the `2^31` rotation threshold, which is also when the
+  leader rotates the DEK (§6).
 - **Fjall State Machine (State DEK):** Nonce is derived via
   `HKDF-Expand(StateDek, info=PrimaryKey || version_u32, L=12)`. The `version`
   field starts at `0` for new records and increments on each update. This
@@ -526,6 +529,8 @@ Operator-managed PKI for environments without SPIRE.
   days remaining, errors at 2 days remaining, and triggers a configurable action
   (warn-only or shutdown) at expiry. This prevents the enforcement gap where a
   node starts with a valid certificate but continues operating after expiry.
+  _(Implementation status as of #1301: the watchdog only logs, never shuts
+  down, and only runs for a certificate given inline as `tls_cert_content`.)_
 - **Certificate Revocation:** CRL and OCSP are not implemented for the TLS
   fallback path. The compensating controls are: (1) the 30-day maximum leaf
   certificate validity limits exposure from a stolen or miss-issued certificate;
@@ -607,8 +612,8 @@ Apply on Node:
 
 To prevent AES-256-GCM nonce exhaustion, Data Encryption Keys must be
 periodically rotated. Rotation is triggered either by time (configurable via
-`[storage] dek_rotation_days`, default 90 days) or by volume (when AES-GCM
-encryptions reach 2^31 under any sub-key).
+`[distributed_storage] dek_rotation_days`, default 90 days) or by volume (when
+the leader's Log DEK nonce counter reaches 90% of 2^31).
 
 **DEK Version Tracking:** Each DEK epoch is assigned a monotonically increasing
 `dek_version_u32`. The version is stored alongside the wrapped DEK in Fjall
@@ -672,6 +677,23 @@ _Partial Rotation Recovery:_ If a node restarts mid-rotation, it detects
 last committed progress marker stored in `_meta:dek:rotation_progress` before
 normal operations complete. The `rotation_index` boundary remains authoritative
 for determining which DEK each log entry was encrypted under.
+
+> **Implementation status (as of #1301):**
+>
+> - Implemented: the time and volume triggers (the Raft leader checks every 5
+>   minutes and proposes `InstallDek`, skipping while an emergency rotation
+>   awaits confirmation); rejection of an `InstallDek` or confirmed emergency
+>   rotation whose version is not above the current one (`STALE_DEK_VERSION`),
+>   so concurrent rotations cannot replace each other's DEK; the per-node
+>   re-encryption checkpoint `_meta:dek:rotation_progress:<node_id>:<version>`,
+>   resumed after a restart; and a re-encryption sweep every 5 minutes over every
+>   retired epoch not yet fully migrated, which also retries skipped records.
+> - Not implemented: `_meta:dek:pending` and the `rotation_index` boundary
+>   (steps 2-4). `InstallDek` swaps the DEK when it is applied, and every log
+>   entry carries the `dek_version` it was encrypted under, which serves as the
+>   boundary. The verification report, the 24-hour CRITICAL alert and blocked
+>   retirement (steps 5 and 8), and `keystone-manage storage recover --record`
+>   (step 6) do not exist; skipped records are only logged at WARN.
 
 ### 6.2 Emergency Rotation and DEK Compromise
 
@@ -757,7 +779,9 @@ fragility._
 
 Restoring a snapshot to a new cluster strictly requires:
 
-1. Access to the Backup DEK (`backup_dek` role) in the KMS.
+1. Access to the Backup DEK (`backup_dek` role) in the KMS. _(Not implemented:
+   the backup header carries a DEK manifest of KEK-wrapped DEKs, and the
+   restoring cluster needs the same KEK; there is no KMS role.)_
 2. Valid node identity credentials (SPIFFE SVIDs or Intermediate CA certs) for
    the new nodes before they join the cluster.
 3. Unwrapping the backup envelope, loading it into Fjall, and immediately
@@ -804,6 +828,11 @@ runtime role does not grant access to retired keys and vice versa. Access to any
 retired DEK requires dual-control or break-glass approval. Operators should
 evaluate whether the 365-day retention mandate can be satisfied with a separate
 escrow mechanism instead of keeping keys live in the operational KMS.
+
+> **Implementation status (as of #1301):** the `backup_dek` and
+> `backup_dek_offline` KMS roles are not implemented. Retired DEKs are kept in
+> the cluster wrapped under the KEK and are carried in each backup's DEK
+> manifest.
 
 ---
 

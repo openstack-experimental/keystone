@@ -93,6 +93,20 @@ pub struct DistributedStorageConfiguration {
     #[serde(default = "default_ensure_linearizable_retry_delay_ms")]
     pub ensure_linearizable_retry_delay_ms: u64,
 
+    /// Age in days after which the Raft leader rotates the DEK automatically
+    /// (ADR 0016-v2 §6). `0` disables the time-based rotation; the
+    /// volume-based rotation, which fires when the log nonce counter of the
+    /// current DEK reaches 90% of `2^31`, always stays on. Defaults to 90.
+    #[serde(default = "default_dek_rotation_days")]
+    pub dek_rotation_days: u32,
+
+    /// Per-record write version at which further writes to the record are
+    /// rejected with a `WRITE_RATE_EXCEEDED` violation (ADR 0016-v2 §10).
+    /// A warning is logged from 90% of it. Defaults to `2^30`.
+    #[serde(default = "default_write_rate_threshold")]
+    #[validate(range(min = 1))]
+    pub write_rate_threshold: u32,
+
     /// Directory holding the durable, fsynced audit spool for this node
     /// (ADR 0016-v2 §3.1). Defaults to `<path>/audit-spool`. An external
     /// shipper tails these files to the SIEM; records are never deleted
@@ -416,6 +430,14 @@ where
     Ok(out)
 }
 
+fn default_dek_rotation_days() -> u32 {
+    90
+}
+
+fn default_write_rate_threshold() -> u32 {
+    crate::store::state_machine::DEFAULT_WRITE_RATE_THRESHOLD
+}
+
 fn default_audit_max_spool_bytes() -> u64 {
     256 * 1024 * 1024
 }
@@ -470,6 +492,8 @@ impl Default for DistributedStorageConfiguration {
             path: PathBuf::new(),
             ensure_linearizable_retries: default_ensure_linearizable_retries(),
             ensure_linearizable_retry_delay_ms: default_ensure_linearizable_retry_delay_ms(),
+            dek_rotation_days: default_dek_rotation_days(),
+            write_rate_threshold: default_write_rate_threshold(),
             audit_spool_dir: None,
             audit_max_spool_bytes: default_audit_max_spool_bytes(),
             pkcs11: None,
