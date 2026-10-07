@@ -27,7 +27,7 @@ use openstack_keystone_core::oauth2_client::{
 use openstack_keystone_core::oauth2_session::IssueRefreshTokenRequest;
 use openstack_keystone_core_types::oauth2_client::{GrantType, OidcAccessTokenClaims};
 
-use crate::audit::{build_initiator_unknown, emit_oauth2_session_event};
+use crate::audit::{build_initiator_from_user_id, emit_oauth2_grant_event};
 use crate::keystone::ServiceState;
 
 use super::common::*;
@@ -207,12 +207,13 @@ pub(super) async fn handle_authorization_code_grant(
         }
     };
 
-    emit_oauth2_session_event(
+    emit_oauth2_grant_event(
         &state.audit_dispatcher,
         correlation_id,
         "authenticate",
-        build_initiator_unknown(),
+        build_initiator_from_user_id(&record.user_id, domain_id),
         &client.client_id,
+        "authorization_code",
         Outcome::Success,
         None,
     );

@@ -187,6 +187,18 @@ pub fn build_initiator_from_vsc(vsc: &ValidatedSecurityContext) -> Initiator {
     .with_address(vsc.inner().peer_addr().map(str::to_string))
 }
 
+/// Build an [`Initiator`] from a known user id and the user's domain, for
+/// flows (OAuth2 OP grants) that identify the user without a validated
+/// security context.
+pub fn build_initiator_from_user_id(user_id: &str, domain_id: &str) -> Initiator {
+    Initiator::new(
+        sanitize_audit_id(user_id),
+        None,
+        Some(sanitize_audit_id(domain_id)).filter(|id| id != "unknown"),
+        None,
+    )
+}
+
 /// Build an all-`"unknown"` [`Initiator`] for total auth failure.
 pub fn build_initiator_unknown() -> Initiator {
     Initiator::new("unknown".to_string(), None, None, None)

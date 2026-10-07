@@ -52,7 +52,9 @@ use super::html::{
     ConsentTemplate, LoginTemplate, error_page, security_headers, too_many_requests,
 };
 use crate::api::common::PeerAddr;
-use crate::audit::{CorrelationId, build_initiator_unknown, emit_oauth2_session_event};
+use crate::audit::{
+    CorrelationId, build_initiator_from_user_id, build_initiator_unknown, emit_oauth2_session_event,
+};
 use crate::keystone::ServiceState;
 
 const SESSION_COOKIE_NAME: &str = "keystone_oauth2_session";
@@ -548,7 +550,7 @@ pub(super) async fn authorize_login(
         &state.audit_dispatcher,
         &correlation_id.0,
         "authenticate",
-        build_initiator_unknown(),
+        build_initiator_from_user_id(&user_id, &session.domain_id),
         &session.client_id,
         Outcome::Success,
         None,
@@ -695,7 +697,7 @@ async fn finish_consent(
             IssueAuthorizationCodeRequest {
                 domain_id: domain_id.to_string(),
                 client_id: session.client_id.clone(),
-                user_id,
+                user_id: user_id.clone(),
                 redirect_uri: session.redirect_uri.clone(),
                 code_challenge: session.code_challenge.clone(),
                 code_challenge_method: session.code_challenge_method.clone(),
@@ -718,7 +720,7 @@ async fn finish_consent(
         &state.audit_dispatcher,
         correlation_id,
         "authorize",
-        build_initiator_unknown(),
+        build_initiator_from_user_id(&user_id, domain_id),
         &session.client_id,
         Outcome::Success,
         None,

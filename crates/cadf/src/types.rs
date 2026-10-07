@@ -53,6 +53,8 @@ pub struct CadfEventPayload {
     pub(crate) outcome: Outcome,
     /// Structured reason for a `failure` outcome, if any.
     pub(crate) outcome_reason: Option<String>,
+    /// OAuth2 `client_id` and `grant_type` of an OP request, if any.
+    pub(crate) oauth2: Option<(String, String)>,
     /// Per-boot sequence number; filled in at signing.
     pub(crate) seq: u64,
     /// The resource the action was on.
@@ -71,6 +73,8 @@ const OBSERVER_TYPE_URI: &str = "service/security/keystone";
 const CORRELATION_TAG: &str = "correlation_id:";
 /// Name of the attachment carrying the fields DSP0262 has no place for.
 const INTEGRITY_ATTACHMENT: &str = "integrity";
+/// Name of the optional attachment carrying the OAuth2 client and grant type.
+const OAUTH2_ATTACHMENT: &str = "oauth2";
 
 /// DSP0262 `outcome` of an event: a closed vocabulary, so no other value can
 /// reach a signed record.
@@ -197,6 +201,16 @@ impl CadfEventPayload {
                 .and_then(|r| r.get("reasonCode"))
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_string),
+            oauth2: value
+                .get("attachments")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|a| {
+                    a.iter().find(|a| {
+                        a.get("name").and_then(serde_json::Value::as_str) == Some(OAUTH2_ATTACHMENT)
+                    })
+                })
+                .and_then(|a| a.get("content"))
+                .and_then(|c| Some((text(c, "client_id").ok()?, text(c, "grant_type").ok()?))),
             seq: number("seq")?,
             // In-crate struct literals on purpose: wire values are kept
             // verbatim so a record round-trips byte-exact — its signature
@@ -242,6 +256,16 @@ impl CadfEventPayload {
                 },
             }],
         });
+        if let (Some((client_id, grant_type)), Some(attachments)) = (
+            &self.oauth2,
+            event.get_mut("attachments").and_then(Value::as_array_mut),
+        ) {
+            attachments.push(json!({
+                "name": OAUTH2_ATTACHMENT,
+                "contentType": "application/json",
+                "content": {"client_id": client_id, "grant_type": grant_type},
+            }));
+        }
         if let (Some(reason), Value::Object(map)) = (&self.outcome_reason, &mut event) {
             map.insert(
                 "reason".into(),
@@ -330,10 +354,29 @@ impl CadfEventPayload {
             observer,
             outcome,
             outcome_reason: outcome_reason.map(OutcomeReason::into_string),
+            oauth2: None,
             seq: 0,
             target,
             version: sanitize_audit_value(&version),
         }
+    }
+
+    /// Attach the OAuth2 `client_id` and `grant_type` the event is about.
+    ///
+    /// Both are reduced to the audit-safe character set so request-supplied
+    /// text cannot reach the signed record.
+    #[must_use]
+    pub fn with_oauth2_context(mut self, client_id: &str, grant_type: &str) -> Self {
+        self.oauth2 = Some((
+            sanitize_audit_value(client_id),
+            sanitize_audit_value(grant_type),
+        ));
+        self
+    }
+
+    /// The OAuth2 `(client_id, grant_type)` attached to the event, if any.
+    pub fn oauth2_context(&self) -> Option<(&str, &str)> {
+        self.oauth2.as_ref().map(|(c, g)| (c.as_str(), g.as_str()))
     }
 
     pub fn observer(&self) -> &Observer {
@@ -823,6 +866,29 @@ mod tests {
         let parsed: CadfEvent = serde_json::from_value(json.clone()).unwrap();
         assert_eq!(parsed.correlation_id(), "req-corr");
         assert_eq!(parsed.seq(), event.seq());
+        assert!(dispatcher.verify_hmac(&parsed, &key));
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), json);
+    }
+
+    #[test]
+    fn oauth2_context_is_signed_and_round_trips() {
+        let key: Arc<[u8]> = Arc::from(b"test-key-32-bytes-0123456789abcd".as_slice());
+        let (dispatcher, _rx) = make_dispatcher("node-a", key.clone());
+        let event = make_payload(&dispatcher)
+            .with_oauth2_context("client-1", "device_code")
+            .sign(&dispatcher);
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["attachments"][1]["name"], "oauth2");
+        assert_eq!(json["attachments"][1]["content"]["client_id"], "client-1");
+        assert_eq!(
+            json["attachments"][1]["content"]["grant_type"],
+            "device_code"
+        );
+        let parsed: CadfEvent = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(
+            parsed.payload().oauth2_context(),
+            Some(("client-1", "device_code"))
+        );
         assert!(dispatcher.verify_hmac(&parsed, &key));
         assert_eq!(serde_json::to_value(&parsed).unwrap(), json);
     }

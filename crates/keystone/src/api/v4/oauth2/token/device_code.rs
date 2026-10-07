@@ -30,7 +30,7 @@ use openstack_keystone_core::oauth2_session::{DevicePollOutcome, IssueRefreshTok
 use openstack_keystone_core_types::oauth2_client::{GrantType, OidcAccessTokenClaims};
 use sha2::{Digest, Sha256};
 
-use crate::audit::{build_initiator_unknown, emit_oauth2_session_event};
+use crate::audit::{build_initiator_from_user_id, emit_oauth2_grant_event};
 use crate::keystone::ServiceState;
 
 use super::common::*;
@@ -180,7 +180,15 @@ pub(super) async fn handle_device_code_grant(
             tracing::warn!(error = %e, "oauth2 client lookup failed");
             Oauth2TokenError::internal("token issuance failed")
         })?;
-    let Some(client) = client else {
+    // The grant was consumed by the poll above, so rejecting here leaves
+    // nothing to redeem. A client disabled or deleted (or a grant from
+    // another domain) after the user approved must not receive tokens.
+    let Some(client) = client.filter(|c| {
+        c.domain_id == domain_id
+            && record.domain_id == domain_id
+            && c.enabled
+            && c.deleted_at.is_none()
+    }) else {
         return Err(Oauth2TokenError::invalid_client("unknown client"));
     };
 
@@ -265,12 +273,13 @@ pub(super) async fn handle_device_code_grant(
         }
     };
 
-    emit_oauth2_session_event(
+    emit_oauth2_grant_event(
         &state.audit_dispatcher,
         correlation_id,
         "authenticate",
-        build_initiator_unknown(),
+        build_initiator_from_user_id(&user_id, domain_id),
         &client_id,
+        "device_code",
         Outcome::Success,
         None,
     );
@@ -304,9 +313,13 @@ mod tests {
 
     use crate::api::tests::get_mocked_state;
     use crate::api::v4::oauth2::openapi_router;
-    use crate::api::v4::oauth2::token::test_fixtures::{json_body, request};
+    use crate::api::v4::oauth2::token::test_fixtures::{
+        json_body, public_authz_code_client, request,
+    };
+    use crate::oauth2_client::MockOauth2ClientProvider;
     use crate::oauth2_session::MockOauth2SessionProvider;
     use crate::provider::Provider;
+    use openstack_keystone_core_types::oauth2_session::{DeviceCodeGrant, DeviceGrantStatus};
 
     fn device_form(device_code: &str) -> String {
         format!(
@@ -517,5 +530,91 @@ mod tests {
                 .unwrap();
             assert_eq!(json_body(resp).await["error"], "slow_down");
         }
+    }
+
+    fn authorized_grant(domain_id: &str) -> DeviceCodeGrant {
+        DeviceCodeGrant {
+            device_code: "dc-1".to_string(),
+            user_code: "ABCD-EFGH".to_string(),
+            domain_id: domain_id.to_string(),
+            client_id: "client-1".to_string(),
+            scope: vec!["openid".to_string()],
+            status: DeviceGrantStatus::Authorized,
+            user_id: Some("user-1".to_string()),
+            auth_time: Some(1000),
+            amr: vec!["pwd".to_string()],
+            nonce: None,
+            server_side_session_secret: "secret".to_string(),
+            last_polled_at: None,
+            created_at: 1000,
+            expires_at: 2000,
+        }
+    }
+
+    /// Redeem an authorized grant for `client` and `grant_domain`; the
+    /// session mock has no `issue_refresh_token` expectation, so any attempt
+    /// to mint a refresh family fails the test.
+    async fn redeem(
+        client: openstack_keystone_core_types::oauth2_client::OAuth2ClientResource,
+        grant_domain: &str,
+        code: &str,
+    ) -> serde_json::Value {
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_get_by_client_id()
+            .returning(move |_, _| Ok(Some(client.clone())));
+        let grant = authorized_grant(grant_domain);
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_poll_device_code_grant()
+            .returning(move |_, _, _| Ok(DevicePollOutcome::Authorized(Box::new(grant.clone()))));
+        session_mock.expect_issue_refresh_token().never();
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock)
+            .mock_oauth2_session(session_mock);
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let resp = api
+            .as_service()
+            .oneshot(request(&device_form(code)))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        json_body(resp).await
+    }
+
+    #[tokio::test]
+    async fn test_device_code_disabled_client_is_invalid_client() {
+        let mut client = public_authz_code_client().await;
+        client.grant_types = vec![
+            openstack_keystone_core_types::oauth2_client::GrantType::DeviceCode,
+            openstack_keystone_core_types::oauth2_client::GrantType::RefreshToken,
+        ];
+        client.enabled = false;
+        assert_eq!(
+            redeem(client, "domain-1", "disabled-client-code").await["error"],
+            "invalid_client"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_device_code_deleted_client_is_invalid_client() {
+        let mut client = public_authz_code_client().await;
+        client.deleted_at = Some(1);
+        assert_eq!(
+            redeem(client, "domain-1", "deleted-client-code").await["error"],
+            "invalid_client"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_device_code_foreign_domain_grant_is_invalid_client() {
+        let client = public_authz_code_client().await;
+        assert_eq!(
+            redeem(client, "other-domain", "foreign-domain-code").await["error"],
+            "invalid_client"
+        );
     }
 }

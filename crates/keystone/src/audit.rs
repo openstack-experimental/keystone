@@ -177,8 +177,8 @@ pub fn extract_provider_name(
 // the original names so existing callers in this crate don't need to change
 // their import paths.
 pub use openstack_keystone_core::cadf_hook::{
-    build_initiator_from_principal, build_initiator_from_vsc, build_initiator_unknown,
-    with_request_address,
+    build_initiator_from_principal, build_initiator_from_user_id, build_initiator_from_vsc,
+    build_initiator_unknown, with_request_address,
 };
 
 /// The client IP for the audit trail, resolved through the operator's
@@ -388,6 +388,54 @@ pub fn emit_oauth2_session_event(
     outcome: Outcome,
     outcome_reason: Option<OutcomeReason>,
 ) {
+    emit_oauth2_event(
+        dispatcher,
+        correlation_id,
+        action,
+        initiator,
+        client_id,
+        None,
+        outcome,
+        outcome_reason,
+    );
+}
+
+/// Like [`emit_oauth2_session_event`], additionally recording the OAuth2
+/// `grant_type` (and the `client_id`) in an `oauth2` attachment of the event.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_oauth2_grant_event(
+    dispatcher: &Arc<AuditDispatcher>,
+    correlation_id: &str,
+    action: &str,
+    initiator: Initiator,
+    client_id: &str,
+    grant_type: &str,
+    outcome: Outcome,
+    outcome_reason: Option<OutcomeReason>,
+) {
+    emit_oauth2_event(
+        dispatcher,
+        correlation_id,
+        action,
+        initiator,
+        client_id,
+        Some(grant_type),
+        outcome,
+        outcome_reason,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_oauth2_event(
+    dispatcher: &Arc<AuditDispatcher>,
+    correlation_id: &str,
+    action: &str,
+    initiator: Initiator,
+    client_id: &str,
+    grant_type: Option<&str>,
+    outcome: Outcome,
+    outcome_reason: Option<OutcomeReason>,
+) {
     let node_id = dispatcher.node_id().to_string();
     let event_id = format!("{}:{}", node_id, Uuid::new_v4());
     let payload = CadfEventPayload::new(
@@ -405,6 +453,10 @@ pub fn emit_oauth2_session_event(
             format!("service/security/keystone/{node_id}"),
         ),
     );
+    let payload = match grant_type {
+        Some(grant_type) => payload.with_oauth2_context(client_id, grant_type),
+        None => payload,
+    };
     let event = payload.sign(dispatcher);
     dispatcher.dispatch(event);
 }
@@ -1061,5 +1113,30 @@ mod tests {
         assert_eq!(extract_provider_name(&identity), Some("Identity"));
         let other = std::io::Error::other("alice@example.com");
         assert_eq!(extract_provider_name(&other), None);
+    }
+
+    #[test]
+    fn build_initiator_from_user_id_carries_user_and_domain() {
+        let i = build_initiator_from_user_id(
+            "0123456789abcdef0123456789abcdef",
+            "fedcba9876543210fedcba9876543210",
+        );
+        assert_eq!(i.id(), "0123456789abcdef0123456789abcdef");
+        assert_eq!(i.domain_id(), Some("fedcba9876543210fedcba9876543210"));
+    }
+
+    #[test]
+    fn emit_oauth2_grant_event_records_initiator_and_grant_type() {
+        let dispatcher = AuditDispatcher::noop();
+        emit_oauth2_grant_event(
+            &dispatcher,
+            "req-1",
+            "authenticate",
+            build_initiator_from_user_id("user-1", "domain-1"),
+            "client-1",
+            "device_code",
+            Outcome::Success,
+            None,
+        );
     }
 }
