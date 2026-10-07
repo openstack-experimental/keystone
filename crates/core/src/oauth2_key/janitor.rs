@@ -11,8 +11,8 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! OAuth2 signing key janitor: demoted-key retirement and proactive JTI
-//! revocation-list pruning (ADR 0026 §3).
+//! OAuth2 signing key janitor: automatic signing-key rotation, demoted-key
+//! retirement and proactive JTI revocation-list pruning (ADR 0026 §3).
 //!
 //! Mirrors the leader-gated background sweep pattern used by
 //! [`crate::api_key::janitor`]: [`spawn`] runs on every cluster node on a
@@ -29,6 +29,7 @@ use uuid::Uuid;
 
 use cadf::{AuditDispatcher, CadfEventPayload, Initiator, Observer, Outcome, Target};
 
+use crate::auth::ExecutionContext;
 use crate::keystone::ServiceState;
 use crate::oauth2_key::Oauth2KeyProviderError;
 
@@ -43,10 +44,13 @@ pub struct JanitorReport {
     pub retired: usize,
     /// Domains whose JTI revocation list was proactively pruned this pass.
     pub jtis_pruned: usize,
-    /// Operations that failed this pass (e.g. a Raft CAS conflict with a
-    /// concurrent rotation). Failures are isolated per domain -- one
-    /// failing domain does not prevent the rest of the sweep from running
-    /// -- and are retried on the next pass.
+    /// Domains whose `Primary` key exceeded `signing_key_rotation_days` and
+    /// was automatically rotated this pass.
+    pub rotated: usize,
+    /// Operations that failed this pass (e.g. a transient backend failure).
+    /// Failures are isolated per domain -- one failing domain does not
+    /// prevent the rest of the sweep from running -- and are retried on the
+    /// next pass.
     pub errors: usize,
 }
 
@@ -62,15 +66,13 @@ pub struct JanitorReport {
 ///
 /// [`Oauth2KeyApi::list_all_active_keys`]: crate::oauth2_key::Oauth2KeyApi::list_all_active_keys
 pub async fn run_once(state: &ServiceState) -> Result<JanitorReport, Oauth2KeyProviderError> {
-    let access_token_lifetime_secs = i64::from(
-        state
-            .config_manager
-            .config
-            .read()
-            .await
-            .oauth2
-            .access_token_lifetime_minutes,
-    ) * 60;
+    let (access_token_lifetime_secs, rotation_interval_secs) = {
+        let cfg = state.config_manager.config.read().await;
+        (
+            i64::from(cfg.oauth2.access_token_lifetime_minutes) * 60,
+            i64::from(cfg.oauth2.signing_key_rotation_days) * 24 * 3600,
+        )
+    };
     let now = Utc::now();
 
     let mut report = JanitorReport::default();
@@ -98,42 +100,109 @@ pub async fn run_once(state: &ServiceState) -> Result<JanitorReport, Oauth2KeyPr
             }
         }
 
-        let Some(previous) = active.previous else {
-            continue;
-        };
+        // Retirement runs before rotation: rotation demotes the current
+        // `Primary` into the `Previous` slot, which must not be retired
+        // in the same pass.
+        //
         // A `Previous` key with no `demoted_at` predates this field's
         // introduction; leave it alone rather than force-retiring it --
         // there's no way to tell how long ago it was actually demoted.
-        let Some(demoted_at) = previous.demoted_at else {
-            continue;
-        };
-        if (now - demoted_at).num_seconds() <= access_token_lifetime_secs {
-            continue;
+        if let Some(demoted_at) = active.previous.as_ref().and_then(|k| k.demoted_at)
+            && (now - demoted_at).num_seconds() > access_token_lifetime_secs
+        {
+            match state
+                .provider
+                .get_oauth2_key_provider()
+                .retire_previous_key(state, &domain_id)
+                .await
+            {
+                Ok(true) => {
+                    emit_maintenance_event(
+                        &state.audit_dispatcher,
+                        "retire_previous_key",
+                        &domain_id,
+                    );
+                    report.retired += 1;
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    warn!(
+                        domain_id = %domain_id,
+                        error = %e,
+                        "oauth2_key janitor: failed to retire previous signing key, continuing sweep"
+                    );
+                    report.errors += 1;
+                }
+            }
         }
 
-        match state
-            .provider
-            .get_oauth2_key_provider()
-            .retire_previous_key(state, &domain_id)
-            .await
-        {
-            Ok(true) => {
-                emit_maintenance_event(&state.audit_dispatcher, "retire_previous_key", &domain_id);
-                report.retired += 1;
-            }
-            Ok(false) => {}
-            Err(e) => {
-                warn!(
-                    domain_id = %domain_id,
-                    error = %e,
-                    "oauth2_key janitor: failed to retire previous signing key, continuing sweep"
-                );
-                report.errors += 1;
+        // `created_at` is reset by every rotation (including emergency
+        // ones), so the cadence timer restarts automatically.
+        if (now - active.primary.created_at).num_seconds() >= rotation_interval_secs {
+            match rotate_if_eligible(state, &domain_id).await {
+                Ok(true) => {
+                    emit_maintenance_event(
+                        &state.audit_dispatcher,
+                        "rotate_signing_key",
+                        &domain_id,
+                    );
+                    report.rotated += 1;
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    warn!(
+                        domain_id = %domain_id,
+                        error = %e,
+                        "oauth2_key janitor: failed to rotate signing key, continuing sweep"
+                    );
+                    report.errors += 1;
+                }
             }
         }
     }
 
     Ok(report)
+}
+
+/// Rotate `domain_id`'s signing key unless the domain is disabled/gone or an
+/// emergency rotation is staged. Returns whether a rotation happened.
+///
+/// Note that the backend writes keys without a compare-and-swap, so a
+/// rotation racing this one (e.g. a manual `rotate-signing-key` against the
+/// hourly sweep) does *not* surface as a backend error: the writes are
+/// last-write-wins and the loser's freshly generated keypair is silently
+/// discarded. The janitor is leader-gated, so a manual operator rotation is
+/// the only realistic contender.
+async fn rotate_if_eligible(
+    state: &ServiceState,
+    domain_id: &str,
+) -> Result<bool, Oauth2KeyProviderError> {
+    let ctx = ExecutionContext::internal(state);
+    match state
+        .provider
+        .get_resource_provider()
+        .get_domain(&ctx, domain_id)
+        .await
+    {
+        Ok(Some(domain)) if domain.enabled => {}
+        Ok(_) => return Ok(false),
+        Err(e) => return Err(Oauth2KeyProviderError::DomainLookup(e.to_string())),
+    }
+    let keys = state.provider.get_oauth2_key_provider();
+    // NB: this check and the rotation below are separate reads; the backend
+    // does not re-check pending emergency state inside the rotation
+    // transaction. An emergency rotation staged in that window would still
+    // be honored on confirmation -- the staged key becomes `Primary` and the
+    // auto-rotated key is demoted to `Previous` (kept in the JWKS until
+    // retirement) -- so the race narrows rather than closes the window.
+    if keys
+        .has_pending_emergency_rotation(state, domain_id)
+        .await?
+    {
+        return Ok(false);
+    }
+    keys.rotate_signing_key(&ctx, domain_id).await?;
+    Ok(true)
 }
 
 /// Emit a `maintenance` CADF event for a janitor-driven lifecycle action.
@@ -180,9 +249,10 @@ pub fn spawn(state: ServiceState) {
             }
 
             match run_once(&state).await {
-                Ok(report) if report.retired > 0 || report.errors > 0 => {
+                Ok(report) if report.retired > 0 || report.rotated > 0 || report.errors > 0 => {
                     info!(
                         retired = report.retired,
+                        rotated = report.rotated,
                         jtis_pruned = report.jtis_pruned,
                         errors = report.errors,
                         "oauth2_key janitor: sweep complete"
@@ -207,8 +277,11 @@ mod tests {
         ActiveKeys, KeyMaterial, SigningAlgorithm, generate_keypair,
     };
 
+    use openstack_keystone_core_types::resource::Domain;
+
     use crate::oauth2_key::MockOauth2KeyProvider;
     use crate::provider::Provider;
+    use crate::resource::MockResourceProvider;
     use crate::tests::get_mocked_state;
 
     fn key() -> KeyMaterial {
@@ -368,5 +441,155 @@ mod tests {
         let report = run_once(&state).await.unwrap();
         assert_eq!(report.retired, 0);
         assert_eq!(report.jtis_pruned, 1);
+    }
+
+    fn old_key() -> KeyMaterial {
+        KeyMaterial {
+            created_at: Utc::now() - ChronoDuration::days(91),
+            ..key()
+        }
+    }
+
+    fn resource_mock(enabled: bool) -> MockResourceProvider {
+        let mut mock = MockResourceProvider::default();
+        mock.expect_get_domain().returning(move |_, id| {
+            Ok(Some(Domain {
+                id: id.to_string(),
+                enabled,
+                ..Default::default()
+            }))
+        });
+        mock
+    }
+
+    fn single_domain_keys(primary: KeyMaterial) -> MockOauth2KeyProvider {
+        let mut mock = MockOauth2KeyProvider::default();
+        mock.expect_list_all_active_keys().returning(move |_| {
+            Ok(vec![(
+                "domain-1".to_string(),
+                ActiveKeys {
+                    primary: primary.clone(),
+                    previous: None,
+                },
+            )])
+        });
+        mock.expect_prune_expired_jtis().returning(|_, _| Ok(()));
+        mock
+    }
+
+    #[tokio::test]
+    async fn test_run_once_rotates_key_older_than_cadence() {
+        let mut mock = single_domain_keys(old_key());
+        mock.expect_has_pending_emergency_rotation()
+            .returning(|_, _| Ok(false));
+        mock.expect_rotate_signing_key()
+            .withf(|_, domain_id| domain_id == "domain-1")
+            .times(1)
+            .returning(|_, _| Ok(key()));
+
+        let state = get_mocked_state(
+            None,
+            Some(
+                Provider::mocked_builder()
+                    .mock_oauth2_key(mock)
+                    .mock_resource(resource_mock(true)),
+            ),
+        )
+        .await;
+
+        let report = run_once(&state).await.unwrap();
+        assert_eq!(report.rotated, 1);
+        assert_eq!(report.errors, 0);
+    }
+
+    #[tokio::test]
+    async fn test_run_once_does_not_rotate_young_key() {
+        // No `expect_rotate_signing_key`: calling it would panic the mock.
+        let mock = single_domain_keys(key());
+        let state =
+            get_mocked_state(None, Some(Provider::mocked_builder().mock_oauth2_key(mock))).await;
+
+        let report = run_once(&state).await.unwrap();
+        assert_eq!(report.rotated, 0);
+    }
+
+    #[tokio::test]
+    async fn test_run_once_skips_disabled_domain() {
+        let mock = single_domain_keys(old_key());
+        let state = get_mocked_state(
+            None,
+            Some(
+                Provider::mocked_builder()
+                    .mock_oauth2_key(mock)
+                    .mock_resource(resource_mock(false)),
+            ),
+        )
+        .await;
+
+        let report = run_once(&state).await.unwrap();
+        assert_eq!(report.rotated, 0);
+        assert_eq!(report.errors, 0);
+    }
+
+    #[tokio::test]
+    async fn test_run_once_skips_domain_with_pending_emergency_rotation() {
+        let mut mock = single_domain_keys(old_key());
+        mock.expect_has_pending_emergency_rotation()
+            .returning(|_, _| Ok(true));
+        let state = get_mocked_state(
+            None,
+            Some(
+                Provider::mocked_builder()
+                    .mock_oauth2_key(mock)
+                    .mock_resource(resource_mock(true)),
+            ),
+        )
+        .await;
+
+        let report = run_once(&state).await.unwrap();
+        assert_eq!(report.rotated, 0);
+        assert_eq!(report.errors, 0);
+    }
+
+    #[tokio::test]
+    async fn test_run_once_isolates_rotation_failure() {
+        let mut mock = MockOauth2KeyProvider::default();
+        mock.expect_list_all_active_keys().returning(move |_| {
+            Ok(["domain-fails", "domain-ok"]
+                .into_iter()
+                .map(|id| {
+                    (
+                        id.to_string(),
+                        ActiveKeys {
+                            primary: old_key(),
+                            previous: None,
+                        },
+                    )
+                })
+                .collect())
+        });
+        mock.expect_prune_expired_jtis().returning(|_, _| Ok(()));
+        mock.expect_has_pending_emergency_rotation()
+            .returning(|_, _| Ok(false));
+        mock.expect_rotate_signing_key()
+            .withf(|_, domain_id| domain_id == "domain-fails")
+            .returning(|_, _| Err(Oauth2KeyProviderError::RaftNotAvailable));
+        mock.expect_rotate_signing_key()
+            .withf(|_, domain_id| domain_id == "domain-ok")
+            .returning(|_, _| Ok(key()));
+
+        let state = get_mocked_state(
+            None,
+            Some(
+                Provider::mocked_builder()
+                    .mock_oauth2_key(mock)
+                    .mock_resource(resource_mock(true)),
+            ),
+        )
+        .await;
+
+        let report = run_once(&state).await.unwrap();
+        assert_eq!(report.rotated, 1);
+        assert_eq!(report.errors, 1);
     }
 }

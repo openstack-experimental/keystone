@@ -235,6 +235,15 @@ pub trait Oauth2KeyApi: Send + Sync {
         domain_id: &str,
     ) -> Result<bool, Oauth2KeyProviderError>;
 
+    /// Whether `domain_id` has an unexpired staged emergency rotation
+    /// awaiting confirmation. The janitor's automatic rotation must not
+    /// race an in-flight emergency rotation (ADR 0026 §3).
+    async fn has_pending_emergency_rotation(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<bool, Oauth2KeyProviderError>;
+
     /// Proactively sweep `domain_id`'s JTI revocation list for entries past
     /// their TTL, for domains with no emergency rotation to otherwise
     /// trigger the lazy sweep in [`Self::confirm_emergency_rotation`].

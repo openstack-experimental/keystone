@@ -263,6 +263,16 @@ impl Oauth2KeyApi for Oauth2KeyService {
             .await
     }
 
+    async fn has_pending_emergency_rotation(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<bool, Oauth2KeyProviderError> {
+        self.backend_driver
+            .has_pending_emergency_rotation(state, domain_id)
+            .await
+    }
+
     async fn prune_expired_jtis(
         &self,
         state: &ServiceState,

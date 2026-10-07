@@ -124,3 +124,30 @@ async fn test_janitor_sweeps_across_multiple_domains() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+#[traced_test]
+async fn test_janitor_does_not_rotate_young_key_via_real_backend() -> Result<()> {
+    // Backdating a key's `created_at` needs raw Raft writes the driver does
+    // not expose, so the older-than-cadence branch is covered by the mocked
+    // unit tests; this confirms the real backend path (domain lookup,
+    // pending-emergency check) leaves a fresh key alone.
+    let (state, _tmp) = get_state_with_config(|_| {}).await?;
+    let domain = create_domain!(state)?;
+
+    let key_provider = state.provider.get_oauth2_key_provider();
+    let primary = key_provider.ensure_domain_keys(&state, &domain.id).await?;
+
+    let report = janitor::run_once(&state).await?;
+    assert_eq!(report.rotated, 0);
+    assert_eq!(report.errors, 0);
+    assert_eq!(
+        key_provider
+            .active_signing_key(&state, &domain.id)
+            .await?
+            .kid,
+        primary.kid
+    );
+
+    Ok(())
+}

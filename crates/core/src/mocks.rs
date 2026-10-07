@@ -281,6 +281,12 @@ mod oauth2_key {
                 domain_id: &str,
             ) -> Result<bool, Oauth2KeyProviderError>;
 
+            async fn has_pending_emergency_rotation(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+            ) -> Result<bool, Oauth2KeyProviderError>;
+
             async fn prune_expired_jtis(
                 &self,
                 state: &ServiceState,

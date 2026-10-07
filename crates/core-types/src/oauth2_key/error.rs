@@ -31,6 +31,11 @@ pub enum Oauth2KeyProviderError {
     #[error("no OAuth2 signing keys found for domain {0}")]
     NotFound(String),
 
+    /// The domain lookup performed as part of a janitor sweep (rotation
+    /// eligibility check) failed.
+    #[error("domain lookup failed in the oauth2 key provider: {0}")]
+    DomainLookup(String),
+
     /// Raft storage is not available for the OAuth2 signing key provider.
     #[error("raft storage is not available in the oauth2 key provider")]
     RaftNotAvailable,

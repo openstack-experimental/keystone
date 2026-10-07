@@ -1141,6 +1141,21 @@ impl Oauth2KeyBackend for RaftOauth2KeyBackend {
         self.retire_previous_key_impl(storage, domain_id).await
     }
 
+    async fn has_pending_emergency_rotation(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<bool, Oauth2KeyProviderError> {
+        let storage = state
+            .storage
+            .as_deref()
+            .ok_or(Oauth2KeyProviderError::RaftNotAvailable)?;
+        Ok(self
+            .load_pending_rotation(storage, domain_id)
+            .await?
+            .is_some_and(|p| p.expires_at > now_epoch_secs()))
+    }
+
     async fn prune_expired_jtis(
         &self,
         state: &ServiceState,

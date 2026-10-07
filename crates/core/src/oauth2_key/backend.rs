@@ -153,6 +153,14 @@ pub trait Oauth2KeyBackend: Send + Sync {
         domain_id: &str,
     ) -> Result<bool, Oauth2KeyProviderError>;
 
+    /// Whether an unexpired staged emergency rotation exists for `domain_id`.
+    /// See [`crate::oauth2_key::Oauth2KeyApi::has_pending_emergency_rotation`].
+    async fn has_pending_emergency_rotation(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<bool, Oauth2KeyProviderError>;
+
     /// Proactively sweep `domain_id`'s JTI revocation list for expired
     /// entries. See [`crate::oauth2_key::Oauth2KeyApi::prune_expired_jtis`].
     async fn prune_expired_jtis(
