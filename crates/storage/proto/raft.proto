@@ -216,6 +216,13 @@ message MetricsResponse {
 
 // ClusterAdminService provides the administrative interface for the cluster
 // management.
+//
+// Leader-only RPCs (AddLearner, ChangeMembership, ClearQuarantine,
+// RotateDek, ConfirmRotateDek, ReconcileDekLocalEmergency, Backup, and
+// Restore into an initialized cluster) answered by a non-leader fail with
+// UNAVAILABLE carrying the `x-openraft-leader-id` and
+// `x-openraft-leader-endpoint` metadata when the leader is known; clients
+// retry against that endpoint.
 service ClusterAdminService {
   // Init initializes a new Raft cluster with the given nodes.
   rpc Init(InitRequest) returns (google.protobuf.Empty) {}
@@ -228,6 +235,11 @@ service ClusterAdminService {
 
   // Metrics retrieves cluster metrics and status information.
   rpc Metrics(google.protobuf.Empty) returns (MetricsResponse) {}
+
+  // StorageStatus reports the responding node's Raft role and its storage
+  // encryption state: DEK epochs, pending emergency rotations, quarantine
+  // markers and the log nonce counter. Requires operator access.
+  rpc StorageStatus(google.protobuf.Empty) returns (StorageStatusResponse) {}
 
   // ClearQuarantine clears the read-only quarantine state triggered by
   // repeated GCM tag verification failures. Requires operator access over
@@ -261,8 +273,9 @@ service ClusterAdminService {
 
   // ReconcileDekLocalEmergency promotes a node-local DEK emergency rotation
   // candidate into Raft-replicated state once quorum has returned (ADR 0028
-  // §6). Must be called against the specific node holding rotation_id --
-  // reconciliation does not fan out across the cluster.
+  // §6). Must be called against the leader, which must hold rotation_id
+  // (staged there or adopted via gossip) -- reconciliation does not fan out
+  // across the cluster.
   rpc ReconcileDekLocalEmergency(ReconcileDekLocalEmergencyRequest) returns (AdminResponse) {}
 
   // GossipLocalEmergencyCandidate is a best-effort, peer-to-peer push of a
@@ -282,9 +295,9 @@ service ClusterAdminService {
   rpc Backup(BackupRequest) returns (stream BackupChunk) {}
 
   // Restore accepts a client-streamed encrypted snapshot (produced by Backup),
-  // validates the backup envelope, decrypts it, and installs it into the Raft
-  // state machine. Only invoke against a freshly-bootstrapped single-node
-  // cluster before adding learners (see ADR 0016-v2 §7).
+  // validates the backup envelope, decrypts it, and installs it: through the
+  // Raft log on the leader of an initialized cluster, or as a Raft snapshot
+  // on an uninitialized node (disaster recovery; see ADR 0016-v2 §7).
   rpc Restore(stream RestoreChunk) returns (AdminResponse) {}
 
   // FetchDek returns the cluster's currently-installed DEK epoch plus any
@@ -299,6 +312,56 @@ service ClusterAdminService {
   // with its own KEK, which requires all cluster nodes to share identical
   // KEK material.
   rpc FetchDek(google.protobuf.Empty) returns (FetchDekResponse) {}
+}
+
+// A pending emergency DEK rotation awaiting dual-control confirmation.
+message PendingDekRotation {
+  // Id to pass to ConfirmRotateDek.
+  string rotation_id = 1;
+  // DEK version the rotation installs once confirmed.
+  uint32 dek_version = 2;
+  // Unix seconds after which the rotation is aborted.
+  uint64 expires_at = 3;
+  // Identity of the initiating operator.
+  string initiator = 4;
+}
+
+// A persisted quarantine marker: `node_id` reported `partition`.
+message QuarantineRecord {
+  string partition = 1;
+  uint64 node_id = 2;
+}
+
+message StorageStatusResponse {
+  // The responding node's Raft id.
+  uint64 node_id = 1;
+  // Raft server state: "Leader", "Follower", "Learner", "Candidate" or
+  // "Shutdown".
+  string state = 2;
+  // Current leader, when known.
+  optional uint64 current_leader = 3;
+  uint64 current_term = 4;
+  optional uint64 last_log_index = 5;
+  optional uint64 last_applied_index = 6;
+  // The active DEK epoch.
+  uint32 dek_version = 7;
+  // Retired DEK epochs still held to read not-yet-re-encrypted data.
+  repeated uint32 retired_dek_versions = 8;
+  // Revoked (emergency-rotated) DEK epochs.
+  repeated uint32 revoked_dek_versions = 9;
+  // Emergency rotations staged and awaiting ConfirmRotateDek.
+  repeated PendingDekRotation pending_rotations = 10;
+  // Partitions whose reads are blocked on the responding node.
+  repeated string quarantined_partitions = 11;
+  // Every quarantine marker the responding node holds, including those
+  // reported by other nodes (informational).
+  repeated QuarantineRecord quarantine_records = 12;
+  // Persisted log-encryption nonce counter of the responding node (the
+  // reservation point, at most one reservation block ahead of use).
+  uint64 nonce_counter = 13;
+  // Counter value at which the node stops accepting log writes
+  // (nonce exhaustion).
+  uint64 nonce_threshold = 14;
 }
 
 message ClearQuarantineRequest {

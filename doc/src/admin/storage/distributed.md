@@ -44,23 +44,45 @@ primitives and the `KekProvider` trait), and the two production KEK providers,
 ## CLI Reference
 
 All cluster management operations use `keystone-manage storage <subcommand>`.
-The `--cluster_addr` flag (type `URI`) selects which cluster member to contact;
-it defaults to `node_cluster_addr` from the config file when omitted.
+Every subcommand except `init` and `join` takes `--cluster-addr <URI>`, the
+cluster member to contact; it defaults to `node_cluster_addr` from the config
+file when omitted. `init` always targets that local address, and `join` takes
+the member to contact as its positional argument.
 
-| Subcommand                                          | Description                                    |
-| --------------------------------------------------- | ---------------------------------------------- |
-| `init`                                              | Bootstrap a new single-node cluster            |
-| `join <cluster-addr>`                               | Join the local node as a Raft learner          |
-| `promote <node-id>`                                 | Promote a learner to voting member             |
-| `demote <node-id>`                                  | Demote a voter to non-voting learner           |
-| `remove-peer <node-id>`                             | Remove a peer from the cluster membership      |
-| `list-peers`                                        | Show cluster peers in a table                  |
-| `metrics`                                           | Show raw cluster metrics and leader status     |
-| `clear-quarantine [--cluster-addr] [--partition]`   | Clear a GCM-failure quarantine (operator-only) |
-| `rotate-dek [--cluster-addr] [--emergency]`         | Rotate the Data Encryption Key                 |
-| `confirm-rotate-dek [--cluster-addr] --rotation-id` | Confirm a pending emergency DEK rotation       |
-| `backup [--cluster-addr] --output`                  | Create an encrypted Fjall snapshot             |
-| `restore [--cluster-addr] --snapshot`               | Restore an encrypted snapshot to the cluster   |
+| Subcommand                                                                          | Target      | Description                                                 |
+| ----------------------------------------------------------------------------------- | ----------- | ----------------------------------------------------------- |
+| `init`                                                                              | local node  | Bootstrap a new single-node cluster                         |
+| `join <cluster-addr>`                                                               | leader      | Join the local node as a Raft learner                       |
+| `promote [--cluster-addr] <node-id>`                                                | leader      | Promote a learner to voting member                          |
+| `demote [--cluster-addr] <node-id>`                                                 | leader      | Demote a voter to non-voting learner                        |
+| `remove-peer [--cluster-addr] <node-id>`                                            | leader      | Remove a voter from the cluster membership                  |
+| `list-peers [--cluster-addr]`                                                       | any node    | Show cluster peers in a table                               |
+| `metrics [--cluster-addr]`                                                          | any node    | Show raw cluster metrics and leader status                  |
+| `status [--cluster-addr]`                                                           | any node    | Show DEK, rotation, quarantine and nonce state of the node  |
+| `clear-quarantine [--cluster-addr] [--partition <name>]`                            | leader      | Clear a GCM-failure quarantine (default partition `data`)   |
+| `rotate-dek [--cluster-addr] [--emergency]`                                         | leader      | Rotate the Data Encryption Key                              |
+| `rotate-dek [--cluster-addr] --local-quorum-bypass --justification <text>`          | given node  | Stage a node-local emergency DEK candidate (no quorum)      |
+| `confirm-rotate-dek [--cluster-addr] --rotation-id <id>`                            | leader      | Confirm a pending emergency DEK rotation                    |
+| `list-dek-local-emergency-candidates [--cluster-addr]`                              | given node  | List node-local emergency DEK candidates                    |
+| `reconcile-dek-local-emergency [--cluster-addr] --rotation-id <id>`                 | leader only | Install a node-local emergency DEK candidate through Raft   |
+| `backup [--cluster-addr] --output <file>`                                           | leader      | Create an encrypted Fjall snapshot                          |
+| `restore [--cluster-addr] --snapshot <file> [--elect]`                              | leader \*   | Restore an encrypted snapshot to the cluster                |
+
+**Leader targeting.** Membership changes, DEK rotations, quarantine clearing,
+backup and restore into a running cluster must be proposed by the Raft leader.
+A follower answers these RPCs with `UNAVAILABLE` plus the leader's id and address
+(`x-openraft-leader-id`, `x-openraft-leader-endpoint`), and the subcommands
+marked _leader_ retry against that address, so `--cluster-addr` may name any
+member. The call is not proxied between nodes: the operator's own identity
+reaches the leader, which is where the request is authorized, rate limited and
+audited. `reconcile-dek-local-emergency` (_leader only_) does not follow the
+redirect; it prints the leader's address so the operator can first check that
+the leader holds the candidate. (\*) Disaster-recovery `restore` into an
+uninitialized node runs on the given node.
+
+`demote` and `remove-peer` of the current leader make it step down once the
+change commits; leadership transfer is not implemented, so the cluster has no
+leader, and writes fail, until the election timeout elects a new one.
 
 ---
 
@@ -457,8 +479,9 @@ Restore, DEK install, quarantine and rotation commands are rejected with
 Per-identity rate limiters (for example `2` DEK rotations per hour, `10`
 `ClearQuarantine` calls per hour, `30` quarantine reports per hour) are held in
 memory on each node. They are **not** replicated through Raft and reset on
-restart. The effective limit across the cluster is therefore per node: an
-operator may start `2` rotations per hour on each node they talk to.
+restart. These RPCs are only served by the leader (a follower redirects before
+taking a token), so the limit applies per leader: it starts afresh after a
+leader change.
 
 ### NodeId Uniqueness
 
@@ -844,8 +867,10 @@ keystone-manage storage join https://10.0.0.1:8310
 
 **Step 4 — Promote learners to voting members.**
 
-Run from an operator workload (SPIFFE mode: `storage-operator` SVID). Repeat
-once per learner to promote:
+Run from an operator workload (SPIFFE mode: `storage-operator` SVID). The
+command locates the leader through `--cluster-addr` (default: the workload's
+`node_cluster_addr`), so it can contact any member. Repeat once per learner to
+promote:
 
 ```sh
 keystone-manage storage promote 2
@@ -903,6 +928,42 @@ Metrics{id:1, Leader, term:3, ...}
 
 For a formatted peer table use `list-peers` instead.
 
+### Storage Status
+
+The DEK, rotation, quarantine and nonce state the runbooks below refer to is
+reported per node by `status`:
+
+```sh
+keystone-manage storage status --cluster-addr https://10.0.0.2:8310
+```
+
+Sample output:
+
+```
+Node                  : 2
+State                 : Follower
+Current leader        : 1
+Current term          : 3
+Last log index        : 1042
+Last applied index    : 1042
+DEK version           : 4
+Retired DEK versions  : 2, 3
+Revoked DEK versions  : none
+Pending rotations     : none
+Quarantined (local)   : none
+Quarantine records    : none
+Nonce counter         : 18432 / 2147483648 (0.00%)
+```
+
+`Quarantined (local)` lists the partitions whose reads are blocked on this node;
+`Quarantine records` lists every marker the node holds, including those reported
+by other nodes. `Pending rotations` shows emergency rotations awaiting
+`confirm-rotate-dek` (authoritative on the leader). The nonce counter is the
+persisted reservation point (at most 1024 ahead of use); the node stops
+accepting log writes when it reaches the threshold. Run the command against each
+node of interest: DEK state can briefly differ while a follower applies a
+rotation, and quarantine is node-local.
+
 ### Scheduled DEK Rotation
 
 Automatic rotation fires after `dek_rotation_days` (default: 90) or when the
@@ -948,8 +1009,8 @@ keys are rejected with a `QUARANTINED` violation.
 **Diagnosis:**
 
 ```sh
-# Check node metrics for quarantine state:
-keystone-manage storage metrics --cluster-addr https://10.0.0.1:8310
+# Check the quarantine state of the affected node:
+keystone-manage storage status --cluster-addr https://10.0.0.1:8310
 ```
 
 Root-cause the GCM failures (hardware fault, storage corruption, or unauthorized
@@ -962,6 +1023,10 @@ keystone-manage storage clear-quarantine \
   --cluster-addr https://10.0.0.1:8310 \
   --partition <partition-name>
 ```
+
+> **Note:** the partition is now the `--partition` option (default `data`).
+> Scripts that passed it positionally (`clear-quarantine <partition>`) must be
+> updated.
 
 This commits a Raft proposal (visible cluster-wide) and emits an audit entry.
 
@@ -991,8 +1056,8 @@ keystone-manage storage restore \
   --snapshot /mnt/backups/keystone-20260101.snap
 ```
 
-Send the backup to the **leader**; a follower rejects it with
-`FailedPrecondition` and names the leader. The backup is committed through the
+The backup must reach the **leader**; a follower answers with the leader's
+address and the command retries there. The backup is committed through the
 Raft log, in 256 KiB chunks followed by a single apply entry, so every node
 replaces its data at the same log index. The cluster membership (node list) and
 each node's Raft state are unchanged. Everything else, including all data

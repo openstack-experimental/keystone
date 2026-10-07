@@ -223,6 +223,20 @@ impl NonceManager {
     }
 }
 
+/// Read the persisted counter (the end of the last reserved block) for
+/// `node_id` in DEK `epoch` without reserving anything, for status reporting.
+///
+/// The value is at most [`RESERVE_BLOCK`] ahead of the last nonce issued.
+pub fn persisted_counter(
+    storage: &dyn NoncePersistence,
+    node_id: u64,
+    epoch: u32,
+) -> Result<u64, CryptoError> {
+    Ok(storage
+        .read_u64(&nonce_ctr_key(node_id, epoch))?
+        .unwrap_or(0))
+}
+
 /// Recover the first counter value that may be issued for `epoch`.
 fn load_counter(
     storage: &dyn NoncePersistence,
@@ -482,5 +496,20 @@ mod tests {
         assert!(!mgr.rotation_due());
         mgr.counter = ROTATION_THRESHOLD - WARN_REMAINING;
         assert!(mgr.rotation_due());
+    }
+
+    #[test]
+    fn test_persisted_counter_reports_reservation() {
+        let store = MemNonce::default();
+        assert_eq!(persisted_counter(&store, 7, 1).expect("read"), 0);
+        let mut mgr = NonceManager::new(7, 1, Box::new(store.clone())).expect("init");
+        mgr.next_nonce().expect("nonce");
+        assert_eq!(
+            persisted_counter(&store, 7, 1).expect("read"),
+            u64::from(RESERVE_BLOCK)
+        );
+        // Other nodes' and epochs' counters are separate.
+        assert_eq!(persisted_counter(&store, 8, 1).expect("read"), 0);
+        assert_eq!(persisted_counter(&store, 7, 2).expect("read"), 0);
     }
 }

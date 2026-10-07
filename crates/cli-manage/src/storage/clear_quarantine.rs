@@ -20,7 +20,7 @@ use tonic::transport::Uri;
 use openstack_keystone_config::LoadedConfig;
 use openstack_keystone_distributed_storage::protobuf as pb;
 
-use super::get_grpc_client;
+use super::call_leader;
 use crate::PerformAction;
 
 /// Clear a quarantined keyspace partition.
@@ -32,29 +32,34 @@ use crate::PerformAction;
 ///
 /// Only use this command after investigating the root cause of the GCM
 /// failures — quarantine protects against data corruption or active tampering.
+/// `storage status` lists the quarantine markers each node holds.
+///
+/// The proposal must be made on the Raft leader; when `--cluster-addr` (or
+/// this host's node) is a follower the command retries against the leader.
 #[derive(Parser)]
 pub(super) struct ClearQuarantineCommand {
-    /// Cluster member to contact (e.g. `https://127.0.0.1:50051`).
+    /// Cluster member to contact first (e.g. `https://127.0.0.1:50051`).
+    /// Defaults to this host's `node_cluster_addr`.
     #[arg(long)]
     pub cluster_addr: Option<Uri>,
 
     /// The keyspace partition to un-quarantine.
     ///
     /// Common values: "data" (default application data), "meta", "index".
-    #[arg(default_value = "data")]
+    #[arg(long, default_value = "data")]
     pub partition: String,
 }
 
 #[async_trait]
 impl PerformAction for ClearQuarantineCommand {
     async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
-        let mut client = get_grpc_client(config, self.cluster_addr, false).await?;
-
-        client
-            .clear_quarantine(pb::raft::ClearQuarantineRequest {
+        call_leader(config, self.cluster_addr, false, |mut client| {
+            let request = pb::raft::ClearQuarantineRequest {
                 partition: self.partition.clone(),
-            })
-            .await?;
+            };
+            async move { client.clear_quarantine(request).await }
+        })
+        .await?;
 
         println!(
             "Quarantine cleared for partition '{}'. The partition is now writable on all nodes.",

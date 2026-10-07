@@ -20,19 +20,21 @@ use tonic::transport::Uri;
 
 use openstack_keystone_config::LoadedConfig;
 
-use super::get_grpc_client;
+use super::{get_grpc_client, rpc_error};
 use crate::PerformAction;
 
 /// Show raw cluster metrics from a Raft node.
 ///
 /// Displays the current leader, membership configuration, and the full
 /// OpenRaft metrics string. Useful for a quick health check or when
-/// diagnosing replication lag, leader elections, or quarantine state.
+/// diagnosing replication lag or leader elections.
 ///
-/// For a tabular view of cluster peers use `list-peers` instead.
+/// For a tabular view of cluster peers use `list-peers`; for DEK, rotation,
+/// quarantine and nonce state use `status`.
 #[derive(Parser)]
 pub(super) struct MetricsCommand {
     /// Address of the target cluster node (e.g. `https://127.0.0.1:50051`).
+    /// Defaults to this host's `node_cluster_addr`.
     #[arg(long)]
     pub cluster_addr: Option<Uri>,
 }
@@ -45,7 +47,7 @@ impl PerformAction for MetricsCommand {
         }
 
         let mut client = get_grpc_client(config, self.cluster_addr, false).await?;
-        let metrics = client.metrics(()).await?.into_inner();
+        let metrics = client.metrics(()).await.map_err(rpc_error)?.into_inner();
 
         let leader = match metrics.current_leader {
             Some(id) => format!("node {id}"),

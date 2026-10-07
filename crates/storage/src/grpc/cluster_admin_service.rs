@@ -45,10 +45,13 @@ use crate::types::*;
 
 mod auth;
 mod dek;
+mod leader;
 mod local_emergency;
 mod restore;
+mod status;
 
 use self::auth::*;
+use self::leader::*;
 use self::local_emergency::*;
 
 /// Raft cluster administrative operations.
@@ -180,9 +183,15 @@ impl ClusterAdminServiceImpl {
     /// A `Result` indicating success, or a `StoreError`.
     #[tracing::instrument(level = "trace", skip(self))]
     pub async fn init_cluster(&self, nodes: Vec<pb::raft::Node>) -> Result<(), StoreError> {
-        // Convert nodes into required format
-        let nodes_map: BTreeMap<u64, pb::raft::Node> =
-            nodes.into_iter().map(|node| (node.node_id, node)).collect();
+        // Convert nodes into required format, storing every address in the
+        // canonical `host:port` form (see `normalize_rpc_addr`).
+        let nodes_map: BTreeMap<u64, pb::raft::Node> = nodes
+            .into_iter()
+            .map(|node| {
+                let rpc_addr = normalize_rpc_addr(&node.rpc_addr).to_owned();
+                (node.node_id, pb::raft::Node { rpc_addr, ..node })
+            })
+            .collect();
 
         // Initialize the cluster
         Ok(self.raft_node.initialize(nodes_map).await?)
@@ -247,11 +256,14 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         request: Request<pb::raft::AddLearnerRequest>,
     ) -> Result<Response<pb::raft::AdminResponse>, Status> {
         require_peer(&request, &self.authz, &[PeerRole::Node, PeerRole::Operator])?;
+        // Membership changes are leader-only; the conflict check below must
+        // also see the leader's committed membership.
+        self.ensure_leader()?;
         let req = request.into_inner();
 
         let node = req
             .node
-            .ok_or_else(|| Status::internal("Node information is required"))?;
+            .ok_or_else(|| Status::invalid_argument("Node information is required"))?;
 
         trace!("Adding learner node {}", node.node_id);
 
@@ -283,8 +295,11 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
             )));
         }
 
+        // Store the canonical `host:port` form so `init`, `join` and the
+        // `retry_join_nodes` auto-join (which announces the configured URI,
+        // scheme and trailing slash included) all register alike.
         let raft_node = Node {
-            rpc_addr: node.rpc_addr.clone(),
+            rpc_addr: check_addr,
             node_id: node.node_id,
         };
 
@@ -292,7 +307,7 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
             .raft_node
             .add_learner(node.node_id, raft_node, true)
             .await
-            .map_err(|e| Status::internal(format!("Failed to add learner node: {}", e)))?;
+            .map_err(|e| raft_write_status("Failed to add learner node", e))?;
 
         trace!("Successfully added learner node {}", node.node_id);
         Ok(Response::new(result.into()))
@@ -364,6 +379,7 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         request: Request<pb::raft::ChangeMembershipRequest>,
     ) -> Result<Response<pb::raft::AdminResponse>, Status> {
         require_peer(&request, &self.authz, &[PeerRole::Operator])?;
+        self.ensure_leader()?;
         let req = request.into_inner();
 
         trace!(
@@ -375,7 +391,7 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
             .raft_node
             .change_membership(req.members, req.retain)
             .await
-            .map_err(|e| Status::internal(format!("Failed to change membership: {}", e)))?;
+            .map_err(|e| raft_write_status("Failed to change membership", e))?;
 
         trace!("Successfully changed cluster membership");
         Ok(Response::new(result.into()))
@@ -404,6 +420,17 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
             current_leader: metrics.current_leader,
         };
         Ok(Response::new(resp))
+    }
+
+    /// Reports this node's Raft role and storage-encryption state (DEK
+    /// epochs, pending emergency rotations, quarantine markers, nonce
+    /// counter). Operator only; answered by any node.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn storage_status(
+        &self,
+        request: Request<()>,
+    ) -> Result<Response<pb::raft::StorageStatusResponse>, Status> {
+        self.handle_storage_status(request).await
     }
 
     /// Clears the read-only quarantine state triggered by repeated GCM tag
@@ -559,12 +586,7 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         trace!(actor, "operator backup requested");
 
         // Ensure backup targets the leader to avoid stale data.
-        let current_leader = self.raft_node.metrics().borrow_watched().current_leader;
-        if current_leader != Some(self.node_id) {
-            return Err(Status::failed_precondition(
-                "backup must be directed at the current cluster leader",
-            ));
-        }
+        self.ensure_leader()?;
 
         // Trigger snapshot build via the snapshot builder trait.
         let mut builder = self.sm.clone();

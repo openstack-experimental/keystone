@@ -1324,7 +1324,7 @@ impl StorageApi for Storage {
                     id,
                     pb::raft::Node {
                         node_id: node.node_id,
-                        rpc_addr: node.rpc_addr,
+                        rpc_addr: normalize_rpc_addr(&node.rpc_addr).to_owned(),
                     },
                 )
             })

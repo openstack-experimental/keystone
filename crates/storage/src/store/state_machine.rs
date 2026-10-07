@@ -62,10 +62,12 @@ mod restore;
 mod rotation;
 mod snapshot;
 mod snapshot_file;
+mod status;
 
 pub(crate) use self::restore::MAX_LIVE_RESTORE_SIZE;
 pub(crate) use self::rotation::{DEK_REVOKED_PENDING_PREFIX, DEK_REVOKED_PREFIX, unix_now};
 pub use self::rotation::{PENDING_ROTATION_TTL_SECS, ReencryptReport, load_pending_rotations};
+pub use self::status::EncryptionStatus;
 
 use self::quarantine::*;
 use self::restore::*;

@@ -4394,3 +4394,174 @@ async fn test_automatic_dek_rotation_inner() -> Result<()> {
     instance.storage.raft.shutdown().await.ok();
     Ok(())
 }
+
+const ADMIN_LEADER_REDIRECT_PORT_BASE: u16 = 1450;
+
+/// Leader-only admin RPCs sent to a follower answer with the leader hint
+/// instead of an internal error, while `StorageStatus` is served by any node
+/// (issue #1305).
+#[serial_test::serial]
+#[tracing_test::traced_test]
+#[test]
+fn test_admin_rpcs_redirect_to_leader() {
+    TypeConfig::run(test_admin_rpcs_redirect_to_leader_inner()).unwrap();
+}
+
+async fn test_admin_rpcs_redirect_to_leader_inner() -> Result<()> {
+    use openstack_keystone_distributed_storage::app::{LEADER_ENDPOINT_HEADER, LEADER_ID_HEADER};
+
+    const PORT: u16 = ADMIN_LEADER_REDIRECT_PORT_BASE;
+
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+    let tls_configuration = make_certificates()?;
+
+    let (instance1, mut leader) = start_single_node_cluster(PORT, &tls_configuration).await?;
+    let instance2 = join_node2_as_voter(PORT, &tls_configuration, &mut leader).await?;
+    let tls_client_config = get_client_tls_config(&instance1.config)?;
+    let mut follower = new_admin_client(
+        instance2.config.node_cluster_addr.clone(),
+        &tls_client_config,
+    )
+    .await?;
+    wait_for_leader(&mut follower, 1).await;
+
+    // Every address is registered in the canonical `host:port` form.
+    let membership = leader
+        .metrics(())
+        .await?
+        .into_inner()
+        .membership
+        .unwrap_or_default();
+    for node in membership.nodes.values() {
+        assert!(!node.rpc_addr.contains("://"), "{node:?}");
+    }
+
+    let leader_addr = get_addr_with_port(1, PORT).to_string();
+    let assert_redirect = |result: std::result::Result<(), tonic::Status>, what: &str| {
+        let status = result.expect_err(&format!("{what} must not succeed on a follower"));
+        assert_eq!(
+            status.code(),
+            tonic::Code::Unavailable,
+            "{what}: {status:?}"
+        );
+        assert_eq!(
+            status
+                .metadata()
+                .get(LEADER_ID_HEADER)
+                .and_then(|v| v.to_str().ok()),
+            Some("1"),
+            "{what}"
+        );
+        assert_eq!(
+            status
+                .metadata()
+                .get(LEADER_ENDPOINT_HEADER)
+                .and_then(|v| v.to_str().ok()),
+            Some(leader_addr.as_str()),
+            "{what}"
+        );
+    };
+
+    assert_redirect(
+        follower
+            .clear_quarantine(pb::raft::ClearQuarantineRequest {
+                partition: "data".into(),
+            })
+            .await
+            .map(drop),
+        "ClearQuarantine",
+    );
+    assert_redirect(
+        follower
+            .rotate_dek(pb::raft::RotateDekRequest { emergency: false })
+            .await
+            .map(drop),
+        "RotateDek",
+    );
+    // Redirected before the pending-rotation lookup, which only the leader
+    // can answer authoritatively.
+    assert_redirect(
+        follower
+            .confirm_rotate_dek(pb::raft::ConfirmRotateDekRequest {
+                rotation_id: "unknown".into(),
+            })
+            .await
+            .map(drop),
+        "ConfirmRotateDek",
+    );
+    assert_redirect(
+        follower
+            .change_membership(pb::raft::ChangeMembershipRequest {
+                members: vec![1, 2],
+                retain: false,
+            })
+            .await
+            .map(drop),
+        "ChangeMembership",
+    );
+    assert_redirect(
+        follower
+            .add_learner(pb::raft::AddLearnerRequest {
+                node: Some(new_node_with_port(3, PORT)),
+            })
+            .await
+            .map(drop),
+        "AddLearner",
+    );
+    assert_redirect(
+        follower.backup(pb::raft::BackupRequest {}).await.map(drop),
+        "Backup",
+    );
+
+    let initial_dek = leader.storage_status(()).await?.into_inner().dek_version;
+
+    // The redirect cost no rate-limit token: the leader still accepts the
+    // rotation (2/hour per identity).
+    leader
+        .rotate_dek(pb::raft::RotateDekRequest { emergency: false })
+        .await?;
+    leader
+        .rotate_dek(pb::raft::RotateDekRequest { emergency: false })
+        .await?;
+
+    // The nonce counter is per DEK epoch and the log encryptor only moves to
+    // the new epoch on the next append, so write once to start its counter.
+    instance1
+        .storage
+        .set_value("k".into(), make_env("v")?, None, None)
+        .await?;
+
+    let leader_status = leader.storage_status(()).await?.into_inner();
+    assert_eq!(leader_status.node_id, 1);
+    assert_eq!(leader_status.state, "Leader");
+    assert_eq!(
+        leader_status.dek_version,
+        initial_dek + 2,
+        "{leader_status:?}"
+    );
+    assert!(
+        leader_status
+            .retired_dek_versions
+            .contains(&(initial_dek + 1)),
+        "{leader_status:?}"
+    );
+    assert!(leader_status.nonce_counter > 0);
+    assert_eq!(leader_status.nonce_threshold, 1 << 31);
+
+    let follower_index = leader_status.last_log_index;
+    assert!(
+        poll_until(Duration::from_millis(100), 50, || {
+            instance2.storage.last_log_index() >= follower_index
+        })
+        .await,
+        "node 2 never caught up"
+    );
+    let follower_status = follower.storage_status(()).await?.into_inner();
+    assert_eq!(follower_status.node_id, 2);
+    assert_eq!(follower_status.state, "Follower");
+    assert_eq!(follower_status.current_leader, Some(1));
+    assert!(follower_status.quarantined_partitions.is_empty());
+
+    Ok(())
+}

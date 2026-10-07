@@ -25,7 +25,10 @@ use crate::PerformAction;
 
 /// Initialize a new storage cluster.
 ///
-/// This command initializes new distributed storage cluster.
+/// This command initializes new distributed storage cluster consisting of
+/// *this host's* node only (`node_id` and `node_cluster_addr` from the config
+/// file), which it contacts at `node_cluster_addr`. Add further nodes with
+/// `join` and `promote`.
 #[derive(Parser)]
 pub(super) struct InitCommand {}
 

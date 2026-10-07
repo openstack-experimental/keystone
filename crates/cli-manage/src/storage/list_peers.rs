@@ -18,25 +18,32 @@ use async_trait::async_trait;
 use clap::Parser;
 use color_eyre::{Report, eyre::eyre};
 use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL};
+use tonic::transport::Uri;
 
 use openstack_keystone_config::LoadedConfig;
 
-use super::get_grpc_client;
+use super::{get_grpc_client, rpc_error};
 use crate::PerformAction;
 
 /// Provides the details of all the peers in the Raft cluster.
 ///
-/// This command is used to list the full set of peers in the Raft cluster.
+/// This command is used to list the full set of peers in the Raft cluster, as
+/// seen by the contacted node.
 #[derive(Parser)]
-pub(super) struct ListPeersCommand {}
+pub(super) struct ListPeersCommand {
+    /// Cluster member to ask (e.g. `https://127.0.0.1:50051`). Defaults to
+    /// this host's `node_cluster_addr`.
+    #[arg(long)]
+    pub cluster_addr: Option<Uri>,
+}
 
 #[async_trait]
 impl PerformAction for ListPeersCommand {
     async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         if super::ds_config(config).is_some() {
-            let mut client = get_grpc_client(config, None, false).await?;
+            let mut client = get_grpc_client(config, self.cluster_addr, false).await?;
 
-            let metrics = client.metrics(()).await?.into_inner();
+            let metrics = client.metrics(()).await.map_err(rpc_error)?.into_inner();
             let membership = metrics.membership.unwrap_or_default();
             let members = membership
                 .configs

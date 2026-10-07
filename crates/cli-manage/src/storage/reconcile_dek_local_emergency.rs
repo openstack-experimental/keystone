@@ -20,16 +20,20 @@ use tonic::transport::Uri;
 use openstack_keystone_config::LoadedConfig;
 use openstack_keystone_distributed_storage::protobuf as pb;
 
-use super::get_grpc_client;
+use super::{get_grpc_client, rpc_error};
 use crate::PerformAction;
 
 /// Reconcile a node-local, quorum-bypass emergency DEK rotation candidate
 /// into Raft-replicated state (ADR 0028 §6).
 ///
-/// Must be run against the specific node that holds `rotation_id` (see
-/// `list-dek-local-emergency-candidates`) -- reconciliation does not fan out
-/// across the cluster. Installs the candidate's DEK via the normal Raft
-/// transaction path, which requires quorum to be available again. The
+/// Must be run against the Raft leader, which must hold `rotation_id` (staged
+/// there or adopted through gossip; check with
+/// `list-dek-local-emergency-candidates --cluster-addr <leader>`) --
+/// reconciliation does not fan out across the cluster. The command does not
+/// follow leader redirects: a follower answers with the leader's address so
+/// the operator can verify the candidate on the leader first. Installs the
+/// candidate's DEK via the normal Raft transaction path, which requires quorum
+/// to be available again. The
 /// confirming operator must differ from the one who staged the candidate
 /// (dual-control, same as `confirm-rotate-dek`). On success, the candidate
 /// is cleared from this node and any other active candidate on this node is
@@ -54,7 +58,8 @@ impl PerformAction for ReconcileDekLocalEmergencyCommand {
             .reconcile_dek_local_emergency(pb::raft::ReconcileDekLocalEmergencyRequest {
                 rotation_id: self.rotation_id.clone(),
             })
-            .await?;
+            .await
+            .map_err(rpc_error)?;
 
         println!(
             "Local emergency DEK rotation {} reconciled. The new DEK is now active.",

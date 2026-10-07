@@ -20,7 +20,7 @@ use tonic::transport::Uri;
 use openstack_keystone_config::LoadedConfig;
 use openstack_keystone_distributed_storage::protobuf as pb;
 
-use super::get_grpc_client;
+use super::call_leader;
 use crate::PerformAction;
 
 /// Confirm a pending emergency DEK rotation (dual-control second factor).
@@ -31,9 +31,13 @@ use crate::PerformAction;
 ///
 /// If the 5-minute window has already expired, the pending rotation has been
 /// automatically aborted and this command will return an error.
+///
+/// The confirmation is checked and proposed on the Raft leader; the command
+/// retries against the leader when the contacted node is a follower.
 #[derive(Parser)]
 pub(super) struct ConfirmRotateDekCommand {
-    /// Address of the target cluster (e.g. `https://127.0.0.1:50051`).
+    /// Cluster member to contact first (e.g. `https://127.0.0.1:50051`).
+    /// Defaults to this host's `node_cluster_addr`.
     #[arg(long)]
     pub cluster_addr: Option<Uri>,
 
@@ -45,13 +49,13 @@ pub(super) struct ConfirmRotateDekCommand {
 #[async_trait]
 impl PerformAction for ConfirmRotateDekCommand {
     async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
-        let mut client = get_grpc_client(config, self.cluster_addr, false).await?;
-
-        client
-            .confirm_rotate_dek(pb::raft::ConfirmRotateDekRequest {
+        call_leader(config, self.cluster_addr, false, |mut client| {
+            let request = pb::raft::ConfirmRotateDekRequest {
                 rotation_id: self.rotation_id.clone(),
-            })
-            .await?;
+            };
+            async move { client.confirm_rotate_dek(request).await }
+        })
+        .await?;
 
         println!(
             "Emergency DEK rotation {} confirmed. The compromised DEK is now revoked.",

@@ -11,25 +11,38 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! # Demote raft node from member to learner
-use std::collections::BTreeSet;
+
+//! # Demote a Raft voter to a learner
 
 use async_trait::async_trait;
 use clap::Parser;
 use color_eyre::{Report, eyre::eyre};
+use tonic::transport::Uri;
 
 use openstack_keystone_config::LoadedConfig;
 use openstack_keystone_distributed_storage::protobuf as pb;
 
-use super::get_grpc_client;
+use super::{connect_leader, rpc_error, voters};
 use crate::PerformAction;
 
 /// Demotes voter to a permanent non-voter.
 ///
 /// This command is used to demote a voter to a permanent non-voter in the Raft
 /// cluster.
+///
+/// The change is computed from, and proposed on, the Raft leader, which is
+/// located through `--cluster-addr` (default: this host's
+/// `node_cluster_addr`). When the target is the current leader it steps down
+/// once the change commits and the cluster has no leader until the next
+/// election completes (leadership transfer is not implemented), so writes
+/// briefly fail.
 #[derive(Parser)]
 pub(super) struct DemoteCommand {
+    /// Cluster member to contact first (e.g. `https://127.0.0.1:50051`).
+    /// Defaults to this host's `node_cluster_addr`.
+    #[arg(long)]
+    pub cluster_addr: Option<Uri>,
+
     /// Node ID to be demoted to a non-voter.
     #[arg()]
     pub node_id: u64,
@@ -38,34 +51,32 @@ pub(super) struct DemoteCommand {
 #[async_trait]
 impl PerformAction for DemoteCommand {
     async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
-        if super::ds_config(config).is_some() {
-            let mut client = get_grpc_client(config, None, false).await?;
-
-            let membership = client
-                .metrics(())
-                .await?
-                .into_inner()
-                .membership
-                .unwrap_or_default();
-            let mut members = membership
-                .configs
-                .into_iter()
-                .flat_map(|nodeidset| nodeidset.node_ids.into_keys())
-                .collect::<BTreeSet<_>>();
-
-            if members.contains(&self.node_id) {
-                members.remove(&self.node_id);
-
-                client
-                    .change_membership(pb::raft::ChangeMembershipRequest {
-                        members: Vec::from_iter(members),
-                        retain: true,
-                    })
-                    .await?;
-            }
-            Ok(())
-        } else {
-            Err(eyre!("no distributed_storage configuration"))
+        if super::ds_config(config).is_none() {
+            return Err(eyre!("no distributed_storage configuration"));
         }
+        let (mut client, metrics) = connect_leader(config, self.cluster_addr).await?;
+
+        let mut members = voters(&metrics);
+        if !members.remove(&self.node_id) {
+            println!("Node {} is not a voter; nothing to do.", self.node_id);
+            return Ok(());
+        }
+        if metrics.current_leader == Some(self.node_id) {
+            eprintln!(
+                "warning: node {} is the current leader; the cluster is leaderless until \
+                 the next election completes",
+                self.node_id
+            );
+        }
+
+        client
+            .change_membership(pb::raft::ChangeMembershipRequest {
+                members: Vec::from_iter(members),
+                retain: true,
+            })
+            .await
+            .map_err(rpc_error)?;
+        println!("Node {} demoted to learner.", self.node_id);
+        Ok(())
     }
 }

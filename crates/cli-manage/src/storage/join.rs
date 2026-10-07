@@ -21,16 +21,24 @@ use tonic::transport::Uri;
 use openstack_keystone_config::LoadedConfig;
 use openstack_keystone_distributed_storage::protobuf as pb;
 
-use super::get_grpc_client;
+use super::call_leader;
 use crate::PerformAction;
 
 /// Join the current node as a peer to the Raft cluster.
 ///
 /// This command is used to join a new node as a peer to the Raft cluster. In
 /// order to join, there must be at least one existing member of the cluster.
+///
+/// Always announces *this host's* node (`node_id` and `node_cluster_addr`
+/// from the config file) as a learner, authenticating with the node's own
+/// identity. `cluster_addr` may be any member: the learner is added on the
+/// Raft leader, and the command follows the redirect when the contacted
+/// member is a follower. Joining is idempotent for the same address; it
+/// fails when the node id is already registered at a different address.
 #[derive(Parser)]
 pub(super) struct JoinCommand {
-    /// Initialized cluster address (e.g. `127.0.0.1:50051`).
+    /// Address of any initialized cluster member (e.g.
+    /// `https://127.0.0.1:50051`).
     #[arg()]
     pub cluster_addr: Uri,
 }
@@ -42,30 +50,24 @@ impl PerformAction for JoinCommand {
             if let (Some(host), Some(port)) =
                 (cfg.node_cluster_addr.host(), cfg.node_cluster_addr.port())
             {
-                let mut client = get_grpc_client(config, Some(self.cluster_addr), true).await?;
-
-                match client
-                    .add_learner(pb::raft::AddLearnerRequest {
-                        node: Some(pb::raft::Node {
-                            node_id: cfg.node_id,
-                            rpc_addr: format!("{host}:{port}"),
-                        }),
-                    })
-                    .await
-                {
-                    Ok(_) => Ok(()),
-                    Err(e) if e.code() == tonic::Code::AlreadyExists => {
-                        // Node is already registered in the cluster (likely via
-                        // auto-join from retry_join_nodes config). Idempotent
-                        // success, used by skaffold post-deploy hook.
-                        tracing::debug!(
-                            node_id = cfg.node_id,
-                            "node already registered in cluster, join is idempotent"
-                        );
-                        Ok(())
-                    }
-                    Err(e) => Err(eyre!("add_learner failed: {e}")),
-                }
+                let node = pb::raft::Node {
+                    node_id: cfg.node_id,
+                    rpc_addr: format!("{host}:{port}"),
+                };
+                // Re-adding the same (node_id, address) succeeds, so a node
+                // that already auto-joined through `retry_join_nodes` is fine.
+                // `AlreadyExists` means the id is registered at a *different*
+                // address -- a node-id collision (ADR 0016-v2 §4.3), which
+                // must fail.
+                call_leader(config, Some(self.cluster_addr), true, |mut client| {
+                    let request = pb::raft::AddLearnerRequest {
+                        node: Some(node.clone()),
+                    };
+                    async move { client.add_learner(request).await }
+                })
+                .await
+                .map_err(|e| eyre!("add_learner failed: {e}"))?;
+                Ok(())
             } else {
                 Err(eyre!(
                     "cannot determine the host:port of the current node to announce to the cluster"

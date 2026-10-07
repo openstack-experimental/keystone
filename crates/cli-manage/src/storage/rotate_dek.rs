@@ -20,7 +20,7 @@ use tonic::transport::Uri;
 use openstack_keystone_config::LoadedConfig;
 use openstack_keystone_distributed_storage::protobuf as pb;
 
-use super::get_grpc_client;
+use super::{call_leader, get_grpc_client, rpc_error};
 use crate::PerformAction;
 
 /// Rotate the Data Encryption Key (DEK).
@@ -28,6 +28,9 @@ use crate::PerformAction;
 /// Triggers a live background DEK rotation with no cluster downtime. All new
 /// Raft log writes use the fresh DEK immediately; a background task re-encrypts
 /// existing Fjall state entries using optimistic CAS-on-version.
+///
+/// Rotations are proposed on the Raft leader; when the contacted node is a
+/// follower the command retries against the leader.
 ///
 /// Use `--emergency` when the current DEK is suspected or confirmed
 /// compromised. Emergency rotation requires dual-control: a second
@@ -37,13 +40,15 @@ use crate::PerformAction;
 /// Use `--local-quorum-bypass` (with `--justification`) instead of
 /// `--emergency` when the cluster has lost Raft quorum and the ordinary
 /// emergency path -- itself a Raft proposal -- would block forever
-/// (ADR 0028 §3). The candidate is written only to the responding node's
-/// local emergency store; it must be explicitly reconciled once quorum
-/// returns (not yet implemented). Refused unless that node's
+/// (ADR 0028 §3). The candidate is written only to the contacted node's
+/// local emergency store (no leader redirect) and gossiped to reachable
+/// peers; once quorum returns it must be reconciled on the leader with
+/// `reconcile-dek-local-emergency`. Refused unless that node's
 /// `[local_emergency]` guardrail currently permits it.
 #[derive(Parser)]
 pub(super) struct RotateDekCommand {
-    /// Address of the target cluster node (e.g. `https://127.0.0.1:50051`).
+    /// Cluster member to contact first (e.g. `https://127.0.0.1:50051`).
+    /// Defaults to this host's `node_cluster_addr`.
     #[arg(long)]
     pub cluster_addr: Option<Uri>,
 
@@ -76,31 +81,33 @@ impl PerformAction for RotateDekCommand {
             ));
         }
 
-        let mut client = get_grpc_client(config, self.cluster_addr, false).await?;
-
         if self.local_quorum_bypass {
+            let mut client = get_grpc_client(config, self.cluster_addr, false).await?;
             let resp = client
                 .rotate_dek_local_emergency(pb::raft::RotateDekLocalEmergencyRequest {
                     justification: self.justification.clone().unwrap_or_default(),
                 })
-                .await?
+                .await
+                .map_err(rpc_error)?
                 .into_inner();
             println!(
                 "Local quorum-bypass DEK rotation staged on the responding node.\n\
                  rotation_id={}\n\n\
                  This candidate is NOT yet replicated. Once quorum returns, an operator \
-                 must explicitly reconcile it.",
+                 must reconcile it on the leader with `reconcile-dek-local-emergency`.",
                 resp.rotation_id,
             );
             return Ok(());
         }
 
-        let resp = client
-            .rotate_dek(pb::raft::RotateDekRequest {
-                emergency: self.emergency,
-            })
-            .await?
-            .into_inner();
+        let emergency = self.emergency;
+        let resp = call_leader(config, self.cluster_addr, false, |mut client| async move {
+            client
+                .rotate_dek(pb::raft::RotateDekRequest { emergency })
+                .await
+                .map(tonic::Response::into_inner)
+        })
+        .await?;
 
         if self.emergency {
             if resp.pending_rotation_id.is_empty() {

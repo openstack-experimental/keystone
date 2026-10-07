@@ -19,7 +19,7 @@ use tonic::transport::Uri;
 
 use openstack_keystone_config::LoadedConfig;
 
-use super::get_grpc_client;
+use super::{get_grpc_client, rpc_error};
 use crate::PerformAction;
 
 /// List node-local, quorum-bypass emergency DEK rotation candidates on the
@@ -44,7 +44,8 @@ impl PerformAction for ListDekLocalEmergencyCandidatesCommand {
 
         let resp = client
             .list_dek_local_emergency_candidates(())
-            .await?
+            .await
+            .map_err(rpc_error)?
             .into_inner();
 
         if resp.candidates.is_empty() {

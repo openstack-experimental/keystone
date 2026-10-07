@@ -22,6 +22,7 @@ impl ClusterAdminServiceImpl {
         request: Request<pb::raft::ClearQuarantineRequest>,
     ) -> Result<Response<()>, Status> {
         let actor = require_operator(&request, &self.authz)?;
+        self.ensure_leader()?;
         // rate limit - 10 per hour per operator identity.
         self.clear_quarantine_limiter
             .check_key(&actor)
@@ -47,7 +48,7 @@ impl ClusterAdminServiceImpl {
             .raft_node
             .client_write(payload)
             .await
-            .map_err(|e| Status::internal(format!("Raft write failed: {e}")));
+            .map_err(|e| raft_write_status("Raft write failed", e));
         let dek_version = self
             .current_dek
             .read()
@@ -70,6 +71,7 @@ impl ClusterAdminServiceImpl {
         request: Request<pb::raft::RotateDekRequest>,
     ) -> Result<Response<pb::raft::AdminResponse>, Status> {
         let actor = require_operator(&request, &self.authz)?;
+        self.ensure_leader()?;
         // rate limit - 2 per hour per operator identity.
         self.rotate_dek_limiter.check_key(&actor).map_err(|_| {
             Status::resource_exhausted("RotateDek rate limit exceeded; try again later")
@@ -116,7 +118,7 @@ impl ClusterAdminServiceImpl {
                 .raft_node
                 .client_write(payload)
                 .await
-                .map_err(|e| Status::internal(format!("Raft write failed: {e}")));
+                .map_err(|e| raft_write_status("Raft write failed", e));
             self.audit_outcome(
                 "DEK_ROTATION_EMERGENCY_STAGED",
                 &actor,
@@ -156,7 +158,7 @@ impl ClusterAdminServiceImpl {
             .raft_node
             .client_write(payload)
             .await
-            .map_err(|e| Status::internal(format!("Raft write failed: {e}")));
+            .map_err(|e| raft_write_status("Raft write failed", e));
         self.audit_outcome(
             "DEK_ROTATION",
             &actor,
@@ -175,6 +177,10 @@ impl ClusterAdminServiceImpl {
         request: Request<pb::raft::ConfirmRotateDekRequest>,
     ) -> Result<Response<pb::raft::AdminResponse>, Status> {
         let actor = require_operator(&request, &self.authz)?;
+        // The pending-rotation pre-check below reads the in-memory map, which
+        // only the leader is guaranteed to have applied `CreatePendingRotation`
+        // to.
+        self.ensure_leader()?;
         let req = request.into_inner();
 
         if req.rotation_id.is_empty() {
@@ -233,7 +239,7 @@ impl ClusterAdminServiceImpl {
             .raft_node
             .client_write(payload)
             .await
-            .map_err(|e| Status::internal(format!("Raft write failed: {e}")));
+            .map_err(|e| raft_write_status("Raft write failed", e));
         self.audit_outcome(
             "DEK_ROTATION_EMERGENCY_CONFIRMED",
             &actor,
@@ -357,6 +363,9 @@ impl ClusterAdminServiceImpl {
         request: Request<pb::raft::ReconcileDekLocalEmergencyRequest>,
     ) -> Result<Response<pb::raft::AdminResponse>, Status> {
         let actor = require_operator(&request, &self.authz)?;
+        // Only the leader can propose `InstallDek`; the candidate must then
+        // be reconciled on the leader's own (gossiped) copy.
+        self.ensure_leader()?;
         let req = request.into_inner();
         let current_version = {
             self.current_dek
@@ -384,7 +393,7 @@ impl ClusterAdminServiceImpl {
             .raft_node
             .client_write(install_payload)
             .await
-            .map_err(|e| Status::internal(format!("Raft write failed: {e}")));
+            .map_err(|e| raft_write_status("Raft write failed", e));
         self.audit_outcome(
             "DEK_ROTATION_LOCAL_EMERGENCY_RECONCILED",
             &actor,

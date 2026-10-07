@@ -233,14 +233,9 @@ impl ClusterAdminServiceImpl {
             pb::api::CommandRequest::try_from(cmd).map_err(|e| Status::internal(e.to_string()))?;
         match self.raft_node.client_write(payload).await {
             Ok(resp) => Ok(resp.data),
-            Err(RaftError::APIError(ClientWriteError::ForwardToLeader(fwd))) => {
-                Err(Status::failed_precondition(format!(
-                    "restore into an initialized cluster must be sent to the leader (leader: {})",
-                    fwd.leader_id
-                        .map_or_else(|| "unknown".to_string(), |id| id.to_string())
-                )))
-            }
-            Err(e) => Err(Status::internal(format!("Raft write failed: {e}"))),
+            // Restore into an initialized cluster must be sent to the
+            // leader; the redirect carries its address.
+            Err(e) => Err(raft_write_status("Raft write failed", e)),
         }
     }
 }
@@ -271,6 +266,9 @@ impl ClusterAdminServiceImpl {
                 "this node is already initialized; --elect is only valid for disaster recovery \
                  into uninitialized nodes",
             ));
+        }
+        if initialized {
+            self.ensure_leader()?;
         }
         let limit = if initialized {
             MAX_LIVE_RESTORE_SIZE

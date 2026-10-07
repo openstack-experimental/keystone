@@ -25,22 +25,24 @@ use tonic::transport::Uri;
 use openstack_keystone_config::LoadedConfig;
 use openstack_keystone_distributed_storage::protobuf as pb;
 
-use super::get_grpc_client;
+use super::call_leader;
 use crate::PerformAction;
 
 /// Create an encrypted operator backup (Fjall snapshot).
 ///
-/// Triggers a fresh snapshot on the target node, then streams the AES-256-GCM
+/// Triggers a fresh snapshot on the Raft leader, then streams the AES-256-GCM
 /// encrypted bytes to `--output`. The backup is bound to the current DEK epoch
 /// via the Backup DEK (BDEK) and the snapshot timestamp — it cannot be replayed
 /// against a different cluster or epoch without the corresponding KMS key.
+/// When the contacted node is a follower the command retries against the
+/// leader.
 ///
-/// The final output includes a DEK manifest covering any retired DEKs required
-/// for offline decryption. Retain this file and the KMS keys for at least 365
-/// days per ADR 0016-v2 §7.
+/// Restoring requires the KEK that protected the backup's DEKs. Retain this
+/// file and the KMS keys for at least 365 days per ADR 0016-v2 §7.
 #[derive(Parser)]
 pub(super) struct BackupCommand {
-    /// Address of the target cluster (e.g. `https://127.0.0.1:50051`).
+    /// Cluster member to contact first (e.g. `https://127.0.0.1:50051`).
+    /// Defaults to this host's `node_cluster_addr`.
     #[arg(long)]
     pub cluster_addr: Option<Uri>,
 
@@ -56,12 +58,13 @@ impl PerformAction for BackupCommand {
             return Err(eyre!("no distributed_storage configuration"));
         }
 
-        let mut client = get_grpc_client(config, self.cluster_addr, false).await?;
-
-        let mut stream = client
-            .backup(pb::raft::BackupRequest {})
-            .await?
-            .into_inner();
+        let mut stream = call_leader(config, self.cluster_addr, false, |mut client| async move {
+            client
+                .backup(pb::raft::BackupRequest {})
+                .await
+                .map(tonic::Response::into_inner)
+        })
+        .await?;
 
         let mut file = fs::OpenOptions::new()
             .write(true)

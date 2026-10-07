@@ -25,7 +25,7 @@ use tonic::transport::Uri;
 use openstack_keystone_config::LoadedConfig;
 use openstack_keystone_distributed_storage::protobuf as pb;
 
-use super::get_grpc_client;
+use super::call_leader;
 use crate::PerformAction;
 
 const CHUNK_SIZE: usize = 256 * 1024;
@@ -72,9 +72,10 @@ fn file_chunk_stream(
 /// the AES-256-GCM envelope (Backup DEK + AD binding) and decrypts it. The
 /// KMS must hold the KEK that protected the backup's DEKs.
 ///
-/// **Into a running cluster** (the usual case): send the backup to the
-/// leader. It is committed through the Raft log and replaces the data on
-/// every node. Cluster membership is unchanged.
+/// **Into a running cluster** (the usual case): the backup must reach the
+/// Raft leader; when `--cluster-addr` (or this host's node) is a follower the
+/// command retries against the leader. It is committed through the Raft log
+/// and replaces the data on every node. Cluster membership is unchanged.
 ///
 /// **Disaster recovery** (the cluster is gone): start every node with
 /// `auto_bootstrap = false` so they stay uninitialized, then run this command
@@ -102,18 +103,31 @@ pub(super) struct RestoreCommand {
 #[async_trait]
 impl PerformAction for RestoreCommand {
     async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
-        let file = File::open(&self.snapshot)
+        let file_size = File::open(&self.snapshot)
             .await
-            .map_err(|e| eyre!("cannot open snapshot file {:?}: {e}", self.snapshot))?;
-        let file_size = file.metadata().await.map(|m| m.len()).unwrap_or(0);
+            .map_err(|e| eyre!("cannot open snapshot file {:?}: {e}", self.snapshot))?
+            .metadata()
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0);
 
-        // Stream in 256 KiB chunks; at most one chunk is resident in memory at
-        // a time.
-        let stream = file_chunk_stream(file, self.elect, file_size);
-
-        let mut client = get_grpc_client(config, self.cluster_addr, false).await?;
-
-        client.restore(stream).await?;
+        call_leader(config, self.cluster_addr, false, |mut client| {
+            let path = self.snapshot.clone();
+            let elect = self.elect;
+            async move {
+                // Re-opened per attempt: a leader redirect needs the stream
+                // again from the start.
+                let file = File::open(&path).await.map_err(|e| {
+                    tonic::Status::internal(format!("cannot open snapshot file {path:?}: {e}"))
+                })?;
+                // Stream in 256 KiB chunks; at most one chunk is resident in
+                // memory at a time.
+                client
+                    .restore(file_chunk_stream(file, elect, file_size))
+                    .await
+            }
+        })
+        .await?;
 
         println!(
             "Restore complete ({} bytes from {:?}).",
