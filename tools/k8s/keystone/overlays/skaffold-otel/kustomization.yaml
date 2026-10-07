@@ -1,0 +1,8 @@
+# The skaffold overlay with OpenTelemetry export to the stack in
+# tools/k8s/observability (Jaeger). Selected by the `otel` profile of the
+# `keystone` skaffold module.
+resources:
+  - ../skaffold
+
+patches:
+  - path: statefulset-otel-patch.yaml

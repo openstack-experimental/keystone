@@ -86,6 +86,7 @@
 
 - [Contributor guide](contributor/index.md)
   - [Local development](contributor/development.md)
+  - [Observability stack](contributor/observability.md)
   - [Testing](contributor/testing.md)
   - [API development](contributor/api-development.md)
   - [Python API compatibility](contributor/python-compatibility.md)

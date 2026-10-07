@@ -357,6 +357,14 @@ verify:
       kubernetesCluster: {}
 
 profiles:
+  # Export traces to the `observability` module's Jaeger (deploy that module
+  # first): `skaffold run -m keystone -p local,otel`.
+  - name: otel
+    patches:
+      - op: replace
+        path: /manifests/kustomize/paths/0
+        value: tools/k8s/keystone/overlays/skaffold-otel
+
   - name: github-ci
     build:
       local:
@@ -518,3 +526,32 @@ profiles:
       - op: add
         path: /verify/-
         value: *tempest_identity_python
+---
+apiVersion: skaffold/v4beta13
+kind: Config
+metadata:
+  name: observability
+# Jaeger (traces), Prometheus (scrapes keystone-rs `/metrics`) and Grafana for
+# the development stack. Deploy with `skaffold run -m observability`; see
+# doc/src/contributor/observability.md.
+manifests:
+  kustomize:
+    paths:
+      - tools/k8s/observability
+deploy:
+  statusCheck: true
+  statusCheckDeadlineSeconds: 120
+  kubectl: {}
+portForward:
+  - resourceType: service
+    resourceName: jaeger
+    port: 16686
+    localPort: 16686
+  - resourceType: service
+    resourceName: prometheus
+    port: 9090
+    localPort: 9090
+  - resourceType: service
+    resourceName: grafana
+    port: 3000
+    localPort: 3000

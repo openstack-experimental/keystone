@@ -1,0 +1,76 @@
+# Prometheus scraping every keystone-rs pod's `/metrics`. The pods are found
+# through the headless `keystone-rs-internal` service (DNS A records, which
+# include not-ready pods), so no Kubernetes API access is needed. A scrape
+# does not cause an OTLP push, and metrics are not pushed in this stack
+# (`OS_OTEL__METRICS_ENABLED=false`), so nothing is counted twice.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+    scrape_configs:
+      - job_name: keystone
+        dns_sd_configs:
+          - names: [keystone-rs-internal]
+            type: A
+            port: 8099
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  labels:
+    app.kubernetes.io/name: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: prometheus
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.9.1
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=1d
+          ports:
+            - containerPort: 9090
+              name: web
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: web
+            periodSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: data
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  labels:
+    app.kubernetes.io/name: prometheus
+spec:
+  selector:
+    app.kubernetes.io/name: prometheus
+  ports:
+    - name: web
+      port: 9090
+      targetPort: web

@@ -26,6 +26,7 @@ COPY --from=planner /app/recipe.json recipe.json
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo chef cook \
     -p openstack-keystone -p openstack-keystone-cli-manage -p test_api -p test_federation \
+    --features openstack-keystone/otel \
     --recipe-path recipe.json --profile skaffold
 
 COPY crates crates
@@ -40,11 +41,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --release --target wasm32-unknown-unknown &&\
     cp /app/target/wasm32-unknown-unknown/release/reference_plugin.wasm /app/reference_plugin.wasm
 
-# Compile keystone + keystone-manage binaries
+# Compile keystone + keystone-manage binaries. The `otel` feature only compiles
+# the OTLP exporters in; they stay off until `[otel] enabled` (ADR 0040).
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --profile skaffold \
     -p openstack-keystone \
-    -p openstack-keystone-cli-manage && \
+    -p openstack-keystone-cli-manage \
+    --features openstack-keystone/otel && \
     cp target/skaffold/keystone /app/keystone && \
     cp target/skaffold/keystone-manage /app/keystone-manage
 

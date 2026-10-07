@@ -1,0 +1,25 @@
+# `[otel]` options through the OS_<SECTION>__<OPTION> environment variables.
+# Traces go to Jaeger; metrics stay on the `/metrics` scrape that Prometheus
+# does, so they are not ingested twice.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: keystone-rs
+spec:
+  template:
+    spec:
+      containers:
+        - name: keystone
+          env:
+            - name: OS_OTEL__ENABLED
+              value: "true"
+            - name: OS_OTEL__METRICS_ENABLED
+              value: "false"
+            - name: OS_OTEL__ENDPOINT
+              value: http://jaeger:4318
+            - name: OS_OTEL__SERVICE_NAME
+              value: keystone
+            - name: OS_OTEL__RESOURCE_ATTRIBUTES
+              value: deployment.environment=dev
+            - name: OS_OTEL__SAMPLING_RATE
+              value: "1.0"

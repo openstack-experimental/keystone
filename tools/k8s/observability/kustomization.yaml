@@ -1,0 +1,9 @@
+# Observability backends for the development stack (ADR 0040, issue #720):
+# Jaeger receives the OTLP traces, Prometheus scrapes `/metrics`, Grafana
+# queries both. Deployed by the `observability` skaffold module; see
+# doc/src/contributor/observability.md.
+resources:
+  - jaeger.yaml
+  - prometheus.yaml
+  - grafana.yaml
+  - ingress.yaml
