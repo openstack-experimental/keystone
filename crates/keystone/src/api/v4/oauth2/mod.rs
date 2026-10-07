@@ -31,6 +31,7 @@ mod device;
 mod device_authorization;
 mod ensure_signing_key;
 mod html;
+mod introspect;
 mod jwks;
 mod jwks_revocation;
 mod local_emergency_key;
@@ -57,6 +58,7 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .routes(routes!(well_known::well_known))
         .routes(routes!(token::token))
         .routes(routes!(revoke::revoke))
+        .routes(routes!(introspect::introspect))
         .routes(routes!(authorize::authorize))
         .routes(routes!(authorize::authorize_login))
         .routes(routes!(authorize::authorize_consent))

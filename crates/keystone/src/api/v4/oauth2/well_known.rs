@@ -75,6 +75,11 @@ pub struct OpenIdConfiguration {
     pub response_modes_supported: Vec<String>,
     /// Supported `response_type` values.
     pub response_types_supported: Vec<String>,
+    /// Token introspection endpoint URL (RFC 7662).
+    pub introspection_endpoint: String,
+    /// Client authentication methods accepted by the introspection endpoint
+    /// (confidential clients only).
+    pub introspection_endpoint_auth_methods_supported: Vec<String>,
     /// Token revocation endpoint URL (RFC 7009).
     pub revocation_endpoint: String,
     /// Client authentication methods accepted by the revocation endpoint.
@@ -128,6 +133,11 @@ impl Default for OpenIdConfiguration {
             request_uri_parameter_supported: false,
             response_modes_supported: strings(&["query"]),
             response_types_supported: strings(&["code"]),
+            introspection_endpoint: String::new(),
+            introspection_endpoint_auth_methods_supported: strings(&[
+                "client_secret_basic",
+                "client_secret_post",
+            ]),
             revocation_endpoint: String::new(),
             revocation_endpoint_auth_methods_supported: strings(&["client_secret_basic"]),
             scopes_supported: strings(&["email", "openid", "openstack:api", "profile"]),
@@ -242,6 +252,7 @@ pub(super) async fn well_known(
         id_token_signing_alg_values_supported: vec![signing_algorithm],
         issuer: issuer.clone(),
         jwks_uri: format!("{issuer}/jwks"),
+        introspection_endpoint: format!("{issuer}/introspect"),
         revocation_endpoint: format!("{issuer}/revoke"),
         token_endpoint: format!("{issuer}/token"),
         ..OpenIdConfiguration::default()
@@ -319,6 +330,8 @@ mod tests {
             "authorization_endpoint",
             "token_endpoint",
             "jwks_uri",
+            "introspection_endpoint",
+            "introspection_endpoint_auth_methods_supported",
             "revocation_endpoint",
             "revocation_endpoint_auth_methods_supported",
             "response_types_supported",

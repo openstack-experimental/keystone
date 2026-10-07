@@ -1669,7 +1669,9 @@ Fernet validation consults revocation events on every back-channel check;
 stateless JWTs wait out `exp` (§11, "Revocation Durability Gap"). A service
 may only move from Stage 2's fall-through posture to preferring JWTs once its
 operator explicitly accepts the 15-minute revocation window (or wires
-back-channel introspection for its high-criticality operations). This
+back-channel introspection for its high-criticality operations, see the admin
+guide's "Introspection for high-criticality services" for the RFC 7662
+`/introspect` endpoint). This
 acceptance is per-service and must be recorded in the deployment's migration
 runbook — it is the one semantic regression Fernet-to-JWT migration cannot
 paper over, and it is the reason Stages 2-4 are ordered by revocation-latency

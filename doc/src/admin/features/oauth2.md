@@ -297,6 +297,53 @@ access tokens (see the user guide). Operationally:
   rotation) do not lose entries; under sustained contention the call fails with
   a 500 rather than silently dropping a revocation.
 
+## Introspection for high-criticality services (RFC 7662)
+
+Offline JWT verification cannot see a revocation until the service next
+refreshes `/jwks/revocation` (and an un-listed token stays valid until `exp`).
+A service that cannot accept that window for its most sensitive operations
+(deleting volumes, changing quotas, ...) should validate the presented token
+with the back-channel endpoint instead:
+
+```
+POST /v4/oauth2/{domain_id}/introspect
+Authorization: Basic base64(client_id:client_secret)
+Content-Type: application/x-www-form-urlencoded
+
+token=<access or refresh token>&token_type_hint=access_token
+```
+
+- **Who may call it:** an enabled *confidential* client of the same domain,
+  authenticated exactly as on `/token` (`client_secret_basic` or
+  `client_secret_post`). Public clients get `401 invalid_client`. No dedicated
+  capability flag is needed: register the resource server as an ordinary
+  confidential client of the domain. The token does not have to belong to the
+  calling client, since a resource server introspects tokens minted for other
+  clients; it must belong to the same domain.
+- **Active token:** `200` with `active: true`, `scope`, `client_id`, `sub`,
+  `exp`, `iat`, `nbf`, `aud`, `iss`, `jti`, `token_type: "Bearer"` and
+  `token_use`. For OpenStack access tokens (`openstack:api`) the response also
+  carries `openstack_context` (user, scope and roles) and `delegation_context`,
+  the authorization data the caller will act on. Refresh tokens return
+  `client_id`, `sub`, `scope`, `exp` and `iat`.
+- **Anything else** (unknown, malformed, expired, revoked, spent, bad
+  signature, token of another domain) is `200 {"active": false}`; the response
+  never says why.
+- Access tokens are checked against the live JTI revocation list (no cache),
+  so a token revoked through RFC 7009 or emergency rotation is inactive
+  immediately. Refresh tokens are active only while the record exists, is not
+  spent or revoked, and neither the token nor its family has expired.
+- If the revocation list or the refresh-token store is unavailable the
+  endpoint answers `500` rather than risk reporting a revoked token as active;
+  treat that as "deny".
+- The endpoint is rate limited per client (`token_rate_limit_*`) and per source
+  IP before any lookup, responses are `Cache-Control: no-store`, and every call
+  emits a CADF `read` audit event initiated by the calling client. Discovery
+  advertises it as `introspection_endpoint`.
+
+Recommended pattern: verify offline for ordinary calls and introspect only for
+the operations whose revocation latency you cannot tolerate.
+
 ## Migration from Fernet
 
 Everything here is additive — Fernet issuance/validation continues unchanged.
@@ -305,7 +352,7 @@ format parity → OP goes live → machine identity migration → human flow mig
 → Fernet sunset). Key operational gate: a service may only prefer JWTs over
 falling through to Fernet once its operator has explicitly accepted the
 15-minute stateless revocation window (or wired back-channel introspection for
-high-criticality operations) — record that acceptance in your deployment's
+high-criticality operations, see "Introspection for high-criticality services") — record that acceptance in your deployment's
 migration runbook.
 
 ## Upgrading to the absolute refresh-token lifetime

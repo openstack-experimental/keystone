@@ -323,6 +323,27 @@ pub async fn post_revoke_form(
     Ok((status, rsp.text().await?))
 }
 
+/// `POST /v4/oauth2/{domain_id}/introspect` (RFC 7662) with HTTP Basic client
+/// authentication. Returns the status and parsed JSON body.
+pub async fn post_introspect_form(
+    domain_id: &str,
+    client_id: &str,
+    client_secret: &str,
+    form: &[(&str, &str)],
+) -> Result<(StatusCode, serde_json::Value)> {
+    let base_url: url::Url = env::var("KEYSTONE_URL")?.parse()?;
+    let rsp = Client::new()
+        .post(base_url.join(&format!("v4/oauth2/{domain_id}/introspect"))?)
+        .basic_auth(client_id, Some(client_secret))
+        .form(form)
+        .send()
+        .await?;
+    let status = rsp.status();
+    let raw_body = rsp.text().await?;
+    let body = serde_json::from_str(&raw_body).unwrap_or(serde_json::Value::Null);
+    Ok((status, body))
+}
+
 /// Poll `/token` with `grant_type=urn:ietf:params:oauth:grant-type:device_code`
 /// (RFC 8628 §3.4).
 pub async fn poll_device_token(

@@ -33,7 +33,7 @@ use test_api::oauth2::*;
 /// Create a domain, wait for async signing-key provisioning, register a
 /// public device+refresh client and run the device flow to completion.
 /// Returns `(domain_id, client_id, token response body)`.
-async fn device_tokens() -> Result<(String, String, serde_json::Value)> {
+pub(super) async fn device_tokens() -> Result<(String, String, serde_json::Value)> {
     let domain_id = create_test_domain(&format!("revoke-{}", Uuid::new_v4().simple())).await?;
     let mut provisioned = false;
     for _ in 0..40 {

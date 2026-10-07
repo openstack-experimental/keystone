@@ -31,7 +31,7 @@ use std::collections::HashSet;
 use thiserror::Error;
 
 use openstack_keystone_core_types::oauth2_client::{
-    DelegationContext, OpenStackAccessTokenClaims, OpenStackScope,
+    DelegationContext, OidcAccessTokenClaims, OpenStackAccessTokenClaims, OpenStackScope,
 };
 use openstack_keystone_key_repository::asymmetric::{SigningAlgorithm, jwt_algorithm};
 
@@ -328,6 +328,87 @@ pub fn verify_revocable_access_token(
         exp: claims.exp,
         sid: claims.sid,
     })
+}
+
+/// An access token accepted by the RFC 7662 introspection endpoint, in the
+/// flavour it was minted as.
+#[derive(Clone, Debug)]
+pub enum IntrospectedAccessToken {
+    /// OIDC access token (`aud` is the owning `client_id`), usable only
+    /// against `/userinfo`.
+    Oidc(OidcAccessTokenClaims),
+    /// OpenStack access token (`aud` is `openstack-apis:{domain_id}`).
+    OpenStack(Box<OpenStackAccessTokenClaims>),
+}
+
+/// Verify an access token presented to the RFC 7662 introspection endpoint.
+///
+/// Unlike [`verify_revocable_access_token`] the token need not belong to the
+/// calling client: introspection is for resource servers, which act on tokens
+/// minted for other clients. Domain isolation comes from the signature
+/// (verified against `jwks`, the domain's own keys) and the pinned issuer.
+/// Signature, configured algorithm, issuer, `exp`/`nbf`, `token_use` and the
+/// `jti` revocation list are enforced as in [`verify_openstack_access_token`];
+/// OpenStack tokens additionally go through the delegation invariants.
+///
+/// # Errors
+/// See [`TokenVerificationError`]. The introspection endpoint maps every
+/// error to `{"active": false}` so it is not an oracle.
+pub fn verify_introspectable_access_token(
+    token: &str,
+    jwks: &JwkSet,
+    expected_algorithm: SigningAlgorithm,
+    expected_issuers: &[String],
+    domain_id: &str,
+    revoked_jtis: &HashSet<String>,
+) -> Result<IntrospectedAccessToken, TokenVerificationError> {
+    let header = decode_header(token)?;
+    let expected_alg = jwt_algorithm(expected_algorithm);
+    if header.alg != expected_alg {
+        return Err(TokenVerificationError::AlgorithmMismatch {
+            actual: header.alg,
+            expected: expected_alg,
+        });
+    }
+
+    let kid = header.kid.ok_or(TokenVerificationError::MissingKeyId)?;
+    let jwk = jwks
+        .find(&kid)
+        .ok_or_else(|| TokenVerificationError::UnknownKeyId(kid.clone()))?;
+    let decoding_key = DecodingKey::from_jwk(jwk)?;
+
+    let openstack_audience = format!("openstack-apis:{domain_id}");
+    let mut validation = Validation::new(expected_alg);
+    validation.set_required_spec_claims(&["exp", "iat", "nbf", "iss", "aud", "sub"]);
+    // The audience is any client of this domain (OIDC flavour) or the
+    // domain audience; both are covered by signature + issuer below.
+    validation.validate_aud = false;
+    validation.validate_nbf = true;
+
+    let common = decode::<RevocableClaims>(token, &decoding_key, &validation)?.claims;
+    if !expected_issuers.iter().any(|iss| iss == &common.iss) {
+        return Err(TokenVerificationError::UntrustedIssuer(common.iss));
+    }
+    let token_use = common.token_use.unwrap_or_default();
+    if token_use != "access" {
+        return Err(TokenVerificationError::WrongTokenUse(token_use));
+    }
+    let jti = common
+        .jti
+        .ok_or_else(|| TokenVerificationError::WrongTokenUse("missing jti".to_string()))?;
+    if revoked_jtis.contains(&jti) {
+        return Err(TokenVerificationError::Revoked(jti));
+    }
+
+    if common.aud == openstack_audience {
+        let claims =
+            decode::<OpenStackAccessTokenClaims>(token, &decoding_key, &validation)?.claims;
+        enforce_delegation_invariants(&claims)?;
+        Ok(IntrospectedAccessToken::OpenStack(Box::new(claims)))
+    } else {
+        let claims = decode::<OidcAccessTokenClaims>(token, &decoding_key, &validation)?.claims;
+        Ok(IntrospectedAccessToken::Oidc(claims))
+    }
 }
 
 #[cfg(test)]
@@ -702,5 +783,74 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, TokenVerificationError::UnknownKeyId(_)));
+    }
+
+    #[test]
+    fn test_introspectable_openstack_token_any_client() {
+        let now = chrono::Utc::now().timestamp();
+        let (token, jwks, _kid) = sign(&valid_claims(now));
+        let got = verify_introspectable_access_token(
+            &token,
+            &jwks,
+            SigningAlgorithm::Es256,
+            &[ISSUER.to_string()],
+            DOMAIN_ID,
+            &HashSet::new(),
+        )
+        .unwrap();
+        assert!(matches!(got, IntrospectedAccessToken::OpenStack(c) if c.jti == "jti-1"));
+    }
+
+    #[test]
+    fn test_introspectable_oidc_token() {
+        let now = chrono::Utc::now().timestamp();
+        let claims = serde_json::json!({
+            "iss": ISSUER, "sub": "u", "aud": "client-7", "exp": now + 900,
+            "iat": now, "nbf": now, "jti": "jti-oidc", "scope": "openid",
+            "token_use": "access",
+        });
+        let (token, jwks, _kid) = sign(&claims);
+        let got = verify_introspectable_access_token(
+            &token,
+            &jwks,
+            SigningAlgorithm::Es256,
+            &[ISSUER.to_string()],
+            DOMAIN_ID,
+            &HashSet::new(),
+        )
+        .unwrap();
+        assert!(matches!(got, IntrospectedAccessToken::Oidc(c) if c.aud == "client-7"));
+    }
+
+    #[test]
+    fn test_introspectable_revoked_jti_rejected() {
+        let now = chrono::Utc::now().timestamp();
+        let (token, jwks, _kid) = sign(&valid_claims(now));
+        let err = verify_introspectable_access_token(
+            &token,
+            &jwks,
+            SigningAlgorithm::Es256,
+            &[ISSUER.to_string()],
+            DOMAIN_ID,
+            &HashSet::from(["jti-1".to_string()]),
+        )
+        .unwrap_err();
+        assert!(matches!(err, TokenVerificationError::Revoked(_)));
+    }
+
+    #[test]
+    fn test_introspectable_untrusted_issuer_rejected() {
+        let now = chrono::Utc::now().timestamp();
+        let (token, jwks, _kid) = sign(&valid_claims(now));
+        let err = verify_introspectable_access_token(
+            &token,
+            &jwks,
+            SigningAlgorithm::Es256,
+            &["https://other.example".to_string()],
+            DOMAIN_ID,
+            &HashSet::new(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, TokenVerificationError::UntrustedIssuer(_)));
     }
 }

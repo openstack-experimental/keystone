@@ -37,6 +37,7 @@ pub use service::Oauth2ClientService;
 pub use token::{build_access_token_claims, hydrate_client_credentials_context};
 pub use token_exchange::{TokenExchangeError, build_token_exchange_claims, validate_subject_token};
 pub use verify::{
-    RevocableAccessToken, TokenVerificationError, verify_openstack_access_token,
+    IntrospectedAccessToken, RevocableAccessToken, TokenVerificationError,
+    verify_introspectable_access_token, verify_openstack_access_token,
     verify_revocable_access_token,
 };
