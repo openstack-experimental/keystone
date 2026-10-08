@@ -42,6 +42,7 @@ mod create;
 mod delete;
 mod groups;
 mod list;
+mod projects;
 mod show;
 mod update;
 
@@ -64,4 +65,5 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .routes(routes!(show::show, delete::remove))
         .routes(routes!(update::update))
         .routes(routes!(groups::groups))
+        .routes(routes!(projects::projects))
 }

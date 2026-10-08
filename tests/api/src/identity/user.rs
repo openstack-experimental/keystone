@@ -14,6 +14,7 @@
 //! v3 user CRUD helpers, generated with [`crate::macros::crud_endpoint`].
 
 use openstack_keystone_api_types::v3::group::Group;
+use openstack_keystone_api_types::v3::project::ProjectShort;
 use openstack_keystone_api_types::v3::user::*;
 
 use crate::macros::crud_endpoint;
@@ -75,6 +76,17 @@ crud_endpoint! {
         path = "groups",
         model = Group,
         response_key = "groups",
+        service = Identity,
+        api_version = (3, 0),
+        query = [],
+    }
+    list {
+        request = UserProjectsRequest,
+        func = list_user_projects,
+        parent = ("users", user_id),
+        path = "projects",
+        model = ProjectShort,
+        response_key = "projects",
         service = Identity,
         api_version = (3, 0),
         query = [],

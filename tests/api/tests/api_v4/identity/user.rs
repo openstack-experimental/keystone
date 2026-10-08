@@ -27,6 +27,7 @@
 //! | PUT    /v4/users/{id}        | `update_success_admin`     | `update_forbidden_project_scoped`| `update_unauthorized`   |
 //! | DELETE /v4/users/{id}        | `delete_success_admin`     | `delete_forbidden_project_scoped`| `delete_unauthorized`   |
 //! | GET    /v4/users/{id}/groups | `groups_success_admin`     | `groups_forbidden_project_scoped`| `groups_unauthorized`   |
+//! | GET    /v4/users/{id}/projects | `projects_success_admin` | `projects_forbidden_project_scoped`| `projects_unauthorized` |
 //!
 //! `policy/identity/user/*.rego` allows `admin`, or `manager`/`reader`
 //! together with a genuine **domain** scope
@@ -414,6 +415,80 @@ async fn test_v4_user_groups_unauthorized() -> Result<()> {
     let rsp = raw_request(
         http::Method::GET,
         "v4/users/some-user/groups",
+        Some("invalid-token"),
+        None,
+    )
+    .await?;
+    assert_unauthorized(rsp.error_for_status(), "an invalid token must be rejected");
+    Ok(())
+}
+
+// --- projects sub-resource ----------------------------------------------
+
+#[tokio::test]
+async fn test_v4_user_projects_success_admin() -> Result<()> {
+    let admin = admin_session().await?;
+    let fixture = ProjectScopedUser::provision(&admin, "default", "member").await?;
+
+    let projects =
+        list_user_projects_v4(&admin, &fixture.user.id, UserV4ProjectsRequest::default()).await;
+    let cleanup = fixture.cleanup().await;
+    let projects = projects?;
+    cleanup?;
+
+    assert_eq!(
+        projects.len(),
+        1,
+        "the user is assigned a role on exactly one project: {projects:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_v4_user_projects_success_owner() -> Result<()> {
+    let admin = admin_session().await?;
+    let fixture = ProjectScopedUser::provision(&admin, "default", "member").await?;
+
+    let projects = list_user_projects_v4(
+        &fixture.session,
+        &fixture.user.id,
+        UserV4ProjectsRequest::default(),
+    )
+    .await;
+    let cleanup = fixture.cleanup().await;
+    let projects = projects?;
+    cleanup?;
+
+    assert_eq!(projects.len(), 1, "owner sees their project: {projects:?}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_v4_user_projects_forbidden_project_scoped() -> Result<()> {
+    let admin = admin_session().await?;
+    let manager = project_scoped_manager(&admin).await?;
+    let target = create_user_v4(&admin, user_create()?).await?;
+
+    assert_forbidden(
+        list_user_projects_v4(
+            &manager.session,
+            &target.id,
+            UserV4ProjectsRequest::default(),
+        )
+        .await,
+        "a project-scoped manager must not list another user's projects",
+    );
+
+    target.delete().await?;
+    manager.cleanup().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_v4_user_projects_unauthorized() -> Result<()> {
+    let rsp = raw_request(
+        http::Method::GET,
+        "v4/users/some-user/projects",
         Some("invalid-token"),
         None,
     )

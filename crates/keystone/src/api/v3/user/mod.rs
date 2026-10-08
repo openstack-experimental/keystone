@@ -23,6 +23,7 @@ mod groups;
 mod list;
 mod os_ec2;
 mod password;
+mod projects;
 mod show;
 pub mod types;
 mod update;
@@ -34,6 +35,7 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .routes(routes!(update::update))
         .routes(routes!(password::change_password))
         .routes(routes!(groups::groups))
+        .routes(routes!(projects::projects))
         .merge(os_ec2::openapi_router())
         .nest(
             "/{user_id}/application_credentials",
