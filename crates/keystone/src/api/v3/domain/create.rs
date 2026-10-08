@@ -146,10 +146,13 @@ mod tests {
         let res: DomainResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(
             Domain {
-                description: Some("A new domain".into()),
+                description: "A new domain".into(),
                 enabled: true,
                 extra: std::collections::HashMap::new(),
                 id: "did".into(),
+                links: Some(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/domains/did".into()
+                )),
                 name: "domain_name".into(),
                 options: Default::default(),
             },

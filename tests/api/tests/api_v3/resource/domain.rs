@@ -42,6 +42,32 @@ async fn test_domain_create() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_domain_without_description_has_empty_description_and_links() -> Result<()> {
+    let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
+    let domain = create_domain(
+        &test_client,
+        DomainCreateBuilder::default()
+            .name(Uuid::new_v4().to_string())
+            .enabled(true)
+            .build()?,
+    )
+    .await?;
+    assert_eq!(domain.description, "");
+    let expected_link = format!("/v3/domains/{}", domain.id);
+    assert_eq!(
+        domain.links.as_ref().map(|l| l.self_link.as_str()),
+        Some(expected_link.as_str())
+    );
+    let shown = get_domain(&test_client, &domain.id)
+        .await?
+        .expect("domain must be found");
+    assert_eq!(shown.description, "");
+    assert_eq!(shown.links, domain.links);
+    domain.delete().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_domain_show() -> Result<()> {
     let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
     let domain = create_domain(

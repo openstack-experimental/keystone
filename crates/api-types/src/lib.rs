@@ -59,6 +59,22 @@ impl Link {
     }
 }
 
+/// Links of a single resource.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct ResourceLinks {
+    /// Link to the resource itself.
+    #[serde(rename = "self")]
+    pub self_link: String,
+}
+
+impl ResourceLinks {
+    /// Build the links of the resource available at `path`.
+    pub fn new(path: String) -> Self {
+        Self { self_link: path }
+    }
+}
+
 /// Return `true` to be used as a positive default for the serde macros.
 pub fn default_true() -> bool {
     true

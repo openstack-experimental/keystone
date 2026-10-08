@@ -164,6 +164,9 @@ mod tests {
                     .id("1")
                     .name("domain1")
                     .enabled(true)
+                    .links(openstack_keystone_api_types::ResourceLinks::new(
+                        "/v3/domains/1".into()
+                    ))
                     .build()
                     .unwrap()
             ],

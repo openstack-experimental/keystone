@@ -17,8 +17,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "validate")]
 use validator::Validate;
 
-use crate::Link;
 pub use crate::v3::project::ProjectOptions;
+use crate::{Link, ResourceLinks};
 
 /// Short domain representation.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -58,11 +58,11 @@ pub struct DomainShort {
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "validate", derive(validator::Validate))]
 pub struct Domain {
-    /// The description of the domain.
+    /// The description of the domain. Empty string when not set.
     #[cfg_attr(feature = "builder", builder(default))]
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     #[cfg_attr(feature = "validate", validate(length(max = 255)))]
-    pub description: Option<String>,
+    pub description: String,
 
     /// If set to true, domain is enabled. If set to false, domain is disabled.
     pub enabled: bool,
@@ -76,6 +76,11 @@ pub struct Domain {
     /// The domain ID.
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub id: String,
+
+    /// Links of the domain.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<ResourceLinks>,
 
     /// The domain name.
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]

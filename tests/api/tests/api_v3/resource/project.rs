@@ -68,6 +68,41 @@ async fn test_project_show() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_project_show_and_list_have_same_shape() -> Result<()> {
+    let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
+    let domain = create_test_domain(&test_client).await?;
+    let project = create_project(
+        &test_client,
+        ProjectCreateBuilder::default()
+            .name(Uuid::new_v4().to_string())
+            .enabled(true)
+            .domain_id(domain.id.clone())
+            .build()?,
+    )
+    .await?;
+    let expected_link = format!("/v3/projects/{}", project.id);
+    assert_eq!(
+        project.links.as_ref().map(|l| l.self_link.as_str()),
+        Some(expected_link.as_str())
+    );
+    let shown = get_project(&test_client, &project.id).await?;
+    let listed = list_projects(
+        &test_client,
+        ProjectListRequest {
+            domain_id: Some(domain.id.clone()),
+            ids: Some(project.id.clone()),
+            ..Default::default()
+        },
+    )
+    .await?;
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0], shown);
+    project.delete().await?;
+    domain.delete().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_project_list() -> Result<()> {
     let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
     let domain = create_test_domain(&test_client).await?;

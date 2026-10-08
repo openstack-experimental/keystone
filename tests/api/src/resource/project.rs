@@ -53,7 +53,7 @@ crud_endpoint! {
         request = ProjectListRequest,
         func = list_projects,
         path = "projects",
-        model = ProjectShort,
+        model = Project,
         response_key = "projects",
         service = Identity,
         api_version = (3, 0),

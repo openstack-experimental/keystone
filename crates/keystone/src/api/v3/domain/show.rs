@@ -160,6 +160,9 @@ mod tests {
                 .id("bar")
                 .enabled(true)
                 .name("domain_name")
+                .links(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/domains/bar".into()
+                ))
                 .build()
                 .unwrap(),
             res.domain,

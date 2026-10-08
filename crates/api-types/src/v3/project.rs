@@ -15,7 +15,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::Link;
+use crate::{Link, ResourceLinks};
 #[cfg(feature = "validate")]
 use validator::Validate;
 
@@ -87,6 +87,11 @@ pub struct Project {
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub id: String,
 
+    /// Links of the project.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<ResourceLinks>,
+
     /// Indicates whether the project also acts as a domain. If set to true,
     /// this project acts as both a project and domain. As a domain, the project
     /// provides a name space in which you can create users, groups, and other
@@ -105,8 +110,10 @@ pub struct Project {
     #[cfg_attr(feature = "validate", validate(nested))]
     pub options: Option<ProjectOptions>,
 
-    /// The ID of the parent for the project.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The ID of the parent for the project. Serialized as `null` when the
+    /// project has no parent.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(default)]
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub parent_id: Option<String>,
 }
@@ -307,6 +314,20 @@ pub struct ProjectShortList {
     /// Collection of project objects.
     #[cfg_attr(feature = "validate", validate(nested))]
     pub projects: Vec<ProjectShort>,
+
+    /// Pagination links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<Link>>,
+}
+
+/// List of full projects.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
+pub struct ProjectList {
+    /// Collection of project objects.
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub projects: Vec<Project>,
 
     /// Pagination links.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -734,6 +734,7 @@ mod tests {
             description: None,
             is_domain: false,
             extra: HashMap::new(),
+            links: None,
             options: None,
         }
     }

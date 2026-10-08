@@ -43,9 +43,13 @@ impl From<provider_types::Domain> for api_types::Domain {
     fn from(value: provider_types::Domain) -> Self {
         let opts: api_types::ProjectOptions = value.options.into();
         Self {
-            description: value.description,
+            description: value.description.unwrap_or_default(),
             enabled: value.enabled,
             extra: value.extra,
+            links: Some(crate::ResourceLinks::new(format!(
+                "/v3/domains/{}",
+                value.id
+            ))),
             id: value.id,
             name: value.name,
             options: opts.immutable.is_some().then_some(opts),

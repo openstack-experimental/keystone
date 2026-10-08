@@ -166,6 +166,9 @@ mod tests {
                 enabled: true,
                 extra: std::collections::HashMap::new(),
                 id: "bar".into(),
+                links: Some(openstack_keystone_api_types::ResourceLinks::new(
+                    "/v3/projects/bar".into()
+                )),
                 is_domain: false,
                 name: "project_name".into(),
                 parent_id: None,

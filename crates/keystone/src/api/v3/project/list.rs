@@ -25,7 +25,7 @@ use validator::Validate;
 use openstack_keystone_api_types::PaginationQuery;
 use openstack_keystone_core_types::ListPagination;
 
-use super::types::{ProjectListParameters, ProjectShortList};
+use super::types::{Project, ProjectList, ProjectListParameters};
 use crate::api::auth::Auth;
 use crate::api::common::paginate_forward;
 use crate::api::error::KeystoneApiError;
@@ -39,7 +39,7 @@ use openstack_keystone_core::auth::ExecutionContext;
     params(ProjectListParameters, PaginationQuery),
     description = "List projects",
     responses(
-        (status = OK, description = "List of projects", body = ProjectShortList),
+        (status = OK, description = "List of projects", body = ProjectList),
         (status = 500, description = "Internal error", example = json!(KeystoneApiError::InternalError(String::from("id = 1"))))
     ),
     tag="projects"
@@ -72,7 +72,7 @@ pub(super) async fn list(
         page_reverse: false,
     };
 
-    let projects: Vec<super::types::ProjectShort> = state
+    let projects: Vec<Project> = state
         .provider
         .get_resource_provider()
         .list_projects(
@@ -92,7 +92,7 @@ pub(super) async fn list(
         &original_url,
     )?;
 
-    Ok((StatusCode::OK, Json(ProjectShortList { projects, links })).into_response())
+    Ok((StatusCode::OK, Json(ProjectList { projects, links })).into_response())
 }
 
 #[cfg(test)]

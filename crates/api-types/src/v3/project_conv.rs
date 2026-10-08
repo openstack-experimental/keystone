@@ -65,6 +65,10 @@ impl From<provider_types::Project> for api_types::Project {
             domain_id: value.domain_id,
             enabled: value.enabled,
             extra: value.extra,
+            links: Some(crate::ResourceLinks::new(format!(
+                "/v3/projects/{}",
+                value.id
+            ))),
             id: value.id,
             is_domain: value.is_domain,
             name: value.name,
