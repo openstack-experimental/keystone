@@ -1,11 +1,6 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>Sign-in error</title>
-</head>
-<body>
-<h1>Sign-in error</h1>
-<p>{{ message }}</p>
-</body>
-</html>
+{% extends "base.html" %}
+{% block title %}{{ t("sign_in_error") }}{% endblock %}
+{% block content %}
+<h1>{{ t("sign_in_error") }}</h1>
+<p class="error" role="alert">{{ t(message) }}</p>
+{% endblock %}

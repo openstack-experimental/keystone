@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="{{ locale }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}{% endblock %} - {{ branding.product_name }}</title>
+<link rel="stylesheet" href="/v4/oauth2/static/style.css">
+</head>
+<body>
+<main class="card">
+{% if branding.logo_url %}
+<img class="logo" src="{{ branding.logo_url }}" alt="{{ branding.product_name }}">
+{% endif %}
+{% block content %}{% endblock %}
+</main>
+<footer>
+<span>{{ branding.product_name }}</span>
+{% if branding.support_url %}<a href="{{ branding.support_url }}">{{ t("support") }}</a>{% endif %}
+{% if branding.privacy_url %}<a href="{{ branding.privacy_url }}">{{ t("privacy") }}</a>{% endif %}
+{% if branding.terms_url %}<a href="{{ branding.terms_url }}">{{ t("terms") }}</a>{% endif %}
+</footer>
+</body>
+</html>

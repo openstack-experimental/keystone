@@ -1,16 +1,11 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>{% if granted %}Device connected{% else %}Request denied{% endif %}</title>
-</head>
-<body>
+{% extends "base.html" %}
+{% block title %}{% if granted %}{{ t("device_connected") }}{% else %}{{ t("request_denied") }}{% endif %}{% endblock %}
+{% block content %}
 {% if granted %}
-<h1>Device connected</h1>
-<p>You have granted <strong>{{ client.name }}</strong> access. You may now close this window.</p>
+<h1>{{ t("device_connected") }}</h1>
+<p>{{ t("granted_access", client=client.name) }}</p>
 {% else %}
-<h1>Request denied</h1>
-<p>You denied <strong>{{ client.name }}</strong> access. You may now close this window.</p>
+<h1>{{ t("request_denied") }}</h1>
+<p>{{ t("denied_access", client=client.name) }}</p>
 {% endif %}
-</body>
-</html>
+{% endblock %}

@@ -215,6 +215,42 @@ pub struct Oauth2Provider {
     /// built-in default stylesheet.
     #[serde(default)]
     pub static_dir: Option<PathBuf>,
+
+    /// Product name shown in the page title, the logo `alt` text and
+    /// the page footer.
+    #[serde(default = "default_ui_product_name")]
+    pub ui_product_name: String,
+
+    /// Logo shown at the top of every page: an absolute path on this host,
+    /// for example `/v4/oauth2/static/logo.svg`. The page CSP only allows
+    /// same-origin images, so external URLs are rejected.
+    #[serde(default)]
+    pub ui_logo_url: Option<String>,
+
+    /// Link to a support page, shown in the page footer.
+    #[serde(default)]
+    pub ui_support_url: Option<String>,
+
+    /// Link to a privacy policy, shown in the page footer.
+    #[serde(default)]
+    pub ui_privacy_url: Option<String>,
+
+    /// Link to the terms of service, shown in the page footer.
+    #[serde(default)]
+    pub ui_terms_url: Option<String>,
+
+    /// Locale used when `Accept-Language` matches none of the available
+    /// locale bundles.
+    #[serde(default = "default_ui_default_locale")]
+    pub ui_default_locale: String,
+}
+
+fn default_ui_product_name() -> String {
+    "OpenStack".to_string()
+}
+
+fn default_ui_default_locale() -> String {
+    "en".to_string()
 }
 
 fn default_signing_key_rotation_days() -> u32 {
@@ -316,16 +352,23 @@ impl Default for Oauth2Provider {
             allow_host_header_issuer: false,
             templates_dir: None,
             static_dir: None,
+            ui_product_name: default_ui_product_name(),
+            ui_logo_url: None,
+            ui_support_url: None,
+            ui_privacy_url: None,
+            ui_terms_url: None,
+            ui_default_locale: default_ui_default_locale(),
         }
     }
 }
 
 impl Oauth2Provider {
-    /// Check that the configured UI directories exist and are directories.
+    /// Check the page customisation settings: the directories must exist and
+    /// the branding URLs must be `https://` URLs or absolute paths.
     ///
     /// Called at startup so a typo fails fast instead of silently serving
     /// the default pages.
-    pub fn validate_ui_paths(&self) -> Result<(), String> {
+    pub fn validate_ui(&self) -> Result<(), String> {
         fn check(name: &str, path: &Path) -> Result<(), String> {
             match std::fs::read_dir(path) {
                 Ok(_) => Ok(()),
@@ -340,6 +383,54 @@ impl Oauth2Provider {
         }
         if let Some(dir) = &self.static_dir {
             check("static_dir", dir)?;
+        }
+        fn is_path(url: &str) -> bool {
+            url.starts_with('/') && !url.starts_with("//")
+        }
+        if let Some(url) = &self.ui_logo_url
+            && !is_path(url)
+        {
+            return Err(format!(
+                "[oauth2] ui_logo_url must be an absolute path, got `{url}`"
+            ));
+        }
+        for (name, url) in [
+            ("ui_support_url", &self.ui_support_url),
+            ("ui_privacy_url", &self.ui_privacy_url),
+            ("ui_terms_url", &self.ui_terms_url),
+        ] {
+            if let Some(url) = url
+                && !(url.starts_with("https://") || is_path(url))
+            {
+                return Err(format!(
+                    "[oauth2] {name} must be an https:// URL or an absolute path, got `{url}`"
+                ));
+            }
+        }
+        for (name, url) in [
+            ("ui_logo_url", &self.ui_logo_url),
+            ("ui_support_url", &self.ui_support_url),
+            ("ui_privacy_url", &self.ui_privacy_url),
+            ("ui_terms_url", &self.ui_terms_url),
+        ] {
+            if let Some(url) = url
+                && url.chars().any(|c| c == '\\' || c.is_control())
+            {
+                return Err(format!(
+                    "[oauth2] {name} must not contain backslashes or control characters"
+                ));
+            }
+        }
+        if self.ui_product_name.trim().is_empty() {
+            return Err("[oauth2] ui_product_name must not be empty".to_string());
+        }
+        if self.ui_default_locale.is_empty()
+            || !self
+                .ui_default_locale
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
+            return Err("[oauth2] ui_default_locale must be a locale tag such as `en`".to_string());
         }
         Ok(())
     }
@@ -419,9 +510,9 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_ui_paths() {
+    fn test_validate_ui() {
         let cfg = Oauth2Provider::default();
-        assert!(cfg.validate_ui_paths().is_ok());
+        assert!(cfg.validate_ui().is_ok());
 
         let dir = std::env::temp_dir();
         let cfg = Oauth2Provider {
@@ -429,12 +520,50 @@ mod tests {
             static_dir: Some(dir),
             ..Default::default()
         };
-        assert!(cfg.validate_ui_paths().is_ok());
+        assert!(cfg.validate_ui().is_ok());
 
         let cfg = Oauth2Provider {
             static_dir: Some(PathBuf::from("/nonexistent/keystone-static")),
             ..Default::default()
         };
-        assert!(cfg.validate_ui_paths().unwrap_err().contains("static_dir"));
+        assert!(cfg.validate_ui().unwrap_err().contains("static_dir"));
+    }
+
+    #[test]
+    fn test_validate_ui_branding() {
+        let cfg = Oauth2Provider::default();
+        assert_eq!(cfg.ui_product_name, "OpenStack");
+        assert_eq!(cfg.ui_default_locale, "en");
+        let ok = Oauth2Provider {
+            ui_logo_url: Some("/v4/oauth2/static/logo.svg".into()),
+            ui_support_url: Some("https://example.com/help".into()),
+            ..Default::default()
+        };
+        assert!(ok.validate_ui().is_ok());
+        for bad in [
+            "http://example.com/x",
+            "javascript:alert(1)",
+            "//evil.example/x",
+            "/\\evil.example/x",
+        ] {
+            let cfg = Oauth2Provider {
+                ui_privacy_url: Some(bad.into()),
+                ..Default::default()
+            };
+            assert!(
+                cfg.validate_ui().unwrap_err().contains("ui_privacy_url"),
+                "{bad}"
+            );
+        }
+        let cfg = Oauth2Provider {
+            ui_logo_url: Some("https://example.com/logo.png".into()),
+            ..Default::default()
+        };
+        assert!(cfg.validate_ui().unwrap_err().contains("ui_logo_url"));
+        let cfg = Oauth2Provider {
+            ui_default_locale: "en us".into(),
+            ..Default::default()
+        };
+        assert!(cfg.validate_ui().is_err());
     }
 }
