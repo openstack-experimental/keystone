@@ -75,6 +75,9 @@ pub(super) struct DeviceLoginForm {
 pub(super) struct DeviceConsentForm {
     csrf_token: String,
     decision: String,
+    /// Present (any value) when the "remember" checkbox was ticked.
+    #[serde(default)]
+    remember: Option<String>,
 }
 
 /// CSRF token derivation, mirroring `authorize.rs`'s but keyed on the
@@ -150,7 +153,12 @@ pub(super) fn render_mfa(
     })
 }
 
-fn render_consent(domain_id: &str, client: &ClientView, grant: &DeviceCodeGrant) -> Response {
+fn render_consent(
+    domain_id: &str,
+    client: &ClientView,
+    grant: &DeviceCodeGrant,
+    remember: Option<bool>,
+) -> Response {
     let Some(csrf_token) = compute_csrf_token(grant) else {
         return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
     };
@@ -159,6 +167,7 @@ fn render_consent(domain_id: &str, client: &ClientView, grant: &DeviceCodeGrant)
         scopes: grant.scope.clone(),
         csrf_token,
         action: format!("/v4/oauth2/{domain_id}/device/consent"),
+        remember,
     })
 }
 
@@ -501,7 +510,15 @@ pub(super) async fn after_device_authentication(
         return finish_decision(state, grant, true, correlation_id).await;
     }
 
-    render_consent(domain_id, client, grant)
+    // A remembered consent that covers the request replaces the page.
+    if let (Some(c), Some(user_id)) = (client_res.as_ref(), grant.user_id.as_deref())
+        && super::consent::is_covered(state, domain_id, user_id, &c.client_id, &grant.scope).await
+    {
+        return finish_decision(state, grant, true, correlation_id).await;
+    }
+
+    let remember = super::consent::remember_choice(client_res.as_ref(), &grant.scope);
+    render_consent(domain_id, client, grant, remember)
 }
 
 /// `POST /v4/oauth2/{domain_id}/device/consent`.
@@ -525,7 +542,7 @@ pub(super) async fn after_device_authentication(
     err(Debug)
 )]
 pub(super) async fn device_consent(
-    Path(_domain_id): Path<String>,
+    Path(domain_id): Path<String>,
     State(state): State<ServiceState>,
     correlation_id: CorrelationId,
     jar: CookieJar,
@@ -573,6 +590,27 @@ pub(super) async fn device_consent(
     }
 
     let granted = form.decision == "allow";
+    if granted
+        && form.remember.is_some()
+        && let Some(user_id) = grant.user_id.as_deref()
+    {
+        let client = state
+            .provider
+            .get_oauth2_client_provider()
+            .get_by_client_id(&ExecutionContext::internal(&state), &grant.client_id)
+            .await
+            .ok()
+            .flatten();
+        super::consent::remember(
+            &state,
+            client.as_ref(),
+            &domain_id,
+            user_id,
+            &grant.scope,
+            &correlation_id.0,
+        )
+        .await;
+    }
     Ok(finish_decision(&state, &grant, granted, &correlation_id.0).await)
 }
 
@@ -926,6 +964,9 @@ mod tests {
     async fn test_device_mfa_correct_code_records_mfa_amr_and_renders_consent() {
         let csrf = super::compute_csrf_token(&grant(true, 0)).unwrap();
         let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_get_consent()
+            .returning(|_, _, _, _| Ok(None));
         session_mock
             .expect_get_device_code_grant()
             .returning(|_, _| Ok(Some(grant(true, 0))));

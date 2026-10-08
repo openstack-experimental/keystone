@@ -714,6 +714,25 @@ The OP login page can send the browser to an upstream IdP
 Residual: federated sign-in is not offered on the device-code page, and
 expiring group membership is not re-checked at refresh rotation.
 
+### V8c — Remembered consent (silent grants, escalation, delegated management)
+
+A remembered consent lets `/authorize` and the device page skip the consent
+page (`oauth2/consent.rs`). Threats and controls:
+
+| Threat | Control |
+| --- | --- |
+| Scope escalation under an old consent | The page is skipped only when every requested scope is in the stored scope set; one new scope asks again, and an approval widens the stored set. |
+| A client that was never approved gets a silent grant | The record is keyed on (domain, user, client); nothing is stored unless the user ticks "remember" on a form carrying the session CSRF token. Denying never stores. |
+| Remembered consent defeats `prompt=consent` | `prompt=consent` is kept on the pre-auth session and disables the skip on every path (password, second factor, federated, SSO). `prompt=none` returns `consent_required` unless a stored consent covers the request. |
+| `pre_authorized` clients | They skip consent by operator decision; nothing is stored for them and the checkbox is not offered. |
+| Consent outliving its subject | Records are deleted with the user, the domain and the client; withdrawing one also revokes that user's refresh families of the client. Disabling a user keeps the record (the user cannot sign in anyway). |
+| Management through a delegated credential | `identity/oauth2/consent/{list,delete}` allow the user themselves only when `credentials.is_delegated` is false (decided on the authentication chain, not the token scope), or an administrator. |
+| Lookup failure turns into a silent grant | Any storage error counts as "not covered": the user is asked. |
+
+Residual: the authorization target of `openstack:api` is stored as `None`
+because the browser flows do not allow `openstack:api` yet; when they do, the
+skip check must compare the target as well.
+
 ### V9 — Secret leakage into policy input, logs, and audit (P2, mitigated)
 
 **Attack.** Decrypted credential blobs (EC2 secret keys, TOTP seeds) reaching

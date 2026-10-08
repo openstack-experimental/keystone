@@ -135,6 +135,23 @@ Not covered yet: back-channel/front-channel logout notifications to relying
 parties, and ending the upstream provider session at logout (the upstream
 `sid` is stored for it).
 
+## Remembered consent
+
+On the consent page (browser and device flows) the user can tick "Remember my
+decision for this application". The approved scopes are then stored per
+(domain, user, client) in Raft, and later requests asking for no more than
+those scopes skip the page. The box is ticked by default only for `openid`,
+`profile` and `email`; it is not offered for `pre_authorized` clients, which
+skip consent anyway. `prompt=consent` always shows the page.
+
+A consent is removed together with its user, domain or client, and by the user
+(see the user guide, "Managing connected applications"). Administrators can
+list and withdraw any user's consents with the same endpoints; the policies are
+`policy/oauth2/consent/list.rego` and `delete.rego`. Withdrawing a consent
+revokes the user's refresh tokens of that client and emits a `consent_revoked`
+audit event with the real user as initiator (storing one emits
+`consent_granted`). Access tokens already issued stay valid until they expire.
+
 ## Customising the login pages
 
 The browser pages of the authorization-code and device flows are rendered

@@ -351,6 +351,14 @@ impl Oauth2ClientApi for Oauth2ClientService {
                 .delete(ctx.state(), domain_id, provider_id)
                 .await?;
             let revoked = revoke_client_families(ctx, &deleted.client_id).await?;
+            // Remembered consents of a deleted client are of no use and would
+            // keep showing up in the users' list of connected applications.
+            ctx.state()
+                .provider
+                .get_oauth2_session_provider()
+                .delete_consents_by_client(ctx.state(), &deleted.client_id)
+                .await
+                .map_err(|e| Oauth2ClientProviderError::FamilyRevocation(e.to_string()))?;
             Ok::<_, Oauth2ClientProviderError>((deleted, revoked))
         };
         crate::audited_if_ctx! {
@@ -885,6 +893,11 @@ mod tests {
             })
             .times(1)
             .returning(|_, _, _| Ok(3));
+        session
+            .expect_delete_consents_by_client()
+            .withf(|_, client_id| client_id == "client-1")
+            .times(1)
+            .returning(|_, _| Ok(2));
         let service = service_with(backend);
         let state = state_with_session(session).await;
         let ctx = ExecutionContext::internal(&state);

@@ -22,6 +22,9 @@
 </ul>
 <form method="post" action="{{ action }}">
 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+{% if remember is not none %}
+<p class="remember"><label><input type="checkbox" name="remember" value="1"{% if remember %} checked{% endif %}> {{ t("remember_decision") }}</label></p>
+{% endif %}
 <div class="actions">
 <button type="submit" name="decision" value="allow" autofocus>{{ t("allow") }}</button>
 <button type="submit" name="decision" value="deny" class="secondary">{{ t("deny") }}</button>

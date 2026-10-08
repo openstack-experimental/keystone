@@ -360,7 +360,7 @@ mod oauth2_session {
     use super::*;
 
     use openstack_keystone_core_types::oauth2_session::{
-        AuthorizationCode, DeviceCodeGrant, PreAuthSession, RefreshToken,
+        AuthorizationCode, Consent, DeviceCodeGrant, PreAuthSession, RefreshToken,
         RefreshTokenRevocationReason, SsoSession, UpstreamLoginCompletion,
     };
 
@@ -425,6 +425,56 @@ mod oauth2_session {
                 &self,
                 state: &ServiceState,
                 domain_id: &str,
+            ) -> Result<usize, Oauth2SessionProviderError>;
+
+            async fn remember_consent(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+                user_id: &str,
+                client_id: &str,
+                scopes: &[String],
+            ) -> Result<Consent, Oauth2SessionProviderError>;
+
+            async fn get_consent(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+                user_id: &str,
+                client_id: &str,
+            ) -> Result<Option<Consent>, Oauth2SessionProviderError>;
+
+            async fn list_consents(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+                user_id: &str,
+            ) -> Result<Vec<Consent>, Oauth2SessionProviderError>;
+
+            async fn revoke_consent(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+                user_id: &str,
+                client_id: &str,
+            ) -> Result<(bool, Vec<String>), Oauth2SessionProviderError>;
+
+            async fn delete_consents_by_user(
+                &self,
+                state: &ServiceState,
+                user_id: &str,
+            ) -> Result<usize, Oauth2SessionProviderError>;
+
+            async fn delete_consents_by_domain(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+            ) -> Result<usize, Oauth2SessionProviderError>;
+
+            async fn delete_consents_by_client(
+                &self,
+                state: &ServiceState,
+                client_id: &str,
             ) -> Result<usize, Oauth2SessionProviderError>;
 
             async fn mark_authenticated_by_sso(

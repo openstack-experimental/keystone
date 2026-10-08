@@ -549,6 +549,7 @@ mod tests {
 
     fn session(pending: Option<(&str, &str)>) -> PreAuthSession {
         PreAuthSession {
+            force_consent: false,
             session_id: "session-1".into(),
             domain_id: "domain-1".into(),
             client_id: "client-1".into(),
@@ -1003,6 +1004,9 @@ mod tests {
         });
 
         let mut sessions = sessions_returning(session(Some(("idp-1", "state-1"))));
+        sessions
+            .expect_get_consent()
+            .returning(|_, _, _, _| Ok(None));
         sessions
             .expect_create_sso_session()
             .times(1)

@@ -42,6 +42,8 @@ mod create;
 mod delete;
 mod groups;
 mod list;
+mod oauth2_consent_delete;
+mod oauth2_consents;
 mod projects;
 mod show;
 mod update;
@@ -65,5 +67,7 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .routes(routes!(show::show, delete::remove))
         .routes(routes!(update::update))
         .routes(routes!(groups::groups))
+        .routes(routes!(oauth2_consents::oauth2_consents))
+        .routes(routes!(oauth2_consent_delete::oauth2_consent_delete))
         .routes(routes!(projects::projects))
 }

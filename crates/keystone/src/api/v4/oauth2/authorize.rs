@@ -101,6 +101,7 @@ pub(super) struct Prompt {
     pub(super) none: bool,
     pub(super) login: bool,
     pub(super) select_account: bool,
+    pub(super) consent: bool,
 }
 
 /// Parse `prompt`. `none` must not be combined with any other value; an
@@ -114,9 +115,8 @@ pub(super) fn parse_prompt(raw: Option<&str>) -> Result<Prompt, &'static str> {
             "none" => prompt.none = true,
             "login" => prompt.login = true,
             "select_account" => prompt.select_account = true,
-            // Consent is always asked unless the client is `pre_authorized`
-            // (an operator decision), so this value is satisfied by default.
-            "consent" => {}
+            // Ask even when a remembered consent would cover the request.
+            "consent" => prompt.consent = true,
             _ => return Err("unsupported prompt value"),
         }
     }
@@ -137,6 +137,9 @@ pub(super) struct LoginForm {
 pub(super) struct ConsentForm {
     csrf_token: String,
     decision: String,
+    /// Present (any value) when the "remember" checkbox was ticked.
+    #[serde(default)]
+    remember: Option<String>,
 }
 
 /// Append query parameters to `redirect_uri` and return a
@@ -260,7 +263,12 @@ pub(super) fn render_mfa(
     })
 }
 
-fn render_consent(domain_id: &str, session: &PreAuthSession, client: &ClientView) -> Response {
+fn render_consent(
+    domain_id: &str,
+    session: &PreAuthSession,
+    client: &ClientView,
+    remember: Option<bool>,
+) -> Response {
     let Some(csrf_token) = compute_csrf_token(session) else {
         return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
     };
@@ -269,6 +277,7 @@ fn render_consent(domain_id: &str, session: &PreAuthSession, client: &ClientView
         scopes: session.scope.clone(),
         csrf_token,
         action: format!("/v4/oauth2/{domain_id}/authorize/consent"),
+        remember,
     })
 }
 
@@ -483,7 +492,20 @@ pub(super) async fn authorize(
                 "the user is not signed in",
             ));
         }
-        if !client.pre_authorized {
+        let remembered = match &sso {
+            Some(s) if !client.pre_authorized => {
+                super::consent::is_covered(
+                    &state,
+                    &domain_id,
+                    &s.user_id,
+                    &client.client_id,
+                    &requested_scope,
+                )
+                .await
+            }
+            _ => false,
+        };
+        if !client.pre_authorized && !remembered {
             return Ok(redirect_with_error(
                 &redirect_uri,
                 &state_param,
@@ -507,6 +529,7 @@ pub(super) async fn authorize(
                 code_challenge,
                 code_challenge_method,
                 nonce: query.nonce.clone(),
+                force_consent: prompt.consent,
             },
         )
         .await
@@ -827,11 +850,21 @@ pub(super) async fn after_authentication(
         return finish_consent(state, domain_id, session, true, correlation_id).await;
     }
 
+    // A remembered consent that covers the request replaces the page, unless
+    // the request asked for `prompt=consent`.
+    if !session.force_consent
+        && let (Some(c), Some(user_id)) = (client.as_ref(), session.user_id.as_deref())
+        && super::consent::is_covered(state, domain_id, user_id, &c.client_id, &session.scope).await
+    {
+        return finish_consent(state, domain_id, session, true, correlation_id).await;
+    }
+
     let client_ui = client
         .as_ref()
         .map(ClientView::from_resource)
         .unwrap_or_else(|| ClientView::from_id(&session.client_id));
-    render_consent(domain_id, session, &client_ui)
+    let remember = super::consent::remember_choice(client.as_ref(), &session.scope);
+    render_consent(domain_id, session, &client_ui, remember)
 }
 
 /// `POST /v4/oauth2/{domain_id}/authorize/consent`.
@@ -903,6 +936,27 @@ pub(super) async fn authorize_consent(
     }
 
     let granted = form.decision == "allow";
+    if granted
+        && form.remember.is_some()
+        && let Some(user_id) = session.user_id.as_deref()
+    {
+        let client = state
+            .provider
+            .get_oauth2_client_provider()
+            .get_by_client_id(&ExecutionContext::internal(&state), &session.client_id)
+            .await
+            .ok()
+            .flatten();
+        super::consent::remember(
+            &state,
+            client.as_ref(),
+            &domain_id,
+            user_id,
+            &session.scope,
+            &correlation_id.0,
+        )
+        .await;
+    }
     Ok(finish_consent(&state, &domain_id, &session, granted, &correlation_id.0).await)
 }
 
@@ -1185,6 +1239,7 @@ mod tests {
             .returning(|_, req| {
                 Ok(PreAuthSession {
                     pending_upstream: None,
+                    force_consent: false,
                     upstream: None,
                     session_id: "session-1".to_string(),
                     domain_id: req.domain_id,
@@ -1261,6 +1316,7 @@ mod tests {
     fn sample_session() -> PreAuthSession {
         PreAuthSession {
             pending_upstream: None,
+            force_consent: false,
             upstream: None,
             session_id: "session-1".to_string(),
             domain_id: "domain-1".to_string(),
@@ -1470,7 +1526,7 @@ mod tests {
                 None,
                 Vec::new(),
             ),
-            super::render_consent("domain-1", &session, &super::ClientView::from_id("c")),
+            super::render_consent("domain-1", &session, &super::ClientView::from_id("c"), None),
         ] {
             assert_eq!(response.headers()["cache-control"], "no-store");
             assert_eq!(response.headers()["pragma"], "no-cache");

@@ -97,6 +97,61 @@ pub trait Oauth2SessionBackend: Send + Sync {
         sso: &SsoSession,
     ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
 
+    /// Store a remembered consent, replacing the record of the same
+    /// (domain, user, client).
+    async fn set_consent(
+        &self,
+        state: &ServiceState,
+        consent: Consent,
+    ) -> Result<Consent, Oauth2SessionProviderError>;
+
+    /// Fetch the remembered consent of a user for a client.
+    async fn get_consent(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        user_id: &str,
+        client_id: &str,
+    ) -> Result<Option<Consent>, Oauth2SessionProviderError>;
+
+    /// List the remembered consents of a user.
+    async fn list_consents_by_user(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        user_id: &str,
+    ) -> Result<Vec<Consent>, Oauth2SessionProviderError>;
+
+    /// Delete a remembered consent; `false` when there was none.
+    async fn delete_consent(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        user_id: &str,
+        client_id: &str,
+    ) -> Result<bool, Oauth2SessionProviderError>;
+
+    /// Delete every consent of the user in any domain; returns how many.
+    async fn delete_consents_by_user(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError>;
+
+    /// Delete every consent within the domain; returns how many.
+    async fn delete_consents_by_domain(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError>;
+
+    /// Delete every consent given to the client; returns how many.
+    async fn delete_consents_by_client(
+        &self,
+        state: &ServiceState,
+        client_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError>;
+
     /// Remember the upstream redirect (`idp_id`, `upstream_state`).
     async fn begin_pre_auth_session_upstream(
         &self,
