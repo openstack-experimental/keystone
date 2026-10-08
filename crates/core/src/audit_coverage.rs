@@ -163,6 +163,30 @@ const ALLOW_LIST: &[(&str, &str, &str)] = &[
         "janitor housekeeping of expired sessions",
     ),
     (
+        "oauth2_session",
+        "create_sso_session",
+        "bookkeeping of the browser session started by an OP sign-in, which \
+         is audited itself",
+    ),
+    (
+        "oauth2_session",
+        "delete_sso_session",
+        "ends a browser session: audited by the OAuth2 handlers (RP-initiated \
+         logout event); also replaces a previous session at sign-in",
+    ),
+    (
+        "oauth2_session",
+        "delete_sso_sessions_by_user",
+        "called by the OAuth2 session lifecycle hook after the audited user \
+         disable, delete or password change",
+    ),
+    (
+        "oauth2_session",
+        "delete_sso_sessions_by_domain",
+        "called by the OAuth2 session lifecycle hook after the audited domain \
+         disable or delete",
+    ),
+    (
         "oauth2_key",
         "ensure_domain_keys",
         "idempotent first-use provisioning triggered by the domain-creation \

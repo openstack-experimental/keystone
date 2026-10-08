@@ -482,14 +482,15 @@ pub(super) async fn authorize_federated_callback(
     );
 
     let client = fetch_client(&state, &session.client_id).await;
-    Ok(after_authentication(
+    let response = after_authentication(
         &state,
         &domain_id,
         &session,
         client.as_ref(),
         &correlation_id.0,
     )
-    .await)
+    .await;
+    Ok(super::sso::attach(&state, &headers, &jar, &session, response).await)
 }
 
 #[cfg(test)]
@@ -511,7 +512,7 @@ mod tests {
     };
     use openstack_keystone_core_types::federation::AuthState;
     use openstack_keystone_core_types::oauth2_client as client_types;
-    use openstack_keystone_core_types::oauth2_session::PendingUpstream;
+    use openstack_keystone_core_types::oauth2_session::{PendingUpstream, SsoSession};
 
     use super::super::authorize::compute_csrf_token;
     use super::super::openapi_router;
@@ -539,6 +540,7 @@ mod tests {
 
     fn client() -> client_types::OAuth2ClientResource {
         client_types::OAuth2ClientResource {
+            post_logout_redirect_uris: Default::default(),
             client_id: "client-1".into(),
             provider_id: "provider-1".into(),
             domain_id: "domain-1".into(),
@@ -1051,6 +1053,22 @@ mod tests {
         });
 
         let mut sessions = sessions_returning(session(Some(("idp-1", "state-1"))));
+        sessions
+            .expect_create_sso_session()
+            .times(1)
+            .withf(|_, req| req.user_id == "shadow-user" && req.amr == ["federated"])
+            .returning(|_, req| {
+                Ok(SsoSession {
+                    sso_id: "sso-new".into(),
+                    domain_id: req.domain_id,
+                    user_id: req.user_id,
+                    auth_time: req.auth_time,
+                    amr: req.amr,
+                    upstream: req.upstream,
+                    created_at: 0,
+                    expires_at: i64::MAX,
+                })
+            });
         sessions
             .expect_complete_upstream_login()
             .withf(|_, session_id, completion| {

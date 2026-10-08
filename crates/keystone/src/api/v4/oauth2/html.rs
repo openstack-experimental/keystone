@@ -24,8 +24,8 @@ use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
 use super::renderer::{
-    ClientView, ConsentCtx, DeviceEntryCtx, DeviceResultCtx, ErrorCtx, LoginCtx, MfaCtx, renderer,
-    show_client_logos,
+    ClientView, ConsentCtx, DeviceEntryCtx, DeviceResultCtx, ErrorCtx, LoginCtx, LogoutCtx, MfaCtx,
+    renderer, show_client_logos,
 };
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
@@ -76,6 +76,10 @@ pub(super) fn view_of(client: Option<&OAuth2ClientResource>, client_id: &str) ->
 
 pub(super) fn login_page(ctx: &LoginCtx) -> Response {
     page(renderer().render_login(ctx))
+}
+
+pub(super) fn logout_page(ctx: &LogoutCtx) -> Response {
+    page(renderer().render_logout(ctx))
 }
 
 pub(super) fn mfa_page(ctx: &MfaCtx) -> Response {

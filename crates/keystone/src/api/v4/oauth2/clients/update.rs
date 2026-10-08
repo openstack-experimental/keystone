@@ -133,6 +133,7 @@ mod tests {
 
     fn sample_resource() -> provider_types::OAuth2ClientResource {
         provider_types::OAuth2ClientResource {
+            post_logout_redirect_uris: Default::default(),
             client_id: "client-1".into(),
             provider_id: "provider-1".into(),
             domain_id: "domain_id".into(),

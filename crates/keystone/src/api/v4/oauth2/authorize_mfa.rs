@@ -225,12 +225,13 @@ pub(super) async fn authorize_mfa(
     );
 
     let client = fetch_client(&state, &session.client_id).await;
-    Ok(after_authentication(
+    let response = after_authentication(
         &state,
         &domain_id,
         &session,
         client.as_ref(),
         &correlation_id.0,
     )
-    .await)
+    .await;
+    Ok(super::sso::attach(&state, &headers, &jar, &session, response).await)
 }

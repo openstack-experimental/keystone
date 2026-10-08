@@ -84,6 +84,46 @@ pub(super) struct AuthorizeQuery {
     /// anything else is ignored.
     #[serde(default)]
     idp_hint: Option<String>,
+    /// Maximum authentication age in seconds (OIDC Core §3.1.2.1).
+    #[serde(default)]
+    max_age: Option<String>,
+    /// Space-separated `none`, `login`, `consent`, `select_account`.
+    #[serde(default)]
+    prompt: Option<String>,
+    /// Prefills the username field of the login form.
+    #[serde(default)]
+    login_hint: Option<String>,
+}
+
+/// The parsed `prompt` request parameter (OIDC Core §3.1.2.1).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct Prompt {
+    pub(super) none: bool,
+    pub(super) login: bool,
+    pub(super) select_account: bool,
+}
+
+/// Parse `prompt`. `none` must not be combined with any other value; an
+/// unknown value is an error.
+pub(super) fn parse_prompt(raw: Option<&str>) -> Result<Prompt, &'static str> {
+    let mut prompt = Prompt::default();
+    let mut count = 0;
+    for value in raw.unwrap_or_default().split_whitespace() {
+        count += 1;
+        match value {
+            "none" => prompt.none = true,
+            "login" => prompt.login = true,
+            "select_account" => prompt.select_account = true,
+            // Consent is always asked unless the client is `pre_authorized`
+            // (an operator decision), so this value is satisfied by default.
+            "consent" => {}
+            _ => return Err("unsupported prompt value"),
+        }
+    }
+    if prompt.none && count > 1 {
+        return Err("prompt=none must not be combined with other values");
+    }
+    Ok(prompt)
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -102,7 +142,7 @@ pub(super) struct ConsentForm {
 /// Append query parameters to `redirect_uri` and return a
 /// security-headers-wrapped 303 See Other. Empty values are omitted (e.g. an
 /// absent `state`).
-fn redirect_with_params(redirect_uri: &str, pairs: &[(&str, &str)]) -> Response {
+pub(super) fn redirect_with_params(redirect_uri: &str, pairs: &[(&str, &str)]) -> Response {
     let Ok(mut url) = url::Url::parse(redirect_uri) else {
         return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
     };
@@ -175,6 +215,18 @@ pub(super) fn render_login(
     error: Option<&str>,
     idps: Vec<IdpView>,
 ) -> Response {
+    render_login_hinted(domain_id, session, client, error, idps, None)
+}
+
+/// [`render_login`] with the RP's `login_hint` prefilled into the username.
+fn render_login_hinted(
+    domain_id: &str,
+    session: &PreAuthSession,
+    client: &ClientView,
+    error: Option<&str>,
+    idps: Vec<IdpView>,
+    login_hint: Option<&str>,
+) -> Response {
     let Some(csrf_token) = compute_csrf_token(session) else {
         return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
     };
@@ -185,6 +237,9 @@ pub(super) fn render_login(
         action: format!("/v4/oauth2/{domain_id}/authorize/login"),
         idps,
         federated_action: format!("/v4/oauth2/{domain_id}/authorize/federated"),
+        login_hint: login_hint
+            .filter(|h| !h.is_empty())
+            .map(|h| h.chars().take(256).collect()),
     })
 }
 
@@ -248,6 +303,7 @@ pub(super) async fn authorize(
     headers: HeaderMap,
     PeerAddr(peer_addr): PeerAddr,
     correlation_id: CorrelationId,
+    jar: CookieJar,
     Query(query): Query<AuthorizeQuery>,
 ) -> Result<Response, std::convert::Infallible> {
     if let Err(retry_after) = state
@@ -383,6 +439,60 @@ pub(super) async fn authorize(
         }
     }
 
+    let prompt = match parse_prompt(query.prompt.as_deref()) {
+        Ok(p) => p,
+        Err(message) => {
+            return Ok(redirect_with_error(
+                &redirect_uri,
+                &state_param,
+                "invalid_request",
+                message,
+            ));
+        }
+    };
+    let max_age = match query.max_age.as_deref().map(str::parse::<i64>) {
+        None => None,
+        Some(Ok(n)) if n >= 0 => Some(n),
+        Some(_) => {
+            return Ok(redirect_with_error(
+                &redirect_uri,
+                &state_param,
+                "invalid_request",
+                "max_age must be a non-negative integer",
+            ));
+        }
+    };
+
+    // An existing SSO session is reused unless the request forces a fresh
+    // login (`prompt=login|select_account`, or `max_age` older than the
+    // login; `max_age=0` always forces one).
+    let now = chrono::Utc::now().timestamp();
+    let sso = super::sso::current(&state, &jar, &domain_id).await;
+    let force_login = prompt.login
+        || prompt.select_account
+        || max_age.is_some_and(|m| m == 0 || sso.as_ref().is_some_and(|s| now - s.auth_time > m));
+    let sso = sso.filter(|_| !force_login);
+    if prompt.none {
+        // Never render HTML: either the request is satisfiable silently or
+        // it is answered with an error redirect, and no cookie is set.
+        if sso.is_none() {
+            return Ok(redirect_with_error(
+                &redirect_uri,
+                &state_param,
+                "login_required",
+                "the user is not signed in",
+            ));
+        }
+        if !client.pre_authorized {
+            return Ok(redirect_with_error(
+                &redirect_uri,
+                &state_param,
+                "consent_required",
+                "the user has not consented to this client",
+            ));
+        }
+    }
+
     let session = match state
         .provider
         .get_oauth2_session_provider()
@@ -421,6 +531,46 @@ pub(super) async fn authorize(
         None,
     );
 
+    if let Some(sso) = sso {
+        let session = match state
+            .provider
+            .get_oauth2_session_provider()
+            .mark_authenticated_by_sso(&state, &session.session_id, &sso)
+            .await
+        {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(error = %e, "oauth2 pre-auth session update failed");
+                return Ok(error_page(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal error",
+                ));
+            }
+        };
+        emit_oauth2_session_event(
+            &state.audit_dispatcher,
+            &correlation_id.0,
+            "authenticate",
+            build_initiator_from_user_id(&sso.user_id, &domain_id),
+            &session.client_id,
+            Outcome::Success,
+            None,
+        );
+        let response = after_authentication(
+            &state,
+            &domain_id,
+            &session,
+            Some(&client),
+            &correlation_id.0,
+        )
+        .await;
+        let jar = CookieJar::new().add(session_cookie(
+            session.session_id.clone(),
+            cookie_secure(&state, &headers).await,
+        ));
+        return Ok((jar, response).into_response());
+    }
+
     let jar = CookieJar::new().add(session_cookie(
         session.session_id.clone(),
         cookie_secure(&state, &headers).await,
@@ -450,7 +600,14 @@ pub(super) async fn authorize(
         };
         return Ok((jar, response).into_response());
     }
-    let response = render_login(&domain_id, &session, &client_ui, None, idp_views(&idps));
+    let response = render_login_hinted(
+        &domain_id,
+        &session,
+        &client_ui,
+        None,
+        idp_views(&idps),
+        query.login_hint.as_deref(),
+    );
     Ok((jar, response).into_response())
 }
 
@@ -647,14 +804,15 @@ pub(super) async fn authorize_login(
         None,
     );
 
-    Ok(after_authentication(
+    let response = after_authentication(
         &state,
         &domain_id,
         &session,
         client.as_ref(),
         &correlation_id.0,
     )
-    .await)
+    .await;
+    Ok(super::sso::attach(&state, &headers, &jar, &session, response).await)
 }
 
 /// Everything after a completed login (password and any second factor):
@@ -872,6 +1030,7 @@ mod tests {
 
     fn authz_client() -> provider_types::OAuth2ClientResource {
         provider_types::OAuth2ClientResource {
+            post_logout_redirect_uris: Default::default(),
             client_id: "client-1".into(),
             provider_id: "provider-1".into(),
             domain_id: "domain-1".into(),

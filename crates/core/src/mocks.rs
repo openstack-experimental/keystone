@@ -361,13 +361,13 @@ mod oauth2_session {
 
     use openstack_keystone_core_types::oauth2_session::{
         AuthorizationCode, DeviceCodeGrant, PreAuthSession, RefreshToken,
-        RefreshTokenRevocationReason, UpstreamLoginCompletion,
+        RefreshTokenRevocationReason, SsoSession, UpstreamLoginCompletion,
     };
 
     use crate::oauth2_session::provider_api::{
-        DeviceAuthorizationStart, DevicePollOutcome, IssueAuthorizationCodeRequest,
-        IssueRefreshTokenRequest, RefreshTokenRedemption, StartDeviceAuthorizationRequest,
-        StartPreAuthSessionRequest,
+        CreateSsoSessionRequest, DeviceAuthorizationStart, DevicePollOutcome,
+        IssueAuthorizationCodeRequest, IssueRefreshTokenRequest, RefreshTokenRedemption,
+        StartDeviceAuthorizationRequest, StartPreAuthSessionRequest,
     };
     use crate::oauth2_session::{Oauth2SessionApi, Oauth2SessionProviderError};
 
@@ -395,6 +395,43 @@ mod oauth2_session {
                 user_id: &str,
                 auth_time: i64,
                 amr: Vec<String>,
+            ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
+
+            async fn create_sso_session(
+                &self,
+                state: &ServiceState,
+                req: CreateSsoSessionRequest,
+            ) -> Result<SsoSession, Oauth2SessionProviderError>;
+
+            async fn get_sso_session(
+                &self,
+                state: &ServiceState,
+                sso_id: &str,
+            ) -> Result<Option<SsoSession>, Oauth2SessionProviderError>;
+
+            async fn delete_sso_session(
+                &self,
+                state: &ServiceState,
+                sso_id: &str,
+            ) -> Result<(), Oauth2SessionProviderError>;
+
+            async fn delete_sso_sessions_by_user(
+                &self,
+                state: &ServiceState,
+                user_id: &str,
+            ) -> Result<usize, Oauth2SessionProviderError>;
+
+            async fn delete_sso_sessions_by_domain(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+            ) -> Result<usize, Oauth2SessionProviderError>;
+
+            async fn mark_authenticated_by_sso(
+                &self,
+                state: &ServiceState,
+                session_id: &str,
+                sso: &SsoSession,
             ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
 
             async fn begin_upstream_login(

@@ -67,6 +67,7 @@ impl From<api::OAuth2ClientCreateRequest> for core::OAuth2ClientResourceCreate {
             policy_uri: c.policy_uri,
             tos_uri: c.tos_uri,
             contacts: c.contacts,
+            post_logout_redirect_uris: c.post_logout_redirect_uris,
         }
     }
 }
@@ -95,6 +96,7 @@ impl From<api::OAuth2ClientUpdate> for core::OAuth2ClientResourceUpdate {
             policy_uri: value.policy_uri,
             tos_uri: value.tos_uri,
             contacts: value.contacts,
+            post_logout_redirect_uris: value.post_logout_redirect_uris,
         }
     }
 }
@@ -124,6 +126,7 @@ impl From<core::OAuth2ClientResource> for api::OAuth2Client {
             policy_uri: value.policy_uri,
             tos_uri: value.tos_uri,
             contacts: value.contacts,
+            post_logout_redirect_uris: value.post_logout_redirect_uris,
         }
     }
 }

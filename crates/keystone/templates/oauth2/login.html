@@ -19,7 +19,7 @@
 <form method="post" action="{{ action }}">
 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 <label for="username">{{ t("username") }}</label>
-<input id="username" type="text" name="username" autocomplete="username" autofocus required>
+<input id="username" type="text" name="username" autocomplete="username" {% if login_hint %}value="{{ login_hint }}"{% else %}autofocus{% endif %} required>
 <label for="password">{{ t("password") }}</label>
 <input id="password" type="password" name="password" autocomplete="current-password" required>
 <button type="submit">{{ t("sign_in") }}</button>
