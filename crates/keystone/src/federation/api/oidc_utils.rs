@@ -339,19 +339,15 @@ pub(super) fn build_http_client() -> Result<reqwest::Client, OidcError> {
         .map_err(OidcError::from)
 }
 
+/// Signing key and helpers shared by the federation and OAuth2 OP tests.
 #[cfg(test)]
-mod tests {
-    use secrecy::ExposeSecret;
-
-    use super::*;
-    use chrono::{TimeDelta, Utc};
-    use httpmock::prelude::*;
-    use jsonwebtoken::{Algorithm, EncodingKey, Header as JwtHeader, encode, jwk::JwkSet};
+pub(crate) mod fixtures {
+    use jsonwebtoken::{Algorithm, EncodingKey, Header as JwtHeader, encode};
     use serde_json::json;
 
     // RSA-2048 test key pair (PKCS#8 PEM + corresponding JWK n/e).
     // Generated offline with openssl and verified against jsonwebtoken.
-    const TEST_RSA_PRIVATE_KEY: &str = "-----BEGIN PRIVATE KEY-----\n\
+    pub(crate) const TEST_RSA_PRIVATE_KEY: &str = "-----BEGIN PRIVATE KEY-----\n\
 MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCV6tfl03xepqw6\n\
 7fphuiONQC1PI1r3po83jDOoX3fhdp7zUQa6m8pueK5tJK+y/iwwK0ok9bRQl5OF\n\
 R08myyW6fPbz9sw2JUNyLfSmAht4dzj+m0FOITMbURCu0mpgDI8ciqcQVuKK4EDT\n\
@@ -382,22 +378,22 @@ w61t8gqclj1jTxn4LURp0Q==\n\
 
     // Base64urlUInt-encoded RSA modulus (n) for the key above — 256 raw bytes,
     // no leading zero.
-    const TEST_JWK_N: &str = "lerX5dN8XqasOu36YbojjUAtTyNa96aPN4wzqF934Xae81EGupvKbniubSSvsv4s\
+    pub(crate) const TEST_JWK_N: &str = "lerX5dN8XqasOu36YbojjUAtTyNa96aPN4wzqF934Xae81EGupvKbniubSSvsv4s\
 MCtKJPW0UJeThUdPJsslunz28_bMNiVDci30pgIbeHc4_ptBTiEzG1EQrtJqYAyP\
 HIqnEFbiiuBA0xQWvKfv_aX-UTkCoHsGyZ04wCXA3DjpC45j8lHxJJ2wrEbky3rF\
 UW_vjy1f7ws-7t57zBtf_TWDx9gcTO6AcXHV97UETbXI3HQJJLOc2VEIyy58uFII\
 nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
 1UlOP82zRTtxvIa9ckn9Tw";
 
-    const TEST_JWK_E: &str = "AQAB";
-    const TEST_KID: &str = "test-kid";
+    pub(crate) const TEST_JWK_E: &str = "AQAB";
+    pub(crate) const TEST_KID: &str = "test-kid";
 
-    fn rsa_encoding_key() -> EncodingKey {
+    pub(crate) fn rsa_encoding_key() -> EncodingKey {
         EncodingKey::from_rsa_pem(TEST_RSA_PRIVATE_KEY.as_bytes())
             .expect("hard-coded test RSA private key must parse")
     }
 
-    fn rsa_jwk(kid: &str) -> jsonwebtoken::jwk::Jwk {
+    pub(crate) fn rsa_jwk(kid: &str) -> jsonwebtoken::jwk::Jwk {
         serde_json::from_value(json!({
             "kty": "RSA",
             "use": "sig",
@@ -409,11 +405,23 @@ nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
         .expect("hard-coded test JWK must deserialize")
     }
 
-    fn make_jwt(claims: &serde_json::Value, kid: Option<&str>) -> String {
+    pub(crate) fn make_jwt(claims: &serde_json::Value, kid: Option<&str>) -> String {
         let mut header = JwtHeader::new(Algorithm::RS256);
         header.kid = kid.map(str::to_owned);
         encode(&header, claims, &rsa_encoding_key()).expect("test JWT must encode")
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use secrecy::ExposeSecret;
+
+    use super::fixtures::*;
+    use super::*;
+    use chrono::{TimeDelta, Utc};
+    use httpmock::prelude::*;
+    use jsonwebtoken::{EncodingKey, Header as JwtHeader, encode, jwk::JwkSet};
+    use serde_json::json;
 
     fn valid_claims(iss: &str, aud: &str, nonce: Option<&str>) -> serde_json::Value {
         let exp = (Utc::now() + TimeDelta::hours(1)).timestamp();

@@ -28,7 +28,8 @@ use crate::api::error::KeystoneApiError;
 use crate::federation::{api::error::OidcError, api::types::*};
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
-use openstack_keystone_core_types::federation::AuthState;
+use openstack_keystone_core_types::federation::{AuthState, IdentityProvider};
+use openstack_keystone_core_types::scope::Scope;
 
 use super::oidc_utils::{
     build_auth_url, build_http_client, discover, generate_pkce, generate_random_token,
@@ -103,6 +104,38 @@ pub async fn post(
             })
         })??;
 
+    let started =
+        begin_upstream_auth(&state, idp, &req.redirect_uri, req.scope.map(Into::into)).await?;
+
+    debug!("Initiated OIDC auth, auth_url: {:?}", started.auth_url);
+    Ok((
+        StatusCode::OK,
+        Json(IdentityProviderAuthResponse {
+            auth_url: started.auth_url,
+        }),
+    )
+        .into_response())
+}
+
+/// The redirect to the upstream IdP and the `state` that identifies the
+/// stored [`AuthState`].
+pub(crate) struct UpstreamAuthStart {
+    /// URL the browser has to be sent to.
+    pub auth_url: String,
+    /// The `state` sent upstream (primary key of the stored auth state).
+    pub state: String,
+}
+
+/// Validate `idp`, run discovery and store the auth state for an OIDC
+/// authorization request that returns to `redirect_uri`.
+///
+/// Shared by the v4 federation API and the OAuth2 OP login page.
+pub(crate) async fn begin_upstream_auth(
+    state: &ServiceState,
+    idp: IdentityProvider,
+    redirect_uri: &str,
+    scope: Option<Scope>,
+) -> Result<UpstreamAuthStart, KeystoneApiError> {
     if idp.default_mapping_name.is_none() {
         return Err(OidcError::MappingRequired.into());
     }
@@ -125,7 +158,7 @@ pub async fn post(
     // Validate redirect URI against the IDP's allowed_redirect_uris list.
     if let Some(allowed) = &idp.allowed_redirect_uris
         && !allowed.is_empty()
-        && !allowed.contains(&req.redirect_uri)
+        && !allowed.iter().any(|u| u == redirect_uri)
     {
         return Err(OidcError::RedirectUriNotAllowed.into());
     }
@@ -150,7 +183,7 @@ pub async fn post(
     let auth_url = build_auth_url(
         &metadata.authorization_endpoint,
         client_id,
-        &req.redirect_uri,
+        redirect_uri,
         &oidc_scopes,
         &csrf_token,
         &nonce,
@@ -161,26 +194,22 @@ pub async fn post(
         .provider
         .get_federation_provider()
         .create_auth_state(
-            &ExecutionContext::internal(&state),
+            &ExecutionContext::internal(state),
             AuthState {
                 state: csrf_token.clone(),
                 nonce: nonce.clone(),
                 idp_id: idp.id.clone(),
-                redirect_uri: req.redirect_uri.clone(),
+                redirect_uri: redirect_uri.to_string(),
                 pkce_verifier: pkce.verifier,
                 expires_at: (Local::now() + TimeDelta::seconds(180)).into(),
                 // TODO: Make this configurable
-                scope: req.scope.map(Into::into),
+                scope,
             },
         )
         .await?;
 
-    debug!("Initiated OIDC auth, auth_url: {:?}", auth_url,);
-    Ok((
-        StatusCode::OK,
-        Json(IdentityProviderAuthResponse {
-            auth_url: auth_url.to_string(),
-        }),
-    )
-        .into_response())
+    Ok(UpstreamAuthStart {
+        auth_url: auth_url.to_string(),
+        state: csrf_token,
+    })
 }

@@ -73,6 +73,34 @@ and refresh tokens carry `amr` of `["pwd", "otp", "mfa"]` instead of `["pwd"]`.
 If the credential lookup fails the login is refused (fail closed). WebAuthn is
 not offered on the OP login pages yet.
 
+## Signing in through an upstream identity provider
+
+If the domain has federation identity providers
+(`/v4/federation/identity_providers`) the login page shows one "Sign in with
+`<name>`" button per provider next to the password form. A provider is offered
+only when it is enabled, belongs to the domain (global providers are not
+offered), has an OIDC discovery URL and a default mapping, and `openid` is in
+`[auth] methods`. `GET /authorize?...&idp_hint=<idp id>` skips the chooser and
+sends the browser straight to that provider; an `idp_hint` that is not one of
+those providers is ignored.
+
+The browser returns to
+`<public_endpoint>/v4/oauth2/<domain_id>/authorize/federated/callback`. Add
+that URL to the provider's `allowed_redirect_uris` when the provider restricts
+them. The upstream ID token is verified exactly as for
+`/v4/federation/oidc/callback`, the user is resolved (or shadowed) through the
+mapping engine, and the login continues to consent. Federated users skip the
+local TOTP step: the upstream provider is responsible for strong
+authentication. The `amr` of the issued tokens is the upstream `amr` claim when
+it is a short list, otherwise `["federated"]`. The provider id and the upstream
+`sid` claim are stored with the session, the authorization code and the refresh
+token family, so logout can later chain to the upstream session.
+
+Not covered yet: federated sign-in on the device-code verification page, and
+re-checking expiring group membership
+([ADR 0013](../../adr/0013-federation-oidc-expiring-group-membership.md)) at
+refresh-token rotation (the OP issues no group or role claims today).
+
 ## Customising the login pages
 
 The browser pages of the authorization-code and device flows are rendered

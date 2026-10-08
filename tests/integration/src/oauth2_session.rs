@@ -132,6 +132,7 @@ async fn test_authorization_code_flow_and_refresh_reuse_collapses_family() -> Re
         .issue_authorization_code(
             &state,
             IssueAuthorizationCodeRequest {
+                upstream: None,
                 domain_id: domain.id.clone(),
                 client_id: session.client_id.clone(),
                 user_id: uid.clone(),
@@ -168,6 +169,7 @@ async fn test_authorization_code_flow_and_refresh_reuse_collapses_family() -> Re
         .issue_refresh_token(
             &state,
             IssueRefreshTokenRequest {
+                upstream: None,
                 amr: Vec::new(),
                 domain_id: domain.id.clone(),
                 client_id: "client-1".to_string(),
@@ -250,6 +252,7 @@ async fn test_foreign_presentation_does_not_spend_refresh_token() -> Result<()> 
         .issue_refresh_token(
             &state,
             IssueRefreshTokenRequest {
+                upstream: None,
                 amr: Vec::new(),
                 domain_id: domain.id.clone(),
                 client_id: "client-1".to_string(),
@@ -323,6 +326,7 @@ async fn test_client_delete_revokes_refresh_families() -> Result<()> {
         .issue_refresh_token(
             &state,
             IssueRefreshTokenRequest {
+                upstream: None,
                 amr: Vec::new(),
                 domain_id: domain.id.clone(),
                 client_id: client.client_id.clone(),
@@ -493,6 +497,7 @@ async fn test_user_disable_revokes_refresh_families() -> Result<()> {
         .issue_refresh_token(
             &state,
             IssueRefreshTokenRequest {
+                upstream: None,
                 amr: Vec::new(),
                 domain_id: domain.id.clone(),
                 client_id: "client-1".to_string(),
@@ -561,6 +566,7 @@ async fn test_domain_disable_revokes_refresh_families() -> Result<()> {
 
     let session_provider = state.provider.get_oauth2_session_provider();
     let issue = |domain_id: String| IssueRefreshTokenRequest {
+        upstream: None,
         amr: Vec::new(),
         domain_id,
         client_id: "client-1".to_string(),

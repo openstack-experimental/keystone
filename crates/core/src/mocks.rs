@@ -361,7 +361,7 @@ mod oauth2_session {
 
     use openstack_keystone_core_types::oauth2_session::{
         AuthorizationCode, DeviceCodeGrant, PreAuthSession, RefreshToken,
-        RefreshTokenRevocationReason,
+        RefreshTokenRevocationReason, UpstreamLoginCompletion,
     };
 
     use crate::oauth2_session::provider_api::{
@@ -395,6 +395,21 @@ mod oauth2_session {
                 user_id: &str,
                 auth_time: i64,
                 amr: Vec<String>,
+            ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
+
+            async fn begin_upstream_login(
+                &self,
+                state: &ServiceState,
+                session_id: &str,
+                idp_id: &str,
+                upstream_state: &str,
+            ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
+
+            async fn complete_upstream_login(
+                &self,
+                state: &ServiceState,
+                session_id: &str,
+                completion: UpstreamLoginCompletion,
             ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
 
             async fn begin_mfa(

@@ -17,6 +17,7 @@ use async_trait::async_trait;
 
 use openstack_keystone_core_types::oauth2_session::{
     AuthorizationCode, DeviceCodeGrant, PreAuthSession, RefreshToken, RefreshTokenRevocationReason,
+    UpstreamLogin, UpstreamLoginCompletion,
 };
 
 use crate::keystone::ServiceState;
@@ -69,6 +70,8 @@ pub struct IssueAuthorizationCodeRequest {
     pub auth_time: i64,
     /// Authentication methods references.
     pub amr: Vec<String>,
+    /// Upstream login the session came from (federated sign-in only).
+    pub upstream: Option<UpstreamLogin>,
 }
 
 /// Input to [`Oauth2SessionApi::issue_refresh_token`] (family root) --
@@ -85,6 +88,8 @@ pub struct IssueRefreshTokenRequest {
     pub scope: Vec<String>,
     /// Authentication methods references of the originating login.
     pub amr: Vec<String>,
+    /// Upstream login the family came from (federated sign-in only).
+    pub upstream: Option<UpstreamLogin>,
 }
 
 /// Outcome of [`Oauth2SessionApi::redeem_refresh_token`] (ADR 0026 §9).
@@ -207,6 +212,29 @@ pub trait Oauth2SessionApi: Send + Sync {
         session_id: &str,
         user_id: &str,
         factors: Vec<String>,
+    ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
+
+    /// The browser is about to be sent to the upstream IdP `idp_id` with
+    /// `upstream_state`: remember both so the callback can be bound to this
+    /// session. Overwrites an earlier pending redirect.
+    async fn begin_upstream_login(
+        &self,
+        state: &ServiceState,
+        session_id: &str,
+        idp_id: &str,
+        upstream_state: &str,
+    ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
+
+    /// The upstream IdP vouched for `user_id`: stamp the session like
+    /// [`Self::mark_authenticated`] and record the `upstream` login. Fails
+    /// with `NotFound` unless the session is waiting on exactly
+    /// `upstream.idp_id` with `completion.upstream_state`; the pending redirect is
+    /// consumed, so a replayed callback cannot complete a second time.
+    async fn complete_upstream_login(
+        &self,
+        state: &ServiceState,
+        session_id: &str,
+        completion: UpstreamLoginCompletion,
     ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
 
     /// Count a failed second-factor attempt; returns the updated session.

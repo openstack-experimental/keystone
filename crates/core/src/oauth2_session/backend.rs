@@ -53,6 +53,24 @@ pub trait Oauth2SessionBackend: Send + Sync {
         amr: Vec<String>,
     ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
 
+    /// Remember the upstream redirect (`idp_id`, `upstream_state`).
+    async fn begin_pre_auth_session_upstream(
+        &self,
+        state: &ServiceState,
+        session_id: &str,
+        idp_id: &str,
+        upstream_state: &str,
+    ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
+
+    /// Complete a federated login: verify the pending redirect matches,
+    /// consume it, and stamp the session.
+    async fn complete_pre_auth_session_upstream(
+        &self,
+        state: &ServiceState,
+        session_id: &str,
+        completion: UpstreamLoginCompletion,
+    ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
+
     /// Record that `user_id` passed the password step and `factors` are
     /// still outstanding. `user_id` on the session stays unset.
     async fn begin_pre_auth_session_mfa(
