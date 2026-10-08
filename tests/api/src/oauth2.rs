@@ -47,6 +47,7 @@ pub async fn register_client(
     #[derive(Serialize)]
     struct CreatePayload {
         provider_id: String,
+        name: String,
         confidential: bool,
         grant_types: Vec<GrantType>,
         allowed_scopes: Vec<String>,
@@ -73,6 +74,7 @@ pub async fn register_client(
         .json(&CreateBody {
             oauth2_client: CreatePayload {
                 provider_id: provider_id.to_string(),
+                name: format!("API test client {provider_id}"),
                 confidential,
                 grant_types,
                 allowed_scopes,

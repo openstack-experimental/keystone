@@ -41,7 +41,8 @@ use openstack_keystone_core_types::identity::{
 use openstack_keystone_core_types::oauth2_session::DeviceCodeGrant;
 
 use super::html::{
-    consent_page, device_entry_page, device_result_page, error_page, login_page, too_many_requests,
+    client_view, consent_page, device_entry_page, device_result_page, error_page, login_page,
+    too_many_requests,
 };
 use super::renderer::{ClientView, ConsentCtx, DeviceEntryCtx, DeviceResultCtx, LoginCtx};
 use crate::api::common::PeerAddr;
@@ -113,7 +114,7 @@ fn render_entry(domain_id: &str, error: Option<&str>, prefill: &str) -> Response
 
 fn render_login(
     domain_id: &str,
-    client_id: &str,
+    client: &ClientView,
     grant: &DeviceCodeGrant,
     error: Option<&str>,
 ) -> Response {
@@ -121,46 +122,30 @@ fn render_login(
         return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
     };
     login_page(&LoginCtx {
-        client: ClientView::from_id(client_id),
+        client: client.clone(),
         csrf_token,
         error: error.map(str::to_string),
         action: format!("/v4/oauth2/{domain_id}/device/login"),
     })
 }
 
-fn render_consent(domain_id: &str, client_id: &str, grant: &DeviceCodeGrant) -> Response {
+fn render_consent(domain_id: &str, client: &ClientView, grant: &DeviceCodeGrant) -> Response {
     let Some(csrf_token) = compute_csrf_token(grant) else {
         return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
     };
     consent_page(&ConsentCtx {
-        client: ClientView::from_id(client_id),
+        client: client.clone(),
         scopes: grant.scope.clone(),
         csrf_token,
         action: format!("/v4/oauth2/{domain_id}/device/consent"),
     })
 }
 
-fn render_result(granted: bool, client_id: &str) -> Response {
+fn render_result(granted: bool, client: &ClientView) -> Response {
     device_result_page(&DeviceResultCtx {
         granted,
-        client: ClientView::from_id(client_id),
+        client: client.clone(),
     })
-}
-
-async fn client_id_for_display(state: &ServiceState, client_id: &str) -> String {
-    // Best-effort display only (the actual grant is already bound to
-    // `client_id` in storage); a lookup failure just falls back to the raw
-    // ID rather than failing the whole page render.
-    let exec = ExecutionContext::internal(state);
-    state
-        .provider
-        .get_oauth2_client_provider()
-        .get_by_client_id(&exec, client_id)
-        .await
-        .ok()
-        .flatten()
-        .map(|c| c.client_id)
-        .unwrap_or_else(|| client_id.to_string())
 }
 
 /// `GET /v4/oauth2/{domain_id}/device` (RFC 8628 §3.3). Renders the
@@ -255,12 +240,12 @@ pub(super) async fn device_login_code(
         }
     };
 
-    let client_id = client_id_for_display(&state, &grant.client_id).await;
+    let client = client_view(&state, &grant.client_id).await;
     let jar = jar.add(device_cookie(
         grant.device_code.clone(),
         cookie_secure(&state, &headers).await,
     ));
-    let response = render_login(&domain_id, &client_id, &grant, None);
+    let response = render_login(&domain_id, &client, &grant, None);
     Ok((jar, response).into_response())
 }
 
@@ -340,7 +325,7 @@ pub(super) async fn device_login(
         ));
     }
 
-    let client_id = client_id_for_display(&state, &grant.client_id).await;
+    let client = client_view(&state, &grant.client_id).await;
 
     let auth_req = match UserPasswordAuthRequestBuilder::default()
         .name(form.username.clone())
@@ -355,7 +340,7 @@ pub(super) async fn device_login(
         Err(_) => {
             return Ok(render_login(
                 &domain_id,
-                &client_id,
+                &client,
                 &grant,
                 Some("invalid username or password"),
             ));
@@ -383,7 +368,7 @@ pub(super) async fn device_login(
             );
             return Ok(render_login(
                 &domain_id,
-                &client_id,
+                &client,
                 &grant,
                 Some("invalid username or password"),
             ));
@@ -429,18 +414,18 @@ pub(super) async fn device_login(
     // `authorize.rs`): a `pre_authorized` client can never carry
     // `openstack:api` in `allowed_scopes` (enforced at CRUD time), so
     // skipping consent here cannot silently grant OpenStack authorization.
-    let client = state
+    let client_res = state
         .provider
         .get_oauth2_client_provider()
         .get_by_client_id(&exec, &grant.client_id)
         .await
         .ok()
         .flatten();
-    if client.as_ref().is_some_and(|c| c.pre_authorized) {
+    if client_res.as_ref().is_some_and(|c| c.pre_authorized) {
         return Ok(finish_decision(&state, &grant, true, &correlation_id.0).await);
     }
 
-    Ok(render_consent(&domain_id, &client_id, &grant))
+    Ok(render_consent(&domain_id, &client, &grant))
 }
 
 /// `POST /v4/oauth2/{domain_id}/device/consent`.
@@ -526,7 +511,7 @@ async fn finish_decision(
     granted: bool,
     correlation_id: &str,
 ) -> Response {
-    let client_id = client_id_for_display(state, &grant.client_id).await;
+    let client = client_view(state, &grant.client_id).await;
     match state
         .provider
         .get_oauth2_session_provider()
@@ -552,7 +537,7 @@ async fn finish_decision(
                 },
                 (!granted).then(|| OutcomeReason::literal("ConsentDenied")),
             );
-            render_result(granted, &client_id)
+            render_result(granted, &client)
         }
         Err(e) => {
             tracing::warn!(error = %e, "oauth2 device code grant decision update failed");

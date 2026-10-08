@@ -2,7 +2,19 @@
 {% block title %}{{ t("authorize_application") }}{% endblock %}
 {% block content %}
 <h1>{{ t("authorize_application") }}</h1>
+{% if client.logo_uri %}
+<img class="client-logo" src="{{ client.logo_uri }}" alt="" referrerpolicy="no-referrer">
+{% endif %}
 <p>{{ t("requesting_following", client=client.name) }}</p>
+{% if client.description %}
+<p class="client-description">{{ client.description }}</p>
+{% endif %}
+{% if client.policy_uri or client.tos_uri %}
+<p class="client-links">
+{% if client.policy_uri %}<a href="{{ client.policy_uri }}" target="_blank" rel="noopener noreferrer">{{ t("client_privacy_policy") }}</a>{% endif %}
+{% if client.tos_uri %}<a href="{{ client.tos_uri }}" target="_blank" rel="noopener noreferrer">{{ t("client_terms_of_service") }}</a>{% endif %}
+</p>
+{% endif %}
 <ul>
 {% for scope in scopes %}
 <li>{{ scope }}</li>

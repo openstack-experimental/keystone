@@ -61,6 +61,12 @@ impl From<api::OAuth2ClientCreateRequest> for core::OAuth2ClientResourceCreate {
             allowed_scopes: c.allowed_scopes,
             pre_authorized: c.pre_authorized,
             claims_template: c.claims_template,
+            name: c.name,
+            description: c.description,
+            logo_uri: c.logo_uri,
+            policy_uri: c.policy_uri,
+            tos_uri: c.tos_uri,
+            contacts: c.contacts,
         }
     }
 }
@@ -83,12 +89,19 @@ impl From<api::OAuth2ClientUpdate> for core::OAuth2ClientResourceUpdate {
             pre_authorized: value.pre_authorized,
             enabled: value.enabled,
             claims_template: value.claims_template,
+            name: value.name,
+            description: value.description,
+            logo_uri: value.logo_uri,
+            policy_uri: value.policy_uri,
+            tos_uri: value.tos_uri,
+            contacts: value.contacts,
         }
     }
 }
 
 impl From<core::OAuth2ClientResource> for api::OAuth2Client {
     fn from(value: core::OAuth2ClientResource) -> Self {
+        let provider_id = value.provider_id.clone();
         Self {
             client_id: value.client_id,
             provider_id: value.provider_id,
@@ -105,6 +118,16 @@ impl From<core::OAuth2ClientResource> for api::OAuth2Client {
             created_at: value.created_at,
             updated_at: value.updated_at,
             deleted_at: value.deleted_at,
+            name: if value.name.trim().is_empty() {
+                provider_id
+            } else {
+                value.name
+            },
+            description: value.description,
+            logo_uri: value.logo_uri,
+            policy_uri: value.policy_uri,
+            tos_uri: value.tos_uri,
+            contacts: value.contacts,
         }
     }
 }

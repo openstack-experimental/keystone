@@ -66,6 +66,12 @@ pub(in crate::api::v4::oauth2) async fn confidential_client() -> provider_types:
         created_at: 0,
         updated_at: 0,
         deleted_at: None,
+        name: String::new(),
+        description: None,
+        logo_uri: None,
+        policy_uri: None,
+        tos_uri: None,
+        contacts: vec![],
     }
 }
 
@@ -229,6 +235,12 @@ pub(in crate::api::v4::oauth2) async fn public_authz_code_client()
         created_at: 0,
         updated_at: 0,
         deleted_at: None,
+        name: String::new(),
+        description: None,
+        logo_uri: None,
+        policy_uri: None,
+        tos_uri: None,
+        contacts: vec![],
     }
 }
 

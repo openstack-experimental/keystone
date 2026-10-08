@@ -23,6 +23,8 @@ denied_access = "You denied {client} access. You may now close this window."
 support = "Support"
 privacy = "Privacy"
 terms = "Terms"
+client_privacy_policy = "Privacy policy"
+client_terms_of_service = "Terms of service"
 
 # Messages produced by the server; the English text is the key.
 "invalid or expired code" = "invalid or expired code"

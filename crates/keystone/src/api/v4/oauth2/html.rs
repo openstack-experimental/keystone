@@ -23,7 +23,12 @@ use axum::{
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
-use super::renderer::{ConsentCtx, DeviceEntryCtx, DeviceResultCtx, ErrorCtx, LoginCtx, renderer};
+use super::renderer::{
+    ClientView, ConsentCtx, DeviceEntryCtx, DeviceResultCtx, ErrorCtx, LoginCtx, renderer,
+    show_client_logos,
+};
+use crate::keystone::ServiceState;
+use openstack_keystone_core::auth::ExecutionContext;
 
 /// Wrap a rendered page into a `200` response with the security headers, or
 /// fall back to the error page when the (operator-supplied) template fails
@@ -36,6 +41,22 @@ fn page(rendered: Result<String, minijinja::Error>) -> Response {
             error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
         }
     }
+}
+
+/// Look up the client's registered display metadata. Best-effort display
+/// only (the flow is already bound to `client_id` in storage): a lookup
+/// failure falls back to the raw id rather than failing the page.
+pub(super) async fn client_view(state: &ServiceState, client_id: &str) -> ClientView {
+    let exec = ExecutionContext::internal(state);
+    state
+        .provider
+        .get_oauth2_client_provider()
+        .get_by_client_id(&exec, client_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|c| ClientView::from_resource(&c))
+        .unwrap_or_else(|| ClientView::from_id(client_id))
 }
 
 pub(super) fn login_page(ctx: &LoginCtx) -> Response {
@@ -58,8 +79,18 @@ pub(super) fn device_result_page(ctx: &DeviceResultCtx) -> Response {
 /// scripts and framing stay blocked. `form-action` is deliberately not set:
 /// browsers apply it to the redirect that answers a form POST, which would
 /// block the redirect back to the relying party's `redirect_uri`.
-const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; style-src 'self'; img-src 'self' data:; \
-     script-src 'none'; frame-ancestors 'none'";
+fn content_security_policy() -> HeaderValue {
+    let img_src = if show_client_logos() {
+        "'self' data: https:"
+    } else {
+        "'self' data:"
+    };
+    HeaderValue::from_str(&format!(
+        "default-src 'self'; style-src 'self'; img-src {img_src}; script-src 'none'; \
+         frame-ancestors 'none'"
+    ))
+    .unwrap_or_else(|_| HeaderValue::from_static("default-src 'self'"))
+}
 
 /// ADR 0026 §8: defense-in-depth headers on every server-rendered OP
 /// response (HTML pages and the redirects between them alike).
@@ -67,7 +98,7 @@ pub(super) fn security_headers(mut response: Response) -> Response {
     let headers = response.headers_mut();
     headers.insert(
         HeaderName::from_static("content-security-policy"),
-        HeaderValue::from_static(CONTENT_SECURITY_POLICY),
+        content_security_policy(),
     );
     headers.insert(
         HeaderName::from_static("x-frame-options"),
@@ -162,7 +193,8 @@ mod tests {
             .unwrap()
             .to_string();
         assert!(csp.contains("style-src 'self'"));
-        assert!(csp.contains("img-src 'self' data:"));
+        assert!(csp.contains("img-src 'self' data:;"));
+        assert!(!csp.contains("https:"));
         assert!(csp.contains("script-src 'none'"));
         assert!(csp.contains("frame-ancestors 'none'"));
     }

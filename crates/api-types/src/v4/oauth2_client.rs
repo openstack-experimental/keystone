@@ -95,6 +95,28 @@ pub struct OAuth2Client {
 
     /// UTC epoch seconds.
     pub updated_at: i64,
+
+    /// Human-readable client name shown on login and consent pages.
+    pub name: String,
+
+    /// Short description of the client.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
+    /// `https://` URL of the client logo.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logo_uri: Option<String>,
+
+    /// `https://` URL of the client's privacy policy.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_uri: Option<String>,
+
+    /// `https://` URL of the client's terms of service.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tos_uri: Option<String>,
+
+    /// Contact addresses of the client's operators (RFC 7591 `contacts`).
+    pub contacts: Vec<String>,
 }
 
 /// OAuth2 client creation payload.
@@ -140,6 +162,34 @@ pub struct OAuth2ClientCreate {
     /// `none`).
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub token_endpoint_auth_method: String,
+
+    /// Human-readable client name shown on login and consent pages.
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 128)))]
+    pub name: String,
+
+    /// Short description of the client (at most 1024 characters).
+    #[serde(default)]
+    #[cfg_attr(feature = "validate", validate(length(max = 1024)))]
+    pub description: Option<String>,
+
+    /// `https://` URL of the client logo.
+    #[serde(default)]
+    #[cfg_attr(feature = "validate", validate(length(max = 2048)))]
+    pub logo_uri: Option<String>,
+
+    /// `https://` URL of the client's privacy policy.
+    #[serde(default)]
+    #[cfg_attr(feature = "validate", validate(length(max = 2048)))]
+    pub policy_uri: Option<String>,
+
+    /// `https://` URL of the client's terms of service.
+    #[serde(default)]
+    #[cfg_attr(feature = "validate", validate(length(max = 2048)))]
+    pub tos_uri: Option<String>,
+
+    /// Contact addresses of the client's operators (RFC 7591 `contacts`).
+    #[serde(default)]
+    pub contacts: Vec<String>,
 }
 
 /// OAuth2 client creation request wrapper.
@@ -199,6 +249,35 @@ pub struct OAuth2ClientUpdate {
     /// New PKCE requirement.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub require_pkce: Option<bool>,
+
+    /// New client name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 128)))]
+    pub name: Option<String>,
+
+    /// New description; an empty string clears it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "validate", validate(length(max = 1024)))]
+    pub description: Option<String>,
+
+    /// New logo URL; an empty string clears it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "validate", validate(length(max = 2048)))]
+    pub logo_uri: Option<String>,
+
+    /// New privacy policy URL; an empty string clears it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "validate", validate(length(max = 2048)))]
+    pub policy_uri: Option<String>,
+
+    /// New terms of service URL; an empty string clears it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "validate", validate(length(max = 2048)))]
+    pub tos_uri: Option<String>,
+
+    /// New contacts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contacts: Option<Vec<String>>,
 }
 
 /// OAuth2 client update request wrapper.
@@ -239,6 +318,11 @@ pub struct OAuth2ClientListParameters {
     /// path, not the query string.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+
+    /// Restrict to clients whose name contains this substring
+    /// (case-insensitive).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 /// Response to `POST .../{provider_id}/rotate-secret`.
