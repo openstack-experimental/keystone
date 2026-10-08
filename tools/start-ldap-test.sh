@@ -30,15 +30,41 @@ mkdir -p "$STATE_DIR/data" "$STATE_DIR/run" "$STATE_DIR/fixtures"
 # lives under /var/tmp and is therefore covered by the profile.
 cp "${FIXTURES_DIR}/keystone-test.schema" "${FIXTURES_DIR}/base.ldif" "$STATE_DIR/fixtures/"
 
+# Debian/Ubuntu and Fedora/RHEL lay slapd out differently: schema dir
+# (/etc/ldap vs /etc/openldap), module dir (/usr/lib/ldap vs
+# /usr/lib64/openldap) and whether back_mdb is a loadable module (Debian) or
+# built into slapd (Fedora).
+SCHEMA_DIR=""
+for d in /etc/ldap/schema /etc/openldap/schema; do
+  if [ -f "$d/core.schema" ]; then SCHEMA_DIR="$d"; break; fi
+done
+if [ -z "$SCHEMA_DIR" ]; then
+  echo "OpenLDAP core.schema not found in /etc/ldap/schema or /etc/openldap/schema" >&2
+  exit 1
+fi
+MODULE_CONF=""
+for d in /usr/lib/ldap /usr/lib64/openldap /usr/lib/openldap; do
+  if [ -f "$d/back_mdb.so" ]; then
+    MODULE_CONF="modulepath $d
+moduleload back_mdb.so"
+    break
+  fi
+done
+SLAPD_BIN="$(command -v slapd || true)"
+if [ -z "$SLAPD_BIN" ] && [ -x /usr/sbin/slapd ]; then SLAPD_BIN=/usr/sbin/slapd; fi
+if [ -z "$SLAPD_BIN" ]; then
+  echo "slapd binary not found" >&2
+  exit 1
+fi
+
 cat > "$STATE_DIR/slapd.conf" <<EOF
-include /etc/ldap/schema/core.schema
-include /etc/ldap/schema/cosine.schema
-include /etc/ldap/schema/inetorgperson.schema
-include /etc/ldap/schema/nis.schema
+include ${SCHEMA_DIR}/core.schema
+include ${SCHEMA_DIR}/cosine.schema
+include ${SCHEMA_DIR}/inetorgperson.schema
+include ${SCHEMA_DIR}/nis.schema
 include ${STATE_DIR}/fixtures/keystone-test.schema
 
-modulepath /usr/lib/ldap
-moduleload back_mdb.so
+${MODULE_CONF}
 
 pidfile ${STATE_DIR}/run/slapd.pid
 argsfile ${STATE_DIR}/run/slapd.args
@@ -51,7 +77,7 @@ rootpw "${ADMIN_PW}"
 directory ${STATE_DIR}/data
 EOF
 
-> "$STATE_DIR/slapd.log" 2>&1 /usr/sbin/slapd -f "$STATE_DIR/slapd.conf" -h "${LDAP_URL}/" -d config,acl,trace &
+> "$STATE_DIR/slapd.log" 2>&1 "$SLAPD_BIN" -f "$STATE_DIR/slapd.conf" -h "${LDAP_URL}/" -d config,acl,trace &
 SLAPD_BG_PID=$!
 disown
 

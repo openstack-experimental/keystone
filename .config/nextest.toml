@@ -2,7 +2,7 @@ experimental = ["setup-scripts"]
 
 [profile.default]
 # exclude raft-only tests from the integration test binary only
-default-filter = 'not (binary(integration) and (test(/spiffe/) or test(/mapping/) or test(/test_cluster/) or test(/api_key/) or test(/scim_realm/) or test(/oauth2_session/) or test(/oauth2_token_verify/) or test(/oauth2_device_grant/) or test(/oauth2_token_exchange/) or test(/oauth2_key_janitor/) or test(/oauth2_emergency_rotation/)))'
+default-filter = 'not (binary(integration) and (test(/spiffe/) or test(/mapping/) or test(/test_cluster/) or test(/api_key/) or test(/scim_realm/) or test(/oauth2_session/) or test(/oauth2_token_verify/) or test(/oauth2_device_grant/) or test(/oauth2_token_exchange/) or test(/oauth2_key_janitor/) or test(/oauth2_emergency_rotation/) or test(/domain_config/)))'
 # Global default settings
 #
 [scripts.setup.setup-pg]
@@ -74,7 +74,8 @@ store-failure-output = true
 
 # --- Raft based integration test ---
 [profile.raft]
-default-filter = "all()"
+# domain_config tests need a live LDAP directory, run them with the ldap profile
+default-filter = "not (binary(integration) and test(/domain_config/))"
 
 [[profile.raft.scripts]]
 filter = "binary(integration) + binary(test_cluster)"
@@ -114,6 +115,8 @@ store-failure-output = true
 # dispatch), against it. Those tests skip themselves (rather than fail)
 # under any other profile, since KEYSTONE_LDAP_TEST_URL is only set here.
 [profile.ldap]
+# only the tests that need a live LDAP directory
+default-filter = "package(openstack-keystone-identity-driver-ldap) + (binary(integration) and test(/domain_config/))"
 
 [[profile.ldap.scripts]]
 filter = "package(openstack-keystone-identity-driver-ldap) + binary(integration)"
@@ -121,6 +124,8 @@ setup = "start-ldap-test"
 
 [profile.ci-ldap]
 inherits = "ldap"
+# default-filter is not inherited
+default-filter = "package(openstack-keystone-identity-driver-ldap) + (binary(integration) and test(/domain_config/))"
 [[profile.ci-ldap.scripts]]
 filter = "package(openstack-keystone-identity-driver-ldap) + binary(integration)"
 setup = "start-ldap-test"
