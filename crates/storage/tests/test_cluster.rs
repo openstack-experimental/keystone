@@ -4812,3 +4812,91 @@ async fn test_admin_rpcs_redirect_to_leader_inner() -> Result<()> {
 
     Ok(())
 }
+
+const TRANSFER_LEADER_PORT_BASE: u16 = 1500;
+
+/// Leadership transfer (issue #1444): the admin RPC hands leadership to a
+/// chosen voter without waiting for an election timeout, writes keep working
+/// through the new leader, and bad targets are refused. Demoting the old
+/// leader afterwards (what `keystone-manage storage demote` does once it has
+/// handed leadership over) leaves the cluster with a leader throughout.
+#[serial_test::serial]
+#[tracing_test::traced_test]
+#[test]
+fn test_transfer_leader_before_demoting_the_leader() {
+    TypeConfig::run(test_transfer_leader_before_demoting_the_leader_inner()).unwrap();
+}
+
+async fn test_transfer_leader_before_demoting_the_leader_inner() -> Result<()> {
+    const PORT: u16 = TRANSFER_LEADER_PORT_BASE;
+
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+    let tls_configuration = make_certificates()?;
+
+    let (instance1, mut admin1) = start_single_node_cluster(PORT, &tls_configuration).await?;
+    let instance2 = join_node2_as_voter(PORT, &tls_configuration, &mut admin1).await?;
+    let tls_client_config = get_client_tls_config(&instance1.config)?;
+    let mut admin2 = new_admin_client(
+        instance2.config.node_cluster_addr.clone(),
+        &tls_client_config,
+    )
+    .await?;
+
+    // Targets that cannot take over are refused and change nothing.
+    let err = admin1
+        .transfer_leader(pb::raft::TransferLeaderAdminRequest { node_id: 1 })
+        .await
+        .expect_err("the leader is already the leader");
+    assert_eq!(err.code(), tonic::Code::FailedPrecondition, "{err}");
+    let err = admin1
+        .transfer_leader(pb::raft::TransferLeaderAdminRequest { node_id: 99 })
+        .await
+        .expect_err("an unknown node cannot take over");
+    assert_eq!(err.code(), tonic::Code::FailedPrecondition, "{err}");
+    // A follower answers with a leader redirect instead of transferring.
+    let err = admin2
+        .transfer_leader(pb::raft::TransferLeaderAdminRequest { node_id: 2 })
+        .await
+        .expect_err("only the leader transfers leadership");
+    assert_eq!(err.code(), tonic::Code::Unavailable, "{err}");
+
+    // The transfer is immediate: far below the 1.5 s minimum election
+    // timeout a leaderless cluster would have to sit out.
+    let started = std::time::Instant::now();
+    admin1
+        .transfer_leader(pb::raft::TransferLeaderAdminRequest { node_id: 2 })
+        .await?;
+    assert!(
+        started.elapsed() < Duration::from_millis(1500),
+        "transfer took {:?}, an election timeout would have been needed",
+        started.elapsed()
+    );
+    wait_for_leader(&mut admin1, 2).await;
+    wait_for_leader(&mut admin2, 2).await;
+
+    // Writes go through the new leader and replicate to the old one.
+    instance2
+        .storage
+        .set_value("after-transfer".to_string(), make_env("v")?, None, None)
+        .await?;
+    let replicated = get_by_key_retrying(&instance1.storage, "after-transfer".as_bytes(), None)
+        .await?
+        .expect("write through the new leader must replicate");
+    assert_eq!("v", replicated.try_deserialize::<String>()?.data);
+
+    // The old leader is now a follower and can be demoted through the
+    // current leader without an election.
+    admin2
+        .change_membership(pb::raft::ChangeMembershipRequest {
+            members: vec![2],
+            retain: true,
+        })
+        .await?;
+    wait_for_leader(&mut admin2, 2).await;
+    instance2
+        .storage
+        .set_value("after-demote".to_string(), make_env("v")?, None, None)
+        .await?;
+    Ok(())
+}

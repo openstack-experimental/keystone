@@ -22,7 +22,7 @@ use tonic::transport::Uri;
 use openstack_keystone_config::LoadedConfig;
 use openstack_keystone_distributed_storage::protobuf as pb;
 
-use super::{connect_leader, rpc_error, voters};
+use super::{connect_leader, rpc_error, step_down_leader, voters};
 use crate::PerformAction;
 
 /// Removes a node from the Raft cluster.
@@ -35,10 +35,9 @@ use crate::PerformAction;
 ///
 /// The change is computed from, and proposed on, the Raft leader, which is
 /// located through `--cluster-addr` (default: this host's
-/// `node_cluster_addr`). When the target is the current leader it steps down
-/// once the change commits and the cluster has no leader until the next
-/// election completes (leadership transfer is not implemented), so writes
-/// briefly fail.
+/// `node_cluster_addr`). When the target is the current leader it first hands
+/// leadership over to another voter (see `transfer-leader`), so writes are not
+/// interrupted by an election.
 #[derive(Parser)]
 pub(super) struct RemovePeerCommand {
     /// Cluster member to contact first (e.g. `https://127.0.0.1:50051`).
@@ -57,20 +56,15 @@ impl PerformAction for RemovePeerCommand {
         if super::ds_config(config).is_none() {
             return Err(eyre!("no distributed_storage configuration"));
         }
-        let (mut client, metrics) = connect_leader(config, self.cluster_addr).await?;
+        let (client, metrics) = connect_leader(config, self.cluster_addr).await?;
 
         let mut members = voters(&metrics);
         if !members.remove(&self.node_id) {
             println!("Node {} is not a voter; nothing to do.", self.node_id);
             return Ok(());
         }
-        if metrics.current_leader == Some(self.node_id) {
-            eprintln!(
-                "warning: node {} is the current leader; the cluster is leaderless until \
-                 the next election completes",
-                self.node_id
-            );
-        }
+        let (mut client, _) =
+            step_down_leader(config, client, metrics, self.node_id, &members).await?;
 
         client
             .change_membership(pb::raft::ChangeMembershipRequest {
