@@ -7,10 +7,10 @@
 <body>
 {% if granted %}
 <h1>Device connected</h1>
-<p>You have granted <strong>{{ client_id }}</strong> access. You may now close this window.</p>
+<p>You have granted <strong>{{ client.name }}</strong> access. You may now close this window.</p>
 {% else %}
 <h1>Request denied</h1>
-<p>You denied <strong>{{ client_id }}</strong> access. You may now close this window.</p>
+<p>You denied <strong>{{ client.name }}</strong> access. You may now close this window.</p>
 {% endif %}
 </body>
 </html>

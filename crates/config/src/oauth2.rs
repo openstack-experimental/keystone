@@ -17,6 +17,8 @@
 //! cadence for the `GET /v4/oauth2/{domain_id}/jwks` cryptographic engine.
 //! Later phases (client registration, scopes, grants) get their own config
 //! sections when implemented.
+use std::path::{Path, PathBuf};
+
 use serde::Deserialize;
 use validator::Validate;
 
@@ -198,6 +200,21 @@ pub struct Oauth2Provider {
     /// flow `verification_uri` through the `Host` header.
     #[serde(default)]
     pub allow_host_header_issuer: bool,
+
+    /// Directory with operator-supplied page templates (`login.html`,
+    /// `consent.html`, `device_entry.html`, `device_result.html`,
+    /// `error.html`). A page whose file is absent falls back to the
+    /// built-in default. Templates are read once at startup; a restart is
+    /// required to pick up changes.
+    #[serde(default)]
+    pub templates_dir: Option<PathBuf>,
+
+    /// Directory with operator-supplied static assets (stylesheets, logos)
+    /// served read-only under `/v4/oauth2/static/`. The route is only
+    /// available when this is set; a `style.css` placed here replaces the
+    /// built-in default stylesheet.
+    #[serde(default)]
+    pub static_dir: Option<PathBuf>,
 }
 
 fn default_signing_key_rotation_days() -> u32 {
@@ -297,7 +314,34 @@ impl Default for Oauth2Provider {
             session_janitor_interval_seconds: default_session_janitor_interval_seconds(),
             list_limit: ListLimitConfig::default(),
             allow_host_header_issuer: false,
+            templates_dir: None,
+            static_dir: None,
         }
+    }
+}
+
+impl Oauth2Provider {
+    /// Check that the configured UI directories exist and are directories.
+    ///
+    /// Called at startup so a typo fails fast instead of silently serving
+    /// the default pages.
+    pub fn validate_ui_paths(&self) -> Result<(), String> {
+        fn check(name: &str, path: &Path) -> Result<(), String> {
+            match std::fs::read_dir(path) {
+                Ok(_) => Ok(()),
+                Err(e) => Err(format!(
+                    "[oauth2] {name} `{}` is not a readable directory: {e}",
+                    path.display()
+                )),
+            }
+        }
+        if let Some(dir) = &self.templates_dir {
+            check("templates_dir", dir)?;
+        }
+        if let Some(dir) = &self.static_dir {
+            check("static_dir", dir)?;
+        }
+        Ok(())
     }
 }
 
@@ -372,5 +416,25 @@ mod tests {
         let cfg: Oauth2Provider =
             serde_json::from_str(r#"{"session_janitor_interval_seconds": 0}"#).unwrap();
         assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_ui_paths() {
+        let cfg = Oauth2Provider::default();
+        assert!(cfg.validate_ui_paths().is_ok());
+
+        let dir = std::env::temp_dir();
+        let cfg = Oauth2Provider {
+            templates_dir: Some(dir.clone()),
+            static_dir: Some(dir),
+            ..Default::default()
+        };
+        assert!(cfg.validate_ui_paths().is_ok());
+
+        let cfg = Oauth2Provider {
+            static_dir: Some(PathBuf::from("/nonexistent/keystone-static")),
+            ..Default::default()
+        };
+        assert!(cfg.validate_ui_paths().unwrap_err().contains("static_dir"));
     }
 }

@@ -53,8 +53,40 @@ code), see the [OAuth2 / OIDC user guide](../../user/features/oauth2.md).
 | `token_rate_limit_burst_size`           | 10      | `/token` rate-limit burst, keyed on unverified `client_id`.                                                                                      |
 | `token_rate_limit_replenish_per_minute` | 60      | `/token` sustained rate after burst is exhausted.                                                                                                |
 | `allow_host_header_issuer`              | `false` | **Development only.** Lets the issuer and cookie `Secure` flag follow the request `Host`/`X-Forwarded-Proto` headers when `[DEFAULT] public_endpoint` is unset. |
+| `templates_dir`                         | unset   | Directory with operator-supplied page templates (see [Customising the login pages](#customising-the-login-pages)). Read once at startup. |
+| `static_dir`                            | unset   | Directory with operator static assets (stylesheets, logos) served at `/v4/oauth2/static/`.                                                       |
 
 Exceeding a rate limit returns `429 Too Many Requests`.
+
+## Customising the login pages
+
+The browser pages of the authorization-code and device flows are rendered
+from Jinja-style templates (`minijinja`, HTML autoescaping on). The built-in
+templates are in `crates/keystone/templates/oauth2/`; copy the ones you want
+to change into `[oauth2] templates_dir`. A page whose file is missing there
+falls back to the built-in one, so a single page can be rebranded on its own.
+
+| File                | Context variables                                                              |
+| ------------------- | ------------------------------------------------------------------------------ |
+| `login.html`        | `client.id`, `client.name`, `csrf_token`, `error` (optional), `action`          |
+| `consent.html`      | `client.id`, `client.name`, `scopes` (list), `csrf_token`, `action`             |
+| `device_entry.html` | `error` (optional), `prefill`, `action`                                         |
+| `device_result.html`| `granted` (bool), `client.id`, `client.name`                                    |
+| `error.html`        | `message`                                                                       |
+
+Keep the form field names (`csrf_token`, `username`, `password`, `decision`,
+`user_code`) and the `action` URL: the handlers depend on them.
+
+Templates are parsed at startup: an unreadable directory or a template with a
+syntax error stops Keystone from starting. Changes need a restart.
+
+Reference stylesheets and logos with `/v4/oauth2/static/<file>` (served from
+`[oauth2] static_dir`; the route answers `404` when it is not configured and
+refuses paths that leave the directory, symlinks included). Responses carry
+`Cache-Control: public, max-age=3600`. The pages are sent with
+`Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self'
+data:; script-src 'none'; frame-ancestors 'none'`, so stylesheets and images
+must be served from the same origin and inline styles or scripts do not run.
 
 ## Production checklist
 

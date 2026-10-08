@@ -7,8 +7,8 @@
 <body>
 <h1>Enter code</h1>
 <p>Enter the code displayed on your device.</p>
-{% if let Some(msg) = error %}
-<p class="error">{{ msg }}</p>
+{% if error %}
+<p class="error">{{ error }}</p>
 {% endif %}
 <form method="post" action="{{ action }}">
 <label>Code <input type="text" name="user_code" value="{{ prefill }}" autocomplete="off" required></label>
