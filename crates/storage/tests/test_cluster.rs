@@ -3208,8 +3208,29 @@ async fn test_backup_restore_round_trip_on_fresh_cluster_inner() -> Result<()> {
     let mut dst_admin =
         new_admin_client(dst.config.node_cluster_addr.clone(), &dst_tls_client_config).await?;
 
+    // A blob that is not a backup is refused and audited as a failed
+    // disaster recovery attempt.
+    let err = dst_admin
+        .restore(futures::stream::iter(vec![pb::raft::RestoreChunk {
+            data: vec![0xA5; 4096],
+            elect: true,
+            total_len: 4096,
+        }]))
+        .await
+        .expect_err("a garbage backup must be rejected");
+    assert_eq!(err.code(), tonic::Code::InvalidArgument, "{err}");
+    let failures = audit_records(&dst, "BACKUP_RESTORED_FAILED", 1).await;
+    assert!(
+        failures[0].contains(r#""mode":"disaster_recovery""#),
+        "{}",
+        failures[0]
+    );
+    audit_records(&dst, "BACKUP_RESTORED", 0).await;
+
     chunks[0].elect = true;
     dst_admin.restore(futures::stream::iter(chunks)).await?;
+    audit_records(&dst, "BACKUP_RESTORED", 1).await;
+    audit_records(&dst, "BACKUP_RESTORED_FAILED", 1).await;
     wait_for_leader(&mut dst_admin, 1).await;
     let voters: Vec<u64> = dst
         .storage
@@ -3255,6 +3276,41 @@ async fn test_backup_restore_round_trip_on_fresh_cluster_inner() -> Result<()> {
             .data
     );
     Ok(())
+}
+
+/// Waits until the node's audit spool holds `expected` records of
+/// `event_type` and returns the matching lines. Asserts the count is stable
+/// afterwards so a duplicate record is caught too.
+async fn audit_records(holder: &InstanceHolder, event_type: &str, expected: usize) -> Vec<String> {
+    let spool = holder
+        .storage_dir
+        .path()
+        .join("audit-spool")
+        .join(format!("raft-audit-{}.jsonl", holder.node_id));
+    let needle = format!(r#""event_type":"{event_type}""#);
+    let read = || -> Vec<String> {
+        std::fs::read_to_string(&spool)
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| l.contains(&needle))
+            .map(str::to_string)
+            .collect()
+    };
+    for _ in 0..100 {
+        if read().len() >= expected {
+            break;
+        }
+        TypeConfig::sleep(Duration::from_millis(50)).await;
+    }
+    // Give a stray duplicate the time to be written.
+    TypeConfig::sleep(Duration::from_millis(200)).await;
+    let found = read();
+    assert_eq!(
+        expected,
+        found.len(),
+        "expected {expected} {event_type} audit record(s): {found:?}"
+    );
+    found
 }
 
 /// Restore into a running two-node cluster (OpenBao style): the backup of
@@ -3350,7 +3406,57 @@ async fn test_restore_into_running_cluster_inner() -> Result<()> {
         "a rejected upload must leave the existing data alone"
     );
 
+    // A restore sent to a follower is a redirect, not an attempt: the
+    // operator retries against the leader and nothing is audited.
+    let dst2_client_config = get_client_tls_config(&dst2.config)?;
+    let mut follower_admin =
+        new_admin_client(dst2.config.node_cluster_addr.clone(), &dst2_client_config).await?;
+    follower_admin
+        .restore(futures::stream::iter(chunks.clone()))
+        .await
+        .expect_err("a follower must redirect the restore");
+    audit_records(&dst2, "BACKUP_RESTORED_FAILED", 0).await;
+
+    // `--elect` is refused on an initialized cluster.
+    let mut elect = chunks.clone();
+    elect[0].elect = true;
+    let err = dst_admin
+        .restore(futures::stream::iter(elect))
+        .await
+        .expect_err("--elect on an initialized cluster must be rejected");
+    assert_eq!(err.code(), tonic::Code::FailedPrecondition, "{err}");
+
+    // A blob that is not a backup passes the upload checks and is rejected
+    // by the cluster when it is applied.
+    let garbage = vec![pb::raft::RestoreChunk {
+        data: vec![0xA5; 4096],
+        elect: false,
+        total_len: 4096,
+    }];
+    let err = dst_admin
+        .restore(futures::stream::iter(garbage))
+        .await
+        .expect_err("a garbage backup must be rejected");
+    assert_eq!(err.code(), tonic::Code::FailedPrecondition, "{err}");
+
+    // Each rejected attempt left exactly one failure record and nothing
+    // claims a restore succeeded.
+    let failures = audit_records(&dst1, "BACKUP_RESTORED_FAILED", 4).await;
+    audit_records(&dst1, "BACKUP_RESTORED", 0).await;
+    for (line, code) in failures.iter().zip([
+        "ResourceExhausted",
+        "InvalidArgument",
+        "FailedPrecondition",
+        "FailedPrecondition",
+    ]) {
+        assert!(line.contains(r#""mode":"cluster""#), "{line}");
+        assert!(line.contains(&format!(r#""code":"{code}""#)), "{line}");
+    }
+
     dst_admin.restore(futures::stream::iter(chunks)).await?;
+    // The successful restore is still recorded once, with no new failure.
+    audit_records(&dst1, "BACKUP_RESTORED", 1).await;
+    audit_records(&dst1, "BACKUP_RESTORED_FAILED", 4).await;
 
     // Both nodes serve the backup, the stale data is gone.
     for (storage, label) in [(&dst1.storage, "leader"), (&dst2.storage, "follower")] {
