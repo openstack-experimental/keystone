@@ -884,15 +884,17 @@ impl AssignmentApi for AssignmentService {
             &grant.r#type,
             AssignmentType::UserDomain | AssignmentType::UserProject | AssignmentType::UserSystem
         ) {
-            // ADR 0034 §4: the central revocation event stays on the global revoke
-            // provider, unrouted — it is not an assignment-backend operation.
+            // ADR 0034 §4: the central revocation event stays on the global
+            // revoke provider, unrouted — it is not an
+            // assignment-backend operation.
             ctx.state()
                 .provider
                 .get_revoke_provider()
                 .create_revocation_event(ctx, revocation_event)
                 .await?;
             // ADR 0031 "Tokens": revoking a grant cascades revocation of every
-            // token carrying that role - `"cascade"`, not a direct user request.
+            // token carrying that role - `"cascade"`, not a direct user
+            // request.
             crate::token::TOKEN_METRICS.record_revoked("cascade");
         }
 

@@ -39,8 +39,8 @@
 //! * **Refresh token**: `active = record exists && same domain && !spent &&
 //!   !revoked && now <= expires_at && now < family_expires_at` (a
 //!   `family_expires_at` of `0` is an uncapped legacy family). Parity with
-//!   `redeem_refresh_token`, which rejects only `expires_at < now`: a token
-//!   is usable through its expiry second, so introspection agrees.
+//!   `redeem_refresh_token`, which rejects only `expires_at < now`: a token is
+//!   usable through its expiry second, so introspection agrees.
 
 use axum::{
     Form, Json,

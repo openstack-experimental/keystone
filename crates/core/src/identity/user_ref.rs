@@ -31,8 +31,8 @@ use crate::resource::error::ResourceProviderError;
 /// carrying the user ID is left untouched.
 ///
 /// # Errors
-/// - [`IdentityProviderError::UserIdOrNameWithDomain`] when neither the ID,
-///   nor the name together with the domain is given.
+/// - [`IdentityProviderError::UserIdOrNameWithDomain`] when neither the ID, nor
+///   the name together with the domain is given.
 /// - [`ResourceProviderError::DomainNotFound`] when the domain name does not
 ///   exist.
 pub(crate) async fn resolve_user_domain<'a>(

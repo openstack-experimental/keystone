@@ -25,8 +25,8 @@
 //! (Keystone does not verify addresses, so `email_verified` is `false`
 //! unless the user record explicitly says otherwise); plus the client's
 //! `claims_template` output, built by the same code as the `id_token` so
-//! both agree. The response is plain JSON (`userinfo_signing_alg_values_supported`
-//! is `["none"]`).
+//! both agree. The response is plain JSON
+//! (`userinfo_signing_alg_values_supported` is `["none"]`).
 
 use axum::{
     Json,

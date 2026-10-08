@@ -183,7 +183,7 @@ Backend traits in `crates/core/src/backend.rs` follow CRUD naming:
 - **Types**: Use standard conventional commit types: `feat`, `fix`, `chore`,
   `docs`, `test`, etc.
 - **Scope**: Optional scope in parentheses: `feat(identity): message`
-- **Subject line**: <=72 characters, **capitalized**, imperative mood, no period
+- **Subject line**: <=50 characters, **capitalized**, imperative mood, no period
   at end
 - **Body**: <=72 characters per line, each line separated by blank line
 - **DCO**: Always include `Signed-off-by:` line using `git commit -s`

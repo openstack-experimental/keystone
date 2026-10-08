@@ -822,17 +822,28 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                                         Some(ref e)
                                             if e.dek_version <= self.current_dek_version() =>
                                         {
-                                            // A rotation committed while this one waited for
-                                            // its confirmation: its version is already taken,
-                                            // so this entry can never be confirmed. It is
-                                            // kept, not removed — the batch does not commit
-                                            // on a violation, so deleting it from the
-                                            // in-memory map without committing the Fjall
-                                            // `meta` delete would leave the two disagreeing
-                                            // (GitHub #1297 item 4). It expires on its own;
-                                            // until then it blocks `CreatePendingRotation`
-                                            // (CONFLICT) and keeps `automatic_rotation_due`
-                                            // suppressed, so a fresh rotation is staged once
+                                            // A rotation committed while this
+                                            // one waited for
+                                            // its confirmation: its version is
+                                            // already taken,
+                                            // so this entry can never be
+                                            // confirmed. It is
+                                            // kept, not removed — the batch
+                                            // does not commit
+                                            // on a violation, so deleting it
+                                            // from the
+                                            // in-memory map without committing
+                                            // the Fjall
+                                            // `meta` delete would leave the two
+                                            // disagreeing
+                                            // (GitHub #1297 item 4). It expires
+                                            // on its own;
+                                            // until then it blocks
+                                            // `CreatePendingRotation`
+                                            // (CONFLICT) and keeps
+                                            // `automatic_rotation_due`
+                                            // suppressed, so a fresh rotation
+                                            // is staged once
                                             // it expires or after a restart.
                                             violations.extend(stale_dek_version_violation(
                                                 e.dek_version,

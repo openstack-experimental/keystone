@@ -1849,7 +1849,8 @@ impl Storage {
     }
 
     /// Send a `ReportQuarantine` to `leader_id`, following `Unavailable`
-    /// leader hints (same retry semantics as [`Self::command_with_forwarding`]).
+    /// leader hints (same retry semantics as
+    /// [`Self::command_with_forwarding`]).
     async fn report_quarantine_with_forwarding(
         &self,
         node_id: u64,

@@ -58,9 +58,9 @@
 //! - **Block** ([`register_block!`], [`parse_block`], [`ParsedSection`]): a
 //!   driver specific configuration block whose type is chosen by a
 //!   discriminator in the file (e.g. `driver = openfga` in
-//!   `[assignment.backends.<name>]`) instead of by the section name. The
-//!   schema keeps the parsed block type erased as a [`ParsedSection`] and the
-//!   driver recovers its type with [`ParsedSection::downcast_ref`].
+//!   `[assignment.backends.<name>]`) instead of by the section name. The schema
+//!   keeps the parsed block type erased as a [`ParsedSection`] and the driver
+//!   recovers its type with [`ParsedSection::downcast_ref`].
 //!
 //! ### Section or block?
 //!
@@ -110,9 +110,7 @@
 //! ```no_run
 //! use std::path::PathBuf;
 //!
-//! use oslo_config::{
-//!     ConfigManager, ConfigSection, CoreSchema, SourceSpec, register_section,
-//! };
+//! use oslo_config::{ConfigManager, ConfigSection, CoreSchema, SourceSpec, register_section};
 //! use serde::Deserialize;
 //!
 //! /// The core schema of the service: only what the core itself reads.

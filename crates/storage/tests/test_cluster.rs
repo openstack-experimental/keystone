@@ -4158,7 +4158,8 @@ async fn test_rogue_identities_rejected_tls_roles_inner() -> Result<()> {
         .await
         .unwrap_err();
     assert_eq!(err.code(), tonic::Code::PermissionDenied);
-    // unrelated workload cert (SAN spiffe://keystone/ns/default/sa/x): forbidden
+    // unrelated workload cert (SAN spiffe://keystone/ns/default/sa/x):
+    // forbidden
     let err = storage_client(&rogue_ch)
         .forwarded_get(forwarded_get_req())
         .await

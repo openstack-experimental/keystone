@@ -222,8 +222,8 @@ impl ApplicationCredentialBackend for SqlBackend {
     ///
     /// # Returns
     /// - `Ok(())` if the secret matches the stored hash.
-    /// - `Err(ApplicationCredentialProviderError::AuthenticationFailed)` if
-    ///   the credential does not exist or the secret does not match.
+    /// - `Err(ApplicationCredentialProviderError::AuthenticationFailed)` if the
+    ///   credential does not exist or the secret does not match.
     #[tracing::instrument(name = "driver.sql.appcred.verify_application_credential_secret", level = "debug", skip_all, fields(credential_id = %credential_id))]
     async fn verify_application_credential_secret(
         &self,

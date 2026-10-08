@@ -335,8 +335,8 @@ async fn test_renewable_vault_token_is_renewed_halfway_through_ttl() {
     // task to:
     // 1. Start and reach its select! loop
     // 2. Have sleep_until() fire when the 1s deadline passes
-    // 3. Get picked by select! (biased — sync_rx.recv() wins if a notify
-    //    event is queued from spawn-time filesystem activity)
+    // 3. Get picked by select! (biased — sync_rx.recv() wins if a notify event
+    //    is queued from spawn-time filesystem activity)
     //
     // yield_now() is insufficient on loaded CI runners because it only
     // gives one scheduling opportunity. A short sleep gives the

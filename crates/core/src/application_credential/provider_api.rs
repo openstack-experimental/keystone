@@ -166,8 +166,8 @@ pub trait ApplicationCredentialApi: Send + Sync {
     ///
     /// # Parameters
     /// - `ctx`: The execution context.
-    /// - `auth`: The authentication request (credential ID or name with
-    ///   user reference, and the secret).
+    /// - `auth`: The authentication request (credential ID or name with user
+    ///   reference, and the secret).
     ///
     /// # Returns
     /// - `Result<AuthenticationResult, ApplicationCredentialProviderError>` -
