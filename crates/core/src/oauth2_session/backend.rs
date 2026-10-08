@@ -53,6 +53,50 @@ pub trait Oauth2SessionBackend: Send + Sync {
         amr: Vec<String>,
     ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
 
+    /// Persist a new SSO session.
+    async fn create_sso_session(
+        &self,
+        state: &ServiceState,
+        data: SsoSessionCreate,
+    ) -> Result<SsoSession, Oauth2SessionProviderError>;
+
+    /// Fetch an SSO session by id (`None` when missing; expiry is the
+    /// service layer's job).
+    async fn get_sso_session(
+        &self,
+        state: &ServiceState,
+        sso_id: &str,
+    ) -> Result<Option<SsoSession>, Oauth2SessionProviderError>;
+
+    /// Delete an SSO session. Deleting a missing session is not an error.
+    async fn delete_sso_session(
+        &self,
+        state: &ServiceState,
+        sso_id: &str,
+    ) -> Result<(), Oauth2SessionProviderError>;
+
+    /// Delete every SSO session of `user_id`; returns how many.
+    async fn delete_sso_sessions_by_user(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError>;
+
+    /// Delete every SSO session of `domain_id`; returns how many.
+    async fn delete_sso_sessions_by_domain(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError>;
+
+    /// Stamp the session as authenticated by an existing SSO session.
+    async fn mark_pre_auth_session_sso(
+        &self,
+        state: &ServiceState,
+        session_id: &str,
+        sso: &SsoSession,
+    ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
+
     /// Remember the upstream redirect (`idp_id`, `upstream_state`).
     async fn begin_pre_auth_session_upstream(
         &self,

@@ -32,6 +32,51 @@ pub struct UpstreamLogin {
     pub sid: Option<String>,
 }
 
+/// The authenticated browser session behind the SSO cookie.
+///
+/// Created when a login completes; while it is valid `/authorize` does not
+/// ask for credentials again.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SsoSession {
+    /// Opaque identifier (the cookie value).
+    pub sso_id: String,
+    /// Domain the user signed in to.
+    pub domain_id: String,
+    /// The authenticated user.
+    pub user_id: String,
+    /// Epoch seconds of the primary authentication (`auth_time`).
+    pub auth_time: i64,
+    /// Authentication methods references of that login.
+    pub amr: Vec<String>,
+    /// Upstream login the session came from (federated sign-in only).
+    pub upstream: Option<UpstreamLogin>,
+    /// UTC epoch seconds.
+    pub created_at: i64,
+    /// UTC epoch seconds after which the session is no longer valid.
+    pub expires_at: i64,
+}
+
+/// Input to create an [`SsoSession`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SsoSessionCreate {
+    /// Opaque identifier (the cookie value).
+    pub sso_id: String,
+    /// Domain the user signed in to.
+    pub domain_id: String,
+    /// The authenticated user.
+    pub user_id: String,
+    /// Epoch seconds of the primary authentication.
+    pub auth_time: i64,
+    /// Authentication methods references of that login.
+    pub amr: Vec<String>,
+    /// Upstream login the session came from.
+    pub upstream: Option<UpstreamLogin>,
+    /// UTC epoch seconds.
+    pub created_at: i64,
+    /// UTC epoch seconds.
+    pub expires_at: i64,
+}
+
 /// An upstream authorization request that was sent but not answered yet.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PendingUpstream {

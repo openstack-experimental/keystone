@@ -129,6 +129,7 @@ fn render_login(
         // Federated sign-in is not offered on the device flow yet.
         idps: Vec::new(),
         federated_action: String::new(),
+        login_hint: None,
     })
 }
 
@@ -816,6 +817,7 @@ mod tests {
         mock.expect_get_by_client_id().returning(|_, _| {
             Ok(Some(
                 openstack_keystone_core_types::oauth2_client::OAuth2ClientResource {
+                    post_logout_redirect_uris: Default::default(),
                     client_id: "client-1".into(),
                     provider_id: "provider-1".into(),
                     domain_id: "domain-1".into(),

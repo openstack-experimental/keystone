@@ -132,6 +132,9 @@ impl Oauth2SessionHook {
                 provider
                     .purge_pending_grants_by_user(&self.state, user_id)
                     .await?;
+                provider
+                    .delete_sso_sessions_by_user(&self.state, user_id)
+                    .await?;
                 (family_ids, reason)
             }
             Revocation::Domain { domain_id, reason } => {
@@ -140,6 +143,9 @@ impl Oauth2SessionHook {
                     .await?;
                 provider
                     .purge_pending_grants_by_domain(&self.state, domain_id)
+                    .await?;
+                provider
+                    .delete_sso_sessions_by_domain(&self.state, domain_id)
                     .await?;
                 (family_ids, reason)
             }
@@ -241,6 +247,12 @@ mod tests {
             .withf(|_, u| u == "user-1")
             .times(1)
             .returning(|_, _| Ok(1));
+        // The user's browser SSO sessions end with the user.
+        session
+            .expect_delete_sso_sessions_by_user()
+            .withf(|_, u| u == "user-1")
+            .times(1)
+            .returning(|_, _| Ok(1));
     }
 
     fn expect_domain_revocation(
@@ -257,6 +269,11 @@ mod tests {
             .withf(|_, d| d == "domain-1")
             .times(1)
             .returning(|_, _| Ok(2));
+        session
+            .expect_delete_sso_sessions_by_domain()
+            .withf(|_, d| d == "domain-1")
+            .times(1)
+            .returning(|_, _| Ok(1));
     }
 
     fn user_event(operation: Operation) -> Event {
@@ -359,6 +376,8 @@ mod tests {
             .never();
         session.expect_purge_pending_grants_by_user().never();
         session.expect_purge_pending_grants_by_domain().never();
+        session.expect_delete_sso_sessions_by_user().never();
+        session.expect_delete_sso_sessions_by_domain().never();
         let hook = hook_with(MockIdentityProvider::default(), session).await;
         for event in [
             user_event(Operation::Update),
@@ -386,6 +405,7 @@ mod tests {
             .times(1)
             .returning(|_, _, _| Err(Oauth2SessionProviderError::RaftNotAvailable));
         session.expect_purge_pending_grants_by_domain().never();
+        session.expect_delete_sso_sessions_by_domain().never();
         let hook = hook_with(MockIdentityProvider::default(), session).await;
         hook.on_event(&domain_event(Operation::Disable)).await;
     }

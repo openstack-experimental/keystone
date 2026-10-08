@@ -240,6 +240,13 @@ pub struct Oauth2Provider {
     #[serde(default)]
     pub ui_terms_url: Option<String>,
 
+    /// Lifetime, in minutes, of the browser single-sign-on session set after
+    /// a successful login. While it lasts `/authorize` skips the login
+    /// form (`prompt` and `max_age` can still force one).
+    #[serde(default = "default_sso_session_lifetime_minutes")]
+    #[validate(range(min = 1))]
+    pub sso_session_lifetime_minutes: u32,
+
     /// Failed second-factor (TOTP) attempts allowed on one login before the
     /// pending sign-in is discarded and the user has to start over. The
     /// per-user `[rate_limit_user_auth]` limiter applies on top.
@@ -258,6 +265,10 @@ pub struct Oauth2Provider {
     /// locale bundles.
     #[serde(default = "default_ui_default_locale")]
     pub ui_default_locale: String,
+}
+
+fn default_sso_session_lifetime_minutes() -> u32 {
+    480
 }
 
 fn default_mfa_max_attempts() -> u32 {
@@ -377,6 +388,7 @@ impl Default for Oauth2Provider {
             ui_privacy_url: None,
             ui_terms_url: None,
             mfa_max_attempts: default_mfa_max_attempts(),
+            sso_session_lifetime_minutes: default_sso_session_lifetime_minutes(),
             ui_show_client_logos: false,
             ui_default_locale: default_ui_default_locale(),
         }
@@ -453,6 +465,7 @@ mod tests {
         assert_eq!(cfg.refresh_token_absolute_lifetime_days, 90);
         assert_eq!(cfg.refresh_token_reuse_grace_minutes, 10);
         assert_eq!(cfg.pre_auth_session_lifetime_minutes, 10);
+        assert_eq!(cfg.sso_session_lifetime_minutes, 480);
         assert_eq!(cfg.device_code_lifetime_minutes, 10);
         assert_eq!(cfg.device_code_poll_interval_seconds, 5);
         assert_eq!(cfg.device_code_invalid_quiet_period_seconds, 300);

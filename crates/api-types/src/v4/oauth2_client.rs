@@ -117,6 +117,9 @@ pub struct OAuth2Client {
 
     /// Contact addresses of the client's operators (RFC 7591 `contacts`).
     pub contacts: Vec<String>,
+
+    /// URIs the provider may redirect to after RP-initiated logout.
+    pub post_logout_redirect_uris: Vec<String>,
 }
 
 /// OAuth2 client creation payload.
@@ -190,6 +193,11 @@ pub struct OAuth2ClientCreate {
     /// Contact addresses of the client's operators (RFC 7591 `contacts`).
     #[serde(default)]
     pub contacts: Vec<String>,
+
+    /// URIs the provider may redirect to after RP-initiated logout (exact
+    /// match, same scheme rules as `redirect_uris`).
+    #[serde(default)]
+    pub post_logout_redirect_uris: Vec<String>,
 }
 
 /// OAuth2 client creation request wrapper.
@@ -278,6 +286,10 @@ pub struct OAuth2ClientUpdate {
     /// New contacts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contacts: Option<Vec<String>>,
+
+    /// New post-logout redirect URIs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_logout_redirect_uris: Option<Vec<String>>,
 }
 
 /// OAuth2 client update request wrapper.

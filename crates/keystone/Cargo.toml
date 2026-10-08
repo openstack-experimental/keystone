@@ -98,6 +98,7 @@ tokio = { workspace = true, features = ["macros", "process", "signal", "rt-multi
 tokio-rustls.workspace = true
 tokio-util.workspace = true
 tonic = { workspace = true, features = ["server", "tls-aws-lc" ] }
+time.workspace = true
 tower.workspace = true
 tower-http = { workspace = true, features = ["compression-full", "normalize-path", "request-id", "sensitive-headers", "trace", "util"] }
 tracing.workspace = true

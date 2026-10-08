@@ -51,6 +51,7 @@ pub(in crate::api::v4::oauth2) async fn confidential_client() -> provider_types:
     .await
     .unwrap();
     provider_types::OAuth2ClientResource {
+        post_logout_redirect_uris: Default::default(),
         client_id: "client-1".into(),
         provider_id: "provider-1".into(),
         domain_id: "domain-1".into(),
@@ -220,6 +221,7 @@ pub(super) fn refresh_resource_mock(enabled: Option<bool>) -> MockResourceProvid
 pub(in crate::api::v4::oauth2) async fn public_authz_code_client()
 -> provider_types::OAuth2ClientResource {
     provider_types::OAuth2ClientResource {
+        post_logout_redirect_uris: Default::default(),
         client_id: "client-1".into(),
         provider_id: "provider-1".into(),
         domain_id: "domain-1".into(),

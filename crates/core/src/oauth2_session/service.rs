@@ -27,9 +27,9 @@ use crate::keystone::ServiceState;
 use crate::oauth2_session::Oauth2SessionProviderError;
 use crate::oauth2_session::backend::Oauth2SessionBackend;
 use crate::oauth2_session::provider_api::{
-    DeviceAuthorizationStart, DevicePollOutcome, IssueAuthorizationCodeRequest,
-    IssueRefreshTokenRequest, Oauth2SessionApi, RefreshTokenRedemption,
-    StartDeviceAuthorizationRequest, StartPreAuthSessionRequest,
+    CreateSsoSessionRequest, DeviceAuthorizationStart, DevicePollOutcome,
+    IssueAuthorizationCodeRequest, IssueRefreshTokenRequest, Oauth2SessionApi,
+    RefreshTokenRedemption, StartDeviceAuthorizationRequest, StartPreAuthSessionRequest,
 };
 use crate::plugin_manager::PluginManagerApi;
 
@@ -238,6 +238,104 @@ impl Oauth2SessionApi for Oauth2SessionService {
     ) -> Result<PreAuthSession, Oauth2SessionProviderError> {
         self.backend_driver
             .mark_pre_auth_session_authenticated(state, session_id, user_id, auth_time, amr)
+            .await
+    }
+
+    #[tracing::instrument(
+        name = "provider.oauth2_session.create_sso_session",
+        level = "debug",
+        skip_all
+    )]
+    async fn create_sso_session(
+        &self,
+        state: &ServiceState,
+        req: CreateSsoSessionRequest,
+    ) -> Result<SsoSession, Oauth2SessionProviderError> {
+        let created_at = now();
+        let expires_at =
+            created_at + i64::from(self.oauth2_config.sso_session_lifetime_minutes) * 60;
+        self.backend_driver
+            .create_sso_session(
+                state,
+                SsoSessionCreate {
+                    sso_id: generate_entropy(),
+                    domain_id: req.domain_id,
+                    user_id: req.user_id,
+                    auth_time: req.auth_time,
+                    amr: req.amr,
+                    upstream: req.upstream,
+                    created_at,
+                    expires_at,
+                },
+            )
+            .await
+    }
+
+    #[tracing::instrument(
+        name = "provider.oauth2_session.get_sso_session",
+        level = "debug",
+        skip_all
+    )]
+    async fn get_sso_session(
+        &self,
+        state: &ServiceState,
+        sso_id: &str,
+    ) -> Result<Option<SsoSession>, Oauth2SessionProviderError> {
+        let Some(session) = self.backend_driver.get_sso_session(state, sso_id).await? else {
+            return Ok(None);
+        };
+        if session.expires_at < now() {
+            // Best-effort cleanup on expired read.
+            let _ = self.backend_driver.delete_sso_session(state, sso_id).await;
+            return Ok(None);
+        }
+        Ok(Some(session))
+    }
+
+    #[tracing::instrument(
+        name = "provider.oauth2_session.delete_sso_session",
+        level = "debug",
+        skip_all
+    )]
+    async fn delete_sso_session(
+        &self,
+        state: &ServiceState,
+        sso_id: &str,
+    ) -> Result<(), Oauth2SessionProviderError> {
+        self.backend_driver.delete_sso_session(state, sso_id).await
+    }
+
+    #[tracing::instrument(name = "provider.oauth2_session.delete_sso_sessions_by_user", level = "debug", skip_all, fields(user_id = %user_id))]
+    async fn delete_sso_sessions_by_user(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError> {
+        self.backend_driver
+            .delete_sso_sessions_by_user(state, user_id)
+            .await
+    }
+
+    #[tracing::instrument(name = "provider.oauth2_session.delete_sso_sessions_by_domain", level = "debug", skip_all, fields(domain_id = %domain_id))]
+    async fn delete_sso_sessions_by_domain(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError> {
+        self.backend_driver
+            .delete_sso_sessions_by_domain(state, domain_id)
+            .await
+    }
+
+    #[tracing::instrument(name = "provider.oauth2_session.mark_authenticated_by_sso", level = "debug", skip_all, fields(session_id = %session_id))]
+    async fn mark_authenticated_by_sso(
+        &self,
+        state: &ServiceState,
+        session_id: &str,
+        sso: &SsoSession,
+    ) -> Result<PreAuthSession, Oauth2SessionProviderError> {
+        self.backend_driver
+            .mark_pre_auth_session_sso(state, session_id, sso)
             .await
     }
 
@@ -914,6 +1012,11 @@ impl Oauth2SessionApi for Oauth2SessionService {
                 .take_device_code_grant(state, primary_key)
                 .await
                 .map(|_| ()),
+            "sso" => {
+                self.backend_driver
+                    .delete_sso_session(state, primary_key)
+                    .await
+            }
             "refresh" | "refresh_tombstone" => {
                 self.backend_driver
                     .delete_refresh_token(state, primary_key)
@@ -1179,6 +1282,94 @@ mod tests {
             family_expires_at: now() + 10_000_000,
             amr: vec![],
         }
+    }
+
+    fn sso_record(expires_at: i64) -> SsoSession {
+        SsoSession {
+            sso_id: "sso-1".to_string(),
+            domain_id: "d1".to_string(),
+            user_id: "u1".to_string(),
+            auth_time: now() - 100,
+            amr: vec!["pwd".to_string()],
+            upstream: None,
+            created_at: now() - 100,
+            expires_at,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_sso_session_returns_none_and_cleans_up_when_expired() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_get_sso_session()
+            .returning(|_, _| Ok(Some(sso_record(now() - 1))));
+        mock.expect_delete_sso_session()
+            .times(1)
+            .returning(|_, _| Ok(()));
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+        assert!(
+            service
+                .get_sso_session(&state, "sso-1")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_sso_session_returns_a_live_session() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_get_sso_session()
+            .returning(|_, _| Ok(Some(sso_record(now() + 600))));
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+        let session = service
+            .get_sso_session(&state, "sso-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(session.user_id, "u1");
+    }
+
+    #[tokio::test]
+    async fn test_create_sso_session_uses_the_configured_lifetime() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_create_sso_session()
+            .withf(|_, data| {
+                !data.sso_id.is_empty()
+                    && data.expires_at - data.created_at == 480 * 60
+                    && data.auth_time == 123
+            })
+            .times(1)
+            .returning(|_, data| {
+                Ok(SsoSession {
+                    sso_id: data.sso_id,
+                    domain_id: data.domain_id,
+                    user_id: data.user_id,
+                    auth_time: data.auth_time,
+                    amr: data.amr,
+                    upstream: data.upstream,
+                    created_at: data.created_at,
+                    expires_at: data.expires_at,
+                })
+            });
+        let mut service = service_with(mock);
+        service.oauth2_config.sso_session_lifetime_minutes = 480;
+        let state = get_mocked_state(None, None).await;
+        let created = service
+            .create_sso_session(
+                &state,
+                CreateSsoSessionRequest {
+                    domain_id: "d1".into(),
+                    user_id: "u1".into(),
+                    auth_time: 123,
+                    amr: vec!["pwd".into()],
+                    upstream: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(created.user_id, "u1");
     }
 
     #[tokio::test]

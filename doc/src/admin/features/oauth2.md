@@ -61,6 +61,7 @@ code), see the [OAuth2 / OIDC user guide](../../user/features/oauth2.md).
 | `ui_show_client_logos`                  | `false` | Render the `logo_uri` registered for a client on its login and consent pages. Lets the CSP load `https:` images, which leaks sign-in activity to the client's host. |
 | `ui_default_locale`                     | `en`    | Locale used when `Accept-Language` matches no available locale.                                                                                  |
 | `mfa_max_attempts`                      | 5       | Wrong second-factor codes allowed per login attempt before the pre-auth session is discarded and the user must start over. The per-user TOTP rate limit applies on top. |
+| `sso_session_lifetime_minutes`        | 480     | Lifetime of the browser SSO session started by a successful sign-in. Later authorization requests in the same browser skip the login form while it lives. `0` is not allowed. |
 
 Exceeding a rate limit returns `429 Too Many Requests`.
 
@@ -100,6 +101,39 @@ Not covered yet: federated sign-in on the device-code verification page, and
 re-checking expiring group membership
 ([ADR 0013](../../adr/0013-federation-oidc-expiring-group-membership.md)) at
 refresh-token rotation (the OP issues no group or role claims today).
+
+## Single sign-on and logout
+
+A successful sign-in (password, TOTP or upstream provider) starts an SSO
+session stored in Raft and tied to the browser by the `keystone_oauth2_sso`
+cookie (`HttpOnly`, `SameSite=Lax`, `Secure` when the public endpoint is
+`https`). While it lives, `/authorize` skips the login form and resumes the
+original sign-in time and `amr`, so `auth_time` in the ID token is the real
+login time. The session is ignored when its user is disabled or belongs to
+another domain, and is deleted when the user or domain is disabled or deleted.
+
+The authorization endpoint honours the OIDC request parameters:
+
+- `prompt=none` never shows a page: it answers with `login_required` or
+  `consent_required` redirects, or issues a code when the user is signed in and
+  the client is pre-authorized. It never sets cookies.
+- `prompt=login` and `prompt=select_account` force a fresh login.
+- `max_age` forces a fresh login when the SSO session is older than the value
+  (`0` always does).
+- `login_hint` pre-fills the user name; `ui_locales` selects the page language.
+
+`GET`/`POST /v4/oauth2/{domain_id}/logout` implements OpenID Connect
+RP-Initiated Logout 1.0 and is advertised as `end_session_endpoint`. An
+`id_token_hint` is verified against the domain keys (expired tokens are
+accepted) and must belong to the signed-in user. A
+`post_logout_redirect_uri` is only followed when it is registered in the
+client's `post_logout_redirect_uris`. Without an `id_token_hint` the user is
+asked to confirm first, because any page could otherwise log them out. On
+success the SSO session is deleted and the cookie cleared.
+
+Not covered yet: back-channel/front-channel logout notifications to relying
+parties, and ending the upstream provider session at logout (the upstream
+`sid` is stored for it).
 
 ## Customising the login pages
 

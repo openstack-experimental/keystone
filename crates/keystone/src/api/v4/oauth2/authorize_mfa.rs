@@ -221,5 +221,7 @@ pub(super) async fn authorize_mfa(
     );
 
     let exec = ExecutionContext::internal(&state);
-    Ok(after_authentication(&state, &exec, &domain_id, &session, &correlation_id.0).await)
+    let response =
+        after_authentication(&state, &exec, &domain_id, &session, &correlation_id.0).await;
+    Ok(super::sso::attach(&state, &headers, &jar, &session, response).await)
 }
