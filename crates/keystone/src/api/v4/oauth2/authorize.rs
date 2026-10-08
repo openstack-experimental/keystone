@@ -44,21 +44,21 @@ use openstack_keystone_core_types::auth::IdentityInfo;
 use openstack_keystone_core_types::identity::{
     Domain as IdentityDomain, UserPasswordAuthRequestBuilder,
 };
-use openstack_keystone_core_types::oauth2_client::GrantType;
+use openstack_keystone_core_types::oauth2_client::{GrantType, OAuth2ClientResource};
 use openstack_keystone_core_types::oauth2_session::PreAuthSession;
 
 use super::html::{
-    client_view, consent_page, error_page, fetch_client, login_page, security_headers,
+    client_view, consent_page, error_page, fetch_client, login_page, mfa_page, security_headers,
     too_many_requests, view_of,
 };
-use super::renderer::{ClientView, ConsentCtx, LoginCtx};
+use super::renderer::{ClientView, ConsentCtx, LoginCtx, MfaCtx};
 use crate::api::common::PeerAddr;
 use crate::audit::{
     CorrelationId, build_initiator_from_user_id, build_initiator_unknown, emit_oauth2_session_event,
 };
 use crate::keystone::ServiceState;
 
-const SESSION_COOKIE_NAME: &str = "keystone_oauth2_session";
+pub(super) const SESSION_COOKIE_NAME: &str = "keystone_oauth2_session";
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub(super) struct AuthorizeQuery {
@@ -137,23 +137,23 @@ fn redirect_with_code(redirect_uri: &str, code: &str, state_param: &str) -> Resp
 /// initiates `/authorize` may not be the victim), so the secret half of the
 /// input -- generated server-side and never sent to the client in cleartext --
 /// is what an attacker crafting a link for a victim to click cannot supply.
-fn compute_csrf_token(session: &PreAuthSession) -> Option<String> {
+pub(super) fn compute_csrf_token(session: &PreAuthSession) -> Option<String> {
     super::html::compute_csrf_token(
         &session.server_side_session_secret,
         &[&session.session_id, &session.state, &session.code_challenge],
     )
 }
 
-fn verify_csrf_token(session: &PreAuthSession, presented: &str) -> bool {
+pub(super) fn verify_csrf_token(session: &PreAuthSession, presented: &str) -> bool {
     compute_csrf_token(session)
         .is_some_and(|expected| super::html::constant_time_eq(&expected, presented))
 }
 
-async fn cookie_secure(state: &ServiceState, headers: &HeaderMap) -> bool {
+pub(super) async fn cookie_secure(state: &ServiceState, headers: &HeaderMap) -> bool {
     crate::api::common::oauth2_cookie_secure(state, headers).await
 }
 
-fn session_cookie(session_id: String, secure: bool) -> Cookie<'static> {
+pub(super) fn session_cookie(session_id: String, secure: bool) -> Cookie<'static> {
     Cookie::build((SESSION_COOKIE_NAME, session_id))
         .http_only(true)
         .same_site(SameSite::Lax)
@@ -176,6 +176,23 @@ fn render_login(
         csrf_token,
         error: error.map(str::to_string),
         action: format!("/v4/oauth2/{domain_id}/authorize/login"),
+    })
+}
+
+pub(super) fn render_mfa(
+    domain_id: &str,
+    session: &PreAuthSession,
+    client: &ClientView,
+    error: Option<&str>,
+) -> Response {
+    let Some(csrf_token) = compute_csrf_token(session) else {
+        return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
+    };
+    mfa_page(&MfaCtx {
+        client: client.clone(),
+        csrf_token,
+        error: error.map(str::to_string),
+        action: format!("/v4/oauth2/{domain_id}/authorize/mfa"),
     })
 }
 
@@ -541,10 +558,38 @@ pub(super) async fn authorize_login(
     let user_id = user_info.user_id.clone();
     let now = chrono::Utc::now().timestamp();
 
+    let factors = match super::mfa::required_factors(&state, &user_id).await {
+        Ok(f) => f,
+        Err(e) => {
+            // Fail closed: never skip a second factor because the lookup failed.
+            tracing::warn!(error = %e, "oauth2 second-factor lookup failed");
+            return Ok(error_page(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal error",
+            ));
+        }
+    };
+    if !factors.is_empty() {
+        return Ok(
+            match state
+                .provider
+                .get_oauth2_session_provider()
+                .begin_mfa(&state, &session_id, &user_id, factors)
+                .await
+            {
+                Ok(pending) => render_mfa(&domain_id, &pending, &client_ui, None),
+                Err(e) => {
+                    tracing::warn!(error = %e, "oauth2 pre-auth session update failed");
+                    error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
+                }
+            },
+        );
+    }
+
     let session = match state
         .provider
         .get_oauth2_session_provider()
-        .mark_authenticated(&state, &session_id, &user_id, now)
+        .mark_authenticated(&state, &session_id, &user_id, now, super::mfa::amr_for(&[]))
         .await
     {
         Ok(s) => s,
@@ -567,15 +612,35 @@ pub(super) async fn authorize_login(
         None,
     );
 
+    Ok(after_authentication(
+        &state,
+        &domain_id,
+        &session,
+        client.as_ref(),
+        &correlation_id.0,
+    )
+    .await)
+}
+
+/// Everything after a completed login (password and any second factor):
+/// skip consent for `pre_authorized` clients, otherwise render it.
+pub(super) async fn after_authentication(
+    state: &ServiceState,
+    domain_id: &str,
+    session: &PreAuthSession,
+    client: Option<&OAuth2ClientResource>,
+    correlation_id: &str,
+) -> Response {
     // `pre_authorized` consent-skip check (ADR 0026 §7.C's invariant applied
     // here too: a `pre_authorized` client never has `openstack:api` in
     // `allowed_scopes`, enforced at CRUD time, so skipping consent here
     // cannot silently grant OpenStack authorization).
-    if client.as_ref().is_some_and(|c| c.pre_authorized) {
-        return Ok(finish_consent(&state, &domain_id, &session, true, &correlation_id.0).await);
+    if client.is_some_and(|c| c.pre_authorized) {
+        return finish_consent(state, domain_id, session, true, correlation_id).await;
     }
 
-    Ok(render_consent(&domain_id, &session, &client_ui))
+    let client_ui = view_of(client, &session.client_id);
+    render_consent(domain_id, session, &client_ui)
 }
 
 /// `POST /v4/oauth2/{domain_id}/authorize/consent`.
@@ -714,7 +779,11 @@ async fn finish_consent(
                 scope: session.scope.clone(),
                 nonce: session.nonce.clone(),
                 auth_time,
-                amr: vec!["pwd".to_string()],
+                amr: if session.amr.is_empty() {
+                    vec!["pwd".to_string()]
+                } else {
+                    session.amr.clone()
+                },
             },
         )
         .await
@@ -937,6 +1006,10 @@ mod tests {
                     consent_granted: None,
                     created_at: 0,
                     expires_at: 1_000_000_000,
+                    amr: vec![],
+                    pending_user_id: None,
+                    pending_factors: vec![],
+                    mfa_attempts: 0,
                 })
             });
 
@@ -1007,6 +1080,10 @@ mod tests {
             consent_granted: None,
             created_at: 0,
             expires_at: 1_000_000_000,
+            amr: vec![],
+            pending_user_id: None,
+            pending_factors: vec![],
+            mfa_attempts: 0,
         }
     }
 
@@ -1125,12 +1202,28 @@ mod tests {
             .returning(move |_, _| Ok(Some(session.clone())));
         session_mock
             .expect_mark_authenticated()
-            .returning(|_, _, _, _| Ok(sample_session()));
+            .withf(|_, _, user_id, _, amr| user_id == "user-1" && *amr == ["pwd"])
+            .returning(|_, _, _, _, _| Ok(sample_session()));
 
         let mut identity_mock = MockIdentityProvider::default();
         identity_mock
             .expect_authenticate_by_password()
             .returning(|_, _| Ok(successful_password_auth_result()));
+        identity_mock.expect_get_user().returning(|_, _| {
+            Ok(Some(
+                openstack_keystone_core_types::identity::UserResponseBuilder::default()
+                    .id("user-1")
+                    .name("alice")
+                    .domain_id("domain-1")
+                    .enabled(true)
+                    .build()
+                    .unwrap(),
+            ))
+        });
+        let mut credential_mock = crate::credential::MockCredentialProvider::default();
+        credential_mock
+            .expect_list_credentials_for_user()
+            .returning(|_, _, _| Ok(Vec::new()));
 
         let mut client_mock = MockOauth2ClientProvider::default();
         client_mock
@@ -1140,6 +1233,7 @@ mod tests {
         let provider = Provider::mocked_builder()
             .mock_oauth2_session(session_mock)
             .mock_identity(identity_mock)
+            .mock_credential(credential_mock)
             .mock_oauth2_client(client_mock);
         let state = get_mocked_state(provider, true, None).await;
         let mut api = openapi_router()
@@ -1267,5 +1361,346 @@ mod tests {
             .unwrap();
         assert!(location.contains("code=issued-code-1"));
         assert!(location.contains("state=xyz"));
+    }
+
+    // ---- second-factor (TOTP) step ----
+
+    fn totp_user_mocks() -> (
+        MockIdentityProvider,
+        crate::credential::MockCredentialProvider,
+    ) {
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_authenticate_by_password()
+            .returning(|_, _| Ok(successful_password_auth_result()));
+        identity_mock.expect_get_user().returning(|_, _| {
+            Ok(Some(
+                openstack_keystone_core_types::identity::UserResponseBuilder::default()
+                    .id("user-1")
+                    .name("alice")
+                    .domain_id("domain-1")
+                    .enabled(true)
+                    .build()
+                    .unwrap(),
+            ))
+        });
+        let mut credential_mock = crate::credential::MockCredentialProvider::default();
+        credential_mock
+            .expect_list_credentials_for_user()
+            .returning(|_, _, _| {
+                Ok(vec![
+                    openstack_keystone_core_types::credential::CredentialBuilder::default()
+                        .id("cred-1")
+                        .blob(r#"{"seed": "x"}"#)
+                        .r#type("totp")
+                        .user_id("user-1")
+                        .build()
+                        .unwrap(),
+                ])
+            });
+        (identity_mock, credential_mock)
+    }
+
+    fn pending_session(attempts: u32) -> PreAuthSession {
+        PreAuthSession {
+            pending_user_id: Some("user-1".into()),
+            pending_factors: vec!["totp".into()],
+            mfa_attempts: attempts,
+            ..sample_session()
+        }
+    }
+
+    fn mfa_post_request(body: &str) -> Request<Body> {
+        Request::builder()
+            .uri("/domain-1/authorize/mfa")
+            .method("POST")
+            .header(header::COOKIE, "keystone_oauth2_session=session-1")
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    }
+
+    fn client_mock() -> MockOauth2ClientProvider {
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_get_by_client_id()
+            .returning(move |_, _| Ok(Some(authz_client())));
+        client_mock
+    }
+
+    #[tokio::test]
+    async fn test_login_with_totp_credential_renders_mfa_and_does_not_sign_in() {
+        let session = sample_session();
+        let csrf = csrf_for(&session);
+
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_get_pre_auth_session()
+            .returning(move |_, _| Ok(Some(session.clone())));
+        // `mark_authenticated` has no expectation: calling it would panic.
+        session_mock
+            .expect_begin_mfa()
+            .withf(|_, _, user_id, factors| user_id == "user-1" && *factors == ["totp"])
+            .returning(|_, _, _, _| Ok(pending_session(0)));
+
+        let (identity_mock, credential_mock) = totp_user_mocks();
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_session(session_mock)
+            .mock_identity(identity_mock)
+            .mock_credential(credential_mock)
+            .mock_oauth2_client(client_mock());
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(login_post_request(&format!(
+                "csrf_token={csrf}&username=alice&password=pass"
+            )))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = text_body(response).await;
+        assert!(body.contains("name=\"passcode\""));
+        assert!(!body.contains("Allow"));
+    }
+
+    #[tokio::test]
+    async fn test_login_fails_closed_when_second_factor_lookup_fails() {
+        let session = sample_session();
+        let csrf = csrf_for(&session);
+
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_get_pre_auth_session()
+            .returning(move |_, _| Ok(Some(session.clone())));
+
+        let (identity_mock, _) = totp_user_mocks();
+        let mut credential_mock = crate::credential::MockCredentialProvider::default();
+        credential_mock
+            .expect_list_credentials_for_user()
+            .returning(|_, _, _| {
+                Err(openstack_keystone_core_types::credential::CredentialProviderError::CredentialNotFound(
+                    "x".into(),
+                ))
+            });
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_session(session_mock)
+            .mock_identity(identity_mock)
+            .mock_credential(credential_mock)
+            .mock_oauth2_client(client_mock());
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(login_post_request(&format!(
+                "csrf_token={csrf}&username=alice&password=pass"
+            )))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_mfa_correct_code_signs_in_with_mfa_amr_and_renders_consent() {
+        let session = pending_session(1);
+        let csrf = csrf_for(&session);
+
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_get_pre_auth_session()
+            .returning(move |_, _| Ok(Some(session.clone())));
+        session_mock
+            .expect_record_mfa_attempt()
+            .times(1)
+            .returning(|_, _| Ok(pending_session(1)));
+        session_mock
+            .expect_mark_authenticated()
+            .withf(|_, _, user_id, _, amr| user_id == "user-1" && *amr == ["pwd", "otp", "mfa"])
+            .returning(|_, _, _, _, _| Ok(sample_session()));
+
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_authenticate_by_totp()
+            .returning(|_, _| Ok(successful_password_auth_result()));
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_session(session_mock)
+            .mock_identity(identity_mock)
+            .mock_oauth2_client(client_mock());
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(mfa_post_request(&format!(
+                "csrf_token={csrf}&factor=totp&passcode=123456"
+            )))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = text_body(response).await;
+        assert!(body.contains("openid"));
+        assert!(body.contains("name=\"decision\""));
+    }
+
+    #[tokio::test]
+    async fn test_mfa_wrong_code_rerenders_and_counts_the_attempt() {
+        let session = pending_session(0);
+        let csrf = csrf_for(&session);
+
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_get_pre_auth_session()
+            .returning(move |_, _| Ok(Some(session.clone())));
+        session_mock
+            .expect_record_mfa_attempt()
+            .times(1)
+            .returning(|_, _| Ok(pending_session(1)));
+
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_authenticate_by_totp()
+            .returning(|_, _| {
+                Err(IdentityProviderError::Authentication {
+                    source: AuthenticationError::TotpPasscodeInvalid,
+                })
+            });
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_session(session_mock)
+            .mock_identity(identity_mock)
+            .mock_oauth2_client(client_mock());
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(mfa_post_request(&format!(
+                "csrf_token={csrf}&factor=totp&passcode=000000"
+            )))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = text_body(response).await;
+        assert!(body.contains("invalid verification code"));
+        assert!(body.contains("name=\"passcode\""));
+    }
+
+    #[tokio::test]
+    async fn test_mfa_attempt_budget_exhausted_discards_the_session() {
+        let session = pending_session(0);
+        let csrf = csrf_for(&session);
+        let max = openstack_keystone_config::Oauth2Provider::default().mfa_max_attempts;
+
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_get_pre_auth_session()
+            .returning(move |_, _| Ok(Some(session.clone())));
+        session_mock
+            .expect_record_mfa_attempt()
+            .returning(move |_, _| Ok(pending_session(max)));
+        session_mock
+            .expect_complete_pre_auth_session()
+            .times(1)
+            .returning(|_, _| Ok(()));
+
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_authenticate_by_totp()
+            .returning(|_, _| {
+                Err(IdentityProviderError::Authentication {
+                    source: AuthenticationError::TotpPasscodeInvalid,
+                })
+            });
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_session(session_mock)
+            .mock_identity(identity_mock);
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(mfa_post_request(&format!(
+                "csrf_token={csrf}&factor=totp&passcode=000000"
+            )))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_mfa_without_pending_factor_or_with_bad_csrf_is_bad_request() {
+        // No pending second factor: a password-only session cannot use the step.
+        let session = sample_session();
+        let csrf = csrf_for(&session);
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_get_pre_auth_session()
+            .returning(move |_, _| Ok(Some(session.clone())));
+        let provider = Provider::mocked_builder().mock_oauth2_session(session_mock);
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let response = api
+            .as_service()
+            .oneshot(mfa_post_request(&format!(
+                "csrf_token={csrf}&factor=totp&passcode=123456"
+            )))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        // Wrong CSRF token on a pending session.
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_get_pre_auth_session()
+            .returning(|_, _| Ok(Some(pending_session(0))));
+        let provider = Provider::mocked_builder().mock_oauth2_session(session_mock);
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let response = api
+            .as_service()
+            .oneshot(mfa_post_request(
+                "csrf_token=wrong&factor=totp&passcode=123456",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_consent_cannot_be_reached_while_second_factor_is_pending() {
+        let session = pending_session(0);
+        let csrf = csrf_for(&session);
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_get_pre_auth_session()
+            .returning(move |_, _| Ok(Some(session.clone())));
+        let provider = Provider::mocked_builder().mock_oauth2_session(session_mock);
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let response = api
+            .as_service()
+            .oneshot(consent_post_request(&format!(
+                "csrf_token={csrf}&decision=allow"
+            )))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }

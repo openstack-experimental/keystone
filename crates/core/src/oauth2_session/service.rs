@@ -234,9 +234,34 @@ impl Oauth2SessionApi for Oauth2SessionService {
         session_id: &str,
         user_id: &str,
         auth_time: i64,
+        amr: Vec<String>,
     ) -> Result<PreAuthSession, Oauth2SessionProviderError> {
         self.backend_driver
-            .mark_pre_auth_session_authenticated(state, session_id, user_id, auth_time)
+            .mark_pre_auth_session_authenticated(state, session_id, user_id, auth_time, amr)
+            .await
+    }
+
+    #[tracing::instrument(name = "provider.oauth2_session.begin_mfa", level = "debug", skip_all, fields(session_id = %session_id))]
+    async fn begin_mfa(
+        &self,
+        state: &ServiceState,
+        session_id: &str,
+        user_id: &str,
+        factors: Vec<String>,
+    ) -> Result<PreAuthSession, Oauth2SessionProviderError> {
+        self.backend_driver
+            .begin_pre_auth_session_mfa(state, session_id, user_id, factors)
+            .await
+    }
+
+    #[tracing::instrument(name = "provider.oauth2_session.record_mfa_attempt", level = "debug", skip_all, fields(session_id = %session_id))]
+    async fn record_mfa_attempt(
+        &self,
+        state: &ServiceState,
+        session_id: &str,
+    ) -> Result<PreAuthSession, Oauth2SessionProviderError> {
+        self.backend_driver
+            .record_pre_auth_session_mfa_attempt(state, session_id)
             .await
     }
 
@@ -356,6 +381,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
                     client_id: req.client_id,
                     user_id: req.user_id,
                     scope: req.scope,
+                    amr: req.amr,
                     issued_at,
                     expires_at: expires_at.min(family_expires_at),
                     family_expires_at,
@@ -448,6 +474,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
                             client_id: record.client_id.clone(),
                             user_id: record.user_id.clone(),
                             scope: record.scope.clone(),
+                            amr: record.amr.clone(),
                             issued_at: now,
                             expires_at,
                             family_expires_at,
@@ -709,6 +736,38 @@ impl Oauth2SessionApi for Oauth2SessionService {
     ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError> {
         self.backend_driver
             .mark_device_code_grant_authenticated(state, device_code, user_id, auth_time, amr)
+            .await
+    }
+
+    #[tracing::instrument(
+        name = "provider.oauth2_session.begin_device_mfa",
+        level = "debug",
+        skip_all
+    )]
+    async fn begin_device_mfa(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+        user_id: &str,
+        factors: Vec<String>,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError> {
+        self.backend_driver
+            .begin_device_code_grant_mfa(state, device_code, user_id, factors)
+            .await
+    }
+
+    #[tracing::instrument(
+        name = "provider.oauth2_session.record_device_mfa_attempt",
+        level = "debug",
+        skip_all
+    )]
+    async fn record_device_mfa_attempt(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError> {
+        self.backend_driver
+            .record_device_code_grant_mfa_attempt(state, device_code)
             .await
     }
 
@@ -982,6 +1041,10 @@ mod tests {
             consent_granted: None,
             created_at: now(),
             expires_at: now() + 600,
+            amr: vec![],
+            pending_user_id: None,
+            pending_factors: vec![],
+            mfa_attempts: 0,
         }
     }
 
@@ -1083,6 +1146,7 @@ mod tests {
             revocation_reason: None,
             expires_at: now() + 1_000_000,
             family_expires_at: now() + 10_000_000,
+            amr: vec![],
         }
     }
 
@@ -1106,6 +1170,10 @@ mod tests {
                 consent_granted: None,
                 created_at: now() - 1000,
                 expires_at: now() - 1,
+                amr: vec![],
+                pending_user_id: None,
+                pending_factors: vec![],
+                mfa_attempts: 0,
             }))
         });
         mock.expect_delete_pre_auth_session()
@@ -1169,6 +1237,7 @@ mod tests {
                 family_expires_at: data.family_expires_at,
                 revoked_at: None,
                 revocation_reason: None,
+                amr: vec![],
             })
         });
         let service = service_with(mock);
@@ -1231,6 +1300,7 @@ mod tests {
                     family_expires_at: data.family_expires_at,
                     revoked_at: None,
                     revocation_reason: None,
+                    amr: vec![],
                 })
             });
         let service = service_with(mock);
@@ -1276,6 +1346,7 @@ mod tests {
                     family_expires_at: data.family_expires_at,
                     revoked_at: None,
                     revocation_reason: None,
+                    amr: vec![],
                 })
             });
         let service = service_with(mock);
@@ -1312,6 +1383,7 @@ mod tests {
                     family_expires_at: data.family_expires_at,
                     revoked_at: None,
                     revocation_reason: None,
+                    amr: vec![],
                 })
             });
         let service = service_with(mock);
@@ -1325,6 +1397,7 @@ mod tests {
                     client_id: "c".to_string(),
                     user_id: "u".to_string(),
                     scope: vec![],
+                    amr: vec![],
                 },
             )
             .await
@@ -1408,6 +1481,7 @@ mod tests {
                 family_expires_at: data.family_expires_at,
                 revoked_at: None,
                 revocation_reason: None,
+                amr: vec![],
             })
         });
         let service = service_with(mock);
@@ -1563,6 +1637,9 @@ mod tests {
             last_polled_at,
             created_at: now() - 100,
             expires_at: now() + 1_000_000,
+            pending_user_id: None,
+            pending_factors: vec![],
+            mfa_attempts: 0,
         }
     }
 
@@ -1585,6 +1662,9 @@ mod tests {
                 last_polled_at: None,
                 created_at: data.created_at,
                 expires_at: data.expires_at,
+                pending_user_id: None,
+                pending_factors: vec![],
+                mfa_attempts: 0,
             })
         });
         let service = service_with(mock);

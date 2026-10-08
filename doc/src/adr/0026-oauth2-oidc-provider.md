@@ -1200,6 +1200,22 @@ The `/authorize` endpoint accepts an optional `max_age` parameter. If present,
 `auth_time`. If `auth_time + max_age < now`, the server forces re-authentication
 (including re-triggering MFA/TOTP/passkey challenges if configured).
 
+### Amendment: TOTP Second Factor on the OP Login
+
+After a successful password check the OP looks up the user's TOTP credentials.
+If any are enabled, `user_id` is **not** stamped on the pre-auth session; the
+session instead records `pending_user_id`, `pending_factors` and a
+`mfa_attempts` counter, so consent stays unreachable until the code verifies
+(`POST /authorize/mfa`, `POST /device/mfa`). Verification reuses
+`authenticate_by_totp` (and its per-user rate limit, the primary brute-force
+control) and is additionally capped per session by `[oauth2] mfa_max_attempts`
+(counted before the code is checked, not reset by re-entering the password;
+best-effort). A user with `multi_factor_auth_enabled = false` skips the step;
+only admins and domain managers can change user options. A lookup error fails closed. On
+success the session is stamped with `amr = ["pwd", "otp", "mfa"]`, which is
+copied to the id_token and to refresh tokens so rotation preserves it. WebAuthn
+is not part of this amendment.
+
 ## 9. Cryptographic Auditing & Non-Repudiation
 
 Every single token issuance event, token refresh lifecycle step, and
