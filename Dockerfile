@@ -1,6 +1,6 @@
 ################
 ##### Builder
-FROM rust:1.96.0-slim-trixie AS base
+FROM rust:1.99.0-slim-trixie AS base
 ENV CARGO_HOME=/usr/local/cargo
 ENV CARGO_TARGET_DIR=/app/target
 

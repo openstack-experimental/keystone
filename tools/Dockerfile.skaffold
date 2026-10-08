@@ -1,4 +1,4 @@
-FROM lukemathwalker/cargo-chef:latest-rust-1.96.1-slim-trixie AS base
+FROM lukemathwalker/cargo-chef:latest-rust-1.99.0-slim-trixie AS base
 ENV CARGO_HOME=/usr/local/cargo
 ENV CARGO_TARGET_DIR=/app/target
 
