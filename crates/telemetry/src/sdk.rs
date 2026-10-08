@@ -35,6 +35,7 @@ use tracing_subscriber::registry::LookupSpan;
 
 use crate::config::{OtlpProtocol, SamplerKind, TelemetrySettings};
 use crate::metrics::{self, AlreadyStarted, PushConfig};
+use crate::redact::PersonalDataFilter;
 
 /// Name of the instrumentation scope of Keystone's own spans and metrics.
 const SCOPE: &str = "openstack-keystone";
@@ -202,7 +203,13 @@ fn build_tracer_provider(
     Ok(SdkTracerProvider::builder()
         .with_sampler(sampler(settings))
         .with_resource(resource.clone())
-        .with_span_processor(BatchSpanProcessor::builder(exporter).build())
+        .with_span_processor(
+            BatchSpanProcessor::builder(PersonalDataFilter::new(
+                exporter,
+                settings.include_user_ids,
+            ))
+            .build(),
+        )
         .build())
 }
 

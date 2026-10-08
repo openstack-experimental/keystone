@@ -35,6 +35,8 @@ pub mod metrics;
 #[cfg(feature = "sdk")]
 mod propagation;
 #[cfg(feature = "sdk")]
+mod redact;
+#[cfg(feature = "sdk")]
 mod sdk;
 
 pub use config::{

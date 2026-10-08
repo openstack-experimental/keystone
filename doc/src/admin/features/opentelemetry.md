@@ -52,7 +52,7 @@ TLS is used. Options:
 | `sampling_rate` | `1.0` | Ratio in `0.0..=1.0` for root spans (every span with `ratio`) |
 | `span_level` | `info` | Most verbose span exported: `error`, `warn`, `info`, `debug`, `trace` |
 | `metrics_interval` | `60` | Metric push interval, seconds |
-| `include_user_ids` | `false` | Add user, project and domain ids and the raw URL path to request spans |
+| `include_user_ids` | `false` | Export user, project and domain ids, user names, list filters and the raw URL path on spans |
 | `include_client_address` | `false` | Add the caller's IP to request spans |
 | `legacy_http_attributes` | `false` | Also emit the `http.method`, `http.user_agent` and `http.status_code` names that `oslo.middleware` uses |
 | `response_traceparent` | `false` | Return `traceparent` in responses |

@@ -151,7 +151,7 @@ impl ResourceBackend for SqlBackend {
     /// # Parameters
     /// - `state`: Service state containing the database connection.
     /// - `id`: ID of the domain to delete.
-    #[tracing::instrument(name = "driver.sql.resource.delete_domain", level = "debug", skip_all, fields(id = %id))]
+    #[tracing::instrument(name = "driver.sql.resource.delete_domain", level = "debug", skip_all, fields(domain_id = %id))]
     async fn delete_domain<'a>(
         &self,
         state: &ServiceState,
@@ -165,7 +165,7 @@ impl ResourceBackend for SqlBackend {
     /// # Parameters
     /// - `state`: Service state containing the database connection.
     /// - `id`: ID of the project to delete.
-    #[tracing::instrument(name = "driver.sql.resource.delete_project", level = "debug", skip_all, fields(id = %id))]
+    #[tracing::instrument(name = "driver.sql.resource.delete_project", level = "debug", skip_all, fields(project_id = %id))]
     async fn delete_project<'a>(
         &self,
         state: &ServiceState,

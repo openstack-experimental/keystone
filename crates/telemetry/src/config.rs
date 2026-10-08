@@ -120,9 +120,11 @@ pub struct OtelConfig {
     pub span_level: Option<SpanLevel>,
     /// Metric export interval in seconds (default 60).
     pub metrics_interval: Option<f64>,
-    /// Add `openstack.user_id`, `openstack.project_id` and
-    /// `openstack.domain_id` to request spans. Off by default: spans leave
-    /// the host.
+    /// Export user, project and domain ids, user names and list filters on
+    /// spans (`openstack.user_id` and the like on request spans, `user_id`,
+    /// `project_id`, `domain_id`, `user_name` and `params` on provider and
+    /// driver spans), and the raw URL path. Off by default: spans leave the
+    /// host.
     pub include_user_ids: Option<bool>,
     /// Add `client.address` (the caller's IP) to request spans. Off by
     /// default: it is personal data and spans leave the host.
@@ -246,7 +248,8 @@ pub struct TelemetrySettings {
     pub span_level: SpanLevel,
     /// Metric export interval.
     pub metrics_interval: Duration,
-    /// Add user, project and domain ids to request spans.
+    /// Export user, project and domain ids, user names and list filters on
+    /// spans.
     pub include_user_ids: bool,
     /// Add the caller's IP to request spans.
     pub include_client_address: bool,

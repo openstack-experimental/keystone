@@ -341,7 +341,7 @@ impl IdentityBackend for SqlBackend {
     /// - `state`: The service state.
     /// - `domain_id`: The domain to search within.
     /// - `name`: The name to match, case-insensitively.
-    #[tracing::instrument(name = "driver.sql.identity.find_user_by_name_ci", level = "debug", skip_all, fields(domain_id = %domain_id, name = %name))]
+    #[tracing::instrument(name = "driver.sql.identity.find_user_by_name_ci", level = "debug", skip_all, fields(domain_id = %domain_id, user_name = %name))]
     async fn find_user_by_name_ci<'a>(
         &self,
         state: &ServiceState,

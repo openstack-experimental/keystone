@@ -142,7 +142,7 @@ inventory::submit! {
 #[async_trait]
 impl DomainConfigBackend for FsBackend {
     /// Read-only: always [`DomainConfigProviderError::Readonly`].
-    #[tracing::instrument(name = "driver.fs.domain_config.create_domain_config", level = "debug", skip_all, fields(_domain_id = %_domain_id))]
+    #[tracing::instrument(name = "driver.fs.domain_config.create_domain_config", level = "debug", skip_all, fields(domain_id = %_domain_id))]
     async fn create_domain_config<'a>(
         &self,
         _state: &ServiceState,
@@ -260,7 +260,7 @@ impl DomainConfigBackend for FsBackend {
     }
 
     /// Read-only: always [`DomainConfigProviderError::Readonly`].
-    #[tracing::instrument(name = "driver.fs.domain_config.update_domain_config", level = "debug", skip_all, fields(_domain_id = %_domain_id))]
+    #[tracing::instrument(name = "driver.fs.domain_config.update_domain_config", level = "debug", skip_all, fields(domain_id = %_domain_id))]
     async fn update_domain_config<'a>(
         &self,
         _state: &ServiceState,
@@ -271,7 +271,7 @@ impl DomainConfigBackend for FsBackend {
     }
 
     /// Read-only: always [`DomainConfigProviderError::Readonly`].
-    #[tracing::instrument(name = "driver.fs.domain_config.update_domain_config_group", level = "debug", skip_all, fields(_domain_id = %_domain_id))]
+    #[tracing::instrument(name = "driver.fs.domain_config.update_domain_config_group", level = "debug", skip_all, fields(domain_id = %_domain_id))]
     async fn update_domain_config_group<'a>(
         &self,
         _state: &ServiceState,
@@ -283,7 +283,7 @@ impl DomainConfigBackend for FsBackend {
     }
 
     /// Read-only: always [`DomainConfigProviderError::Readonly`].
-    #[tracing::instrument(name = "driver.fs.domain_config.update_domain_config_option", level = "debug", skip_all, fields(_domain_id = %_domain_id))]
+    #[tracing::instrument(name = "driver.fs.domain_config.update_domain_config_option", level = "debug", skip_all, fields(domain_id = %_domain_id))]
     async fn update_domain_config_option<'a>(
         &self,
         _state: &ServiceState,
@@ -294,7 +294,7 @@ impl DomainConfigBackend for FsBackend {
     }
 
     /// Read-only: always [`DomainConfigProviderError::Readonly`].
-    #[tracing::instrument(name = "driver.fs.domain_config.delete_domain_config", level = "debug", skip_all, fields(_domain_id = %_domain_id))]
+    #[tracing::instrument(name = "driver.fs.domain_config.delete_domain_config", level = "debug", skip_all, fields(domain_id = %_domain_id))]
     async fn delete_domain_config<'a>(
         &self,
         _state: &ServiceState,
@@ -304,7 +304,7 @@ impl DomainConfigBackend for FsBackend {
     }
 
     /// Read-only: always [`DomainConfigProviderError::Readonly`].
-    #[tracing::instrument(name = "driver.fs.domain_config.delete_domain_config_group", level = "debug", skip_all, fields(_domain_id = %_domain_id))]
+    #[tracing::instrument(name = "driver.fs.domain_config.delete_domain_config_group", level = "debug", skip_all, fields(domain_id = %_domain_id))]
     async fn delete_domain_config_group<'a>(
         &self,
         _state: &ServiceState,
@@ -315,7 +315,7 @@ impl DomainConfigBackend for FsBackend {
     }
 
     /// Read-only: always [`DomainConfigProviderError::Readonly`].
-    #[tracing::instrument(name = "driver.fs.domain_config.delete_domain_config_option", level = "debug", skip_all, fields(_domain_id = %_domain_id))]
+    #[tracing::instrument(name = "driver.fs.domain_config.delete_domain_config_option", level = "debug", skip_all, fields(domain_id = %_domain_id))]
     async fn delete_domain_config_option<'a>(
         &self,
         _state: &ServiceState,
@@ -327,7 +327,7 @@ impl DomainConfigBackend for FsBackend {
     }
 
     /// Read-only: always [`DomainConfigProviderError::Readonly`].
-    #[tracing::instrument(name = "driver.fs.domain_config.obtain_registration", level = "debug", skip_all, fields(_domain_id = %_domain_id))]
+    #[tracing::instrument(name = "driver.fs.domain_config.obtain_registration", level = "debug", skip_all, fields(domain_id = %_domain_id))]
     async fn obtain_registration<'a>(
         &self,
         _state: &ServiceState,
@@ -352,7 +352,7 @@ impl DomainConfigBackend for FsBackend {
     }
 
     /// Read-only: always [`DomainConfigProviderError::Readonly`].
-    #[tracing::instrument(name = "driver.fs.domain_config.release_registration", level = "debug", skip_all, fields(_domain_id = %_domain_id))]
+    #[tracing::instrument(name = "driver.fs.domain_config.release_registration", level = "debug", skip_all, fields(domain_id = %_domain_id))]
     async fn release_registration<'a>(
         &self,
         _state: &ServiceState,

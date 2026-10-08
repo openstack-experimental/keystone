@@ -183,7 +183,9 @@ after the request.
 
 Spans leave the host. By default they contain route templates, status codes and
 the identifiers of the resources a call touched, but not user, project or domain
-ids, the raw URL path or the client address. The options that add them
+ids, user names, list filters, the raw URL path or the client address. The
+exporter strips the former from every span, including the `debug` provider and
+driver spans, so raising `span_level` does not change this. The options that add them
 (`include_user_ids`, `include_client_address`) are off for that reason; switch
 them on only when the collector and the backend are trusted with personal data
 and covered by your retention rules.

@@ -121,7 +121,11 @@ inside `TraceLayer`, installed only while traces are exported:
   ids are in it), and `openstack.user_id`, `openstack.project_id` and
   `openstack.domain_id`, recorded where the request authenticates. Without the
   option those fields are not declared on the span, so nothing can record
-  into them;
+  into them. The provider and driver spans record the ids they were called
+  with at `debug` level, and a span field cannot be switched off at runtime,
+  so the exporter removes the attributes `user_id`, `project_id`,
+  `domain_id`, `user_name` and `params` (a list filter, which holds names and
+  ids) from every span unless the option is on. They stay in local logs;
 - `response_traceparent` echoes the span's `traceparent` in the response, off
   by default.
 

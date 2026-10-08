@@ -1256,7 +1256,7 @@ impl IdentityApi for IdentityService {
         }
     }
 
-    #[tracing::instrument(name = "provider.identity.find_user_by_name_ci", level = "debug", skip_all, fields(domain_id = %domain_id, name = %name))]
+    #[tracing::instrument(name = "provider.identity.find_user_by_name_ci", level = "debug", skip_all, fields(domain_id = %domain_id, user_name = %name))]
     async fn find_user_by_name_ci<'a>(
         &self,
         ctx: &ExecutionContext<'a>,

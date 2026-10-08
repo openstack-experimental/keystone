@@ -478,7 +478,7 @@ impl ResourceApi for ResourceService {
     /// # Returns
     /// - `Result<(), ResourceProviderError>` - `Ok(())` if successful, or an
     ///   error.
-    #[tracing::instrument(name = "provider.resource.delete_domain", level = "debug", skip_all, fields(id = %id))]
+    #[tracing::instrument(name = "provider.resource.delete_domain", level = "debug", skip_all, fields(domain_id = %id))]
     async fn delete_domain<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -546,7 +546,7 @@ impl ResourceApi for ResourceService {
     /// # Returns
     /// - `Result<(), ResourceProviderError>` - `Ok(())` if successful, or an
     ///   error.
-    #[tracing::instrument(name = "provider.resource.delete_project", level = "debug", skip_all, fields(id = %id))]
+    #[tracing::instrument(name = "provider.resource.delete_project", level = "debug", skip_all, fields(project_id = %id))]
     async fn delete_project<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
