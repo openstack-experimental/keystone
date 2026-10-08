@@ -2,7 +2,8 @@
 
 Keystone can export traces and metrics over OTLP, and it always serves the
 same metrics as Prometheus text on `/metrics`. This page is the operator
-guide; the design is in [ADR 0040](../../adr/0040-opentelemetry.md).
+guide; the design is in [ADR 0040](../../adr/0040-opentelemetry.md). For what
+to collect, alert on and look at, see [Observability](observability.md).
 
 ## Build
 
