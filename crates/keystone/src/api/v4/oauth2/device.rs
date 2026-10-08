@@ -20,12 +20,11 @@
 //! page rather than a redirect back to a relying party -- the polling
 //! device, not this browser, receives the eventual token at `/token`.
 
-use askama::Template;
 use axum::{
     Form,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
-    response::{Html, IntoResponse, Response},
+    response::{IntoResponse, Response},
 };
 use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, SameSite};
@@ -42,8 +41,9 @@ use openstack_keystone_core_types::identity::{
 use openstack_keystone_core_types::oauth2_session::DeviceCodeGrant;
 
 use super::html::{
-    ConsentTemplate, LoginTemplate, error_page, security_headers, too_many_requests,
+    consent_page, device_entry_page, device_result_page, error_page, login_page, too_many_requests,
 };
+use super::renderer::{ClientView, ConsentCtx, DeviceEntryCtx, DeviceResultCtx, LoginCtx};
 use crate::api::common::PeerAddr;
 use crate::audit::{
     CorrelationId, build_initiator_from_user_id, build_initiator_unknown, emit_oauth2_session_event,
@@ -76,21 +76,6 @@ pub(super) struct DeviceConsentForm {
     decision: String,
 }
 
-#[derive(Template)]
-#[template(path = "oauth2/device_entry.html")]
-struct DeviceEntryTemplate<'a> {
-    error: Option<&'a str>,
-    prefill: &'a str,
-    action: String,
-}
-
-#[derive(Template)]
-#[template(path = "oauth2/device_result.html")]
-struct DeviceResultTemplate<'a> {
-    granted: bool,
-    client_id: &'a str,
-}
-
 /// CSRF token derivation, mirroring `authorize.rs`'s but keyed on the
 /// device grant's own identifiers instead of a `PreAuthSession`'s.
 fn compute_csrf_token(grant: &DeviceCodeGrant) -> Option<String> {
@@ -119,17 +104,11 @@ fn device_cookie(device_code: String, secure: bool) -> Cookie<'static> {
 }
 
 fn render_entry(domain_id: &str, error: Option<&str>, prefill: &str) -> Response {
-    let body = match (DeviceEntryTemplate {
-        error,
-        prefill,
+    device_entry_page(&DeviceEntryCtx {
+        error: error.map(str::to_string),
+        prefill: prefill.to_string(),
         action: format!("/v4/oauth2/{domain_id}/device"),
     })
-    .render()
-    {
-        Ok(body) => body,
-        Err(_) => return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
-    };
-    security_headers((StatusCode::OK, Html(body)).into_response())
 }
 
 fn render_login(
@@ -141,44 +120,31 @@ fn render_login(
     let Some(csrf_token) = compute_csrf_token(grant) else {
         return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
     };
-    let body = match (LoginTemplate {
-        client_id,
-        csrf_token: &csrf_token,
-        error,
+    login_page(&LoginCtx {
+        client: ClientView::from_id(client_id),
+        csrf_token,
+        error: error.map(str::to_string),
         action: format!("/v4/oauth2/{domain_id}/device/login"),
     })
-    .render()
-    {
-        Ok(body) => body,
-        Err(_) => return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
-    };
-    security_headers((StatusCode::OK, Html(body)).into_response())
 }
 
 fn render_consent(domain_id: &str, client_id: &str, grant: &DeviceCodeGrant) -> Response {
     let Some(csrf_token) = compute_csrf_token(grant) else {
         return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
     };
-    let body = match (ConsentTemplate {
-        client_id,
-        scopes: &grant.scope,
-        csrf_token: &csrf_token,
+    consent_page(&ConsentCtx {
+        client: ClientView::from_id(client_id),
+        scopes: grant.scope.clone(),
+        csrf_token,
         action: format!("/v4/oauth2/{domain_id}/device/consent"),
     })
-    .render()
-    {
-        Ok(body) => body,
-        Err(_) => return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
-    };
-    security_headers((StatusCode::OK, Html(body)).into_response())
 }
 
 fn render_result(granted: bool, client_id: &str) -> Response {
-    let body = match (DeviceResultTemplate { granted, client_id }).render() {
-        Ok(body) => body,
-        Err(_) => return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
-    };
-    security_headers((StatusCode::OK, Html(body)).into_response())
+    device_result_page(&DeviceResultCtx {
+        granted,
+        client: ClientView::from_id(client_id),
+    })
 }
 
 async fn client_id_for_display(state: &ServiceState, client_id: &str) -> String {

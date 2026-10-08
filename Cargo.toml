@@ -82,7 +82,7 @@ aes-gcm = { version = "0.11" }
 arbitrary = { version = "1" }
 arc-swap = { version = "1.9" }
 argon2 = { version = "0.6" }
-askama = { version = "0.16" }
+minijinja = { version = "2" }
 async-trait = { version = "0.1" }
 axum = { version = "0.8", default-features = false }
 axum-extra = { version = "0.12", default-features = false }

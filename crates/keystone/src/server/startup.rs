@@ -142,6 +142,7 @@ pub async fn run() -> Result<(), Report> {
     log_telemetry_config(&guards);
 
     check_oauth2_public_endpoint(&cfg);
+    crate::api::v4::oauth2::init_ui(&cfg.oauth2).map_err(|e| eyre::eyre!(e))?;
 
     info!("Starting Keystone...");
     let startup_timer = Instant::now();

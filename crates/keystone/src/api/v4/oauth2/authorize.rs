@@ -23,12 +23,11 @@
 //! authorization scope for a human token is not yet wired through the
 //! consent step.
 
-use askama::Template;
 use axum::{
     Form,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
-    response::{Html, IntoResponse, Redirect, Response},
+    response::{IntoResponse, Redirect, Response},
 };
 use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, SameSite};
@@ -48,9 +47,8 @@ use openstack_keystone_core_types::identity::{
 use openstack_keystone_core_types::oauth2_client::GrantType;
 use openstack_keystone_core_types::oauth2_session::PreAuthSession;
 
-use super::html::{
-    ConsentTemplate, LoginTemplate, error_page, security_headers, too_many_requests,
-};
+use super::html::{consent_page, error_page, login_page, security_headers, too_many_requests};
+use super::renderer::{ClientView, ConsentCtx, LoginCtx};
 use crate::api::common::PeerAddr;
 use crate::audit::{
     CorrelationId, build_initiator_from_user_id, build_initiator_unknown, emit_oauth2_session_event,
@@ -165,36 +163,24 @@ fn render_login(domain_id: &str, session: &PreAuthSession, error: Option<&str>) 
     let Some(csrf_token) = compute_csrf_token(session) else {
         return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
     };
-    let body = match (LoginTemplate {
-        client_id: &session.client_id,
-        csrf_token: &csrf_token,
-        error,
+    login_page(&LoginCtx {
+        client: ClientView::from_id(&session.client_id),
+        csrf_token,
+        error: error.map(str::to_string),
         action: format!("/v4/oauth2/{domain_id}/authorize/login"),
     })
-    .render()
-    {
-        Ok(body) => body,
-        Err(_) => return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
-    };
-    security_headers((StatusCode::OK, Html(body)).into_response())
 }
 
 fn render_consent(domain_id: &str, session: &PreAuthSession) -> Response {
     let Some(csrf_token) = compute_csrf_token(session) else {
         return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
     };
-    let body = match (ConsentTemplate {
-        client_id: &session.client_id,
-        scopes: &session.scope,
-        csrf_token: &csrf_token,
+    consent_page(&ConsentCtx {
+        client: ClientView::from_id(&session.client_id),
+        scopes: session.scope.clone(),
+        csrf_token,
         action: format!("/v4/oauth2/{domain_id}/authorize/consent"),
     })
-    .render()
-    {
-        Ok(body) => body,
-        Err(_) => return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
-    };
-    security_headers((StatusCode::OK, Html(body)).into_response())
 }
 
 /// `GET /v4/oauth2/{domain_id}/authorize` (RFC 6749 §4.1.1, ADR 0026 §10

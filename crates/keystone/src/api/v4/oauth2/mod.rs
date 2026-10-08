@@ -35,8 +35,10 @@ mod introspect;
 mod jwks;
 mod jwks_revocation;
 mod local_emergency_key;
+mod renderer;
 mod revoke;
 mod rotate_signing_key;
+mod static_files;
 mod token;
 mod userinfo;
 mod well_known;
@@ -54,6 +56,7 @@ pub struct ApiDoc;
 
 pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
+        .routes(routes!(static_files::static_file))
         .routes(routes!(jwks::jwks))
         .routes(routes!(jwks_revocation::jwks_revocation))
         .routes(routes!(well_known::well_known))
@@ -78,4 +81,14 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         ))
         .routes(routes!(local_emergency_key::reconcile_local_emergency_key))
         .merge(clients::openapi_router())
+}
+
+/// Validate the `[oauth2]` UI configuration and install the page renderer
+/// built from it. Called once at startup; templates are read here, so a
+/// restart is required to pick up template changes.
+pub(crate) fn init_ui(cfg: &openstack_keystone_config::Oauth2Provider) -> Result<(), String> {
+    cfg.validate_ui_paths()?;
+    let renderer = renderer::renderer_from_config(cfg).map_err(|e| e.to_string())?;
+    renderer::install(renderer);
+    Ok(())
 }

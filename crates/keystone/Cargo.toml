@@ -18,7 +18,6 @@ path="src/bin/keystone.rs"
 
 [dependencies]
 async-trait.workspace = true
-askama = { workspace = true, features = ["derive"] }
 axum = { workspace = true, features = ["form", "http1", "http2", "macros", "matched-path", "original-uri", "query", "tokio", "tracing"] }
 axum-extra = { workspace = true, features = ["cookie"] }
 base64.workspace = true
@@ -34,6 +33,7 @@ hmac.workspace = true
 hyper-util.workspace = true
 hyper.workspace = true
 inventory.workspace = true
+minijinja.workspace = true
 ipnet = { workspace = true }
 jsonwebtoken = { workspace = true }
 nix = { workspace = true, features = ["socket", "user"] }
@@ -93,7 +93,7 @@ spiffe = { workspace = true, features = ["x509-source"] }
 spiffe-rustls.workspace = true
 spiffe-rustls-tokio.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["fs", "macros", "process", "signal", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "process", "signal", "rt-multi-thread"] }
 tokio-rustls.workspace = true
 tokio-util.workspace = true
 tonic = { workspace = true, features = ["server", "tls-aws-lc" ] }
