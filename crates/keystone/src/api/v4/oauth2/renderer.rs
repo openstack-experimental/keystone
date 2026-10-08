@@ -297,6 +297,17 @@ pub(crate) struct LoginCtx {
     pub csrf_token: String,
     pub error: Option<String>,
     pub action: String,
+    /// Upstream identity providers offered next to the password form.
+    pub idps: Vec<IdpView>,
+    /// Form target of the "Sign in with ..." buttons.
+    pub federated_action: String,
+}
+
+/// An upstream identity provider as the login page shows it.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct IdpView {
+    pub id: String,
+    pub name: String,
 }
 
 /// Context of `mfa.html`.
@@ -474,6 +485,8 @@ mod tests {
 
     fn login_ctx() -> LoginCtx {
         LoginCtx {
+            federated_action: Default::default(),
+            idps: Default::default(),
             client: ClientView::from_id("<b>app</b>"),
             csrf_token: "tok".into(),
             error: Some("bad".into()),
@@ -537,6 +550,8 @@ mod tests {
         let client = || ClientView::from_id("c");
         let pages = [
             r.render_login(&LoginCtx {
+                federated_action: Default::default(),
+                idps: Default::default(),
                 client: client(),
                 csrf_token: "t".into(),
                 error: None,
@@ -617,6 +632,8 @@ mod tests {
 
         let login = r
             .render_login(&LoginCtx {
+                federated_action: Default::default(),
+                idps: Default::default(),
                 client: rich_client(true),
                 csrf_token: "t".into(),
                 error: None,

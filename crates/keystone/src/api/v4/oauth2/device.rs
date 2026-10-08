@@ -127,6 +127,9 @@ fn render_login(
         csrf_token,
         error: error.map(str::to_string),
         action: format!("/v4/oauth2/{domain_id}/device/login"),
+        // Federated sign-in is not offered on the device flow yet.
+        idps: Vec::new(),
+        federated_action: String::new(),
     })
 }
 

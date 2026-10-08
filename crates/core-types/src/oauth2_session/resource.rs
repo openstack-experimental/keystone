@@ -19,6 +19,44 @@ use serde::{Deserialize, Serialize};
 /// consumed across the login -> consent -> code-issuance sequence. Keyed by
 /// an opaque `session_id` carried in an `HttpOnly`, `SameSite=Lax` cookie
 /// (ADR 0026 §8). Single-flight: deleted on completion or expiry.
+/// The upstream (federated) login a session, code or refresh family
+/// originated from.
+///
+/// Recorded so RP-initiated logout and a future back-channel logout can
+/// chain from the OP session to the upstream IdP session.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UpstreamLogin {
+    /// Federation identity provider the user signed in with.
+    pub idp_id: String,
+    /// The upstream `sid` claim, when the IdP issued one.
+    pub sid: Option<String>,
+}
+
+/// An upstream authorization request that was sent but not answered yet.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PendingUpstream {
+    /// Federation identity provider the browser was sent to.
+    pub idp_id: String,
+    /// The `state` sent upstream; the callback must present exactly this.
+    pub state: String,
+}
+
+/// What the upstream callback hands to the session when it completes a
+/// federated login.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpstreamLoginCompletion {
+    /// The `state` the callback presented; must match the pending redirect.
+    pub upstream_state: String,
+    /// The resolved (possibly shadow) Keystone user.
+    pub user_id: String,
+    /// Epoch seconds of the upstream authentication.
+    pub auth_time: i64,
+    /// Authentication methods references of the login.
+    pub amr: Vec<String>,
+    /// The upstream login to record.
+    pub upstream: UpstreamLogin,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PreAuthSession {
     /// Opaque session identifier (the cookie value).
@@ -76,6 +114,13 @@ pub struct PreAuthSession {
     /// Second-factor attempts so far (counted before verification).
     #[serde(default)]
     pub mfa_attempts: u32,
+    /// Set once the user is redirected to an upstream IdP, cleared when the
+    /// callback completes the login.
+    #[serde(default)]
+    pub pending_upstream: Option<PendingUpstream>,
+    /// Set alongside `user_id` when the login was federated.
+    #[serde(default)]
+    pub upstream: Option<UpstreamLogin>,
 }
 
 /// Input to create a new [`PreAuthSession`].
@@ -138,6 +183,9 @@ pub struct AuthorizationCode {
     pub created_at: i64,
     /// UTC epoch seconds (`[oauth2] authorization_code_lifetime_seconds`).
     pub expires_at: i64,
+    /// Upstream login this originated from (federated sign-in only).
+    #[serde(default)]
+    pub upstream: Option<UpstreamLogin>,
 }
 
 /// Input to create a new [`AuthorizationCode`].
@@ -169,6 +217,9 @@ pub struct AuthorizationCodeCreate {
     pub created_at: i64,
     /// UTC epoch seconds.
     pub expires_at: i64,
+    /// Upstream login this originated from (federated sign-in only).
+    #[serde(default)]
+    pub upstream: Option<UpstreamLogin>,
 }
 
 /// A single node in a `refresh_token` rotation family tree (ADR 0026 §2,
@@ -231,6 +282,9 @@ pub struct RefreshToken {
     /// for families minted before the field existed (reported as `pwd`).
     #[serde(default)]
     pub amr: Vec<String>,
+    /// Upstream login this originated from (federated sign-in only).
+    #[serde(default)]
+    pub upstream: Option<UpstreamLogin>,
 }
 
 /// Reason a refresh token family was revoked (stored in
@@ -398,4 +452,7 @@ pub struct RefreshTokenCreate {
     pub family_expires_at: i64,
     /// Authentication methods references of the originating login.
     pub amr: Vec<String>,
+    /// Upstream login this originated from (federated sign-in only).
+    #[serde(default)]
+    pub upstream: Option<UpstreamLogin>,
 }

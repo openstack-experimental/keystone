@@ -150,6 +150,7 @@ pub(super) async fn handle_authorization_code_grant(
                     user_id: record.user_id.clone(),
                     scope: record.scope.clone(),
                     amr: record.amr.clone(),
+                    upstream: record.upstream.clone(),
                 },
             )
             .await
@@ -260,6 +261,7 @@ mod tests {
 
     fn sample_authz_code(scope: Vec<String>) -> AuthorizationCode {
         AuthorizationCode {
+            upstream: None,
             code: "code-1".to_string(),
             domain_id: "domain-1".to_string(),
             client_id: "client-1".to_string(),
@@ -507,6 +509,7 @@ mod tests {
         session_mock.expect_issue_refresh_token().returning(|_, _| {
             Ok((
                 openstack_keystone_core_types::oauth2_session::RefreshToken {
+                    upstream: None,
                     token_id: "irrelevant".to_string(),
                     family_id: "family-9".to_string(),
                     parent_token_id: None,
@@ -548,6 +551,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_authorization_code_passes_upstream_login_to_refresh_family() {
+        let mut client = public_authz_code_client().await;
+        client.grant_types = vec![
+            openstack_keystone_core_types::oauth2_client::GrantType::AuthorizationCode,
+            openstack_keystone_core_types::oauth2_client::GrantType::RefreshToken,
+        ];
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_get_by_client_id()
+            .returning(move |_, _| Ok(Some(client.clone())));
+
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_redeem_authorization_code()
+            .returning(|_, _| {
+                let mut code = sample_authz_code(vec!["openid".to_string()]);
+                code.upstream = Some(
+                    openstack_keystone_core_types::oauth2_session::UpstreamLogin {
+                        idp_id: "idp-1".to_string(),
+                        sid: Some("upstream-sid".to_string()),
+                    },
+                );
+                Ok(Some(code))
+            });
+        session_mock
+            .expect_issue_refresh_token()
+            .withf(|_, req| {
+                req.upstream.as_ref().is_some_and(|u| {
+                    u.idp_id == "idp-1" && u.sid.as_deref() == Some("upstream-sid")
+                })
+            })
+            .returning(|_, _| {
+                Ok((
+                    openstack_keystone_core_types::oauth2_session::RefreshToken {
+                        upstream: None,
+                        token_id: "irrelevant".to_string(),
+                        family_id: "family-9".to_string(),
+                        parent_token_id: None,
+                        domain_id: "domain-1".to_string(),
+                        client_id: "client-1".to_string(),
+                        user_id: "user-1".to_string(),
+                        scope: vec!["openid".to_string()],
+                        issued_at: 1000,
+                        spent_at: None,
+                        revoked_at: None,
+                        revocation_reason: None,
+                        expires_at: 1000 + 2_592_000,
+                        family_expires_at: 0,
+                        amr: vec![],
+                    },
+                    "refresh-bearer".to_string(),
+                ))
+            });
+
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock)
+            .mock_oauth2_session(session_mock)
+            .mock_oauth2_key(ok_key_mock());
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(request(&authz_code_form(PKCE_VERIFIER)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
     async fn test_signing_failure_discards_undelivered_refresh_family() {
         use openstack_keystone_core_types::oauth2_key::Oauth2KeyProviderError;
         use openstack_keystone_core_types::oauth2_session::RefreshTokenRevocationReason;
@@ -569,6 +644,7 @@ mod tests {
         session_mock.expect_issue_refresh_token().returning(|_, _| {
             Ok((
                 openstack_keystone_core_types::oauth2_session::RefreshToken {
+                    upstream: None,
                     token_id: "irrelevant".to_string(),
                     family_id: "family-9".to_string(),
                     parent_token_id: None,

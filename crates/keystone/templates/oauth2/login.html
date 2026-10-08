@@ -24,4 +24,15 @@
 <input id="password" type="password" name="password" autocomplete="current-password" required>
 <button type="submit">{{ t("sign_in") }}</button>
 </form>
+{% if idps %}
+<div class="idps">
+{% for idp in idps %}
+<form method="post" action="{{ federated_action }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<input type="hidden" name="idp_id" value="{{ idp.id }}">
+<button type="submit" class="secondary">{{ t("sign_in_with", idp=idp.name) }}</button>
+</form>
+{% endfor %}
+</div>
+{% endif %}
 {% endblock %}

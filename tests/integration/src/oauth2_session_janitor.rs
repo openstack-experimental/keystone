@@ -50,6 +50,7 @@ fn session_create(id: &str, expires_at: i64) -> PreAuthSessionCreate {
 
 fn refresh_create(token_id: &str, family_id: &str, expires_at: i64) -> RefreshTokenCreate {
     RefreshTokenCreate {
+        upstream: None,
         token_id: token_id.to_string(),
         family_id: family_id.to_string(),
         parent_token_id: None,
