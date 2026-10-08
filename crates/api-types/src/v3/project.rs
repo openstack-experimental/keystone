@@ -185,7 +185,7 @@ pub struct ProjectCreate {
 
     /// The name of the project, which must be unique within the owning domain.
     /// A project can have the same name as its domain.
-    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub name: String,
 
     /// The resource options for the project. Available resource options are
@@ -278,7 +278,7 @@ pub struct ProjectUpdate {
 
     /// The project name.
     #[cfg_attr(feature = "builder", builder(default))]
-    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub name: Option<String>,
 
     /// The resource options for the project. Available resource options are
@@ -416,5 +416,27 @@ mod tests {
             )
             .unwrap()
         );
+    }
+
+    #[cfg(feature = "validate")]
+    #[test]
+    fn test_project_name_length() {
+        use validator::Validate;
+        let ok = "a".repeat(64);
+        let long = "a".repeat(65);
+
+        let req: super::ProjectCreateRequest =
+            serde_json::from_value(serde_json::json!({"project": {"name": ok}})).unwrap();
+        assert!(req.validate().is_ok());
+        let req: super::ProjectCreateRequest =
+            serde_json::from_value(serde_json::json!({"project": {"name": long}})).unwrap();
+        assert!(req.validate().is_err(), "create rejects name > 64");
+
+        let req: super::ProjectUpdateRequest =
+            serde_json::from_value(serde_json::json!({"project": {"name": ok}})).unwrap();
+        assert!(req.validate().is_ok());
+        let req: super::ProjectUpdateRequest =
+            serde_json::from_value(serde_json::json!({"project": {"name": long}})).unwrap();
+        assert!(req.validate().is_err(), "update rejects name > 64");
     }
 }

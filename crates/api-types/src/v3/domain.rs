@@ -127,7 +127,7 @@ pub struct DomainCreate {
     pub id: Option<String>,
 
     /// The domain name.
-    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub name: String,
 
     /// The resource options for the domain. A domain is a project with
@@ -189,7 +189,7 @@ pub struct DomainUpdate {
 
     /// The domain name.
     #[cfg_attr(feature = "builder", builder(default))]
-    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub name: Option<String>,
 
     /// The resource options for the domain. A domain is a project with
@@ -287,5 +287,27 @@ mod tests {
             )
             .unwrap()
         );
+    }
+
+    #[cfg(feature = "validate")]
+    #[test]
+    fn test_domain_name_length() {
+        use validator::Validate;
+        let ok = "a".repeat(64);
+        let long = "a".repeat(65);
+
+        let req: super::DomainCreateRequest =
+            serde_json::from_value(serde_json::json!({"domain": {"name": ok}})).unwrap();
+        assert!(req.validate().is_ok());
+        let req: super::DomainCreateRequest =
+            serde_json::from_value(serde_json::json!({"domain": {"name": long}})).unwrap();
+        assert!(req.validate().is_err(), "create rejects name > 64");
+
+        let req: super::DomainUpdateRequest =
+            serde_json::from_value(serde_json::json!({"domain": {"name": ok}})).unwrap();
+        assert!(req.validate().is_ok());
+        let req: super::DomainUpdateRequest =
+            serde_json::from_value(serde_json::json!({"domain": {"name": long}})).unwrap();
+        assert!(req.validate().is_err(), "update rejects name > 64");
     }
 }

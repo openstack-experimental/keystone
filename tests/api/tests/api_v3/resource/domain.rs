@@ -290,3 +290,22 @@ async fn test_domain_list_filter_by_enabled() -> Result<()> {
     disabled_item.delete().await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn test_domain_create_name_too_long() -> Result<()> {
+    let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
+    let res = create_domain(
+        &test_client,
+        DomainCreateBuilder::default()
+            .name("a".repeat(65))
+            .enabled(true)
+            .build()?,
+    )
+    .await;
+    test_api::asserts::assert_status(
+        res.map(|d| d.id.clone()),
+        http::StatusCode::BAD_REQUEST,
+        "domain name longer than 64 characters must be rejected",
+    );
+    Ok(())
+}

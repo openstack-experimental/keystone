@@ -322,3 +322,25 @@ async fn test_project_list_filter_by_enabled() -> Result<()> {
     domain.delete().await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn test_project_create_name_too_long() -> Result<()> {
+    let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
+    let domain = create_test_domain(&test_client).await?;
+    let res = create_project(
+        &test_client,
+        ProjectCreateBuilder::default()
+            .name("a".repeat(65))
+            .enabled(true)
+            .domain_id(domain.id.clone())
+            .build()?,
+    )
+    .await;
+    domain.delete().await?;
+    test_api::asserts::assert_status(
+        res.map(|p| p.id.clone()),
+        http::StatusCode::BAD_REQUEST,
+        "project name longer than 64 characters must be rejected",
+    );
+    Ok(())
+}
