@@ -49,6 +49,10 @@ const TEMPLATES: &[(&str, &str)] = &[
         include_str!("../../../../templates/oauth2/consent.html"),
     ),
     (
+        "mfa.html",
+        include_str!("../../../../templates/oauth2/mfa.html"),
+    ),
+    (
         "device_entry.html",
         include_str!("../../../../templates/oauth2/device_entry.html"),
     ),
@@ -286,6 +290,15 @@ pub(crate) struct LoginCtx {
     pub action: String,
 }
 
+/// Context of `mfa.html`.
+#[derive(Debug, Serialize)]
+pub(crate) struct MfaCtx {
+    pub client: ClientView,
+    pub csrf_token: String,
+    pub error: Option<String>,
+    pub action: String,
+}
+
 /// Context of `consent.html`.
 #[derive(Debug, Serialize)]
 pub(crate) struct ConsentCtx {
@@ -320,6 +333,7 @@ pub(crate) struct ErrorCtx {
 pub(crate) trait Renderer: Send + Sync {
     fn render_login(&self, ctx: &LoginCtx) -> Result<String, minijinja::Error>;
     fn render_consent(&self, ctx: &ConsentCtx) -> Result<String, minijinja::Error>;
+    fn render_mfa(&self, ctx: &MfaCtx) -> Result<String, minijinja::Error>;
     fn render_device_entry(&self, ctx: &DeviceEntryCtx) -> Result<String, minijinja::Error>;
     fn render_device_result(&self, ctx: &DeviceResultCtx) -> Result<String, minijinja::Error>;
     fn render_error(&self, ctx: &ErrorCtx) -> Result<String, minijinja::Error>;
@@ -405,6 +419,9 @@ impl Renderer for JinjaRenderer {
     }
     fn render_consent(&self, ctx: &ConsentCtx) -> Result<String, minijinja::Error> {
         self.render("consent.html", ctx)
+    }
+    fn render_mfa(&self, ctx: &MfaCtx) -> Result<String, minijinja::Error> {
+        self.render("mfa.html", ctx)
     }
     fn render_device_entry(&self, ctx: &DeviceEntryCtx) -> Result<String, minijinja::Error> {
         self.render("device_entry.html", ctx)
@@ -636,6 +653,24 @@ mod tests {
         assert!(view.policy_uri.is_none());
         client.name = "Named".into();
         assert_eq!(ClientView::from_resource(&client).name, "Named");
+    }
+
+    #[test]
+    fn test_mfa_page() {
+        let r = JinjaRenderer::embedded();
+        let html = r
+            .render_mfa(&MfaCtx {
+                client: ClientView::from_id("c"),
+                csrf_token: "tok".into(),
+                error: Some("invalid verification code".into()),
+                action: "/v4/oauth2/d/authorize/mfa".into(),
+            })
+            .unwrap();
+        assert!(html.contains("name=\"passcode\""));
+        assert!(html.contains("autocomplete=\"one-time-code\""));
+        assert!(html.contains("name=\"factor\" value=\"totp\""));
+        assert!(html.contains("value=\"tok\""));
+        assert!(html.contains(">invalid verification code</p>"));
     }
 
     #[test]

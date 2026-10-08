@@ -50,8 +50,8 @@ pub struct IdTokenClaims {
     pub auth_time: i64,
     /// Echoed verbatim from the `/authorize` request (replay prevention).
     pub nonce: Option<String>,
-    /// Authentication methods references: `"pwd"`, `"mfa_totp"`,
-    /// `"webauthn"`, etc.
+    /// Authentication methods references (RFC 8176): `"pwd"`, `"otp"`,
+    /// `"mfa"`, etc.
     pub amr: Vec<String>,
     /// Per OIDC Core §3.2.2.10: `SHA-256(access_token)[:96 bits, base64url]`.
     /// Binds the `id_token` to its co-issued `access_token`, preventing

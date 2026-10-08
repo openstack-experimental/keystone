@@ -50,6 +50,24 @@ pub trait Oauth2SessionBackend: Send + Sync {
         session_id: &str,
         user_id: &str,
         auth_time: i64,
+        amr: Vec<String>,
+    ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
+
+    /// Record that `user_id` passed the password step and `factors` are
+    /// still outstanding. `user_id` on the session stays unset.
+    async fn begin_pre_auth_session_mfa(
+        &self,
+        state: &ServiceState,
+        session_id: &str,
+        user_id: &str,
+        factors: Vec<String>,
+    ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
+
+    /// Count a failed second-factor attempt and return the updated session.
+    async fn record_pre_auth_session_mfa_failure(
+        &self,
+        state: &ServiceState,
+        session_id: &str,
     ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
 
     /// Stamp `consent_granted` on a pre-auth session once the consent step
@@ -157,6 +175,23 @@ pub trait Oauth2SessionBackend: Send + Sync {
         user_id: &str,
         auth_time: i64,
         amr: Vec<String>,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError>;
+
+    /// Record that `user_id` passed the password step and `factors` are
+    /// still outstanding. `user_id` on the grant stays unset.
+    async fn begin_device_code_grant_mfa(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+        user_id: &str,
+        factors: Vec<String>,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError>;
+
+    /// Count a failed second-factor attempt and return the updated grant.
+    async fn record_device_code_grant_mfa_failure(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
     ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError>;
 
     /// Stamp the terminal `status` once the verification page's consent

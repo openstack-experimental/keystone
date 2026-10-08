@@ -57,6 +57,25 @@ pub struct PreAuthSession {
     /// UTC epoch seconds after which this session is no longer valid
     /// (`[oauth2] pre_auth_session_lifetime_minutes`).
     pub expires_at: i64,
+    /// Authentication methods references (RFC 8176) of the completed login,
+    /// set alongside `user_id`.
+    ///
+    /// This and the following fields are trailing `#[serde(default)]`
+    /// fields: records are positional msgpack arrays, so only trailing
+    /// defaulted fields stay decodable from older, shorter records.
+    #[serde(default)]
+    pub amr: Vec<String>,
+    /// The user that passed the password step while second factors are
+    /// still outstanding. `user_id` stays `None` until every factor in
+    /// `pending_factors` has passed, so consent cannot be reached early.
+    #[serde(default)]
+    pub pending_user_id: Option<String>,
+    /// Second factors (`"totp"`) the user still has to pass.
+    #[serde(default)]
+    pub pending_factors: Vec<String>,
+    /// Failed second-factor attempts so far.
+    #[serde(default)]
+    pub mfa_attempts: u32,
 }
 
 /// Input to create a new [`PreAuthSession`].
@@ -202,11 +221,16 @@ pub struct RefreshToken {
     /// from root issuance). Copied unchanged to every rotated child. `0`
     /// (records written before this field existed) means "no cap".
     ///
-    /// Must stay the last field: records are stored as positional msgpack
-    /// arrays, so only a trailing `#[serde(default)]` field stays
-    /// decodable from older, shorter records.
+    /// Trailing `#[serde(default)]` field: records are stored as positional
+    /// msgpack arrays, so only trailing defaulted fields stay decodable from
+    /// older, shorter records.
     #[serde(default)]
     pub family_expires_at: i64,
+    /// Authentication methods references (RFC 8176) of the login that
+    /// created the family, replayed into the `id_token` on refresh. Empty
+    /// for families minted before the field existed (reported as `pwd`).
+    #[serde(default)]
+    pub amr: Vec<String>,
 }
 
 /// Reason a refresh token family was revoked (stored in
@@ -313,6 +337,18 @@ pub struct DeviceCodeGrant {
     pub created_at: i64,
     /// UTC epoch seconds (`[oauth2] device_code_lifetime_minutes`).
     pub expires_at: i64,
+    /// The user that passed the password step while second factors are
+    /// still outstanding (see [`PreAuthSession::pending_user_id`]).
+    ///
+    /// Trailing `#[serde(default)]` field, like the two below.
+    #[serde(default)]
+    pub pending_user_id: Option<String>,
+    /// Second factors (`"totp"`) the user still has to pass.
+    #[serde(default)]
+    pub pending_factors: Vec<String>,
+    /// Failed second-factor attempts so far.
+    #[serde(default)]
+    pub mfa_attempts: u32,
 }
 
 /// Input to create a new [`DeviceCodeGrant`].
@@ -360,4 +396,6 @@ pub struct RefreshTokenCreate {
     /// UTC epoch seconds the whole family expires (absolute cap); `0` = no
     /// cap.
     pub family_expires_at: i64,
+    /// Authentication methods references of the originating login.
+    pub amr: Vec<String>,
 }

@@ -42,16 +42,16 @@ use openstack_keystone_core_types::oauth2_session::DeviceCodeGrant;
 
 use super::html::{
     client_view, consent_page, device_entry_page, device_result_page, error_page, login_page,
-    too_many_requests,
+    mfa_page, too_many_requests,
 };
-use super::renderer::{ClientView, ConsentCtx, DeviceEntryCtx, DeviceResultCtx, LoginCtx};
+use super::renderer::{ClientView, ConsentCtx, DeviceEntryCtx, DeviceResultCtx, LoginCtx, MfaCtx};
 use crate::api::common::PeerAddr;
 use crate::audit::{
     CorrelationId, build_initiator_from_user_id, build_initiator_unknown, emit_oauth2_session_event,
 };
 use crate::keystone::ServiceState;
 
-const DEVICE_COOKIE_NAME: &str = "keystone_oauth2_device_code";
+pub(super) const DEVICE_COOKIE_NAME: &str = "keystone_oauth2_device_code";
 
 #[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
 pub(super) struct DeviceQuery {
@@ -79,19 +79,19 @@ pub(super) struct DeviceConsentForm {
 
 /// CSRF token derivation, mirroring `authorize.rs`'s but keyed on the
 /// device grant's own identifiers instead of a `PreAuthSession`'s.
-fn compute_csrf_token(grant: &DeviceCodeGrant) -> Option<String> {
+pub(super) fn compute_csrf_token(grant: &DeviceCodeGrant) -> Option<String> {
     super::html::compute_csrf_token(
         &grant.server_side_session_secret,
         &[&grant.device_code, &grant.user_code],
     )
 }
 
-fn verify_csrf_token(grant: &DeviceCodeGrant, presented: &str) -> bool {
+pub(super) fn verify_csrf_token(grant: &DeviceCodeGrant, presented: &str) -> bool {
     compute_csrf_token(grant)
         .is_some_and(|expected| super::html::constant_time_eq(&expected, presented))
 }
 
-async fn cookie_secure(state: &ServiceState, headers: &HeaderMap) -> bool {
+pub(super) async fn cookie_secure(state: &ServiceState, headers: &HeaderMap) -> bool {
     crate::api::common::oauth2_cookie_secure(state, headers).await
 }
 
@@ -126,6 +126,23 @@ fn render_login(
         csrf_token,
         error: error.map(str::to_string),
         action: format!("/v4/oauth2/{domain_id}/device/login"),
+    })
+}
+
+pub(super) fn render_mfa(
+    domain_id: &str,
+    client: &ClientView,
+    grant: &DeviceCodeGrant,
+    error: Option<&str>,
+) -> Response {
+    let Some(csrf_token) = compute_csrf_token(grant) else {
+        return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
+    };
+    mfa_page(&MfaCtx {
+        client: client.clone(),
+        csrf_token,
+        error: error.map(str::to_string),
+        action: format!("/v4/oauth2/{domain_id}/device/mfa"),
     })
 }
 
@@ -384,10 +401,44 @@ pub(super) async fn device_login(
     let user_id = user_info.user_id.clone();
     let now = chrono::Utc::now().timestamp();
 
+    let factors = match super::mfa::required_factors(&state, &user_id).await {
+        Ok(f) => f,
+        Err(e) => {
+            // Fail closed: never skip a second factor because the lookup failed.
+            tracing::warn!(error = %e, "oauth2 second-factor lookup failed");
+            return Ok(error_page(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal error",
+            ));
+        }
+    };
+    if !factors.is_empty() {
+        return Ok(
+            match state
+                .provider
+                .get_oauth2_session_provider()
+                .begin_device_mfa(&state, &device_code, &user_id, factors)
+                .await
+            {
+                Ok(pending) => render_mfa(&domain_id, &client, &pending, None),
+                Err(e) => {
+                    tracing::warn!(error = %e, "oauth2 device code grant update failed");
+                    error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
+                }
+            },
+        );
+    }
+
     let grant = match state
         .provider
         .get_oauth2_session_provider()
-        .mark_device_authenticated(&state, &device_code, &user_id, now, vec!["pwd".to_string()])
+        .mark_device_authenticated(
+            &state,
+            &device_code,
+            &user_id,
+            now,
+            super::mfa::amr_for(&[]),
+        )
         .await
     {
         Ok(g) => g,
@@ -410,6 +461,27 @@ pub(super) async fn device_login(
         None,
     );
 
+    Ok(after_device_authentication(
+        &state,
+        &exec,
+        &domain_id,
+        &client,
+        &grant,
+        &correlation_id.0,
+    )
+    .await)
+}
+
+/// Everything after a completed device login (password and any second
+/// factor): skip consent for `pre_authorized` clients, otherwise render it.
+pub(super) async fn after_device_authentication(
+    state: &ServiceState,
+    exec: &ExecutionContext<'_>,
+    domain_id: &str,
+    client: &ClientView,
+    grant: &DeviceCodeGrant,
+    correlation_id: &str,
+) -> Response {
     // `pre_authorized` skips consent only, never login (same invariant as
     // `authorize.rs`): a `pre_authorized` client can never carry
     // `openstack:api` in `allowed_scopes` (enforced at CRUD time), so
@@ -417,15 +489,15 @@ pub(super) async fn device_login(
     let client_res = state
         .provider
         .get_oauth2_client_provider()
-        .get_by_client_id(&exec, &grant.client_id)
+        .get_by_client_id(exec, &grant.client_id)
         .await
         .ok()
         .flatten();
     if client_res.as_ref().is_some_and(|c| c.pre_authorized) {
-        return Ok(finish_decision(&state, &grant, true, &correlation_id.0).await);
+        return finish_decision(state, grant, true, correlation_id).await;
     }
 
-    Ok(render_consent(&domain_id, &client, &grant))
+    render_consent(domain_id, client, grant)
 }
 
 /// `POST /v4/oauth2/{domain_id}/device/consent`.
@@ -505,7 +577,7 @@ pub(super) async fn device_consent(
 /// and show the static result page. Unlike `authorize.rs`'s `finish_consent`,
 /// there is no redirect target -- the polling device, not this browser,
 /// receives the eventual token at `/token`.
-async fn finish_decision(
+pub(super) async fn finish_decision(
     state: &ServiceState,
     grant: &DeviceCodeGrant,
     granted: bool,
@@ -667,5 +739,287 @@ mod tests {
             api.as_service().oneshot(req2).await.unwrap().status(),
             StatusCode::TOO_MANY_REQUESTS
         );
+    }
+
+    // ---- second-factor (TOTP) step ----
+
+    use http_body_util::BodyExt;
+    use openstack_keystone_core_types::auth::{
+        AuthenticationContext, AuthenticationError, AuthenticationResultBuilder, AuthzInfoBuilder,
+        IdentityInfo, PrincipalInfo, ScopeInfo, UserIdentityInfoBuilder,
+    };
+    use openstack_keystone_core_types::identity::IdentityProviderError;
+    use openstack_keystone_core_types::oauth2_session::{DeviceCodeGrant, DeviceGrantStatus};
+
+    use crate::api::tests::get_mocked_state;
+    use crate::identity::MockIdentityProvider;
+    use crate::oauth2_client::MockOauth2ClientProvider;
+
+    fn grant(pending: bool, attempts: u32) -> DeviceCodeGrant {
+        DeviceCodeGrant {
+            device_code: "dc-1".into(),
+            user_code: "BCDFGHJK".into(),
+            domain_id: "domain-1".into(),
+            client_id: "client-1".into(),
+            scope: vec!["openid".into()],
+            status: DeviceGrantStatus::Pending,
+            user_id: None,
+            auth_time: None,
+            amr: vec![],
+            nonce: None,
+            server_side_session_secret: "secret".into(),
+            last_polled_at: None,
+            created_at: 0,
+            expires_at: 1_000_000_000,
+            pending_user_id: pending.then(|| "user-1".to_string()),
+            pending_factors: if pending { vec!["totp".into()] } else { vec![] },
+            mfa_attempts: attempts,
+        }
+    }
+
+    fn device_post(uri: &str, body: &str) -> Request<Body> {
+        Request::builder()
+            .uri(uri)
+            .method("POST")
+            .header("cookie", "keystone_oauth2_device_code=dc-1")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    }
+
+    fn user_auth_result() -> openstack_keystone_core_types::auth::AuthenticationResult {
+        AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Password)
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id("user-1")
+                        .build()
+                        .unwrap(),
+                ),
+            })
+            .authorization(
+                AuthzInfoBuilder::default()
+                    .scope(ScopeInfo::Unscoped)
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap()
+    }
+
+    fn client_provider() -> MockOauth2ClientProvider {
+        let mut mock = MockOauth2ClientProvider::default();
+        mock.expect_get_by_client_id().returning(|_, _| {
+            Ok(Some(
+                openstack_keystone_core_types::oauth2_client::OAuth2ClientResource {
+                    client_id: "client-1".into(),
+                    provider_id: "provider-1".into(),
+                    domain_id: "domain-1".into(),
+                    client_secret_hash: None,
+                    redirect_uris: vec![],
+                    token_endpoint_auth_method: "none".into(),
+                    grant_types: vec![],
+                    require_pkce: true,
+                    allowed_scopes: vec![],
+                    pre_authorized: false,
+                    enabled: true,
+                    claims_template: Default::default(),
+                    created_at: 0,
+                    updated_at: 0,
+                    deleted_at: None,
+                    name: "CLI".into(),
+                    description: None,
+                    logo_uri: None,
+                    policy_uri: None,
+                    tos_uri: None,
+                    contacts: vec![],
+                },
+            ))
+        });
+        mock
+    }
+
+    async fn body_text(response: axum::response::Response) -> String {
+        String::from_utf8(
+            response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_device_login_with_totp_credential_renders_mfa() {
+        let csrf = super::compute_csrf_token(&grant(false, 0)).unwrap();
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_get_device_code_grant()
+            .returning(|_, _| Ok(Some(grant(false, 0))));
+        // `mark_device_authenticated` has no expectation: calling it would panic.
+        session_mock
+            .expect_begin_device_mfa()
+            .returning(|_, _, _, _| Ok(grant(true, 0)));
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_authenticate_by_password()
+            .returning(|_, _| Ok(user_auth_result()));
+        identity_mock.expect_get_user().returning(|_, _| {
+            Ok(Some(
+                openstack_keystone_core_types::identity::UserResponseBuilder::default()
+                    .id("user-1")
+                    .name("alice")
+                    .domain_id("domain-1")
+                    .enabled(true)
+                    .build()
+                    .unwrap(),
+            ))
+        });
+        let mut credential_mock = crate::credential::MockCredentialProvider::default();
+        credential_mock
+            .expect_list_credentials_for_user()
+            .returning(|_, _, _| {
+                Ok(vec![
+                    openstack_keystone_core_types::credential::CredentialBuilder::default()
+                        .id("cred-1")
+                        .blob(r#"{"seed": "x"}"#)
+                        .r#type("totp")
+                        .user_id("user-1")
+                        .build()
+                        .unwrap(),
+                ])
+            });
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_session(session_mock)
+            .mock_identity(identity_mock)
+            .mock_credential(credential_mock)
+            .mock_oauth2_client(client_provider());
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(device_post(
+                "/domain-1/device/login",
+                &format!("csrf_token={csrf}&username=alice&password=pw"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_text(response).await;
+        assert!(body.contains("name=\"passcode\""));
+        assert!(body.contains("CLI"));
+    }
+
+    #[tokio::test]
+    async fn test_device_mfa_correct_code_records_mfa_amr_and_renders_consent() {
+        let csrf = super::compute_csrf_token(&grant(true, 0)).unwrap();
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_get_device_code_grant()
+            .returning(|_, _| Ok(Some(grant(true, 0))));
+        session_mock
+            .expect_mark_device_authenticated()
+            .withf(|_, _, user_id, _, amr| user_id == "user-1" && *amr == ["pwd", "otp", "mfa"])
+            .returning(|_, _, _, _, _| {
+                let mut g = grant(false, 0);
+                g.user_id = Some("user-1".into());
+                Ok(g)
+            });
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_authenticate_by_totp()
+            .returning(|_, _| Ok(user_auth_result()));
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_session(session_mock)
+            .mock_identity(identity_mock)
+            .mock_oauth2_client(client_provider());
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(device_post(
+                "/domain-1/device/mfa",
+                &format!("csrf_token={csrf}&factor=totp&passcode=123456"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(body_text(response).await.contains("name=\"decision\""));
+    }
+
+    #[tokio::test]
+    async fn test_device_mfa_wrong_code_exhausting_attempts_denies_the_grant() {
+        let csrf = super::compute_csrf_token(&grant(true, 0)).unwrap();
+        let max = openstack_keystone_config::Oauth2Provider::default().mfa_max_attempts;
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_get_device_code_grant()
+            .returning(|_, _| Ok(Some(grant(true, 0))));
+        session_mock
+            .expect_record_device_mfa_failure()
+            .returning(move |_, _| Ok(grant(true, max)));
+        session_mock
+            .expect_mark_device_decision()
+            .withf(|_, _, granted| !*granted)
+            .times(1)
+            .returning(move |_, _, _| Ok(grant(true, max)));
+        let mut identity_mock = MockIdentityProvider::default();
+        identity_mock
+            .expect_authenticate_by_totp()
+            .returning(|_, _| {
+                Err(IdentityProviderError::Authentication {
+                    source: AuthenticationError::TotpPasscodeInvalid,
+                })
+            });
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_session(session_mock)
+            .mock_identity(identity_mock);
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(device_post(
+                "/domain-1/device/mfa",
+                &format!("csrf_token={csrf}&factor=totp&passcode=000000"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_device_mfa_without_pending_factor_is_bad_request() {
+        let csrf = super::compute_csrf_token(&grant(false, 0)).unwrap();
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_get_device_code_grant()
+            .returning(|_, _| Ok(Some(grant(false, 0))));
+        let provider = Provider::mocked_builder().mock_oauth2_session(session_mock);
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let response = api
+            .as_service()
+            .oneshot(device_post(
+                "/domain-1/device/mfa",
+                &format!("csrf_token={csrf}&factor=totp&passcode=123456"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }

@@ -446,6 +446,7 @@ mod tests {
             revocation_reason: None,
             expires_at: now + 3600,
             family_expires_at: now + 7200,
+            amr: vec![],
         };
         modify(&mut record);
         record

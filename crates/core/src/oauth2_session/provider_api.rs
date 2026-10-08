@@ -83,6 +83,8 @@ pub struct IssueRefreshTokenRequest {
     pub user_id: String,
     /// The scope grant this family carries.
     pub scope: Vec<String>,
+    /// Authentication methods references of the originating login.
+    pub amr: Vec<String>,
 }
 
 /// Outcome of [`Oauth2SessionApi::redeem_refresh_token`] (ADR 0026 §9).
@@ -186,13 +188,32 @@ pub trait Oauth2SessionApi: Send + Sync {
         session_id: &str,
     ) -> Result<Option<PreAuthSession>, Oauth2SessionProviderError>;
 
-    /// Stamp `user_id`/`auth_time` once login succeeds.
+    /// Stamp `user_id`/`auth_time`/`amr` once login (all factors) succeeds.
     async fn mark_authenticated(
         &self,
         state: &ServiceState,
         session_id: &str,
         user_id: &str,
         auth_time: i64,
+        amr: Vec<String>,
+    ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
+
+    /// The password step passed for `user_id` but `factors` (for example
+    /// `"totp"`) are still outstanding: remember that without stamping
+    /// `user_id`, so consent stays unreachable.
+    async fn begin_mfa(
+        &self,
+        state: &ServiceState,
+        session_id: &str,
+        user_id: &str,
+        factors: Vec<String>,
+    ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
+
+    /// Count a failed second-factor attempt; returns the updated session.
+    async fn record_mfa_failure(
+        &self,
+        state: &ServiceState,
+        session_id: &str,
     ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
 
     /// Stamp `consent_granted` once the consent step completes.
@@ -367,6 +388,22 @@ pub trait Oauth2SessionApi: Send + Sync {
         user_id: &str,
         auth_time: i64,
         amr: Vec<String>,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError>;
+
+    /// Device flow counterpart of [`Self::begin_mfa`].
+    async fn begin_device_mfa(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+        user_id: &str,
+        factors: Vec<String>,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError>;
+
+    /// Device flow counterpart of [`Self::record_mfa_failure`].
+    async fn record_device_mfa_failure(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
     ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError>;
 
     /// Stamp the terminal decision once the verification page's consent

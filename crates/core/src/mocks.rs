@@ -394,6 +394,21 @@ mod oauth2_session {
                 session_id: &str,
                 user_id: &str,
                 auth_time: i64,
+                amr: Vec<String>,
+            ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
+
+            async fn begin_mfa(
+                &self,
+                state: &ServiceState,
+                session_id: &str,
+                user_id: &str,
+                factors: Vec<String>,
+            ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
+
+            async fn record_mfa_failure(
+                &self,
+                state: &ServiceState,
+                session_id: &str,
             ) -> Result<PreAuthSession, Oauth2SessionProviderError>;
 
             async fn mark_consent(
@@ -507,6 +522,20 @@ mod oauth2_session {
                 user_id: &str,
                 auth_time: i64,
                 amr: Vec<String>,
+            ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError>;
+
+            async fn begin_device_mfa(
+                &self,
+                state: &ServiceState,
+                device_code: &str,
+                user_id: &str,
+                factors: Vec<String>,
+            ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError>;
+
+            async fn record_device_mfa_failure(
+                &self,
+                state: &ServiceState,
+                device_code: &str,
             ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError>;
 
             async fn mark_device_decision(

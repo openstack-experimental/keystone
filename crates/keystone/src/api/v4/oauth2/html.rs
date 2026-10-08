@@ -24,7 +24,7 @@ use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
 use super::renderer::{
-    ClientView, ConsentCtx, DeviceEntryCtx, DeviceResultCtx, ErrorCtx, LoginCtx, renderer,
+    ClientView, ConsentCtx, DeviceEntryCtx, DeviceResultCtx, ErrorCtx, LoginCtx, MfaCtx, renderer,
     show_client_logos,
 };
 use crate::keystone::ServiceState;
@@ -61,6 +61,10 @@ pub(super) async fn client_view(state: &ServiceState, client_id: &str) -> Client
 
 pub(super) fn login_page(ctx: &LoginCtx) -> Response {
     page(renderer().render_login(ctx))
+}
+
+pub(super) fn mfa_page(ctx: &MfaCtx) -> Response {
+    page(renderer().render_mfa(ctx))
 }
 
 pub(super) fn consent_page(ctx: &ConsentCtx) -> Response {
