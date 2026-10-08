@@ -153,6 +153,20 @@ pub trait RoleBackend: Send + Sync {
         prior_role_id: &'a str,
     ) -> Result<Vec<RoleImply>, RoleProviderError>;
 
+    /// List role imply rules for any of the given prior roles.
+    ///
+    /// Returns the direct rules of all `prior_role_ids` in a single call, so
+    /// a graph walk costs one query per level instead of one per role.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `prior_role_ids` - The IDs of the prior roles.
+    async fn list_role_imply_rules_by_priors<'a>(
+        &self,
+        state: &ServiceState,
+        prior_role_ids: &[&'a str],
+    ) -> Result<Vec<RoleImply>, RoleProviderError>;
+
     /// List Roles.
     ///
     /// # Arguments

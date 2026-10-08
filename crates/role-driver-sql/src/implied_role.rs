@@ -35,12 +35,14 @@ pub use check::check;
 pub use create::create;
 pub use delete::delete;
 pub use get::get;
-pub use list::{list, list_by_prior};
+pub use list::{list, list_by_prior, list_by_priors};
 
 /// Filter variants for listing role imply rules.
 pub(crate) enum ImpliedRoleFilter<'a> {
     /// Filter by prior role only.
     PriorRole(&'a str),
+    /// Filter by any of the prior roles.
+    PriorRoles(&'a [&'a str]),
     /// Filter by both prior and implied role IDs.
     Exact(&'a str, &'a str),
 }
@@ -194,6 +196,9 @@ pub(crate) async fn list_expanded<C: ConnectionTrait>(
     match filter {
         Some(ImpliedRoleFilter::PriorRole(p_id)) => {
             query = query.filter(db_implied_role::Column::PriorRoleId.eq(p_id));
+        }
+        Some(ImpliedRoleFilter::PriorRoles(p_ids)) => {
+            query = query.filter(db_implied_role::Column::PriorRoleId.is_in(p_ids.iter().copied()));
         }
         Some(ImpliedRoleFilter::Exact(p_id, c_id)) => {
             query = query

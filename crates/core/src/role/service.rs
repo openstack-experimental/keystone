@@ -478,6 +478,47 @@ impl RoleApi for RoleService {
         Ok(rules)
     }
 
+    /// List role imply rules for any of the given prior roles.
+    ///
+    /// Roles already in the request cache are served from it; the rest are
+    /// fetched with a single backend call and cached per role, including the
+    /// roles that have no rules.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `prior_role_ids` - The IDs of the prior roles.
+    #[tracing::instrument(name = "provider.role.list_role_imply_rules_by_priors", level = "debug", skip_all, fields(count = prior_role_ids.len()))]
+    async fn list_role_imply_rules_by_priors<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        prior_role_ids: &[&'a str],
+    ) -> Result<Vec<RoleImply>, RoleProviderError> {
+        let mut rules: Vec<RoleImply> = Vec::new();
+        let mut missing: Vec<&'a str> = Vec::new();
+        for id in prior_role_ids {
+            match cache_get::<Vec<RoleImply>>(ROLE_IMPLY_BY_PRIOR_CACHE_NS, id) {
+                Some(cached) => rules.extend(cached),
+                None => missing.push(id),
+            }
+        }
+        if !missing.is_empty() {
+            let fetched = self
+                .backend_driver
+                .list_role_imply_rules_by_priors(ctx.state(), &missing)
+                .await?;
+            for id in &missing {
+                let own: Vec<RoleImply> = fetched
+                    .iter()
+                    .filter(|rule| rule.prior_role.id == *id)
+                    .cloned()
+                    .collect();
+                cache_set(ROLE_IMPLY_BY_PRIOR_CACHE_NS, id, own);
+            }
+            rules.extend(fetched);
+        }
+        Ok(rules)
+    }
+
     /// List roles.
     ///
     /// # Arguments
@@ -767,6 +808,47 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(first, second);
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_list_role_imply_rules_by_priors_one_backend_call_for_missing_only() {
+        let state = get_mocked_state(None, Some(Provider::mocked_builder())).await;
+        let mut backend = MockRoleBackend::default();
+        backend
+            .expect_list_role_imply_rules_by_priors()
+            .times(1)
+            .withf(|_, ids: &[&str]| ids == ["a", "b"])
+            .returning(|_, _| Ok(vec![make_imply("a", "x")]));
+        backend
+            .expect_list_role_imply_rules_by_priors()
+            .times(1)
+            .withf(|_, ids: &[&str]| ids == ["c"])
+            .returning(|_, _| Ok(vec![make_imply("c", "y")]));
+        let provider = RoleService {
+            backend_driver: Arc::new(backend),
+        };
+
+        crate::request_cache::RequestCache::scope(async {
+            let ctx = ExecutionContext::internal(&state);
+            let first = provider
+                .list_role_imply_rules_by_priors(&ctx, &["a", "b"])
+                .await
+                .unwrap();
+            assert_eq!(first, vec![make_imply("a", "x")]);
+            // "a" and "b" (which has no rules) are cached, only "c" is fetched.
+            let second = provider
+                .list_role_imply_rules_by_priors(&ctx, &["a", "b", "c"])
+                .await
+                .unwrap();
+            assert_eq!(second, vec![make_imply("a", "x"), make_imply("c", "y")]);
+            // The single-role lookup shares the cache.
+            let single = provider
+                .list_role_imply_rules_by_prior(&ctx, "c")
+                .await
+                .unwrap();
+            assert_eq!(single, vec![make_imply("c", "y")]);
         })
         .await;
     }

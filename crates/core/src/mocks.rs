@@ -1674,6 +1674,12 @@ mod role {
                 prior_role_id: &'a str,
             ) -> Result<Vec<RoleImply>, RoleProviderError>;
 
+            async fn list_role_imply_rules_by_priors<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                prior_role_ids: &[&'a str],
+            ) -> Result<Vec<RoleImply>, RoleProviderError>;
+
             async fn list_roles<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,

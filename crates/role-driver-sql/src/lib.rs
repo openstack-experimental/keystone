@@ -310,6 +310,23 @@ impl RoleBackend for SqlBackend {
         Ok(implied_role::list_by_prior(&state.db.connection(), prior_role_id).await?)
     }
 
+    /// List role imply rules for any of the given prior roles.
+    ///
+    /// # Parameters
+    /// - `state`: The service state.
+    /// - `prior_role_ids`: The IDs of the prior roles.
+    ///
+    /// # Returns
+    /// A `Result` containing a list of `RoleImply`, or an `Error`.
+    #[tracing::instrument(name = "driver.sql.role.list_role_imply_rules_by_priors", level = "debug", skip_all, fields(count = prior_role_ids.len()))]
+    async fn list_role_imply_rules_by_priors<'a>(
+        &self,
+        state: &ServiceState,
+        prior_role_ids: &[&'a str],
+    ) -> Result<Vec<RoleImply>, RoleProviderError> {
+        Ok(implied_role::list_by_priors(&state.db.connection(), prior_role_ids).await?)
+    }
+
     /// List roles.
     ///
     /// # Parameters

@@ -156,6 +156,21 @@ pub trait RoleApi: Send + Sync {
         prior_role_id: &'a str,
     ) -> Result<Vec<RoleImply>, RoleProviderError>;
 
+    /// List role imply rules for any of the given prior roles.
+    ///
+    /// Same result as calling [`Self::list_role_imply_rules_by_prior`] for
+    /// every ID, with a single backend call for the IDs that are not in the
+    /// request cache yet.
+    ///
+    /// # Arguments
+    /// * `state` - The current service state.
+    /// * `prior_role_ids` - The IDs of the prior roles.
+    async fn list_role_imply_rules_by_priors<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        prior_role_ids: &[&'a str],
+    ) -> Result<Vec<RoleImply>, RoleProviderError>;
+
     /// List Roles.
     ///
     /// # Arguments

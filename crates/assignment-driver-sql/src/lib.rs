@@ -73,14 +73,14 @@ impl SqlBackend {
     /// Resolve implied roles for a set of assignments.
     ///
     /// Walks the imply-rule graph breadth-first, starting only from the
-    /// role IDs present in `assignments` and fetching each frontier role's
-    /// direct rules via `list_role_imply_rules_by_prior`, instead of pulling
-    /// the entire `implied_role` table. Effective-role sets are typically a
-    /// handful of roles, so this trades one full-table scan for a few
-    /// narrow, indexed lookups. Computes transitive closure over the
-    /// resulting (small) subgraph, and generates assignment entries for
-    /// each implied role. Does NOT resolve role names (that's the
-    /// provider's responsibility).
+    /// role IDs present in `assignments` and fetching the direct rules of
+    /// a whole frontier at once via `list_role_imply_rules_by_priors`, instead
+    /// of pulling the entire `implied_role` table. Effective-role sets are
+    /// typically a handful of roles, so this trades one full-table scan for
+    /// one narrow, indexed lookup per level of the graph. Computes transitive
+    /// closure over the resulting (small) subgraph, and generates
+    /// assignment entries for each implied role. Does NOT resolve role
+    /// names (that's the provider's responsibility).
     ///
     /// Returns a `Vec<Assignment>` containing both the original assignments
     /// and any additionally generated implied role assignments.
@@ -96,24 +96,28 @@ impl SqlBackend {
             assignments.iter().map(|a| a.role_id.clone()).collect();
         while !frontier.is_empty() {
             let mut next_frontier: BTreeSet<String> = BTreeSet::new();
-            for role_id in frontier {
-                if !visited.insert(role_id.clone()) {
-                    continue;
-                }
-                let rules = state
-                    .provider
-                    .get_role_provider()
-                    .list_role_imply_rules_by_prior(&exec, &role_id)
-                    .await?;
-                for rule in rules {
-                    let implied_id = rule.implied_role.id.clone();
-                    imply_rules
-                        .entry(rule.prior_role.id.clone())
-                        .or_default()
-                        .insert(implied_id.clone());
-                    if !visited.contains(&implied_id) {
-                        next_frontier.insert(implied_id);
-                    }
+            let level: Vec<String> = frontier
+                .into_iter()
+                .filter(|role_id| visited.insert(role_id.clone()))
+                .collect();
+            if level.is_empty() {
+                break;
+            }
+            let level_ids: Vec<&str> = level.iter().map(String::as_str).collect();
+            // One call per level of the graph, not one per role.
+            let rules = state
+                .provider
+                .get_role_provider()
+                .list_role_imply_rules_by_priors(&exec, &level_ids)
+                .await?;
+            for rule in rules {
+                let implied_id = rule.implied_role.id.clone();
+                imply_rules
+                    .entry(rule.prior_role.id.clone())
+                    .or_default()
+                    .insert(implied_id.clone());
+                if !visited.contains(&implied_id) {
+                    next_frontier.insert(implied_id);
                 }
             }
             frontier = next_frontier;
@@ -436,9 +440,9 @@ mod tests {
 
         let mut role_mock = MockRoleProvider::default();
         role_mock
-            .expect_list_role_imply_rules_by_prior()
-            .returning(|_e, prior_role_id| {
-                if prior_role_id == "1" {
+            .expect_list_role_imply_rules_by_priors()
+            .returning(|_e, ids| {
+                if ids.contains(&"1") {
                     Ok(vec![
                         RoleImplyBuilder::default()
                             .prior_role(RoleRef {
@@ -676,9 +680,9 @@ mod tests {
 
         let mut role_mock = MockRoleProvider::default();
         role_mock
-            .expect_list_role_imply_rules_by_prior()
-            .returning(|_e, prior_role_id| {
-                if prior_role_id == "1" {
+            .expect_list_role_imply_rules_by_priors()
+            .returning(|_e, ids| {
+                if ids.contains(&"1") {
                     Ok(vec![
                         RoleImplyBuilder::default()
                             .prior_role(RoleRef {

@@ -45,6 +45,24 @@ pub async fn list_by_prior(
     super::list_expanded(db, Some(ImpliedRoleFilter::PriorRole(prior_role_id))).await
 }
 
+/// List role imply rules for any of the given prior roles in one query.
+///
+/// # Parameters
+/// - `db`: The database connection.
+/// - `prior_role_ids`: The IDs of the prior roles.
+///
+/// # Returns
+/// A `Result` containing a list of `RoleImply`, or an `Error`.
+pub async fn list_by_priors(
+    db: &DatabaseConnection,
+    prior_role_ids: &[&str],
+) -> Result<Vec<RoleImply>, RoleProviderError> {
+    if prior_role_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    super::list_expanded(db, Some(ImpliedRoleFilter::PriorRoles(prior_role_ids))).await
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -66,6 +84,30 @@ mod tests {
             ("implied_role_domain_id", NULL_DOMAIN_ID.into()),
         ])
         .into_mock_row()
+    }
+
+    #[tokio::test]
+    async fn test_list_by_priors_empty_input_does_not_query() {
+        // No query result is queued: a query would fail the mock.
+        let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
+
+        assert!(list_by_priors(&db, &[]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_by_priors_single_query_for_all() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![
+                mock_row("admin", "admin", "manager", "manager"),
+                mock_row("manager", "manager", "member", "member"),
+            ]])
+            .into_connection();
+
+        let results = list_by_priors(&db, &["admin", "manager"]).await.unwrap();
+
+        assert_eq!(results.len(), 2);
+        let log = db.into_transaction_log();
+        assert_eq!(log.len(), 1);
     }
 
     #[tokio::test]
