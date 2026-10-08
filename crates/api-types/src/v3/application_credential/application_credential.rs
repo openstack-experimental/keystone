@@ -81,6 +81,41 @@ pub struct ApplicationCredential {
     pub unrestricted: bool,
 }
 
+/// Role reference in an application credential create request.
+///
+/// Like in python keystone the role may be identified either by `id` or by
+/// `name` (optionally qualified with `domain_id`).
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(
+    feature = "builder",
+    derive(derive_builder::Builder),
+    builder(
+        build_fn(error = "crate::error::BuilderError"),
+        setter(strip_option, into)
+    )
+)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
+pub struct ApplicationCredentialRoleRef {
+    /// Role domain ID.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
+    pub domain_id: Option<String>,
+
+    /// Role ID. May be omitted when `name` is given.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
+    pub id: Option<String>,
+
+    /// Role name. May be omitted when `id` is given.
+    #[cfg_attr(feature = "builder", builder(default))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "validate", validate(length(min = 1, max = 255)))]
+    pub name: Option<String>,
+}
+
 /// Data for creating an application credential.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(
@@ -110,6 +145,7 @@ pub struct ApplicationCredentialCreate {
     /// expire.
     #[cfg_attr(feature = "builder", builder(default))]
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "crate::deserialize_lenient_datetime_opt")]
     pub expires_at: Option<DateTime<Utc>>,
 
     /// Name of the application credential. Must be unique among the owning
@@ -121,7 +157,8 @@ pub struct ApplicationCredentialCreate {
     /// user's roles on the project. Defaults to all of the user's roles on the
     /// project when empty.
     #[cfg_attr(feature = "builder", builder(default))]
-    pub roles: Vec<RoleRef>,
+    #[serde(default)]
+    pub roles: Vec<ApplicationCredentialRoleRef>,
 
     /// Optional secret to use for the new credential. If not provided, a
     /// random secret will be generated.
@@ -241,4 +278,67 @@ pub struct ApplicationCredentialListParameters {
     /// name matches this value are returned.
     #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub name: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_create_minimal_body() {
+        let req: ApplicationCredentialCreate = serde_json::from_str(r#"{"name": "foo"}"#).unwrap();
+        assert!(req.roles.is_empty());
+        assert!(req.expires_at.is_none());
+    }
+
+    #[test]
+    fn test_create_role_by_id_only() {
+        let req: ApplicationCredentialCreate =
+            serde_json::from_str(r#"{"name": "foo", "roles": [{"id": "rid"}]}"#).unwrap();
+        assert_eq!(req.roles[0].id.as_deref(), Some("rid"));
+        assert_eq!(req.roles[0].name, None);
+    }
+
+    #[test]
+    fn test_create_role_by_name_only() {
+        let req: ApplicationCredentialCreate =
+            serde_json::from_str(r#"{"name": "foo", "roles": [{"name": "member"}]}"#).unwrap();
+        assert_eq!(req.roles[0].id, None);
+        assert_eq!(req.roles[0].name.as_deref(), Some("member"));
+    }
+
+    #[test]
+    fn test_create_expires_at_naive_is_utc() {
+        let req: ApplicationCredentialCreate =
+            serde_json::from_str(r#"{"name": "foo", "expires_at": "2026-10-08T11:15:07.405835"}"#)
+                .unwrap();
+        assert_eq!(
+            req.expires_at.unwrap().to_rfc3339(),
+            "2026-10-08T11:15:07.405835+00:00"
+        );
+    }
+
+    #[test]
+    fn test_create_expires_at_rfc3339_and_null() {
+        let req: ApplicationCredentialCreate =
+            serde_json::from_str(r#"{"name": "foo", "expires_at": "2026-10-08T13:15:07+02:00"}"#)
+                .unwrap();
+        assert_eq!(
+            req.expires_at.unwrap().to_rfc3339(),
+            "2026-10-08T11:15:07+00:00"
+        );
+        let req: ApplicationCredentialCreate =
+            serde_json::from_str(r#"{"name": "foo", "expires_at": null}"#).unwrap();
+        assert!(req.expires_at.is_none());
+    }
+
+    #[test]
+    fn test_create_expires_at_invalid() {
+        assert!(
+            serde_json::from_str::<ApplicationCredentialCreate>(
+                r#"{"name": "foo", "expires_at": "tomorrow"}"#
+            )
+            .is_err()
+        );
+    }
 }

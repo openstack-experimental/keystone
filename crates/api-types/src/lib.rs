@@ -87,6 +87,28 @@ where
     }
 }
 
+/// Deserialize an `Option<DateTime<Utc>>` leniently.
+///
+/// Python keystone accepts ISO 8601 timestamps with or without a timezone
+/// offset (tempest sends naive `2026-10-08T11:15:07.405835`); naive values
+/// are interpreted as UTC. `null` maps to `None`.
+pub fn deserialize_lenient_datetime_opt<'de, D>(
+    deserializer: D,
+) -> Result<Option<chrono::DateTime<chrono::Utc>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let Some(raw) = Option::<String>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&raw) {
+        return Ok(Some(dt.with_timezone(&chrono::Utc)));
+    }
+    chrono::NaiveDateTime::parse_from_str(&raw, "%Y-%m-%dT%H:%M:%S%.f")
+        .map(|n| Some(n.and_utc()))
+        .map_err(|_| serde::de::Error::custom(format!("invalid datetime: `{raw}`")))
+}
+
 /// Default `limit` when the client does not supply one: **`None`**.
 ///
 /// Deliberately not a hard-coded page size. ADR 0029's precedence chain is

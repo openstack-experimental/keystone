@@ -78,7 +78,23 @@ impl TryFrom<api_types_application_credential::ApplicationCredentialCreate>
     ) -> Result<Self, Self::Error> {
         let mut builder = provider_types::ApplicationCredentialCreateBuilder::default();
         builder.name(value.name);
-        builder.roles(value.roles.into_iter().map(Into::into).collect::<Vec<_>>());
+        builder.roles(
+            value
+                .roles
+                .into_iter()
+                .map(|role| {
+                    Ok(openstack_keystone_core_types::role::RoleRef {
+                        domain_id: role.domain_id,
+                        id: role.id.ok_or_else(|| {
+                            crate::error::BuilderError::UninitializedField(
+                                "role id is required".into(),
+                            )
+                        })?,
+                        name: role.name,
+                    })
+                })
+                .collect::<Result<Vec<_>, crate::error::BuilderError>>()?,
+        );
         if let Some(v) = value.access_rules {
             // The API payload carries no owner for inline access rules; the
             // provider stamps the credential's owner onto each rule before

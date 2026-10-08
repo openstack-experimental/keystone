@@ -19,17 +19,21 @@ use axum::{
     response::IntoResponse,
 };
 use serde_json::json;
+use std::collections::HashSet;
 use validator::Validate;
 
 use super::types::application_credential::{
     ApplicationCredentialCreateRequest, ApplicationCredentialCreateResponse,
+    ApplicationCredentialRoleRef,
 };
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::application_credential as core_type_application_credential;
+use openstack_keystone_core_types::assignment::RoleAssignmentListParametersBuilder;
 use openstack_keystone_core_types::auth::ScopeInfo;
+use openstack_keystone_core_types::role::RoleListParametersBuilder;
 /// Create application credential.
 ///
 /// POST /v3/users/{user_id}/application_credentials
@@ -51,9 +55,8 @@ pub(super) async fn create(
     Auth(user_auth): Auth,
     Path(user_id): Path<String>,
     State(state): State<ServiceState>,
-    Json(payload): Json<ApplicationCredentialCreateRequest>,
+    Json(mut payload): Json<ApplicationCredentialCreateRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
-    payload.validate()?;
     let execution_context = ExecutionContext::from_auth(&state, &user_auth);
 
     // project_id must come from the token scope, not the request body
@@ -84,6 +87,62 @@ pub(super) async fn create(
             None,
         )
         .await?;
+
+    // Roles may be referenced by `id` or by `name` (matching python
+    // keystone); resolve name-only references to an id and, when no roles are
+    // given, default to all of the user's roles on the project.
+    let internal_context = ExecutionContext::internal(&state);
+    for role in payload.application_credential.roles.iter_mut() {
+        if role.id.is_none() {
+            let name = role
+                .name
+                .clone()
+                .ok_or_else(|| KeystoneApiError::BadRequest("role id or name required".into()))?;
+            let resolved = state
+                .provider
+                .get_role_provider()
+                .list_roles(
+                    &internal_context,
+                    // Without `domain_id` only global roles match, so a
+                    // domain-scoped role of the same name is never picked.
+                    &RoleListParametersBuilder::default()
+                        .name(name.clone())
+                        .domain_id(role.domain_id.clone())
+                        .build()?,
+                )
+                .await?
+                .into_iter()
+                .next()
+                .ok_or_else(|| KeystoneApiError::BadRequest(format!("role `{name}` not found")))?;
+            role.id = Some(resolved.id);
+        }
+    }
+    if payload.application_credential.roles.is_empty() {
+        let mut seen = HashSet::new();
+        payload.application_credential.roles = state
+            .provider
+            .get_assignment_provider()
+            .list_role_assignments(
+                &internal_context,
+                &RoleAssignmentListParametersBuilder::default()
+                    .user_id(user_id.clone())
+                    .project_id(project_id.clone())
+                    .include_names(true)
+                    .effective(true)
+                    .resolve_implied_roles(true)
+                    .build()?,
+            )
+            .await?
+            .into_iter()
+            .filter(|a| seen.insert(a.role_id.clone()))
+            .map(|a| ApplicationCredentialRoleRef {
+                domain_id: None,
+                id: Some(a.role_id),
+                name: a.role_name,
+            })
+            .collect();
+    }
+    payload.validate()?;
 
     let app_cred = core_type_application_credential::ApplicationCredentialCreateBuilder::try_from(
         payload.application_credential,
@@ -133,11 +192,15 @@ mod tests {
     use crate::api::v3::openapi_router;
     use crate::api::v3::user::application_credential::types::application_credential::{
         ApplicationCredentialCreateBuilder, ApplicationCredentialCreateRequest,
-        ApplicationCredentialCreateResponse,
+        ApplicationCredentialCreateResponse, ApplicationCredentialRoleRef,
     };
     use crate::application_credential::MockApplicationCredentialProvider;
+    use crate::assignment::MockAssignmentProvider;
     use crate::identity::MockIdentityProvider;
     use crate::provider::Provider;
+    use crate::role::MockRoleProvider;
+    use openstack_keystone_core_types::assignment::{AssignmentBuilder, AssignmentType};
+    use openstack_keystone_core_types::role::RoleBuilder;
 
     fn mock_user(mock: &mut MockIdentityProvider) {
         mock.expect_get_user().returning(|_, _| {
@@ -172,7 +235,10 @@ mod tests {
         let req = ApplicationCredentialCreateRequest {
             application_credential: ApplicationCredentialCreateBuilder::default()
                 .name("my-cred")
-                .roles(vec![])
+                .roles(vec![ApplicationCredentialRoleRef {
+                    id: Some("rid".into()),
+                    ..Default::default()
+                }])
                 .build()
                 .unwrap(),
         };
@@ -224,6 +290,179 @@ mod tests {
         assert_eq!(res.application_credential.name, "my-cred");
         // secret must be present in create response
         assert!(!res.application_credential.secret.expose_secret().is_empty());
+    }
+
+    async fn post_raw(state: crate::keystone::ServiceState, body: &'static str) -> StatusCode {
+        openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state)
+            .as_service()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/users/uid/application_credentials")
+                    .extension(test_fixture_scoped())
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .status()
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_create_defaults_roles_to_user_roles() {
+        let mut identity_mock = MockIdentityProvider::default();
+        mock_user(&mut identity_mock);
+        let mut assignment_mock = MockAssignmentProvider::default();
+        assignment_mock
+            .expect_list_role_assignments()
+            .returning(|_, _| {
+                Ok(vec![
+                    AssignmentBuilder::default()
+                        .actor_id("uid")
+                        .role_id("rid")
+                        .role_name("member")
+                        .target_id("pid")
+                        .r#type(AssignmentType::UserProject)
+                        .build()
+                        .unwrap(),
+                ])
+            });
+        let mut app_cred_mock = MockApplicationCredentialProvider::default();
+        app_cred_mock
+            .expect_create_application_credential()
+            .withf(|_, rec| rec.roles.len() == 1 && rec.roles[0].id == "rid")
+            .returning(|_, _| Ok(mock_create_response()));
+
+        let state = get_mocked_state(
+            Provider::mocked_builder()
+                .mock_identity(identity_mock)
+                .mock_assignment(assignment_mock)
+                .mock_application_credential(app_cred_mock),
+            true,
+            None,
+        )
+        .await;
+
+        assert_eq!(
+            post_raw(state, r#"{"application_credential": {"name": "my-cred"}}"#).await,
+            StatusCode::CREATED
+        );
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_create_role_by_name() {
+        let mut identity_mock = MockIdentityProvider::default();
+        mock_user(&mut identity_mock);
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_list_roles()
+            .withf(|_, params| {
+                params.name.as_deref() == Some("member") && params.domain_id == Some(None)
+            })
+            .returning(|_, _| {
+                Ok(vec![
+                    RoleBuilder::default()
+                        .id("rid")
+                        .name("member")
+                        .build()
+                        .unwrap(),
+                ])
+            });
+        let mut app_cred_mock = MockApplicationCredentialProvider::default();
+        app_cred_mock
+            .expect_create_application_credential()
+            .withf(|_, rec| rec.roles.len() == 1 && rec.roles[0].id == "rid")
+            .returning(|_, _| Ok(mock_create_response()));
+
+        let state = get_mocked_state(
+            Provider::mocked_builder()
+                .mock_identity(identity_mock)
+                .mock_role(role_mock)
+                .mock_application_credential(app_cred_mock),
+            true,
+            None,
+        )
+        .await;
+
+        assert_eq!(
+            post_raw(
+                state,
+                r#"{"application_credential": {"name": "my-cred", "roles": [{"name": "member"}]}}"#
+            )
+            .await,
+            StatusCode::CREATED
+        );
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_create_role_by_name_in_domain() {
+        let mut identity_mock = MockIdentityProvider::default();
+        mock_user(&mut identity_mock);
+        let mut role_mock = MockRoleProvider::default();
+        role_mock
+            .expect_list_roles()
+            .withf(|_, params| {
+                params.name.as_deref() == Some("member")
+                    && params.domain_id == Some(Some("did".to_string()))
+            })
+            .returning(|_, _| {
+                Ok(vec![
+                    RoleBuilder::default()
+                        .id("rid")
+                        .name("member")
+                        .domain_id("did")
+                        .build()
+                        .unwrap(),
+                ])
+            });
+        let mut app_cred_mock = MockApplicationCredentialProvider::default();
+        app_cred_mock
+            .expect_create_application_credential()
+            .withf(|_, rec| rec.roles.len() == 1 && rec.roles[0].id == "rid")
+            .returning(|_, _| Ok(mock_create_response()));
+
+        let state = get_mocked_state(
+            Provider::mocked_builder()
+                .mock_identity(identity_mock)
+                .mock_role(role_mock)
+                .mock_application_credential(app_cred_mock),
+            true,
+            None,
+        )
+        .await;
+
+        assert_eq!(
+            post_raw(
+                state,
+                r#"{"application_credential": {"name": "my-cred", "roles": [{"name": "member", "domain_id": "did"}]}}"#
+            )
+            .await,
+            StatusCode::CREATED
+        );
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_create_role_name_unknown() {
+        let mut role_mock = MockRoleProvider::default();
+        role_mock.expect_list_roles().returning(|_, _| Ok(vec![]));
+        let state =
+            get_mocked_state(Provider::mocked_builder().mock_role(role_mock), true, None).await;
+
+        assert_eq!(
+            post_raw(
+                state,
+                r#"{"application_credential": {"name": "my-cred", "roles": [{"name": "nope"}]}}"#
+            )
+            .await,
+            StatusCode::BAD_REQUEST
+        );
     }
 
     #[traced_test]

@@ -207,8 +207,10 @@ pub struct ApplicationCredentialCreate {
     /// A list of one or more roles that this application credential has
     /// associated with its project. A token using this application
     /// credential will have these same roles.
+    ///
+    /// Roles are referenced by ID here; the API layer resolves role names
+    /// (and optional domain) to IDs before building this type.
     #[validate(nested)]
-    // TODO: application creation allows specifying role names
     pub roles: Vec<RoleRef>,
 
     /// The secret that the application credential will be created with. If not
