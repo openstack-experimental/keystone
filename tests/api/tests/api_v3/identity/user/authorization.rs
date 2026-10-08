@@ -128,6 +128,7 @@ async fn test_user_list_success_admin() -> Result<()> {
             domain_id: Some(user.domain_id.clone()),
             name: Some(user.name.clone()),
             unique_id: None,
+            enabled: None,
         },
     )
     .await?;
@@ -200,6 +201,7 @@ async fn test_user_list_forbidden_project_scoped_manager() -> Result<()> {
             domain_id: Some("default".to_string()),
             name: None,
             unique_id: None,
+            enabled: None,
         },
     )
     .await

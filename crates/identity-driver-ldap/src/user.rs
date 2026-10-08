@@ -169,7 +169,12 @@ pub async fn list(
     for entry in &entries {
         let mut user = models::to_user_response(cfg, default_domain_id, entry)?;
         user.enabled = apply_enabled_emulation(pool, cfg, user.enabled, &entry.dn).await?;
-        users.push(user);
+        // `enabled` is derived from the mask/invert/default/emulation
+        // strategies, so it can not be expressed as an LDAP filter reliably;
+        // apply it on the computed value instead.
+        if params.enabled.is_none_or(|e| e == user.enabled) {
+            users.push(user);
+        }
     }
     Ok(users)
 }

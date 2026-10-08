@@ -40,6 +40,10 @@ pub struct UserListParameters {
     #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub unique_id: Option<String>,
 
+    /// Filter users by the `enabled` flag.
+    #[serde(default, deserialize_with = "crate::deserialize_lenient_bool_opt")]
+    pub enabled: Option<bool>,
+
     /// Filter users by type (`local`, `federated`, `nonlocal`, `all`).
     #[serde(rename = "type")]
     pub user_type: Option<UserType>,

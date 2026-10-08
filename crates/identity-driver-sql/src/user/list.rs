@@ -72,6 +72,10 @@ fn get_user_list_query(
         user_select = user_select.filter(db_user::Column::DomainId.eq(domain_id));
     }
 
+    if let Some(enabled) = params.enabled {
+        user_select = user_select.filter(db_user::Column::Enabled.eq(enabled));
+    }
+
     let mut cursor = user_select.cursor_by(db_user::Column::Id);
     if let Some(marker) = &params.pagination.marker {
         if params.pagination.page_reverse {
@@ -515,6 +519,33 @@ mod tests {
         assert!(sql.contains(r#""user"."id" >"#));
         assert!(sql.contains(r#"ORDER BY "user"."id" ASC"#));
         assert!(sql.contains("LIMIT"));
+    }
+
+    #[tokio::test]
+    async fn test_list_enabled_filter() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([Vec::<db_user::Model>::new()])
+            .into_connection();
+
+        let res = list(
+            &Config::default(),
+            &db,
+            &UserListParameters {
+                enabled: Some(false),
+                user_type: Some(UserType::NonLocal),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(res.is_empty());
+
+        let txns = db.into_transaction_log();
+        let sql = &txns[0].statements()[0].sql;
+        assert!(
+            sql.contains(r#"WHERE "user"."enabled" = $1"#),
+            "expected enabled filter in SQL: {sql}"
+        );
     }
 
     #[tokio::test]

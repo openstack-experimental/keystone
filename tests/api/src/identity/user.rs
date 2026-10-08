@@ -58,7 +58,7 @@ crud_endpoint! {
         response_key = "users",
         service = Identity,
         api_version = (3, 0),
-        query = [domain_id, name, unique_id],
+        query = [domain_id, name, unique_id, enabled],
     }
     delete {
         request = UserDeleteRequest,

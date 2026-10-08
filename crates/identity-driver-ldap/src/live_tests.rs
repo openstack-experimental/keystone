@@ -194,6 +194,40 @@ async fn test_list_users_all_finds_seeded_entries() -> Result<(), IdentityProvid
 }
 
 #[tokio::test]
+async fn test_list_users_enabled_filter() -> Result<(), IdentityProviderError> {
+    let url = skip_unless_configured!();
+    let cfg = test_config(&url);
+    let backend = LdapBackend::new(&cfg)
+        .await
+        .map_err(|e| IdentityProviderError::LdapConnection(e.to_string()))?;
+
+    let ids_for = async |enabled: bool| -> Result<Vec<String>, IdentityProviderError> {
+        let params = UserListParametersBuilder::default()
+            .enabled(Some(enabled))
+            .build()
+            .expect("valid params");
+        let users = user::list(
+            &backend.service_pool,
+            &backend.config,
+            DEFAULT_DOMAIN_ID,
+            &params,
+        )
+        .await?;
+        assert!(users.iter().all(|u| u.enabled == enabled));
+        Ok(users.into_iter().map(|u| u.id).collect())
+    };
+
+    let disabled = ids_for(false).await?;
+    assert!(disabled.contains(&"disableduser".to_string()));
+    assert!(!disabled.contains(&"jdoe".to_string()));
+
+    let enabled = ids_for(true).await?;
+    assert!(enabled.contains(&"jdoe".to_string()));
+    assert!(!enabled.contains(&"disableduser".to_string()));
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_find_user_by_name_ci() -> Result<(), IdentityProviderError> {
     let url = skip_unless_configured!();
     let cfg = test_config(&url);

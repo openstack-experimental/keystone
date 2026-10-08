@@ -302,6 +302,11 @@ pub struct UserListParameters {
     #[validate(length(max = 64))]
     pub unique_id: Option<String>,
 
+    /// Filter users by the `enabled` flag (matches the stored column, as the
+    /// Python implementation does).
+    #[builder(default)]
+    pub enabled: Option<bool>,
+
     /// Filter users by User Type (local, federated, nonlocal, all).
     #[builder(default)]
     //#[serde(default, rename = "type")]

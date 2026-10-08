@@ -279,6 +279,7 @@ async fn find_admin_user_id(admin: &Arc<AsyncOpenStack>) -> Result<String> {
             domain_id: Some(DOMAIN.to_string()),
             name: Some("admin".to_string()),
             unique_id: None,
+            enabled: None,
         },
     )
     .await?;

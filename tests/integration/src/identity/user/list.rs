@@ -64,6 +64,64 @@ async fn test_list() -> Result<()> {
 
 #[tokio::test]
 #[traced_test]
+async fn test_list_enabled_filter() -> Result<()> {
+    let (state, _tmp) = get_state_with_config(|_| {}).await?;
+    let domain = create_domain!(state)?;
+    let idp = state.provider.get_identity_provider();
+
+    let mut ids = [None, None];
+    for (slot, enabled) in ids.iter_mut().zip([true, false]) {
+        *slot = Some(
+            idp.create_user(
+                &ExecutionContext::internal(&state),
+                UserCreateBuilder::default()
+                    .name(Uuid::new_v4().to_string())
+                    .domain_id(domain.id.clone())
+                    .enabled(enabled)
+                    .build()?,
+            )
+            .await?
+            .id,
+        );
+    }
+    let [Some(enabled_id), Some(disabled_id)] = ids else {
+        unreachable!("both users created");
+    };
+
+    for (filter, expected, unexpected) in [
+        (Some(true), &enabled_id, &disabled_id),
+        (Some(false), &disabled_id, &enabled_id),
+    ] {
+        let users = idp
+            .list_users(
+                &ExecutionContext::internal(&state),
+                &UserListParameters {
+                    domain_id: Some(domain.id.clone()),
+                    enabled: filter,
+                    ..Default::default()
+                },
+            )
+            .await?;
+        assert_eq!(users.len(), 1, "filter {filter:?}");
+        assert_eq!(&users[0].id, expected);
+        assert_ne!(&users[0].id, unexpected);
+    }
+
+    let all = idp
+        .list_users(
+            &ExecutionContext::internal(&state),
+            &UserListParameters {
+                domain_id: Some(domain.id.clone()),
+                ..Default::default()
+            },
+        )
+        .await?;
+    assert_eq!(all.len(), 2, "no filter returns both");
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
 async fn test_list_mixed_user_types() -> Result<()> {
     let (state, _tmp) = get_state_with_config(|_| {}).await?;
     let domain = create_domain!(state)?;

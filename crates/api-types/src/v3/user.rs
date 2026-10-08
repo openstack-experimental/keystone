@@ -431,6 +431,10 @@ pub struct UserListParameters {
     /// Filter users by the federated unique ID.
     #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub unique_id: Option<String>,
+
+    /// Filter users by the `enabled` flag.
+    #[serde(default, deserialize_with = "crate::deserialize_lenient_bool_opt")]
+    pub enabled: Option<bool>,
 }
 
 #[cfg(test)]

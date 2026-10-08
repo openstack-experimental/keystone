@@ -33,6 +33,7 @@ impl From<api_types::UserListParameters> for provider_types::UserListParameters 
             domain_id: value.domain_id,
             name: value.name,
             unique_id: value.unique_id,
+            enabled: value.enabled,
             user_type: value.user_type.map(Into::into),
             ..Default::default()
         }
