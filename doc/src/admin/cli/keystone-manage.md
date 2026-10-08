@@ -17,8 +17,8 @@ keystone-manage --config /etc/keystone/keystone.conf <command>
 | `oauth2 ensure-signing-key` | Provision a missing domain signing key. |
 | `oauth2 rotate-signing-key|confirm-rotate-signing-key` | Perform normal signing-key rotation. |
 | `oauth2 list-local-emergency-candidates|reconcile-local-emergency-key` | Inspect and reconcile quorum-loss candidates. |
-| `storage init|join|list-peers|promote|demote|remove-peer` | Manage Raft membership. |
-| `storage backup|restore|metrics|clear-quarantine` | Operate and recover distributed storage. |
+| `storage init|join|list-peers|promote|demote|remove-peer|transfer-leader` | Manage Raft membership and leadership. Everything but `init` and `join` takes `--cluster-addr`; `join` takes the address positionally; commands that change the cluster follow the redirect to the Raft leader. `demote` and `remove-peer` hand leadership over first when the target leads. |
+| `storage backup|restore|metrics|status|clear-quarantine` | Operate and recover distributed storage. `clear-quarantine` takes the partition positionally. |
 | `storage rotate-dek|confirm-rotate-dek` | Rotate distributed-encryption keys. |
 | `storage list-dek-local-emergency-candidates|reconcile-dek-local-emergency` | Inspect and reconcile local emergency DEK candidates. |
 | `token setup|rotate` | Initialize or rotate the Fernet token repository. |

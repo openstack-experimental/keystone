@@ -38,14 +38,16 @@ The crate is split into two layers:
 ## Usage
 
 ```rust
-// Initialize storage from config
-let storage = Storage::new(
-    config.storage.as_ref().unwrap().clone(),
-    std::env::temp_dir(),
-).await?;
+use std::sync::Arc;
 
-// Coerce to trait object for core
-let api: Arc<dyn StorageApi> = storage.into_trait()?;
+use openstack_keystone_distributed_storage::app::init_storage;
+use openstack_keystone_storage_api::StorageApi;
+
+// Initialize the storage from the loaded configuration.
+let storage = init_storage(&config_manager).await?;
+
+// Use it through the trait object, as `core` does.
+let api: Arc<dyn StorageApi> = storage;
 ```
 
 ## Features
