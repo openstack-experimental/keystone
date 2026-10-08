@@ -98,6 +98,42 @@ fn sso_idx_prefix(domain_id: &str) -> String {
 
 const SSO_IDX_PREFIX: &str = "oauth2:sso_idx:v1:";
 
+fn consent_key(domain_id: &str, user_id: &str, client_id: &str) -> String {
+    format!("oauth2:consent:v1:{domain_id}:{user_id}:{client_id}")
+}
+
+/// Index of consents by (domain_id, user_id): listing a user's consents,
+/// and sweeping a user's or a domain's, is a prefix scan.
+fn consent_idx_key(domain_id: &str, user_id: &str, client_id: &str) -> String {
+    format!("oauth2:consent_idx:v1:{domain_id}:{user_id}:{client_id}")
+}
+
+fn consent_idx_prefix(domain_id: &str, user_id: &str) -> String {
+    format!("oauth2:consent_idx:v1:{domain_id}:{user_id}:")
+}
+
+const CONSENT_IDX_PREFIX: &str = "oauth2:consent_idx:v1:";
+
+/// Index of consents by client: sweeping a deleted client is a prefix scan.
+fn consent_client_idx_key(client_id: &str, domain_id: &str, user_id: &str) -> String {
+    format!("oauth2:consent_cidx:v1:{client_id}:{domain_id}:{user_id}")
+}
+
+fn consent_client_idx_prefix(client_id: &str) -> String {
+    format!("oauth2:consent_cidx:v1:{client_id}:")
+}
+
+/// Split a `consent_idx` key into `(domain_id, user_id, client_id)`.
+fn parse_consent_idx(key: &str) -> Option<(String, String, String)> {
+    let rest = key.strip_prefix(CONSENT_IDX_PREFIX)?;
+    let mut parts = rest.splitn(3, ':');
+    Some((
+        parts.next()?.to_string(),
+        parts.next()?.to_string(),
+        parts.next()?.to_string(),
+    ))
+}
+
 fn device_code_key(device_code: &str) -> String {
     format!("oauth2:device_code:v1:{device_code}")
 }
@@ -246,6 +282,7 @@ impl RaftOauth2SessionBackend {
             mfa_attempts: 0,
             pending_upstream: None,
             upstream: None,
+            force_consent: data.force_consent,
         };
         let mutations = vec![
             Mutation::set(
@@ -511,6 +548,127 @@ impl RaftOauth2SessionBackend {
                 continue;
             }
             self.delete_sso_session_impl(storage, sso_id).await?;
+            deleted += 1;
+        }
+        Ok(deleted)
+    }
+
+    async fn set_consent_impl(
+        &self,
+        storage: &dyn StorageApi,
+        consent: Consent,
+    ) -> Result<Consent, Oauth2SessionProviderError> {
+        let mutations = vec![
+            Mutation::set(
+                consent_key(&consent.domain_id, &consent.user_id, &consent.client_id),
+                &consent,
+                Metadata::new(),
+                None::<&str>,
+                None,
+            )
+            .map_err(store_err)?,
+            Mutation::set_index(consent_idx_key(
+                &consent.domain_id,
+                &consent.user_id,
+                &consent.client_id,
+            )),
+            Mutation::set_index(consent_client_idx_key(
+                &consent.client_id,
+                &consent.domain_id,
+                &consent.user_id,
+            )),
+        ];
+        storage.transaction(mutations).await.map_err(store_err)?;
+        Ok(consent)
+    }
+
+    async fn get_consent_impl(
+        &self,
+        storage: &dyn StorageApi,
+        domain_id: &str,
+        user_id: &str,
+        client_id: &str,
+    ) -> Result<Option<Consent>, Oauth2SessionProviderError> {
+        get(storage, &consent_key(domain_id, user_id, client_id))
+            .await
+            .map_err(store_err)
+    }
+
+    async fn list_consents_by_user_impl(
+        &self,
+        storage: &dyn StorageApi,
+        domain_id: &str,
+        user_id: &str,
+    ) -> Result<Vec<Consent>, Oauth2SessionProviderError> {
+        let prefix = consent_idx_prefix(domain_id, user_id);
+        let keys = storage
+            .prefix_index(prefix.as_bytes())
+            .await
+            .map_err(store_err)?;
+        let mut consents = Vec::new();
+        for key in keys {
+            let Some(client_id) = key.strip_prefix(&prefix) else {
+                continue;
+            };
+            if let Some(consent) = self
+                .get_consent_impl(storage, domain_id, user_id, client_id)
+                .await?
+            {
+                consents.push(consent);
+            }
+        }
+        Ok(consents)
+    }
+
+    async fn delete_consent_impl(
+        &self,
+        storage: &dyn StorageApi,
+        domain_id: &str,
+        user_id: &str,
+        client_id: &str,
+    ) -> Result<bool, Oauth2SessionProviderError> {
+        let existed = self
+            .get_consent_impl(storage, domain_id, user_id, client_id)
+            .await?
+            .is_some();
+        let mutations = vec![
+            Mutation::remove(
+                consent_key(domain_id, user_id, client_id),
+                None::<&str>,
+                None,
+            ),
+            Mutation::remove_index(consent_idx_key(domain_id, user_id, client_id)),
+            Mutation::remove_index(consent_client_idx_key(client_id, domain_id, user_id)),
+        ];
+        storage.transaction(mutations).await.map_err(store_err)?;
+        Ok(existed)
+    }
+
+    /// Delete every consent found under the index `prefix` whose
+    /// `(domain_id, user_id, client_id)` the parser extracts and `matches`
+    /// accepts.
+    async fn delete_consents_matching(
+        &self,
+        storage: &dyn StorageApi,
+        prefix: &str,
+        parse: impl Fn(&str) -> Option<(String, String, String)>,
+        matches: impl Fn(&(String, String, String)) -> bool,
+    ) -> Result<usize, Oauth2SessionProviderError> {
+        let keys = storage
+            .prefix_index(prefix.as_bytes())
+            .await
+            .map_err(store_err)?;
+        let mut deleted = 0;
+        for key in keys {
+            let Some(parsed) = parse(&key) else {
+                continue;
+            };
+            if !matches(&parsed) {
+                continue;
+            }
+            let (domain_id, user_id, client_id) = parsed;
+            self.delete_consent_impl(storage, &domain_id, &user_id, &client_id)
+                .await?;
             deleted += 1;
         }
         Ok(deleted)
@@ -1363,6 +1521,103 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
         .await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_session.set_consent", level = "debug", skip_all, fields(client_id = %consent.client_id))]
+    async fn set_consent(
+        &self,
+        state: &ServiceState,
+        consent: Consent,
+    ) -> Result<Consent, Oauth2SessionProviderError> {
+        self.set_consent_impl(self.storage(state)?, consent).await
+    }
+
+    #[tracing::instrument(name = "driver.raft.oauth2_session.get_consent", level = "debug", skip_all, fields(client_id = %client_id))]
+    async fn get_consent(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        user_id: &str,
+        client_id: &str,
+    ) -> Result<Option<Consent>, Oauth2SessionProviderError> {
+        self.get_consent_impl(self.storage(state)?, domain_id, user_id, client_id)
+            .await
+    }
+
+    #[tracing::instrument(name = "driver.raft.oauth2_session.list_consents_by_user", level = "debug", skip_all, fields(user_id = %user_id))]
+    async fn list_consents_by_user(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        user_id: &str,
+    ) -> Result<Vec<Consent>, Oauth2SessionProviderError> {
+        self.list_consents_by_user_impl(self.storage(state)?, domain_id, user_id)
+            .await
+    }
+
+    #[tracing::instrument(name = "driver.raft.oauth2_session.delete_consent", level = "debug", skip_all, fields(client_id = %client_id))]
+    async fn delete_consent(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        user_id: &str,
+        client_id: &str,
+    ) -> Result<bool, Oauth2SessionProviderError> {
+        self.delete_consent_impl(self.storage(state)?, domain_id, user_id, client_id)
+            .await
+    }
+
+    #[tracing::instrument(name = "driver.raft.oauth2_session.delete_consents_by_user", level = "debug", skip_all, fields(user_id = %user_id))]
+    async fn delete_consents_by_user(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError> {
+        self.delete_consents_matching(
+            self.storage(state)?,
+            CONSENT_IDX_PREFIX,
+            parse_consent_idx,
+            |(_, u, _)| u == user_id,
+        )
+        .await
+    }
+
+    #[tracing::instrument(name = "driver.raft.oauth2_session.delete_consents_by_domain", level = "debug", skip_all, fields(domain_id = %domain_id))]
+    async fn delete_consents_by_domain(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError> {
+        self.delete_consents_matching(
+            self.storage(state)?,
+            &format!("{CONSENT_IDX_PREFIX}{domain_id}:"),
+            parse_consent_idx,
+            |(d, _, _)| d == domain_id,
+        )
+        .await
+    }
+
+    #[tracing::instrument(name = "driver.raft.oauth2_session.delete_consents_by_client", level = "debug", skip_all, fields(client_id = %client_id))]
+    async fn delete_consents_by_client(
+        &self,
+        state: &ServiceState,
+        client_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError> {
+        let prefix = consent_client_idx_prefix(client_id);
+        let client = client_id.to_string();
+        self.delete_consents_matching(
+            self.storage(state)?,
+            &prefix,
+            // `<prefix><domain_id>:<user_id>` -- ids never contain ':'
+            // except possibly the client id, which is the fixed prefix.
+            move |key| {
+                let rest = key.strip_prefix(&consent_client_idx_prefix(&client))?;
+                let (domain_id, user_id) = rest.split_once(':')?;
+                Some((domain_id.to_string(), user_id.to_string(), client.clone()))
+            },
+            |_| true,
+        )
+        .await
+    }
+
     #[tracing::instrument(name = "driver.raft.oauth2_session.delete_pre_auth_session", level = "debug", skip_all, fields(session_id = %session_id))]
     async fn delete_pre_auth_session(
         &self,
@@ -1662,6 +1917,7 @@ mod tests {
             code_challenge_method: "S256".to_string(),
             nonce: None,
             server_side_session_secret: "secret".to_string(),
+            force_consent: false,
             created_at: 1000,
             expires_at: 2000,
         }
@@ -2899,5 +3155,202 @@ mod tests {
             .delete_refresh_token_impl(&storage, "token-1")
             .await
             .unwrap();
+    }
+
+    fn consent(domain: &str, user: &str, client: &str) -> Consent {
+        Consent {
+            domain_id: domain.to_string(),
+            user_id: user.to_string(),
+            client_id: client.to_string(),
+            scopes: vec!["openid".to_string()],
+            authorization_target: None,
+            granted_at: 1,
+            updated_at: 1,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_consent_roundtrip_list_and_delete() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        for (d, u, c) in [
+            ("domain-1", "user-1", "client-1"),
+            ("domain-1", "user-1", "client-2"),
+            ("domain-1", "user-2", "client-1"),
+        ] {
+            backend
+                .set_consent_impl(&storage, consent(d, u, c))
+                .await
+                .unwrap();
+        }
+        let got = backend
+            .get_consent_impl(&storage, "domain-1", "user-1", "client-1")
+            .await
+            .unwrap();
+        assert_eq!(got, Some(consent("domain-1", "user-1", "client-1")));
+
+        let mut listed: Vec<String> = backend
+            .list_consents_by_user_impl(&storage, "domain-1", "user-1")
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|c| c.client_id)
+            .collect();
+        listed.sort();
+        assert_eq!(listed, ["client-1", "client-2"]);
+
+        assert!(
+            backend
+                .delete_consent_impl(&storage, "domain-1", "user-1", "client-1")
+                .await
+                .unwrap()
+        );
+        // Second delete reports that there was nothing.
+        assert!(
+            !backend
+                .delete_consent_impl(&storage, "domain-1", "user-1", "client-1")
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            backend
+                .list_consents_by_user_impl(&storage, "domain-1", "user-1")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_consent_is_replaced_on_set() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .set_consent_impl(&storage, consent("domain-1", "user-1", "client-1"))
+            .await
+            .unwrap();
+        let mut wider = consent("domain-1", "user-1", "client-1");
+        wider.scopes.push("email".into());
+        backend
+            .set_consent_impl(&storage, wider.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            backend
+                .get_consent_impl(&storage, "domain-1", "user-1", "client-1")
+                .await
+                .unwrap(),
+            Some(wider)
+        );
+        assert_eq!(
+            backend
+                .list_consents_by_user_impl(&storage, "domain-1", "user-1")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_consents_by_user_domain_and_client() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        for (d, u, c) in [
+            ("domain-1", "user-1", "client-1"),
+            ("domain-1", "user-1", "client-2"),
+            ("domain-1", "user-2", "client-1"),
+            ("domain-2", "user-1", "client-1"),
+            ("domain-2", "user-3", "client-9"),
+        ] {
+            backend
+                .set_consent_impl(&storage, consent(d, u, c))
+                .await
+                .unwrap();
+        }
+        let present = |d, u, c| {
+            let backend = &backend;
+            let storage = &storage;
+            async move {
+                backend
+                    .get_consent_impl(storage, d, u, c)
+                    .await
+                    .unwrap()
+                    .is_some()
+            }
+        };
+
+        // client-9 only.
+        let parse = parse_consent_idx;
+        let deleted = backend
+            .delete_consents_matching(&storage, CONSENT_IDX_PREFIX, parse, |(_, u, _)| {
+                u == "user-3"
+            })
+            .await
+            .unwrap();
+        assert_eq!(deleted, 1);
+        assert!(!present("domain-2", "user-3", "client-9").await);
+
+        // user-1 in every domain.
+        let deleted = backend
+            .delete_consents_matching(&storage, CONSENT_IDX_PREFIX, parse, |(_, u, _)| {
+                u == "user-1"
+            })
+            .await
+            .unwrap();
+        assert_eq!(deleted, 3);
+        assert!(present("domain-1", "user-2", "client-1").await);
+
+        // The rest of domain-1.
+        let deleted = backend
+            .delete_consents_matching(
+                &storage,
+                &format!("{CONSENT_IDX_PREFIX}domain-1:"),
+                parse,
+                |(d, _, _)| d == "domain-1",
+            )
+            .await
+            .unwrap();
+        assert_eq!(deleted, 1);
+        assert!(!present("domain-1", "user-2", "client-1").await);
+    }
+
+    #[tokio::test]
+    async fn test_delete_consents_by_client_leaves_other_clients() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        for (d, u, c) in [
+            ("domain-1", "user-1", "client-1"),
+            ("domain-1", "user-2", "client-1"),
+            ("domain-1", "user-1", "client-2"),
+        ] {
+            backend
+                .set_consent_impl(&storage, consent(d, u, c))
+                .await
+                .unwrap();
+        }
+        let client = "client-1".to_string();
+        let deleted = backend
+            .delete_consents_matching(
+                &storage,
+                &consent_client_idx_prefix(&client),
+                |key| {
+                    let rest = key.strip_prefix(&consent_client_idx_prefix("client-1"))?;
+                    let (d, u) = rest.split_once(':')?;
+                    Some((d.to_string(), u.to_string(), "client-1".to_string()))
+                },
+                |_| true,
+            )
+            .await
+            .unwrap();
+        assert_eq!(deleted, 2);
+        assert!(
+            backend
+                .get_consent_impl(&storage, "domain-1", "user-1", "client-2")
+                .await
+                .unwrap()
+                .is_some()
+        );
     }
 }

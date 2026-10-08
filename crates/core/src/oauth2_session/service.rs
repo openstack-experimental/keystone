@@ -194,6 +194,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
                     code_challenge_method: req.code_challenge_method,
                     nonce: req.nonce,
                     server_side_session_secret: generate_entropy(),
+                    force_consent: req.force_consent,
                     created_at,
                     expires_at,
                 },
@@ -324,6 +325,145 @@ impl Oauth2SessionApi for Oauth2SessionService {
     ) -> Result<usize, Oauth2SessionProviderError> {
         self.backend_driver
             .delete_sso_sessions_by_domain(state, domain_id)
+            .await
+    }
+
+    #[tracing::instrument(name = "provider.oauth2_session.remember_consent", level = "debug", skip_all, fields(client_id = %client_id))]
+    async fn remember_consent(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        user_id: &str,
+        client_id: &str,
+        scopes: &[String],
+    ) -> Result<Consent, Oauth2SessionProviderError> {
+        let now = now();
+        // Read-merge-write without a version check: two concurrent consents
+        // for different scopes can lose one. That fails safe, the user is
+        // just asked again.
+        let existing = self
+            .backend_driver
+            .get_consent(state, domain_id, user_id, client_id)
+            .await?;
+        let consent = match existing {
+            Some(mut consent) => {
+                let mut changed = false;
+                for scope in scopes {
+                    if !consent.scopes.contains(scope) {
+                        consent.scopes.push(scope.clone());
+                        changed = true;
+                    }
+                }
+                if !changed {
+                    return Ok(consent);
+                }
+                consent.updated_at = now;
+                consent
+            }
+            None => Consent {
+                domain_id: domain_id.to_string(),
+                user_id: user_id.to_string(),
+                client_id: client_id.to_string(),
+                scopes: scopes.to_vec(),
+                authorization_target: None,
+                granted_at: now,
+                updated_at: now,
+            },
+        };
+        self.backend_driver.set_consent(state, consent).await
+    }
+
+    #[tracing::instrument(name = "provider.oauth2_session.get_consent", level = "debug", skip_all, fields(client_id = %client_id))]
+    async fn get_consent(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        user_id: &str,
+        client_id: &str,
+    ) -> Result<Option<Consent>, Oauth2SessionProviderError> {
+        self.backend_driver
+            .get_consent(state, domain_id, user_id, client_id)
+            .await
+    }
+
+    #[tracing::instrument(name = "provider.oauth2_session.list_consents", level = "debug", skip_all, fields(user_id = %user_id))]
+    async fn list_consents(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        user_id: &str,
+    ) -> Result<Vec<Consent>, Oauth2SessionProviderError> {
+        self.backend_driver
+            .list_consents_by_user(state, domain_id, user_id)
+            .await
+    }
+
+    #[tracing::instrument(name = "provider.oauth2_session.revoke_consent", level = "debug", skip_all, fields(client_id = %client_id))]
+    async fn revoke_consent(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        user_id: &str,
+        client_id: &str,
+    ) -> Result<(bool, Vec<String>), Oauth2SessionProviderError> {
+        let existed = self
+            .backend_driver
+            .delete_consent(state, domain_id, user_id, client_id)
+            .await?;
+        // Only the families that belong to both the user and the client.
+        let of_client: std::collections::HashSet<String> = self
+            .backend_driver
+            .list_refresh_families_by_client(state, client_id)
+            .await?
+            .into_iter()
+            .collect();
+        let family_ids: Vec<String> = self
+            .backend_driver
+            .list_refresh_families_by_user(state, domain_id, user_id)
+            .await?
+            .into_iter()
+            .filter(|f| of_client.contains(f))
+            .collect();
+        let family_ids = self
+            .revoke_families(
+                state,
+                family_ids,
+                RefreshTokenRevocationReason::ConsentRevoked,
+            )
+            .await?;
+        Ok((existed, family_ids))
+    }
+
+    #[tracing::instrument(name = "provider.oauth2_session.delete_consents_by_user", level = "debug", skip_all, fields(user_id = %user_id))]
+    async fn delete_consents_by_user(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError> {
+        self.backend_driver
+            .delete_consents_by_user(state, user_id)
+            .await
+    }
+
+    #[tracing::instrument(name = "provider.oauth2_session.delete_consents_by_domain", level = "debug", skip_all, fields(domain_id = %domain_id))]
+    async fn delete_consents_by_domain(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError> {
+        self.backend_driver
+            .delete_consents_by_domain(state, domain_id)
+            .await
+    }
+
+    #[tracing::instrument(name = "provider.oauth2_session.delete_consents_by_client", level = "debug", skip_all, fields(client_id = %client_id))]
+    async fn delete_consents_by_client(
+        &self,
+        state: &ServiceState,
+        client_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError> {
+        self.backend_driver
+            .delete_consents_by_client(state, client_id)
             .await
     }
 
@@ -1158,6 +1298,7 @@ mod tests {
     ) -> PreAuthSession {
         PreAuthSession {
             pending_upstream: None,
+            force_consent: false,
             upstream: None,
             session_id: session_id.to_string(),
             domain_id: domain_id.to_string(),
@@ -1378,6 +1519,7 @@ mod tests {
         mock.expect_get_pre_auth_session().returning(|_, _| {
             Ok(Some(PreAuthSession {
                 pending_upstream: None,
+                force_consent: false,
                 upstream: None,
                 session_id: "s1".to_string(),
                 domain_id: "d1".to_string(),
@@ -2123,5 +2265,137 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(out, vec![("session".to_string(), "s1".to_string())]);
+    }
+
+    fn stored_consent(scopes: &[&str]) -> Consent {
+        Consent {
+            domain_id: "domain-1".into(),
+            user_id: "user-1".into(),
+            client_id: "client-1".into(),
+            scopes: scopes.iter().map(|s| s.to_string()).collect(),
+            authorization_target: None,
+            granted_at: 10,
+            updated_at: 10,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_remember_consent_creates_a_new_consent() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_get_consent().returning(|_, _, _, _| Ok(None));
+        mock.expect_set_consent()
+            .withf(|_, c| {
+                c.scopes == ["openid", "email"]
+                    && c.granted_at == c.updated_at
+                    && c.authorization_target.is_none()
+            })
+            .times(1)
+            .returning(|_, c| Ok(c));
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let scopes = vec!["openid".to_string(), "email".to_string()];
+        let consent = service
+            .remember_consent(&state, "domain-1", "user-1", "client-1", &scopes)
+            .await
+            .unwrap();
+        assert_eq!(consent.scopes, scopes);
+    }
+
+    #[tokio::test]
+    async fn test_remember_consent_widens_and_keeps_granted_at() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_get_consent()
+            .returning(|_, _, _, _| Ok(Some(stored_consent(&["openid"]))));
+        mock.expect_set_consent()
+            .withf(|_, c| {
+                c.scopes == ["openid", "email"] && c.granted_at == 10 && c.updated_at > 10
+            })
+            .times(1)
+            .returning(|_, c| Ok(c));
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        service
+            .remember_consent(
+                &state,
+                "domain-1",
+                "user-1",
+                "client-1",
+                &["email".to_string(), "openid".to_string()],
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_remember_consent_without_new_scopes_writes_nothing() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_get_consent()
+            .returning(|_, _, _, _| Ok(Some(stored_consent(&["openid", "email"]))));
+        mock.expect_set_consent().never();
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let consent = service
+            .remember_consent(
+                &state,
+                "domain-1",
+                "user-1",
+                "client-1",
+                &["openid".to_string()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(consent.updated_at, 10);
+    }
+
+    #[tokio::test]
+    async fn test_revoke_consent_deletes_it_and_revokes_only_the_clients_families() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_delete_consent()
+            .withf(|_, d, u, c| d == "domain-1" && u == "user-1" && c == "client-1")
+            .times(1)
+            .returning(|_, _, _, _| Ok(true));
+        mock.expect_list_refresh_families_by_client()
+            .returning(|_, _| Ok(vec!["f1".to_string(), "f3".to_string()]));
+        mock.expect_list_refresh_families_by_user()
+            .returning(|_, _, _| Ok(vec!["f1".to_string(), "f2".to_string()]));
+        // f2 belongs to another client of the user, f3 to another user.
+        mock.expect_revoke_refresh_token_family()
+            .withf(|_, family_id, reason, _| {
+                family_id == "f1" && *reason == RefreshTokenRevocationReason::ConsentRevoked
+            })
+            .times(1)
+            .returning(|_, _, _, _| Ok(()));
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let (existed, families) = service
+            .revoke_consent(&state, "domain-1", "user-1", "client-1")
+            .await
+            .unwrap();
+        assert!(existed);
+        assert_eq!(families, ["f1"]);
+    }
+
+    #[tokio::test]
+    async fn test_revoke_consent_reports_when_nothing_existed() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_delete_consent()
+            .returning(|_, _, _, _| Ok(false));
+        mock.expect_list_refresh_families_by_client()
+            .returning(|_, _| Ok(vec![]));
+        mock.expect_list_refresh_families_by_user()
+            .returning(|_, _, _| Ok(vec![]));
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+
+        let (existed, families) = service
+            .revoke_consent(&state, "domain-1", "user-1", "client-1")
+            .await
+            .unwrap();
+        assert!(!existed);
+        assert!(families.is_empty());
     }
 }

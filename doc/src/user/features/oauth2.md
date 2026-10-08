@@ -170,6 +170,37 @@ cloud CLI (`aws sso`, `gcloud`, `az`) uses.
    `user_code` uses an unambiguous character set (`[A-Z0-9]` minus `O/0/I/l/1`)
    so it's easy to type by hand.
 
+## Managing connected applications
+
+When you approve an application and tick "Remember my decision for this
+application", it is listed as a connected application and the consent page is
+skipped next time it asks for the same or fewer scopes. Asking for an
+additional scope shows the page again, as does `prompt=consent`.
+
+List the applications you approved:
+
+```console
+$ curl -H "X-Auth-Token: $TOKEN" \
+    $KEYSTONE/v4/users/$USER_ID/oauth2/consents
+{"consents": [{"client_id": "...", "client_name": "My App",
+  "scopes": ["openid", "profile"], "authorization_target": null,
+  "granted_at": 1790000000, "updated_at": 1790000000}]}
+```
+
+Withdraw one:
+
+```console
+$ curl -X DELETE -H "X-Auth-Token: $TOKEN" \
+    $KEYSTONE/v4/users/$USER_ID/oauth2/consents/$CLIENT_ID
+```
+
+This forgets the approval **and** revokes the application's refresh tokens for
+your account, so it cannot renew its access; access tokens it already holds
+work until they expire. You can manage your own consents with an ordinary
+token, but not with an application credential or a trust token; an
+administrator can manage anyone's. The endpoint answers `404` when there is
+neither a remembered consent nor a live refresh token for that application.
+
 ## Token types you'll see
 
 - **`id_token`** — identity only, `aud` is your `client_id`. Never carries roles

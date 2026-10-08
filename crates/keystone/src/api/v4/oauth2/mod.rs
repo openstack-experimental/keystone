@@ -28,6 +28,7 @@ mod authorize;
 mod authorize_mfa;
 mod clients;
 mod confirm_rotate_signing_key;
+mod consent;
 mod device;
 mod device_authorization;
 mod device_mfa;

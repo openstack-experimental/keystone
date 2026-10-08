@@ -43,6 +43,7 @@ fn session_create(id: &str, expires_at: i64) -> PreAuthSessionCreate {
         code_challenge_method: "S256".to_string(),
         nonce: None,
         server_side_session_secret: "secret".to_string(),
+        force_consent: false,
         created_at: expires_at - 600,
         expires_at,
     }

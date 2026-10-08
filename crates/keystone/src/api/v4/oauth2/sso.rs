@@ -239,6 +239,7 @@ mod tests {
             pending_factors: vec![],
             mfa_attempts: 0,
             pending_upstream: None,
+            force_consent: false,
             upstream: None,
         }
     }
@@ -325,6 +326,9 @@ mod tests {
         sessions
             .expect_get_sso_session()
             .returning(move |_, _| Ok(Some(sso_record(auth_time))));
+        sessions
+            .expect_get_consent()
+            .returning(|_, _, _, _| Ok(None));
         sessions
     }
 
@@ -431,6 +435,52 @@ mod tests {
         let location = location(&response);
         assert!(location.contains("code=the-code"), "{location}");
         assert!(location.contains("state=xyz"));
+    }
+
+    #[tokio::test]
+    async fn test_prompt_none_with_sso_and_remembered_consent_issues_a_code() {
+        let mut sessions = MockOauth2SessionProvider::default();
+        let auth_time = chrono::Utc::now().timestamp() - 10;
+        sessions
+            .expect_get_sso_session()
+            .returning(move |_, _| Ok(Some(sso_record(auth_time))));
+        sessions.expect_get_consent().returning(|_, _, _, _| {
+            Ok(Some(
+                openstack_keystone_core_types::oauth2_session::Consent {
+                    domain_id: "domain-1".into(),
+                    user_id: "user-1".into(),
+                    client_id: "client-1".into(),
+                    scopes: vec!["openid".into(), "profile".into()],
+                    authorization_target: None,
+                    granted_at: 1,
+                    updated_at: 1,
+                },
+            ))
+        });
+        sessions
+            .expect_start_pre_auth_session()
+            .returning(|_, _| Ok(pre_auth(None)));
+        sessions
+            .expect_mark_authenticated_by_sso()
+            .returning(move |_, _, sso| {
+                let mut session = pre_auth(Some(&sso.user_id));
+                session.auth_time = Some(sso.auth_time);
+                session.amr = sso.amr.clone();
+                Ok(session)
+            });
+        sessions
+            .expect_complete_pre_auth_session()
+            .returning(|_, _| Ok(()));
+        sessions
+            .expect_issue_authorization_code()
+            .times(1)
+            .returning(|_, _| Ok("the-code".to_string()));
+        let response = router(sessions, false, true)
+            .await
+            .oneshot(authorize("&prompt=none", true))
+            .await
+            .unwrap();
+        assert!(location(&response).contains("code=the-code"));
     }
 
     #[tokio::test]
@@ -591,6 +641,9 @@ mod tests {
         signed_in.amr = vec!["pwd".into()];
         let csrf = compute_csrf_token(&pre_auth(None)).unwrap();
         let mut sessions = MockOauth2SessionProvider::default();
+        sessions
+            .expect_get_consent()
+            .returning(|_, _, _, _| Ok(None));
         sessions
             .expect_get_pre_auth_session()
             .returning(|_, _| Ok(Some(pre_auth(None))));

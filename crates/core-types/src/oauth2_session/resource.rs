@@ -77,6 +77,30 @@ pub struct SsoSessionCreate {
     pub expires_at: i64,
 }
 
+/// A user's remembered approval of a client for a set of scopes.
+///
+/// While the stored scopes cover a new authorization request, the consent
+/// page is skipped. One record per (domain, user, client).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Consent {
+    /// Domain of the user and the client.
+    pub domain_id: String,
+    /// The user who consented.
+    pub user_id: String,
+    /// The client the consent was given to.
+    pub client_id: String,
+    /// Scopes the user approved.
+    pub scopes: Vec<String>,
+    /// Authorization target (`openstack:api` only). Not set today: the
+    /// browser flows reject `openstack:api`.
+    #[serde(default)]
+    pub authorization_target: Option<String>,
+    /// UTC epoch seconds the consent was first given.
+    pub granted_at: i64,
+    /// UTC epoch seconds the stored scopes last changed.
+    pub updated_at: i64,
+}
+
 /// An upstream authorization request that was sent but not answered yet.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PendingUpstream {
@@ -166,6 +190,10 @@ pub struct PreAuthSession {
     /// Set alongside `user_id` when the login was federated.
     #[serde(default)]
     pub upstream: Option<UpstreamLogin>,
+    /// The request carried `prompt=consent`: a remembered consent must not
+    /// be used to skip the consent page.
+    #[serde(default)]
+    pub force_consent: bool,
 }
 
 /// Input to create a new [`PreAuthSession`].
@@ -191,6 +219,9 @@ pub struct PreAuthSessionCreate {
     pub nonce: Option<String>,
     /// Server-side CSRF-derivation secret.
     pub server_side_session_secret: String,
+    /// The request carried `prompt=consent`.
+    #[serde(default)]
+    pub force_consent: bool,
     /// UTC epoch seconds.
     pub created_at: i64,
     /// UTC epoch seconds.
@@ -360,6 +391,8 @@ pub enum RefreshTokenRevocationReason {
     DomainDeleted,
     /// The owning user's password was changed.
     PasswordChanged,
+    /// The user withdrew their consent for the client.
+    ConsentRevoked,
 }
 
 impl RefreshTokenRevocationReason {
@@ -377,6 +410,7 @@ impl RefreshTokenRevocationReason {
             Self::IssuanceFailed => "issuance_failed",
             Self::DomainDeleted => "domain_deleted",
             Self::PasswordChanged => "password_changed",
+            Self::ConsentRevoked => "consent_revoked",
         }
     }
 }

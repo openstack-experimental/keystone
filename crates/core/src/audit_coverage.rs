@@ -187,6 +187,29 @@ const ALLOW_LIST: &[(&str, &str, &str)] = &[
          disable or delete",
     ),
     (
+        "oauth2_session",
+        "revoke_consent",
+        "audited by the consent withdrawal handler (consent withdrawn event \
+         with the real user as initiator)",
+    ),
+    (
+        "oauth2_session",
+        "delete_consents_by_user",
+        "called by the OAuth2 session lifecycle hook after the audited user \
+         delete",
+    ),
+    (
+        "oauth2_session",
+        "delete_consents_by_domain",
+        "called by the OAuth2 session lifecycle hook after the audited domain \
+         delete",
+    ),
+    (
+        "oauth2_session",
+        "delete_consents_by_client",
+        "called inside the audited OAuth2 client delete",
+    ),
+    (
         "oauth2_key",
         "ensure_domain_keys",
         "idempotent first-use provisioning triggered by the domain-creation \

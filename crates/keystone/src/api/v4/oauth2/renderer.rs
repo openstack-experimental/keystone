@@ -345,6 +345,8 @@ pub(crate) struct ConsentCtx {
     pub scopes: Vec<String>,
     pub csrf_token: String,
     pub action: String,
+    /// State of the "remember my decision" checkbox; `None` hides it.
+    pub remember: Option<bool>,
 }
 
 /// Context of `logout.html`.
@@ -544,6 +546,7 @@ mod tests {
                 scopes: vec!["openid".into()],
                 csrf_token: "t".into(),
                 action: "/a".into(),
+                remember: None,
             })
             .unwrap()
             .contains("<li>openid</li>")
@@ -600,6 +603,7 @@ mod tests {
                 scopes: vec![],
                 csrf_token: "t".into(),
                 action: "/a".into(),
+                remember: None,
             })
             .unwrap(),
             r.render_device_entry(&DeviceEntryCtx {
@@ -653,6 +657,7 @@ mod tests {
             scopes: vec!["openid".into()],
             csrf_token: "t".into(),
             action: "/a".into(),
+            remember: None,
         };
         let with_logo = r.render_consent(&ctx(true)).unwrap();
         assert!(with_logo.contains("Fancy &lt;App&gt;"));
