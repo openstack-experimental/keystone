@@ -144,6 +144,42 @@ never influences authorization (security-model invariants).
 `#[instrument]` sites on authentication, token, credential, EC2 and trust
 paths must `skip` secrets, because spans now leave the host.
 
+#### Span layers
+
+A request produces at most one span per layer, so a trace reads
+`GET /v3/users → api::user_list → provider.identity.list_users →
+driver.sql.identity.list_users`, and each layer says something different:
+
+| Layer | Where | Name | What the span tells |
+| --- | --- | --- | --- |
+| HTTP | `http.server` middleware | `{method} {route}` | the request as a whole |
+| API handler | `crates/keystone/src/**/api` | `api::<operation>` | auth, policy and (de)serialization |
+| Provider | `crates/core/src/<domain>/service.rs` | `provider.<domain>.<method>` | business logic, caching, driver orchestration |
+| Driver | `crates/*-driver-*` | `driver.<backend>.<domain>.<method>` | the call that leaves the process: SQL, LDAP, OpenFGA, Raft |
+
+Rules:
+
+- Instrument the methods of the provider trait impl (`impl *Api for *Service`)
+  and of the driver trait impl (`impl *Backend for ...`), not the private
+  helpers behind them. The helpers show up as time inside the layer's span.
+  Drivers that only do local work (`token-driver-fernet`, `token-driver-jws`)
+  have no span, the provider span covers them.
+- Spans from the provider and driver layers are `level = "debug"`, as are
+  most handler spans, so `span_level = "info"` keeps little more than the HTTP
+  span and `debug` shows the whole stack.
+- Use `skip_all` and list the fields to record: the `*_id` arguments, a
+  `*Parameters` filter (with `?params`), and a plain `name`. Never record a
+  request body, a secret or the execution context. A bare `skip(self, state)`
+  records every other argument with `Debug`, so a new field on a request type
+  would be exported silently.
+- Methods that run in a loop within one request, such as the implied-role
+  walk (`list_role_imply_rules_by_prior`), use `level = "trace"`, otherwise
+  one request produces dozens of identical spans.
+- Spans are the only thing exported (see above). The sqlx statement log is an
+  event, so database timing is not in the trace unless the driver span is.
+  That is why SQL drivers keep a span per method instead of leaving it to the
+  provider.
+
 ### Metrics
 
 Each instrument becomes an SDK instrument built from one global `Meter`.

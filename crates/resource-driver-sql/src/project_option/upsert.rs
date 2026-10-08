@@ -37,7 +37,6 @@ use crate::project_option::ProjectOptionIntoModelIterator;
 ///
 /// # Returns
 /// A `Result` containing `()` if successful, or an `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn upsert<C, P>(
     db: &C,
     project_id: P,

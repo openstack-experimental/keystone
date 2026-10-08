@@ -45,7 +45,6 @@ use crate::user::MergeUserData;
 /// # Returns
 /// A `Result` containing an `Option` with the `db_user::Model` if found, or an
 /// `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn get_main_entry<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
@@ -66,7 +65,6 @@ pub async fn get_main_entry<U: AsRef<str>>(
 /// # Returns
 /// A `Result` containing an `Option` with the `UserResponse` if found, or an
 /// `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn get(
     conf: &Config,
     db: &DatabaseConnection,
@@ -148,7 +146,6 @@ pub async fn get(
 /// # Returns
 /// A `Result` containing the canonical user ID, or an `Error`
 /// (`UserNotFound` when absent, `UserDisabled` when disabled).
-#[tracing::instrument(skip_all)]
 pub async fn check_user_exist(
     db: &DatabaseConnection,
     user_id: Option<&str>,
@@ -223,7 +220,6 @@ pub async fn check_user_exist(
 ///
 /// # Returns
 /// A `Result` containing the domain ID, or an `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn get_user_domain_id<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,

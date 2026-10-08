@@ -64,6 +64,7 @@ impl FederationApi for FederationService {
     /// # Returns
     /// - `Result<(), FederationProviderError>` - Ok if successful, or a
     ///   federation provider error.
+    #[tracing::instrument(name = "provider.federation.cleanup", level = "debug", skip_all)]
     async fn cleanup<'a>(&self, ctx: &ExecutionContext<'a>) -> Result<(), FederationProviderError> {
         self.backend_driver.cleanup(ctx.state()).await
     }
@@ -77,6 +78,11 @@ impl FederationApi for FederationService {
     /// # Returns
     /// - `Result<AuthState, FederationProviderError>` - The created `AuthState`
     ///   or an error.
+    #[tracing::instrument(
+        name = "provider.federation.create_auth_state",
+        level = "debug",
+        skip_all
+    )]
     async fn create_auth_state<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -125,6 +131,11 @@ impl FederationApi for FederationService {
     /// # Returns
     /// - `Result<IdentityProvider, FederationProviderError>` - The created
     ///   `IdentityProvider` or an error.
+    #[tracing::instrument(
+        name = "provider.federation.create_identity_provider",
+        level = "debug",
+        skip_all
+    )]
     async fn create_identity_provider<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -177,6 +188,7 @@ impl FederationApi for FederationService {
     ///
     /// # Returns
     /// - `Result<(), FederationProviderError>` - Ok if successful, or an error.
+    #[tracing::instrument(name = "provider.federation.delete_auth_state", level = "debug", skip_all, fields(id = %id))]
     async fn delete_auth_state<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -219,6 +231,7 @@ impl FederationApi for FederationService {
     ///
     /// # Returns
     /// - `Result<(), FederationProviderError>` - Ok if successful, or an error.
+    #[tracing::instrument(name = "provider.federation.delete_identity_provider", level = "debug", skip_all, fields(id = %id))]
     async fn delete_identity_provider<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -262,6 +275,7 @@ impl FederationApi for FederationService {
     /// # Returns
     /// - `Result<Option<AuthState>, FederationProviderError>` - A `Result`
     ///   containing an `Option` with the auth state if found, or an `Error`.
+    #[tracing::instrument(name = "provider.federation.get_auth_state", level = "debug", skip_all, fields(id = %id))]
     async fn get_auth_state<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -280,6 +294,7 @@ impl FederationApi for FederationService {
     /// - `Result<Option<IdentityProvider>, FederationProviderError>` - A
     ///   `Result` containing an `Option` with the identity provider if found,
     ///   or an `Error`.
+    #[tracing::instrument(name = "provider.federation.get_identity_provider", level = "debug", skip_all, fields(id = %id))]
     async fn get_identity_provider<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -299,6 +314,7 @@ impl FederationApi for FederationService {
     /// # Returns
     /// - `Result<Vec<IdentityProvider>, FederationProviderError>` - A list of
     ///   identity providers or an error.
+    #[tracing::instrument(name = "provider.federation.list_identity_providers", level = "debug", skip_all, fields(params = ?params))]
     async fn list_identity_providers<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -319,6 +335,7 @@ impl FederationApi for FederationService {
     /// # Returns
     /// - `Result<IdentityProvider, FederationProviderError>` - The updated
     ///   `IdentityProvider` or an error.
+    #[tracing::instrument(name = "provider.federation.update_identity_provider", level = "debug", skip_all, fields(id = %id))]
     async fn update_identity_provider<'a>(
         &self,
         ctx: &ExecutionContext<'a>,

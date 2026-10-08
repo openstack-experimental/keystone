@@ -51,7 +51,12 @@ where
 {
     type Rejection = KeystoneApiError;
 
-    #[tracing::instrument(skip(state, parts), err)]
+    #[tracing::instrument(
+        name = "auth.from_request_parts",
+        level = "debug",
+        skip(state, parts),
+        err
+    )]
     /// Try to authenticate the request
     ///
     /// Authenticate the request creating the `ValidatedSecurityContext` using

@@ -78,6 +78,7 @@ impl Oauth2KeyService {
 
 #[async_trait]
 impl Oauth2KeyApi for Oauth2KeyService {
+    #[tracing::instrument(name = "provider.oauth2_key.ensure_domain_keys", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn ensure_domain_keys(
         &self,
         state: &ServiceState,
@@ -88,6 +89,7 @@ impl Oauth2KeyApi for Oauth2KeyService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.oauth2_key.jwks", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn jwks(
         &self,
         state: &ServiceState,
@@ -97,6 +99,7 @@ impl Oauth2KeyApi for Oauth2KeyService {
         active_keys_to_jwk_set(&active)
     }
 
+    #[tracing::instrument(name = "provider.oauth2_key.active_signing_key", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn active_signing_key(
         &self,
         state: &ServiceState,
@@ -106,6 +109,7 @@ impl Oauth2KeyApi for Oauth2KeyService {
         Ok(active.primary)
     }
 
+    #[tracing::instrument(name = "provider.oauth2_key.rotate_signing_key", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn rotate_signing_key<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -124,6 +128,7 @@ impl Oauth2KeyApi for Oauth2KeyService {
         }
     }
 
+    #[tracing::instrument(name = "provider.oauth2_key.stage_emergency_rotation", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn stage_emergency_rotation<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -143,6 +148,7 @@ impl Oauth2KeyApi for Oauth2KeyService {
         }
     }
 
+    #[tracing::instrument(name = "provider.oauth2_key.confirm_emergency_rotation", level = "debug", skip_all, fields(domain_id = %domain_id, rotation_id = %rotation_id))]
     async fn confirm_emergency_rotation<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -170,6 +176,7 @@ impl Oauth2KeyApi for Oauth2KeyService {
         }
     }
 
+    #[tracing::instrument(name = "provider.oauth2_key.stage_local_emergency_rotation", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn stage_local_emergency_rotation<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -196,6 +203,7 @@ impl Oauth2KeyApi for Oauth2KeyService {
         }
     }
 
+    #[tracing::instrument(name = "provider.oauth2_key.list_local_emergency_candidates", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn list_local_emergency_candidates(
         &self,
         state: &ServiceState,
@@ -206,6 +214,7 @@ impl Oauth2KeyApi for Oauth2KeyService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.oauth2_key.reconcile_local_emergency_rotation", level = "debug", skip_all, fields(domain_id = %domain_id, rotation_id = %rotation_id))]
     async fn reconcile_local_emergency_rotation<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -226,6 +235,7 @@ impl Oauth2KeyApi for Oauth2KeyService {
         }
     }
 
+    #[tracing::instrument(name = "provider.oauth2_key.revoked_jtis", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn revoked_jtis(
         &self,
         state: &ServiceState,
@@ -234,6 +244,7 @@ impl Oauth2KeyApi for Oauth2KeyService {
         self.backend_driver.revoked_jtis(state, domain_id).await
     }
 
+    #[tracing::instrument(name = "provider.oauth2_key.revoke_jti", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn revoke_jti(
         &self,
         state: &ServiceState,
@@ -246,6 +257,11 @@ impl Oauth2KeyApi for Oauth2KeyService {
             .await
     }
 
+    #[tracing::instrument(
+        name = "provider.oauth2_key.list_all_active_keys",
+        level = "debug",
+        skip_all
+    )]
     async fn list_all_active_keys(
         &self,
         state: &ServiceState,
@@ -253,6 +269,7 @@ impl Oauth2KeyApi for Oauth2KeyService {
         self.backend_driver.list_all_active_keys(state).await
     }
 
+    #[tracing::instrument(name = "provider.oauth2_key.retire_previous_key", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn retire_previous_key(
         &self,
         state: &ServiceState,
@@ -263,6 +280,7 @@ impl Oauth2KeyApi for Oauth2KeyService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.oauth2_key.has_pending_emergency_rotation", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn has_pending_emergency_rotation(
         &self,
         state: &ServiceState,
@@ -273,6 +291,7 @@ impl Oauth2KeyApi for Oauth2KeyService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.oauth2_key.prune_expired_jtis", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn prune_expired_jtis(
         &self,
         state: &ServiceState,

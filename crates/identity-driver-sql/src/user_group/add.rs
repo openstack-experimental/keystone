@@ -34,7 +34,6 @@ use crate::entity::{
 ///
 /// # Returns
 /// A `Result` indicating success or failure.
-#[tracing::instrument(skip_all)]
 pub async fn add_user_to_group<U: AsRef<str>, G: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
@@ -60,7 +59,6 @@ pub async fn add_user_to_group<U: AsRef<str>, G: AsRef<str>>(
 ///
 /// # Returns
 /// A `Result` indicating success or failure.
-#[tracing::instrument(skip_all)]
 pub async fn add_users_to_groups<I, U, G>(
     db: &DatabaseConnection,
     iter: I,
@@ -94,7 +92,6 @@ where
 ///
 /// # Returns
 /// A `Result` indicating success or failure.
-#[tracing::instrument(skip_all)]
 pub async fn add_user_to_group_expiring<U: AsRef<str>, G: AsRef<str>, IDP: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,
@@ -126,7 +123,6 @@ pub async fn add_user_to_group_expiring<U: AsRef<str>, G: AsRef<str>, IDP: AsRef
 ///
 /// # Returns
 /// A `Result` indicating success or failure.
-#[tracing::instrument(skip_all)]
 pub async fn add_users_to_groups_expiring<I, U, G, IDP>(
     db: &DatabaseConnection,
     iter: I,

@@ -29,7 +29,6 @@ use crate::entity::group;
 ///
 /// # Returns
 /// A `Result` containing the created group, or an `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn create(
     db: &DatabaseConnection,
     group: GroupCreate,

@@ -29,6 +29,11 @@ use crate::SqlBackend;
 
 #[async_trait]
 impl CredentialBackend for SqlBackend {
+    #[tracing::instrument(
+        name = "driver.sql.credential.create_credential",
+        level = "debug",
+        skip_all
+    )]
     async fn create_credential(
         &self,
         state: &ServiceState,
@@ -38,6 +43,7 @@ impl CredentialBackend for SqlBackend {
         create::create(&cfg, &state.db.connection(), rec).await
     }
 
+    #[tracing::instrument(name = "driver.sql.credential.get_credential", level = "debug", skip_all, fields(id = %id))]
     async fn get_credential<'a>(
         &self,
         state: &ServiceState,
@@ -47,6 +53,11 @@ impl CredentialBackend for SqlBackend {
         get::get(&cfg, &state.db.connection(), id).await
     }
 
+    #[tracing::instrument(
+        name = "driver.sql.credential.get_credential_by_ec2_access",
+        level = "debug",
+        skip_all
+    )]
     async fn get_credential_by_ec2_access<'a>(
         &self,
         state: &ServiceState,
@@ -56,6 +67,7 @@ impl CredentialBackend for SqlBackend {
         get::get_by_ec2_access(&cfg, &state.db.connection(), access).await
     }
 
+    #[tracing::instrument(name = "driver.sql.credential.list_credentials", level = "debug", skip_all, fields(params = ?params))]
     async fn list_credentials(
         &self,
         state: &ServiceState,
@@ -65,6 +77,7 @@ impl CredentialBackend for SqlBackend {
         list::list(&cfg, &state.db.connection(), params).await
     }
 
+    #[tracing::instrument(name = "driver.sql.credential.list_credentials_for_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn list_credentials_for_user<'a>(
         &self,
         state: &ServiceState,
@@ -75,6 +88,7 @@ impl CredentialBackend for SqlBackend {
         list::list_for_user(&cfg, &state.db.connection(), user_id, r#type).await
     }
 
+    #[tracing::instrument(name = "driver.sql.credential.update_credential", level = "debug", skip_all, fields(id = %id))]
     async fn update_credential<'a>(
         &self,
         state: &ServiceState,
@@ -85,6 +99,7 @@ impl CredentialBackend for SqlBackend {
         update::update(&cfg, &state.db.connection(), id, rec).await
     }
 
+    #[tracing::instrument(name = "driver.sql.credential.delete_credential", level = "debug", skip_all, fields(id = %id))]
     async fn delete_credential<'a>(
         &self,
         state: &ServiceState,
@@ -93,6 +108,7 @@ impl CredentialBackend for SqlBackend {
         delete::delete(&state.db.connection(), id).await
     }
 
+    #[tracing::instrument(name = "driver.sql.credential.delete_credentials_for_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn delete_credentials_for_user<'a>(
         &self,
         state: &ServiceState,
@@ -101,6 +117,7 @@ impl CredentialBackend for SqlBackend {
         delete::delete_for_user(&state.db.connection(), user_id).await
     }
 
+    #[tracing::instrument(name = "driver.sql.credential.delete_credentials_for_project", level = "debug", skip_all, fields(project_id = %project_id))]
     async fn delete_credentials_for_project<'a>(
         &self,
         state: &ServiceState,

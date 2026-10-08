@@ -99,6 +99,7 @@ impl RoleApi for RoleService {
     /// # Arguments
     /// * `state` - The current service state.
     /// * `params` - The parameters for creating a role.
+    #[tracing::instrument(name = "provider.role.create_role", level = "debug", skip_all)]
     async fn create_role<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -156,6 +157,7 @@ impl RoleApi for RoleService {
     /// * `state` - The current service state.
     /// * `prior_role_id` - The ID of the prior role.
     /// * `implied_role_id` - The ID of the implied role.
+    #[tracing::instrument(name = "provider.role.create_role_imply_rule", level = "debug", skip_all, fields(prior_role_id = %prior_role_id, implied_role_id = %implied_role_id))]
     async fn create_role_imply_rule<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -212,6 +214,7 @@ impl RoleApi for RoleService {
     /// * `state` - The current service state.
     /// * `prior_role_id` - The ID of the prior role.
     /// * `implied_role_id` - The ID of the implied role.
+    #[tracing::instrument(name = "provider.role.check_role_imply_rule", level = "debug", skip_all, fields(prior_role_id = %prior_role_id, implied_role_id = %implied_role_id))]
     async fn check_role_imply_rule<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -229,6 +232,7 @@ impl RoleApi for RoleService {
     /// * `state` - The current service state.
     /// * `role_id` - The ID of the role to update.
     /// * `role` - The fields to change.
+    #[tracing::instrument(name = "provider.role.update_role", level = "debug", skip_all, fields(role_id = %role_id))]
     async fn update_role<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -280,6 +284,7 @@ impl RoleApi for RoleService {
     /// # Arguments
     /// * `state` - The current service state.
     /// * `id` - The ID of the role to delete.
+    #[tracing::instrument(name = "provider.role.delete_role", level = "debug", skip_all, fields(id = %id))]
     async fn delete_role<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -323,6 +328,7 @@ impl RoleApi for RoleService {
     /// * `state` - The current service state.
     /// * `prior_role_id` - The ID of the prior role.
     /// * `implied_role_id` - The ID of the implied role.
+    #[tracing::instrument(name = "provider.role.delete_role_imply_rule", level = "debug", skip_all, fields(prior_role_id = %prior_role_id, implied_role_id = %implied_role_id))]
     async fn delete_role_imply_rule<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -376,6 +382,7 @@ impl RoleApi for RoleService {
     /// # Arguments
     /// * `state` - The current service state.
     /// * `roles` - The list of roles to expand.
+    #[tracing::instrument(name = "provider.role.expand_implied_roles", level = "debug", skip_all)]
     async fn expand_implied_roles<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -397,6 +404,7 @@ impl RoleApi for RoleService {
     ///
     /// A `Result` containing an `Option` with the `Role` if found, or an
     /// `Error`.
+    #[tracing::instrument(name = "provider.role.get_role", level = "debug", skip_all, fields(id = %id))]
     async fn get_role<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -418,6 +426,7 @@ impl RoleApi for RoleService {
     /// * `state` - The current service state.
     /// * `prior_role_id` - The ID of the prior role.
     /// * `implied_role_id` - The ID of the implied role.
+    #[tracing::instrument(name = "provider.role.get_role_imply_rule", level = "debug", skip_all, fields(prior_role_id = %prior_role_id, implied_role_id = %implied_role_id))]
     async fn get_role_imply_rule<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -433,6 +442,11 @@ impl RoleApi for RoleService {
     ///
     /// # Arguments
     /// * `state` - The current service state.
+    #[tracing::instrument(
+        name = "provider.role.list_role_imply_rules",
+        level = "debug",
+        skip_all
+    )]
     async fn list_role_imply_rules<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -445,6 +459,7 @@ impl RoleApi for RoleService {
     /// # Arguments
     /// * `state` - The current service state.
     /// * `prior_role_id` - The ID of the prior role.
+    #[tracing::instrument(name = "provider.role.list_role_imply_rules_by_prior", level = "trace", skip_all, fields(prior_role_id = %prior_role_id))]
     async fn list_role_imply_rules_by_prior<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -468,6 +483,7 @@ impl RoleApi for RoleService {
     /// # Arguments
     /// * `state` - The current service state.
     /// * `params` - The parameters for listing roles.
+    #[tracing::instrument(name = "provider.role.list_roles", level = "debug", skip_all, fields(params = ?params))]
     async fn list_roles<'a>(
         &self,
         ctx: &ExecutionContext<'a>,

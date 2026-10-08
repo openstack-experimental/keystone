@@ -167,6 +167,11 @@ impl Oauth2SessionService {
 
 #[async_trait]
 impl Oauth2SessionApi for Oauth2SessionService {
+    #[tracing::instrument(
+        name = "provider.oauth2_session.start_pre_auth_session",
+        level = "debug",
+        skip_all
+    )]
     async fn start_pre_auth_session(
         &self,
         state: &ServiceState,
@@ -196,6 +201,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.oauth2_session.get_pre_auth_session", level = "debug", skip_all, fields(session_id = %session_id))]
     async fn get_pre_auth_session(
         &self,
         state: &ServiceState,
@@ -221,6 +227,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
         Ok(Some(session))
     }
 
+    #[tracing::instrument(name = "provider.oauth2_session.mark_authenticated", level = "debug", skip_all, fields(session_id = %session_id, user_id = %user_id))]
     async fn mark_authenticated(
         &self,
         state: &ServiceState,
@@ -233,6 +240,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.oauth2_session.mark_consent", level = "debug", skip_all, fields(session_id = %session_id))]
     async fn mark_consent(
         &self,
         state: &ServiceState,
@@ -244,6 +252,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.oauth2_session.complete_pre_auth_session", level = "debug", skip_all, fields(session_id = %session_id))]
     async fn complete_pre_auth_session(
         &self,
         state: &ServiceState,
@@ -254,6 +263,11 @@ impl Oauth2SessionApi for Oauth2SessionService {
             .await
     }
 
+    #[tracing::instrument(
+        name = "provider.oauth2_session.issue_authorization_code",
+        level = "debug",
+        skip_all
+    )]
     async fn issue_authorization_code(
         &self,
         state: &ServiceState,
@@ -286,6 +300,11 @@ impl Oauth2SessionApi for Oauth2SessionService {
         Ok(code)
     }
 
+    #[tracing::instrument(
+        name = "provider.oauth2_session.redeem_authorization_code",
+        level = "debug",
+        skip_all
+    )]
     async fn redeem_authorization_code(
         &self,
         state: &ServiceState,
@@ -307,6 +326,11 @@ impl Oauth2SessionApi for Oauth2SessionService {
         Ok(Some(record))
     }
 
+    #[tracing::instrument(
+        name = "provider.oauth2_session.issue_refresh_token",
+        level = "debug",
+        skip_all
+    )]
     async fn issue_refresh_token(
         &self,
         state: &ServiceState,
@@ -341,6 +365,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
         Ok((record, bearer))
     }
 
+    #[tracing::instrument(name = "provider.oauth2_session.redeem_refresh_token", level = "debug", skip_all, fields(client_id = %client_id, domain_id = %domain_id))]
     async fn redeem_refresh_token(
         &self,
         state: &ServiceState,
@@ -478,6 +503,11 @@ impl Oauth2SessionApi for Oauth2SessionService {
         }
     }
 
+    #[tracing::instrument(
+        name = "provider.oauth2_session.peek_refresh_token",
+        level = "debug",
+        skip_all
+    )]
     async fn peek_refresh_token(
         &self,
         state: &ServiceState,
@@ -488,6 +518,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.oauth2_session.revoke_refresh_token_family", level = "debug", skip_all, fields(family_id = %family_id))]
     async fn revoke_refresh_token_family(
         &self,
         state: &ServiceState,
@@ -499,6 +530,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.oauth2_session.revoke_refresh_token_families_by_client", level = "debug", skip_all, fields(client_id = %client_id))]
     async fn revoke_refresh_token_families_by_client(
         &self,
         state: &ServiceState,
@@ -518,6 +550,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
         Ok(family_ids.len())
     }
 
+    #[tracing::instrument(name = "provider.oauth2_session.revoke_refresh_token_families_by_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn revoke_refresh_token_families_by_user<'a>(
         &self,
         state: &ServiceState,
@@ -540,6 +573,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
         self.revoke_families(state, family_ids, reason).await
     }
 
+    #[tracing::instrument(name = "provider.oauth2_session.revoke_refresh_token_families_by_domain", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn revoke_refresh_token_families_by_domain(
         &self,
         state: &ServiceState,
@@ -553,6 +587,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
         self.revoke_families(state, family_ids, reason).await
     }
 
+    #[tracing::instrument(name = "provider.oauth2_session.purge_pending_grants_by_domain", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn purge_pending_grants_by_domain(
         &self,
         state: &ServiceState,
@@ -566,6 +601,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
         .await
     }
 
+    #[tracing::instrument(name = "provider.oauth2_session.purge_pending_grants_by_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn purge_pending_grants_by_user(
         &self,
         state: &ServiceState,
@@ -579,6 +615,11 @@ impl Oauth2SessionApi for Oauth2SessionService {
         .await
     }
 
+    #[tracing::instrument(
+        name = "provider.oauth2_session.start_device_authorization",
+        level = "debug",
+        skip_all
+    )]
     async fn start_device_authorization(
         &self,
         state: &ServiceState,
@@ -611,6 +652,11 @@ impl Oauth2SessionApi for Oauth2SessionService {
         })
     }
 
+    #[tracing::instrument(
+        name = "provider.oauth2_session.get_device_code_grant_by_user_code",
+        level = "debug",
+        skip_all
+    )]
     async fn get_device_code_grant_by_user_code(
         &self,
         state: &ServiceState,
@@ -629,6 +675,11 @@ impl Oauth2SessionApi for Oauth2SessionService {
         Ok(Some(grant))
     }
 
+    #[tracing::instrument(
+        name = "provider.oauth2_session.get_device_code_grant",
+        level = "debug",
+        skip_all
+    )]
     async fn get_device_code_grant(
         &self,
         state: &ServiceState,
@@ -647,6 +698,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
         Ok(Some(grant))
     }
 
+    #[tracing::instrument(name = "provider.oauth2_session.mark_device_authenticated", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn mark_device_authenticated(
         &self,
         state: &ServiceState,
@@ -660,6 +712,11 @@ impl Oauth2SessionApi for Oauth2SessionService {
             .await
     }
 
+    #[tracing::instrument(
+        name = "provider.oauth2_session.mark_device_decision",
+        level = "debug",
+        skip_all
+    )]
     async fn mark_device_decision(
         &self,
         state: &ServiceState,
@@ -676,6 +733,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.oauth2_session.poll_device_code_grant", level = "debug", skip_all, fields(domain_id = %domain_id, client_id = %client_id))]
     async fn poll_device_code_grant(
         &self,
         state: &ServiceState,
@@ -731,6 +789,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
         }
     }
 
+    #[tracing::instrument(name = "provider.oauth2_session.list_expired", level = "debug", skip_all, fields(kind = %kind))]
     async fn list_expired(
         &self,
         state: &ServiceState,
@@ -743,6 +802,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.oauth2_session.purge_expired", level = "debug", skip_all, fields(kind = %kind))]
     async fn purge_expired(
         &self,
         state: &ServiceState,

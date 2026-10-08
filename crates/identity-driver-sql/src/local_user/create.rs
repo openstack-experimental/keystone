@@ -33,7 +33,6 @@ use crate::entity::{local_user, user};
 /// # Returns
 /// A `Result` containing the created `local_user::Model` if successful, or an
 /// `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn create<C>(
     conf: &Config,
     db: &C,

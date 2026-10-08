@@ -97,6 +97,11 @@ impl RevokeBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing the created `RevocationEvent`, or a
     /// `RevokeProviderError`.
+    #[tracing::instrument(
+        name = "driver.sql.revoke.create_revocation_event",
+        level = "debug",
+        skip_all
+    )]
     async fn create_revocation_event(
         &self,
         state: &ServiceState,
@@ -117,6 +122,7 @@ impl RevokeBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing a boolean indicating if the token is revoked, or a
     /// `RevokeProviderError`.
+    #[tracing::instrument(name = "driver.sql.revoke.is_token_revoked", level = "debug", skip_all)]
     async fn is_token_revoked(
         &self,
         state: &ServiceState,
@@ -146,6 +152,7 @@ impl RevokeBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` indicating success or a `RevokeProviderError`.
+    #[tracing::instrument(name = "driver.sql.revoke.revoke_token", level = "debug", skip_all)]
     async fn revoke_token(
         &self,
         state: &ServiceState,

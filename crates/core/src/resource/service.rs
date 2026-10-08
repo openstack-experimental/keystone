@@ -191,6 +191,7 @@ impl ResourceApi for ResourceService {
     /// # Returns
     /// - `Result<bool, ResourceProviderError>` - Whether the domain is enabled
     ///   or an error.
+    #[tracing::instrument(name = "provider.resource.get_domain_enabled", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn get_domain_enabled<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -210,6 +211,7 @@ impl ResourceApi for ResourceService {
     /// # Returns
     /// - `Result<Domain, ResourceProviderError>` - The created `Domain` or an
     ///   error.
+    #[tracing::instrument(name = "provider.resource.create_domain", level = "debug", skip_all)]
     async fn create_domain<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -289,6 +291,7 @@ impl ResourceApi for ResourceService {
     /// # Returns
     /// - `Result<Project, ResourceProviderError>` - The created `Project` or an
     ///   error.
+    #[tracing::instrument(name = "provider.resource.create_project", level = "debug", skip_all)]
     async fn create_project<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -355,6 +358,7 @@ impl ResourceApi for ResourceService {
     /// # Returns
     /// - `Result<Domain, ResourceProviderError>` - The updated `Domain` or an
     ///   error.
+    #[tracing::instrument(name = "provider.resource.update_domain", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn update_domain<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -418,6 +422,7 @@ impl ResourceApi for ResourceService {
     /// # Returns
     /// - `Result<Project, ResourceProviderError>` - The updated `Project` or an
     ///   error.
+    #[tracing::instrument(name = "provider.resource.update_project", level = "debug", skip_all, fields(project_id = %project_id))]
     async fn update_project<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -473,6 +478,7 @@ impl ResourceApi for ResourceService {
     /// # Returns
     /// - `Result<(), ResourceProviderError>` - `Ok(())` if successful, or an
     ///   error.
+    #[tracing::instrument(name = "provider.resource.delete_domain", level = "debug", skip_all, fields(id = %id))]
     async fn delete_domain<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -540,6 +546,7 @@ impl ResourceApi for ResourceService {
     /// # Returns
     /// - `Result<(), ResourceProviderError>` - `Ok(())` if successful, or an
     ///   error.
+    #[tracing::instrument(name = "provider.resource.delete_project", level = "debug", skip_all, fields(id = %id))]
     async fn delete_project<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -608,6 +615,7 @@ impl ResourceApi for ResourceService {
     /// # Returns
     /// - A `Result` containing an `Option` with the `Domain` if found, or an
     ///   `Error`.
+    #[tracing::instrument(name = "provider.resource.get_domain", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn get_domain<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -635,6 +643,7 @@ impl ResourceApi for ResourceService {
     /// # Returns
     /// - A `Result` containing an `Option` with the `Project` if found, or an
     ///   `Error`.
+    #[tracing::instrument(name = "provider.resource.get_project", level = "debug", skip_all, fields(project_id = %project_id))]
     async fn get_project<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -663,6 +672,7 @@ impl ResourceApi for ResourceService {
     /// # Returns
     /// - A `Result` containing an `Option` with the `Project` if found, or an
     ///   `Error`.
+    #[tracing::instrument(name = "provider.resource.get_project_by_name", level = "debug", skip_all, fields(name = %name, domain_id = %domain_id))]
     async fn get_project_by_name<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -683,6 +693,7 @@ impl ResourceApi for ResourceService {
     /// # Returns
     /// - A `Result` containing an `Option` with the `Vec<Project>` if found, or
     ///   an `Error`.
+    #[tracing::instrument(name = "provider.resource.get_project_parents", level = "debug", skip_all, fields(project_id = %project_id))]
     async fn get_project_parents<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -710,6 +721,11 @@ impl ResourceApi for ResourceService {
     /// # Returns
     /// - A `Result` containing an `Option` with the `Domain` if found, or an
     ///   `Error`.
+    #[tracing::instrument(
+        name = "provider.resource.find_domain_by_name",
+        level = "debug",
+        skip_all
+    )]
     async fn find_domain_by_name<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -729,6 +745,7 @@ impl ResourceApi for ResourceService {
     /// # Returns
     /// - `Result<Vec<Domain>, ResourceProviderError>` - A list of domains or an
     ///   error.
+    #[tracing::instrument(name = "provider.resource.list_domains", level = "debug", skip_all, fields(params = ?params))]
     async fn list_domains<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -746,6 +763,7 @@ impl ResourceApi for ResourceService {
     /// # Returns
     /// - `Result<Vec<Project>, ResourceProviderError>` - A list of projects or
     ///   an error.
+    #[tracing::instrument(name = "provider.resource.list_projects", level = "debug", skip_all, fields(params = ?params))]
     async fn list_projects<'a>(
         &self,
         ctx: &ExecutionContext<'a>,

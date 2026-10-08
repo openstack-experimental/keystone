@@ -876,6 +876,11 @@ impl RaftOauth2SessionBackend {
 
 #[async_trait]
 impl Oauth2SessionBackend for RaftOauth2SessionBackend {
+    #[tracing::instrument(
+        name = "driver.raft.oauth2_session.create_pre_auth_session",
+        level = "debug",
+        skip_all
+    )]
     async fn create_pre_auth_session(
         &self,
         state: &ServiceState,
@@ -885,6 +890,7 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
             .await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_session.get_pre_auth_session", level = "debug", skip_all, fields(session_id = %session_id))]
     async fn get_pre_auth_session(
         &self,
         state: &ServiceState,
@@ -894,6 +900,7 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
             .await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_session.mark_pre_auth_session_authenticated", level = "debug", skip_all, fields(session_id = %session_id, user_id = %user_id))]
     async fn mark_pre_auth_session_authenticated(
         &self,
         state: &ServiceState,
@@ -910,6 +917,7 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
         .await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_session.mark_pre_auth_session_consent", level = "debug", skip_all, fields(session_id = %session_id))]
     async fn mark_pre_auth_session_consent(
         &self,
         state: &ServiceState,
@@ -920,6 +928,7 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
             .await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_session.delete_pre_auth_session", level = "debug", skip_all, fields(session_id = %session_id))]
     async fn delete_pre_auth_session(
         &self,
         state: &ServiceState,
@@ -929,6 +938,11 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
             .await
     }
 
+    #[tracing::instrument(
+        name = "driver.raft.oauth2_session.create_authorization_code",
+        level = "debug",
+        skip_all
+    )]
     async fn create_authorization_code(
         &self,
         state: &ServiceState,
@@ -938,6 +952,11 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
             .await
     }
 
+    #[tracing::instrument(
+        name = "driver.raft.oauth2_session.take_authorization_code",
+        level = "debug",
+        skip_all
+    )]
     async fn take_authorization_code(
         &self,
         state: &ServiceState,
@@ -947,6 +966,11 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
             .await
     }
 
+    #[tracing::instrument(
+        name = "driver.raft.oauth2_session.create_refresh_token",
+        level = "debug",
+        skip_all
+    )]
     async fn create_refresh_token(
         &self,
         state: &ServiceState,
@@ -956,6 +980,7 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
             .await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_session.get_refresh_token", level = "debug", skip_all, fields(token_id = %token_id))]
     async fn get_refresh_token(
         &self,
         state: &ServiceState,
@@ -965,6 +990,7 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
             .await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_session.mark_refresh_token_spent", level = "debug", skip_all, fields(token_id = %token_id))]
     async fn mark_refresh_token_spent(
         &self,
         state: &ServiceState,
@@ -975,6 +1001,7 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
             .await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_session.list_refresh_token_family", level = "debug", skip_all, fields(family_id = %family_id))]
     async fn list_refresh_token_family(
         &self,
         state: &ServiceState,
@@ -984,6 +1011,7 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
             .await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_session.revoke_refresh_token_family", level = "debug", skip_all, fields(family_id = %family_id))]
     async fn revoke_refresh_token_family(
         &self,
         state: &ServiceState,
@@ -995,6 +1023,11 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
             .await
     }
 
+    #[tracing::instrument(
+        name = "driver.raft.oauth2_session.create_device_code_grant",
+        level = "debug",
+        skip_all
+    )]
     async fn create_device_code_grant(
         &self,
         state: &ServiceState,
@@ -1004,6 +1037,11 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
             .await
     }
 
+    #[tracing::instrument(
+        name = "driver.raft.oauth2_session.get_device_code_grant",
+        level = "debug",
+        skip_all
+    )]
     async fn get_device_code_grant(
         &self,
         state: &ServiceState,
@@ -1013,6 +1051,11 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
             .await
     }
 
+    #[tracing::instrument(
+        name = "driver.raft.oauth2_session.get_device_code_grant_by_user_code",
+        level = "debug",
+        skip_all
+    )]
     async fn get_device_code_grant_by_user_code(
         &self,
         state: &ServiceState,
@@ -1022,6 +1065,7 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
             .await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_session.mark_device_code_grant_authenticated", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn mark_device_code_grant_authenticated(
         &self,
         state: &ServiceState,
@@ -1040,6 +1084,11 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
         .await
     }
 
+    #[tracing::instrument(
+        name = "driver.raft.oauth2_session.mark_device_code_grant_decision",
+        level = "debug",
+        skip_all
+    )]
     async fn mark_device_code_grant_decision(
         &self,
         state: &ServiceState,
@@ -1050,6 +1099,11 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
             .await
     }
 
+    #[tracing::instrument(
+        name = "driver.raft.oauth2_session.mark_device_code_grant_polled",
+        level = "debug",
+        skip_all
+    )]
     async fn mark_device_code_grant_polled(
         &self,
         state: &ServiceState,
@@ -1060,6 +1114,11 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
             .await
     }
 
+    #[tracing::instrument(
+        name = "driver.raft.oauth2_session.take_device_code_grant",
+        level = "debug",
+        skip_all
+    )]
     async fn take_device_code_grant(
         &self,
         state: &ServiceState,
@@ -1069,6 +1128,7 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
             .await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_session.list_refresh_families_by_user", level = "debug", skip_all, fields(domain_id = %domain_id, user_id = %user_id))]
     async fn list_refresh_families_by_user(
         &self,
         state: &ServiceState,
@@ -1079,6 +1139,7 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
             .await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_session.list_refresh_families_by_user_any_domain", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn list_refresh_families_by_user_any_domain(
         &self,
         state: &ServiceState,
@@ -1088,6 +1149,7 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
             .await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_session.list_refresh_families_by_client", level = "debug", skip_all, fields(client_id = %client_id))]
     async fn list_refresh_families_by_client(
         &self,
         state: &ServiceState,
@@ -1097,6 +1159,7 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
             .await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_session.list_refresh_families_by_domain", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn list_refresh_families_by_domain(
         &self,
         state: &ServiceState,
@@ -1106,6 +1169,11 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
             .await
     }
 
+    #[tracing::instrument(
+        name = "driver.raft.oauth2_session.list_expired",
+        level = "debug",
+        skip_all
+    )]
     async fn list_expired<'k>(
         &self,
         state: &ServiceState,
@@ -1117,6 +1185,7 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
             .await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_session.delete_refresh_token", level = "debug", skip_all, fields(token_id = %token_id))]
     async fn delete_refresh_token(
         &self,
         state: &ServiceState,

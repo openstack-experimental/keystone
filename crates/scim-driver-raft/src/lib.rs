@@ -276,6 +276,7 @@ impl RaftBackend {
 
 #[async_trait]
 impl ScimRealmBackend for RaftBackend {
+    #[tracing::instrument(name = "driver.raft.scim.create", level = "debug", skip_all)]
     async fn create(
         &self,
         state: &ServiceState,
@@ -299,6 +300,7 @@ impl ScimRealmBackend for RaftBackend {
         }
     }
 
+    #[tracing::instrument(name = "driver.raft.scim.get", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id))]
     async fn get<'a>(
         &self,
         state: &ServiceState,
@@ -314,6 +316,7 @@ impl ScimRealmBackend for RaftBackend {
             .map_err(ScimRealmProviderError::raft)
     }
 
+    #[tracing::instrument(name = "driver.raft.scim.list", level = "debug", skip_all, fields(params = ?params))]
     async fn list(
         &self,
         state: &ServiceState,
@@ -328,6 +331,7 @@ impl ScimRealmBackend for RaftBackend {
             .map_err(ScimRealmProviderError::raft)
     }
 
+    #[tracing::instrument(name = "driver.raft.scim.update", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id))]
     async fn update<'a>(
         &self,
         state: &ServiceState,
@@ -668,6 +672,7 @@ impl RaftBackend {
 
 #[async_trait]
 impl ScimResourceBackend for RaftBackend {
+    #[tracing::instrument(name = "driver.raft.scim.create", level = "debug", skip_all)]
     async fn create(
         &self,
         state: &ServiceState,
@@ -686,6 +691,7 @@ impl ScimResourceBackend for RaftBackend {
         }
     }
 
+    #[tracing::instrument(name = "driver.raft.scim.get", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id, resource_type = ?resource_type, keystone_id = %keystone_id))]
     async fn get<'a>(
         &self,
         state: &ServiceState,
@@ -703,6 +709,7 @@ impl ScimResourceBackend for RaftBackend {
             .map_err(ScimResourceProviderError::raft)
     }
 
+    #[tracing::instrument(name = "driver.raft.scim.get_by_external_id", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id, resource_type = ?resource_type, external_id = %external_id))]
     async fn get_by_external_id<'a>(
         &self,
         state: &ServiceState,
@@ -726,6 +733,7 @@ impl ScimResourceBackend for RaftBackend {
         .map_err(ScimResourceProviderError::raft)
     }
 
+    #[tracing::instrument(name = "driver.raft.scim.list", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id, resource_type = ?resource_type))]
     async fn list<'a>(
         &self,
         state: &ServiceState,
@@ -742,6 +750,7 @@ impl ScimResourceBackend for RaftBackend {
             .map_err(ScimResourceProviderError::raft)
     }
 
+    #[tracing::instrument(name = "driver.raft.scim.update", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id, resource_type = ?resource_type, keystone_id = %keystone_id))]
     async fn update<'a>(
         &self,
         state: &ServiceState,
@@ -785,6 +794,7 @@ impl ScimResourceBackend for RaftBackend {
         }
     }
 
+    #[tracing::instrument(name = "driver.raft.scim.list_all", level = "debug", skip_all)]
     async fn list_all(
         &self,
         state: &ServiceState,
@@ -798,6 +808,7 @@ impl ScimResourceBackend for RaftBackend {
             .map_err(ScimResourceProviderError::raft)
     }
 
+    #[tracing::instrument(name = "driver.raft.scim.purge", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id, resource_type = ?resource_type, keystone_id = %keystone_id))]
     async fn purge<'a>(
         &self,
         state: &ServiceState,

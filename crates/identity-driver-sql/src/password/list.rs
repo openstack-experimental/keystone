@@ -30,7 +30,6 @@ use crate::entity::{password, prelude::Password as DbPassword};
 ///
 /// # Returns
 /// A `Result` containing a vector of passwords, or an `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn list<C: ConnectionTrait>(
     db: &C,
     local_user_id: i32,

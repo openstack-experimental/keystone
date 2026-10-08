@@ -92,7 +92,6 @@ impl db_user::ActiveModel {
 /// # Returns
 /// A `Result` containing the created `db_user::Model` if successful, or an
 /// `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn create_main<C>(
     conf: &Config,
     db: &C,
@@ -121,7 +120,6 @@ where
 ///
 /// # Returns
 /// A `Result` containing the `UserResponse` if successful, or an `Error`.
-#[tracing::instrument(skip(conf, db))]
 pub async fn create(
     conf: &Config,
     db: &DatabaseConnection,

@@ -30,7 +30,6 @@ use crate::entity::{prelude::ProjectOption as DbProjectOption, project_option};
 ///
 /// # Returns
 /// A `Result` containing `ProjectOptions` if successful, or an `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn list_by_project_id<C, S>(
     db: &C,
     project_id: S,

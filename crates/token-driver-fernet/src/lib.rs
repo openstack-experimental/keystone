@@ -229,7 +229,6 @@ impl FernetTokenProvider {
     /// # Returns
     /// A `Result` containing the encoded integer if successful, or a
     /// `FernetDriverError`.
-    #[tracing::instrument(level = "trace", skip(self, methods))]
     pub(crate) fn encode_auth_methods<I>(&self, methods: I) -> Result<u8, FernetDriverError>
     where
         I: IntoIterator<Item = String>,
@@ -258,7 +257,6 @@ impl FernetTokenProvider {
     /// # Returns
     /// A `Result` containing a vector of authentication methods if successful,
     /// or a `FernetDriverError`.
-    #[tracing::instrument(level = "trace", skip(self))]
     pub(crate) fn decode_auth_methods(&self, value: u8) -> Result<Vec<String>, FernetDriverError> {
         if let Some(res) = self.auth_methods_code_cache.get(&value) {
             Ok(res.iter().cloned().collect())
@@ -430,7 +428,6 @@ impl FernetTokenProvider {
     ///
     /// # Returns
     /// A `Result` indicating success or a `FernetDriverError`.
-    #[tracing::instrument(level = "trace", skip(self))]
     pub async fn load_keys(&mut self) -> Result<(), FernetDriverError> {
         self.cached = Some(
             self.utils
@@ -491,7 +488,6 @@ impl TokenBackend for FernetTokenProvider {
     /// # Returns
     /// A `Result` containing the decrypted `Token` if successful, or a
     /// `TokenProviderError`.
-    #[tracing::instrument(level = "trace", skip(self, credential))]
     fn decode(&self, credential: &str) -> Result<FernetToken, TokenProviderError> {
         self.decrypt(credential).map_err(|error| match error {
             error @ (FernetDriverError::AuditIdWrongFormat
@@ -521,7 +517,6 @@ impl TokenBackend for FernetTokenProvider {
     /// # Returns
     /// A `Result` containing the encrypted token string if successful, or a
     /// `TokenProviderError`.
-    #[tracing::instrument(level = "trace", skip(self, token))]
     fn encode(&self, token: &FernetToken) -> Result<String, TokenProviderError> {
         Ok(self.encrypt(token)?)
     }

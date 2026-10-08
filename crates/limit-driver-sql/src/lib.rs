@@ -72,7 +72,7 @@ inventory::submit! {
 #[async_trait]
 impl LimitBackend for SqlBackend {
     /// Create limits atomically.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.limit.create_limits", level = "debug", skip_all)]
     async fn create_limits<'a>(
         &self,
         state: &ServiceState,
@@ -82,7 +82,11 @@ impl LimitBackend for SqlBackend {
     }
 
     /// Create registered limits atomically.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(
+        name = "driver.sql.limit.create_registered_limits",
+        level = "debug",
+        skip_all
+    )]
     async fn create_registered_limits<'a>(
         &self,
         state: &ServiceState,
@@ -92,7 +96,7 @@ impl LimitBackend for SqlBackend {
     }
 
     /// Delete a limit.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.limit.delete_limit", level = "debug", skip_all, fields(id = %id))]
     async fn delete_limit<'a>(
         &self,
         state: &ServiceState,
@@ -102,7 +106,7 @@ impl LimitBackend for SqlBackend {
     }
 
     /// Delete all limits of the domain.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.limit.delete_limits_by_domain", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn delete_limits_by_domain<'a>(
         &self,
         state: &ServiceState,
@@ -112,7 +116,7 @@ impl LimitBackend for SqlBackend {
     }
 
     /// Delete all limits of the project.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.limit.delete_limits_by_project", level = "debug", skip_all, fields(project_id = %project_id))]
     async fn delete_limits_by_project<'a>(
         &self,
         state: &ServiceState,
@@ -122,7 +126,7 @@ impl LimitBackend for SqlBackend {
     }
 
     /// Delete a registered limit.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.limit.delete_registered_limit", level = "debug", skip_all, fields(id = %id))]
     async fn delete_registered_limit<'a>(
         &self,
         state: &ServiceState,
@@ -132,7 +136,7 @@ impl LimitBackend for SqlBackend {
     }
 
     /// Get a limit by ID.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.limit.get_limit", level = "debug", skip_all, fields(id = %id))]
     async fn get_limit<'a>(
         &self,
         state: &ServiceState,
@@ -142,7 +146,7 @@ impl LimitBackend for SqlBackend {
     }
 
     /// Get a registered limit by ID.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.limit.get_registered_limit", level = "debug", skip_all, fields(id = %id))]
     async fn get_registered_limit<'a>(
         &self,
         state: &ServiceState,
@@ -152,7 +156,7 @@ impl LimitBackend for SqlBackend {
     }
 
     /// List limits.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.limit.list_limits", level = "debug", skip_all, fields(params = ?params))]
     async fn list_limits<'a>(
         &self,
         state: &ServiceState,
@@ -162,7 +166,7 @@ impl LimitBackend for SqlBackend {
     }
 
     /// List registered limits.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.limit.list_registered_limits", level = "debug", skip_all, fields(params = ?params))]
     async fn list_registered_limits<'a>(
         &self,
         state: &ServiceState,
@@ -172,7 +176,7 @@ impl LimitBackend for SqlBackend {
     }
 
     /// Update a limit.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.limit.update_limit", level = "debug", skip_all, fields(id = %id))]
     async fn update_limit<'a>(
         &self,
         state: &ServiceState,
@@ -183,7 +187,7 @@ impl LimitBackend for SqlBackend {
     }
 
     /// Update a registered limit.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.limit.update_registered_limit", level = "debug", skip_all, fields(id = %id))]
     async fn update_registered_limit<'a>(
         &self,
         state: &ServiceState,

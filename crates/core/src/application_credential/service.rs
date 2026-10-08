@@ -189,6 +189,11 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     ///   The authentication result populated with
     ///   [`AuthenticationContext::ApplicationCredential`] on success, or an
     ///   error.
+    #[tracing::instrument(
+        name = "provider.application_credential.authenticate_by_application_credential",
+        level = "debug",
+        skip_all
+    )]
     async fn authenticate_by_application_credential<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -273,6 +278,11 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     /// # Returns
     /// - `Result<AccessRule, ApplicationCredentialProviderError>` - The created
     ///   access rule or an error.
+    #[tracing::instrument(
+        name = "provider.application_credential.create_access_rule",
+        level = "debug",
+        skip_all
+    )]
     async fn create_access_rule<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -335,6 +345,11 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     /// - `Result<ApplicationCredentialCreateResponse,
     ///   ApplicationCredentialProviderError>` - The creation response or an
     ///   error.
+    #[tracing::instrument(
+        name = "provider.application_credential.create_application_credential",
+        level = "debug",
+        skip_all
+    )]
     async fn create_application_credential<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -454,6 +469,7 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     /// # Returns
     /// - `Result<(), ApplicationCredentialProviderError>` - Unit on success, or
     ///   an error.
+    #[tracing::instrument(name = "provider.application_credential.delete_access_rule", level = "debug", skip_all, fields(user_id = %user_id, id = %id))]
     async fn delete_access_rule<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -506,6 +522,11 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     /// # Returns
     /// - `Result<(), ApplicationCredentialProviderError>` - Unit on success, or
     ///   an error.
+    #[tracing::instrument(
+        name = "provider.application_credential.delete_application_credential",
+        level = "debug",
+        skip_all
+    )]
     async fn delete_application_credential<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -555,6 +576,7 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     /// # Returns
     /// - `Result<Option<AccessRule>, ApplicationCredentialProviderError>` - The
     ///   access rule if found, or an error.
+    #[tracing::instrument(name = "provider.application_credential.get_access_rule", level = "debug", skip_all, fields(user_id = %user_id, id = %id))]
     async fn get_access_rule<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -576,6 +598,7 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     /// - `Result<Option<ApplicationCredential>,
     ///   ApplicationCredentialProviderError>` - The credential if found, or an
     ///   error.
+    #[tracing::instrument(name = "provider.application_credential.get_application_credential", level = "debug", skip_all, fields(id = %id))]
     async fn get_application_credential<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -616,6 +639,7 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     /// # Returns
     /// - `Result<Vec<AccessRule>, ApplicationCredentialProviderError>` - A list
     ///   of access rules or an error.
+    #[tracing::instrument(name = "provider.application_credential.list_access_rules", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn list_access_rules<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -636,6 +660,7 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     /// - `Result<Vec<ApplicationCredential>,
     ///   ApplicationCredentialProviderError>` - A list of application
     ///   credentials or an error.
+    #[tracing::instrument(name = "provider.application_credential.list_application_credentials", level = "debug", skip_all, fields(params = ?params))]
     async fn list_application_credentials<'a>(
         &self,
         ctx: &ExecutionContext<'a>,

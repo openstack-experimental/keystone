@@ -30,7 +30,6 @@ use crate::entity::{prelude::RoleOption as DbRoleOption, role_option};
 ///
 /// # Returns
 /// A `Result` containing `RoleOptions` if successful, or an `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn list_by_role_id<C, S>(db: &C, role_id: S) -> Result<RoleOptions, RoleProviderError>
 where
     C: ConnectionTrait,

@@ -142,6 +142,7 @@ inventory::submit! {
 #[async_trait]
 impl DomainConfigBackend for FsBackend {
     /// Read-only: always [`DomainConfigProviderError::Readonly`].
+    #[tracing::instrument(name = "driver.fs.domain_config.create_domain_config", level = "debug", skip_all, fields(_domain_id = %_domain_id))]
     async fn create_domain_config<'a>(
         &self,
         _state: &ServiceState,
@@ -153,6 +154,7 @@ impl DomainConfigBackend for FsBackend {
 
     /// The whole configuration of a domain, sensitive options included so the
     /// identity backend can bind. [`DomainConfig`] drops them on serialization.
+    #[tracing::instrument(name = "driver.fs.domain_config.get_domain_config", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn get_domain_config<'a>(
         &self,
         state: &ServiceState,
@@ -165,6 +167,7 @@ impl DomainConfigBackend for FsBackend {
     }
 
     /// A single group, with sensitive options filtered out.
+    #[tracing::instrument(name = "driver.fs.domain_config.get_domain_config_group", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn get_domain_config_group<'a>(
         &self,
         state: &ServiceState,
@@ -178,6 +181,7 @@ impl DomainConfigBackend for FsBackend {
     }
 
     /// A single option; `None` for a sensitive one, which is never readable.
+    #[tracing::instrument(name = "driver.fs.domain_config.get_domain_config_option", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn get_domain_config_option<'a>(
         &self,
         state: &ServiceState,
@@ -195,6 +199,11 @@ impl DomainConfigBackend for FsBackend {
     ///
     /// The files are keyed by domain name, so each match is resolved back to an
     /// ID through the resource provider; a name with no live domain is skipped.
+    #[tracing::instrument(
+        name = "driver.fs.domain_config.list_domains_with_option",
+        level = "debug",
+        skip_all
+    )]
     async fn list_domains_with_option<'a>(
         &self,
         state: &ServiceState,
@@ -237,6 +246,7 @@ impl DomainConfigBackend for FsBackend {
     ///
     /// The scan is synchronous `std::fs` walking the whole directory, so it
     /// runs on a blocking thread rather than the reactor's worker.
+    #[tracing::instrument(name = "driver.fs.domain_config.reload", level = "debug", skip_all)]
     async fn reload(&self, config: &Config) -> Result<bool, DomainConfigProviderError> {
         let dir = config.identity.domain_config_dir.clone();
         let fresh = tokio::task::spawn_blocking(move || store::DomainConfigStore::load(&dir))
@@ -250,6 +260,7 @@ impl DomainConfigBackend for FsBackend {
     }
 
     /// Read-only: always [`DomainConfigProviderError::Readonly`].
+    #[tracing::instrument(name = "driver.fs.domain_config.update_domain_config", level = "debug", skip_all, fields(_domain_id = %_domain_id))]
     async fn update_domain_config<'a>(
         &self,
         _state: &ServiceState,
@@ -260,6 +271,7 @@ impl DomainConfigBackend for FsBackend {
     }
 
     /// Read-only: always [`DomainConfigProviderError::Readonly`].
+    #[tracing::instrument(name = "driver.fs.domain_config.update_domain_config_group", level = "debug", skip_all, fields(_domain_id = %_domain_id))]
     async fn update_domain_config_group<'a>(
         &self,
         _state: &ServiceState,
@@ -271,6 +283,7 @@ impl DomainConfigBackend for FsBackend {
     }
 
     /// Read-only: always [`DomainConfigProviderError::Readonly`].
+    #[tracing::instrument(name = "driver.fs.domain_config.update_domain_config_option", level = "debug", skip_all, fields(_domain_id = %_domain_id))]
     async fn update_domain_config_option<'a>(
         &self,
         _state: &ServiceState,
@@ -281,6 +294,7 @@ impl DomainConfigBackend for FsBackend {
     }
 
     /// Read-only: always [`DomainConfigProviderError::Readonly`].
+    #[tracing::instrument(name = "driver.fs.domain_config.delete_domain_config", level = "debug", skip_all, fields(_domain_id = %_domain_id))]
     async fn delete_domain_config<'a>(
         &self,
         _state: &ServiceState,
@@ -290,6 +304,7 @@ impl DomainConfigBackend for FsBackend {
     }
 
     /// Read-only: always [`DomainConfigProviderError::Readonly`].
+    #[tracing::instrument(name = "driver.fs.domain_config.delete_domain_config_group", level = "debug", skip_all, fields(_domain_id = %_domain_id))]
     async fn delete_domain_config_group<'a>(
         &self,
         _state: &ServiceState,
@@ -300,6 +315,7 @@ impl DomainConfigBackend for FsBackend {
     }
 
     /// Read-only: always [`DomainConfigProviderError::Readonly`].
+    #[tracing::instrument(name = "driver.fs.domain_config.delete_domain_config_option", level = "debug", skip_all, fields(_domain_id = %_domain_id))]
     async fn delete_domain_config_option<'a>(
         &self,
         _state: &ServiceState,
@@ -311,6 +327,7 @@ impl DomainConfigBackend for FsBackend {
     }
 
     /// Read-only: always [`DomainConfigProviderError::Readonly`].
+    #[tracing::instrument(name = "driver.fs.domain_config.obtain_registration", level = "debug", skip_all, fields(_domain_id = %_domain_id))]
     async fn obtain_registration<'a>(
         &self,
         _state: &ServiceState,
@@ -321,6 +338,11 @@ impl DomainConfigBackend for FsBackend {
     }
 
     /// A file backend keeps no registration; nobody holds one.
+    #[tracing::instrument(
+        name = "driver.fs.domain_config.read_registration",
+        level = "debug",
+        skip_all
+    )]
     async fn read_registration<'a>(
         &self,
         _state: &ServiceState,
@@ -330,6 +352,7 @@ impl DomainConfigBackend for FsBackend {
     }
 
     /// Read-only: always [`DomainConfigProviderError::Readonly`].
+    #[tracing::instrument(name = "driver.fs.domain_config.release_registration", level = "debug", skip_all, fields(_domain_id = %_domain_id))]
     async fn release_registration<'a>(
         &self,
         _state: &ServiceState,

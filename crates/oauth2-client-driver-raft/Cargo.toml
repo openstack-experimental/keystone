@@ -19,6 +19,7 @@ openstack-keystone-core-types.workspace = true
 openstack-keystone-distributed-storage.workspace = true
 rmp-serde.workspace = true
 serde = { workspace = true, features = ["derive"] }
+tracing.workspace = true
 
 [dev-dependencies]
 openstack-keystone-distributed-storage = { workspace = true, features = ["mock"] }

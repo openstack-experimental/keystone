@@ -30,7 +30,6 @@ use crate::entity::{prelude::UserOption as DbUserOptions, user_option};
 ///
 /// # Returns
 /// A `Result` containing `UserOptions` if successful, or an `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn list_by_user_id<S: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: S,

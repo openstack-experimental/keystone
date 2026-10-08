@@ -68,6 +68,11 @@ fn scim_index_event(operation: Operation, provider_id: &str, keystone_id: &str) 
 
 #[async_trait]
 impl ScimResourceApi for ScimResourceService {
+    #[tracing::instrument(
+        name = "provider.scim_resource.create_index",
+        level = "debug",
+        skip_all
+    )]
     async fn create_index<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -83,6 +88,7 @@ impl ScimResourceApi for ScimResourceService {
         }
     }
 
+    #[tracing::instrument(name = "provider.scim_resource.get_index", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id, resource_type = ?resource_type, keystone_id = %keystone_id))]
     async fn get_index<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -102,6 +108,7 @@ impl ScimResourceApi for ScimResourceService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.scim_resource.get_index_by_external_id", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id, resource_type = ?resource_type, external_id = %external_id))]
     async fn get_index_by_external_id<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -121,6 +128,7 @@ impl ScimResourceApi for ScimResourceService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.scim_resource.list_index", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id, resource_type = ?resource_type))]
     async fn list_index<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -133,6 +141,7 @@ impl ScimResourceApi for ScimResourceService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.scim_resource.update_index", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id, resource_type = ?resource_type, keystone_id = %keystone_id))]
     async fn update_index<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -164,6 +173,11 @@ impl ScimResourceApi for ScimResourceService {
         }
     }
 
+    #[tracing::instrument(
+        name = "provider.scim_resource.list_all_index",
+        level = "debug",
+        skip_all
+    )]
     async fn list_all_index<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -171,6 +185,7 @@ impl ScimResourceApi for ScimResourceService {
         self.backend_driver.list_all(ctx.state()).await
     }
 
+    #[tracing::instrument(name = "provider.scim_resource.purge_index", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id, resource_type = ?resource_type, keystone_id = %keystone_id))]
     async fn purge_index<'a>(
         &self,
         ctx: &ExecutionContext<'a>,

@@ -259,7 +259,11 @@ impl K8sAuthBackend for RaftBackend {
     ///
     /// # Returns
     /// The created K8s auth instance.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(
+        name = "driver.raft.k8s_auth.create_auth_instance",
+        level = "debug",
+        skip_all
+    )]
     async fn create_auth_instance(
         &self,
         state: &ServiceState,
@@ -282,7 +286,7 @@ impl K8sAuthBackend for RaftBackend {
     ///
     /// # Returns
     /// An empty result on success.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.raft.k8s_auth.delete_auth_instance", level = "debug", skip_all, fields(id = %id))]
     async fn delete_auth_instance<'a>(
         &self,
         state: &ServiceState,
@@ -306,7 +310,7 @@ impl K8sAuthBackend for RaftBackend {
     /// # Returns
     /// A `Result` containing an `Option` with the K8sAuthInstance if found, or
     /// an `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.raft.k8s_auth.get_auth_instance", level = "debug", skip_all, fields(id = %id))]
     async fn get_auth_instance<'a>(
         &self,
         state: &ServiceState,
@@ -329,7 +333,7 @@ impl K8sAuthBackend for RaftBackend {
     ///
     /// # Returns
     /// A list of K8s auth instances.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.raft.k8s_auth.list_auth_instances", level = "debug", skip_all, fields(params = ?params))]
     async fn list_auth_instances(
         &self,
         state: &ServiceState,
@@ -353,7 +357,7 @@ impl K8sAuthBackend for RaftBackend {
     ///
     /// # Returns
     /// The updated K8s auth instance.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.raft.k8s_auth.update_auth_instance", level = "debug", skip_all, fields(id = %id))]
     async fn update_auth_instance<'a>(
         &self,
         state: &ServiceState,

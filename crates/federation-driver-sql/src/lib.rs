@@ -95,7 +95,7 @@ inventory::submit! {
 #[async_trait]
 impl FederationBackend for SqlBackend {
     /// Delete expired authentication state records.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.federation.cleanup", level = "debug", skip_all)]
     async fn cleanup(&self, state: &ServiceState) -> Result<(), FederationProviderError> {
         Ok(auth_state::delete_expired(&state.db.connection()).await?)
     }
@@ -113,7 +113,11 @@ impl FederationBackend for SqlBackend {
     /// # Returns
     ///
     /// The created [`AuthState`].
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(
+        name = "driver.sql.federation.create_auth_state",
+        level = "debug",
+        skip_all
+    )]
     async fn create_auth_state(
         &self,
         state: &ServiceState,
@@ -131,7 +135,11 @@ impl FederationBackend for SqlBackend {
     /// # Returns
     ///
     /// The created [`IdentityProvider`].
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(
+        name = "driver.sql.federation.create_identity_provider",
+        level = "debug",
+        skip_all
+    )]
     async fn create_identity_provider(
         &self,
         state: &ServiceState,
@@ -145,7 +153,7 @@ impl FederationBackend for SqlBackend {
     /// # Arguments
     ///
     /// * `id` - the auth state record ID.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.federation.delete_auth_state", level = "debug", skip_all, fields(id = %id))]
     async fn delete_auth_state<'a>(
         &self,
         state: &ServiceState,
@@ -159,7 +167,7 @@ impl FederationBackend for SqlBackend {
     /// # Arguments
     ///
     /// * `id` - the identity provider ID.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.federation.delete_identity_provider", level = "debug", skip_all, fields(id = %id))]
     async fn delete_identity_provider<'a>(
         &self,
         state: &ServiceState,
@@ -178,7 +186,7 @@ impl FederationBackend for SqlBackend {
     ///
     /// The [`AuthState`] if it exists, or `None` if the record has expired or
     /// was already consumed.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.federation.get_auth_state", level = "debug", skip_all, fields(id = %id))]
     async fn get_auth_state<'a>(
         &self,
         state: &ServiceState,
@@ -196,7 +204,7 @@ impl FederationBackend for SqlBackend {
     /// # Returns
     ///
     /// The [`IdentityProvider`] if it exists, or `None`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.federation.get_identity_provider", level = "debug", skip_all, fields(id = %id))]
     async fn get_identity_provider<'a>(
         &self,
         state: &ServiceState,
@@ -214,7 +222,7 @@ impl FederationBackend for SqlBackend {
     /// # Returns
     ///
     /// A vector of matching [`IdentityProvider`]s.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.federation.list_identity_providers", level = "debug", skip_all, fields(params = ?params))]
     async fn list_identity_providers(
         &self,
         state: &ServiceState,
@@ -233,7 +241,7 @@ impl FederationBackend for SqlBackend {
     /// # Returns
     ///
     /// The updated [`IdentityProvider`].
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.federation.update_identity_provider", level = "debug", skip_all, fields(id = %id))]
     async fn update_identity_provider<'a>(
         &self,
         state: &ServiceState,

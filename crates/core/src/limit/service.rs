@@ -389,6 +389,7 @@ impl LimitService {
 #[async_trait]
 impl LimitApi for LimitService {
     /// Create limits.
+    #[tracing::instrument(name = "provider.limit.create_limits", level = "debug", skip_all)]
     async fn create_limits<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -418,6 +419,11 @@ impl LimitApi for LimitService {
     }
 
     /// Create registered limits.
+    #[tracing::instrument(
+        name = "provider.limit.create_registered_limits",
+        level = "debug",
+        skip_all
+    )]
     async fn create_registered_limits<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -452,6 +458,7 @@ impl LimitApi for LimitService {
     }
 
     /// Delete a limit.
+    #[tracing::instrument(name = "provider.limit.delete_limit", level = "debug", skip_all, fields(id = %id))]
     async fn delete_limit<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -467,6 +474,7 @@ impl LimitApi for LimitService {
     }
 
     /// Delete all limits of the domain.
+    #[tracing::instrument(name = "provider.limit.delete_limits_by_domain", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn delete_limits_by_domain<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -478,6 +486,7 @@ impl LimitApi for LimitService {
     }
 
     /// Delete all limits of the project.
+    #[tracing::instrument(name = "provider.limit.delete_limits_by_project", level = "debug", skip_all, fields(project_id = %project_id))]
     async fn delete_limits_by_project<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -489,6 +498,7 @@ impl LimitApi for LimitService {
     }
 
     /// Delete a registered limit.
+    #[tracing::instrument(name = "provider.limit.delete_registered_limit", level = "debug", skip_all, fields(id = %id))]
     async fn delete_registered_limit<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -511,6 +521,7 @@ impl LimitApi for LimitService {
     }
 
     /// Get a limit.
+    #[tracing::instrument(name = "provider.limit.get_limit", level = "debug", skip_all, fields(id = %id))]
     async fn get_limit<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -520,6 +531,7 @@ impl LimitApi for LimitService {
     }
 
     /// Describe the enforcement model.
+    #[tracing::instrument(name = "provider.limit.get_limit_model", level = "debug", skip_all)]
     async fn get_limit_model<'a>(
         &self,
         _exec: &ExecutionContext<'a>,
@@ -540,6 +552,7 @@ impl LimitApi for LimitService {
     }
 
     /// Get a registered limit.
+    #[tracing::instrument(name = "provider.limit.get_registered_limit", level = "debug", skip_all, fields(id = %id))]
     async fn get_registered_limit<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -551,6 +564,7 @@ impl LimitApi for LimitService {
     }
 
     /// List limits.
+    #[tracing::instrument(name = "provider.limit.list_limits", level = "debug", skip_all, fields(params = ?params))]
     async fn list_limits<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -561,6 +575,7 @@ impl LimitApi for LimitService {
     }
 
     /// List registered limits.
+    #[tracing::instrument(name = "provider.limit.list_registered_limits", level = "debug", skip_all, fields(params = ?params))]
     async fn list_registered_limits<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -573,6 +588,7 @@ impl LimitApi for LimitService {
     }
 
     /// Update a limit.
+    #[tracing::instrument(name = "provider.limit.update_limit", level = "debug", skip_all, fields(id = %id))]
     async fn update_limit<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -612,6 +628,7 @@ impl LimitApi for LimitService {
     }
 
     /// Update a registered limit.
+    #[tracing::instrument(name = "provider.limit.update_registered_limit", level = "debug", skip_all, fields(id = %id))]
     async fn update_registered_limit<'a>(
         &self,
         exec: &ExecutionContext<'a>,

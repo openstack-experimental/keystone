@@ -412,6 +412,7 @@ impl RaftBackend {
 
 #[async_trait]
 impl ApiKeyBackend for RaftBackend {
+    #[tracing::instrument(name = "driver.raft.api_key.create", level = "debug", skip_all)]
     async fn create(
         &self,
         state: &ServiceState,
@@ -426,6 +427,7 @@ impl ApiKeyBackend for RaftBackend {
             .map_err(ApiKeyProviderError::raft)
     }
 
+    #[tracing::instrument(name = "driver.raft.api_key.get_by_client_id", level = "debug", skip_all, fields(domain_id = %domain_id, client_id = %client_id))]
     async fn get_by_client_id<'a>(
         &self,
         state: &ServiceState,
@@ -441,6 +443,7 @@ impl ApiKeyBackend for RaftBackend {
             .map_err(ApiKeyProviderError::raft)
     }
 
+    #[tracing::instrument(name = "driver.raft.api_key.get_by_lookup_hash", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn get_by_lookup_hash<'a>(
         &self,
         state: &ServiceState,
@@ -456,6 +459,7 @@ impl ApiKeyBackend for RaftBackend {
             .map_err(ApiKeyProviderError::raft)
     }
 
+    #[tracing::instrument(name = "driver.raft.api_key.list", level = "debug", skip_all, fields(params = ?params))]
     async fn list(
         &self,
         state: &ServiceState,
@@ -470,6 +474,7 @@ impl ApiKeyBackend for RaftBackend {
             .map_err(ApiKeyProviderError::raft)
     }
 
+    #[tracing::instrument(name = "driver.raft.api_key.update", level = "debug", skip_all, fields(domain_id = %domain_id, client_id = %client_id))]
     async fn update<'a>(
         &self,
         state: &ServiceState,
@@ -493,6 +498,7 @@ impl ApiKeyBackend for RaftBackend {
         }
     }
 
+    #[tracing::instrument(name = "driver.raft.api_key.revoke", level = "debug", skip_all, fields(domain_id = %domain_id, client_id = %client_id))]
     async fn revoke<'a>(
         &self,
         state: &ServiceState,
@@ -519,6 +525,7 @@ impl ApiKeyBackend for RaftBackend {
         }
     }
 
+    #[tracing::instrument(name = "driver.raft.api_key.update_last_used", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn update_last_used<'a>(
         &self,
         state: &ServiceState,
@@ -535,6 +542,7 @@ impl ApiKeyBackend for RaftBackend {
             .map_err(ApiKeyProviderError::raft)
     }
 
+    #[tracing::instrument(name = "driver.raft.api_key.update_secret_hash", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn update_secret_hash<'a>(
         &self,
         state: &ServiceState,
@@ -551,6 +559,7 @@ impl ApiKeyBackend for RaftBackend {
             .map_err(ApiKeyProviderError::raft)
     }
 
+    #[tracing::instrument(name = "driver.raft.api_key.list_all", level = "debug", skip_all)]
     async fn list_all(
         &self,
         state: &ServiceState,
@@ -564,6 +573,7 @@ impl ApiKeyBackend for RaftBackend {
             .map_err(ApiKeyProviderError::raft)
     }
 
+    #[tracing::instrument(name = "driver.raft.api_key.purge", level = "debug", skip_all, fields(domain_id = %domain_id, client_id = %client_id))]
     async fn purge<'a>(
         &self,
         state: &ServiceState,

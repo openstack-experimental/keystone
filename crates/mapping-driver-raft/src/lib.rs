@@ -1012,7 +1012,7 @@ impl MappingBackend for RaftBackend {
     /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle
     /// is missing, or [`MappingProviderError::RaftStoreError`] if the
     /// transaction fails.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.raft.mapping.create_ruleset", level = "debug", skip_all)]
     async fn create_ruleset(
         &self,
         state: &ServiceState,
@@ -1044,7 +1044,11 @@ impl MappingBackend for RaftBackend {
     /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle
     /// is missing, or [`MappingProviderError::RaftStoreError`] if the
     /// transaction fails.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(
+        name = "driver.raft.mapping.create_virtual_user",
+        level = "debug",
+        skip_all
+    )]
     async fn create_virtual_user(
         &self,
         state: &ServiceState,
@@ -1073,7 +1077,7 @@ impl MappingBackend for RaftBackend {
     /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle
     /// is missing, [`MappingProviderError::CasConflict`] on CAS conflict,
     /// or [`MappingProviderError::RaftStoreError`] if the transaction fails.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.raft.mapping.delete_ruleset", level = "debug", skip_all, fields(mapping_id = %mapping_id))]
     async fn delete_ruleset<'a>(
         &self,
         state: &ServiceState,
@@ -1110,7 +1114,7 @@ impl MappingBackend for RaftBackend {
     /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle
     /// is missing, [`MappingProviderError::CasConflict`] on CAS conflict,
     /// or [`MappingProviderError::RaftStoreError`] if the transaction fails.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.raft.mapping.delete_virtual_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn delete_virtual_user<'a>(
         &self,
         state: &ServiceState,
@@ -1146,7 +1150,7 @@ impl MappingBackend for RaftBackend {
     /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle
     /// is missing, or [`MappingProviderError::RaftStoreError`] if the read
     /// fails.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.raft.mapping.get_ruleset", level = "debug", skip_all, fields(mapping_id = %mapping_id))]
     async fn get_ruleset<'a>(
         &self,
         state: &ServiceState,
@@ -1175,7 +1179,7 @@ impl MappingBackend for RaftBackend {
     /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle
     /// is missing, or [`MappingProviderError::RaftStoreError`] if the read
     /// fails.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.raft.mapping.get_ruleset_by_source", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn get_ruleset_by_source<'a>(
         &self,
         state: &ServiceState,
@@ -1204,7 +1208,7 @@ impl MappingBackend for RaftBackend {
     /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle
     /// is missing, or [`MappingProviderError::RaftStoreError`] if the read
     /// fails.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.raft.mapping.get_virtual_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn get_virtual_user<'a>(
         &self,
         state: &ServiceState,
@@ -1236,7 +1240,7 @@ impl MappingBackend for RaftBackend {
     /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle
     /// is missing, or [`MappingProviderError::RaftStoreError`] if the scan
     /// fails.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.raft.mapping.list_rulesets", level = "debug", skip_all, fields(params = ?params))]
     async fn list_rulesets(
         &self,
         state: &ServiceState,
@@ -1268,7 +1272,7 @@ impl MappingBackend for RaftBackend {
     /// Returns [`MappingProviderError::RaftNotAvailable`] if the storage handle
     /// is missing, or [`MappingProviderError::RaftStoreError`] if the scan
     /// fails.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.raft.mapping.list_virtual_users", level = "debug", skip_all, fields(params = ?params))]
     async fn list_virtual_users(
         &self,
         state: &ServiceState,
@@ -1303,7 +1307,7 @@ impl MappingBackend for RaftBackend {
     /// exist, [`MappingProviderError::RaftNotAvailable`] if the storage
     /// handle is missing, or [`MappingProviderError::RaftStoreError`] if
     /// the CAS check fails.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.raft.mapping.update_ruleset", level = "debug", skip_all, fields(mapping_id = %mapping_id))]
     async fn update_ruleset<'a>(
         &self,
         state: &ServiceState,
@@ -1347,7 +1351,7 @@ impl MappingBackend for RaftBackend {
     /// [`MappingProviderError::RaftNotAvailable`] if the storage handle is
     /// missing, or [`MappingProviderError::RaftStoreError`] if the CAS
     /// check fails.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.raft.mapping.update_virtual_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn update_virtual_user<'a>(
         &self,
         state: &ServiceState,
@@ -1387,7 +1391,7 @@ impl MappingBackend for RaftBackend {
     /// [`MappingProviderError::RaftNotAvailable`] if the storage handle is
     /// missing, or [`MappingProviderError::RaftStoreError`] if the CAS
     /// check fails.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.raft.mapping.disable_virtual_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn disable_virtual_user<'a>(
         &self,
         state: &ServiceState,
@@ -1426,7 +1430,7 @@ impl MappingBackend for RaftBackend {
     /// [`MappingProviderError::RaftNotAvailable`] if the storage handle is
     /// missing, or [`MappingProviderError::RaftStoreError`] if the CAS
     /// check fails.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.raft.mapping.enable_virtual_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn enable_virtual_user<'a>(
         &self,
         state: &ServiceState,

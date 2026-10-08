@@ -37,7 +37,6 @@ use crate::role_option::RoleOptionIntoModelIterator;
 ///
 /// # Returns
 /// A `Result` containing `()` if successful, or an `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn upsert<C, R>(db: &C, role_id: R, opts: &RoleOptions) -> Result<(), RoleProviderError>
 where
     C: ConnectionTrait,

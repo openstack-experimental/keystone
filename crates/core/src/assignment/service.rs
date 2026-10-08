@@ -564,6 +564,7 @@ impl AssignmentApi for AssignmentService {
     ///
     /// # Returns
     /// - `Result<bool, AssignmentProviderError>` - True if the grant exists.
+    #[tracing::instrument(name = "provider.assignment.check_grant", level = "debug", skip_all)]
     async fn check_grant<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -585,6 +586,7 @@ impl AssignmentApi for AssignmentService {
     /// # Returns
     /// - `Result<Assignment, AssignmentProviderError>` - The created assignment
     ///   or an error.
+    #[tracing::instrument(name = "provider.assignment.create_grant", level = "debug", skip_all)]
     async fn create_grant<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -711,6 +713,7 @@ impl AssignmentApi for AssignmentService {
     /// # Returns
     /// - `Result<Vec<Assignment>, AssignmentProviderError>` - A list of
     ///   assignments or an error.
+    #[tracing::instrument(name = "provider.assignment.list_role_assignments", level = "debug", skip_all, fields(params = ?params))]
     async fn list_role_assignments<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -776,6 +779,7 @@ impl AssignmentApi for AssignmentService {
     ///
     /// # Returns
     /// - `Result<(), AssignmentProviderError>` - Ok on success, or an error.
+    #[tracing::instrument(name = "provider.assignment.revoke_grant", level = "debug", skip_all)]
     async fn revoke_grant<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -895,6 +899,7 @@ impl AssignmentApi for AssignmentService {
         Ok(())
     }
 
+    #[tracing::instrument(name = "provider.assignment.reload", level = "debug", skip_all)]
     async fn reload(&self, state: &ServiceState) -> Result<bool, AssignmentProviderError> {
         match self.rebuild(state).await {
             Ok(changed) => Ok(changed),
@@ -908,6 +913,11 @@ impl AssignmentApi for AssignmentService {
         }
     }
 
+    #[tracing::instrument(
+        name = "provider.assignment.refresh_bindings",
+        level = "debug",
+        skip_all
+    )]
     async fn refresh_bindings(&self, state: &ServiceState) -> Result<(), AssignmentProviderError> {
         if let Err(error) = self.rebuild(state).await {
             warn!(

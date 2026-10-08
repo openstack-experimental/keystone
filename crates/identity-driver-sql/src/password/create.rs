@@ -32,7 +32,6 @@ use crate::entity::password;
 /// # Returns
 /// A `Result` containing the created `password::Model` if successful, or an
 /// `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn create<C: ConnectionTrait, S: AsRef<str>>(
     db: &C,
     local_user_id: i32,

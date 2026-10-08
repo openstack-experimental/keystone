@@ -368,6 +368,7 @@ fn map_not_found(e: StoreError, provider_id: &str) -> Oauth2ClientProviderError 
 
 #[async_trait]
 impl Oauth2ClientBackend for RaftOauth2ClientBackend {
+    #[tracing::instrument(name = "driver.raft.oauth2_client.create", level = "debug", skip_all)]
     async fn create(
         &self,
         state: &ServiceState,
@@ -386,6 +387,7 @@ impl Oauth2ClientBackend for RaftOauth2ClientBackend {
         }
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_client.delete", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id))]
     async fn delete<'a>(
         &self,
         state: &ServiceState,
@@ -401,6 +403,7 @@ impl Oauth2ClientBackend for RaftOauth2ClientBackend {
             .map_err(|e| map_not_found(e, provider_id))
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_client.get", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id))]
     async fn get<'a>(
         &self,
         state: &ServiceState,
@@ -416,6 +419,7 @@ impl Oauth2ClientBackend for RaftOauth2ClientBackend {
             .map_err(Oauth2ClientProviderError::raft)
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_client.get_by_client_id", level = "debug", skip_all, fields(client_id = %client_id))]
     async fn get_by_client_id<'a>(
         &self,
         state: &ServiceState,
@@ -430,6 +434,7 @@ impl Oauth2ClientBackend for RaftOauth2ClientBackend {
             .map_err(Oauth2ClientProviderError::raft)
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_client.list", level = "debug", skip_all, fields(params = ?params))]
     async fn list(
         &self,
         state: &ServiceState,
@@ -444,6 +449,7 @@ impl Oauth2ClientBackend for RaftOauth2ClientBackend {
             .map_err(Oauth2ClientProviderError::raft)
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_client.rotate_secret", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id))]
     async fn rotate_secret<'a>(
         &self,
         state: &ServiceState,
@@ -460,6 +466,7 @@ impl Oauth2ClientBackend for RaftOauth2ClientBackend {
             .map_err(|e| map_not_found(e, provider_id))
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_client.update", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id))]
     async fn update<'a>(
         &self,
         state: &ServiceState,

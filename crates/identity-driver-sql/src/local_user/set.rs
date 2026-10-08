@@ -30,7 +30,6 @@ use crate::entity::local_user as db_local_user;
 /// # Returns
 /// A `Result` containing the updated `db_local_user::Model` if successful, or
 /// an `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn reset_failed_auth(
     db: &DatabaseConnection,
     user: &db_local_user::Model,
@@ -54,7 +53,6 @@ pub async fn reset_failed_auth(
 /// # Returns
 /// A `Result` containing the updated `db_local_user::Model` if successful, or
 /// an `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn log_failed_auth(
     db: &DatabaseConnection,
     user: &db_local_user::Model,

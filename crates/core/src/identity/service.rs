@@ -528,6 +528,7 @@ impl IdentityApi for IdentityService {
     /// - `state`: The service state.
     /// - `user_id`: The ID of the user.
     /// - `group_id`: The ID of the group.
+    #[tracing::instrument(name = "provider.identity.add_user_to_group", level = "debug", skip_all, fields(user_id = %user_id, group_id = %group_id))]
     async fn add_user_to_group<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -578,6 +579,7 @@ impl IdentityApi for IdentityService {
     /// - `user_id`: The ID of the user.
     /// - `group_id`: The ID of the group.
     /// - `idp_id`: The ID of the identity provider.
+    #[tracing::instrument(name = "provider.identity.add_user_to_group_expiring", level = "debug", skip_all, fields(user_id = %user_id, group_id = %group_id, idp_id = %idp_id))]
     async fn add_user_to_group_expiring<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -627,6 +629,11 @@ impl IdentityApi for IdentityService {
     /// # Parameters
     /// - `state`: The service state.
     /// - `memberships`: A list of (user ID, group ID) tuples.
+    #[tracing::instrument(
+        name = "provider.identity.add_users_to_groups",
+        level = "debug",
+        skip_all
+    )]
     async fn add_users_to_groups<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -696,6 +703,7 @@ impl IdentityApi for IdentityService {
     /// - `state`: The service state.
     /// - `memberships`: A list of (user ID, group ID) tuples.
     /// - `idp_id`: The ID of the identity provider.
+    #[tracing::instrument(name = "provider.identity.add_users_to_groups_expiring", level = "debug", skip_all, fields(idp_id = %idp_id))]
     async fn add_users_to_groups_expiring<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -767,6 +775,11 @@ impl IdentityApi for IdentityService {
     /// # Parameters
     /// - `state`: The service state.
     /// - `auth`: The password authentication request.
+    #[tracing::instrument(
+        name = "provider.identity.authenticate_by_password",
+        level = "debug",
+        skip_all
+    )]
     async fn authenticate_by_password<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -797,6 +810,11 @@ impl IdentityApi for IdentityService {
     /// # Parameters
     /// - `state`: The service state.
     /// - `auth`: The TOTP authentication request.
+    #[tracing::instrument(
+        name = "provider.identity.authenticate_by_totp",
+        level = "debug",
+        skip_all
+    )]
     async fn authenticate_by_totp<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -911,6 +929,7 @@ impl IdentityApi for IdentityService {
     /// # Parameters
     /// - `state`: The service state.
     /// - `group`: The group details to create.
+    #[tracing::instrument(name = "provider.identity.create_group", level = "debug", skip_all)]
     async fn create_group<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -973,6 +992,7 @@ impl IdentityApi for IdentityService {
     /// # Parameters
     /// - `state`: The service state.
     /// - `user`: The user details to create.
+    #[tracing::instrument(name = "provider.identity.create_user", level = "debug", skip_all)]
     async fn create_user<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1047,6 +1067,7 @@ impl IdentityApi for IdentityService {
     /// # Parameters
     /// - `state`: The service state.
     /// - `group_id`: The ID of the group to delete.
+    #[tracing::instrument(name = "provider.identity.delete_group", level = "debug", skip_all, fields(group_id = %group_id))]
     async fn delete_group<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1092,6 +1113,7 @@ impl IdentityApi for IdentityService {
     /// # Parameters
     /// - `state`: The service state.
     /// - `user_id`: The ID of the user to delete.
+    #[tracing::instrument(name = "provider.identity.delete_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn delete_user<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1162,6 +1184,7 @@ impl IdentityApi for IdentityService {
     /// # Returns
     /// - `Result<Option<UserResponse>, IdentityProviderError>` - A `Result`
     ///   containing an `Option` with the user if found, or an `Error`.
+    #[tracing::instrument(name = "provider.identity.get_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn get_user<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1203,6 +1226,7 @@ impl IdentityApi for IdentityService {
     /// the new value into the cache. Other operations (`get_user`,
     /// `delete_user`) update the cache with `delete_user` purging the value
     /// from the cache.
+    #[tracing::instrument(name = "provider.identity.get_user_domain_id", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn get_user_domain_id<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1232,6 +1256,7 @@ impl IdentityApi for IdentityService {
         }
     }
 
+    #[tracing::instrument(name = "provider.identity.find_user_by_name_ci", level = "debug", skip_all, fields(domain_id = %domain_id, name = %name))]
     async fn find_user_by_name_ci<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1267,6 +1292,7 @@ impl IdentityApi for IdentityService {
     /// # Returns
     /// - `Result<Option<UserResponse>, IdentityProviderError>` - A `Result`
     ///   containing an `Option` with the user if found, or an `Error`.
+    #[tracing::instrument(name = "provider.identity.find_federated_user", level = "debug", skip_all, fields(idp_id = %idp_id, unique_id = %unique_id))]
     async fn find_federated_user<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1283,6 +1309,7 @@ impl IdentityApi for IdentityService {
     /// # Parameters
     /// - `state`: The service state.
     /// - `params`: The parameters for listing users.
+    #[tracing::instrument(name = "provider.identity.list_users", level = "debug", skip_all, fields(params = ?params))]
     async fn list_users<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1315,6 +1342,7 @@ impl IdentityApi for IdentityService {
     /// # Parameters
     /// - `state`: The service state.
     /// - `params`: The parameters for listing groups.
+    #[tracing::instrument(name = "provider.identity.list_groups", level = "debug", skip_all, fields(params = ?params))]
     async fn list_groups<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1351,6 +1379,7 @@ impl IdentityApi for IdentityService {
     /// # Returns
     /// - `Result<Option<Group>, IdentityProviderError>` - A `Result` containing
     ///   an `Option` with the group if found, or an `Error`.
+    #[tracing::instrument(name = "provider.identity.get_group", level = "debug", skip_all, fields(group_id = %group_id))]
     async fn get_group<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1379,6 +1408,7 @@ impl IdentityApi for IdentityService {
     /// # Parameters
     /// - `state`: The service state.
     /// - `user_id`: The ID of the user.
+    #[tracing::instrument(name = "provider.identity.list_groups_of_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn list_groups_of_user<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1395,6 +1425,7 @@ impl IdentityApi for IdentityService {
     /// # Parameters
     /// - `state`: The service state.
     /// - `group_id`: The ID of the group.
+    #[tracing::instrument(name = "provider.identity.list_users_of_group", level = "debug", skip_all, fields(group_id = %group_id))]
     async fn list_users_of_group<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1413,6 +1444,7 @@ impl IdentityApi for IdentityService {
     /// - `state`: The service state.
     /// - `domain_id`: The domain to search within.
     /// - `name`: The name to match, case-insensitively.
+    #[tracing::instrument(name = "provider.identity.find_group_by_name_ci", level = "debug", skip_all, fields(domain_id = %domain_id, name = %name))]
     async fn find_group_by_name_ci<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1444,6 +1476,7 @@ impl IdentityApi for IdentityService {
     /// - `state`: The service state.
     /// - `group_id`: The ID of the group to update.
     /// - `group`: The group update request.
+    #[tracing::instrument(name = "provider.identity.update_group", level = "debug", skip_all, fields(group_id = %group_id))]
     async fn update_group<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1497,6 +1530,7 @@ impl IdentityApi for IdentityService {
     /// - `state`: The service state.
     /// - `user_id`: The ID of the user.
     /// - `group_id`: The ID of the group.
+    #[tracing::instrument(name = "provider.identity.remove_user_from_group", level = "debug", skip_all, fields(user_id = %user_id, group_id = %group_id))]
     async fn remove_user_from_group<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1547,6 +1581,7 @@ impl IdentityApi for IdentityService {
     /// - `user_id`: The ID of the user.
     /// - `group_id`: The ID of the group.
     /// - `idp_id`: The ID of the identity provider.
+    #[tracing::instrument(name = "provider.identity.remove_user_from_group_expiring", level = "debug", skip_all, fields(user_id = %user_id, group_id = %group_id, idp_id = %idp_id))]
     async fn remove_user_from_group_expiring<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1597,6 +1632,7 @@ impl IdentityApi for IdentityService {
     /// - `state`: The service state.
     /// - `user_id`: The ID of the user.
     /// - `group_ids`: A set of group IDs.
+    #[tracing::instrument(name = "provider.identity.remove_user_from_groups", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn remove_user_from_groups<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1650,6 +1686,7 @@ impl IdentityApi for IdentityService {
     /// - `user_id`: The ID of the user.
     /// - `group_ids`: A set of group IDs.
     /// - `idp_id`: The ID of the identity provider.
+    #[tracing::instrument(name = "provider.identity.remove_user_from_groups_expiring", level = "debug", skip_all, fields(user_id = %user_id, idp_id = %idp_id))]
     async fn remove_user_from_groups_expiring<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1704,6 +1741,7 @@ impl IdentityApi for IdentityService {
     /// - `state`: The service state.
     /// - `user_id`: The ID of the user.
     /// - `group_ids`: A set of group IDs.
+    #[tracing::instrument(name = "provider.identity.set_user_groups", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn set_user_groups<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1756,6 +1794,7 @@ impl IdentityApi for IdentityService {
     /// - `state`: The service state.
     /// - `user_id`: The ID of the user to update.
     /// - `user`: The user details to update.
+    #[tracing::instrument(name = "provider.identity.update_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn update_user<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1826,6 +1865,7 @@ impl IdentityApi for IdentityService {
     /// - `user_id`: The ID of the user to update.
     /// - `original_password`: The current password for verification.
     /// - `new_password`: The new password to set.
+    #[tracing::instrument(name = "provider.identity.update_user_password", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn update_user_password<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1880,6 +1920,7 @@ impl IdentityApi for IdentityService {
     /// - `group_ids`: A set of group IDs.
     /// - `idp_id`: The ID of the identity provider.
     /// - `last_verified`: The last verified date, if any.
+    #[tracing::instrument(name = "provider.identity.set_user_groups_expiring", level = "debug", skip_all, fields(user_id = %user_id, idp_id = %idp_id))]
     async fn set_user_groups_expiring<'a>(
         &self,
         ctx: &ExecutionContext<'a>,

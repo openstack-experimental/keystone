@@ -94,6 +94,7 @@ impl DomainConfigBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing the stored `DomainConfig`, or an `Error`.
+    #[tracing::instrument(name = "driver.sql.domain_config.create_domain_config", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn create_domain_config<'a>(
         &self,
         state: &ServiceState,
@@ -112,6 +113,7 @@ impl DomainConfigBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing an `Option` with the `DomainConfig` if the domain
     /// has one, or an `Error`.
+    #[tracing::instrument(name = "driver.sql.domain_config.get_domain_config", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn get_domain_config<'a>(
         &self,
         state: &ServiceState,
@@ -130,6 +132,7 @@ impl DomainConfigBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing an `Option` with the `DomainConfigGroup` if the
     /// domain has a readable option stored in it, or an `Error`.
+    #[tracing::instrument(name = "driver.sql.domain_config.get_domain_config_group", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn get_domain_config_group<'a>(
         &self,
         state: &ServiceState,
@@ -150,6 +153,7 @@ impl DomainConfigBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing an `Option` with the `DomainConfigOption` if it is
     /// stored and readable, or an `Error`.
+    #[tracing::instrument(name = "driver.sql.domain_config.get_domain_config_option", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn get_domain_config_option<'a>(
         &self,
         state: &ServiceState,
@@ -169,6 +173,11 @@ impl DomainConfigBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing the distinct domain IDs, or an `Error`.
+    #[tracing::instrument(
+        name = "driver.sql.domain_config.list_domains_with_option",
+        level = "debug",
+        skip_all
+    )]
     async fn list_domains_with_option<'a>(
         &self,
         state: &ServiceState,
@@ -187,6 +196,7 @@ impl DomainConfigBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing the resulting `DomainConfig`, or an `Error`.
+    #[tracing::instrument(name = "driver.sql.domain_config.update_domain_config", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn update_domain_config<'a>(
         &self,
         state: &ServiceState,
@@ -206,6 +216,7 @@ impl DomainConfigBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing the resulting `DomainConfigGroup`, or an `Error`.
+    #[tracing::instrument(name = "driver.sql.domain_config.update_domain_config_group", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn update_domain_config_group<'a>(
         &self,
         state: &ServiceState,
@@ -225,6 +236,7 @@ impl DomainConfigBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing the stored `DomainConfigOption`, or an `Error`.
+    #[tracing::instrument(name = "driver.sql.domain_config.update_domain_config_option", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn update_domain_config_option<'a>(
         &self,
         state: &ServiceState,
@@ -242,6 +254,7 @@ impl DomainConfigBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` indicating success or an `Error`.
+    #[tracing::instrument(name = "driver.sql.domain_config.delete_domain_config", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn delete_domain_config<'a>(
         &self,
         state: &ServiceState,
@@ -259,6 +272,7 @@ impl DomainConfigBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` indicating success or an `Error`.
+    #[tracing::instrument(name = "driver.sql.domain_config.delete_domain_config_group", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn delete_domain_config_group<'a>(
         &self,
         state: &ServiceState,
@@ -278,6 +292,7 @@ impl DomainConfigBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` indicating success or an `Error`.
+    #[tracing::instrument(name = "driver.sql.domain_config.delete_domain_config_option", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn delete_domain_config_option<'a>(
         &self,
         state: &ServiceState,
@@ -298,6 +313,7 @@ impl DomainConfigBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing `true` when the domain now holds the
     /// registration, `false` when somebody already does, or an `Error`.
+    #[tracing::instrument(name = "driver.sql.domain_config.obtain_registration", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn obtain_registration<'a>(
         &self,
         state: &ServiceState,
@@ -316,6 +332,11 @@ impl DomainConfigBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing an `Option` with the ID of the domain holding it,
     /// or an `Error`.
+    #[tracing::instrument(
+        name = "driver.sql.domain_config.read_registration",
+        level = "debug",
+        skip_all
+    )]
     async fn read_registration<'a>(
         &self,
         state: &ServiceState,
@@ -334,6 +355,7 @@ impl DomainConfigBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` indicating success or an `Error`.
+    #[tracing::instrument(name = "driver.sql.domain_config.release_registration", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn release_registration<'a>(
         &self,
         state: &ServiceState,

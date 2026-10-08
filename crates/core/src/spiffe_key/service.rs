@@ -77,6 +77,7 @@ impl SpiffeKeyService {
 
 #[async_trait]
 impl SpiffeKeyApi for SpiffeKeyService {
+    #[tracing::instrument(name = "provider.spiffe_key.ensure_domain_keys", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn ensure_domain_keys(
         &self,
         _state: &ServiceState,
@@ -88,6 +89,7 @@ impl SpiffeKeyApi for SpiffeKeyService {
             .map_err(|e| map_err(domain_id, e))
     }
 
+    #[tracing::instrument(name = "provider.spiffe_key.jwks", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn jwks(
         &self,
         _state: &ServiceState,
@@ -101,6 +103,7 @@ impl SpiffeKeyApi for SpiffeKeyService {
         active_keys_to_jwk_set(&active).map_err(|e| SpiffeKeyProviderError::Crypto(e.to_string()))
     }
 
+    #[tracing::instrument(name = "provider.spiffe_key.active_signing_key", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn active_signing_key(
         &self,
         _state: &ServiceState,

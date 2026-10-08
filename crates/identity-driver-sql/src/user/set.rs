@@ -32,7 +32,6 @@ use crate::entity::user as db_user;
 /// # Returns
 /// A `Result` containing the updated `db_user::Model` if successful, or an
 /// `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn reset_last_active(
     db: &DatabaseConnection,
     user: &db_user::Model,

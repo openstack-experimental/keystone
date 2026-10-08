@@ -61,6 +61,7 @@ impl CatalogApi for CatalogService {
     ///
     /// # Returns
     /// A `Result` indicating success or a `CatalogProviderError`.
+    #[tracing::instrument(name = "provider.catalog.add_endpoint_to_project", level = "debug", skip_all, fields(project_id = %project_id, endpoint_id = %endpoint_id))]
     async fn add_endpoint_to_project<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -112,6 +113,7 @@ impl CatalogApi for CatalogService {
     ///
     /// # Returns
     /// A `Result` indicating success or a `CatalogProviderError`.
+    #[tracing::instrument(name = "provider.catalog.add_endpoint_group_to_project", level = "debug", skip_all, fields(project_id = %project_id, endpoint_group_id = %endpoint_group_id))]
     async fn add_endpoint_group_to_project<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -164,6 +166,7 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing `true` when the association exists, or a
     /// `CatalogProviderError`.
+    #[tracing::instrument(name = "provider.catalog.check_endpoint_in_project", level = "debug", skip_all, fields(project_id = %project_id, endpoint_id = %endpoint_id))]
     async fn check_endpoint_in_project<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -185,6 +188,7 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing `true` when the association exists, or a
     /// `CatalogProviderError`.
+    #[tracing::instrument(name = "provider.catalog.check_endpoint_group_in_project", level = "debug", skip_all, fields(project_id = %project_id, endpoint_group_id = %endpoint_group_id))]
     async fn check_endpoint_group_in_project<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -205,6 +209,7 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing the created `Endpoint`, or a
     /// `CatalogProviderError`.
+    #[tracing::instrument(name = "provider.catalog.create_endpoint", level = "debug", skip_all)]
     async fn create_endpoint<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -257,6 +262,11 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing the created `EndpointGroup`, or a
     /// `CatalogProviderError`.
+    #[tracing::instrument(
+        name = "provider.catalog.create_endpoint_group",
+        level = "debug",
+        skip_all
+    )]
     async fn create_endpoint_group<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -306,6 +316,7 @@ impl CatalogApi for CatalogService {
     ///
     /// # Returns
     /// A `Result` containing the created `Region`, or a `CatalogProviderError`.
+    #[tracing::instrument(name = "provider.catalog.create_region", level = "debug", skip_all)]
     async fn create_region<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -358,6 +369,7 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing the created `Service`, or a
     /// `CatalogProviderError`.
+    #[tracing::instrument(name = "provider.catalog.create_service", level = "debug", skip_all)]
     async fn create_service<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -410,6 +422,7 @@ impl CatalogApi for CatalogService {
     ///
     /// # Returns
     /// A `Result` indicating success or a `CatalogProviderError`.
+    #[tracing::instrument(name = "provider.catalog.delete_endpoint", level = "debug", skip_all, fields(id = %id))]
     async fn delete_endpoint<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -454,6 +467,7 @@ impl CatalogApi for CatalogService {
     ///
     /// # Returns
     /// A `Result` indicating success or a `CatalogProviderError`.
+    #[tracing::instrument(name = "provider.catalog.delete_endpoint_group", level = "debug", skip_all, fields(id = %id))]
     async fn delete_endpoint_group<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -498,6 +512,7 @@ impl CatalogApi for CatalogService {
     ///
     /// # Returns
     /// A `Result` indicating success or a `CatalogProviderError`.
+    #[tracing::instrument(name = "provider.catalog.delete_region", level = "debug", skip_all, fields(id = %id))]
     async fn delete_region<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -540,6 +555,7 @@ impl CatalogApi for CatalogService {
     ///
     /// # Returns
     /// A `Result` indicating success or a `CatalogProviderError`.
+    #[tracing::instrument(name = "provider.catalog.delete_service", level = "debug", skip_all, fields(id = %id))]
     async fn delete_service<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -583,6 +599,7 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing a vector of tuples of `Service` and its associated
     /// `Endpoint`s, or a `CatalogProviderError`.
+    #[tracing::instrument(name = "provider.catalog.get_catalog", level = "debug", skip_all)]
     async fn get_catalog<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -600,6 +617,7 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing an `Option` with the endpoint if found, or an
     /// `Error`.
+    #[tracing::instrument(name = "provider.catalog.get_endpoint", level = "debug", skip_all, fields(id = %id))]
     async fn get_endpoint<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -617,6 +635,7 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing an `Option` with the endpoint group if found, or
     /// an `Error`.
+    #[tracing::instrument(name = "provider.catalog.get_endpoint_group", level = "debug", skip_all, fields(id = %id))]
     async fn get_endpoint_group<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -636,6 +655,7 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing an `Option` with the region if found, or an
     /// `Error`.
+    #[tracing::instrument(name = "provider.catalog.get_region", level = "debug", skip_all, fields(id = %id))]
     async fn get_region<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -653,6 +673,7 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing an `Option` with the service if found, or an
     /// `Error`.
+    #[tracing::instrument(name = "provider.catalog.get_service", level = "debug", skip_all, fields(id = %id))]
     async fn get_service<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -670,6 +691,7 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing a vector of `Endpoint` objects or a
     /// `CatalogProviderError`.
+    #[tracing::instrument(name = "provider.catalog.list_endpoints", level = "debug", skip_all, fields(params = ?params))]
     async fn list_endpoints<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -690,6 +712,7 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing a vector of `EndpointGroup` objects or a
     /// `CatalogProviderError`.
+    #[tracing::instrument(name = "provider.catalog.list_endpoint_groups", level = "debug", skip_all, fields(params = ?params))]
     async fn list_endpoint_groups<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -710,6 +733,7 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing a vector of `Endpoint` objects or a
     /// `CatalogProviderError`.
+    #[tracing::instrument(name = "provider.catalog.list_project_endpoints", level = "debug", skip_all, fields(project_id = %project_id))]
     async fn list_project_endpoints<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -729,6 +753,7 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing a vector of `EndpointGroup` objects or a
     /// `CatalogProviderError`.
+    #[tracing::instrument(name = "provider.catalog.list_project_endpoint_groups", level = "debug", skip_all, fields(project_id = %project_id))]
     async fn list_project_endpoint_groups<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -748,6 +773,7 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing a vector of `Region` objects or a
     /// `CatalogProviderError`.
+    #[tracing::instrument(name = "provider.catalog.list_regions", level = "debug", skip_all, fields(params = ?params))]
     async fn list_regions<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -766,6 +792,7 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing a vector of `Service` objects or a
     /// `CatalogProviderError`.
+    #[tracing::instrument(name = "provider.catalog.list_services", level = "debug", skip_all, fields(params = ?params))]
     async fn list_services<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -796,6 +823,7 @@ impl CatalogApi for CatalogService {
     ///
     /// # Returns
     /// A `Result` indicating success or a `CatalogProviderError`.
+    #[tracing::instrument(name = "provider.catalog.remove_endpoint_from_project", level = "debug", skip_all, fields(project_id = %project_id, endpoint_id = %endpoint_id))]
     async fn remove_endpoint_from_project<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -847,6 +875,7 @@ impl CatalogApi for CatalogService {
     ///
     /// # Returns
     /// A `Result` indicating success or a `CatalogProviderError`.
+    #[tracing::instrument(name = "provider.catalog.remove_endpoint_group_from_project", level = "debug", skip_all, fields(project_id = %project_id, endpoint_group_id = %endpoint_group_id))]
     async fn remove_endpoint_group_from_project<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -899,6 +928,7 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing the updated `Endpoint`, or a
     /// `CatalogProviderError`.
+    #[tracing::instrument(name = "provider.catalog.update_endpoint", level = "debug", skip_all, fields(id = %id))]
     async fn update_endpoint<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -948,6 +978,7 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing the updated `EndpointGroup`, or a
     /// `CatalogProviderError`.
+    #[tracing::instrument(name = "provider.catalog.update_endpoint_group", level = "debug", skip_all, fields(id = %id))]
     async fn update_endpoint_group<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -996,6 +1027,7 @@ impl CatalogApi for CatalogService {
     ///
     /// # Returns
     /// A `Result` containing the updated `Region`, or a `CatalogProviderError`.
+    #[tracing::instrument(name = "provider.catalog.update_region", level = "debug", skip_all, fields(id = %id))]
     async fn update_region<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -1045,6 +1077,7 @@ impl CatalogApi for CatalogService {
     /// # Returns
     /// A `Result` containing the updated `Service`, or a
     /// `CatalogProviderError`.
+    #[tracing::instrument(name = "provider.catalog.update_service", level = "debug", skip_all, fields(id = %id))]
     async fn update_service<'a>(
         &self,
         exec: &ExecutionContext<'a>,

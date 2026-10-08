@@ -31,7 +31,6 @@ use crate::entity::{federated_user, prelude::FederatedUser};
 /// # Returns
 /// A `Result` containing an `Option` with the federated user if found, or an
 /// `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn find_by_idp_and_unique_id<I: AsRef<str>, U: AsRef<str>>(
     db: &DatabaseConnection,
     idp_id: I,

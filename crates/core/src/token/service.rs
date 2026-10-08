@@ -433,6 +433,7 @@ impl TokenApi for TokenService {
     /// # Returns
     /// - `Result<ValidatedSecurityContext, TokenProviderError>` - Authenticated
     ///   information or an error.
+    #[tracing::instrument(name = "provider.token.authorize_by_token", level = "debug", skip_all)]
     async fn authorize_by_token<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -458,6 +459,7 @@ impl TokenApi for TokenService {
     }
 
     /// Validate the token and produce a [`ValidatedSecurityContext`].
+    #[tracing::instrument(name = "provider.token.validate_to_context", level = "debug", skip_all)]
     async fn validate_to_context<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -496,6 +498,7 @@ impl TokenApi for TokenService {
     /// - `Result<ValidatedSecurityContext, TokenProviderError>` - The validated
     ///   context with Token
     /// and expanded information or an error.
+    #[tracing::instrument(name = "provider.token.issue_token_context", level = "debug", skip_all)]
     async fn issue_token_context(
         &self,
         state: &ServiceState,
@@ -538,6 +541,7 @@ impl TokenApi for TokenService {
     ///
     /// # Returns
     /// - `Result<String, TokenProviderError>` - The encoded string or an error.
+    #[tracing::instrument(name = "provider.token.encode_token", level = "debug", skip_all)]
     fn encode_token(&self, token: &FernetToken) -> Result<String, TokenProviderError> {
         self.backend_driver.encode(token)
     }
@@ -553,6 +557,7 @@ impl TokenApi for TokenService {
     /// - `Result<Option<TokenRestriction>, TokenProviderError>` - A `Result`
     ///   containing an `Option` with the token restriction if found, or an
     ///   `Error`.
+    #[tracing::instrument(name = "provider.token.get_token_restriction", level = "debug", skip_all, fields(id = %id))]
     async fn get_token_restriction<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -601,6 +606,11 @@ impl TokenApi for TokenService {
     /// # Returns
     /// - `Result<TokenRestriction, TokenProviderError>` - The created token
     ///   restriction or an error.
+    #[tracing::instrument(
+        name = "provider.token.create_token_restriction",
+        level = "debug",
+        skip_all
+    )]
     async fn create_token_restriction<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -652,6 +662,7 @@ impl TokenApi for TokenService {
     /// # Returns
     /// - `Result<Vec<TokenRestriction>, TokenProviderError>` - A list of token
     ///   restrictions or an error.
+    #[tracing::instrument(name = "provider.token.list_token_restrictions", level = "debug", skip_all, fields(params = ?params))]
     async fn list_token_restrictions<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -672,6 +683,7 @@ impl TokenApi for TokenService {
     /// # Returns
     /// - `Result<TokenRestriction, TokenProviderError>` - The updated token
     ///   restriction or an error.
+    #[tracing::instrument(name = "provider.token.update_token_restriction", level = "debug", skip_all, fields(id = %id))]
     async fn update_token_restriction<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -718,6 +730,7 @@ impl TokenApi for TokenService {
     ///
     /// # Returns
     /// - `Result<(), TokenProviderError>` - Ok on success, or an error.
+    #[tracing::instrument(name = "provider.token.delete_token_restriction", level = "debug", skip_all, fields(id = %id))]
     async fn delete_token_restriction<'a>(
         &self,
         ctx: &ExecutionContext<'a>,

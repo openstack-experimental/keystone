@@ -69,6 +69,7 @@ impl IdMappingBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing an `Option` with the `IdMapping` if found, or an
     /// `Error`.
+    #[tracing::instrument(name = "driver.sql.idmapping.get_by_local_id", level = "debug", skip_all, fields(local_id = %local_id, domain_id = %domain_id, entity_type = ?entity_type))]
     async fn get_by_local_id<'a>(
         &self,
         state: &ServiceState,
@@ -91,6 +92,7 @@ impl IdMappingBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing an `Option` with the `IdMapping` if found, or an
     /// `Error`.
+    #[tracing::instrument(name = "driver.sql.idmapping.get_by_public_id", level = "debug", skip_all, fields(public_id = %public_id))]
     async fn get_by_public_id<'a>(
         &self,
         state: &ServiceState,
@@ -111,6 +113,7 @@ impl IdMappingBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing the created (or already-existing, on a benign
     /// race) `IdMapping`, or an `Error`.
+    #[tracing::instrument(name = "driver.sql.idmapping.create_id_mapping", level = "debug", skip_all, fields(local_id = %local_id, domain_id = %domain_id, entity_type = ?entity_type, public_id = %public_id))]
     async fn create_id_mapping<'a>(
         &self,
         state: &ServiceState,
@@ -137,6 +140,7 @@ impl IdMappingBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` indicating success, or an `Error`.
+    #[tracing::instrument(name = "driver.sql.idmapping.delete_id_mapping", level = "debug", skip_all, fields(public_id = %public_id))]
     async fn delete_id_mapping<'a>(
         &self,
         state: &ServiceState,
@@ -153,6 +157,7 @@ impl IdMappingBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` indicating success, or an `Error`.
+    #[tracing::instrument(name = "driver.sql.idmapping.delete_mappings_for_domain", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn delete_mappings_for_domain<'a>(
         &self,
         state: &ServiceState,

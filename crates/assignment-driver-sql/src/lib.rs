@@ -84,7 +84,6 @@ impl SqlBackend {
     ///
     /// Returns a `Vec<Assignment>` containing both the original assignments
     /// and any additionally generated implied role assignments.
-    #[tracing::instrument(level = "info", skip(self, state, assignments))]
     async fn resolve_implied_roles(
         &self,
         state: &ServiceState,
@@ -187,7 +186,6 @@ impl SqlBackend {
     ///
     /// A `Result` containing a `Vec` of `Assignment` if successful, or an
     /// `Error`.
-    #[tracing::instrument(level = "info", skip(self, state))]
     async fn list_assignments_for_multiple_actors_and_targets(
         &self,
         state: &ServiceState,
@@ -241,7 +239,7 @@ impl AssignmentBackend for SqlBackend {
     ///
     /// A `Result` containing a `bool` indicating if the grant exists, or an
     /// `Error`.
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.assignment.check_grant", level = "debug", skip_all)]
     async fn check_grant(
         &self,
         state: &ServiceState,
@@ -261,7 +259,7 @@ impl AssignmentBackend for SqlBackend {
     ///
     /// A `Result` containing the created `Assignment` if successful, or an
     /// `Error`.
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.assignment.create_grant", level = "debug", skip_all)]
     async fn create_grant(
         &self,
         state: &ServiceState,
@@ -281,7 +279,7 @@ impl AssignmentBackend for SqlBackend {
     ///
     /// A `Result` containing a `Vec` of `Assignment` if successful, or an
     /// `Error`.
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.assignment.list_assignments", level = "debug", skip_all, fields(params = ?params))]
     async fn list_assignments(
         &self,
         state: &ServiceState,
@@ -388,7 +386,7 @@ impl AssignmentBackend for SqlBackend {
     /// # Returns
     ///
     /// A `Result` indicating success or an `Error`.
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.assignment.revoke_grant", level = "debug", skip_all)]
     async fn revoke_grant(
         &self,
         state: &ServiceState,

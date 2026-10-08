@@ -28,7 +28,6 @@ use crate::entity::prelude::Group as DbGroup;
 ///
 /// # Returns
 /// A `Result` indicating success or an `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn delete<S: AsRef<str>>(
     db: &DatabaseConnection,
     group_id: S,

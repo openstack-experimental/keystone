@@ -65,7 +65,7 @@ impl ResourceBackend for SqlBackend {
     ///
     /// # Returns
     /// A `bool` indicating if the domain is enabled.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.resource.get_domain_enabled", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn get_domain_enabled<'a>(
         &self,
         state: &ServiceState,
@@ -82,7 +82,7 @@ impl ResourceBackend for SqlBackend {
     ///
     /// # Returns
     /// The created `Domain`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.resource.create_domain", level = "debug", skip_all)]
     async fn create_domain(
         &self,
         state: &ServiceState,
@@ -99,7 +99,7 @@ impl ResourceBackend for SqlBackend {
     ///
     /// # Returns
     /// The created `Project`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.resource.create_project", level = "debug", skip_all)]
     async fn create_project(
         &self,
         state: &ServiceState,
@@ -117,7 +117,7 @@ impl ResourceBackend for SqlBackend {
     ///
     /// # Returns
     /// The updated `Domain`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.resource.update_domain", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn update_domain<'a>(
         &self,
         state: &ServiceState,
@@ -136,7 +136,7 @@ impl ResourceBackend for SqlBackend {
     ///
     /// # Returns
     /// The updated `Project`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.resource.update_project", level = "debug", skip_all, fields(project_id = %project_id))]
     async fn update_project<'a>(
         &self,
         state: &ServiceState,
@@ -151,7 +151,7 @@ impl ResourceBackend for SqlBackend {
     /// # Parameters
     /// - `state`: Service state containing the database connection.
     /// - `id`: ID of the domain to delete.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.resource.delete_domain", level = "debug", skip_all, fields(id = %id))]
     async fn delete_domain<'a>(
         &self,
         state: &ServiceState,
@@ -165,7 +165,7 @@ impl ResourceBackend for SqlBackend {
     /// # Parameters
     /// - `state`: Service state containing the database connection.
     /// - `id`: ID of the project to delete.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.resource.delete_project", level = "debug", skip_all, fields(id = %id))]
     async fn delete_project<'a>(
         &self,
         state: &ServiceState,
@@ -183,7 +183,7 @@ impl ResourceBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing an `Option` with the `Domain` if found, or an
     /// `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.resource.get_domain", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn get_domain<'a>(
         &self,
         state: &ServiceState,
@@ -201,7 +201,11 @@ impl ResourceBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing an `Option` with the `Domain` if found, or an
     /// `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(
+        name = "driver.sql.resource.get_domain_by_name",
+        level = "debug",
+        skip_all
+    )]
     async fn get_domain_by_name<'a>(
         &self,
         state: &ServiceState,
@@ -219,7 +223,7 @@ impl ResourceBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing an `Option` with the `Project` if found, or an
     /// `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.resource.get_project", level = "debug", skip_all, fields(project_id = %project_id))]
     async fn get_project<'a>(
         &self,
         state: &ServiceState,
@@ -238,7 +242,7 @@ impl ResourceBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing an `Option` with the `Project` if found, or an
     /// `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.resource.get_project_by_name", level = "debug", skip_all, fields(name = %name, domain_id = %domain_id))]
     async fn get_project_by_name<'a>(
         &self,
         state: &ServiceState,
@@ -257,7 +261,7 @@ impl ResourceBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing an `Option` with the `Vec<Project>` if found, or
     /// an `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.resource.get_project_parents", level = "debug", skip_all, fields(project_id = %project_id))]
     async fn get_project_parents<'a>(
         &self,
         state: &ServiceState,
@@ -274,7 +278,7 @@ impl ResourceBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Vec<Domain>`.
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.resource.list_domains", level = "debug", skip_all, fields(params = ?params))]
     async fn list_domains(
         &self,
         state: &ServiceState,
@@ -291,7 +295,7 @@ impl ResourceBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Vec<Project>`.
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.resource.list_projects", level = "debug", skip_all, fields(params = ?params))]
     async fn list_projects(
         &self,
         state: &ServiceState,

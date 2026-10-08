@@ -80,6 +80,7 @@ impl IdMappingApi for IdMappingService {
     /// # Returns
     /// - `Result<Option<IdMapping>, IdMappingProviderError>` - A `Result`
     ///   containing an `Option` with the `IdMapping` if found, or an `Error`.
+    #[tracing::instrument(name = "provider.idmapping.get_by_local_id", level = "debug", skip_all, fields(local_id = %local_id, domain_id = %domain_id, entity_type = ?entity_type))]
     async fn get_by_local_id<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -101,6 +102,7 @@ impl IdMappingApi for IdMappingService {
     /// # Returns
     /// - `Result<Option<IdMapping>, IdMappingProviderError>` - A `Result`
     ///   containing an `Option` with the `IdMapping` if found, or an `Error`.
+    #[tracing::instrument(name = "provider.idmapping.get_by_public_id", level = "debug", skip_all, fields(public_id = %public_id))]
     async fn get_by_public_id<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -125,6 +127,7 @@ impl IdMappingApi for IdMappingService {
     /// # Returns
     /// - `Result<IdMapping, IdMappingProviderError>` - The created (or
     ///   already-existing, on a benign race) `IdMapping`, or an `Error`.
+    #[tracing::instrument(name = "provider.idmapping.create_id_mapping", level = "debug", skip_all, fields(local_id = %local_id, domain_id = %domain_id, entity_type = ?entity_type))]
     async fn create_id_mapping<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -167,6 +170,7 @@ impl IdMappingApi for IdMappingService {
     /// # Returns
     /// - `Result<(), IdMappingProviderError>` - `Ok` on success (including when
     ///   nothing was found), or an `Error`.
+    #[tracing::instrument(name = "provider.idmapping.delete_id_mapping", level = "debug", skip_all, fields(public_id = %public_id))]
     async fn delete_id_mapping<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -194,6 +198,7 @@ impl IdMappingApi for IdMappingService {
     /// # Returns
     /// - `Result<(), IdMappingProviderError>` - `Ok` on success (including when
     ///   nothing was found), or an `Error`.
+    #[tracing::instrument(name = "provider.idmapping.delete_mappings_for_domain", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn delete_mappings_for_domain<'a>(
         &self,
         ctx: &ExecutionContext<'a>,

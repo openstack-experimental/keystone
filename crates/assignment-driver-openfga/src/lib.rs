@@ -617,6 +617,11 @@ impl AssignmentBackend for OpenFGADriver {
     ///
     /// Fans out over every configured representation of the actor and target
     /// and returns `true` if any combination is allowed.
+    #[tracing::instrument(
+        name = "driver.openfga.assignment.check_grant",
+        level = "debug",
+        skip_all
+    )]
     async fn check_grant(
         &self,
         state: &ServiceState,
@@ -644,6 +649,11 @@ impl AssignmentBackend for OpenFGADriver {
     }
 
     /// Create a grant by writing the canonical tuple.
+    #[tracing::instrument(
+        name = "driver.openfga.assignment.create_grant",
+        level = "debug",
+        skip_all
+    )]
     async fn create_grant(
         &self,
         state: &ServiceState,
@@ -680,6 +690,7 @@ impl AssignmentBackend for OpenFGADriver {
     }
 
     /// List role assignments matching `params`.
+    #[tracing::instrument(name = "driver.openfga.assignment.list_assignments", level = "debug", skip_all, fields(params = ?params))]
     async fn list_assignments(
         &self,
         state: &ServiceState,
@@ -978,6 +989,11 @@ impl AssignmentBackend for OpenFGADriver {
     /// representations that actually hold the tuple are deleted. A real OpenFGA
     /// error from either the `read` or the `delete` propagates as-is. The
     /// representations are probed concurrently, capped at `max_concurrency`.
+    #[tracing::instrument(
+        name = "driver.openfga.assignment.revoke_grant",
+        level = "debug",
+        skip_all
+    )]
     async fn revoke_grant(
         &self,
         state: &ServiceState,

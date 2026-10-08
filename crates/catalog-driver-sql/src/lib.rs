@@ -71,7 +71,7 @@ inventory::submit! {
 #[async_trait]
 impl CatalogBackend for SqlBackend {
     /// Associate an endpoint with a project.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.add_endpoint_to_project", level = "debug", skip_all, fields(project_id = %project_id, endpoint_id = %endpoint_id))]
     async fn add_endpoint_to_project<'a>(
         &self,
         state: &ServiceState,
@@ -82,7 +82,7 @@ impl CatalogBackend for SqlBackend {
     }
 
     /// Associate an endpoint group with a project.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.add_endpoint_group_to_project", level = "debug", skip_all, fields(project_id = %project_id, endpoint_group_id = %endpoint_group_id))]
     async fn add_endpoint_group_to_project<'a>(
         &self,
         state: &ServiceState,
@@ -96,7 +96,7 @@ impl CatalogBackend for SqlBackend {
     }
 
     /// Check whether an endpoint is associated with a project.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.check_endpoint_in_project", level = "debug", skip_all, fields(project_id = %project_id, endpoint_id = %endpoint_id))]
     async fn check_endpoint_in_project<'a>(
         &self,
         state: &ServiceState,
@@ -107,7 +107,7 @@ impl CatalogBackend for SqlBackend {
     }
 
     /// Check whether an endpoint group is associated with a project.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.check_endpoint_group_in_project", level = "debug", skip_all, fields(project_id = %project_id, endpoint_group_id = %endpoint_group_id))]
     async fn check_endpoint_group_in_project<'a>(
         &self,
         state: &ServiceState,
@@ -129,7 +129,7 @@ impl CatalogBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing the created `Endpoint`, or a
     /// `CatalogProviderError`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.create_endpoint", level = "debug", skip_all)]
     async fn create_endpoint(
         &self,
         state: &ServiceState,
@@ -139,7 +139,11 @@ impl CatalogBackend for SqlBackend {
     }
 
     /// Create a new endpoint group.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(
+        name = "driver.sql.catalog.create_endpoint_group",
+        level = "debug",
+        skip_all
+    )]
     async fn create_endpoint_group(
         &self,
         state: &ServiceState,
@@ -156,7 +160,7 @@ impl CatalogBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing the created `Region`, or a `CatalogProviderError`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.create_region", level = "debug", skip_all)]
     async fn create_region(
         &self,
         state: &ServiceState,
@@ -174,7 +178,7 @@ impl CatalogBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing the created `Service`, or a
     /// `CatalogProviderError`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.create_service", level = "debug", skip_all)]
     async fn create_service(
         &self,
         state: &ServiceState,
@@ -191,7 +195,7 @@ impl CatalogBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` indicating success or a `CatalogProviderError`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.delete_endpoint", level = "debug", skip_all, fields(id = %id))]
     async fn delete_endpoint<'a>(
         &self,
         state: &ServiceState,
@@ -201,7 +205,7 @@ impl CatalogBackend for SqlBackend {
     }
 
     /// Delete an endpoint group by ID.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.delete_endpoint_group", level = "debug", skip_all, fields(id = %id))]
     async fn delete_endpoint_group<'a>(
         &self,
         state: &ServiceState,
@@ -218,7 +222,7 @@ impl CatalogBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` indicating success or a `CatalogProviderError`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.delete_region", level = "debug", skip_all, fields(id = %id))]
     async fn delete_region<'a>(
         &self,
         state: &ServiceState,
@@ -235,7 +239,7 @@ impl CatalogBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` indicating success or a `CatalogProviderError`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.delete_service", level = "debug", skip_all, fields(id = %id))]
     async fn delete_service<'a>(
         &self,
         state: &ServiceState,
@@ -253,7 +257,7 @@ impl CatalogBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing a vector of tuples of `Service` and its associated
     /// `Endpoint`s, or a `CatalogProviderError`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.get_catalog", level = "debug", skip_all)]
     async fn get_catalog(
         &self,
         state: &ServiceState,
@@ -271,7 +275,7 @@ impl CatalogBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing an `Option` with the `Endpoint` if found, or an
     /// `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.get_endpoint", level = "debug", skip_all, fields(id = %id))]
     async fn get_endpoint<'a>(
         &self,
         state: &ServiceState,
@@ -281,7 +285,7 @@ impl CatalogBackend for SqlBackend {
     }
 
     /// Get a single endpoint group by ID.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.get_endpoint_group", level = "debug", skip_all, fields(id = %id))]
     async fn get_endpoint_group<'a>(
         &self,
         state: &ServiceState,
@@ -299,7 +303,7 @@ impl CatalogBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing an `Option` with the `Region` if found, or an
     /// `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.get_region", level = "debug", skip_all, fields(id = %id))]
     async fn get_region<'a>(
         &self,
         state: &ServiceState,
@@ -317,7 +321,7 @@ impl CatalogBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing an `Option` with the `Service` if found, or an
     /// `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.get_service", level = "debug", skip_all, fields(id = %id))]
     async fn get_service<'a>(
         &self,
         state: &ServiceState,
@@ -335,7 +339,7 @@ impl CatalogBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing a vector of `Endpoint`s, or a
     /// `CatalogProviderError`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.list_endpoints", level = "debug", skip_all, fields(params = ?params))]
     async fn list_endpoints(
         &self,
         state: &ServiceState,
@@ -345,7 +349,7 @@ impl CatalogBackend for SqlBackend {
     }
 
     /// List endpoint groups.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.list_endpoint_groups", level = "debug", skip_all, fields(params = ?params))]
     async fn list_endpoint_groups(
         &self,
         state: &ServiceState,
@@ -355,7 +359,7 @@ impl CatalogBackend for SqlBackend {
     }
 
     /// List the endpoints associated with a project.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.list_project_endpoints", level = "debug", skip_all, fields(project_id = %project_id))]
     async fn list_project_endpoints<'a>(
         &self,
         state: &ServiceState,
@@ -365,7 +369,7 @@ impl CatalogBackend for SqlBackend {
     }
 
     /// List the endpoint groups associated with a project.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.list_project_endpoint_groups", level = "debug", skip_all, fields(project_id = %project_id))]
     async fn list_project_endpoint_groups<'a>(
         &self,
         state: &ServiceState,
@@ -386,7 +390,7 @@ impl CatalogBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing a vector of `Region`s, or a
     /// `CatalogProviderError`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.list_regions", level = "debug", skip_all, fields(params = ?params))]
     async fn list_regions(
         &self,
         state: &ServiceState,
@@ -404,7 +408,7 @@ impl CatalogBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing a vector of `Service`s, or a
     /// `CatalogProviderError`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.list_services", level = "debug", skip_all, fields(params = ?params))]
     async fn list_services(
         &self,
         state: &ServiceState,
@@ -423,9 +427,8 @@ impl CatalogBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing the updated `Endpoint`, or a
     /// `CatalogProviderError`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
     /// Remove the association between an endpoint and a project.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.remove_endpoint_from_project", level = "debug", skip_all, fields(project_id = %project_id, endpoint_id = %endpoint_id))]
     async fn remove_endpoint_from_project<'a>(
         &self,
         state: &ServiceState,
@@ -436,7 +439,7 @@ impl CatalogBackend for SqlBackend {
     }
 
     /// Remove the association between an endpoint group and a project.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.remove_endpoint_group_from_project", level = "debug", skip_all, fields(project_id = %project_id, endpoint_group_id = %endpoint_group_id))]
     async fn remove_endpoint_group_from_project<'a>(
         &self,
         state: &ServiceState,
@@ -450,7 +453,7 @@ impl CatalogBackend for SqlBackend {
     }
 
     /// Update an existing endpoint.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.update_endpoint", level = "debug", skip_all, fields(id = %id))]
     async fn update_endpoint<'a>(
         &self,
         state: &ServiceState,
@@ -461,7 +464,7 @@ impl CatalogBackend for SqlBackend {
     }
 
     /// Update an existing endpoint group.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.update_endpoint_group", level = "debug", skip_all, fields(id = %id))]
     async fn update_endpoint_group<'a>(
         &self,
         state: &ServiceState,
@@ -480,7 +483,7 @@ impl CatalogBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing the updated `Region`, or a `CatalogProviderError`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.update_region", level = "debug", skip_all, fields(id = %id))]
     async fn update_region<'a>(
         &self,
         state: &ServiceState,
@@ -500,7 +503,7 @@ impl CatalogBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing the updated `Service`, or a
     /// `CatalogProviderError`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.catalog.update_service", level = "debug", skip_all, fields(id = %id))]
     async fn update_service<'a>(
         &self,
         state: &ServiceState,

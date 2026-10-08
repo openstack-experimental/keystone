@@ -71,6 +71,11 @@ impl K8sAuthApi for K8sAuthService {
     /// # Returns
     /// * Success with [`AuthenticationResult`] via mapping engine.
     /// * Error if authentication fails.
+    #[tracing::instrument(
+        name = "provider.k8s_auth.authenticate_by_k8s_mapping",
+        level = "debug",
+        skip_all
+    )]
     async fn authenticate_by_k8s_mapping<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -88,6 +93,11 @@ impl K8sAuthApi for K8sAuthService {
     /// # Returns
     /// * Success with the created [`K8sAuthInstance`].
     /// * Error if the instance could not be created.
+    #[tracing::instrument(
+        name = "provider.k8s_auth.create_auth_instance",
+        level = "debug",
+        skip_all
+    )]
     async fn create_auth_instance<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -139,6 +149,7 @@ impl K8sAuthApi for K8sAuthService {
     /// # Returns
     /// * Success if the instance was deleted.
     /// * Error if the deletion failed.
+    #[tracing::instrument(name = "provider.k8s_auth.delete_auth_instance", level = "debug", skip_all, fields(id = %id))]
     async fn delete_auth_instance<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -182,6 +193,7 @@ impl K8sAuthApi for K8sAuthService {
     /// # Returns
     /// A `Result` containing an `Option` with the [`K8sAuthInstance`] if found,
     /// or an `Error`.
+    #[tracing::instrument(name = "provider.k8s_auth.get_auth_instance", level = "debug", skip_all, fields(id = %id))]
     async fn get_auth_instance<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -199,6 +211,7 @@ impl K8sAuthApi for K8sAuthService {
     /// # Returns
     /// * Success with a list of [`K8sAuthInstance`].
     /// * Error if the listing failed.
+    #[tracing::instrument(name = "provider.k8s_auth.list_auth_instances", level = "debug", skip_all, fields(params = ?params))]
     async fn list_auth_instances<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -219,6 +232,7 @@ impl K8sAuthApi for K8sAuthService {
     /// # Returns
     /// * Success with the updated [`K8sAuthInstance`].
     /// * Error if the update failed.
+    #[tracing::instrument(name = "provider.k8s_auth.update_auth_instance", level = "debug", skip_all, fields(id = %id))]
     async fn update_auth_instance<'a>(
         &self,
         ctx: &ExecutionContext<'a>,

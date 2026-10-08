@@ -120,7 +120,6 @@ fn get_user_list_query(
 /// # Returns
 /// A `Result` containing a map from user id to its `local_user`,
 /// `nonlocal_user` and `user_option` rows, or an `Error`.
-#[tracing::instrument(skip_all)]
 async fn fetch_joined_user_details(
     db: &DatabaseConnection,
     user_ids: &[String],
@@ -195,7 +194,6 @@ async fn fetch_joined_user_details(
 ///
 /// # Returns
 /// A `Result` containing a list of `UserResponse`s, or an `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn list(
     conf: &Config,
     db: &DatabaseConnection,

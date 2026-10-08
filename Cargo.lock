@@ -5836,6 +5836,7 @@ dependencies = [
  "rmp-serde",
  "serde",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

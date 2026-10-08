@@ -114,7 +114,7 @@ impl RoleBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing the created `Role`, or an `Error`.
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.role.create_role", level = "debug", skip_all)]
     async fn create_role(
         &self,
         state: &ServiceState,
@@ -132,7 +132,7 @@ impl RoleBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing the created `RoleImply`, or an `Error`.
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.role.create_role_imply_rule", level = "debug", skip_all, fields(prior_role_id = %prior_role_id, implied_role_id = %implied_role_id))]
     async fn create_role_imply_rule<'a>(
         &self,
         state: &ServiceState,
@@ -148,7 +148,7 @@ impl RoleBackend for SqlBackend {
     /// * `state` - The current service state.
     /// * `prior_role_id` - The ID of the prior role.
     /// * `implied_role_id` - The ID of the implied role.
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.role.check_role_imply_rule", level = "debug", skip_all, fields(prior_role_id = %prior_role_id, implied_role_id = %implied_role_id))]
     async fn check_role_imply_rule<'a>(
         &self,
         state: &ServiceState,
@@ -167,6 +167,7 @@ impl RoleBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing the updated `Role`, or an `Error`.
+    #[tracing::instrument(name = "driver.sql.role.update_role", level = "debug", skip_all, fields(role_id = %role_id))]
     async fn update_role<'a>(
         &self,
         state: &ServiceState,
@@ -184,6 +185,7 @@ impl RoleBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` indicating success or an `Error`.
+    #[tracing::instrument(name = "driver.sql.role.delete_role", level = "debug", skip_all, fields(id = %id))]
     async fn delete_role<'a>(
         &self,
         state: &ServiceState,
@@ -201,6 +203,7 @@ impl RoleBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` indicating success or an `Error`.
+    #[tracing::instrument(name = "driver.sql.role.delete_role_imply_rule", level = "debug", skip_all, fields(prior_role_id = %prior_role_id, implied_role_id = %implied_role_id))]
     async fn delete_role_imply_rule<'a>(
         &self,
         state: &ServiceState,
@@ -220,7 +223,11 @@ impl RoleBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` indicating success or an `Error`.
-    #[tracing::instrument(level = "info", skip(self, state))]
+    #[tracing::instrument(
+        name = "driver.sql.role.expand_implied_roles",
+        level = "debug",
+        skip_all
+    )]
     async fn expand_implied_roles(
         &self,
         state: &ServiceState,
@@ -238,7 +245,7 @@ impl RoleBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing an `Option` with the `Role` if found, or an
     /// `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.role.get_role", level = "debug", skip_all, fields(id = %id))]
     async fn get_role<'a>(
         &self,
         state: &ServiceState,
@@ -257,7 +264,7 @@ impl RoleBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing an `Option` with the `RoleImply` if found, or an
     /// `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.role.get_role_imply_rule", level = "debug", skip_all, fields(prior_role_id = %prior_role_id, implied_role_id = %implied_role_id))]
     async fn get_role_imply_rule<'a>(
         &self,
         state: &ServiceState,
@@ -274,7 +281,11 @@ impl RoleBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing a list of `RoleImply`, or an `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(
+        name = "driver.sql.role.list_role_imply_rules",
+        level = "debug",
+        skip_all
+    )]
     async fn list_role_imply_rules(
         &self,
         state: &ServiceState,
@@ -290,7 +301,7 @@ impl RoleBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing a list of `RoleImply`, or an `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.role.list_role_imply_rules_by_prior", level = "trace", skip_all, fields(prior_role_id = %prior_role_id))]
     async fn list_role_imply_rules_by_prior<'a>(
         &self,
         state: &ServiceState,
@@ -307,7 +318,7 @@ impl RoleBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing a list of `Role`s, or an `Error`.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.role.list_roles", level = "debug", skip_all, fields(params = ?params))]
     async fn list_roles(
         &self,
         state: &ServiceState,

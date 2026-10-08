@@ -36,7 +36,6 @@ use crate::entity::{
 /// # Returns
 /// A `Result` containing an `Option` with the `(local_user::Model, impl
 /// IntoIterator<Item = password::Model>)` if found, or an `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn load_local_user_with_passwords<
     C: ConnectionTrait,
     S1: AsRef<str>,
@@ -91,7 +90,6 @@ pub async fn load_local_user_with_passwords<
 /// # Returns
 /// A `Result` containing an `Option` with the `(local_user::Model,
 /// Option<password::Model>)` if found, or an `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn load_local_user_with_latest_password<
     C: ConnectionTrait,
     S1: AsRef<str>,
@@ -146,7 +144,6 @@ pub async fn load_local_user_with_latest_password<
 ///
 /// # Returns
 /// A `Result` containing a list of optional password vectors, or an `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn load_local_users_passwords<
     C: ConnectionTrait,
     L: IntoIterator<Item = Option<i32>> + std::fmt::Debug,

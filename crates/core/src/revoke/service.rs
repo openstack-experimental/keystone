@@ -57,6 +57,11 @@ impl RevokeApi for RevokeService {
     /// # Arguments
     /// * `state` - The current service state.
     /// * `event` - The revocation event to create.
+    #[tracing::instrument(
+        name = "provider.revoke.create_revocation_event",
+        level = "debug",
+        skip_all
+    )]
     async fn create_revocation_event<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -88,6 +93,7 @@ impl RevokeApi for RevokeService {
     /// * `state` - The current service state.
     /// * `token_security_context` - A `ValidatedSecurityContext` of the Token.
     /// * `token` - The token to check.
+    #[tracing::instrument(name = "provider.revoke.is_token_revoked", level = "debug", skip_all)]
     async fn is_token_revoked<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -107,6 +113,7 @@ impl RevokeApi for RevokeService {
     /// # Arguments
     /// * `state` - The current service state.
     /// * `token` - The token to revoke.
+    #[tracing::instrument(name = "provider.revoke.revoke_token", level = "debug", skip_all)]
     async fn revoke_token<'a>(
         &self,
         ctx: &ExecutionContext<'a>,

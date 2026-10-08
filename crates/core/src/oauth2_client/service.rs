@@ -172,6 +172,7 @@ impl Oauth2ClientService {
 
 #[async_trait]
 impl Oauth2ClientApi for Oauth2ClientService {
+    #[tracing::instrument(name = "provider.oauth2_client.create", level = "debug", skip_all)]
     async fn create<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -206,6 +207,7 @@ impl Oauth2ClientApi for Oauth2ClientService {
         Ok((created, plaintext_secret))
     }
 
+    #[tracing::instrument(name = "provider.oauth2_client.delete", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id))]
     async fn delete<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -228,6 +230,7 @@ impl Oauth2ClientApi for Oauth2ClientService {
         }
     }
 
+    #[tracing::instrument(name = "provider.oauth2_client.get", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id))]
     async fn get<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -239,6 +242,7 @@ impl Oauth2ClientApi for Oauth2ClientService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.oauth2_client.get_by_client_id", level = "debug", skip_all, fields(client_id = %client_id))]
     async fn get_by_client_id<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -249,6 +253,7 @@ impl Oauth2ClientApi for Oauth2ClientService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.oauth2_client.list", level = "debug", skip_all, fields(params = ?params))]
     async fn list<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -257,6 +262,7 @@ impl Oauth2ClientApi for Oauth2ClientService {
         self.backend_driver.list(ctx.state(), params).await
     }
 
+    #[tracing::instrument(name = "provider.oauth2_client.rotate_secret", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id))]
     async fn rotate_secret<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -299,6 +305,7 @@ impl Oauth2ClientApi for Oauth2ClientService {
         Ok((updated, secret.expose_secret().to_string()))
     }
 
+    #[tracing::instrument(name = "provider.oauth2_client.update", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id))]
     async fn update<'a>(
         &self,
         ctx: &ExecutionContext<'a>,

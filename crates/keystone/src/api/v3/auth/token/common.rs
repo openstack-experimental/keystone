@@ -34,7 +34,12 @@ use openstack_keystone_core_types::application_credential::{
 /// expose any hints that user, project, domain, etc might exist before we have
 /// authenticated them by taking different amount of time in case of certain
 /// validations.
-#[tracing::instrument(skip(state, headers), err)]
+#[tracing::instrument(
+    name = "auth.authenticate_request",
+    level = "debug",
+    skip(state, headers),
+    err
+)]
 pub(super) async fn authenticate_request(
     state: &ServiceState,
     req: &AuthRequest,

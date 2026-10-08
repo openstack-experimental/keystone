@@ -164,7 +164,7 @@ pub async fn find_project_from_scope(
 /// # Returns
 /// * `Ok(ScopeInfo)`: The scope information
 /// * `Err(KeystoneApiError)`: An error if the scope is not valid
-#[tracing::instrument(skip(state), err)]
+#[tracing::instrument(name = "auth.get_authz_info", level = "debug", skip(state), err)]
 pub async fn get_authz_info(
     state: &ServiceState,
     scope: Option<&ProviderScope>,

@@ -134,10 +134,16 @@ inventory::submit! {
 impl IdentityBackend for LdapBackend {
     /// LDAP maps one directory to one domain (python-keystone parity: the
     /// LDAP driver is not domain aware).
+    #[tracing::instrument(
+        name = "driver.ldap.identity.is_domain_aware",
+        level = "debug",
+        skip_all
+    )]
     fn is_domain_aware(&self) -> bool {
         false
     }
 
+    #[tracing::instrument(name = "driver.ldap.identity.add_user_to_group", level = "debug", skip_all, fields(_user_id = %_user_id, _group_id = %_group_id))]
     async fn add_user_to_group<'a>(
         &self,
         _state: &ServiceState,
@@ -147,6 +153,7 @@ impl IdentityBackend for LdapBackend {
         Err(readonly("add_user_to_group"))
     }
 
+    #[tracing::instrument(name = "driver.ldap.identity.add_user_to_group_expiring", level = "debug", skip_all, fields(_user_id = %_user_id, _group_id = %_group_id, _idp_id = %_idp_id))]
     async fn add_user_to_group_expiring<'a>(
         &self,
         _state: &ServiceState,
@@ -157,6 +164,11 @@ impl IdentityBackend for LdapBackend {
         Err(not_implemented("expiring group membership"))
     }
 
+    #[tracing::instrument(
+        name = "driver.ldap.identity.add_users_to_groups",
+        level = "debug",
+        skip_all
+    )]
     async fn add_users_to_groups<'a>(
         &self,
         _state: &ServiceState,
@@ -165,6 +177,7 @@ impl IdentityBackend for LdapBackend {
         Err(readonly("add_users_to_groups"))
     }
 
+    #[tracing::instrument(name = "driver.ldap.identity.add_users_to_groups_expiring", level = "debug", skip_all, fields(_idp_id = %_idp_id))]
     async fn add_users_to_groups_expiring<'a>(
         &self,
         _state: &ServiceState,
@@ -174,7 +187,11 @@ impl IdentityBackend for LdapBackend {
         Err(not_implemented("expiring group membership"))
     }
 
-    #[tracing::instrument(skip(self, state, auth))]
+    #[tracing::instrument(
+        name = "driver.ldap.identity.authenticate_by_password",
+        level = "debug",
+        skip_all
+    )]
     async fn authenticate_by_password(
         &self,
         state: &ServiceState,
@@ -191,7 +208,11 @@ impl IdentityBackend for LdapBackend {
         .await
     }
 
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(
+        name = "driver.ldap.identity.check_user_exist",
+        level = "debug",
+        skip_all
+    )]
     async fn check_user_exist<'a>(
         &self,
         state: &ServiceState,
@@ -211,6 +232,7 @@ impl IdentityBackend for LdapBackend {
         .await
     }
 
+    #[tracing::instrument(name = "driver.ldap.identity.create_group", level = "debug", skip_all)]
     async fn create_group(
         &self,
         _state: &ServiceState,
@@ -219,6 +241,7 @@ impl IdentityBackend for LdapBackend {
         Err(readonly("create_group"))
     }
 
+    #[tracing::instrument(name = "driver.ldap.identity.create_user", level = "debug", skip_all)]
     async fn create_user(
         &self,
         _state: &ServiceState,
@@ -227,6 +250,7 @@ impl IdentityBackend for LdapBackend {
         Err(readonly("create_user"))
     }
 
+    #[tracing::instrument(name = "driver.ldap.identity.delete_group", level = "debug", skip_all, fields(_group_id = %_group_id))]
     async fn delete_group<'a>(
         &self,
         _state: &ServiceState,
@@ -235,6 +259,7 @@ impl IdentityBackend for LdapBackend {
         Err(readonly("delete_group"))
     }
 
+    #[tracing::instrument(name = "driver.ldap.identity.delete_user", level = "debug", skip_all, fields(_user_id = %_user_id))]
     async fn delete_user<'a>(
         &self,
         _state: &ServiceState,
@@ -243,7 +268,7 @@ impl IdentityBackend for LdapBackend {
         Err(readonly("delete_user"))
     }
 
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.ldap.identity.get_group", level = "debug", skip_all, fields(group_id = %group_id))]
     async fn get_group<'a>(
         &self,
         state: &ServiceState,
@@ -259,7 +284,7 @@ impl IdentityBackend for LdapBackend {
         .await
     }
 
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.ldap.identity.get_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn get_user<'a>(
         &self,
         state: &ServiceState,
@@ -275,6 +300,7 @@ impl IdentityBackend for LdapBackend {
         .await
     }
 
+    #[tracing::instrument(name = "driver.ldap.identity.get_user_domain_id", level = "debug", skip_all, fields(_user_id = %_user_id))]
     async fn get_user_domain_id<'a>(
         &self,
         state: &ServiceState,
@@ -283,7 +309,7 @@ impl IdentityBackend for LdapBackend {
         Ok(self.default_domain_id(state).await)
     }
 
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.ldap.identity.find_user_by_name_ci", level = "debug", skip_all, fields(domain_id = %domain_id, name = %name))]
     async fn find_user_by_name_ci<'a>(
         &self,
         state: &ServiceState,
@@ -301,6 +327,7 @@ impl IdentityBackend for LdapBackend {
         .await
     }
 
+    #[tracing::instrument(name = "driver.ldap.identity.find_federated_user", level = "debug", skip_all, fields(_idp_id = %_idp_id, _unique_id = %_unique_id))]
     async fn find_federated_user<'a>(
         &self,
         _state: &ServiceState,
@@ -313,7 +340,7 @@ impl IdentityBackend for LdapBackend {
         Err(not_implemented("federated users"))
     }
 
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.ldap.identity.list_groups", level = "debug", skip_all, fields(params = ?params))]
     async fn list_groups(
         &self,
         state: &ServiceState,
@@ -323,7 +350,7 @@ impl IdentityBackend for LdapBackend {
         group::list(&self.service_pool, &self.config, &default_domain_id, params).await
     }
 
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.ldap.identity.list_users", level = "debug", skip_all, fields(params = ?params))]
     async fn list_users(
         &self,
         state: &ServiceState,
@@ -333,7 +360,7 @@ impl IdentityBackend for LdapBackend {
         user::list(&self.service_pool, &self.config, &default_domain_id, params).await
     }
 
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.ldap.identity.list_groups_of_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn list_groups_of_user<'a>(
         &self,
         state: &ServiceState,
@@ -360,7 +387,7 @@ impl IdentityBackend for LdapBackend {
         .await
     }
 
-    #[tracing::instrument(skip(self, _state))]
+    #[tracing::instrument(name = "driver.ldap.identity.list_users_of_group", level = "debug", skip_all, fields(group_id = %group_id))]
     async fn list_users_of_group<'a>(
         &self,
         _state: &ServiceState,
@@ -369,7 +396,7 @@ impl IdentityBackend for LdapBackend {
         group::list_users_of_group(&self.service_pool, &self.config, group_id).await
     }
 
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.ldap.identity.find_group_by_name_ci", level = "debug", skip_all, fields(domain_id = %domain_id, name = %name))]
     async fn find_group_by_name_ci<'a>(
         &self,
         state: &ServiceState,
@@ -387,6 +414,7 @@ impl IdentityBackend for LdapBackend {
         .await
     }
 
+    #[tracing::instrument(name = "driver.ldap.identity.update_group", level = "debug", skip_all, fields(_group_id = %_group_id))]
     async fn update_group<'a>(
         &self,
         _state: &ServiceState,
@@ -396,6 +424,7 @@ impl IdentityBackend for LdapBackend {
         Err(readonly("update_group"))
     }
 
+    #[tracing::instrument(name = "driver.ldap.identity.remove_user_from_group", level = "debug", skip_all, fields(_user_id = %_user_id, _group_id = %_group_id))]
     async fn remove_user_from_group<'a>(
         &self,
         _state: &ServiceState,
@@ -405,6 +434,7 @@ impl IdentityBackend for LdapBackend {
         Err(readonly("remove_user_from_group"))
     }
 
+    #[tracing::instrument(name = "driver.ldap.identity.remove_user_from_group_expiring", level = "debug", skip_all, fields(_user_id = %_user_id, _group_id = %_group_id, _idp_id = %_idp_id))]
     async fn remove_user_from_group_expiring<'a>(
         &self,
         _state: &ServiceState,
@@ -415,6 +445,7 @@ impl IdentityBackend for LdapBackend {
         Err(not_implemented("expiring group membership"))
     }
 
+    #[tracing::instrument(name = "driver.ldap.identity.remove_user_from_groups", level = "debug", skip_all, fields(_user_id = %_user_id))]
     async fn remove_user_from_groups<'a>(
         &self,
         _state: &ServiceState,
@@ -424,6 +455,7 @@ impl IdentityBackend for LdapBackend {
         Err(readonly("remove_user_from_groups"))
     }
 
+    #[tracing::instrument(name = "driver.ldap.identity.remove_user_from_groups_expiring", level = "debug", skip_all, fields(_user_id = %_user_id, _idp_id = %_idp_id))]
     async fn remove_user_from_groups_expiring<'a>(
         &self,
         _state: &ServiceState,
@@ -434,6 +466,7 @@ impl IdentityBackend for LdapBackend {
         Err(not_implemented("expiring group membership"))
     }
 
+    #[tracing::instrument(name = "driver.ldap.identity.set_user_groups", level = "debug", skip_all, fields(_user_id = %_user_id))]
     async fn set_user_groups<'a>(
         &self,
         _state: &ServiceState,
@@ -443,6 +476,7 @@ impl IdentityBackend for LdapBackend {
         Err(readonly("set_user_groups"))
     }
 
+    #[tracing::instrument(name = "driver.ldap.identity.update_user", level = "debug", skip_all, fields(_user_id = %_user_id))]
     async fn update_user<'a>(
         &self,
         _state: &ServiceState,
@@ -452,6 +486,7 @@ impl IdentityBackend for LdapBackend {
         Err(readonly("update_user"))
     }
 
+    #[tracing::instrument(name = "driver.ldap.identity.update_user_password", level = "debug", skip_all, fields(_user_id = %_user_id))]
     async fn update_user_password<'a>(
         &self,
         _state: &ServiceState,
@@ -462,6 +497,7 @@ impl IdentityBackend for LdapBackend {
         Err(readonly("update_user_password"))
     }
 
+    #[tracing::instrument(name = "driver.ldap.identity.set_user_groups_expiring", level = "debug", skip_all, fields(_user_id = %_user_id, _idp_id = %_idp_id))]
     async fn set_user_groups_expiring<'a>(
         &self,
         _state: &ServiceState,

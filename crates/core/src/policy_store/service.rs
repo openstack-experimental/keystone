@@ -62,6 +62,11 @@ impl PolicyStoreApi for PolicyStoreService {
     /// # Returns
     /// A `Result` containing the created `Policy`, or a
     /// `PolicyStoreProviderError`.
+    #[tracing::instrument(
+        name = "provider.policy_store.create_policy",
+        level = "debug",
+        skip_all
+    )]
     async fn create_policy<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -121,6 +126,7 @@ impl PolicyStoreApi for PolicyStoreService {
     ///
     /// # Returns
     /// A `Result` indicating success or a `PolicyStoreProviderError`.
+    #[tracing::instrument(name = "provider.policy_store.delete_policy", level = "debug", skip_all, fields(id = %id))]
     async fn delete_policy<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -164,6 +170,7 @@ impl PolicyStoreApi for PolicyStoreService {
     /// # Returns
     /// A `Result` containing an `Option` with the policy if found, or a
     /// `PolicyStoreProviderError`.
+    #[tracing::instrument(name = "provider.policy_store.get_policy", level = "debug", skip_all, fields(id = %id))]
     async fn get_policy<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -181,6 +188,7 @@ impl PolicyStoreApi for PolicyStoreService {
     /// # Returns
     /// A `Result` containing a vector of `Policy` objects or a
     /// `PolicyStoreProviderError`.
+    #[tracing::instrument(name = "provider.policy_store.list_policies", level = "debug", skip_all, fields(params = ?params))]
     async fn list_policies<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -202,6 +210,7 @@ impl PolicyStoreApi for PolicyStoreService {
     /// # Returns
     /// A `Result` containing the updated `Policy`, or a
     /// `PolicyStoreProviderError`.
+    #[tracing::instrument(name = "provider.policy_store.update_policy", level = "debug", skip_all, fields(id = %id))]
     async fn update_policy<'a>(
         &self,
         exec: &ExecutionContext<'a>,

@@ -32,7 +32,6 @@ use crate::user_option::UserOptionIntoModelIterator;
 ///
 /// # Returns
 /// A `Result` containing `()` if successful, or an `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn create<C, U>(
     db: &C,
     user_id: U,

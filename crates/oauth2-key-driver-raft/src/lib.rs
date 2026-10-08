@@ -909,6 +909,7 @@ impl RaftOauth2KeyBackend {
 
 #[async_trait]
 impl Oauth2KeyBackend for RaftOauth2KeyBackend {
+    #[tracing::instrument(name = "driver.raft.oauth2_key.ensure_domain_keys", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn ensure_domain_keys(
         &self,
         state: &ServiceState,
@@ -923,6 +924,7 @@ impl Oauth2KeyBackend for RaftOauth2KeyBackend {
             .await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_key.active_keys", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn active_keys(
         &self,
         state: &ServiceState,
@@ -935,6 +937,7 @@ impl Oauth2KeyBackend for RaftOauth2KeyBackend {
         self.active_keys_impl(storage, domain_id).await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_key.rotate_signing_key", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn rotate_signing_key(
         &self,
         state: &ServiceState,
@@ -949,6 +952,7 @@ impl Oauth2KeyBackend for RaftOauth2KeyBackend {
             .await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_key.stage_emergency_rotation", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn stage_emergency_rotation(
         &self,
         state: &ServiceState,
@@ -964,6 +968,7 @@ impl Oauth2KeyBackend for RaftOauth2KeyBackend {
             .await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_key.confirm_emergency_rotation", level = "debug", skip_all, fields(domain_id = %domain_id, rotation_id = %rotation_id))]
     async fn confirm_emergency_rotation(
         &self,
         state: &ServiceState,
@@ -996,6 +1001,7 @@ impl Oauth2KeyBackend for RaftOauth2KeyBackend {
         .await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_key.stage_local_emergency_rotation", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn stage_local_emergency_rotation(
         &self,
         state: &ServiceState,
@@ -1046,6 +1052,7 @@ impl Oauth2KeyBackend for RaftOauth2KeyBackend {
         .await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_key.list_local_emergency_candidates", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn list_local_emergency_candidates(
         &self,
         state: &ServiceState,
@@ -1059,6 +1066,7 @@ impl Oauth2KeyBackend for RaftOauth2KeyBackend {
             .await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_key.reconcile_local_emergency_rotation", level = "debug", skip_all, fields(domain_id = %domain_id, rotation_id = %rotation_id))]
     async fn reconcile_local_emergency_rotation(
         &self,
         state: &ServiceState,
@@ -1087,6 +1095,7 @@ impl Oauth2KeyBackend for RaftOauth2KeyBackend {
         .await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_key.revoked_jtis", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn revoked_jtis(
         &self,
         state: &ServiceState,
@@ -1099,6 +1108,7 @@ impl Oauth2KeyBackend for RaftOauth2KeyBackend {
         self.revoked_jtis_impl(storage, domain_id).await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_key.revoke_jti", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn revoke_jti(
         &self,
         state: &ServiceState,
@@ -1118,6 +1128,11 @@ impl Oauth2KeyBackend for RaftOauth2KeyBackend {
             .await
     }
 
+    #[tracing::instrument(
+        name = "driver.raft.oauth2_key.list_all_active_keys",
+        level = "debug",
+        skip_all
+    )]
     async fn list_all_active_keys(
         &self,
         state: &ServiceState,
@@ -1129,6 +1144,7 @@ impl Oauth2KeyBackend for RaftOauth2KeyBackend {
         self.list_all_active_keys_impl(storage).await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_key.retire_previous_key", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn retire_previous_key(
         &self,
         state: &ServiceState,
@@ -1141,6 +1157,7 @@ impl Oauth2KeyBackend for RaftOauth2KeyBackend {
         self.retire_previous_key_impl(storage, domain_id).await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_key.has_pending_emergency_rotation", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn has_pending_emergency_rotation(
         &self,
         state: &ServiceState,
@@ -1156,6 +1173,7 @@ impl Oauth2KeyBackend for RaftOauth2KeyBackend {
             .is_some_and(|p| p.expires_at > now_epoch_secs()))
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_key.prune_expired_jtis", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn prune_expired_jtis(
         &self,
         state: &ServiceState,

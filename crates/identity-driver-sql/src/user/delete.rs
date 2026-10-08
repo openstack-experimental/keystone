@@ -28,7 +28,6 @@ use crate::entity::prelude::User as DbUser;
 ///
 /// # Returns
 /// A `Result` containing `()` if successful, or an `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn delete<U: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: U,

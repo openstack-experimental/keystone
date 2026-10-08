@@ -672,6 +672,7 @@ impl MappingApi for MappingService {
     ///
     /// Validates the payload, generates UUID, computes content-aware version,
     /// then delegates to the backend driver.
+    #[tracing::instrument(name = "provider.mapping.create_ruleset", level = "debug", skip_all)]
     async fn create_ruleset<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -737,6 +738,7 @@ impl MappingApi for MappingService {
     }
 
     /// Delete a mapping ruleset.
+    #[tracing::instrument(name = "provider.mapping.delete_ruleset", level = "debug", skip_all, fields(mapping_id = %mapping_id))]
     async fn delete_ruleset<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -827,6 +829,7 @@ impl MappingApi for MappingService {
     }
 
     /// Delete a virtual user shadow record.
+    #[tracing::instrument(name = "provider.mapping.delete_virtual_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn delete_virtual_user<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -901,6 +904,7 @@ impl MappingApi for MappingService {
     }
 
     /// Fetch a mapping ruleset by ID.
+    #[tracing::instrument(name = "provider.mapping.get_ruleset", level = "debug", skip_all, fields(mapping_id = %mapping_id))]
     async fn get_ruleset<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -912,6 +916,7 @@ impl MappingApi for MappingService {
     }
 
     /// Fetch a ruleset by its (domain_id, source) composite index.
+    #[tracing::instrument(name = "provider.mapping.get_ruleset_by_source", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn get_ruleset_by_source<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -924,6 +929,7 @@ impl MappingApi for MappingService {
     }
 
     /// Fetch a virtual user shadow record by user ID.
+    #[tracing::instrument(name = "provider.mapping.get_virtual_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn get_virtual_user<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -935,6 +941,7 @@ impl MappingApi for MappingService {
     }
 
     /// List mapping rulesets.
+    #[tracing::instrument(name = "provider.mapping.list_rulesets", level = "debug", skip_all, fields(params = ?params))]
     async fn list_rulesets<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -947,6 +954,7 @@ impl MappingApi for MappingService {
     ///
     /// Fetches the current ruleset, validates immutability, applies mutations
     /// in memory, re-validates, computes new version, then delegates update.
+    #[tracing::instrument(name = "provider.mapping.mutate_rules", level = "debug", skip_all, fields(mapping_id = %mapping_id))]
     async fn mutate_rules<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1101,6 +1109,7 @@ impl MappingApi for MappingService {
     ///
     /// Validates the update payload against the existing ruleset, computes
     /// new version, then delegates to the backend driver.
+    #[tracing::instrument(name = "provider.mapping.update_ruleset", level = "debug", skip_all, fields(mapping_id = %mapping_id))]
     async fn update_ruleset<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1179,6 +1188,7 @@ impl MappingApi for MappingService {
     }
 
     /// Disable a virtual user shadow record.
+    #[tracing::instrument(name = "provider.mapping.disable_virtual_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn disable_virtual_user<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1218,6 +1228,7 @@ impl MappingApi for MappingService {
     }
 
     /// Enable (reactivate) a virtual user shadow record.
+    #[tracing::instrument(name = "provider.mapping.enable_virtual_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn enable_virtual_user<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -1263,6 +1274,11 @@ impl MappingApi for MappingService {
     /// 0031) — `idp_id` is the operator-configured identity provider the
     /// caller authenticated against, and `outcome` reflects whether the
     /// overall mapping authentication succeeded.
+    #[tracing::instrument(
+        name = "provider.mapping.authenticate_by_mapping",
+        level = "debug",
+        skip_all
+    )]
     async fn authenticate_by_mapping<'a>(
         &self,
         exec: &ExecutionContext<'a>,

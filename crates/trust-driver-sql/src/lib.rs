@@ -58,7 +58,7 @@ inventory::submit! {
 #[async_trait]
 impl TrustBackend for SqlBackend {
     /// Create a new trust.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.trust.create_trust", level = "debug", skip_all)]
     async fn create_trust(
         &self,
         state: &ServiceState,
@@ -68,7 +68,7 @@ impl TrustBackend for SqlBackend {
     }
 
     /// Delete a trust by ID.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.trust.delete_trust", level = "debug", skip_all, fields(id = %id))]
     async fn delete_trust<'a>(
         &self,
         state: &ServiceState,
@@ -78,7 +78,7 @@ impl TrustBackend for SqlBackend {
     }
 
     /// Get trust by ID.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.trust.get_trust", level = "debug", skip_all, fields(id = %id))]
     async fn get_trust<'a>(
         &self,
         state: &ServiceState,
@@ -88,7 +88,7 @@ impl TrustBackend for SqlBackend {
     }
 
     /// Resolve trust chain by the trust ID.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.trust.get_trust_delegation_chain", level = "debug", skip_all, fields(id = %id))]
     async fn get_trust_delegation_chain<'a>(
         &self,
         state: &ServiceState,
@@ -98,7 +98,7 @@ impl TrustBackend for SqlBackend {
     }
 
     /// List trusts.
-    #[tracing::instrument(level = "debug", skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.trust.list_trusts", level = "debug", skip_all, fields(params = ?params))]
     async fn list_trusts(
         &self,
         state: &ServiceState,

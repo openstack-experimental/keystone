@@ -106,6 +106,11 @@ impl CredentialService {
 
 #[async_trait]
 impl CredentialApi for CredentialService {
+    #[tracing::instrument(
+        name = "provider.credential.create_credential",
+        level = "debug",
+        skip_all
+    )]
     async fn create_credential<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -206,6 +211,7 @@ impl CredentialApi for CredentialService {
         Ok(credential)
     }
 
+    #[tracing::instrument(name = "provider.credential.get_credential", level = "debug", skip_all, fields(id = %id))]
     async fn get_credential<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -214,6 +220,11 @@ impl CredentialApi for CredentialService {
         self.backend_driver.get_credential(ctx.state(), id).await
     }
 
+    #[tracing::instrument(
+        name = "provider.credential.get_credential_by_ec2_access",
+        level = "debug",
+        skip_all
+    )]
     async fn get_credential_by_ec2_access<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -224,6 +235,7 @@ impl CredentialApi for CredentialService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.credential.list_credentials", level = "debug", skip_all, fields(params = ?params))]
     async fn list_credentials<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -234,6 +246,7 @@ impl CredentialApi for CredentialService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.credential.list_credentials_for_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn list_credentials_for_user<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -245,6 +258,7 @@ impl CredentialApi for CredentialService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.credential.update_credential", level = "debug", skip_all, fields(id = %id))]
     async fn update_credential<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -336,6 +350,7 @@ impl CredentialApi for CredentialService {
         Ok(credential)
     }
 
+    #[tracing::instrument(name = "provider.credential.delete_credential", level = "debug", skip_all, fields(id = %id))]
     async fn delete_credential<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -385,6 +400,7 @@ impl CredentialApi for CredentialService {
         Ok(())
     }
 
+    #[tracing::instrument(name = "provider.credential.delete_credentials_for_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn delete_credentials_for_user<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -409,6 +425,7 @@ impl CredentialApi for CredentialService {
         }
     }
 
+    #[tracing::instrument(name = "provider.credential.delete_credentials_for_project", level = "debug", skip_all, fields(project_id = %project_id))]
     async fn delete_credentials_for_project<'a>(
         &self,
         ctx: &ExecutionContext<'a>,

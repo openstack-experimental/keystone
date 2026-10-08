@@ -29,7 +29,6 @@ use crate::entity::prelude::Group as DbGroup;
 ///
 /// # Returns
 /// A `Result` containing an `Option` with the Group if found, or an `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn get<S: AsRef<str>>(
     db: &DatabaseConnection,
     group_id: S,

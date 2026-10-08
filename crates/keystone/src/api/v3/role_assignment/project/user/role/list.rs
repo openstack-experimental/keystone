@@ -48,7 +48,7 @@ use openstack_keystone_core::auth::ExecutionContext;
     tag="role_assignments"
 )]
 #[tracing::instrument(
-    name = "api::project_user_role_list",
+    name = "api::v3::project_user_role_list",
     level = "debug",
     skip(state, user_auth),
     err(Debug)

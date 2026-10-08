@@ -29,7 +29,6 @@ use crate::entity::{nonlocal_user, user};
 ///
 /// # Returns
 /// A `Result` containing the created nonlocal user model, or an `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn create<C, S>(
     db: &C,
     main_record: &user::Model,

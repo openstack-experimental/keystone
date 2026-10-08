@@ -55,6 +55,7 @@ impl ScimRealmService {
 
 #[async_trait]
 impl ScimRealmApi for ScimRealmService {
+    #[tracing::instrument(name = "provider.scim_realm.create_realm", level = "debug", skip_all)]
     async fn create_realm<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -88,6 +89,7 @@ impl ScimRealmApi for ScimRealmService {
         }
     }
 
+    #[tracing::instrument(name = "provider.scim_realm.get_realm", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id))]
     async fn get_realm<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -99,6 +101,7 @@ impl ScimRealmApi for ScimRealmService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.scim_realm.list_realms", level = "debug", skip_all, fields(params = ?params))]
     async fn list_realms<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -107,6 +110,7 @@ impl ScimRealmApi for ScimRealmService {
         self.backend_driver.list(ctx.state(), params).await
     }
 
+    #[tracing::instrument(name = "provider.scim_realm.update_realm", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id))]
     async fn update_realm<'a>(
         &self,
         ctx: &ExecutionContext<'a>,

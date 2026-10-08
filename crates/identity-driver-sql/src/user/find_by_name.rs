@@ -38,7 +38,6 @@ use crate::entity::{local_user as db_local_user, nonlocal_user as db_nonlocal_us
 
 /// Find the `user_id` of any local or nonlocal user in `domain_id` whose
 /// name matches `name`, case-insensitively.
-#[tracing::instrument(skip(db))]
 pub async fn find_by_name_ci(
     db: &DatabaseConnection,
     domain_id: &str,

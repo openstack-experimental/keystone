@@ -69,6 +69,11 @@ impl ApplicationCredentialBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing the created `AccessRule` or an `Error`.
+    #[tracing::instrument(
+        name = "driver.sql.appcred.create_access_rule",
+        level = "debug",
+        skip_all
+    )]
     async fn create_access_rule(
         &self,
         state: &ServiceState,
@@ -86,6 +91,11 @@ impl ApplicationCredentialBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing the `ApplicationCredentialCreateResponse` or an
     /// `Error`.
+    #[tracing::instrument(
+        name = "driver.sql.appcred.create_application_credential",
+        level = "debug",
+        skip_all
+    )]
     async fn create_application_credential(
         &self,
         state: &ServiceState,
@@ -104,6 +114,7 @@ impl ApplicationCredentialBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing `()` or an `Error`.
+    #[tracing::instrument(name = "driver.sql.appcred.delete_access_rule", level = "debug", skip_all, fields(user_id = %user_id, id = %id))]
     async fn delete_access_rule<'a>(
         &self,
         state: &ServiceState,
@@ -122,6 +133,7 @@ impl ApplicationCredentialBackend for SqlBackend {
     /// # Returns
     /// - `Result<(), ApplicationCredentialProviderError>` - Unit on success, or
     ///   an error.
+    #[tracing::instrument(name = "driver.sql.appcred.delete_application_credential", level = "debug", skip_all, fields(id = %id))]
     async fn delete_application_credential<'a>(
         &self,
         state: &ServiceState,
@@ -139,6 +151,7 @@ impl ApplicationCredentialBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing an `Option` with the `AccessRule` if found, or an
     /// `Error`.
+    #[tracing::instrument(name = "driver.sql.appcred.get_access_rule", level = "debug", skip_all, fields(user_id = %user_id, id = %id))]
     async fn get_access_rule<'a>(
         &self,
         state: &ServiceState,
@@ -157,6 +170,7 @@ impl ApplicationCredentialBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing an `Option` with the `ApplicationCredential` if
     /// found, or an `Error`.
+    #[tracing::instrument(name = "driver.sql.appcred.get_application_credential", level = "debug", skip_all, fields(id = %id))]
     async fn get_application_credential<'a>(
         &self,
         state: &ServiceState,
@@ -173,6 +187,7 @@ impl ApplicationCredentialBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing a `Vec` of `AccessRule` or an `Error`.
+    #[tracing::instrument(name = "driver.sql.appcred.list_access_rules", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn list_access_rules<'a>(
         &self,
         state: &ServiceState,
@@ -189,6 +204,7 @@ impl ApplicationCredentialBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing a `Vec` of `ApplicationCredential` or an `Error`.
+    #[tracing::instrument(name = "driver.sql.appcred.list_application_credentials", level = "debug", skip_all, fields(params = ?params))]
     async fn list_application_credentials(
         &self,
         state: &ServiceState,
@@ -208,6 +224,7 @@ impl ApplicationCredentialBackend for SqlBackend {
     /// - `Ok(())` if the secret matches the stored hash.
     /// - `Err(ApplicationCredentialProviderError::AuthenticationFailed)` if
     ///   the credential does not exist or the secret does not match.
+    #[tracing::instrument(name = "driver.sql.appcred.verify_application_credential_secret", level = "debug", skip_all, fields(credential_id = %credential_id))]
     async fn verify_application_credential_secret(
         &self,
         state: &ServiceState,

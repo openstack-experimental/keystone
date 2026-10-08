@@ -72,7 +72,11 @@ impl PolicyStoreBackend for SqlBackend {
     // `skip_all`: `policy` carries the document (`blob`) and arbitrary
     // caller-supplied `extra` properties, which `Debug` would otherwise render
     // into the span.
-    #[tracing::instrument(level = "debug", skip_all, fields(policy_type = %policy.r#type))]
+    #[tracing::instrument(
+        name = "driver.sql.policy_store.create_policy",
+        level = "debug",
+        skip_all
+    )]
     async fn create_policy(
         &self,
         state: &ServiceState,
@@ -89,7 +93,7 @@ impl PolicyStoreBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` indicating success or a `PolicyStoreProviderError`.
-    #[tracing::instrument(level = "debug", skip_all, fields(policy_id = %id))]
+    #[tracing::instrument(name = "driver.sql.policy_store.delete_policy", level = "debug", skip_all, fields(id = %id))]
     async fn delete_policy(
         &self,
         state: &ServiceState,
@@ -107,7 +111,7 @@ impl PolicyStoreBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing an `Option` with the `Policy` if found, or a
     /// `PolicyStoreProviderError`.
-    #[tracing::instrument(level = "debug", skip_all, fields(policy_id = %id))]
+    #[tracing::instrument(name = "driver.sql.policy_store.get_policy", level = "debug", skip_all, fields(id = %id))]
     async fn get_policy(
         &self,
         state: &ServiceState,
@@ -125,7 +129,7 @@ impl PolicyStoreBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing a vector of `Policy` objects or a
     /// `PolicyStoreProviderError`.
-    #[tracing::instrument(level = "debug", skip_all)]
+    #[tracing::instrument(name = "driver.sql.policy_store.list_policies", level = "debug", skip_all, fields(params = ?params))]
     async fn list_policies(
         &self,
         state: &ServiceState,
@@ -145,7 +149,7 @@ impl PolicyStoreBackend for SqlBackend {
     /// A `Result` containing the updated `Policy`, or a
     /// `PolicyStoreProviderError`.
     // `skip_all` for the same reason as `create_policy`.
-    #[tracing::instrument(level = "debug", skip_all, fields(policy_id = %id))]
+    #[tracing::instrument(name = "driver.sql.policy_store.update_policy", level = "debug", skip_all, fields(id = %id))]
     async fn update_policy(
         &self,
         state: &ServiceState,

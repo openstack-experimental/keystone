@@ -28,7 +28,6 @@ use crate::entity::group as db_group;
 ///
 /// # Returns
 /// A `Result` containing the matched group's ID, if any, or an `Error`.
-#[tracing::instrument(skip(db))]
 pub async fn find_by_name_ci(
     db: &DatabaseConnection,
     domain_id: &str,

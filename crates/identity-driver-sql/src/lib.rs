@@ -78,7 +78,7 @@ impl IdentityBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing `()` if successful, or an `Error`.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.identity.add_user_to_group", level = "debug", skip_all, fields(user_id = %user_id, group_id = %group_id))]
     async fn add_user_to_group<'a>(
         &self,
         state: &ServiceState,
@@ -98,7 +98,7 @@ impl IdentityBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing `()` if successful, or an `Error`.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.identity.add_user_to_group_expiring", level = "debug", skip_all, fields(user_id = %user_id, group_id = %group_id, idp_id = %idp_id))]
     async fn add_user_to_group_expiring<'a>(
         &self,
         state: &ServiceState,
@@ -124,7 +124,11 @@ impl IdentityBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing `()` if successful, or an `Error`.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(
+        name = "driver.sql.identity.add_users_to_groups",
+        level = "debug",
+        skip_all
+    )]
     async fn add_users_to_groups<'a>(
         &self,
         state: &ServiceState,
@@ -142,7 +146,7 @@ impl IdentityBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing `()` if successful, or an `Error`.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.identity.add_users_to_groups_expiring", level = "debug", skip_all, fields(idp_id = %idp_id))]
     async fn add_users_to_groups_expiring<'a>(
         &self,
         state: &ServiceState,
@@ -166,6 +170,11 @@ impl IdentityBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing `AuthenticatedInfo` if successful, or an `Error`.
+    #[tracing::instrument(
+        name = "driver.sql.identity.authenticate_by_password",
+        level = "debug",
+        skip_all
+    )]
     async fn authenticate_by_password(
         &self,
         state: &ServiceState,
@@ -187,7 +196,11 @@ impl IdentityBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing the canonical user ID, or an `Error`.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(
+        name = "driver.sql.identity.check_user_exist",
+        level = "debug",
+        skip_all
+    )]
     async fn check_user_exist<'a>(
         &self,
         state: &ServiceState,
@@ -206,7 +219,7 @@ impl IdentityBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing the created `Group` if successful, or an `Error`.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.identity.create_group", level = "debug", skip_all)]
     async fn create_group(
         &self,
         state: &ServiceState,
@@ -223,7 +236,7 @@ impl IdentityBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing the `UserResponse` if successful, or an `Error`.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.identity.create_user", level = "debug", skip_all)]
     async fn create_user(
         &self,
         state: &ServiceState,
@@ -241,7 +254,7 @@ impl IdentityBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing `()` if successful, or an `Error`.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.identity.delete_group", level = "debug", skip_all, fields(group_id = %group_id))]
     async fn delete_group<'a>(
         &self,
         state: &ServiceState,
@@ -258,7 +271,7 @@ impl IdentityBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing `()` if successful, or an `Error`.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.identity.delete_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn delete_user<'a>(
         &self,
         state: &ServiceState,
@@ -276,7 +289,7 @@ impl IdentityBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing an `Option` with the `Group` if found, or an
     /// `Error`.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.identity.get_group", level = "debug", skip_all, fields(group_id = %group_id))]
     async fn get_group<'a>(
         &self,
         state: &ServiceState,
@@ -294,7 +307,7 @@ impl IdentityBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing an `Option` with the `UserResponse` if found, or
     /// an `Error`.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.identity.get_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn get_user<'a>(
         &self,
         state: &ServiceState,
@@ -312,6 +325,7 @@ impl IdentityBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing the domain ID of the user, or an `Error`.
+    #[tracing::instrument(name = "driver.sql.identity.get_user_domain_id", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn get_user_domain_id<'a>(
         &self,
         state: &ServiceState,
@@ -327,7 +341,7 @@ impl IdentityBackend for SqlBackend {
     /// - `state`: The service state.
     /// - `domain_id`: The domain to search within.
     /// - `name`: The name to match, case-insensitively.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.identity.find_user_by_name_ci", level = "debug", skip_all, fields(domain_id = %domain_id, name = %name))]
     async fn find_user_by_name_ci<'a>(
         &self,
         state: &ServiceState,
@@ -347,7 +361,7 @@ impl IdentityBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing an `Option` with the `UserResponse` if found, or
     /// an `Error`.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.identity.find_federated_user", level = "debug", skip_all, fields(idp_id = %idp_id, unique_id = %unique_id))]
     async fn find_federated_user<'a>(
         &self,
         state: &ServiceState,
@@ -372,7 +386,7 @@ impl IdentityBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing a list of `Group`s, or an `Error`.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.identity.list_groups", level = "debug", skip_all, fields(params = ?params))]
     async fn list_groups(
         &self,
         state: &ServiceState,
@@ -389,7 +403,7 @@ impl IdentityBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing a list of `Group`s, or an `Error`.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.identity.list_groups_of_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn list_groups_of_user<'a>(
         &self,
         state: &ServiceState,
@@ -413,7 +427,7 @@ impl IdentityBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing a list of member user IDs, or an `Error`.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.identity.list_users_of_group", level = "debug", skip_all, fields(group_id = %group_id))]
     async fn list_users_of_group<'a>(
         &self,
         state: &ServiceState,
@@ -439,7 +453,7 @@ impl IdentityBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing the matched group's ID, if any, or an `Error`.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.identity.find_group_by_name_ci", level = "debug", skip_all, fields(domain_id = %domain_id, name = %name))]
     async fn find_group_by_name_ci<'a>(
         &self,
         state: &ServiceState,
@@ -458,7 +472,7 @@ impl IdentityBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing the updated `Group`, or an `Error`.
-    #[tracing::instrument(skip(self, state, group))]
+    #[tracing::instrument(name = "driver.sql.identity.update_group", level = "debug", skip_all, fields(group_id = %group_id))]
     async fn update_group<'a>(
         &self,
         state: &ServiceState,
@@ -476,7 +490,7 @@ impl IdentityBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing a list of `UserResponse`s, or an `Error`.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.identity.list_users", level = "debug", skip_all, fields(params = ?params))]
     async fn list_users(
         &self,
         state: &ServiceState,
@@ -495,7 +509,7 @@ impl IdentityBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing `()` if successful, or an `Error`.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.identity.remove_user_from_group", level = "debug", skip_all, fields(user_id = %user_id, group_id = %group_id))]
     async fn remove_user_from_group<'a>(
         &self,
         state: &ServiceState,
@@ -515,7 +529,7 @@ impl IdentityBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing `()` if successful, or an `Error`.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.identity.remove_user_from_group_expiring", level = "debug", skip_all, fields(user_id = %user_id, group_id = %group_id, idp_id = %idp_id))]
     async fn remove_user_from_group_expiring<'a>(
         &self,
         state: &ServiceState,
@@ -541,7 +555,7 @@ impl IdentityBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing `()` if successful, or an `Error`.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.identity.remove_user_from_groups", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn remove_user_from_groups<'a>(
         &self,
         state: &ServiceState,
@@ -561,7 +575,7 @@ impl IdentityBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing `()` if successful, or an `Error`.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.identity.remove_user_from_groups_expiring", level = "debug", skip_all, fields(user_id = %user_id, idp_id = %idp_id))]
     async fn remove_user_from_groups_expiring<'a>(
         &self,
         state: &ServiceState,
@@ -587,7 +601,7 @@ impl IdentityBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing `()` if successful, or an `Error`.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.identity.set_user_groups", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn set_user_groups<'a>(
         &self,
         state: &ServiceState,
@@ -608,7 +622,7 @@ impl IdentityBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing `()` if successful, or an `Error`.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.identity.set_user_groups_expiring", level = "debug", skip_all, fields(user_id = %user_id, idp_id = %idp_id))]
     async fn set_user_groups_expiring<'a>(
         &self,
         state: &ServiceState,
@@ -637,7 +651,7 @@ impl IdentityBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing the updated `UserResponse` if successful, or an
     /// `Error`.
-    #[tracing::instrument(skip(self, state))]
+    #[tracing::instrument(name = "driver.sql.identity.update_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn update_user<'a>(
         &self,
         state: &ServiceState,
@@ -658,7 +672,7 @@ impl IdentityBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing `()` if successful, or an `Error`.
-    #[tracing::instrument(skip(self, state, original_password, new_password))]
+    #[tracing::instrument(name = "driver.sql.identity.update_user_password", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn update_user_password<'a>(
         &self,
         state: &ServiceState,

@@ -35,7 +35,6 @@ use crate::entity::nonlocal_user as db_nonlocal_user;
 ///
 /// # Returns
 /// A `Result` containing the updated nonlocal user model, or an `Error`.
-#[tracing::instrument(skip(db))]
 pub async fn update_name<C>(
     db: &C,
     user_id: &str,

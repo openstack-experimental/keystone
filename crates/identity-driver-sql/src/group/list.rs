@@ -73,7 +73,6 @@ fn get_list_query(
 ///
 /// # Returns
 /// A `Result` containing a vector of groups, or an `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn list(
     db: &DatabaseConnection,
     params: &GroupListParameters,

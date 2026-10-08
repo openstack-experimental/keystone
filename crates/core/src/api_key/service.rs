@@ -68,6 +68,7 @@ fn api_key_event(operation: Operation, domain_id: &str, client_id: &str) -> Even
 
 #[async_trait]
 impl ApiKeyApi for ApiKeyService {
+    #[tracing::instrument(name = "provider.api_key.create", level = "debug", skip_all)]
     async fn create<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -83,6 +84,7 @@ impl ApiKeyApi for ApiKeyService {
         }
     }
 
+    #[tracing::instrument(name = "provider.api_key.get_by_client_id", level = "debug", skip_all, fields(domain_id = %domain_id, client_id = %client_id))]
     async fn get_by_client_id<'a>(
         &self,
         state: &ServiceState,
@@ -94,6 +96,7 @@ impl ApiKeyApi for ApiKeyService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.api_key.get_by_lookup_hash", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn get_by_lookup_hash<'a>(
         &self,
         state: &ServiceState,
@@ -105,6 +108,7 @@ impl ApiKeyApi for ApiKeyService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.api_key.list", level = "debug", skip_all, fields(params = ?params))]
     async fn list(
         &self,
         state: &ServiceState,
@@ -113,6 +117,7 @@ impl ApiKeyApi for ApiKeyService {
         self.backend_driver.list(state, params).await
     }
 
+    #[tracing::instrument(name = "provider.api_key.update", level = "debug", skip_all, fields(domain_id = %domain_id, client_id = %client_id))]
     async fn update<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -152,6 +157,7 @@ impl ApiKeyApi for ApiKeyService {
         }
     }
 
+    #[tracing::instrument(name = "provider.api_key.revoke", level = "debug", skip_all, fields(domain_id = %domain_id, client_id = %client_id))]
     async fn revoke<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -172,6 +178,7 @@ impl ApiKeyApi for ApiKeyService {
         }
     }
 
+    #[tracing::instrument(name = "provider.api_key.update_last_used", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn update_last_used<'a>(
         &self,
         state: &ServiceState,
@@ -184,6 +191,7 @@ impl ApiKeyApi for ApiKeyService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.api_key.update_secret_hash", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn update_secret_hash<'a>(
         &self,
         state: &ServiceState,
@@ -196,6 +204,7 @@ impl ApiKeyApi for ApiKeyService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.api_key.list_all", level = "debug", skip_all)]
     async fn list_all(
         &self,
         state: &ServiceState,
@@ -203,6 +212,7 @@ impl ApiKeyApi for ApiKeyService {
         self.backend_driver.list_all(state).await
     }
 
+    #[tracing::instrument(name = "provider.api_key.purge", level = "debug", skip_all, fields(domain_id = %domain_id, client_id = %client_id))]
     async fn purge<'a>(
         &self,
         ctx: &ExecutionContext<'a>,

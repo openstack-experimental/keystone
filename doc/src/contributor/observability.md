@@ -102,5 +102,9 @@ Jaeger (`http://jaeger.local`):
   `keystone` in the *Search* tab, or paste a trace id in the *TraceID* tab.
 - Prometheus target `keystone` is empty: the targets come from the DNS name of
   the headless service `keystone-rs-internal`, which has to resolve.
+- Only the root `GET /v3/...` spans and a few others show up: `span_level`
+  defaults to `info`, which drops the `debug` provider and driver spans. The
+  stack sets `OS_OTEL__SPAN_LEVEL=debug` in the `otel` overlay, so a deployment
+  without it, or with another overlay, only exports the coarse spans.
 - The default sampler follows the caller's `traceparent`. `sampling_rate` is
   `1.0` in this stack so that every root span is kept.

@@ -31,7 +31,6 @@ use crate::entity::group as db_group;
 ///
 /// # Returns
 /// A `Result` containing the updated `Group` if successful, or an `Error`.
-#[tracing::instrument(skip(db))]
 pub async fn update(
     db: &DatabaseConnection,
     group_id: &str,

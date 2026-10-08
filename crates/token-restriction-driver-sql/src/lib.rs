@@ -72,6 +72,7 @@ impl TokenRestrictionBackend for SqlBackend {
     /// # Returns
     /// A `Result` containing an `Option` with the `TokenRestriction` if found,
     /// or an `Error`.
+    #[tracing::instrument(name = "driver.sql.token_restriction.get_token_restriction", level = "debug", skip_all, fields(id = %id))]
     async fn get_token_restriction<'a>(
         &self,
         state: &ServiceState,
@@ -88,6 +89,11 @@ impl TokenRestrictionBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing the created `TokenRestriction`, or an `Error`.
+    #[tracing::instrument(
+        name = "driver.sql.token_restriction.create_token_restriction",
+        level = "debug",
+        skip_all
+    )]
     async fn create_token_restriction<'a>(
         &self,
         state: &ServiceState,
@@ -104,6 +110,7 @@ impl TokenRestrictionBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing a list of `TokenRestriction`s, or an `Error`.
+    #[tracing::instrument(name = "driver.sql.token_restriction.list_token_restrictions", level = "debug", skip_all, fields(params = ?params))]
     async fn list_token_restrictions<'a>(
         &self,
         state: &ServiceState,
@@ -121,6 +128,7 @@ impl TokenRestrictionBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` containing the updated `TokenRestriction`, or an `Error`.
+    #[tracing::instrument(name = "driver.sql.token_restriction.update_token_restriction", level = "debug", skip_all, fields(id = %id))]
     async fn update_token_restriction<'a>(
         &self,
         state: &ServiceState,
@@ -138,6 +146,7 @@ impl TokenRestrictionBackend for SqlBackend {
     ///
     /// # Returns
     /// A `Result` indicating success or an `Error`.
+    #[tracing::instrument(name = "driver.sql.token_restriction.delete_token_restriction", level = "debug", skip_all, fields(id = %id))]
     async fn delete_token_restriction<'a>(
         &self,
         state: &ServiceState,

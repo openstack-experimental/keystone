@@ -35,7 +35,6 @@ use crate::local_user::load_local_user_with_passwords;
 /// # Returns
 /// A `Result` containing the updated `UserResponse` if successful, or an
 /// `Error`.
-#[tracing::instrument(skip(conf, db))]
 pub async fn update(
     conf: &Config,
     db: &DatabaseConnection,

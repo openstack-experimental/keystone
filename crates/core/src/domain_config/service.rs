@@ -274,6 +274,7 @@ fn domain_config_event(operation: Operation, domain_id: &str) -> Event {
 
 #[async_trait]
 impl DomainConfigApi for DomainConfigService {
+    #[tracing::instrument(name = "provider.domain_config.create_domain_config", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn create_domain_config<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -308,6 +309,7 @@ impl DomainConfigApi for DomainConfigService {
         }
     }
 
+    #[tracing::instrument(name = "provider.domain_config.get_domain_config", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn get_domain_config<'a>(
         &self,
         state: &ServiceState,
@@ -318,6 +320,7 @@ impl DomainConfigApi for DomainConfigService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.domain_config.get_domain_config_group", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn get_domain_config_group<'a>(
         &self,
         state: &ServiceState,
@@ -329,6 +332,7 @@ impl DomainConfigApi for DomainConfigService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.domain_config.get_domain_config_option", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn get_domain_config_option<'a>(
         &self,
         state: &ServiceState,
@@ -341,6 +345,7 @@ impl DomainConfigApi for DomainConfigService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.domain_config.update_domain_config", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn update_domain_config<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -373,6 +378,7 @@ impl DomainConfigApi for DomainConfigService {
         }
     }
 
+    #[tracing::instrument(name = "provider.domain_config.update_domain_config_group", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn update_domain_config_group<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -410,6 +416,7 @@ impl DomainConfigApi for DomainConfigService {
         }
     }
 
+    #[tracing::instrument(name = "provider.domain_config.update_domain_config_option", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn update_domain_config_option<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -448,6 +455,7 @@ impl DomainConfigApi for DomainConfigService {
         }
     }
 
+    #[tracing::instrument(name = "provider.domain_config.delete_domain_config", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn delete_domain_config<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -471,6 +479,7 @@ impl DomainConfigApi for DomainConfigService {
         }
     }
 
+    #[tracing::instrument(name = "provider.domain_config.delete_domain_config_group", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn delete_domain_config_group<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -497,6 +506,7 @@ impl DomainConfigApi for DomainConfigService {
         }
     }
 
+    #[tracing::instrument(name = "provider.domain_config.delete_domain_config_option", level = "debug", skip_all, fields(domain_id = %domain_id))]
     async fn delete_domain_config_option<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -527,6 +537,11 @@ impl DomainConfigApi for DomainConfigService {
         }
     }
 
+    #[tracing::instrument(
+        name = "provider.domain_config.get_default_config",
+        level = "debug",
+        skip_all
+    )]
     async fn get_default_config(
         &self,
         state: &ServiceState,
@@ -534,6 +549,11 @@ impl DomainConfigApi for DomainConfigService {
         self.backend_driver.get_default_config(state).await
     }
 
+    #[tracing::instrument(
+        name = "provider.domain_config.get_default_group",
+        level = "debug",
+        skip_all
+    )]
     async fn get_default_group(
         &self,
         state: &ServiceState,
@@ -542,6 +562,11 @@ impl DomainConfigApi for DomainConfigService {
         self.backend_driver.get_default_group(state, group).await
     }
 
+    #[tracing::instrument(
+        name = "provider.domain_config.get_default_option",
+        level = "debug",
+        skip_all
+    )]
     async fn get_default_option<'a>(
         &self,
         state: &ServiceState,

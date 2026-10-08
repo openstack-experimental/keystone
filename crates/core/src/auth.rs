@@ -93,7 +93,7 @@ impl ValidatedSecurityContext {
     /// (validated) or reconstructs a value that was already validated when
     /// its token was minted. Scope-setting, validation, and role resolution
     /// happen as a single atomic step.
-    #[tracing::instrument(skip(state), err(Debug))]
+    #[tracing::instrument(name = "auth.new_for_scope", level = "debug", skip(state), err(Debug))]
     pub async fn new_for_scope(
         mut ctx: SecurityContext,
         scope: ScopeInfo,

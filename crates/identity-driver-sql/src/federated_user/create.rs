@@ -28,7 +28,6 @@ use crate::entity::federated_user;
 ///
 /// # Returns
 /// A `Result` containing the created federated user model, or an `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn create<A, C>(
     db: &C,
     federation: A,

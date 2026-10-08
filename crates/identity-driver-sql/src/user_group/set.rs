@@ -43,7 +43,6 @@ use super::*;
 ///
 /// # Returns
 /// A `Result` indicating success or failure.
-#[tracing::instrument(skip_all)]
 pub async fn set_user_groups<I, U, G>(
     db: &DatabaseConnection,
     user_id: U,
@@ -110,7 +109,6 @@ where
 ///
 /// # Returns
 /// A `Result` indicating success or failure.
-#[tracing::instrument(skip_all)]
 pub async fn set_user_groups_expiring<I, U, G, IDP>(
     db: &DatabaseConnection,
     user_id: U,

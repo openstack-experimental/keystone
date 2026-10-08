@@ -394,7 +394,7 @@ impl RaftDriver {
 
 #[async_trait]
 impl WebauthnApi for RaftDriver {
-    #[tracing::instrument(level = "debug", skip_all())]
+    #[tracing::instrument(name = "driver.raft.webauthn.cleanup", level = "debug", skip_all)]
     async fn cleanup<'a>(&self, exec: &ExecutionContext<'a>) -> Result<(), WebauthnError> {
         let raft = exec
             .state()
@@ -410,7 +410,11 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Create webauthn credential for the user.
-    #[tracing::instrument(level = "debug", skip(self, exec))]
+    #[tracing::instrument(
+        name = "driver.raft.webauthn.create_user_webauthn_credential",
+        level = "debug",
+        skip_all
+    )]
     async fn create_user_webauthn_credential<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -427,7 +431,7 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Get webauthn credential of the user by the credential_id.
-    #[tracing::instrument(level = "debug", skip(self, exec))]
+    #[tracing::instrument(name = "driver.raft.webauthn.get_user_webauthn_credential", level = "debug", skip_all, fields(user_id = %user_id, credential_id = %credential_id))]
     async fn get_user_webauthn_credential<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -445,7 +449,7 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Delete credential for the user.
-    #[tracing::instrument(level = "debug", skip(self, exec))]
+    #[tracing::instrument(name = "driver.raft.webauthn.delete_user_webauthn_credential", level = "debug", skip_all, fields(user_id = %user_id, credential_id = %credential_id))]
     async fn delete_user_webauthn_credential<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -463,7 +467,7 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Delete webauthn credential auth state for a user.
-    #[tracing::instrument(level = "debug", skip(self, exec))]
+    #[tracing::instrument(name = "driver.raft.webauthn.delete_user_webauthn_credential_authentication_state", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn delete_user_webauthn_credential_authentication_state<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -480,7 +484,7 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Delete webauthn credential registration state for the user.
-    #[tracing::instrument(level = "debug", skip(self, exec))]
+    #[tracing::instrument(name = "driver.raft.webauthn.delete_user_webauthn_credential_registration_state", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn delete_user_webauthn_credential_registration_state<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -497,7 +501,7 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Get webauthn credential auth state.
-    #[tracing::instrument(level = "debug", skip(self, exec))]
+    #[tracing::instrument(name = "driver.raft.webauthn.get_user_webauthn_credential_authentication_state", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn get_user_webauthn_credential_authentication_state<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -514,7 +518,7 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Get webauthn credential registration state.
-    #[tracing::instrument(level = "debug", skip(self, exec))]
+    #[tracing::instrument(name = "driver.raft.webauthn.get_user_webauthn_credential_registration_state", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn get_user_webauthn_credential_registration_state<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -531,7 +535,7 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// List user webauthn credentials.
-    #[tracing::instrument(level = "debug", skip(self, exec))]
+    #[tracing::instrument(name = "driver.raft.webauthn.list_user_webauthn_credentials", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn list_user_webauthn_credentials<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -548,7 +552,7 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Save webauthn credential auth state.
-    #[tracing::instrument(level = "debug", skip(self, exec))]
+    #[tracing::instrument(name = "driver.raft.webauthn.save_user_webauthn_credential_authentication_state", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn save_user_webauthn_credential_authentication_state<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -566,7 +570,7 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Save webauthn credential registration state.
-    #[tracing::instrument(level = "debug", skip(self, exec))]
+    #[tracing::instrument(name = "driver.raft.webauthn.save_user_webauthn_credential_registration_state", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn save_user_webauthn_credential_registration_state<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -584,7 +588,7 @@ impl WebauthnApi for RaftDriver {
     }
 
     /// Update credential data.
-    #[tracing::instrument(level = "debug", skip(self, exec))]
+    #[tracing::instrument(name = "driver.raft.webauthn.update_user_webauthn_credential", level = "debug", skip_all, fields(user_id = %user_id, credential_id = %credential_id))]
     async fn update_user_webauthn_credential<'a>(
         &self,
         exec: &ExecutionContext<'a>,

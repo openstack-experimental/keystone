@@ -195,7 +195,6 @@ pub async fn authenticate_by_password(
 /// # Returns
 /// A `Result` containing a boolean indicating if the user should be locked, or
 /// an `Error`.
-#[tracing::instrument(level = "debug", skip(config, db))]
 async fn should_lock(
     config: &Config,
     db: &DatabaseConnection,

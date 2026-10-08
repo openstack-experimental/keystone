@@ -37,7 +37,6 @@ use crate::entity::{
 ///
 /// # Returns
 /// A `Result` containing a `Vec` of member `User.id`s, or an `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn list_group_user_ids<S: AsRef<str>>(
     db: &DatabaseConnection,
     group_id: S,
@@ -86,7 +85,6 @@ pub async fn list_group_user_ids<S: AsRef<str>>(
 ///
 /// # Returns
 /// A `Result` containing a `Vec` of `Group`s, or an `Error`.
-#[tracing::instrument(skip_all)]
 pub async fn list_user_groups<S: AsRef<str>>(
     db: &DatabaseConnection,
     user_id: S,

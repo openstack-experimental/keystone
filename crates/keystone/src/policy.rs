@@ -35,7 +35,7 @@ pub struct HttpPolicyEnforcer {
 
 impl HttpPolicyEnforcer {
     #[allow(clippy::needless_update)]
-    #[tracing::instrument(name = "policy.http", err)]
+    #[tracing::instrument(name = "policy.http", level = "debug", err)]
     /// Creates a new `HttpPolicyEnforcer`.
     ///
     /// # Parameters

@@ -61,7 +61,7 @@ where
 {
     type Rejection = KeystoneApiError;
 
-    #[tracing::instrument(skip(state), err)]
+    #[tracing::instrument(name = "auth.api_key", level = "debug", skip(state), err)]
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let state = ServiceState::from_ref(state);
         // ADR 0031 "Authentication": `method = "api_key"`, timed/recorded
@@ -172,7 +172,7 @@ where
 {
     type Rejection = KeystoneApiError;
 
-    #[tracing::instrument(skip(state), err)]
+    #[tracing::instrument(name = "auth.scim_realm", level = "debug", skip(state), err)]
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let state = ServiceState::from_ref(state);
         let (domain_id, resource) = resolve_verified_api_client(parts, &state).await?;

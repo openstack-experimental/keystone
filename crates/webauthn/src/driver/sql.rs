@@ -46,12 +46,16 @@ inventory::submit! {
 
 #[async_trait]
 impl WebauthnApi for SqlDriver {
-    #[tracing::instrument(level = "debug", skip(self, exec))]
+    #[tracing::instrument(name = "driver.sql.webauthn.cleanup", level = "debug", skip_all)]
     async fn cleanup<'a>(&self, exec: &ExecutionContext<'a>) -> Result<(), WebauthnError> {
         state::delete_expired(&exec.state().db.connection()).await
     }
 
-    #[tracing::instrument(level = "debug", skip(self, exec))]
+    #[tracing::instrument(
+        name = "driver.sql.webauthn.create_user_webauthn_credential",
+        level = "debug",
+        skip_all
+    )]
     async fn create_user_webauthn_credential<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -60,7 +64,7 @@ impl WebauthnApi for SqlDriver {
         credential::create(&exec.state().db.connection(), credential).await
     }
 
-    #[tracing::instrument(level = "debug", skip(self, exec))]
+    #[tracing::instrument(name = "driver.sql.webauthn.get_user_webauthn_credential", level = "debug", skip_all, fields(user_id = %user_id, credential_id = %credential_id))]
     async fn get_user_webauthn_credential<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -70,7 +74,7 @@ impl WebauthnApi for SqlDriver {
         credential::find(&exec.state().db.connection(), user_id, credential_id).await
     }
 
-    #[tracing::instrument(level = "debug", skip(self, exec))]
+    #[tracing::instrument(name = "driver.sql.webauthn.delete_user_webauthn_credential", level = "debug", skip_all, fields(user_id = %user_id, credential_id = %credential_id))]
     async fn delete_user_webauthn_credential<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -81,7 +85,7 @@ impl WebauthnApi for SqlDriver {
         Ok(())
     }
 
-    #[tracing::instrument(level = "debug", skip(self, exec))]
+    #[tracing::instrument(name = "driver.sql.webauthn.delete_user_webauthn_credential_authentication_state", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn delete_user_webauthn_credential_authentication_state<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -90,7 +94,7 @@ impl WebauthnApi for SqlDriver {
         state::delete(&exec.state().db.connection(), user_id, StateType::Auth).await
     }
 
-    #[tracing::instrument(level = "debug", skip(self, exec))]
+    #[tracing::instrument(name = "driver.sql.webauthn.delete_user_webauthn_credential_registration_state", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn delete_user_webauthn_credential_registration_state<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -99,7 +103,7 @@ impl WebauthnApi for SqlDriver {
         state::delete(&exec.state().db.connection(), user_id, StateType::Register).await
     }
 
-    #[tracing::instrument(level = "debug", skip(self, exec))]
+    #[tracing::instrument(name = "driver.sql.webauthn.get_user_webauthn_credential_authentication_state", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn get_user_webauthn_credential_authentication_state<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -108,7 +112,7 @@ impl WebauthnApi for SqlDriver {
         state::get_auth(&exec.state().db.connection(), user_id).await
     }
 
-    #[tracing::instrument(level = "debug", skip(self, exec))]
+    #[tracing::instrument(name = "driver.sql.webauthn.get_user_webauthn_credential_registration_state", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn get_user_webauthn_credential_registration_state<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -117,7 +121,7 @@ impl WebauthnApi for SqlDriver {
         state::get_register(&exec.state().db.connection(), user_id).await
     }
 
-    #[tracing::instrument(level = "debug", skip(self, exec))]
+    #[tracing::instrument(name = "driver.sql.webauthn.list_user_webauthn_credentials", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn list_user_webauthn_credentials<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -126,7 +130,7 @@ impl WebauthnApi for SqlDriver {
         credential::list(&exec.state().db.connection(), user_id).await
     }
 
-    #[tracing::instrument(level = "debug", skip(self, exec))]
+    #[tracing::instrument(name = "driver.sql.webauthn.save_user_webauthn_credential_authentication_state", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn save_user_webauthn_credential_authentication_state<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -136,7 +140,7 @@ impl WebauthnApi for SqlDriver {
         state::create_auth(&exec.state().db.connection(), user_id, auth_state).await
     }
 
-    #[tracing::instrument(level = "debug", skip(self, exec))]
+    #[tracing::instrument(name = "driver.sql.webauthn.save_user_webauthn_credential_registration_state", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn save_user_webauthn_credential_registration_state<'a>(
         &self,
         exec: &ExecutionContext<'a>,
@@ -146,7 +150,7 @@ impl WebauthnApi for SqlDriver {
         state::create_register(&exec.state().db.connection(), user_id, reg_state).await
     }
 
-    #[tracing::instrument(level = "debug", skip(self, exec))]
+    #[tracing::instrument(name = "driver.sql.webauthn.update_user_webauthn_credential", level = "debug", skip_all, fields(user_id = %user_id, credential_id = %credential_id))]
     async fn update_user_webauthn_credential<'a>(
         &self,
         exec: &ExecutionContext<'a>,

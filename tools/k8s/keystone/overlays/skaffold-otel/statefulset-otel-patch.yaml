@@ -23,3 +23,6 @@ spec:
               value: deployment.environment=dev
             - name: OS_OTEL__SAMPLING_RATE
               value: "1.0"
+            # Export the provider and driver spans, not only the coarse ones.
+            - name: OS_OTEL__SPAN_LEVEL
+              value: debug

@@ -74,6 +74,7 @@ fn plugin_identity_event(
 
 #[async_trait]
 impl DynamicPluginIdentityApi for DynamicPluginIdentityService {
+    #[tracing::instrument(name = "provider.auth_plugin_identity.create_or_resolve", level = "debug", skip_all, fields(plugin_name = ?plugin_name, external_id = %external_id, user_id = %user_id))]
     async fn create_or_resolve<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -98,6 +99,7 @@ impl DynamicPluginIdentityApi for DynamicPluginIdentityService {
         }
     }
 
+    #[tracing::instrument(name = "provider.auth_plugin_identity.find", level = "debug", skip_all, fields(plugin_name = ?plugin_name, external_id = %external_id))]
     async fn find<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -109,6 +111,7 @@ impl DynamicPluginIdentityApi for DynamicPluginIdentityService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.auth_plugin_identity.purge", level = "debug", skip_all, fields(plugin_name = ?plugin_name, external_id = %external_id))]
     async fn purge<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -128,6 +131,7 @@ impl DynamicPluginIdentityApi for DynamicPluginIdentityService {
         }
     }
 
+    #[tracing::instrument(name = "provider.auth_plugin_identity.purge_by_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn purge_by_user<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
@@ -146,6 +150,7 @@ impl DynamicPluginIdentityApi for DynamicPluginIdentityService {
         }
     }
 
+    #[tracing::instrument(name = "provider.auth_plugin_identity.list_by_plugin", level = "debug", skip_all, fields(plugin_name = ?plugin_name))]
     async fn list_by_plugin<'a>(
         &self,
         ctx: &ExecutionContext<'a>,
