@@ -339,6 +339,64 @@ pub(super) fn build_http_client() -> Result<reqwest::Client, OidcError> {
         .map_err(OidcError::from)
 }
 
+/// Read `iss` from a JWT payload without verifying the token. Only use the
+/// result to pick a trusted issuer; `verify_jwt` checks the signed claim later.
+#[allow(dead_code)]
+pub(super) fn extract_issuer(token: &str) -> Result<String, OidcError> {
+    decode_header(token)?;
+
+    let mut segments = token.split('.');
+    let payload = match (
+        segments.next(),
+        segments.next(),
+        segments.next(),
+        segments.next(),
+    ) {
+        (Some(_), Some(payload), Some(_), None) => payload,
+        _ => {
+            return Err(OidcError::MalformedToken(
+                "expected exactly 3 dot-separated segments".to_string(),
+            ));
+        }
+    };
+
+    let bytes = URL_SAFE_NO_PAD
+        .decode(payload)
+        .map_err(|e| OidcError::MalformedToken(format!("payload is not base64url: {e}")))?;
+    let claims: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|e| OidcError::MalformedToken(format!("payload is not JSON: {e}")))?;
+
+    match claims.get("iss").and_then(|v| v.as_str()) {
+        Some(iss) if !iss.is_empty() => Ok(iss.to_owned()),
+        _ => Err(OidcError::MissingIssuer),
+    }
+}
+
+/// Verify an external JWT (the `subject_token` of a token exchange) against the
+/// JWKS of one of `trusted_issuers`. Returns the verified claims.
+#[allow(dead_code)]
+pub(super) async fn verify_external_jwt(
+    token: &str,
+    trusted_issuers: &[&str],
+    audiences: &[&str],
+    client: &reqwest::Client,
+) -> Result<serde_json::Value, OidcError> {
+    let issuer = extract_issuer(token)?;
+
+    // Check the allowlist before any network call.
+    let claimed = issuer.trim_end_matches('/');
+    let trusted = trusted_issuers
+        .iter()
+        .copied()
+        .find(|t| t.trim_end_matches('/') == claimed)
+        .ok_or_else(|| OidcError::UntrustedIssuer(issuer.clone()))?;
+
+    let metadata = discover(trusted, client).await?;
+    let jwks = fetch_jwks(&metadata.jwks_uri, client).await?;
+
+    verify_jwt(token, &jwks, Some(&issuer), None, audiences)
+}
+
 #[cfg(test)]
 mod tests {
     use secrecy::ExposeSecret;
@@ -1376,5 +1434,413 @@ nCCsPCcZ_m39ehWRD5EuL3yrQGE7HJo2a7E9J2bb0xBQEzXd_UzBI-lOOw2nvwIm\
             matches!(result, Err(OidcError::JwtDecode { .. })),
             "missing aud must be rejected, got {result:?}"
         );
+    }
+
+    // ── extract_issuer / verify_external_jwt ─────────────────────────────────
+
+    fn jwks_body() -> serde_json::Value {
+        json!({"keys": [{
+            "kty": "RSA", "use": "sig", "alg": "RS256", "kid": TEST_KID,
+            "n": TEST_JWK_N, "e": TEST_JWK_E,
+        }]})
+    }
+
+    fn mock_idp<'a>(
+        server: &'a MockServer,
+        issuer: &str,
+        jwks: &serde_json::Value,
+    ) -> (httpmock::Mock<'a>, httpmock::Mock<'a>) {
+        let base_url = server.base_url();
+        let discovery = server.mock(|when, then| {
+            when.method(GET).path("/.well-known/openid-configuration");
+            then.status(200).json_body(json!({
+                "issuer": issuer,
+                "authorization_endpoint": format!("{base_url}/auth"),
+                "token_endpoint": format!("{base_url}/token"),
+                "jwks_uri": format!("{base_url}/jwks"),
+            }));
+        });
+        let jwks_mock = server.mock(|when, then| {
+            when.method(GET).path("/jwks");
+            then.status(200).json_body(jwks.clone());
+        });
+        (discovery, jwks_mock)
+    }
+
+    #[test]
+    fn extract_issuer_returns_iss_claim() {
+        let token = make_jwt(
+            &valid_claims("https://iss.example.com", "my-client", None),
+            Some(TEST_KID),
+        );
+        assert_eq!(extract_issuer(&token).unwrap(), "https://iss.example.com");
+    }
+
+    #[test]
+    fn extract_issuer_does_not_verify_signature() {
+        let token = make_jwt(
+            &valid_claims("https://iss.example.com", "my-client", None),
+            Some(TEST_KID),
+        );
+        let (rest, _sig) = token.rsplit_once('.').expect("token has a signature");
+        let tampered = format!("{rest}.AAAA");
+        assert_eq!(
+            extract_issuer(&tampered).unwrap(),
+            "https://iss.example.com"
+        );
+    }
+
+    #[test]
+    fn extract_issuer_rejects_missing_or_non_string_iss() {
+        let exp = (Utc::now() + TimeDelta::hours(1)).timestamp();
+        for claims in [
+            json!({"sub": "u", "aud": "a", "exp": exp}),
+            json!({"sub": "u", "aud": "a", "exp": exp, "iss": ""}),
+            json!({"sub": "u", "aud": "a", "exp": exp, "iss": 42}),
+            json!({"sub": "u", "aud": "a", "exp": exp, "iss": null}),
+        ] {
+            let token = make_jwt(&claims, Some(TEST_KID));
+            assert!(
+                matches!(extract_issuer(&token), Err(OidcError::MissingIssuer)),
+                "{claims} must yield MissingIssuer"
+            );
+        }
+    }
+
+    #[test]
+    fn extract_issuer_rejects_malformed_tokens() {
+        assert!(matches!(
+            extract_issuer("not-a-jwt-at-all"),
+            Err(OidcError::JwtDecode { .. })
+        ));
+
+        let good = make_jwt(
+            &valid_claims("https://iss.example.com", "my-client", None),
+            Some(TEST_KID),
+        );
+        let mut parts = good.split('.');
+        let header = parts.next().expect("header segment");
+        let _payload = parts.next().expect("payload segment");
+        let sig = parts.next().expect("signature segment");
+
+        let bad_b64 = format!("{header}.!!!.{sig}");
+        assert!(matches!(
+            extract_issuer(&bad_b64),
+            Err(OidcError::MalformedToken(_))
+        ));
+
+        let not_json = format!("{header}.{}.{sig}", URL_SAFE_NO_PAD.encode(b"not json"));
+        assert!(matches!(
+            extract_issuer(&not_json),
+            Err(OidcError::MalformedToken(_))
+        ));
+
+        assert!(extract_issuer(&format!("{good}.extra")).is_err());
+    }
+
+    #[test]
+    fn extract_issuer_rejects_alg_none() {
+        let header = URL_SAFE_NO_PAD.encode(b"{\"alg\":\"none\",\"typ\":\"JWT\"}");
+        let payload = URL_SAFE_NO_PAD.encode(json!({"iss": "https://iss.example.com"}).to_string());
+        assert!(extract_issuer(&format!("{header}.{payload}.")).is_err());
+    }
+
+    #[tokio::test]
+    async fn verify_external_jwt_accepts_valid_token() {
+        let server = MockServer::start();
+        let base_url = server.base_url();
+        let (discovery, jwks) = mock_idp(&server, &base_url, &jwks_body());
+
+        let token = make_jwt(&valid_claims(&base_url, "my-client", None), Some(TEST_KID));
+        let claims = verify_external_jwt(
+            &token,
+            &[base_url.as_str()],
+            &["my-client"],
+            &reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(claims["sub"], "user123");
+        assert_eq!(claims["iss"], base_url.as_str());
+        discovery.assert_calls(1);
+        jwks.assert_calls(1);
+    }
+
+    #[tokio::test]
+    async fn verify_external_jwt_ignores_trailing_slash_on_trusted_issuer() {
+        let server = MockServer::start();
+        let base_url = server.base_url();
+        mock_idp(&server, &base_url, &jwks_body());
+
+        let token = make_jwt(&valid_claims(&base_url, "my-client", None), Some(TEST_KID));
+        let trusted = format!("{base_url}/");
+        verify_external_jwt(
+            &token,
+            &[trusted.as_str()],
+            &["my-client"],
+            &reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn verify_external_jwt_rejects_untrusted_issuer_without_network_io() {
+        let server = MockServer::start();
+        let base_url = server.base_url();
+        let (discovery, jwks) = mock_idp(&server, &base_url, &jwks_body());
+
+        let token = make_jwt(
+            &valid_claims("https://evil.example.com", "my-client", None),
+            Some(TEST_KID),
+        );
+        let result = verify_external_jwt(
+            &token,
+            &[base_url.as_str()],
+            &["my-client"],
+            &reqwest::Client::new(),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(OidcError::UntrustedIssuer(ref i)) if i == "https://evil.example.com"),
+            "expected UntrustedIssuer, got {result:?}"
+        );
+        discovery.assert_calls(0);
+        jwks.assert_calls(0);
+    }
+
+    #[tokio::test]
+    async fn verify_external_jwt_rejects_empty_trusted_list() {
+        let token = make_jwt(
+            &valid_claims("https://iss.example.com", "my-client", None),
+            Some(TEST_KID),
+        );
+        let result =
+            verify_external_jwt(&token, &[], &["my-client"], &reqwest::Client::new()).await;
+        assert!(matches!(result, Err(OidcError::UntrustedIssuer(_))));
+    }
+
+    #[tokio::test]
+    async fn verify_external_jwt_rejects_tampered_payload() {
+        let server = MockServer::start();
+        let base_url = server.base_url();
+        mock_idp(&server, &base_url, &jwks_body());
+
+        let token = make_jwt(&valid_claims(&base_url, "my-client", None), Some(TEST_KID));
+        let mut parts = token.split('.');
+        let header = parts.next().expect("header segment");
+        let _payload = parts.next().expect("payload segment");
+        let signature = parts.next().expect("signature segment");
+
+        let mut evil = valid_claims(&base_url, "my-client", None);
+        evil["sub"] = json!("attacker");
+        let evil_payload =
+            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&evil).expect("claims serialize"));
+        let tampered = format!("{header}.{evil_payload}.{signature}");
+
+        let result = verify_external_jwt(
+            &tampered,
+            &[base_url.as_str()],
+            &["my-client"],
+            &reqwest::Client::new(),
+        )
+        .await;
+        assert!(
+            matches!(result, Err(OidcError::JwtDecode { .. })),
+            "tampered payload must be rejected, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_external_jwt_rejects_tampered_signature() {
+        let server = MockServer::start();
+        let base_url = server.base_url();
+        mock_idp(&server, &base_url, &jwks_body());
+
+        let token = make_jwt(&valid_claims(&base_url, "my-client", None), Some(TEST_KID));
+        let (rest, sig) = token.rsplit_once('.').expect("token has a signature");
+        let last = sig.chars().next_back().expect("signature is non-empty");
+        let replacement = if last == 'A' { 'B' } else { 'A' };
+        let tampered = format!("{rest}.{}{replacement}", &sig[..sig.len() - 1]);
+
+        let result = verify_external_jwt(
+            &tampered,
+            &[base_url.as_str()],
+            &["my-client"],
+            &reqwest::Client::new(),
+        )
+        .await;
+        assert!(
+            matches!(result, Err(OidcError::JwtDecode { .. })),
+            "tampered signature must be rejected, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_external_jwt_rejects_signature_from_other_key_under_trusted_kid() {
+        let mut other_n = TEST_JWK_N.to_string();
+        let first = if other_n.starts_with('A') { "B" } else { "A" };
+        other_n.replace_range(0..1, first);
+        let other_jwks = json!({"keys": [{
+            "kty": "RSA", "use": "sig", "alg": "RS256", "kid": TEST_KID,
+            "n": other_n, "e": TEST_JWK_E,
+        }]});
+
+        let server = MockServer::start();
+        let base_url = server.base_url();
+        mock_idp(&server, &base_url, &other_jwks);
+
+        let token = make_jwt(&valid_claims(&base_url, "my-client", None), Some(TEST_KID));
+        let result = verify_external_jwt(
+            &token,
+            &[base_url.as_str()],
+            &["my-client"],
+            &reqwest::Client::new(),
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "token must not verify against a different key, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_external_jwt_rejects_unknown_kid() {
+        let server = MockServer::start();
+        let base_url = server.base_url();
+        mock_idp(&server, &base_url, &jwks_body());
+
+        let token = make_jwt(
+            &valid_claims(&base_url, "my-client", None),
+            Some("rotated-away-kid"),
+        );
+        let result = verify_external_jwt(
+            &token,
+            &[base_url.as_str()],
+            &["my-client"],
+            &reqwest::Client::new(),
+        )
+        .await;
+        assert!(
+            matches!(result, Err(OidcError::JwkNotFound(_))),
+            "expected JwkNotFound, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_external_jwt_rejects_discovery_issuer_mismatch() {
+        let server = MockServer::start();
+        let base_url = server.base_url();
+        let (_discovery, jwks) = mock_idp(&server, "https://attacker.example.com", &jwks_body());
+
+        let token = make_jwt(&valid_claims(&base_url, "my-client", None), Some(TEST_KID));
+        let result = verify_external_jwt(
+            &token,
+            &[base_url.as_str()],
+            &["my-client"],
+            &reqwest::Client::new(),
+        )
+        .await;
+        assert!(
+            matches!(result, Err(OidcError::IssuerMismatch { .. })),
+            "expected IssuerMismatch, got {result:?}"
+        );
+        jwks.assert_calls(0);
+    }
+
+    #[tokio::test]
+    async fn verify_external_jwt_rejects_expired_token() {
+        let server = MockServer::start();
+        let base_url = server.base_url();
+        mock_idp(&server, &base_url, &jwks_body());
+
+        let exp = (Utc::now() - TimeDelta::hours(1)).timestamp();
+        let claims = json!({
+            "sub": "user", "iss": base_url, "aud": "my-client",
+            "exp": exp, "iat": exp - 3600,
+        });
+        let token = make_jwt(&claims, Some(TEST_KID));
+        let result = verify_external_jwt(
+            &token,
+            &[base_url.as_str()],
+            &["my-client"],
+            &reqwest::Client::new(),
+        )
+        .await;
+        assert!(matches!(result, Err(OidcError::JwtDecode { .. })));
+    }
+
+    #[tokio::test]
+    async fn verify_external_jwt_rejects_wrong_audience() {
+        let server = MockServer::start();
+        let base_url = server.base_url();
+        mock_idp(&server, &base_url, &jwks_body());
+
+        let token = make_jwt(
+            &valid_claims(&base_url, "some-other-client", None),
+            Some(TEST_KID),
+        );
+        let result = verify_external_jwt(
+            &token,
+            &[base_url.as_str()],
+            &["my-client"],
+            &reqwest::Client::new(),
+        )
+        .await;
+        assert!(matches!(result, Err(OidcError::JwtDecode { .. })));
+    }
+
+    #[tokio::test]
+    async fn verify_external_jwt_rejects_symmetric_algorithm() {
+        let server = MockServer::start();
+        let base_url = server.base_url();
+        mock_idp(&server, &base_url, &jwks_body());
+
+        let key = EncodingKey::from_secret(TEST_JWK_N.as_bytes());
+        let claims = valid_claims(&base_url, "my-client", None);
+        let token = encode(&JwtHeader::default(), &claims, &key).unwrap();
+
+        let result = verify_external_jwt(
+            &token,
+            &[base_url.as_str()],
+            &["my-client"],
+            &reqwest::Client::new(),
+        )
+        .await;
+        assert!(
+            matches!(result, Err(OidcError::UnsupportedAlgorithm(_))),
+            "expected UnsupportedAlgorithm, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_external_jwt_propagates_jwks_fetch_failure() {
+        let server = MockServer::start();
+        let base_url = server.base_url();
+        server.mock(|when, then| {
+            when.method(GET).path("/.well-known/openid-configuration");
+            then.status(200).json_body(json!({
+                "issuer": base_url,
+                "authorization_endpoint": format!("{base_url}/auth"),
+                "token_endpoint": format!("{base_url}/token"),
+                "jwks_uri": format!("{base_url}/jwks"),
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/jwks");
+            then.status(500);
+        });
+
+        let token = make_jwt(&valid_claims(&base_url, "my-client", None), Some(TEST_KID));
+        let result = verify_external_jwt(
+            &token,
+            &[base_url.as_str()],
+            &["my-client"],
+            &reqwest::Client::new(),
+        )
+        .await;
+        assert!(result.is_err(), "JWKS fetch failure must fail closed");
     }
 }

@@ -19,6 +19,18 @@ use crate::api::error::KeystoneApiError;
 
 #[derive(Error, Debug)]
 pub enum OidcError {
+    /// The token is not a well-formed JWT.
+    #[error("malformed token: {0}")]
+    MalformedToken(String),
+
+    /// The token has no usable `iss` claim.
+    #[error("token has no `iss` claim")]
+    MissingIssuer,
+
+    /// The token issuer is not a trusted issuer.
+    #[error("issuer `{0}` is not a trusted issuer")]
+    UntrustedIssuer(String),
+
     /// OIDC Discovery error.
     #[error("discovery error for {url}: {msg}")]
     Discovery {
@@ -214,6 +226,15 @@ impl From<OidcError> for KeystoneApiError {
                 KeystoneApiError::BadRequest(format!(
                     "ID token iat ({iat}) is in the future (current: {now})"
                 ))
+            }
+            OidcError::MalformedToken(msg) => {
+                KeystoneApiError::BadRequest(format!("Malformed token: {msg}"))
+            }
+            OidcError::MissingIssuer => {
+                KeystoneApiError::BadRequest("Token has no `iss` claim.".to_string())
+            }
+            OidcError::UntrustedIssuer(_) => {
+                KeystoneApiError::unauthorized(value, Some("untrusted issuer"))
             }
         }
     }
