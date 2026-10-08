@@ -83,7 +83,7 @@ async fn test_project_list() -> Result<()> {
     let params = ProjectListRequest {
         domain_id: Some(domain.id.clone()),
         ids: Some(project.id.clone()),
-        name: None,
+        ..Default::default()
     };
     let projects = list_projects(&test_client, params).await?;
     assert!(
@@ -257,6 +257,68 @@ async fn test_project_delete() -> Result<()> {
     delete_project(&test_client, &project.id).await?;
     let result = get_project(&test_client, &project.id).await;
     assert!(result.is_err(), "project should be deleted");
+    domain.delete().await?;
+    Ok(())
+}
+
+/// `GET /v3/projects?enabled=<bool>` returns only projects with a matching
+/// flag.
+#[tokio::test]
+async fn test_project_list_filter_by_enabled() -> Result<()> {
+    let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
+    let domain = create_test_domain(&test_client).await?;
+    let enabled_item = create_project(
+        &test_client,
+        ProjectCreateBuilder::default()
+            .name(Uuid::new_v4().to_string())
+            .enabled(true)
+            .domain_id(domain.id.clone())
+            .build()?,
+    )
+    .await?;
+    let disabled_item = create_project(
+        &test_client,
+        ProjectCreateBuilder::default()
+            .name(Uuid::new_v4().to_string())
+            .enabled(false)
+            .domain_id(domain.id.clone())
+            .build()?,
+    )
+    .await?;
+
+    // Tempest sends Python-style capitalised booleans, so cover both
+    // spellings.
+    for (query, want_enabled) in [
+        ("true", true),
+        ("false", false),
+        ("True", true),
+        ("False", false),
+    ] {
+        let items = list_projects(
+            &test_client,
+            ProjectListRequest {
+                domain_id: Some(domain.id.clone()),
+                enabled: Some(query.to_string()),
+                ..Default::default()
+            },
+        )
+        .await?;
+        assert!(
+            items.iter().all(|i| i.enabled == want_enabled),
+            "enabled={query}: every returned project must be enabled={want_enabled}"
+        );
+        let ids: Vec<&str> = items.iter().map(|i| i.id.as_str()).collect();
+        let (present, absent) = if want_enabled {
+            (&enabled_item.id, &disabled_item.id)
+        } else {
+            (&disabled_item.id, &enabled_item.id)
+        };
+        assert!(ids.contains(&present.as_str()), "enabled={query}");
+        assert!(!ids.contains(&absent.as_str()), "enabled={query}");
+    }
+
+    enabled_item.delete().await?;
+    disabled_item.delete().await?;
     domain.delete().await?;
     Ok(())
 }

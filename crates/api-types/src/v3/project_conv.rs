@@ -109,6 +109,7 @@ impl From<api_types::ProjectListParameters> for provider_types::ProjectListParam
             domain_id: value.domain_id,
             ids: value.ids.map(|s| HashSet::from([s])),
             name: value.name,
+            enabled: value.enabled,
             pagination: Default::default(),
         }
     }

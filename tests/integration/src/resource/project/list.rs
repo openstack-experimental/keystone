@@ -69,3 +69,45 @@ async fn test_list_by_id() -> Result<()> {
     assert!(!res.contains(&project2.resource));
     Ok(())
 }
+
+#[traced_test]
+#[tokio::test]
+async fn test_list_by_enabled() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let enabled = create_project!(state, domain.id.clone())?;
+    let disabled = crate::resource::create_project(
+        &state,
+        ProjectCreateBuilder::default()
+            .name(uuid::Uuid::new_v4().simple().to_string())
+            .domain_id(domain.id.clone())
+            .parent_id(domain.id.clone())
+            .enabled(false)
+            .build()?,
+    )
+    .await?;
+
+    for want in [true, false] {
+        let res = state
+            .provider
+            .get_resource_provider()
+            .list_projects(
+                &ExecutionContext::internal(&state),
+                &ProjectListParameters {
+                    domain_id: Some(domain.id.clone()),
+                    enabled: Some(want),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        assert!(res.iter().all(|i| i.enabled == want));
+        let (present, absent) = if want {
+            (&enabled, &disabled)
+        } else {
+            (&disabled, &enabled)
+        };
+        assert!(res.iter().any(|i| i.id == present.id));
+        assert!(!res.iter().any(|i| i.id == absent.id));
+    }
+    Ok(())
+}

@@ -84,6 +84,7 @@ impl From<api_types::DomainListParameters> for provider_types::DomainListParamet
         Self {
             ids: value.ids.map(|s| HashSet::from([s])),
             name: value.name,
+            enabled: value.enabled,
             pagination: Default::default(),
         }
     }

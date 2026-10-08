@@ -200,6 +200,10 @@ pub struct ProjectListParameters {
     #[validate(length(max = 255))]
     pub name: Option<String>,
 
+    /// Filter projects by the `enabled` flag.
+    #[builder(default)]
+    pub enabled: Option<bool>,
+
     /// Pagination controls (limit/marker/page_reverse).
     #[builder(default)]
     pub pagination: crate::ListPagination,

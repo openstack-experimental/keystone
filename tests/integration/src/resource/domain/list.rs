@@ -67,3 +67,41 @@ async fn test_list_by_id() -> Result<()> {
     assert!(!res.iter().any(|d| d.id == domain2.id));
     Ok(())
 }
+
+#[traced_test]
+#[tokio::test]
+async fn test_list_by_enabled() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let enabled = create_domain!(state)?;
+    let disabled = crate::resource::create_domain(
+        &state,
+        DomainCreateBuilder::default()
+            .name(uuid::Uuid::new_v4().simple().to_string())
+            .enabled(false)
+            .build()?,
+    )
+    .await?;
+
+    for want in [true, false] {
+        let res = state
+            .provider
+            .get_resource_provider()
+            .list_domains(
+                &ExecutionContext::internal(&state),
+                &DomainListParameters {
+                    enabled: Some(want),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        assert!(res.iter().all(|i| i.enabled == want));
+        let (present, absent) = if want {
+            (&enabled, &disabled)
+        } else {
+            (&disabled, &enabled)
+        };
+        assert!(res.iter().any(|i| i.id == present.id));
+        assert!(!res.iter().any(|i| i.id == absent.id));
+    }
+    Ok(())
+}

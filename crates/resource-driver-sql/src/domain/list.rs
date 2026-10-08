@@ -45,6 +45,10 @@ fn get_list_query(
         select = select.filter(db_project::Column::Name.eq(val));
     }
 
+    if let Some(enabled) = params.enabled {
+        select = select.filter(db_project::Column::Enabled.eq(enabled));
+    }
+
     if let Some(val) = &params.ids
         && !val.is_empty()
     {
@@ -134,6 +138,19 @@ mod tests {
             .to_string(PostgresQueryBuilder)
             .contains("\"project\".\"name\" = 'name'")
         );
+    }
+
+    #[tokio::test]
+    async fn test_query_enabled() {
+        let q = QuerySelect::query(
+            &mut get_list_query(&DomainListParameters {
+                enabled: Some(false),
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .to_string(PostgresQueryBuilder);
+        assert!(q.contains("\"project\".\"enabled\" = FALSE"), "{}", q);
     }
 
     #[tokio::test]

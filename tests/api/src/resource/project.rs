@@ -57,7 +57,7 @@ crud_endpoint! {
         response_key = "projects",
         service = Identity,
         api_version = (3, 0),
-        query = [domain_id, ids, name],
+        query = [domain_id, ids, name, enabled],
     }
     delete {
         request = ProjectDeleteRequest,

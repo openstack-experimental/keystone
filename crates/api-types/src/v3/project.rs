@@ -329,6 +329,10 @@ pub struct ProjectListParameters {
     /// Filter projects by name.
     #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub name: Option<String>,
+
+    /// Filter projects by the `enabled` flag.
+    #[serde(default, deserialize_with = "crate::deserialize_lenient_bool_opt")]
+    pub enabled: Option<bool>,
 }
 
 #[cfg(test)]

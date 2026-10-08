@@ -169,6 +169,9 @@ pub struct DomainListRequest {
 
     /// Filter domains by the `name` attribute.
     pub name: Option<String>,
+
+    /// Filter domains by the `enabled` flag.
+    pub enabled: Option<String>,
 }
 
 impl RestEndpoint for DomainListRequest {
@@ -184,6 +187,7 @@ impl RestEndpoint for DomainListRequest {
         let mut params = QueryParams::default();
         params.push_opt("ids", self.ids.as_ref());
         params.push_opt("name", self.name.as_ref());
+        params.push_opt("enabled", self.enabled.as_ref());
         params
     }
 

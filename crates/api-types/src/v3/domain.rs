@@ -237,6 +237,10 @@ pub struct DomainListParameters {
     /// Filter domains by the `name` attribute.
     #[cfg_attr(feature = "validate", validate(length(max = 255)))]
     pub name: Option<String>,
+
+    /// Filter domains by the `enabled` flag.
+    #[serde(default, deserialize_with = "crate::deserialize_lenient_bool_opt")]
+    pub enabled: Option<bool>,
 }
 
 #[cfg(test)]

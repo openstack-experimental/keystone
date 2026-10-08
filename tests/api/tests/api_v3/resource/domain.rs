@@ -74,7 +74,7 @@ async fn test_domain_list() -> Result<()> {
     .await?;
     let params = DomainListRequest {
         ids: Some(domain.id.clone()),
-        name: None,
+        ..Default::default()
     };
     let domains = list_domains(&test_client, params).await?;
     assert!(
@@ -231,5 +231,62 @@ async fn test_domain_delete() -> Result<()> {
     delete_domain(&test_client, &domain.id).await?;
     let result = get_domain(&test_client, &domain.id).await;
     assert!(result.is_err(), "domain should be deleted");
+    Ok(())
+}
+
+/// `GET /v3/domains?enabled=<bool>` returns only domains with a matching
+/// flag.
+#[tokio::test]
+async fn test_domain_list_filter_by_enabled() -> Result<()> {
+    let test_client = Arc::new(AsyncOpenStack::new(&get_system_scope_config()?).await?);
+    let enabled_item = create_domain(
+        &test_client,
+        DomainCreateBuilder::default()
+            .name(Uuid::new_v4().to_string())
+            .enabled(true)
+            .build()?,
+    )
+    .await?;
+    let disabled_item = create_domain(
+        &test_client,
+        DomainCreateBuilder::default()
+            .name(Uuid::new_v4().to_string())
+            .enabled(false)
+            .build()?,
+    )
+    .await?;
+
+    // Tempest sends Python-style capitalised booleans, so cover both
+    // spellings.
+    for (query, want_enabled) in [
+        ("true", true),
+        ("false", false),
+        ("True", true),
+        ("False", false),
+    ] {
+        let items = list_domains(
+            &test_client,
+            DomainListRequest {
+                enabled: Some(query.to_string()),
+                ..Default::default()
+            },
+        )
+        .await?;
+        assert!(
+            items.iter().all(|i| i.enabled == want_enabled),
+            "enabled={query}: every returned domain must be enabled={want_enabled}"
+        );
+        let ids: Vec<&str> = items.iter().map(|i| i.id.as_str()).collect();
+        let (present, absent) = if want_enabled {
+            (&enabled_item.id, &disabled_item.id)
+        } else {
+            (&disabled_item.id, &enabled_item.id)
+        };
+        assert!(ids.contains(&present.as_str()), "enabled={query}");
+        assert!(!ids.contains(&absent.as_str()), "enabled={query}");
+    }
+
+    enabled_item.delete().await?;
+    disabled_item.delete().await?;
     Ok(())
 }
