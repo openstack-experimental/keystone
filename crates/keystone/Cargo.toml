@@ -93,6 +93,7 @@ spiffe = { workspace = true, features = ["x509-source"] }
 spiffe-rustls.workspace = true
 spiffe-rustls-tokio.workspace = true
 thiserror.workspace = true
+toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
 tokio = { workspace = true, features = ["macros", "process", "signal", "rt-multi-thread"] }
 tokio-rustls.workspace = true
 tokio-util.workspace = true

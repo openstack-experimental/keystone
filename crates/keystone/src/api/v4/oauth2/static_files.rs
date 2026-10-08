@@ -21,6 +21,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
+use super::renderer::DEFAULT_STYLESHEET;
 use crate::keystone::ServiceState;
 
 fn content_type(path: &Path) -> &'static str {
@@ -56,8 +57,8 @@ async fn resolve(root: &Path, requested: &str) -> Option<PathBuf> {
     full.starts_with(&root).then_some(full)
 }
 
-/// `GET /v4/oauth2/static/{path}`. Serves files from `[oauth2] static_dir`;
-/// `404` when it is not configured or the file does not exist.
+/// `GET /v4/oauth2/static/{path}`. Serves files from `[oauth2] static_dir`
+/// and the built-in default `style.css`; `404` otherwise.
 #[utoipa::path(
     get,
     path = "/static/{path}",
@@ -81,21 +82,32 @@ pub(super) async fn static_file(
         .oauth2
         .static_dir
         .clone();
-    let Some(dir) = dir else {
-        return StatusCode::NOT_FOUND.into_response();
+    let served = match &dir {
+        Some(dir) => match resolve(dir, &path).await {
+            Some(file) => tokio::fs::read(&file)
+                .await
+                .ok()
+                .map(|bytes| (bytes, content_type(&file))),
+            None => None,
+        },
+        None => None,
     };
-    let Some(file) = resolve(&dir, &path).await else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Ok(bytes) = tokio::fs::read(&file).await else {
+    // The default stylesheet is available even without `static_dir`, and
+    // unless the operator provides their own `style.css`.
+    let served = served.or_else(|| {
+        (path == "style.css").then(|| {
+            (
+                DEFAULT_STYLESHEET.as_bytes().to_vec(),
+                "text/css; charset=utf-8",
+            )
+        })
+    });
+    let Some((bytes, mime)) = served else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let mut response = bytes.into_response();
     let headers = response.headers_mut();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static(content_type(&file)),
-    );
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
     headers.insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static("public, max-age=3600"),

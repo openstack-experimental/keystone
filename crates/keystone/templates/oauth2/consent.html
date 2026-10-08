@@ -1,12 +1,8 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>Authorize application</title>
-</head>
-<body>
-<h1>Authorize application</h1>
-<p><strong>{{ client.name }}</strong> is requesting the following access:</p>
+{% extends "base.html" %}
+{% block title %}{{ t("authorize_application") }}{% endblock %}
+{% block content %}
+<h1>{{ t("authorize_application") }}</h1>
+<p>{{ t("requesting_following", client=client.name) }}</p>
 <ul>
 {% for scope in scopes %}
 <li>{{ scope }}</li>
@@ -14,8 +10,9 @@
 </ul>
 <form method="post" action="{{ action }}">
 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-<button type="submit" name="decision" value="allow">Allow</button>
-<button type="submit" name="decision" value="deny">Deny</button>
+<div class="actions">
+<button type="submit" name="decision" value="allow" autofocus>{{ t("allow") }}</button>
+<button type="submit" name="decision" value="deny" class="secondary">{{ t("deny") }}</button>
+</div>
 </form>
-</body>
-</html>
+{% endblock %}
