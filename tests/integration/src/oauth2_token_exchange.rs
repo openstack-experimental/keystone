@@ -66,6 +66,7 @@ async fn provision_token_exchange_client(
                 .client_id("")
                 .provider_id(format!("provider-{domain_id}"))
                 .domain_id(domain_id)
+                .name("Integration test client")
                 .token_endpoint_auth_method("client_secret_basic")
                 .grant_types(vec![GrantType::TokenExchange])
                 .build()?,
@@ -250,6 +251,7 @@ async fn test_token_exchange_requires_grant_types_capability() -> Result<()> {
                 .client_id("")
                 .provider_id(format!("provider-{}", domain.id))
                 .domain_id(domain.id.clone())
+                .name("Integration test client")
                 .token_endpoint_auth_method("client_secret_basic")
                 .grant_types(vec![GrantType::ClientCredentials])
                 .build()?,

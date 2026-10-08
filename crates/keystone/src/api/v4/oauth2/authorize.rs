@@ -47,7 +47,10 @@ use openstack_keystone_core_types::identity::{
 use openstack_keystone_core_types::oauth2_client::GrantType;
 use openstack_keystone_core_types::oauth2_session::PreAuthSession;
 
-use super::html::{consent_page, error_page, login_page, security_headers, too_many_requests};
+use super::html::{
+    client_view, consent_page, error_page, fetch_client, login_page, security_headers,
+    too_many_requests, view_of,
+};
 use super::renderer::{ClientView, ConsentCtx, LoginCtx};
 use crate::api::common::PeerAddr;
 use crate::audit::{
@@ -159,24 +162,29 @@ fn session_cookie(session_id: String, secure: bool) -> Cookie<'static> {
         .build()
 }
 
-fn render_login(domain_id: &str, session: &PreAuthSession, error: Option<&str>) -> Response {
+fn render_login(
+    domain_id: &str,
+    session: &PreAuthSession,
+    client: &ClientView,
+    error: Option<&str>,
+) -> Response {
     let Some(csrf_token) = compute_csrf_token(session) else {
         return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
     };
     login_page(&LoginCtx {
-        client: ClientView::from_id(&session.client_id),
+        client: client.clone(),
         csrf_token,
         error: error.map(str::to_string),
         action: format!("/v4/oauth2/{domain_id}/authorize/login"),
     })
 }
 
-fn render_consent(domain_id: &str, session: &PreAuthSession) -> Response {
+fn render_consent(domain_id: &str, session: &PreAuthSession, client: &ClientView) -> Response {
     let Some(csrf_token) = compute_csrf_token(session) else {
         return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
     };
     consent_page(&ConsentCtx {
-        client: ClientView::from_id(&session.client_id),
+        client: client.clone(),
         scopes: session.scope.clone(),
         csrf_token,
         action: format!("/v4/oauth2/{domain_id}/authorize/consent"),
@@ -391,7 +399,8 @@ pub(super) async fn authorize(
         session.session_id.clone(),
         cookie_secure(&state, &headers).await,
     ));
-    let response = render_login(&domain_id, &session, None);
+    let client_ui = client_view(&state, &session.client_id).await;
+    let response = render_login(&domain_id, &session, &client_ui, None);
     Ok((jar, response).into_response())
 }
 
@@ -473,6 +482,8 @@ pub(super) async fn authorize_login(
         ));
     }
 
+    let client = fetch_client(&state, &session.client_id).await;
+    let client_ui = view_of(client.as_ref(), &session.client_id);
     let auth_req = match UserPasswordAuthRequestBuilder::default()
         .name(form.username.clone())
         .domain(IdentityDomain {
@@ -487,6 +498,7 @@ pub(super) async fn authorize_login(
             return Ok(render_login(
                 &domain_id,
                 &session,
+                &client_ui,
                 Some("invalid username or password"),
             ));
         }
@@ -514,6 +526,7 @@ pub(super) async fn authorize_login(
             return Ok(render_login(
                 &domain_id,
                 &session,
+                &client_ui,
                 Some("invalid username or password"),
             ));
         }
@@ -554,23 +567,15 @@ pub(super) async fn authorize_login(
         None,
     );
 
-    // Re-fetch the client for the `pre_authorized` consent-skip check (ADR
-    // 0026 §7.C's invariant applied here too: a `pre_authorized` client
-    // never has `openstack:api` in `allowed_scopes`, enforced at CRUD
-    // time, so skipping consent here cannot silently grant OpenStack
-    // authorization).
-    let client = state
-        .provider
-        .get_oauth2_client_provider()
-        .get_by_client_id(&exec, &session.client_id)
-        .await
-        .ok()
-        .flatten();
+    // `pre_authorized` consent-skip check (ADR 0026 §7.C's invariant applied
+    // here too: a `pre_authorized` client never has `openstack:api` in
+    // `allowed_scopes`, enforced at CRUD time, so skipping consent here
+    // cannot silently grant OpenStack authorization).
     if client.as_ref().is_some_and(|c| c.pre_authorized) {
         return Ok(finish_consent(&state, &domain_id, &session, true, &correlation_id.0).await);
     }
 
-    Ok(render_consent(&domain_id, &session))
+    Ok(render_consent(&domain_id, &session, &client_ui))
 }
 
 /// `POST /v4/oauth2/{domain_id}/authorize/consent`.
@@ -777,6 +782,12 @@ mod tests {
             created_at: 0,
             updated_at: 0,
             deleted_at: None,
+            name: "Example App".into(),
+            description: None,
+            logo_uri: None,
+            policy_uri: None,
+            tos_uri: None,
+            contacts: vec![],
         }
     }
 
@@ -952,7 +963,9 @@ mod tests {
         assert!(set_cookie.contains("keystone_oauth2_session=session-1"));
         assert!(set_cookie.to_lowercase().contains("httponly"));
         let body = text_body(response).await;
-        assert!(body.contains("client-1"));
+        // The registered name is shown, not the raw client id.
+        assert!(body.contains("Example App"));
+        assert!(!body.contains("client-1"));
     }
 
     #[tokio::test]
@@ -1052,8 +1065,15 @@ mod tests {
                 })
             });
 
+        let client = authz_client();
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_get_by_client_id()
+            .returning(move |_, _| Ok(Some(client.clone())));
+
         let provider = Provider::mocked_builder()
             .mock_oauth2_session(session_mock)
+            .mock_oauth2_client(client_mock)
             .mock_identity(identity_mock);
         let state = get_mocked_state(provider, true, None).await;
         let mut api = openapi_router()
@@ -1152,8 +1172,8 @@ mod tests {
     fn test_render_login_and_consent_headers() {
         let session = sample_session();
         for response in [
-            super::render_login("domain-1", &session, None),
-            super::render_consent("domain-1", &session),
+            super::render_login("domain-1", &session, &super::ClientView::from_id("c"), None),
+            super::render_consent("domain-1", &session, &super::ClientView::from_id("c")),
         ] {
             assert_eq!(response.headers()["cache-control"], "no-store");
             assert_eq!(response.headers()["pragma"], "no-cache");

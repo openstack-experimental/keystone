@@ -39,6 +39,16 @@ pub enum GrantType {
     TokenExchange,
 }
 
+/// Apply an optional-string update: `None` keeps the current value, an empty
+/// string clears it, anything else replaces it.
+fn apply_optional(update: Option<String>, current: Option<String>) -> Option<String> {
+    match update {
+        None => current,
+        Some(v) if v.is_empty() => None,
+        Some(v) => Some(v),
+    }
+}
+
 /// A registered OAuth2/OIDC relying party (ADR 0026 §5, "Amendment to ADR
 /// 0020: OAuth2 Client as a Fourth Provider Resource").
 ///
@@ -113,6 +123,42 @@ pub struct OAuth2ClientResource {
     /// still fails closed; refresh families are revoked at delete time.
     #[builder(default)]
     pub deleted_at: Option<i64>,
+
+    /// Human-readable client name shown on login and consent pages (RFC 7591
+    /// `client_name`). Empty for records created before the field existed;
+    /// use [`OAuth2ClientResource::display_name`].
+    ///
+    /// Appended after `deleted_at` (like every later field) because records
+    /// are stored as positional MessagePack arrays: older, shorter records
+    /// deserialize with these defaults.
+    #[serde(default)]
+    #[builder(default)]
+    pub name: String,
+
+    /// Short description of the client (RFC 7591 `client_uri` neighbour).
+    #[serde(default)]
+    #[builder(default)]
+    pub description: Option<String>,
+
+    /// `https://` URL of the client logo (RFC 7591 `logo_uri`).
+    #[serde(default)]
+    #[builder(default)]
+    pub logo_uri: Option<String>,
+
+    /// `https://` URL of the client's privacy policy (RFC 7591 `policy_uri`).
+    #[serde(default)]
+    #[builder(default)]
+    pub policy_uri: Option<String>,
+
+    /// `https://` URL of the client's terms of service (RFC 7591 `tos_uri`).
+    #[serde(default)]
+    #[builder(default)]
+    pub tos_uri: Option<String>,
+
+    /// Contact addresses of the client's operators (RFC 7591 `contacts`).
+    #[serde(default)]
+    #[builder(default)]
+    pub contacts: Vec<String>,
 }
 
 impl std::fmt::Debug for OAuth2ClientResource {
@@ -141,6 +187,12 @@ impl std::fmt::Debug for OAuth2ClientResource {
             .field("created_at", &self.created_at)
             .field("updated_at", &self.updated_at)
             .field("deleted_at", &self.deleted_at)
+            .field("name", &self.name)
+            .field("description", &self.description)
+            .field("logo_uri", &self.logo_uri)
+            .field("policy_uri", &self.policy_uri)
+            .field("tos_uri", &self.tos_uri)
+            .field("contacts", &self.contacts)
             .finish()
     }
 }
@@ -166,9 +218,25 @@ impl OAuth2ClientResource {
             pre_authorized: update.pre_authorized.unwrap_or(self.pre_authorized),
             enabled,
             claims_template: update.claims_template.unwrap_or(self.claims_template),
+            name: update.name.unwrap_or(self.name),
+            description: apply_optional(update.description, self.description),
+            logo_uri: apply_optional(update.logo_uri, self.logo_uri),
+            policy_uri: apply_optional(update.policy_uri, self.policy_uri),
+            tos_uri: apply_optional(update.tos_uri, self.tos_uri),
+            contacts: update.contacts.unwrap_or(self.contacts),
             updated_at: now,
             deleted_at,
             ..self
+        }
+    }
+
+    /// Name to show to users: the registered `name`, or the `provider_id`
+    /// for clients registered before names existed.
+    pub fn display_name(&self) -> &str {
+        if self.name.trim().is_empty() {
+            &self.provider_id
+        } else {
+            &self.name
         }
     }
 
@@ -231,6 +299,31 @@ pub struct OAuth2ClientResourceCreate {
     /// Per-client output claim templates.
     #[builder(default)]
     pub claims_template: HashMap<String, String>,
+
+    /// Human-readable client name (1-128 characters, validated by the
+    /// service layer).
+    #[builder(default)]
+    pub name: String,
+
+    /// Short description of the client.
+    #[builder(default)]
+    pub description: Option<String>,
+
+    /// `https://` URL of the client logo.
+    #[builder(default)]
+    pub logo_uri: Option<String>,
+
+    /// `https://` URL of the client's privacy policy.
+    #[builder(default)]
+    pub policy_uri: Option<String>,
+
+    /// `https://` URL of the client's terms of service.
+    #[builder(default)]
+    pub tos_uri: Option<String>,
+
+    /// Contact addresses of the client's operators.
+    #[builder(default)]
+    pub contacts: Vec<String>,
 }
 
 impl std::fmt::Debug for OAuth2ClientResourceCreate {
@@ -254,6 +347,12 @@ impl std::fmt::Debug for OAuth2ClientResourceCreate {
             .field("allowed_scopes", &self.allowed_scopes)
             .field("pre_authorized", &self.pre_authorized)
             .field("claims_template", &self.claims_template)
+            .field("name", &self.name)
+            .field("description", &self.description)
+            .field("logo_uri", &self.logo_uri)
+            .field("policy_uri", &self.policy_uri)
+            .field("tos_uri", &self.tos_uri)
+            .field("contacts", &self.contacts)
             .finish()
     }
 }
@@ -287,6 +386,24 @@ pub struct OAuth2ClientResourceUpdate {
 
     /// `None` = unchanged.
     pub claims_template: Option<HashMap<String, String>>,
+
+    /// `None` = unchanged.
+    pub name: Option<String>,
+
+    /// `None` = unchanged, empty string = clear.
+    pub description: Option<String>,
+
+    /// `None` = unchanged, empty string = clear.
+    pub logo_uri: Option<String>,
+
+    /// `None` = unchanged, empty string = clear.
+    pub policy_uri: Option<String>,
+
+    /// `None` = unchanged, empty string = clear.
+    pub tos_uri: Option<String>,
+
+    /// `None` = unchanged.
+    pub contacts: Option<Vec<String>>,
 }
 
 /// Filter parameters for `GET /v4/oauth2/{domain_id}/clients`.
@@ -300,6 +417,11 @@ pub struct OAuth2ClientResourceListParameters {
     /// Restrict to enabled/disabled clients.
     #[builder(default)]
     pub enabled: Option<bool>,
+
+    /// Restrict to clients whose name contains this substring
+    /// (case-insensitive).
+    #[builder(default)]
+    pub name: Option<String>,
 
     #[builder(default)]
     pub pagination: crate::ListPagination,

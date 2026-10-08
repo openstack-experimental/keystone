@@ -214,6 +214,12 @@ mod tests {
             created_at: 0,
             updated_at: 0,
             deleted_at: None,
+            name: String::new(),
+            description: None,
+            logo_uri: None,
+            policy_uri: None,
+            tos_uri: None,
+            contacts: vec![],
         }
     }
 

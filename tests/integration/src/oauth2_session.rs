@@ -302,6 +302,7 @@ async fn test_client_delete_revokes_refresh_families() -> Result<()> {
                 .client_id("")
                 .provider_id(format!("provider-{}", domain.id))
                 .domain_id(domain.id.clone())
+                .name("Integration test client")
                 .token_endpoint_auth_method("client_secret_basic")
                 .grant_types(vec![GrantType::AuthorizationCode, GrantType::RefreshToken])
                 .build()?,
@@ -386,6 +387,7 @@ async fn test_id_token_claims_include_profile_email_and_template() -> Result<()>
                 .client_id("")
                 .provider_id(format!("provider-{}", domain.id))
                 .domain_id(domain.id.clone())
+                .name("Integration test client")
                 .token_endpoint_auth_method("client_secret_basic")
                 .grant_types(vec![GrantType::AuthorizationCode])
                 .claims_template(std::collections::HashMap::from([(

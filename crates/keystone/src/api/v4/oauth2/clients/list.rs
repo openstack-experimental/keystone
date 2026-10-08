@@ -83,6 +83,7 @@ pub(super) async fn list(
     let params = OAuth2ClientResourceListParameters {
         domain_id: domain_id.clone(),
         enabled: query.enabled,
+        name: query.name.clone(),
         pagination: ListPagination {
             limit: config.resolve_list_limit(&config.oauth2.list_limit, pagination.limit),
             marker: pagination.marker.clone(),
@@ -151,6 +152,12 @@ mod tests {
             created_at: 0,
             updated_at: 0,
             deleted_at: None,
+            name: String::new(),
+            description: None,
+            logo_uri: None,
+            policy_uri: None,
+            tos_uri: None,
+            contacts: vec![],
         }
     }
 

@@ -239,6 +239,13 @@ pub struct Oauth2Provider {
     #[serde(default)]
     pub ui_terms_url: Option<String>,
 
+    /// Show the `logo_uri` registered for a client on its login and consent
+    /// pages. The browser then fetches that image from the client's host
+    /// (allowed by adding `https:` to the CSP `img-src`), which tells that
+    /// host who is signing in; off by default.
+    #[serde(default)]
+    pub ui_show_client_logos: bool,
+
     /// Locale used when `Accept-Language` matches none of the available
     /// locale bundles.
     #[serde(default = "default_ui_default_locale")]
@@ -357,6 +364,7 @@ impl Default for Oauth2Provider {
             ui_support_url: None,
             ui_privacy_url: None,
             ui_terms_url: None,
+            ui_show_client_logos: false,
             ui_default_locale: default_ui_default_locale(),
         }
     }

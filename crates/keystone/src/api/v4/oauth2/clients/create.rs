@@ -127,6 +127,12 @@ mod tests {
             created_at: 0,
             updated_at: 0,
             deleted_at: None,
+            name: String::new(),
+            description: None,
+            logo_uri: None,
+            policy_uri: None,
+            tos_uri: None,
+            contacts: vec![],
         }
     }
 
@@ -142,6 +148,12 @@ mod tests {
                 allowed_scopes: vec!["openid".into()],
                 pre_authorized: false,
                 claims_template: Default::default(),
+                name: "Test client".into(),
+                description: None,
+                logo_uri: None,
+                policy_uri: None,
+                tos_uri: None,
+                contacts: vec![],
             },
         }
     }
