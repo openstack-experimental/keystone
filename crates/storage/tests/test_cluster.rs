@@ -1929,6 +1929,10 @@ async fn test_cluster_inner() -> Result<()> {
                 .await;
             match result {
                 Err(ApiStoreError::Unavailable(_)) => {}
+                // Right after the removal the node can still be told by the
+                // leader to forward to a leader that has just changed: a
+                // refusal, not a stale read.
+                Err(ref e) if format!("{e:?}").contains("not linearizable leader") => {}
                 Ok(Some(env)) => assert_eq!(
                     "written_after_removal",
                     env.try_deserialize::<String>()?.data,
@@ -5007,4 +5011,353 @@ async fn test_transfer_leader_before_demoting_the_leader_inner() -> Result<()> {
         .set_value("after-demote".to_string(), make_env("v")?, None, None)
         .await?;
     Ok(())
+}
+
+/// A cluster node that can be killed and restarted on the same data
+/// directory, to exercise failover and crash recovery (GitHub #1307).
+struct RestartableNode {
+    node_id: u64,
+    config: DistributedStorageConfiguration,
+    _dir: TempDir,
+    storage: Option<Arc<Storage>>,
+    server: Option<(tokio::sync::oneshot::Sender<()>, thread::JoinHandle<()>)>,
+}
+
+impl RestartableNode {
+    /// Creates the node's storage; call [`RestartableNode::start`] to serve.
+    #[allow(unsafe_code)]
+    async fn new(node_id: u64, port_base: u16, tls: &TlsConfiguration) -> Result<Self> {
+        let dir = TempDir::new()?;
+        let config =
+            get_ds_config_with_port(node_id, port_base, dir.path().to_path_buf(), tls.clone());
+        // SAFETY: tests using this harness are `#[serial]`.
+        unsafe {
+            std::env::set_var("KEYSTONE_DEV_KEK", TEST_KEK_HEX);
+            std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
+        }
+        let storage = init_storage(&config_manager(config.clone())).await?;
+        Ok(Self {
+            node_id,
+            config,
+            _dir: dir,
+            storage: Some(storage),
+            server: None,
+        })
+    }
+
+    fn storage(&self) -> &Arc<Storage> {
+        self.storage.as_ref().expect("node is running")
+    }
+
+    /// Serves the node's gRPC API on its listener address.
+    async fn start(&mut self) {
+        let storage = self.storage().clone();
+        let config = self.config.clone();
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+        let handle = thread::spawn(move || {
+            let mut rt = AsyncRuntimeOf::<TypeConfig>::new(1);
+            rt.block_on(async {
+                let Ok(tls) = get_server_tls_config(&config) else {
+                    return;
+                };
+                let Ok(builder) = tonic::transport::Server::builder().tls_config(tls) else {
+                    return;
+                };
+                let mut builder = builder;
+                let Ok(routes) = get_app_server(&storage).await else {
+                    return;
+                };
+                let serve = builder.add_routes(routes).serve(config.node_listener_addr);
+                // Dropping the server future closes its connections at once
+                // (a graceful shutdown would wait for the peers' pooled ones).
+                tokio::select! {
+                    _ = serve => {},
+                    _ = stop_rx => {},
+                }
+            });
+        });
+        self.server = Some((stop_tx, handle));
+        TypeConfig::sleep(Duration::from_millis(200)).await;
+    }
+
+    /// Stops the node without any cluster-level goodbye and releases its
+    /// data directory lock.
+    async fn kill(&mut self) {
+        if let Some((stop, handle)) = self.server.take() {
+            let _ = stop.send(());
+            let _ = handle.join();
+        }
+        if let Some(storage) = self.storage.take() {
+            storage.raft.shutdown().await.ok();
+        }
+        TypeConfig::sleep(Duration::from_millis(500)).await;
+    }
+
+    /// Starts the node again from its persisted state.
+    #[allow(unsafe_code)]
+    async fn restart(&mut self) -> Result<()> {
+        // SAFETY: tests using this harness are `#[serial]`.
+        unsafe {
+            std::env::set_var("KEYSTONE_DEV_KEK", TEST_KEK_HEX);
+            std::env::set_var("KEYSTONE_ALLOW_ENV_KEK", "1");
+        }
+        self.storage = Some(init_storage(&config_manager(self.config.clone())).await?);
+        self.start().await;
+        Ok(())
+    }
+
+    async fn admin(&self) -> Result<ClusterAdminServiceClient<Channel>> {
+        let tls = get_client_tls_config(&self.config)?;
+        new_admin_client(self.config.node_cluster_addr.clone(), &tls).await
+    }
+}
+
+/// Waits until `node` reports a leader other than `not` and returns it.
+async fn wait_for_new_leader(node: &RestartableNode, not: u64) -> u64 {
+    for _ in 0..300 {
+        if let Some(leader) = node.storage().current_leader()
+            && leader != not
+        {
+            return leader;
+        }
+        TypeConfig::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("no leader other than {not} elected within 30 seconds");
+}
+
+/// `set_value` that retries while an election is still in progress.
+async fn set_value_retrying(storage: &Arc<Storage>, key: &str, value: &str) -> Result<()> {
+    let mut last_err = None;
+    for _ in 0..100 {
+        match storage
+            .set_value(key.to_string(), make_env(value)?, None, None)
+            .await
+        {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                last_err = Some(e);
+                TypeConfig::sleep(Duration::from_millis(200)).await;
+            }
+        }
+    }
+    Err(last_err.expect("at least one attempt").into())
+}
+
+const FAILOVER_PORT_BASE: u16 = 1600;
+
+/// The leader of a three-node cluster is killed while data exists: the
+/// survivors elect a new leader, keep serving the old data and take new
+/// writes, and the old leader restarts from its persisted log (crash
+/// recovery), catches up and serves both the old and the new data.
+#[serial_test::serial]
+#[tracing_test::traced_test]
+#[test]
+fn test_leader_failover_and_rejoin() {
+    TypeConfig::run(test_leader_failover_and_rejoin_inner()).unwrap();
+}
+
+async fn test_leader_failover_and_rejoin_inner() -> Result<()> {
+    const PORT: u16 = FAILOVER_PORT_BASE;
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+    let tls = make_certificates()?;
+
+    let mut nodes = Vec::new();
+    for id in 1..=3 {
+        let mut node = RestartableNode::new(id, PORT, &tls).await?;
+        node.start().await;
+        nodes.push(node);
+    }
+    let mut admin1 = nodes[0].admin().await?;
+    admin1
+        .init(pb::raft::InitRequest {
+            nodes: vec![new_node_with_port(1, PORT)],
+        })
+        .await?;
+    wait_for_leader(&mut admin1, 1).await;
+    for id in [2u64, 3] {
+        nodes[id as usize - 1]
+            .storage()
+            .join_cluster(
+                &get_addr_with_port(1, PORT).to_string(),
+                &get_addr_with_port(id, PORT).to_string(),
+            )
+            .await?;
+    }
+    admin1
+        .change_membership(pb::raft::ChangeMembershipRequest {
+            members: vec![1, 2, 3],
+            retain: false,
+        })
+        .await?;
+
+    const NUM_RECORDS: usize = 100;
+    write_index_and_sensitive_records(nodes[0].storage()).await?;
+    write_records_concurrently(nodes[0].storage(), NUM_RECORDS).await?;
+    let leader_index = nodes[0]
+        .storage()
+        .last_log_index()
+        .ok_or_else(|| eyre::eyre!("leader must have a log"))?;
+    for node in &nodes[1..] {
+        assert!(
+            poll_until(Duration::from_millis(100), 100, || {
+                node.storage().last_log_index() >= Some(leader_index)
+            })
+            .await,
+            "node {} did not replicate before the failover",
+            node.node_id
+        );
+    }
+
+    // --- Kill the leader.
+    nodes[0].kill().await;
+    let new_leader = wait_for_new_leader(&nodes[1], 1).await;
+    assert!(new_leader == 2 || new_leader == 3, "leader {new_leader}");
+    let survivor = if new_leader == 2 {
+        &nodes[2]
+    } else {
+        &nodes[1]
+    };
+
+    // Old data stays readable from both survivors, new writes succeed.
+    for node in &nodes[1..] {
+        let got = get_by_key_retrying(node.storage(), "k0".as_bytes(), None)
+            .await?
+            .expect("pre-failover record must survive");
+        assert_eq!("v0", got.try_deserialize::<String>()?.data);
+    }
+    set_value_retrying(
+        nodes[new_leader as usize - 1].storage(),
+        "after",
+        "failover",
+    )
+    .await?;
+    let got = get_by_key_retrying(survivor.storage(), "after".as_bytes(), None)
+        .await?
+        .expect("post-failover write must replicate");
+    assert_eq!("failover", got.try_deserialize::<String>()?.data);
+
+    // --- The old leader restarts from its persisted state and catches up.
+    nodes[0].restart().await?;
+    let new_index = nodes[new_leader as usize - 1]
+        .storage()
+        .last_log_index()
+        .ok_or_else(|| eyre::eyre!("new leader must have a log"))?;
+    assert!(
+        poll_until(Duration::from_millis(100), 200, || {
+            nodes[0].storage().last_log_index() >= Some(new_index)
+        })
+        .await,
+        "restarted node did not catch up to {new_index} (at {:?})",
+        nodes[0].storage().last_log_index()
+    );
+    assert_ne!(
+        nodes[0].storage().current_leader(),
+        Some(1),
+        "the restarted node must follow the new leader"
+    );
+    assert_serves_all_records(nodes[0].storage(), NUM_RECORDS, "restarted old leader").await?;
+    let got = get_by_key_retrying(nodes[0].storage(), "after".as_bytes(), None)
+        .await?
+        .expect("restarted node must serve the post-failover write");
+    assert_eq!("failover", got.try_deserialize::<String>()?.data);
+
+    for node in &mut nodes {
+        node.kill().await;
+    }
+    Ok(())
+}
+
+const QUARANTINE_RESTART_PORT_BASE: u16 = 1650;
+
+/// A quarantine marker survives a restart: the partition stays blocked after
+/// the node comes back, and `clear-quarantine` over the admin API unblocks it
+/// (GitHub #1307).
+#[serial_test::serial]
+#[tracing_test::traced_test]
+#[test]
+fn test_quarantine_survives_restart_and_is_cleared() {
+    TypeConfig::run(test_quarantine_survives_restart_and_is_cleared_inner()).unwrap();
+}
+
+async fn test_quarantine_survives_restart_and_is_cleared_inner() -> Result<()> {
+    const PORT: u16 = QUARANTINE_RESTART_PORT_BASE;
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+    let tls = make_certificates()?;
+
+    let mut node = RestartableNode::new(1, PORT, &tls).await?;
+    node.start().await;
+    let mut admin = node.admin().await?;
+    admin
+        .init(pb::raft::InitRequest {
+            nodes: vec![new_node_with_port(1, PORT)],
+        })
+        .await?;
+    wait_for_leader(&mut admin, 1).await;
+
+    set_value_retrying(node.storage(), "guarded", "secret").await?;
+    node.storage()
+        .raft
+        .client_write(quarantine_payload_for(1))
+        .await?;
+    let err = node
+        .storage()
+        .get_by_key("guarded".as_bytes(), None)
+        .await
+        .expect_err("quarantined partition must refuse reads");
+    assert!(
+        format!("{err:?}").to_lowercase().contains("quarantin"),
+        "{err:?}"
+    );
+
+    // --- Restart: the persisted marker keeps blocking reads.
+    drop(admin);
+    node.kill().await;
+    node.restart().await?;
+    let mut admin = node.admin().await?;
+    wait_for_leader(&mut admin, 1).await;
+    let err = node
+        .storage()
+        .get_by_key("guarded".as_bytes(), None)
+        .await
+        .expect_err("the quarantine must survive the restart");
+    assert!(
+        format!("{err:?}").to_lowercase().contains("quarantin"),
+        "{err:?}"
+    );
+    let status = admin.storage_status(()).await?.into_inner();
+    assert_eq!(vec!["data".to_string()], status.quarantined_partitions);
+
+    // --- Clearing after the restart unblocks the partition.
+    admin
+        .clear_quarantine(pb::raft::ClearQuarantineRequest {
+            partition: "data".to_string(),
+        })
+        .await?;
+    let got = get_by_key_retrying(node.storage(), "guarded".as_bytes(), None)
+        .await?
+        .expect("record must be readable after the quarantine is cleared");
+    assert_eq!("secret", got.try_deserialize::<String>()?.data);
+    assert!(
+        admin
+            .storage_status(())
+            .await?
+            .into_inner()
+            .quarantined_partitions
+            .is_empty()
+    );
+
+    node.kill().await;
+    Ok(())
+}
+
+/// A Raft command quarantining the `data` partition on `node_id`, as the
+/// state machine commits it after repeated GCM failures.
+fn quarantine_payload_for(node_id: u64) -> pb::api::CommandRequest {
+    let cmd = StoreCommand::Transaction(vec![MutationInner::Quarantine {
+        node_id,
+        partition: "data".to_string(),
+    }]);
+    pb::api::CommandRequest::try_from(cmd).expect("quarantine command encodes")
 }
