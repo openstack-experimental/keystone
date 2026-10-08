@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: keystone-rs
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: identity-generator
+          args:
+            - |
+              set -eu
+              NODE_ID="${POD_NAME##*-}"
+              SVC="keystone-rs-internal.${POD_NAMESPACE}.svc.cluster.local"
+              cat <<EOF > /etc/keystone/site.toml
+              [distributed_storage]
+              node_id = ${NODE_ID}
+              node_cluster_addr = "https://${POD_NAME}.${SVC}:8300"
+              node_listener_addr = "0.0.0.0:8300"
+              path = "/storage"
+              trust_domains = "example.org"
+              allowed_peer_svids = ["spiffe://example.org/keystone/storage/node"]
+              retry_join_nodes = "0=https://keystone-rs-0.${SVC}:8300"
+              kek_provider = "tpm"
+              [distributed_storage.tpm]
+              tpm_tcti = "swtpm:host=127.0.0.1,port=2361"
+              tpm_key_context_file = "/etc/keystone-tpm/kek.ctx"
+              EOF
+              cat /etc/keystone/site.toml
+      containers:
+        - name: keystone
+          args:
+            - |
+              set -eu
+              # Wait for the swtpm sidecar to start listening, then send
+              # TPM2_Startup before the storage engine opens the TPM KEK.
+              # A failure here means the TPM is already started, which is
+              # fine for a restarted sidecar with persisted state.
+              until bash -c 'exec 3<>/dev/tcp/127.0.0.1/2361' 2>/dev/null; do
+                sleep 0.2
+              done
+              TPM2TOOLS_TCTI="swtpm:host=127.0.0.1,port=2361" tpm2_startup -c || true
+              ulimit -S -l "$(ulimit -H -l)" || true
+              exec keystone
+          volumeMounts:
+            - name: tpm-kek
+              mountPath: /etc/keystone-tpm
+              readOnly: true
+        - name: swtpm
+          image: keystone-rs
+          command:
+            - swtpm
+            - socket
+            - --tpmstate
+            - dir=/swtpm-state
+            - --ctrl
+            - type=tcp,port=2362
+            - --server
+            - type=tcp,port=2361
+            - --tpm2
+            - --flags
+            - not-need-init
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: swtpm-state
+              mountPath: /swtpm-state
+      volumes:
+        - name: swtpm-state
+          hostPath:
+            path: /var/lib/keystone-raft-test/swtpm
+            type: DirectoryOrCreate
+        - name: tpm-kek
+          secret:
+            secretName: keystone-tpm-kek
+            items:
+              - key: kek.ctx
+                path: kek.ctx
+              - key: kek.ctx.hmac
+                path: kek.ctx.hmac
+            defaultMode: 0400

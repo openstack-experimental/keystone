@@ -27,11 +27,12 @@ configMapGenerator:
       - conf/keystone.conf
 
 images:
-  # The published `main` image is built with the PKCS#11 feature (see the
-  # KEYSTONE_FEATURES build argument in .github/workflows/container-publish.yml),
-  # so the overlay's `kek_provider = "pkcs11"` works as-is. A self-built image
-  # must pass the same build argument; a TPM-backed cluster needs
-  # openstack-keystone/tpm instead (see distributed.md).
+  # The published `main` image is built with both the PKCS#11 and TPM
+  # features (see the KEYSTONE_FEATURES build argument in
+  # .github/workflows/container-publish.yml), so this overlay's
+  # `kek_provider = "pkcs11"` works as-is and a TPM variant can switch the
+  # config to `kek_provider = "tpm"` without changing the image. A self-built
+  # image must pass the same build argument.
   - name: keystone-rs
     newName: ghcr.io/openstack-experimental/keystone
     newTag: main

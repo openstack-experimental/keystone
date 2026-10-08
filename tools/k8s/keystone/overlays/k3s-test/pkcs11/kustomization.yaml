@@ -1,0 +1,24 @@
+# PKCS#11 variant of the single-voter k3s smoke test.
+#
+# Uses a SoftHSM2-backed token so no physical HSM is needed. Deploy it with
+# the `keystone-k3s-test-pkcs11` Skaffold module (see
+# doc/src/contributor/development.md); that module builds and pushes the
+# `localhost:5000/keystone-rs:raft-test` image used below.
+namespace: keystone-raft-test
+
+resources:
+  - ../base
+  - softhsm2-configmap.yaml
+
+images:
+  # The init container added by the patch below uses the unqualified image
+  # name; rewrite it to the locally built image.
+  - name: keystone-rs
+    newName: localhost:5000/keystone-rs
+    newTag: raft-test
+
+patches:
+  - target:
+      kind: StatefulSet
+      name: keystone-rs
+    path: statefulset-patch.yaml

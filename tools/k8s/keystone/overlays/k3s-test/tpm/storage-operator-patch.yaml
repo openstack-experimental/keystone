@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keystone-storage-operator
+data:
+  site.toml: |
+    [auth]
+    methods = "password"
+    [database]
+    connection = "postgresql://unused:unused@localhost/unused"
+    [distributed_storage]
+    node_id = 1000
+    node_cluster_addr = "https://keystone-rs-0.keystone-rs-internal.keystone-raft-test.svc.cluster.local:8300"
+    node_listener_addr = "0.0.0.0:8300"
+    path = "/tmp/storage"
+    trust_domains = "example.org"
+    allowed_peer_svids = ["spiffe://example.org/keystone/storage/node"]
+    kek_provider = "tpm"
+    [distributed_storage.tpm]
+    tpm_tcti = "swtpm:host=127.0.0.1,port=2361"
+    tpm_key_context_file = "/nonexistent"

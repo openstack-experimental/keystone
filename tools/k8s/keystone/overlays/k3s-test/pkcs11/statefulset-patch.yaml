@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: keystone-rs
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: identity-generator
+          args:
+            - |
+              set -eu
+              NODE_ID="${POD_NAME##*-}"
+              SVC="keystone-rs-internal.${POD_NAMESPACE}.svc.cluster.local"
+              cat <<EOF > /etc/keystone/site.toml
+              [distributed_storage]
+              node_id = ${NODE_ID}
+              node_cluster_addr = "https://${POD_NAME}.${SVC}:8300"
+              node_listener_addr = "0.0.0.0:8300"
+              path = "/storage"
+              trust_domains = "example.org"
+              allowed_peer_svids = ["spiffe://example.org/keystone/storage/node"]
+              retry_join_nodes = "0=https://keystone-rs-0.${SVC}:8300"
+              kek_provider = "pkcs11"
+              [distributed_storage.pkcs11]
+              pkcs11_module_path = "/usr/lib/softhsm/libsofthsm2.so"
+              pkcs11_slot_label = "keystone-storage"
+              pkcs11_key_label = "keystone-kek"
+              pkcs11_pin_file = "/etc/keystone-pkcs11/pin"
+              EOF
+              cat /etc/keystone/site.toml
+        - name: softhsm-init
+          image: keystone-rs
+          env:
+            - name: SOFTHSM2_CONF
+              value: /etc/softhsm/softhsm2.conf
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: raft-storage
+              mountPath: /storage
+            - name: pkcs11-pin
+              mountPath: /etc/keystone-pkcs11
+              readOnly: true
+            - name: softhsm2-config
+              mountPath: /etc/softhsm
+              readOnly: true
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              MODULE=/usr/lib/softhsm/libsofthsm2.so
+              PIN_FILE=/etc/keystone-pkcs11/pin
+              mkdir -p /storage/softhsm
+              if [ ! -e /storage/softhsm/.keystone-token-initialized ]; then
+                softhsm2-util --init-token --free --label keystone-storage \
+                   --module "$MODULE" \
+                   --so-pin "$(cat "$PIN_FILE")" \
+                   --pin "$(cat "$PIN_FILE")"
+                touch /storage/softhsm/.keystone-token-initialized
+              fi
+              if [ ! -e /storage/softhsm/.keystone-kek-provisioned ]; then
+                pkcs11-tool --module "$MODULE" \
+                   --login --login-type user \
+                   --pin "$(cat "$PIN_FILE")" \
+                   --keygen --key-type AES:32 \
+                   --usage-decrypt --private --sensitive \
+                   --label keystone-kek --id 01
+                touch /storage/softhsm/.keystone-kek-provisioned
+              fi
+      containers:
+        - name: keystone
+          env:
+            - name: SOFTHSM2_CONF
+              value: /etc/softhsm/softhsm2.conf
+          volumeMounts:
+            - name: softhsm2-config
+              mountPath: /etc/softhsm
+              readOnly: true
+      volumes:
+        - name: softhsm2-config
+          configMap:
+            name: softhsm2

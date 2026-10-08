@@ -1,0 +1,54 @@
+# SPIRE registrations for the single-voter k3s smoke test. ClusterSPIFFEIDs
+# are cluster-scoped and are bound to the `keystone-raft-test` namespace and
+# the same dedicated service accounts used by the production overlay.
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: keystone-raft-test-storage-node
+spec:
+  className: spire-spire
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/keystone/storage/node"
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: keystone-raft-test
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: keystone-rs
+  workloadSelectorTemplates:
+    - "k8s:sa:keystone-rs"
+  ttl: "1h"
+---
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: keystone-raft-test-rs-default
+spec:
+  className: spire-spire
+  hint: default
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: keystone-raft-test
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: keystone-rs
+  workloadSelectorTemplates:
+    - "k8s:sa:keystone-rs"
+  ttl: "1h"
+---
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: keystone-raft-test-storage-operator
+spec:
+  className: spire-spire
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/keystone/storage/storage-operator"
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: keystone-raft-test
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: keystone-storage-operator
+  workloadSelectorTemplates:
+    - "k8s:sa:keystone-storage-operator"
+  ttl: "1h"

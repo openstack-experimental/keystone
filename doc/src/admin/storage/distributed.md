@@ -31,6 +31,7 @@ primitives and the `KekProvider` trait), and the two production KEK providers,
     - [First-Time Cluster Bootstrap](#first-time-cluster-bootstrap)
     - [Adding Nodes](#adding-nodes)
     - [Kubernetes Reference Deployment](#kubernetes-reference-deployment)
+    - [Single-voter k3s smoke test](#single-voter-k3s-smoke-test)
     - [TLS Certificate Management](#tls-certificate-management)
 11. [Operational Runbook](#operational-runbook)
     - [Cluster Metrics](#cluster-metrics)
@@ -937,15 +938,17 @@ What it sets up, and why:
   match the pinned values are rejected.
 - **KEK.** `kek_provider = "pkcs11"` with the token PIN mounted from the
   `keystone-pkcs11-pin` Secret (create it out of band). The published
-  `ghcr.io/openstack-experimental/keystone:main` image is already built with the
-  PKCS#11 feature (see `.github/workflows/container-publish.yml`), so it works
-  as-is; a self-built image must pass the same feature, e.g.
-  `docker build --build-arg KEYSTONE_FEATURES=openstack-keystone/pkcs11 .`. The
-  image must also contain the vendor's PKCS#11 module and client configuration
-  at `pkcs11_module_path`. For a TPM use `openstack-keystone/tpm` and
-  `kek_provider = "tpm"`; the pod then also needs access to the TPM device
-  (`/dev/tpmrm0`), typically through a device plugin, and the image must link
-  the `libtss2` C libraries because `tss-esapi` has no pure-Rust fallback.
+  `ghcr.io/openstack-experimental/keystone:main` image is built with both the
+  PKCS#11 and TPM features (see `.github/workflows/container-publish.yml`), so
+  this overlay works as-is and a TPM-backed cluster can switch the config to
+  `kek_provider = "tpm"` without changing the image. A self-built image must
+  pass the same build argument, e.g.
+  `docker build --build-arg KEYSTONE_FEATURES=openstack-keystone/pkcs11,openstack-keystone/tpm .`.
+  The image must also contain the vendor's PKCS#11 module and client
+  configuration at `pkcs11_module_path`. For a TPM, set `kek_provider = "tpm"`
+  and give the pod access to the TPM device (`/dev/tpmrm0`), typically through a
+  device plugin or, for a single-node test, a `hostPath` char-device mount; the
+  image already ships the `libtss2` runtime libraries required by `tss-esapi`.
 - **Pre-flight.** The pods run as non-root with all capabilities dropped and a
   read-only root file system. Keystone sets `RLIMIT_CORE = 0` and
   `PR_SET_DUMPABLE = 0` itself; neither needs a privilege. The container command
@@ -974,8 +977,62 @@ stays uninitialized, remove the stale member with
 `keystone-manage storage join <address of a live member>` in `keystone-rs-0`
 and promote it again (see [Adding Nodes](#adding-nodes)).
 
-The readiness probe uses `/ready`, which reports whether the storage is
-initialized; it does not yet reflect leadership loss or quarantine.
+The readiness probe uses `/ready`, which returns 503 while the storage is not
+initialized or reports a recoverable Raft issue (no known leader, a stale quorum
+acknowledgement, or a quarantined partition). The liveness probe uses `/health`,
+which fails only on an unrecoverable error such as a stopped Raft core.
+
+### Single-voter k3s smoke test
+
+`tools/k8s/keystone/overlays/k3s-test` is a throwaway, single-voter overlay for
+verifying the two production KEK providers on a single-node k3s cluster. It is
+not a quorum test: the overlay drops the required pod anti-affinity and runs
+only `keystone-rs-0`.
+
+The overlays render the same dependencies as the other Keystone overlays: a
+CloudNativePG `Cluster` for the bootstrap job's database, SPIRE
+`ClusterSPIFFEID` registrations, and the `keystone-py` image used by the
+bootstrap job. Install CloudNativePG and the SPIRE controller manager on the k3s
+cluster first (the main `keystone` Skaffold module installs both).
+
+Use the Skaffold modules described in the
+[Raft KEK overlays on k3s](../contributor/development.md#raft-kek-overlays-on-k3s)
+section of the contributor development guide:
+
+```sh
+skaffold run -f skaffold-k3s-test.yaml \
+  -p pkcs11 --default-repo localhost:5000 --tag raft-test --cleanup=false
+skaffold run -f skaffold-k3s-test.yaml \
+  -p tpm --default-repo localhost:5000 --tag raft-test --cleanup=false
+```
+
+The PKCS#11 variant uses SoftHSM2. It initialises a token on the StatefulSet
+volume and generates the `keystone-kek` AES-256 key automatically.
+
+The TPM variant runs a `swtpm` sidecar on pod loopback and sends
+`TPM2_Startup` before starting `keystone`. This avoids depending on a host TPM,
+which may lack `TPM2_EncryptDecrypt2` (for example, some ARM/virt
+implementations return `0x000b0143` — “command code not supported” — for it).
+Provision the sidecar state and the KEK context files on the k3s host before
+deploying the TPM module; the Skaffold module creates the `keystone-tpm-kek`
+Secret from those files.
+
+A real host TPM can be used instead by pointing `tpm_tcti` at
+`device:/dev/tpmrm0`, removing the `swtpm` sidecar and the `tpm2_startup` call
+from `tools/k8s/keystone/overlays/k3s-test/tpm/statefulset-patch.yaml`, and
+provisioning the context files against the host TPM. The TPM must support
+`TPM2_EncryptDecrypt2`.
+
+Tear down either variant with:
+
+```sh
+skaffold delete -f skaffold-k3s-test.yaml \
+  -p pkcs11 --default-repo localhost:5000
+skaffold delete -f skaffold-k3s-test.yaml \
+  -p tpm --default-repo localhost:5000
+```
+
+The StatefulSet volume claim is deleted with the namespace.
 
 ### TLS Certificate Management
 

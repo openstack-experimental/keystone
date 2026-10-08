@@ -1,0 +1,50 @@
+# TPM 2.0 variant of the single-voter k3s smoke test.
+#
+# This variant runs a `swtpm` sidecar in the pod instead of mounting a host
+# TPM. Some host TPMs (e.g. ARM virt) do not implement
+# `TPM_CC_EncryptDecrypt2`, which the TPM KEK provider requires, so a software
+# TPM is used for the k3s smoke test. A host-TPM deployment would replace the
+# sidecar with a `hostPath` char-device mount (or device plugin) and set
+# `tpm_tcti = "device:/dev/tpmrm0"`.
+#
+# The swtpm state lives on the host at `/var/lib/keystone-raft-test/swtpm` so
+# the pre-provisioned keys survive pod restarts. Provision it before applying
+# (use ports other than the pod sidecar's 2361/2362):
+#
+#   sudo mkdir -p /var/lib/keystone-raft-test/swtpm
+#   sudo chown 65532:65532 /var/lib/keystone-raft-test/swtpm
+#   swtpm socket \
+#     --tpmstate dir=/var/lib/keystone-raft-test/swtpm \
+#     --ctrl type=tcp,port=2352 --server type=tcp,port=2351 \
+#     --tpm2 --flags not-need-init &
+#   TPM2TOOLS_TCTI="swtpm:host=127.0.0.1,port=2351" tpm2_startup -c
+#   TPM_KEK_TCTI="swtpm:host=127.0.0.1,port=2351" \
+#     TPM_KEK_CONTEXT_FILE=/tmp/keystone-tpm-kek.ctx \
+#     cargo run -p openstack-keystone-storage-crypto-tpm --example tpm_kek_demo
+#   kill %1
+#   sudo rm -f /var/lib/keystone-raft-test/swtpm/.lock
+#
+# Deploy it with the `keystone-k3s-test-tpm` Skaffold module after creating
+# the `keystone-tpm-kek` Secret from the context files (see
+# doc/src/contributor/development.md).
+namespace: keystone-raft-test
+
+resources:
+  - ../base
+
+images:
+  # The init container and swtpm sidecar added by the patch below use the
+  # unqualified image name; rewrite them to the locally built image.
+  - name: keystone-rs
+    newName: localhost:5000/keystone-rs
+    newTag: raft-test
+
+patches:
+  - target:
+      kind: StatefulSet
+      name: keystone-rs
+    path: statefulset-patch.yaml
+  - target:
+      kind: ConfigMap
+      name: keystone-storage-operator
+    path: storage-operator-patch.yaml

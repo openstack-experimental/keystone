@@ -1,0 +1,97 @@
+# Single-voter k3s smoke-test base for the Raft storage KEK providers.
+#
+# Do not apply this directory directly; deploy a provider variant through
+# Skaffold:
+#
+#   skaffold run -m keystone-k3s-test-pkcs11 -p local --default-repo localhost:5000
+#   skaffold run -m keystone-k3s-test-tpm -p local --default-repo localhost:5000
+#
+# The overlay runs one `keystone-rs` voter (node_id 0) in the
+# `keystone-raft-test` namespace. It verifies the image and configuration
+# against a host TPM or a SoftHSM-backed PKCS#11 token; it is not a quorum
+# test, because a single node cannot schedule more than one voter.
+namespace: keystone-raft-test
+
+resources:
+  - namespace.yaml
+  - ../../production
+  - spire
+
+images:
+  # Match the post-production image name so the override applies after the
+  # production overlay has already renamed `keystone-rs`. The local Skaffold
+  # profile pushes these images to the development registry.
+  - name: ghcr.io/openstack-experimental/keystone
+    newName: localhost:5000/keystone-rs
+    newTag: raft-test
+  - name: ghcr.io/openstack-experimental/keystone-opa
+    newName: localhost:5000/keystone-opa
+    newTag: raft-test
+
+configMapGenerator:
+  - name: keystone
+    behavior: replace
+    files:
+      - conf/keystone.conf
+
+replicas:
+  - name: keystone-rs
+    count: 1
+
+patches:
+  - target:
+      kind: StatefulSet
+      name: keystone-rs
+    path: statefulset-single-voter-patch.yaml
+  - target:
+      kind: ConfigMap
+      name: keystone-storage-operator
+    path: storage-operator-patch.yaml
+  # The smoke test only exercises the keystone-rs Raft storage path; drop the
+  # evaluation-only Python deployment and ingress rules that would otherwise
+  # need their own SPIRE identities and certificates.
+  - target:
+      kind: Deployment
+      name: keystone-py
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: keystone-py
+      $patch: delete
+  - target:
+      kind: Ingress
+      name: keystone
+    patch: |-
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: keystone
+      $patch: delete
+  - target:
+      kind: Ingress
+      name: keystone-py
+    patch: |-
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: keystone-py
+      $patch: delete
+  - target:
+      kind: Ingress
+      name: keystone-rs
+    patch: |-
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: keystone-rs
+      $patch: delete
+  - target:
+      kind: Service
+      name: keystone-py
+    patch: |-
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: keystone-py
+      $patch: delete

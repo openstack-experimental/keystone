@@ -1,0 +1,19 @@
+# Relax the 3-voter placement rule for a single-node k3s smoke test. With one
+# replica the anti-affinity would be harmless, but an empty list keeps the
+# overlay from failing if it is ever applied to a cluster with one schedulable
+# node and leftover pods. The PKCS#11 PIN volume is made optional so the TPM
+# variant can run without creating a throwaway PIN secret.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: keystone-rs
+spec:
+  template:
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution: []
+      volumes:
+        - name: pkcs11-pin
+          secret:
+            optional: true
