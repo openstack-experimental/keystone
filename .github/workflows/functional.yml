@@ -31,6 +31,7 @@ jobs:
       contents: read
     outputs:
       code: ${{ github.event_name != 'pull_request' || steps.filter.outputs.code == 'true' }}
+      raft_kek: ${{ github.event_name != 'pull_request' || steps.filter.outputs.raft_kek == 'true' }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
@@ -54,6 +55,15 @@ jobs:
               - 'tools/Dockerfile.skaffold'
               - 'tools/Dockerfile.tempest'
               - 'tools/tempest/**'
+            raft_kek:
+              - '.github/workflows/functional.yml'
+              - 'Cargo.lock'
+              - 'Dockerfile'
+              - 'crates/storage*/**'
+              - 'crates/keystone/**'
+              - 'skaffold-k3s-test.yaml'
+              - 'tools/k3s-raft-smoke.sh'
+              - 'tools/k8s/keystone/**'
 
   # `build` and `interop` are not required checks; skip them in the merge
   # queue to keep runner pressure (and queue wait) down.
@@ -360,6 +370,88 @@ jobs:
       - name: Dump events
         if: failure()
         run: kubectl get events
+
+  # Single-voter Raft deployment with the PKCS#11 (SoftHSM2) KEK provider.
+  # Not a required check: it only runs when the storage crates or the
+  # Kubernetes overlays change and is skipped in the merge queue.
+  k3s-raft-pkcs11:
+    needs: changes
+    if: needs.changes.outputs.raft_kek == 'true' && github.event_name != 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Start Local Registry
+        run: |
+          docker run -d -p 5000:5000 --restart always --name registry registry:2
+
+      - name: Set up Docker Insecure Registry
+        run: |
+          echo '{"insecure-registries":["localhost:5000"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
+      - name: Install K3s
+        run: |
+          curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable traefik --disable servicelb --write-kubeconfig-mode 644" sh -s -
+          echo "KUBECONFIG=/etc/rancher/k3s/k3s.yaml" >> $GITHUB_ENV
+
+      - name: Install Skaffold
+        run: |
+          curl -Lo skaffold https://storage.googleapis.com/skaffold/builds/latest/skaffold-linux-amd64 && \
+          sudo install skaffold /usr/local/bin/
+
+      - name: Wait for Cluster Ready
+        run: |
+          timeout 60s bash -c 'until kubectl get nodes | grep -w "Ready"; do sleep 2; done'
+
+      # The overlay needs CloudNativePG (bootstrap database) and SPIRE
+      # (ClusterSPIFFEID registrations and node identities).
+      - name: Install CloudNativePG and SPIRE
+        run: |
+          helm repo add cnpg https://cloudnative-pg.github.io/charts
+          helm repo add spiffe https://spiffe.github.io/helm-charts-hardened
+          helm repo update
+          helm install cloudnative-pg cnpg/cloudnative-pg \
+            --namespace cnpg --create-namespace --wait --timeout 5m
+          helm install spire-crds spiffe/spire-crds \
+            --namespace spire --create-namespace
+          helm install spire spiffe/spire \
+            --namespace spire --wait --timeout 10m
+
+      - name: Deploy the PKCS#11 overlay
+        env:
+          BUILDKIT_STEP_LOG_MAX_SIZE: 10485760
+        run: |
+          export BUILDX_NO_DEFAULT_ATTESTATIONS=1
+          skaffold run -f skaffold-k3s-test.yaml -p pkcs11 \
+            --default-repo localhost:5000 --tag raft-test --cleanup=false
+
+      - name: Run smoke test
+        run: tools/k3s-raft-smoke.sh
+
+      - name: Dump pods
+        if: failure()
+        run: kubectl -n keystone-raft-test get pods -o wide
+
+      - name: Dump keystone-rs logs
+        if: failure()
+        run: |
+          kubectl -n keystone-raft-test logs statefulset/keystone-rs --all-containers --tail=500 || true
+          kubectl -n keystone-raft-test logs statefulset/keystone-rs --all-containers --previous --tail=500 || true
+
+      - name: Dump bootstrap job
+        if: failure()
+        run: |
+          kubectl -n keystone-raft-test get job keystone-bootstrap -o yaml || true
+          kubectl -n keystone-raft-test logs job/keystone-bootstrap --all-containers --tail=200 || true
+
+      - name: Dump events
+        if: failure()
+        run: kubectl -n keystone-raft-test get events --sort-by=.lastTimestamp
 
   loadtest-track:
     if: "success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'openstack-experimental-release-plz'"

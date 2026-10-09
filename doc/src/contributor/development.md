@@ -122,6 +122,12 @@ bootstrapped `admin` user against project `admin`:
 kubectl -n keystone-raft-test port-forward svc/keystone-rs 18080:8080
 ```
 
+The `k3s-raft-pkcs11` job in `.github/workflows/functional.yml` runs the PKCS#11
+overlay in CI when the storage crates or the Kubernetes overlays change.
+`tools/k3s-raft-smoke.sh` is the check it runs and can be used locally against
+a deployed overlay: it authenticates as `admin`, restarts the pod and verifies
+that the earlier token is still valid.
+
 Tear down either variant with:
 
 ```console
