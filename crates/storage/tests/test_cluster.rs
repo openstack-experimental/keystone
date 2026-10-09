@@ -2907,6 +2907,42 @@ async fn join_node2_as_voter(
     Ok(instance2)
 }
 
+/// Brings up node 2 fresh and joins it the way `keystone-manage storage
+/// join` does: node 2 is asked to adopt the leader's DEK over the admin RPC
+/// (it is not a member yet), then registered as a learner and promoted.
+async fn join_node2_through_admin_rpcs(
+    port_base: u16,
+    tls_configuration: &TlsConfiguration,
+    admin_client1: &mut ClusterAdminServiceClient<Channel>,
+) -> Result<Arc<InstanceHolder>> {
+    let instance2 =
+        Arc::new(InstanceHolder::new_with_port(2, port_base, tls_configuration.clone()).await?);
+    spawn_raft_app(&instance2).await;
+    let tls_client_config = get_client_tls_config(&instance2.config)?;
+    let mut admin_client2 = new_admin_client(
+        instance2.config.node_cluster_addr.clone(),
+        &tls_client_config,
+    )
+    .await?;
+    admin_client2
+        .adopt_cluster_dek(pb::raft::AdoptClusterDekRequest {
+            leader_addr: get_addr_with_port(1, port_base).to_string(),
+        })
+        .await?;
+    admin_client1
+        .add_learner(pb::raft::AddLearnerRequest {
+            node: Some(new_node_with_port(2, port_base)),
+        })
+        .await?;
+    admin_client1
+        .change_membership(pb::raft::ChangeMembershipRequest {
+            members: vec![1, 2],
+            retain: false,
+        })
+        .await?;
+    Ok(instance2)
+}
+
 /// Keyspace for the `i`-th test record: the default `data` keyspace plus two
 /// custom ones, so every kind of keyspace has to survive the scenario.
 fn test_keyspace(i: usize) -> Option<String> {
@@ -3041,19 +3077,43 @@ const AUTO_SNAPSHOT_JOIN_PORT_BASE: u16 = 700;
 #[test]
 fn test_join_after_automatic_compaction_serves_all_keyspaces() {
     TypeConfig::run(async {
-        test_join_after_automatic_compaction_serves_all_keyspaces_inner()
+        test_join_after_automatic_compaction_serves_all_keyspaces_inner(
+            AUTO_SNAPSHOT_JOIN_PORT_BASE,
+            false,
+        )
+        .await
+        .unwrap();
+    });
+}
+
+/// The same scenario through the `keystone-manage storage join` path
+/// (GitHub #1445): the CLI asks the not-yet-joined node to adopt the
+/// cluster DEK over the admin RPC and then registers it as a learner; the
+/// node never replicates under its own bootstrap DEK, so the snapshot it
+/// receives after log compaction decrypts and every key is served.
+const CLI_JOIN_PORT_BASE: u16 = 1550;
+
+#[serial_test::serial]
+#[tracing_test::traced_test]
+#[test]
+fn test_cli_join_after_compaction_adopts_cluster_dek() {
+    TypeConfig::run(async {
+        test_join_after_automatic_compaction_serves_all_keyspaces_inner(CLI_JOIN_PORT_BASE, true)
             .await
             .unwrap();
     });
 }
 
-async fn test_join_after_automatic_compaction_serves_all_keyspaces_inner() -> Result<()> {
+async fn test_join_after_automatic_compaction_serves_all_keyspaces_inner(
+    port_base: u16,
+    via_cli_path: bool,
+) -> Result<()> {
     let provider = rustls::crypto::aws_lc_rs::default_provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
     let tls_configuration = make_certificates()?;
 
     let (instance1, mut admin_client1) =
-        start_single_node_cluster(AUTO_SNAPSHOT_JOIN_PORT_BASE, &tls_configuration).await?;
+        start_single_node_cluster(port_base, &tls_configuration).await?;
 
     // Comfortably more than the 5000-entry default snapshot threshold.
     const NUM_RECORDS: usize = 5400;
@@ -3083,12 +3143,11 @@ async fn test_join_after_automatic_compaction_serves_all_keyspaces_inner() -> Re
 
     // --- The joiner's missing log prefix is gone: it can only catch up via
     //     InstallSnapshot.
-    let instance2 = join_node2_as_voter(
-        AUTO_SNAPSHOT_JOIN_PORT_BASE,
-        &tls_configuration,
-        &mut admin_client1,
-    )
-    .await?;
+    let instance2 = if via_cli_path {
+        join_node2_through_admin_rpcs(port_base, &tls_configuration, &mut admin_client1).await?
+    } else {
+        join_node2_as_voter(port_base, &tls_configuration, &mut admin_client1).await?
+    };
     let leader_index = instance1
         .storage
         .last_log_index()
@@ -3150,6 +3209,55 @@ async fn test_join_after_automatic_compaction_serves_all_keyspaces_inner() -> Re
     );
 
     assert_serves_all_records(&instance2.storage, NUM_RECORDS, "joined node").await?;
+    // Reads may be served by the leader: decrypt what node 2 itself stores
+    // with node 2's own DEK, which only works when it adopted the leader's.
+    assert_decrypts_locally(&instance1, &instance2, (0..30).step_by(3)).await?;
+    if via_cli_path {
+        // The adoption went through the admin RPC and was audited once.
+        audit_records(&instance2, "CLUSTER_DEK_ADOPTED", 1).await;
+    }
+    Ok(())
+}
+
+/// Decrypts the default-keyspace records `k{i}` straight from `follower`'s
+/// state machine, using the metadata the `leader` holds for them.
+async fn assert_decrypts_locally(
+    leader: &InstanceHolder,
+    follower: &InstanceHolder,
+    indices: impl Iterator<Item = usize>,
+) -> Result<()> {
+    for i in indices {
+        let key = format!("k{i}");
+        let metadata = leader
+            .storage
+            .state_machine_store()
+            .meta()
+            .get(meta_key("data", key.as_bytes()))?
+            .map(|raw| Metadata::unpack(raw.as_ref()))
+            .transpose()?
+            .unwrap_or_else(|| panic!("leader must have Metadata for {key}"));
+        let ciphertext = follower
+            .storage
+            .state_machine_store()
+            .data()
+            .get(key.as_bytes())?
+            .unwrap_or_else(|| panic!("follower must have ciphertext for {key}"));
+        let plaintext = follower
+            .storage
+            .state_machine_store()
+            .decrypt_state(
+                ciphertext.as_ref(),
+                metadata.tier as u8,
+                b"data",
+                key.as_bytes(),
+                metadata.dek_version,
+            )
+            .unwrap_or_else(|e| {
+                panic!("follower must decrypt {key} with the leader's DEK (GitHub #1298): {e}")
+            });
+        let value: String = rmp_serde::from_slice(&plaintext)?;
+        assert_eq!(format!("v{i}"), value);
+    }
     Ok(())
 }
 

@@ -256,6 +256,22 @@ fn node_uri(addr: &str) -> Result<Uri, Report> {
     uri.wrap_err_with(|| format!("invalid node address {addr:?}"))
 }
 
+/// `host:port` of the Raft leader as seen from the cluster member at `addr`,
+/// querying with this node's own identity.
+async fn leader_rpc_addr(cfg: &LoadedConfig, addr: &Uri) -> Result<String, Report> {
+    let mut client = get_grpc_client(cfg, Some(addr.clone()), true).await?;
+    let metrics = client.metrics(()).await.map_err(rpc_error)?.into_inner();
+    let leader = metrics.current_leader.ok_or_else(|| {
+        eyre!("no Raft leader is known right now (election in progress?); retry shortly")
+    })?;
+    metrics
+        .membership
+        .as_ref()
+        .and_then(|m| m.nodes.get(&leader))
+        .map(|n| n.rpc_addr.clone())
+        .ok_or_else(|| eyre!("leader node {leader} is missing from the membership"))
+}
+
 /// Connects to the Raft leader, starting from `addr` (default: this host's
 /// `node_cluster_addr`), and returns the client with the leader's own
 /// metrics.

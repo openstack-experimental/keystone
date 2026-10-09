@@ -45,6 +45,7 @@ use crate::types::*;
 
 mod auth;
 mod dek;
+mod join;
 mod leader;
 mod local_emergency;
 mod restore;
@@ -95,6 +96,10 @@ pub struct ClusterAdminServiceImpl {
     /// Serializes live restores: their staged chunks share one namespace, and
     /// a second restore starting would supersede the first.
     restore_lock: tokio::sync::Mutex<()>,
+    /// Client used to reach other cluster nodes as this node; needed to
+    /// adopt the cluster DEK before joining. Set by
+    /// [`ClusterAdminServiceImpl::with_tls_client`].
+    tls_client: Option<crate::network::RaftTlsClient>,
 }
 
 impl ClusterAdminServiceImpl {
@@ -172,7 +177,14 @@ impl ClusterAdminServiceImpl {
             local_emergency_config,
             local_emergency_leaderless_tracker: LeaderlessTracker::new(),
             restore_lock: tokio::sync::Mutex::new(()),
+            tls_client: None,
         }
+    }
+
+    /// Lets the service reach other cluster nodes with this node's identity.
+    pub fn with_tls_client(mut self, tls_client: crate::network::RaftTlsClient) -> Self {
+        self.tls_client = Some(tls_client);
+        self
     }
 
     /// Initializes a new Raft cluster with the specified nodes.
@@ -747,6 +759,16 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         request: Request<pb::raft::TransferLeaderAdminRequest>,
     ) -> Result<Response<pb::raft::AdminResponse>, Status> {
         self.handle_transfer_leader(request).await
+    }
+
+    /// Adopts the cluster's DEKs from the leader on this (not yet joined)
+    /// node; the first step of a manual `keystone-manage storage join`.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn adopt_cluster_dek(
+        &self,
+        request: Request<pb::raft::AdoptClusterDekRequest>,
+    ) -> Result<Response<pb::raft::AdminResponse>, Status> {
+        self.handle_adopt_cluster_dek(request).await
     }
 }
 

@@ -352,6 +352,19 @@ service ClusterAdminService {
   // returns once that node is the leader, so the current leader can be
   // demoted, removed or restarted without a leaderless window. Leader only.
   rpc TransferLeader(TransferLeaderAdminRequest) returns (AdminResponse) {}
+
+  // AdoptClusterDek makes the *responding* node fetch the cluster's DEKs from
+  // the leader and install them, before the node is registered as a learner.
+  // Without it a node joining by `keystone-manage storage join` would
+  // replicate under its own bootstrap-generated placeholder DEK. A node that
+  // is already part of a cluster is left untouched. Callable only with a node
+  // identity (the `Node` role), as `join` authenticates.
+  rpc AdoptClusterDek(AdoptClusterDekRequest) returns (AdminResponse) {}
+}
+
+message AdoptClusterDekRequest {
+  // Address of the cluster leader (`host:port`) the node fetches the DEKs from.
+  string leader_addr = 1;
 }
 
 message TransferLeaderAdminRequest {

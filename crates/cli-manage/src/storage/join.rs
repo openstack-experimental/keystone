@@ -21,7 +21,7 @@ use tonic::transport::Uri;
 use openstack_keystone_config::LoadedConfig;
 use openstack_keystone_distributed_storage::protobuf as pb;
 
-use super::call_leader;
+use super::{call_leader, get_grpc_client, leader_rpc_addr};
 use crate::PerformAction;
 
 /// Join the current node as a peer to the Raft cluster.
@@ -35,6 +35,10 @@ use crate::PerformAction;
 /// Raft leader, and the command follows the redirect when the contacted
 /// member is a follower. Joining is idempotent for the same address; it
 /// fails when the node id is already registered at a different address.
+///
+/// Before it registers, the local node (which must be running) is asked to
+/// fetch the cluster's DEKs from the leader, so it never replicates under its
+/// own bootstrap-generated DEK.
 #[derive(Parser)]
 pub(super) struct JoinCommand {
     /// Address of any initialized cluster member (e.g.
@@ -54,6 +58,26 @@ impl PerformAction for JoinCommand {
                     node_id: cfg.node_id,
                     rpc_addr: format!("{host}:{port}"),
                 };
+                // Adopt the cluster's DEK on the local node before the leader
+                // starts replicating to it; otherwise it would replicate under
+                // its own bootstrap-generated DEK and quarantine its data
+                // after a snapshot install (#1298).
+                let leader_addr = leader_rpc_addr(config, &self.cluster_addr).await?;
+                let mut local = get_grpc_client(config, None, true).await?;
+                local
+                    .adopt_cluster_dek(pb::raft::AdoptClusterDekRequest { leader_addr })
+                    .await
+                    .map_err(|e| {
+                        if e.code() == tonic::Code::Unimplemented {
+                            eyre!(
+                                "the local node does not support adopting the cluster DEK; \
+                                 upgrade and restart it before joining"
+                            )
+                        } else {
+                            eyre!("adopting the cluster DEK on this node failed: {e}")
+                        }
+                    })?;
+
                 // Re-adding the same (node_id, address) succeeds, so a node
                 // that already auto-joined through `retry_join_nodes` is fine.
                 // `AlreadyExists` means the id is registered at a *different*
