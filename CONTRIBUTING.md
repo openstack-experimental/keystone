@@ -16,6 +16,8 @@ help this project come to fruition.
 - Rust toolchain (stable)
 - [pre-commit](https://pre-commit.com/) for linting hooks
 - [cargo-nextest](https://nexte.st/) for integration tests
+- `protoc` (for example the `protobuf-compiler` package), required to build
+  the distributed storage crate
 - [SPIRE](https://github.com/spiffe/spiffe.io) (`spire-server` and `spire-agent`
   on `$PATH`) for API integration tests
 - (Optional) [skaffold](https://skaffold.dev/) and a local Kubernetes cluster

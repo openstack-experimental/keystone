@@ -5,7 +5,14 @@ Last-revised: 2026-07-02 (PKCS#11/TPM KEK provisioning addendum)
 
 ## Status
 
-Proposed
+Accepted
+
+ADR-0016 (v1) is superseded by this version. Where the implementation differs
+from the text below, `doc/src/admin/storage/distributed.md` describes the
+behaviour of the code: in particular, F7 (NodeId uniqueness) fails closed only
+when a live membership conflict is detected; when no peer can be reached at
+startup the node warns and proceeds so a simultaneous full-cluster restart can
+recover.
 
 **Supersedes:** ADR-0016 (2026-04-12)
 

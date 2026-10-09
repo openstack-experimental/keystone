@@ -129,7 +129,7 @@ ciphertext — no plaintext, no key material.
 │  Storage struct (app.rs)                                        │
 │  • Raft client  • DEK epoch  • Audit forwarder                  │
 └───────┬───────────────────────┬─────────────────────────────────┘
-        │ Raft proposals        │ Local reads (Tier 0/1)
+        │ Raft proposals        │ Reads (ReadIndex)
 ┌───────▼───────────────────────▼─────────────────────────────────┐
 │  OpenRaft (consensus)                                           │
 │  ┌──────────────────┐         ┌────────────────────────────┐    │
@@ -158,11 +158,10 @@ ciphertext — no plaintext, no key material.
 
 ### Read Path
 
-- **Tier 0 / 1 (PUBLIC / INTERNAL):** The local state machine decrypts and
-  returns the value directly.
-- **Tier 2 / 3 (SENSITIVE / SECRET):** A `ReadIndex` (linearizable read) is
-  issued to OpenRaft first, ensuring no stale follower can return a value that
-  has since been revoked.
+- **Every tier:** A `ReadIndex` (linearizable read) is issued to OpenRaft
+  first, ensuring no stale follower can return a value that has since been
+  revoked. Tiers are not carried on writes yet, so there is no cheaper local
+  read path for Tier 0 / 1 (planned).
 
 ---
 
@@ -305,9 +304,9 @@ rotation does not lift the block for a record that reached it.
 **On-disk layout:**
 `[dek_version_u32_BE; 4] ++ [utc_epoch_u64_BE; 8] ++ [nonce_salt_u64_BE; 8] ++ [nonce_12b][ciphertext][tag_16b]`
 
-| Field           | Value                                                          |
-| --------------- | -------------------------------------------------------------- |
-| Associated data | `b"keystone-backup-v1" ++ utc_epoch_u64_BE ++ dek_version_u32` |
+| Field           | Value                                                                                  |
+| --------------- | -------------------------------------------------------------------------------------- |
+| Associated data | `b"keystone-backup-v1" ++ utc_epoch_u64_BE ++ dek_version_u32_BE ++ nonce_salt_u64_BE` |
 
 The `dek_version` and `utc_epoch` in the AD bind the snapshot to a specific
 point in time and DEK epoch, preventing time-travel and replay attacks across
@@ -343,7 +342,9 @@ counter for Raft log nonces:
 - Emits a WARN when fewer than 10% of the `2^31` threshold remain. From that
   point the leader rotates the DEK automatically (see
   [DEK Rotation](#dek-rotation)). At `2^31` the node can no longer append log
-  entries under that DEK.
+  entries under that DEK. The warning is rate limited, and the counter is
+  exposed as `keystone_raft_log_nonce_counter` and
+  `keystone_raft_log_nonce_remaining`.
 
 ---
 
@@ -354,8 +355,8 @@ associated data and stored in the record metadata.
 
 | Tier | Label       | Read path                | Examples                                    |
 | ---- | ----------- | ------------------------ | ------------------------------------------- |
-| 0    | `PUBLIC`    | Local read               | Feature flags, role display names           |
-| 1    | `INTERNAL`  | Local read               | Display attributes, config markers          |
+| 0    | `PUBLIC`    | Local read (planned)     | Feature flags, role display names           |
+| 1    | `INTERNAL`  | Local read (planned)     | Display attributes, config markers          |
 | 2    | `SENSITIVE` | Linearizable (ReadIndex) | Group memberships, session tokens, API keys |
 | 3    | `SECRET`    | Linearizable (ReadIndex) | Credential plaintext, TOTP seeds            |
 
@@ -371,9 +372,10 @@ group member can never be observed as still-valid on a lagging follower.
 
 ## Intra-Cluster Transport (mTLS)
 
-All cluster communication uses TLS 1.3 with AEAD cipher suites only
-(`TLS_AES_256_GCM_SHA384` or `TLS_CHACHA20_POLY1305_SHA256`). Manual joining is
-permanently disabled; every peer must present a valid mTLS identity.
+All cluster communication uses mutual TLS with the rustls defaults (TLS 1.2 is
+not disabled; the node does not restrict protocol versions or cipher suites
+itself). Every peer must present a valid mTLS identity, including a node that
+auto-joins through `retry_join_nodes`.
 
 ### SPIFFE Mode (Default)
 
@@ -509,7 +511,10 @@ Each node has a manually configured `node_id: u64`. At startup and on every
 `add_learner` gRPC call, the cluster membership is checked for a
 `(node_id, rpc_addr)` collision. A detected collision is fatal — the node or the
 operation is aborted with a clear error message. If membership cannot be queried
-(no quorum), startup fails closed.
+(no quorum), the node logs a prominent warning and starts anyway: failing
+closed there would make recovery impossible when every node of the cluster
+restarts at the same time. The live check against a peer's membership runs only
+when `retry_join_nodes` is configured.
 
 ---
 
@@ -605,8 +610,10 @@ GCM tag verification failures indicate tampered or corrupted ciphertext.
 | 3                           | Drain in-flight Raft proposals, commit quarantine marker via Raft, set partition read-only |
 
 Quarantine state is **Raft-committed** (stored in
-`_meta:quarantine:<node_id>:<partition>`) and therefore persists across restarts
-and is visible to all cluster members. A restarted node reads this key at
+`_meta:quarantine:<partition>:<node_id>`) and therefore persists across restarts
+and is visible to all cluster members. A marker blocks reads only on the node
+that reported it; `clear-quarantine` clears the partition's markers of all
+nodes. A restarted node reads this key at
 startup and re-enters quarantine if the marker is set.
 
 Clearing quarantine requires a `storage-operator` identity:
@@ -724,8 +731,37 @@ node_id = 1
 # Advertised cluster-internal address (used by peers for Raft RPC).
 node_cluster_addr = "https://10.0.0.1:8310"
 
-# Local listener address for inbound cluster connections.
+# Local listener address for inbound cluster connections
+# (default: 0.0.0.0:8081).
 node_listener_addr = "0.0.0.0:8310"
+
+# Development mode: accepts the env KEK and, in TLS mode without
+# tls_role_san_prefix, any CA-signed peer. Must be false (default) in
+# production; tools/check_no_dev_mode.sh flags service definitions that set it.
+# dev_mode = false
+
+# Peers to auto-join on startup, as comma separated `id=address` pairs. Node
+# id 0 is the bootstrap node: it initializes itself with the full list as the
+# initial membership. Any other node adds itself as a learner on the first
+# listed peer that answers (after adopting the cluster DEK). The join is still
+# authenticated by mTLS. Without the list the nodes are joined manually with
+# `init` and `join`. All nodes must share the same KEK material.
+# retry_join_nodes = "0=https://keystone-0:8310,1=https://keystone-1:8310,2=https://keystone-2:8310"
+
+# Set to false on nodes that are about to receive a disaster recovery
+# `restore`, so that they are not initialized on first start (default: true).
+# auto_bootstrap = true
+
+# Reads that cannot be confirmed linearizable are retried this many times
+# (default: 80) with this delay in milliseconds (default: 50) before they
+# fail with `Unavailable`.
+# ensure_linearizable_retries = 80
+# ensure_linearizable_retry_delay_ms = 50
+
+# Audit spool directory (default: <path>/audit-spool) and its size bound
+# (default: 256 MiB).
+# audit_spool_dir = "/var/lib/keystone/storage/audit-spool"
+# audit_max_spool_bytes = 268435456
 
 # Directory where Fjall database files are stored.
 path = "/var/lib/keystone/storage"
@@ -746,6 +782,14 @@ write_rate_threshold = 1073741824
 
 # --- Transport: SPIFFE (default) ---
 trust_domains = "example.org"
+# SVIDs outside spiffe_path_prefix that are accepted with the node role.
+# Required when dev_mode = false. The first entry is also the SVID this node
+# itself presents.
+# allowed_peer_svids = "spiffe://example.org/keystone/storage/node"
+# Role of the operator workload (default: storage-operator) and the path prefix
+# of all storage SVIDs (default: /keystone/storage/).
+# operator_role = "storage-operator"
+# spiffe_path_prefix = "/keystone/storage/"
 
 # --- Transport: TLS fallback ---
 # tls_cert_file    = "/etc/keystone/storage/node.pem"
@@ -755,6 +799,13 @@ trust_domains = "example.org"
 # tls_cert_content = "..."
 # tls_key_content  = "..."
 # tls_client_ca_content = "..."
+# URI prefix of the SAN that carries the peer role (required when
+# dev_mode = false), e.g. spiffe://keystone/storage/
+# tls_role_san_prefix = "spiffe://keystone/storage/"
+
+# The [distributed_storage.pkcs11] and [distributed_storage.tpm] subsections
+# are described below; node-local emergency writes (quorum loss) are configured
+# in the separate [local_emergency] section (ADR 0028).
 ```
 
 **Environment variables (development only):**
@@ -765,8 +816,8 @@ trust_domains = "example.org"
 | `KEYSTONE_ALLOW_ENV_KEK` | Must be set to `1` when using `KEYSTONE_DEV_KEK`.                              |
 
 > **Warning:** `KEYSTONE_DEV_KEK` and `KEYSTONE_ALLOW_ENV_KEK` must never appear
-> in production Dockerfiles, Kubernetes manifests, or systemd units. The CI gate
-> `tools/check_no_dev_mode.sh` enforces this.
+> in production Dockerfiles, Kubernetes manifests, or systemd units.
+> `tools/check_no_dev_mode.sh` checks for this (it is not run in CI yet).
 
 ### PKCS#11 and TPM KEK Providers
 
@@ -1099,7 +1150,8 @@ Quick health check — shows current leader, voter set, and raw OpenRaft metrics
 keystone-manage storage metrics --cluster-addr https://10.0.0.1:8310
 ```
 
-Sample output:
+Sample output (the raw metrics are one long line, shown as printed by the
+contacted node):
 
 ```
 Current leader : node 1
@@ -1107,7 +1159,7 @@ Voters         : [1, 2, 3]
 All nodes      : [1=10.0.0.1:8310, 2=10.0.0.2:8310, 3=10.0.0.3:8310]
 
 Raw metrics:
-Metrics{id:1, Leader, term:3, ...}
+Metrics{id:1, Leader, term:1, vote:<T1-N1:Q>, last_log:5, local_committed:1.5, cluster_committed:1.5, last_applied:1.5, leader:1(quorum_acked_time:10:32:00.294800, 483.80772ms ago), membership:{log_id:1.5, {voters:[{1:Node { node_id: 1, rpc_addr: "10.0.0.1:8310" },2:Node { node_id: 2, rpc_addr: "10.0.0.2:8310" },3:Node { node_id: 3, rpc_addr: "10.0.0.3:8310" }}], learners:[]}}, committed_membership:{log_id:1.5, {voters:[{1:Node { node_id: 1, rpc_addr: "10.0.0.1:8310" },2:Node { node_id: 2, rpc_addr: "10.0.0.2:8310" },3:Node { node_id: 3, rpc_addr: "10.0.0.3:8310" }}], learners:[]}}, snapshot:None, purged:None, replication:{1:1.5,2:1.5,3:1.5}, heartbeat:{1:10:32:00.294800,2:10:32:00.294800,3:10:32:00.294800}}
 ```
 
 For a formatted peer table use `list-peers` instead.
@@ -1309,9 +1361,10 @@ by the security team.
 2. **No DEK in plaintext outside mlock'd RAM.** The DEK is stored wrapped under
    the KEK on disk. In memory it lives only inside mlock'd `Zeroizing` buffers.
 
-3. **Strict mTLS.** Auto-join is permanently disabled. Every inbound connection
-   must present a valid SPIFFE SVID or an operator-managed certificate signed by
-   the cluster Intermediate CA.
+3. **Strict mTLS.** Every inbound connection must present a valid SPIFFE SVID
+   or an operator-managed certificate signed by the cluster Intermediate CA.
+   Auto-join through `retry_join_nodes` exists, but the joining node is
+   authenticated like every other peer.
 
 4. **No stale reads for sensitive data.** Tier 2 and Tier 3 reads always execute
    the ReadIndex protocol before returning data.
@@ -1338,9 +1391,9 @@ by the security team.
     prohibited. All nonce strategies are documented in the ADR and reviewed by
     the security team before any new encrypted context is added.
 
-11. **Deployment validation.** `tools/check_no_dev_mode.sh` runs in CI and
-    rejects production service definitions containing `--dev-mode` or
-    `KEYSTONE_ALLOW_ENV_KEK`.
+11. **Deployment validation.** `tools/check_no_dev_mode.sh` rejects production
+    service definitions containing `--dev-mode` or `KEYSTONE_ALLOW_ENV_KEK`.
+    It is not wired into CI yet; run it as part of the deployment pipeline.
 
 12. **Startup pre-flight.** Before loading any key material, the node verifies
     `RLIMIT_CORE == 0` and `PR_SET_DUMPABLE == 0`. Failures emit CRITICAL log

@@ -4,6 +4,7 @@ You are a coding agent working on the OpenStack Keystone Rust implementation.
 
 ## Core Constraints
 
+- Building `crates/storage` needs `protoc` (the `build.rs` fails without it).
 - Use `cargo test -p <crate>` for unit tests.
 - Use `cargo test -p test_integration` for integration tests,
   `cargo nextest -p test_integration --profile raft` for integration tests with

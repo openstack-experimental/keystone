@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# check_no_dev_mode.sh — CI safety gate for ADR 0016-v2 §11
+# check_no_dev_mode.sh — deployment safety check for ADR 0016-v2 §11
+#
+# Not wired into CI yet; run it from the deployment pipeline.
 #
 # Scans Dockerfiles, Kubernetes manifests, and systemd unit files for flags
 # that must never appear in production deployments:
