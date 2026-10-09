@@ -1,0 +1,9 @@
+# Long-running Raft soak test (tests/soak). Apply next to a running keystone
+# Raft cluster in the same namespace:
+#   kubectl apply -k tools/k8s/keystone/overlays/soak
+# The controller needs no Kubernetes API access: it finds the Raft pods
+# through the headless `keystone-rs-internal` service and scrapes their
+# `/metrics` and `/ready`. Prometheus scrapes the controller (see
+# tools/k8s/observability/prometheus.yaml). Results: `GET :9100/verdict`.
+resources:
+  - soak.yaml

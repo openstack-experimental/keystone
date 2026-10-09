@@ -17,6 +17,11 @@ data:
           - names: [keystone-rs-internal]
             type: A
             port: 8099
+      # Soak test controller (tests/soak); absent unless the soak overlay
+      # is deployed, in which case the target is simply down.
+      - job_name: keystone-soak
+        static_configs:
+          - targets: [keystone-soak:9100]
 ---
 apiVersion: apps/v1
 kind: Deployment
