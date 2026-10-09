@@ -28,7 +28,9 @@ use crate::PerformAction;
 /// Provides the details of all the peers in the Raft cluster.
 ///
 /// This command is used to list the full set of peers in the Raft cluster, as
-/// seen by the contacted node.
+/// seen by the contacted node, followed by the contacted node's DEK version
+/// and quarantine state. Run `status --cluster-addr` against other nodes for
+/// theirs.
 #[derive(Parser)]
 pub(super) struct ListPeersCommand {
     /// Cluster member to ask (e.g. `https://127.0.0.1:50051`). Defaults to
@@ -73,6 +75,27 @@ impl PerformAction for ListPeersCommand {
             }
             println!("{table}");
             println!("Metrics {:?}", metrics.other_metrics);
+            // The encryption state is per node: report it for the contacted
+            // one and point at `status` for the others.
+            match client.storage_status(()).await {
+                Ok(resp) => {
+                    let status = resp.into_inner();
+                    println!(
+                        "Node {} DEK version: {}, quarantined partitions: {}",
+                        status.node_id,
+                        status.dek_version,
+                        if status.quarantined_partitions.is_empty() {
+                            "none".to_string()
+                        } else {
+                            status.quarantined_partitions.join(", ")
+                        }
+                    );
+                }
+                Err(err) => eprintln!(
+                    "warning: could not fetch DEK state from the contacted node: {}",
+                    rpc_error(err)
+                ),
+            }
             Ok(())
         } else {
             Err(eyre!("no distributed_storage configuration"))
