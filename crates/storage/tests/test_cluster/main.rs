@@ -51,6 +51,7 @@ use openstack_keystone_distributed_storage::{StorageApi, TypeConfig};
 
 mod admin;
 mod basic;
+mod crash;
 #[path = "../common/mod.rs"]
 mod common;
 mod harness;
