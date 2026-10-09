@@ -61,6 +61,23 @@ pub(super) fn backup_header(blob: &[u8]) -> Option<(u32, u64)> {
     Some((version, utc_epoch))
 }
 
+/// What the audit record of a restore attempt reports. Filled in as the
+/// attempt progresses so a failure can say how far it got.
+#[derive(Debug, Default)]
+pub(super) struct RestoreAttempt {
+    /// `cluster` or `disaster_recovery`; unknown until the first chunk has
+    /// been checked against the node state.
+    pub(super) mode: Option<&'static str>,
+    /// Size the client declared (0 when undeclared).
+    pub(super) declared_len: u64,
+    /// Bytes received from the client so far.
+    pub(super) received_len: u64,
+    /// Set when the node refused the attempt only because it is not the
+    /// leader. The operator is redirected and retries, so nothing was
+    /// attempted here and nothing is audited.
+    pub(super) redirected: bool,
+}
+
 impl ClusterAdminServiceImpl {
     /// Restores an uninitialized node following OpenRaft's documented
     /// restore-from-snapshot procedure: the vote is derived from the
@@ -113,6 +130,7 @@ impl ClusterAdminServiceImpl {
         &self,
         first: pb::raft::RestoreChunk,
         stream: &mut Streaming<pb::raft::RestoreChunk>,
+        attempt: &mut RestoreAttempt,
     ) -> Result<Option<(u32, u64)>, Status> {
         let declared_len = first.total_len;
         let _serialized = self
@@ -122,7 +140,14 @@ impl ClusterAdminServiceImpl {
         let restore_id = uuid::Uuid::new_v4().to_string();
         let mut staged = false;
         let outcome = self
-            .stage_and_apply(&restore_id, declared_len, first, stream, &mut staged)
+            .stage_and_apply(
+                &restore_id,
+                declared_len,
+                first,
+                stream,
+                &mut staged,
+                attempt,
+            )
             .await;
         if outcome.is_err() && staged {
             // Best effort: the chunks that did commit are otherwise staged
@@ -146,6 +171,7 @@ impl ClusterAdminServiceImpl {
         first: pb::raft::RestoreChunk,
         stream: &mut Streaming<pb::raft::RestoreChunk>,
         staged: &mut bool,
+        attempt: &mut RestoreAttempt,
     ) -> Result<Option<(u32, u64)>, Status> {
         let mut pending: Vec<u8> = Vec::with_capacity(RESTORE_CHUNK_SIZE);
         let mut seq = 0u32;
@@ -154,6 +180,7 @@ impl ClusterAdminServiceImpl {
         let mut next = Some(first);
         while let Some(message) = next {
             total_len += message.data.len() as u64;
+            attempt.received_len = total_len;
             if total_len > MAX_LIVE_RESTORE_SIZE {
                 return Err(Status::resource_exhausted(
                     "backup is too large to restore into a running cluster (1 GiB limit); \
@@ -248,6 +275,41 @@ impl ClusterAdminServiceImpl {
         let actor = require_operator(&request, &self.authz)?;
         trace!(actor, "operator restore requested");
 
+        let mut attempt = RestoreAttempt::default();
+        let result = self.run_restore(&actor, request, &mut attempt).await;
+        if let Err(status) = &result
+            && !attempt.redirected
+        {
+            // Best effort and free of backup contents; the attempt's
+            // failure is what the caller gets back, not the audit's.
+            let dek_version = self
+                .current_dek
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .version;
+            self.audit.emit(AuditRecord::now(
+                "BACKUP_RESTORED_FAILED",
+                &actor,
+                self.node_id,
+                dek_version,
+                serde_json::json!({
+                    "mode": attempt.mode,
+                    "declared_len": attempt.declared_len,
+                    "received_len": attempt.received_len,
+                    "code": format!("{:?}", status.code()),
+                    "error": status.message(),
+                }),
+            ));
+        }
+        result
+    }
+
+    async fn run_restore(
+        &self,
+        actor: &str,
+        request: Request<Streaming<pb::raft::RestoreChunk>>,
+        attempt: &mut RestoreAttempt,
+    ) -> Result<Response<pb::raft::AdminResponse>, Status> {
         let mut stream = request.into_inner();
         let first = stream
             .message()
@@ -255,20 +317,28 @@ impl ClusterAdminServiceImpl {
             .ok_or_else(|| Status::invalid_argument("restore stream was empty"))?;
         let elect = first.elect;
         let declared_len = first.total_len;
+        attempt.declared_len = declared_len;
+        attempt.received_len = first.data.len() as u64;
 
         let initialized = self
             .raft_node
             .is_initialized()
             .await
             .map_err(|e| Status::internal(format!("cannot determine Raft state: {e}")))?;
+        attempt.mode = Some(if initialized {
+            "cluster"
+        } else {
+            "disaster_recovery"
+        });
         if initialized && elect {
             return Err(Status::failed_precondition(
                 "this node is already initialized; --elect is only valid for disaster recovery \
                  into uninitialized nodes",
             ));
         }
-        if initialized {
-            self.ensure_leader()?;
+        if initialized && let Err(redirect) = self.ensure_leader() {
+            attempt.redirected = true;
+            return Err(redirect);
         }
         let limit = if initialized {
             MAX_LIVE_RESTORE_SIZE
@@ -282,7 +352,9 @@ impl ClusterAdminServiceImpl {
         }
 
         let (mode, utc_epoch, dek_version) = if initialized {
-            let header = self.restore_into_cluster(first, &mut stream).await?;
+            let header = self
+                .restore_into_cluster(first, &mut stream, attempt)
+                .await?;
             (
                 "cluster",
                 header.map(|(_, epoch)| epoch),
@@ -301,6 +373,7 @@ impl ClusterAdminServiceImpl {
                     )));
                 }
                 buf.extend_from_slice(&chunk.data);
+                attempt.received_len = buf.len() as u64;
                 next = next_restore_message(&mut stream).await?;
             }
             check_declared_len(declared_len, buf.len() as u64)?;
@@ -326,7 +399,7 @@ impl ClusterAdminServiceImpl {
             .version;
         self.audit.emit(AuditRecord::now(
             "BACKUP_RESTORED",
-            &actor,
+            actor,
             self.node_id,
             dek_ver_for_audit,
             serde_json::json!({
