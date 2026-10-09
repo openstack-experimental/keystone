@@ -1552,6 +1552,13 @@ that actually implements this grant.
 The grant above is now built, as the follow-up amendment this section itself
 anticipated. Concrete choices made during implementation:
 
+- **Expiry bounded by the credential chain.** The exchanged access token's
+  `exp` is capped at the earliest of the configured access-token lifetime, the
+  validated `subject_token` expiry, and the application credential's expiry.
+  Both credential expiries must be present; a missing expiry or a resulting
+  non-positive lifetime is rejected as `invalid_grant`. The response's
+  `expires_in` reports the capped lifetime, so repeated exchanges cannot extend
+  a delegated credential past its configured expiry.
 - **`AppCred` only, not `Trust` or `Ec2`.** Only `ApplicationCredential`'s
   immutable project (`ApplicationCredential.project_id`) is carried on the object embedded in
   `AuthenticationContext::ApplicationCredential` once `subject_token` is

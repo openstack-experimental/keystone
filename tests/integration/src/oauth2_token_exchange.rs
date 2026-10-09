@@ -89,6 +89,7 @@ async fn provision_token_exchange_client(
 async fn mint_app_cred_subject_token(
     state: &openstack_keystone::keystone::ServiceState,
     domain_id: &str,
+    app_cred_expires_at: chrono::DateTime<chrono::Utc>,
 ) -> Result<(
     String,
     crate::common::AsyncResourceGuard<
@@ -112,6 +113,7 @@ async fn mint_app_cred_subject_token(
             &ExecutionContext::internal(state),
             ApplicationCredentialCreate {
                 access_rules: None,
+                expires_at: Some(app_cred_expires_at),
                 name: Uuid::new_v4().to_string(),
                 project_id: project.id.clone(),
                 roles: vec![RoleRef::from(role.clone())],
@@ -172,23 +174,55 @@ async fn test_token_exchange_full_flow_issues_app_cred_delegated_claims() -> Res
     let (state, _tmp) = get_state().await?;
     let domain = create_domain!(state)?;
     let client = provision_token_exchange_client(&state, &domain.id).await?;
+    let app_cred_expires_at = chrono::Utc::now() + chrono::Duration::hours(1);
     let (subject_token, _user_guard, _project_guard) =
-        mint_app_cred_subject_token(&state, &domain.id).await?;
+        mint_app_cred_subject_token(&state, &domain.id, app_cred_expires_at).await?;
 
     let (vsc, delegation) = validate_subject_token(&state, &subject_token).await?;
     let issuer = format!("https://ks.example/v4/oauth2/{}", domain.id);
+    let now = chrono::Utc::now().timestamp();
     let claims = build_token_exchange_claims(
         &client,
         &vsc,
         delegation,
         &issuer,
         Uuid::new_v4().to_string(),
-        chrono::Utc::now().timestamp(),
-        chrono::Utc::now().timestamp() + 900,
+        now,
+        now + 900,
     )?;
 
     assert_eq!(claims.aud, format!("openstack-apis:{}", domain.id));
+    assert_eq!(claims.exp, now + 900);
     assert!(claims.amr.contains(&"application_credential".to_string()));
+
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_token_exchange_caps_expiry_at_short_lived_app_credential() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let domain = create_domain!(state)?;
+    let client = provision_token_exchange_client(&state, &domain.id).await?;
+    let app_cred_expires_at = chrono::Utc::now() + chrono::Duration::minutes(5);
+    let (subject_token, _user_guard, _project_guard) =
+        mint_app_cred_subject_token(&state, &domain.id, app_cred_expires_at).await?;
+
+    let (vsc, delegation) = validate_subject_token(&state, &subject_token).await?;
+    let issuer = format!("https://ks.example/v4/oauth2/{}", domain.id);
+    let now = chrono::Utc::now().timestamp();
+    let claims = build_token_exchange_claims(
+        &client,
+        &vsc,
+        delegation,
+        &issuer,
+        Uuid::new_v4().to_string(),
+        now,
+        now + 900,
+    )?;
+
+    assert_eq!(claims.exp, app_cred_expires_at.timestamp());
+    assert!(claims.exp < now + 900);
 
     Ok(())
 }
@@ -204,8 +238,9 @@ async fn test_token_exchange_rejects_cross_domain_subject_token() -> Result<()> 
     let domain_a = create_domain!(state)?;
     let domain_b = create_domain!(state)?;
     let client_b = provision_token_exchange_client(&state, &domain_b.id).await?;
+    let app_cred_expires_at = chrono::Utc::now() + chrono::Duration::hours(1);
     let (subject_token_a, _user_guard, _project_guard) =
-        mint_app_cred_subject_token(&state, &domain_a.id).await?;
+        mint_app_cred_subject_token(&state, &domain_a.id, app_cred_expires_at).await?;
 
     let (vsc, delegation) = validate_subject_token(&state, &subject_token_a).await?;
     let issuer_b = format!("https://ks.example/v4/oauth2/{}", domain_b.id);

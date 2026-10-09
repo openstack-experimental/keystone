@@ -114,6 +114,12 @@ pub(super) async fn handle_token_exchange_grant(
                     "subject_token's scope belongs to a different domain than this token endpoint",
                 )
             }
+            openstack_keystone_core::oauth2_client::TokenExchangeError::MissingSubjectTokenExpiry
+            | openstack_keystone_core::oauth2_client::TokenExchangeError::NonPositiveLifetime => {
+                Oauth2TokenError::invalid_grant(
+                    "subject_token or application credential expiry does not permit token exchange",
+                )
+            }
             _ => Oauth2TokenError::internal("token issuance failed"),
         }
     })?;
@@ -132,7 +138,7 @@ pub(super) async fn handle_token_exchange_grant(
     let response = TokenResponse {
         access_token,
         token_type: "Bearer",
-        expires_in: access_lifetime,
+        expires_in: claims.exp - now,
         scope: "openstack:api".to_string(),
         id_token: None,
         refresh_token: None,
@@ -144,6 +150,7 @@ pub(super) async fn handle_token_exchange_grant(
 mod tests {
 
     use axum::http::StatusCode;
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
     use tower::ServiceExt;
     use tower_http::trace::TraceLayer;
@@ -239,7 +246,10 @@ mod tests {
         openstack_keystone_core::auth::ValidatedSecurityContext::test_new(sc)
     }
 
-    fn app_cred_delegated_vsc() -> openstack_keystone_core::auth::ValidatedSecurityContext {
+    fn app_cred_delegated_vsc(
+        subject_expires_at: chrono::DateTime<chrono::Utc>,
+        app_cred_expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> openstack_keystone_core::auth::ValidatedSecurityContext {
         use openstack_keystone_core_types::identity::UserResponseBuilder;
         use openstack_keystone_core_types::resource::{Domain, Project};
 
@@ -279,7 +289,7 @@ mod tests {
                     openstack_keystone_core_types::application_credential::ApplicationCredential {
                         access_rules: None,
                         description: None,
-                        expires_at: None,
+                        expires_at: Some(app_cred_expires_at),
                         id: "app-cred-1".to_string(),
                         name: "app-cred".to_string(),
                         project_id: "project-1".to_string(),
@@ -305,12 +315,16 @@ mod tests {
                 ),
             })
             .authorization(authz)
+            .expires_at(subject_expires_at)
             .build();
         openstack_keystone_core::auth::ValidatedSecurityContext::test_new(sc)
     }
 
     #[tokio::test]
     async fn test_token_exchange_success_issues_signed_jwt_with_app_cred_delegation() {
+        let now = chrono::Utc::now();
+        let app_cred_expires_at = now + chrono::Duration::seconds(120);
+        let subject_expires_at = now + chrono::Duration::seconds(300);
         let client = token_exchange_client().await;
         let mut client_mock = MockOauth2ClientProvider::default();
         client_mock
@@ -320,7 +334,12 @@ mod tests {
         let mut token_mock = crate::token::MockTokenProvider::default();
         token_mock
             .expect_validate_to_context()
-            .returning(|_, _, _, _| Ok(app_cred_delegated_vsc()));
+            .returning(move |_, _, _, _| {
+                Ok(app_cred_delegated_vsc(
+                    subject_expires_at,
+                    app_cred_expires_at,
+                ))
+            });
 
         let provider = Provider::mocked_builder()
             .mock_oauth2_client(client_mock)
@@ -342,7 +361,14 @@ mod tests {
         let body = json_body(response).await;
         assert_eq!(body["token_type"], "Bearer");
         let access_token = body["access_token"].as_str().unwrap();
-        assert_eq!(access_token.split('.').count(), 3);
+        let token_parts: Vec<_> = access_token.split('.').collect();
+        assert_eq!(token_parts.len(), 3);
+        let claims_json = URL_SAFE_NO_PAD.decode(token_parts[1]).unwrap();
+        let claims: serde_json::Value = serde_json::from_slice(&claims_json).unwrap();
+        let exp = claims["exp"].as_i64().unwrap();
+        let iat = claims["iat"].as_i64().unwrap();
+        assert_eq!(exp, app_cred_expires_at.timestamp());
+        assert_eq!(body["expires_in"].as_i64().unwrap(), exp - iat);
     }
 
     #[tokio::test]

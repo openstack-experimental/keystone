@@ -56,6 +56,14 @@ pub enum TokenExchangeError {
     #[error("subject_token's context has no resolved authorization scope")]
     NoAuthorization,
 
+    /// The validated subject token has no expiry to bound the exchanged token.
+    #[error("subject_token has no expiration")]
+    MissingSubjectTokenExpiry,
+
+    /// The credential-chain expiry is not later than the new token's issue time.
+    #[error("credential-chain expiry does not leave a positive token lifetime")]
+    NonPositiveLifetime,
+
     /// The delegation object (app-cred) has no bound project. Exchange requires
     /// a concrete I2 boundary to enforce; there is nothing to bind the new
     /// token to.
@@ -134,7 +142,8 @@ pub async fn validate_subject_token(
 
 /// Build the [`OpenStackAccessTokenClaims`] for a Token Exchange grant, from
 /// the validated `subject_token` context and its derived
-/// [`DelegationContext`].
+/// [`DelegationContext`]. The supplied `exp` is the configured-lifetime
+/// ceiling; the resulting claim expiry is capped by both credential expiries.
 ///
 /// # Errors
 /// See [`TokenExchangeError`] for each rejection reason.
@@ -174,6 +183,31 @@ pub fn build_token_exchange_claims(
     };
     if scope_domain_id != Some(client.domain_id.as_str()) {
         return Err(TokenExchangeError::CrossDomainSubjectToken);
+    }
+
+    let subject_expires_at = vsc
+        .inner()
+        .expires_at()
+        .ok_or(TokenExchangeError::MissingSubjectTokenExpiry)?
+        .timestamp();
+    let app_cred_expires_at: Option<i64> = match vsc.inner().authentication_context() {
+        AuthenticationContext::ApplicationCredential {
+            application_credential,
+            ..
+        } => application_credential.expires_at.map(|t| t.timestamp()),
+        other => {
+            return Err(TokenExchangeError::NotDelegated(
+                other.auth_type().into_owned(),
+            ));
+        }
+    };
+
+    let mut exp = exp.min(subject_expires_at);
+    if let Some(app_cred_expires_at) = app_cred_expires_at {
+        exp = exp.min(app_cred_expires_at);
+    }
+    if exp <= iat {
+        return Err(TokenExchangeError::NonPositiveLifetime);
     }
 
     let role_refs = authz.effective_roles().unwrap_or(&[]).to_vec();
@@ -260,13 +294,16 @@ mod tests {
         }
     }
 
-    fn app_cred_context(project_id: &str) -> AuthenticationContext {
+    fn app_cred_context(
+        project_id: &str,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> AuthenticationContext {
         AuthenticationContext::ApplicationCredential {
             application_credential:
                 openstack_keystone_core_types::application_credential::ApplicationCredential {
                     access_rules: None,
                     description: None,
-                    expires_at: None,
+                    expires_at,
                     id: "appcred-1".to_string(),
                     name: "appcred".to_string(),
                     project_id: project_id.to_string(),
@@ -280,7 +317,7 @@ mod tests {
 
     #[test]
     fn test_derive_delegation_context_app_cred() {
-        let ctx = app_cred_context("project-2");
+        let ctx = app_cred_context("project-2", None);
         let result = derive_delegation_context(&ctx).unwrap();
         assert_eq!(
             result,
@@ -334,7 +371,10 @@ mod tests {
         }
     }
 
-    fn user_vsc(authentication_context: AuthenticationContext) -> ValidatedSecurityContext {
+    fn user_vsc(
+        authentication_context: AuthenticationContext,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> ValidatedSecurityContext {
         let user = UserResponseBuilder::default()
             .id("user-1")
             .domain_id("domain-1")
@@ -361,7 +401,7 @@ mod tests {
             })
             .build()
             .unwrap();
-        let sc = SecurityContext::test_build()
+        let mut sc_builder = SecurityContext::test_build()
             .authentication_context(authentication_context)
             .principal(PrincipalInfo {
                 identity: IdentityInfo::User(
@@ -378,14 +418,22 @@ mod tests {
                         .unwrap(),
                 ),
             })
-            .authorization(authz)
-            .build();
+            .authorization(authz);
+        if let Some(expires_at) = expires_at {
+            sc_builder = sc_builder.expires_at(expires_at);
+        }
+        let sc = sc_builder.build();
         ValidatedSecurityContext::test_new(sc)
     }
 
     #[test]
     fn test_build_token_exchange_claims_for_app_cred() {
-        let vsc = user_vsc(app_cred_context("project-1"));
+        let subject_expires_at = chrono::DateTime::from_timestamp(2000, 0).unwrap();
+        let app_cred_expires_at = chrono::DateTime::from_timestamp(2100, 0).unwrap();
+        let vsc = user_vsc(
+            app_cred_context("project-1", Some(app_cred_expires_at)),
+            Some(subject_expires_at),
+        );
         let claims = build_token_exchange_claims(
             &sample_client(),
             &vsc,
@@ -401,6 +449,7 @@ mod tests {
 
         assert_eq!(claims.sub, "user-1");
         assert_eq!(claims.aud, "openstack-apis:domain-1");
+        assert_eq!(claims.exp, 1900);
         assert!(claims.amr.contains(&"application_credential".to_string()));
         assert_eq!(
             claims.delegation_context,
@@ -408,6 +457,131 @@ mod tests {
                 project_id: "project-1".to_string()
             }
         );
+    }
+
+    fn build_claims_with_expiries(
+        subject_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+        app_cred_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+        requested_exp: i64,
+    ) -> Result<OpenStackAccessTokenClaims, TokenExchangeError> {
+        let vsc = user_vsc(
+            app_cred_context("project-1", app_cred_expires_at),
+            subject_expires_at,
+        );
+        build_token_exchange_claims(
+            &sample_client(),
+            &vsc,
+            DelegationContext::AppCred {
+                project_id: "project-1".to_string(),
+            },
+            "https://ks.example/v4/oauth2/domain-1",
+            "jti-1".to_string(),
+            1000,
+            requested_exp,
+        )
+    }
+
+    #[test]
+    fn test_build_token_exchange_claims_caps_at_subject_token_expiry() {
+        let claims = build_claims_with_expiries(
+            Some(chrono::DateTime::from_timestamp(1500, 0).unwrap()),
+            Some(chrono::DateTime::from_timestamp(1800, 0).unwrap()),
+            1900,
+        )
+        .unwrap();
+
+        assert_eq!(claims.exp, 1500);
+    }
+
+    #[test]
+    fn test_build_token_exchange_claims_caps_at_app_credential_expiry() {
+        let claims = build_claims_with_expiries(
+            Some(chrono::DateTime::from_timestamp(1800, 0).unwrap()),
+            Some(chrono::DateTime::from_timestamp(1500, 0).unwrap()),
+            1900,
+        )
+        .unwrap();
+
+        assert_eq!(claims.exp, 1500);
+    }
+
+    #[test]
+    fn test_build_token_exchange_claims_uses_default_when_credentials_live_longer() {
+        let claims = build_claims_with_expiries(
+            Some(chrono::DateTime::from_timestamp(2000, 0).unwrap()),
+            Some(chrono::DateTime::from_timestamp(2100, 0).unwrap()),
+            1900,
+        )
+        .unwrap();
+
+        assert_eq!(claims.exp, 1900);
+    }
+
+    #[test]
+    fn test_build_token_exchange_claims_rejects_missing_subject_expiry() {
+        let app_cred_expiry = Some(chrono::DateTime::from_timestamp(2000, 0).unwrap());
+        assert!(matches!(
+            build_claims_with_expiries(None, app_cred_expiry, 1900),
+            Err(TokenExchangeError::MissingSubjectTokenExpiry)
+        ));
+    }
+
+    #[test]
+    fn test_build_token_exchange_claims_rejects_expiry_equal_to_iat() {
+        let at = |ts| Some(chrono::DateTime::from_timestamp(ts, 0).unwrap());
+
+        // subject_token expiry == iat
+        assert!(matches!(
+            build_claims_with_expiries(at(1000), at(2000), 1900),
+            Err(TokenExchangeError::NonPositiveLifetime)
+        ));
+        // app-cred expiry == iat
+        assert!(matches!(
+            build_claims_with_expiries(at(2000), at(1000), 1900),
+            Err(TokenExchangeError::NonPositiveLifetime)
+        ));
+        // configured lifetime ceiling == iat
+        assert!(matches!(
+            build_claims_with_expiries(at(2000), at(2000), 1000),
+            Err(TokenExchangeError::NonPositiveLifetime)
+        ));
+
+        // One second of remaining lifetime is the smallest valid token.
+        let claims = build_claims_with_expiries(at(1001), at(2000), 1900).unwrap();
+        assert_eq!(claims.exp, 1001);
+    }
+
+    #[test]
+    fn test_build_token_exchange_claims_skips_app_credential_term_without_expiry() {
+        // Non-expiring app cred, configured lifetime is the minimum.
+        let claims = build_claims_with_expiries(
+            Some(chrono::DateTime::from_timestamp(2000, 0).unwrap()),
+            None,
+            1900,
+        )
+        .unwrap();
+        assert_eq!(claims.exp, 1900);
+
+        // Non-expiring app cred, subject_token expiry is still the cap.
+        let claims = build_claims_with_expiries(
+            Some(chrono::DateTime::from_timestamp(1500, 0).unwrap()),
+            None,
+            1900,
+        )
+        .unwrap();
+        assert_eq!(claims.exp, 1500);
+    }
+
+    #[test]
+    fn test_build_token_exchange_claims_rejects_non_positive_lifetime() {
+        let err = build_claims_with_expiries(
+            Some(chrono::DateTime::from_timestamp(999, 0).unwrap()),
+            Some(chrono::DateTime::from_timestamp(2000, 0).unwrap()),
+            1900,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, TokenExchangeError::NonPositiveLifetime));
     }
 
     #[test]
@@ -480,7 +654,7 @@ mod tests {
     #[test]
     fn test_build_token_exchange_claims_rejects_non_user_principal() {
         let sc = SecurityContext::test_build()
-            .authentication_context(app_cred_context("project-1"))
+            .authentication_context(app_cred_context("project-1", None))
             .principal(PrincipalInfo {
                 identity: IdentityInfo::Principal(
                     PrincipalIdentityInfoBuilder::default()
