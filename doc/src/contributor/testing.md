@@ -9,9 +9,27 @@ crate for crate-level commands.
 | Crate unit tests | `cargo test -p <crate_name>` |
 | Integration tests | `cargo test -p test_integration` |
 | Raft integration tests | `cargo nextest run -p test_integration --profile raft` |
+| Raft storage crate suite | `cargo test -p openstack-keystone-distributed-storage` |
 | Live API tests | `cargo nextest run --profile api -p test_api` |
 | Formatting check | `cargo fmt --all -- --check` |
 | Crate lint | `cargo clippy -p <crate_name>` |
+
+## Raft Storage Tests
+
+`cargo test -p openstack-keystone-distributed-storage` is the authoritative
+suite for the storage crate. Its `tests/test_cluster.rs` starts real multi-node
+clusters in one process and covers membership changes, snapshot catch-up,
+DEK rotation, backup and restore, leader transfer, leader failover and node
+restart, and quarantine. It sets the development KEK itself, so it does not
+need `tools/raft-env.sh`. The tests are `#[serial]` and use fixed port ranges,
+so run them with a single test process per machine.
+
+`--profile raft` of `test_integration` is a different suite: it runs the
+keystone integration tests against Raft-backed drivers. The SoftHSM2 based
+`test_pkcs11_cluster` only runs with `--features pkcs11`.
+
+Building the storage crate needs `protoc` (for example the
+`protobuf-compiler` package).
 
 ## Live API Tests
 
