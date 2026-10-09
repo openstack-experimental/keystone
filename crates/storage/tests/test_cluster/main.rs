@@ -53,6 +53,7 @@ mod admin;
 mod basic;
 #[path = "../common/mod.rs"]
 mod common;
+mod crash;
 mod harness;
 mod join;
 mod kek;
