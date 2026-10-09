@@ -28,17 +28,17 @@ use crate::types::FjallNoncePersistence;
 pub struct EncryptionStatus {
     /// The active DEK epoch.
     pub dek_version: u32,
+    /// Persisted log-nonce reservation counter of this node.
+    pub nonce_counter: u64,
+    /// Every persisted `(partition, reporting node)` quarantine marker,
+    /// sorted.
+    pub quarantine_records: Vec<(String, u64)>,
+    /// Partitions whose reads are blocked on this node, sorted.
+    pub quarantined_partitions: Vec<String>,
     /// Retired epochs still held for reading, ascending.
     pub retired_dek_versions: Vec<u32>,
     /// Revoked epochs, ascending.
     pub revoked_dek_versions: Vec<u32>,
-    /// Partitions whose reads are blocked on this node, sorted.
-    pub quarantined_partitions: Vec<String>,
-    /// Every persisted `(partition, reporting node)` quarantine marker,
-    /// sorted.
-    pub quarantine_records: Vec<(String, u64)>,
-    /// Persisted log-nonce reservation counter of this node.
-    pub nonce_counter: u64,
 }
 
 impl FjallStateMachine {

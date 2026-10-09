@@ -79,28 +79,42 @@ impl FjallLocalEmergencyStore {
 
 #[async_trait]
 impl LocalEmergencyStore for FjallLocalEmergencyStore {
-    async fn put_candidate(
+    async fn clear_candidate(
         &self,
-        candidate: EmergencyCandidate,
+        subsystem: Subsystem,
+        scope_id: &str,
+        rotation_id: &str,
     ) -> Result<(), LocalEmergencyStoreError> {
-        let full_key = key::candidate_key(
-            candidate.subsystem,
-            &candidate.scope_id,
-            &candidate.rotation_id,
-        );
+        let full_key = key::candidate_key(subsystem, scope_id, rotation_id);
         if self
             .keyspace
             .get(full_key.as_bytes())
             .map_err(LocalEmergencyStoreError::other)?
-            .is_some()
+            .is_none()
         {
-            return Err(LocalEmergencyStoreError::AlreadyExists(full_key));
+            return Err(LocalEmergencyStoreError::NotFound(full_key));
         }
-        let bytes = rmp_serde::to_vec(&candidate).map_err(LocalEmergencyStoreError::other)?;
         self.keyspace
-            .insert(full_key.as_bytes(), bytes)
+            .remove(full_key.as_bytes())
             .map_err(LocalEmergencyStoreError::other)?;
         Ok(())
+    }
+
+    async fn get_audit_pointer(
+        &self,
+        rotation_id: &str,
+    ) -> Result<Option<String>, LocalEmergencyStoreError> {
+        let full_key = key::audit_pointer_key(rotation_id);
+        let Some(bytes) = self
+            .keyspace
+            .get(full_key.as_bytes())
+            .map_err(LocalEmergencyStoreError::other)?
+        else {
+            return Ok(None);
+        };
+        let event_id =
+            String::from_utf8(bytes.to_vec()).map_err(LocalEmergencyStoreError::other)?;
+        Ok(Some(event_id))
     }
 
     async fn get_candidate(
@@ -152,30 +166,6 @@ impl LocalEmergencyStore for FjallLocalEmergencyStore {
         Ok(out)
     }
 
-    async fn revoke_candidate(
-        &self,
-        subsystem: Subsystem,
-        scope_id: &str,
-        rotation_id: &str,
-    ) -> Result<(), LocalEmergencyStoreError> {
-        let full_key = key::candidate_key(subsystem, scope_id, rotation_id);
-        let Some(bytes) = self
-            .keyspace
-            .get(full_key.as_bytes())
-            .map_err(LocalEmergencyStoreError::other)?
-        else {
-            return Err(LocalEmergencyStoreError::NotFound(full_key));
-        };
-        let mut candidate: EmergencyCandidate =
-            rmp_serde::from_slice(&bytes).map_err(LocalEmergencyStoreError::other)?;
-        candidate.revoked = true;
-        let bytes = rmp_serde::to_vec(&candidate).map_err(LocalEmergencyStoreError::other)?;
-        self.keyspace
-            .insert(full_key.as_bytes(), bytes)
-            .map_err(LocalEmergencyStoreError::other)?;
-        Ok(())
-    }
-
     async fn mark_conflicted(
         &self,
         subsystem: Subsystem,
@@ -200,27 +190,6 @@ impl LocalEmergencyStore for FjallLocalEmergencyStore {
         Ok(())
     }
 
-    async fn clear_candidate(
-        &self,
-        subsystem: Subsystem,
-        scope_id: &str,
-        rotation_id: &str,
-    ) -> Result<(), LocalEmergencyStoreError> {
-        let full_key = key::candidate_key(subsystem, scope_id, rotation_id);
-        if self
-            .keyspace
-            .get(full_key.as_bytes())
-            .map_err(LocalEmergencyStoreError::other)?
-            .is_none()
-        {
-            return Err(LocalEmergencyStoreError::NotFound(full_key));
-        }
-        self.keyspace
-            .remove(full_key.as_bytes())
-            .map_err(LocalEmergencyStoreError::other)?;
-        Ok(())
-    }
-
     async fn put_audit_pointer(
         &self,
         rotation_id: &str,
@@ -233,21 +202,52 @@ impl LocalEmergencyStore for FjallLocalEmergencyStore {
         Ok(())
     }
 
-    async fn get_audit_pointer(
+    async fn put_candidate(
         &self,
+        candidate: EmergencyCandidate,
+    ) -> Result<(), LocalEmergencyStoreError> {
+        let full_key = key::candidate_key(
+            candidate.subsystem,
+            &candidate.scope_id,
+            &candidate.rotation_id,
+        );
+        if self
+            .keyspace
+            .get(full_key.as_bytes())
+            .map_err(LocalEmergencyStoreError::other)?
+            .is_some()
+        {
+            return Err(LocalEmergencyStoreError::AlreadyExists(full_key));
+        }
+        let bytes = rmp_serde::to_vec(&candidate).map_err(LocalEmergencyStoreError::other)?;
+        self.keyspace
+            .insert(full_key.as_bytes(), bytes)
+            .map_err(LocalEmergencyStoreError::other)?;
+        Ok(())
+    }
+
+    async fn revoke_candidate(
+        &self,
+        subsystem: Subsystem,
+        scope_id: &str,
         rotation_id: &str,
-    ) -> Result<Option<String>, LocalEmergencyStoreError> {
-        let full_key = key::audit_pointer_key(rotation_id);
+    ) -> Result<(), LocalEmergencyStoreError> {
+        let full_key = key::candidate_key(subsystem, scope_id, rotation_id);
         let Some(bytes) = self
             .keyspace
             .get(full_key.as_bytes())
             .map_err(LocalEmergencyStoreError::other)?
         else {
-            return Ok(None);
+            return Err(LocalEmergencyStoreError::NotFound(full_key));
         };
-        let event_id =
-            String::from_utf8(bytes.to_vec()).map_err(LocalEmergencyStoreError::other)?;
-        Ok(Some(event_id))
+        let mut candidate: EmergencyCandidate =
+            rmp_serde::from_slice(&bytes).map_err(LocalEmergencyStoreError::other)?;
+        candidate.revoked = true;
+        let bytes = rmp_serde::to_vec(&candidate).map_err(LocalEmergencyStoreError::other)?;
+        self.keyspace
+            .insert(full_key.as_bytes(), bytes)
+            .map_err(LocalEmergencyStoreError::other)?;
+        Ok(())
     }
 }
 

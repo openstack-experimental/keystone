@@ -56,20 +56,20 @@ impl fmt::Display for pb::raft::LeaderId {
 }
 
 impl RaftLeaderId for pb::raft::LeaderId {
-    type Term = u64;
     type Committed = u64;
     type NodeId = u64;
+    type Term = u64;
 
     fn new(term: u64, node_id: u64) -> Self {
         Self { term, node_id }
     }
 
-    fn term(&self) -> u64 {
-        self.term
-    }
-
     fn node_id(&self) -> &u64 {
         &self.node_id
+    }
+
+    fn term(&self) -> u64 {
+        self.term
     }
 
     fn to_committed(&self) -> Self::Committed {

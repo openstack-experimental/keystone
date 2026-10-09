@@ -17,12 +17,6 @@
 use super::*;
 
 impl FjallStateMachine {
-    /// Return the path to the snapshot directory.
-    #[cfg(test)]
-    pub(crate) fn snapshot_dir(&self) -> &std::path::Path {
-        &self.snapshot_dir
-    }
-
     /// Return the path of the most recently written snapshot file that
     /// still exists on disk, if any.
     ///
@@ -40,19 +34,6 @@ impl FjallStateMachine {
             }
         }
         Ok(None)
-    }
-
-    /// Returns the persisted snapshot history, newest first (see
-    /// [`Self::record_snapshot_and_gc`]).
-    pub(super) fn snapshot_history(&self) -> io::Result<Vec<String>> {
-        let history: Option<Vec<String>> = self
-            .meta
-            .get(SNAPSHOT_HISTORY_META_KEY)
-            .map_err(|e| io::Error::other(e.to_string()))?
-            .map(|bytes| deserialize(&bytes))
-            .transpose()
-            .map_err(|e| io::Error::other(e.to_string()))?;
-        Ok(history.unwrap_or_default())
     }
 
     /// Encrypts `file_bytes` (a serialized [`SnapshotFile`]) with the
@@ -167,6 +148,25 @@ impl FjallStateMachine {
             }
         }
         Ok(())
+    }
+
+    /// Return the path to the snapshot directory.
+    #[cfg(test)]
+    pub(crate) fn snapshot_dir(&self) -> &std::path::Path {
+        &self.snapshot_dir
+    }
+
+    /// Returns the persisted snapshot history, newest first (see
+    /// [`Self::record_snapshot_and_gc`]).
+    pub(super) fn snapshot_history(&self) -> io::Result<Vec<String>> {
+        let history: Option<Vec<String>> = self
+            .meta
+            .get(SNAPSHOT_HISTORY_META_KEY)
+            .map_err(|e| io::Error::other(e.to_string()))?
+            .map(|bytes| deserialize(&bytes))
+            .transpose()
+            .map_err(|e| io::Error::other(e.to_string()))?;
+        Ok(history.unwrap_or_default())
     }
 
     /// Collects a consistent, point-in-time snapshot payload: every

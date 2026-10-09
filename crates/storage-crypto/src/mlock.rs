@@ -62,8 +62,8 @@ const KEY_SIZE: usize = 32;
 const CANARY_SIZE: usize = 16;
 
 struct AllocState {
-    page_size: usize,
     canary: [u8; CANARY_SIZE],
+    page_size: usize,
 }
 
 static ALLOC_STATE: OnceLock<AllocState> = OnceLock::new();
@@ -118,16 +118,6 @@ impl LockedKey {
             .ok_or("guard-page allocation failed")
     }
 
-    /// Copy `bytes` into a fresh guard-paged allocation.
-    ///
-    /// Panics on OOM; allocation failure for key material is fatal.
-    #[allow(clippy::expect_used)]
-    pub fn from_raw(bytes: [u8; KEY_SIZE]) -> Self {
-        let mut key = Self::alloc().expect("OOM allocating LockedKey");
-        key.as_mut().copy_from_slice(&bytes);
-        key
-    }
-
     /// Read access to the key bytes.
     #[inline]
     pub fn as_bytes(&self) -> &[u8; KEY_SIZE] {
@@ -139,6 +129,16 @@ impl LockedKey {
     #[inline]
     pub fn as_mut(&mut self) -> &mut [u8; KEY_SIZE] {
         unsafe { self.raw.as_mut() }
+    }
+
+    /// Copy `bytes` into a fresh guard-paged allocation.
+    ///
+    /// Panics on OOM; allocation failure for key material is fatal.
+    #[allow(clippy::expect_used)]
+    pub fn from_raw(bytes: [u8; KEY_SIZE]) -> Self {
+        let mut key = Self::alloc().expect("OOM allocating LockedKey");
+        key.as_mut().copy_from_slice(&bytes);
+        key
     }
 }
 

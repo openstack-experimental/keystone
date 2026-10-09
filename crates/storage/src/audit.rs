@@ -68,10 +68,10 @@ const RETAINED_KEY_EPOCHS: usize = 2;
 pub struct AuditSpoolConfig {
     /// Directory holding the live spool file and sealed segments.
     pub dir: PathBuf,
-    /// Raft node id; part of the spool file names.
-    pub node_id: u64,
     /// Upper bound on the total spool size (live + sealed segments).
     pub max_bytes: u64,
+    /// Raft node id; part of the spool file names.
+    pub node_id: u64,
 }
 
 /// A signed audit record.
@@ -137,15 +137,11 @@ impl KeyRing {
 /// exposed through [`AuditForwarder::register_metrics`].
 #[derive(Default)]
 struct AuditMetrics {
-    spool_bytes: AtomicI64,
     dropped_total: AtomicU64,
+    spool_bytes: AtomicI64,
 }
 
 impl AuditMetrics {
-    fn spool_bytes(&self) -> i64 {
-        self.spool_bytes.load(Ordering::Relaxed)
-    }
-
     fn dropped_total(&self) -> u64 {
         self.dropped_total.load(Ordering::Relaxed)
     }
@@ -157,6 +153,10 @@ impl AuditMetrics {
     fn set_spool_bytes(&self, bytes: i64) {
         self.spool_bytes.store(bytes, Ordering::Relaxed);
     }
+
+    fn spool_bytes(&self) -> i64 {
+        self.spool_bytes.load(Ordering::Relaxed)
+    }
 }
 
 /// Background task that signs audit records and appends them to the spool.
@@ -165,30 +165,16 @@ impl AuditMetrics {
 /// sender, key ring and metrics.
 #[derive(Clone)]
 pub struct AuditForwarder {
-    tx: mpsc::Sender<AuditRecord>,
     keys: Arc<Mutex<KeyRing>>,
     metrics: Arc<AuditMetrics>,
+    tx: mpsc::Sender<AuditRecord>,
 }
 
 impl AuditForwarder {
-    /// Spawn the writer background task and return the handle.
-    ///
-    /// `key_version` is the DEK epoch version `key` was derived from. The
-    /// returned `JoinHandle` is detached; callers should store it only if
-    /// they want structured shutdown.
-    pub fn spawn(
-        key_version: u32,
-        key: AuditHmacKey,
-        spool: AuditSpoolConfig,
-    ) -> std::io::Result<(Self, tokio::task::JoinHandle<()>)> {
-        let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let keys = Arc::new(Mutex::new(KeyRing {
-            keys: BTreeMap::from([(key_version, key)]),
-        }));
-        let metrics = Arc::new(AuditMetrics::default());
-        let writer = SpoolWriter::open(spool, metrics.clone())?;
-        let handle = tokio::spawn(forwarder_task(rx, keys.clone(), writer, metrics.clone()));
-        Ok((Self { tx, keys, metrics }, handle))
+    /// Records dropped since startup (channel overflow or spool write
+    /// failure).
+    pub fn dropped_total(&self) -> u64 {
+        self.metrics.dropped_total()
     }
 
     /// Submit a record for signing and spooling (non-blocking).
@@ -200,29 +186,6 @@ impl AuditForwarder {
             self.metrics.inc_dropped();
             tracing::error!(error = %e, "AUDIT: record dropped — writer channel full or closed");
         }
-    }
-
-    /// Install the signing key for a newly active DEK epoch.
-    ///
-    /// Called from the state machine after every DEK epoch swap. Only the
-    /// most recent [`RETAINED_KEY_EPOCHS`] keys are kept.
-    pub fn rotate_key(&self, version: u32, new_key: AuditHmacKey) {
-        let mut ring = self.keys.lock().unwrap_or_else(|p| p.into_inner());
-        ring.keys.insert(version, new_key);
-        while ring.keys.len() > RETAINED_KEY_EPOCHS {
-            ring.keys.pop_first();
-        }
-    }
-
-    /// Records dropped since startup (channel overflow or spool write
-    /// failure).
-    pub fn dropped_total(&self) -> u64 {
-        self.metrics.dropped_total()
-    }
-
-    /// Current total spool size in bytes.
-    pub fn spool_bytes(&self) -> i64 {
-        self.metrics.spool_bytes()
     }
 
     /// Expose the audit spool metrics on `meter`.
@@ -271,19 +234,56 @@ impl AuditForwarder {
             },
         );
     }
+
+    /// Install the signing key for a newly active DEK epoch.
+    ///
+    /// Called from the state machine after every DEK epoch swap. Only the
+    /// most recent [`RETAINED_KEY_EPOCHS`] keys are kept.
+    pub fn rotate_key(&self, version: u32, new_key: AuditHmacKey) {
+        let mut ring = self.keys.lock().unwrap_or_else(|p| p.into_inner());
+        ring.keys.insert(version, new_key);
+        while ring.keys.len() > RETAINED_KEY_EPOCHS {
+            ring.keys.pop_first();
+        }
+    }
+
+    /// Spawn the writer background task and return the handle.
+    ///
+    /// `key_version` is the DEK epoch version `key` was derived from. The
+    /// returned `JoinHandle` is detached; callers should store it only if
+    /// they want structured shutdown.
+    pub fn spawn(
+        key_version: u32,
+        key: AuditHmacKey,
+        spool: AuditSpoolConfig,
+    ) -> std::io::Result<(Self, tokio::task::JoinHandle<()>)> {
+        let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let keys = Arc::new(Mutex::new(KeyRing {
+            keys: BTreeMap::from([(key_version, key)]),
+        }));
+        let metrics = Arc::new(AuditMetrics::default());
+        let writer = SpoolWriter::open(spool, metrics.clone())?;
+        let handle = tokio::spawn(forwarder_task(rx, keys.clone(), writer, metrics.clone()));
+        Ok((Self { tx, keys, metrics }, handle))
+    }
+
+    /// Current total spool size in bytes.
+    pub fn spool_bytes(&self) -> i64 {
+        self.metrics.spool_bytes()
+    }
 }
 
 /// Durable JSONL spool with segment rotation and a total size bound.
 struct SpoolWriter {
+    alerted: bool,
     dir: PathBuf,
-    node_id: u64,
-    max_bytes: u64,
-    segment_bytes: u64,
     file: File,
     live_bytes: u64,
-    sealed: Vec<(PathBuf, u64)>,
-    alerted: bool,
+    max_bytes: u64,
     metrics: Arc<AuditMetrics>,
+    node_id: u64,
+    sealed: Vec<(PathBuf, u64)>,
+    segment_bytes: u64,
 }
 
 fn live_path(dir: &Path, node_id: u64) -> PathBuf {
@@ -303,44 +303,6 @@ fn open_append(path: &Path) -> std::io::Result<File> {
 }
 
 impl SpoolWriter {
-    fn open(cfg: AuditSpoolConfig, metrics: Arc<AuditMetrics>) -> std::io::Result<Self> {
-        fs::create_dir_all(&cfg.dir)?;
-        let prefix = segment_prefix(cfg.node_id);
-        let mut sealed = Vec::new();
-        for entry in fs::read_dir(&cfg.dir)? {
-            let entry = entry?;
-            if entry.file_name().to_string_lossy().starts_with(&prefix) {
-                sealed.push((entry.path(), entry.metadata()?.len()));
-            }
-        }
-        sealed.sort();
-        let path = live_path(&cfg.dir, cfg.node_id);
-        let file = open_append(&path)?;
-        let live_bytes = file.metadata()?.len();
-        let writer = Self {
-            segment_bytes: (cfg.max_bytes / 8).max(1),
-            dir: cfg.dir,
-            node_id: cfg.node_id,
-            max_bytes: cfg.max_bytes,
-            file,
-            live_bytes,
-            sealed,
-            alerted: false,
-            metrics,
-        };
-        writer.publish_bytes();
-        Ok(writer)
-    }
-
-    fn total_bytes(&self) -> u64 {
-        self.live_bytes + self.sealed.iter().map(|(_, n)| n).sum::<u64>()
-    }
-
-    fn publish_bytes(&self) {
-        self.metrics
-            .set_spool_bytes(i64::try_from(self.total_bytes()).unwrap_or(i64::MAX));
-    }
-
     /// Append one line and fsync it before returning.
     fn append(&mut self, line: &str) -> std::io::Result<()> {
         if self.live_bytes >= self.segment_bytes {
@@ -353,30 +315,6 @@ impl SpoolWriter {
         self.enforce_bound();
         self.publish_bytes();
         Ok(())
-    }
-
-    fn seal(&mut self) -> std::io::Result<()> {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let sealed = self
-            .dir
-            .join(format!("{}{nanos:039}", segment_prefix(self.node_id)));
-        fs::rename(live_path(&self.dir, self.node_id), &sealed)?;
-        self.sealed.push((sealed, self.live_bytes));
-        self.file = open_append(&live_path(&self.dir, self.node_id))?;
-        self.live_bytes = 0;
-        Ok(())
-    }
-
-    /// Forget sealed segments that no longer exist on disk.
-    ///
-    /// A shipper that has delivered a sealed segment deletes it (the
-    /// keystone audit sink shipper does, once the sink acknowledged it); the
-    /// size accounting must then stop counting it.
-    fn forget_missing_segments(&mut self) {
-        self.sealed.retain(|(path, _)| path.exists());
     }
 
     /// Drop the oldest sealed segments while over the bound; alert at 90%.
@@ -408,6 +346,68 @@ impl SpoolWriter {
             );
         }
         self.alerted = over;
+    }
+
+    /// Forget sealed segments that no longer exist on disk.
+    ///
+    /// A shipper that has delivered a sealed segment deletes it (the
+    /// keystone audit sink shipper does, once the sink acknowledged it); the
+    /// size accounting must then stop counting it.
+    fn forget_missing_segments(&mut self) {
+        self.sealed.retain(|(path, _)| path.exists());
+    }
+
+    fn open(cfg: AuditSpoolConfig, metrics: Arc<AuditMetrics>) -> std::io::Result<Self> {
+        fs::create_dir_all(&cfg.dir)?;
+        let prefix = segment_prefix(cfg.node_id);
+        let mut sealed = Vec::new();
+        for entry in fs::read_dir(&cfg.dir)? {
+            let entry = entry?;
+            if entry.file_name().to_string_lossy().starts_with(&prefix) {
+                sealed.push((entry.path(), entry.metadata()?.len()));
+            }
+        }
+        sealed.sort();
+        let path = live_path(&cfg.dir, cfg.node_id);
+        let file = open_append(&path)?;
+        let live_bytes = file.metadata()?.len();
+        let writer = Self {
+            segment_bytes: (cfg.max_bytes / 8).max(1),
+            dir: cfg.dir,
+            node_id: cfg.node_id,
+            max_bytes: cfg.max_bytes,
+            file,
+            live_bytes,
+            sealed,
+            alerted: false,
+            metrics,
+        };
+        writer.publish_bytes();
+        Ok(writer)
+    }
+
+    fn publish_bytes(&self) {
+        self.metrics
+            .set_spool_bytes(i64::try_from(self.total_bytes()).unwrap_or(i64::MAX));
+    }
+
+    fn seal(&mut self) -> std::io::Result<()> {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let sealed = self
+            .dir
+            .join(format!("{}{nanos:039}", segment_prefix(self.node_id)));
+        fs::rename(live_path(&self.dir, self.node_id), &sealed)?;
+        self.sealed.push((sealed, self.live_bytes));
+        self.file = open_append(&live_path(&self.dir, self.node_id))?;
+        self.live_bytes = 0;
+        Ok(())
+    }
+
+    fn total_bytes(&self) -> u64 {
+        self.live_bytes + self.sealed.iter().map(|(_, n)| n).sum::<u64>()
     }
 }
 

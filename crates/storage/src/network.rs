@@ -11,6 +11,13 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! # Raft network transport.
+//!
+//! Implements `openraft`'s `RaftNetworkFactory`: [`NetworkManager`] hands
+//! out one [`NetworkConnection`] per peer, which carries Raft RPCs over
+//! gRPC with mutual TLS using SPIFFE SVIDs. The module also holds the TLS
+//! client/server configuration helpers, SVID lifetime checks, and the
+//! [`CertExpiryWatchdog`] that forces certificate renewal before expiry.
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
@@ -111,18 +118,11 @@ struct SpiffeConnector {
 }
 
 impl tower::Service<http::Uri> for SpiffeConnector {
-    type Response = hyper_util::rt::TokioIo<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>;
     type Error = std::io::Error;
     type Future = std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
     >;
-
-    fn poll_ready(
-        &mut self,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), Self::Error>> {
-        std::task::Poll::Ready(Ok(()))
-    }
+    type Response = hyper_util::rt::TokioIo<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>;
 
     fn call(&mut self, uri: http::Uri) -> Self::Future {
         let tls = self.tls.clone();
@@ -151,6 +151,13 @@ impl tower::Service<http::Uri> for SpiffeConnector {
             let tls_stream = connector.connect(server_name, tcp).await?;
             Ok(hyper_util::rt::TokioIo::new(tls_stream))
         })
+    }
+
+    fn poll_ready(
+        &mut self,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        std::task::Poll::Ready(Ok(()))
     }
 }
 
@@ -190,14 +197,6 @@ pub struct NetworkConnection {
 }
 
 impl NetworkConnection {
-    /// Creates a new `NetworkConnection` with the provided gRPC client.
-    pub fn new(target_node: Node, tls_client: RaftTlsClient) -> Self {
-        NetworkConnection {
-            target_node,
-            tls_client,
-        }
-    }
-
     /// Creates a gRPC client to the target node.
     pub async fn make_client(&self) -> Result<RaftServiceClient<Channel>, RPCError> {
         let addr = &self.target_node.rpc_addr;
@@ -236,6 +235,14 @@ impl NetworkConnection {
         };
 
         Ok(RaftServiceClient::new(channel))
+    }
+
+    /// Creates a new `NetworkConnection` with the provided gRPC client.
+    pub fn new(target_node: Node, tls_client: RaftTlsClient) -> Self {
+        NetworkConnection {
+            target_node,
+            tls_client,
+        }
     }
 
     /// Convert `pb::AppendEntriesResponse` to `StreamAppendResult`.

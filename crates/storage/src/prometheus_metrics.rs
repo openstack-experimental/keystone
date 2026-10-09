@@ -58,11 +58,6 @@ use crate::TypeConfig;
 pub struct EventCounter(Arc<AtomicU64>);
 
 impl EventCounter {
-    /// Count one event.
-    pub fn inc(&self) {
-        self.add(1);
-    }
-
     /// Count `n` events.
     pub fn add(&self, n: u64) {
         self.0.fetch_add(n, Ordering::Relaxed);
@@ -71,6 +66,11 @@ impl EventCounter {
     /// Events counted so far.
     pub fn get(&self) -> u64 {
         self.0.load(Ordering::Relaxed)
+    }
+
+    /// Count one event.
+    pub fn inc(&self) {
+        self.add(1);
     }
 
     fn register(&self, meter: &Meter, name: &'static str, help: &'static str) {
@@ -88,6 +88,12 @@ pub struct KeystoneRaftPrometheusMetrics {
     /// per-operation latency measurement, not a snapshot read-through like
     /// the gauges.
     apply_duration_seconds: HistogramVec<0>,
+    /// Records skipped by the most recent sweep pass.
+    dek_reencrypt_last_skipped: Arc<AtomicU64>,
+    /// Records re-encrypted under the current DEK by background sweeps.
+    dek_reencrypt_migrated_total: EventCounter,
+    /// Records the background sweeps skipped (CAS retries exhausted).
+    dek_reencrypt_skipped_total: EventCounter,
     /// AES-GCM tag verification failures on state reads (the quarantine
     /// trigger). Incremented on every failure, not only on the one that
     /// crosses the quarantine threshold.
@@ -95,12 +101,6 @@ pub struct KeystoneRaftPrometheusMetrics {
     /// Highest per-record write version seen by this node since start
     /// (ADR 0016-v2 §10 invariant 9).
     write_rate_version_max: Arc<AtomicU32>,
-    /// Records re-encrypted under the current DEK by background sweeps.
-    dek_reencrypt_migrated_total: EventCounter,
-    /// Records the background sweeps skipped (CAS retries exhausted).
-    dek_reencrypt_skipped_total: EventCounter,
-    /// Records skipped by the most recent sweep pass.
-    dek_reencrypt_last_skipped: Arc<AtomicU64>,
 }
 
 impl KeystoneRaftPrometheusMetrics {
@@ -160,18 +160,18 @@ impl KeystoneRaftPrometheusMetrics {
         self.apply_duration_seconds.record(seconds, []);
     }
 
-    /// Records a per-record write version, keeping the maximum.
-    pub fn record_write_version(&self, version: u32) {
-        self.write_rate_version_max
-            .fetch_max(version, Ordering::Relaxed);
-    }
-
     /// Records the outcome of one background re-encryption pass.
     pub fn record_reencrypt_report(&self, report: &crate::store::state_machine::ReencryptReport) {
         self.dek_reencrypt_migrated_total.add(report.migrated);
         self.dek_reencrypt_skipped_total.add(report.skipped);
         self.dek_reencrypt_last_skipped
             .store(report.skipped, Ordering::Relaxed);
+    }
+
+    /// Records a per-record write version, keeping the maximum.
+    pub fn record_write_version(&self, version: u32) {
+        self.write_rate_version_max
+            .fetch_max(version, Ordering::Relaxed);
     }
 }
 
@@ -293,28 +293,28 @@ pub fn register_gauges(
 /// docs). `None` fields could not be read and are not exposed.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RaftNodeStatus {
-    /// Partitions this node has quarantined (reads blocked).
-    pub quarantined_partitions: Vec<String>,
-    /// Version of the active DEK epoch.
-    pub dek_version: u32,
+    /// Emergency DEK rotations staged and awaiting confirmation.
+    pub dek_pending_rotations: usize,
     /// Retired DEK epochs still held for decryption / re-encryption.
     pub dek_retired_epochs: usize,
     /// Revoked DEK versions (emergency rotations).
     pub dek_revoked_epochs: usize,
-    /// Emergency DEK rotations staged and awaiting confirmation.
-    pub dek_pending_rotations: usize,
-    /// Next log-encryption nonce counter value.
-    pub log_nonce_counter: Option<u32>,
-    /// Nonce counter values left before DEK rotation is mandatory.
-    pub log_nonce_remaining: Option<u32>,
-    /// Size of the latest snapshot file on disk.
-    pub snapshot_size_bytes: Option<u64>,
-    /// Seconds since the latest snapshot file was written.
-    pub snapshot_age_seconds: Option<u64>,
+    /// Version of the active DEK epoch.
+    pub dek_version: u32,
     /// Disk space used by the whole Fjall database.
     pub disk_space_bytes: Option<u64>,
     /// Disk space used by the Raft log keyspace.
     pub log_disk_space_bytes: Option<u64>,
+    /// Next log-encryption nonce counter value.
+    pub log_nonce_counter: Option<u32>,
+    /// Nonce counter values left before DEK rotation is mandatory.
+    pub log_nonce_remaining: Option<u32>,
+    /// Partitions this node has quarantined (reads blocked).
+    pub quarantined_partitions: Vec<String>,
+    /// Seconds since the latest snapshot file was written.
+    pub snapshot_age_seconds: Option<u64>,
+    /// Size of the latest snapshot file on disk.
+    pub snapshot_size_bytes: Option<u64>,
 }
 
 /// How long a [`RaftNodeStatus`] read is reused. One collection reads many

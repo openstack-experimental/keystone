@@ -51,12 +51,14 @@ pub struct FjallLogStore<C>
 where
     C: RaftTypeConfig,
 {
+    _p: PhantomData<C>,
     pub db: Arc<Database>,
-    pub logs: Keyspace,
-    pub meta: Keyspace,
     /// Current active DEK epoch (shared with FjallStateMachine for live
     /// rotation).
     dek: Arc<RwLock<Arc<DekEpoch>>>,
+    pub logs: Keyspace,
+    pub meta: Keyspace,
+    nonce_mgr: Arc<Mutex<NonceManager>>,
     /// Retired DEK epochs keyed by version — kept for decrypting old log
     /// entries until those entries are compacted into a snapshot.
     old_deks: Arc<Mutex<BTreeMap<u32, Arc<DekEpoch>>>>,
@@ -67,130 +69,12 @@ where
     /// reused by the restored DEKs, so they are tried by version when the
     /// regular lookup fails.
     shadow_deks: Arc<Mutex<Vec<Arc<DekEpoch>>>>,
-    nonce_mgr: Arc<Mutex<NonceManager>>,
-    _p: PhantomData<C>,
 }
 
 impl<C> FjallLogStore<C>
 where
     C: RaftTypeConfig,
 {
-    #[allow(clippy::result_large_err)]
-    /// Create a new `FjallLogStore`.
-    ///
-    /// # Parameters
-    /// - `db`: Database instance.
-    /// - `node_id`: Raft node ID used as the high 8 bytes of each log nonce.
-    /// - `dek`: Shared current DEK epoch (also held by `FjallStateMachine`).
-    /// - `old_deks`: Shared map of retired DEK epochs for reading old entries.
-    ///
-    /// # Returns
-    /// A `Result` containing the `FjallLogStore`, or a `StoreError`.
-    pub fn new(
-        db: Arc<Database>,
-        node_id: u64,
-        dek: Arc<RwLock<Arc<DekEpoch>>>,
-        old_deks: Arc<Mutex<BTreeMap<u32, Arc<DekEpoch>>>>,
-        revoked_deks: Arc<Mutex<HashSet<u32>>>,
-    ) -> Result<Self, StoreError> {
-        let logs = db.keyspace("logs", KeyspaceCreateOptions::default)?;
-        let meta = db.keyspace("meta", KeyspaceCreateOptions::default)?;
-
-        let persistence = FjallNoncePersistence {
-            keyspace: meta.clone(),
-            db: db.clone(),
-        };
-        let epoch = dek.read().unwrap_or_else(|p| p.into_inner()).version;
-        let nonce_mgr = NonceManager::new(node_id, epoch, Box::new(persistence))?;
-
-        Ok(Self {
-            db,
-            logs,
-            meta,
-            dek,
-            old_deks,
-            revoked_deks,
-            shadow_deks: Arc::default(),
-            nonce_mgr: Arc::new(Mutex::new(nonce_mgr)),
-            _p: Default::default(),
-        })
-    }
-
-    /// The log nonce manager, shared so the automatic DEK rotation can
-    /// watch the counter of the current epoch and the
-    /// `keystone_raft_log_nonce_*` metrics can report it.
-    pub fn nonce_manager(&self) -> Arc<Mutex<NonceManager>> {
-        self.nonce_mgr.clone()
-    }
-
-    /// Shares the state machine's displaced-DEK list with this store.
-    pub fn with_shadow_deks(mut self, shadow_deks: Arc<Mutex<Vec<Arc<DekEpoch>>>>) -> Self {
-        self.shadow_deks = shadow_deks;
-        self
-    }
-
-    #[allow(clippy::result_large_err)]
-    #[tracing::instrument(skip(self, value))]
-    /// Set metadata for the log store.
-    fn set_meta<T: serde::Serialize>(&self, key: &[u8], value: &T) -> Result<(), StoreError> {
-        let bytes = serde_json::to_vec(value)?;
-        self.meta.insert(key, bytes)?;
-        self.db.persist(PersistMode::SyncAll)?;
-        Ok(())
-    }
-
-    #[allow(clippy::result_large_err)]
-    #[tracing::instrument(skip(self))]
-    /// Get metadata for the log store.
-    fn get_meta<T: serde::de::DeserializeOwned>(
-        &self,
-        key: &[u8],
-    ) -> Result<Option<T>, StoreError> {
-        let raw = self.meta.get(key)?;
-        match raw {
-            Some(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
-            None => Ok(None),
-        }
-    }
-
-    /// Encrypt a serialized Raft entry for storage.
-    ///
-    /// Layout: `[dek_version_u32_BE; 4] ++ [term_u64_BE; 8] ++ [nonce_12] ++
-    /// [ciphertext] ++ [tag_16]`.
-    fn encrypt_entry(
-        &self,
-        term: u64,
-        index: u64,
-        plaintext: &[u8],
-    ) -> Result<Vec<u8>, StoreError> {
-        let (dek_version, encrypted) = {
-            let guard = self
-                .dek
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let version = guard.version;
-            // The nonce counter is scoped to the DEK epoch it encrypts
-            // under; take it while holding the epoch so a concurrent swap
-            // cannot pair one epoch's key with another's counter.
-            let nonce = {
-                let mut mgr = self
-                    .nonce_mgr
-                    .lock()
-                    .map_err(|_| StoreError::Other(eyre::eyre!("nonce manager lock poisoned")))?;
-                mgr.switch_epoch(version)?;
-                mgr.next_nonce()?
-            };
-            let enc = log_encrypt(guard.log_dek(), plaintext, term, index, &nonce)?;
-            (version, enc)
-        };
-        let mut out =
-            Vec::with_capacity(DEK_VERSION_PREFIX_LEN + TERM_PREFIX_LEN + encrypted.len());
-        out.extend_from_slice(&dek_version.to_be_bytes());
-        out.extend_from_slice(&term.to_be_bytes());
-        out.extend_from_slice(&encrypted);
-        Ok(out)
-    }
-
     /// Decrypt a stored log entry, selecting the correct DEK epoch by version.
     ///
     /// Falls back to the epochs a live restore displaced when the regular
@@ -282,12 +166,42 @@ where
         }
     }
 
-    /// Register a retired DEK epoch so old log entries can still be decrypted.
-    pub fn register_old_dek(&self, epoch: Arc<DekEpoch>) {
-        self.old_deks
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .insert(epoch.version, epoch);
+    /// Encrypt a serialized Raft entry for storage.
+    ///
+    /// Layout: `[dek_version_u32_BE; 4] ++ [term_u64_BE; 8] ++ [nonce_12] ++
+    /// [ciphertext] ++ [tag_16]`.
+    fn encrypt_entry(
+        &self,
+        term: u64,
+        index: u64,
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>, StoreError> {
+        let (dek_version, encrypted) = {
+            let guard = self
+                .dek
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let version = guard.version;
+            // The nonce counter is scoped to the DEK epoch it encrypts
+            // under; take it while holding the epoch so a concurrent swap
+            // cannot pair one epoch's key with another's counter.
+            let nonce = {
+                let mut mgr = self
+                    .nonce_mgr
+                    .lock()
+                    .map_err(|_| StoreError::Other(eyre::eyre!("nonce manager lock poisoned")))?;
+                mgr.switch_epoch(version)?;
+                mgr.next_nonce()?
+            };
+            let enc = log_encrypt(guard.log_dek(), plaintext, term, index, &nonce)?;
+            (version, enc)
+        };
+        let mut out =
+            Vec::with_capacity(DEK_VERSION_PREFIX_LEN + TERM_PREFIX_LEN + encrypted.len());
+        out.extend_from_slice(&dek_version.to_be_bytes());
+        out.extend_from_slice(&term.to_be_bytes());
+        out.extend_from_slice(&encrypted);
+        Ok(out)
     }
 
     /// Remove a retired DEK epoch once all log entries for that version are
@@ -298,6 +212,92 @@ where
             .unwrap_or_else(|p| p.into_inner())
             .remove(&version);
     }
+
+    #[allow(clippy::result_large_err)]
+    #[tracing::instrument(skip(self))]
+    /// Get metadata for the log store.
+    fn get_meta<T: serde::de::DeserializeOwned>(
+        &self,
+        key: &[u8],
+    ) -> Result<Option<T>, StoreError> {
+        let raw = self.meta.get(key)?;
+        match raw {
+            Some(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
+            None => Ok(None),
+        }
+    }
+
+    #[allow(clippy::result_large_err)]
+    /// Create a new `FjallLogStore`.
+    ///
+    /// # Parameters
+    /// - `db`: Database instance.
+    /// - `node_id`: Raft node ID used as the high 8 bytes of each log nonce.
+    /// - `dek`: Shared current DEK epoch (also held by `FjallStateMachine`).
+    /// - `old_deks`: Shared map of retired DEK epochs for reading old entries.
+    ///
+    /// # Returns
+    /// A `Result` containing the `FjallLogStore`, or a `StoreError`.
+    pub fn new(
+        db: Arc<Database>,
+        node_id: u64,
+        dek: Arc<RwLock<Arc<DekEpoch>>>,
+        old_deks: Arc<Mutex<BTreeMap<u32, Arc<DekEpoch>>>>,
+        revoked_deks: Arc<Mutex<HashSet<u32>>>,
+    ) -> Result<Self, StoreError> {
+        let logs = db.keyspace("logs", KeyspaceCreateOptions::default)?;
+        let meta = db.keyspace("meta", KeyspaceCreateOptions::default)?;
+
+        let persistence = FjallNoncePersistence {
+            keyspace: meta.clone(),
+            db: db.clone(),
+        };
+        let epoch = dek.read().unwrap_or_else(|p| p.into_inner()).version;
+        let nonce_mgr = NonceManager::new(node_id, epoch, Box::new(persistence))?;
+
+        Ok(Self {
+            db,
+            logs,
+            meta,
+            dek,
+            old_deks,
+            revoked_deks,
+            shadow_deks: Arc::default(),
+            nonce_mgr: Arc::new(Mutex::new(nonce_mgr)),
+            _p: Default::default(),
+        })
+    }
+
+    /// The log nonce manager, shared so the automatic DEK rotation can
+    /// watch the counter of the current epoch and the
+    /// `keystone_raft_log_nonce_*` metrics can report it.
+    pub fn nonce_manager(&self) -> Arc<Mutex<NonceManager>> {
+        self.nonce_mgr.clone()
+    }
+
+    /// Register a retired DEK epoch so old log entries can still be decrypted.
+    pub fn register_old_dek(&self, epoch: Arc<DekEpoch>) {
+        self.old_deks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(epoch.version, epoch);
+    }
+
+    #[allow(clippy::result_large_err)]
+    #[tracing::instrument(skip(self, value))]
+    /// Set metadata for the log store.
+    fn set_meta<T: serde::Serialize>(&self, key: &[u8], value: &T) -> Result<(), StoreError> {
+        let bytes = serde_json::to_vec(value)?;
+        self.meta.insert(key, bytes)?;
+        self.db.persist(PersistMode::SyncAll)?;
+        Ok(())
+    }
+
+    /// Shares the state machine's displaced-DEK list with this store.
+    pub fn with_shadow_deks(mut self, shadow_deks: Arc<Mutex<Vec<Arc<DekEpoch>>>>) -> Self {
+        self.shadow_deks = shadow_deks;
+        self
+    }
 }
 
 impl<C> RaftLogReader<C> for FjallLogStore<C>
@@ -305,6 +305,11 @@ where
     C: RaftTypeConfig,
     <C::LeaderId as RaftLeaderId>::Committed: Clone + Into<u64>,
 {
+    async fn read_vote(&mut self) -> Result<Option<VoteOf<C>>, io::Error> {
+        self.get_meta::<VoteOf<C>>(KEY_VOTE)
+            .map_err(|e| io::Error::other(e.to_string()))
+    }
+
     #[tracing::instrument(skip(self))]
     async fn try_get_log_entries<RB: RangeBounds<u64> + Clone + Debug + OptionalSend>(
         &mut self,
@@ -343,11 +348,6 @@ where
         }
         Ok(entries)
     }
-
-    async fn read_vote(&mut self) -> Result<Option<VoteOf<C>>, io::Error> {
-        self.get_meta::<VoteOf<C>>(KEY_VOTE)
-            .map_err(|e| io::Error::other(e.to_string()))
-    }
 }
 
 impl<C> RaftLogStorage<C> for FjallLogStore<C>
@@ -356,6 +356,34 @@ where
     <C::LeaderId as RaftLeaderId>::Committed: Clone + Into<u64>,
 {
     type LogReader = Self;
+
+    #[tracing::instrument(skip(self, entries, callback))]
+    async fn append<I>(&mut self, entries: I, callback: IOFlushed<C>) -> Result<(), io::Error>
+    where
+        I: IntoIterator<Item = EntryOf<C>> + Send,
+    {
+        for entry in entries {
+            let log_id = entry.log_id();
+            let term: u64 = log_id.committed_leader_id().clone().into();
+            let index = log_id.index();
+            tracing::debug!("appending log entry term={} index={}", term, index);
+
+            let plaintext =
+                serde_json::to_vec(&entry).map_err(|e| io::Error::other(e.to_string()))?;
+            let stored = self
+                .encrypt_entry(term, index, &plaintext)
+                .map_err(|e| io::Error::other(e.to_string()))?;
+
+            self.logs
+                .insert(index.to_be_bytes(), stored)
+                .map_err(|e| io::Error::other(e.to_string()))?;
+        }
+        self.db
+            .persist(PersistMode::SyncAll)
+            .map_err(|e| io::Error::other(e.to_string()))?;
+        callback.io_completed(Ok(()));
+        Ok(())
+    }
 
     #[tracing::instrument(skip(self))]
     async fn get_log_reader(&mut self) -> Self::LogReader {
@@ -397,37 +425,42 @@ where
     }
 
     #[tracing::instrument(skip(self))]
-    async fn save_vote(&mut self, vote: &VoteOf<C>) -> Result<(), io::Error> {
-        self.set_meta(KEY_VOTE, vote)
+    async fn purge(&mut self, log_id: LogIdOf<C>) -> Result<(), io::Error> {
+        tracing::debug!("delete_log: [0, {:?}]", log_id);
+
+        // `KEY_PURGED` and every removed entry commit in one `Batch`
+        // (GitHub #1297 item 1): the old code wrote `KEY_PURGED` first,
+        // then removed entries one by one, so a crash mid-way left
+        // `last_purged_log_id` ahead of entries that still physically
+        // existed on disk.
+        let purged_bytes =
+            serde_json::to_vec(&log_id).map_err(|e| io::Error::other(e.to_string()))?;
+        let end = log_id.index().to_be_bytes();
+        let keys: Vec<_> = self
+            .logs
+            .range(..=end)
+            .map(|entry| entry.key().map_err(|e| io::Error::other(e.to_string())))
+            .collect::<Result<_, _>>()?;
+
+        let mut batch = self.db.batch();
+        batch.insert(&self.meta, KEY_PURGED, purged_bytes);
+        for key in keys {
+            batch.remove(&self.logs, key);
+        }
+        batch
+            .commit()
+            .map_err(|e| io::Error::other(e.to_string()))?;
+
+        self.db
+            .persist(PersistMode::SyncAll)
             .map_err(|e| io::Error::other(e.to_string()))?;
         Ok(())
     }
 
-    #[tracing::instrument(skip(self, entries, callback))]
-    async fn append<I>(&mut self, entries: I, callback: IOFlushed<C>) -> Result<(), io::Error>
-    where
-        I: IntoIterator<Item = EntryOf<C>> + Send,
-    {
-        for entry in entries {
-            let log_id = entry.log_id();
-            let term: u64 = log_id.committed_leader_id().clone().into();
-            let index = log_id.index();
-            tracing::debug!("appending log entry term={} index={}", term, index);
-
-            let plaintext =
-                serde_json::to_vec(&entry).map_err(|e| io::Error::other(e.to_string()))?;
-            let stored = self
-                .encrypt_entry(term, index, &plaintext)
-                .map_err(|e| io::Error::other(e.to_string()))?;
-
-            self.logs
-                .insert(index.to_be_bytes(), stored)
-                .map_err(|e| io::Error::other(e.to_string()))?;
-        }
-        self.db
-            .persist(PersistMode::SyncAll)
+    #[tracing::instrument(skip(self))]
+    async fn save_vote(&mut self, vote: &VoteOf<C>) -> Result<(), io::Error> {
+        self.set_meta(KEY_VOTE, vote)
             .map_err(|e| io::Error::other(e.to_string()))?;
-        callback.io_completed(Ok(()));
         Ok(())
     }
 
@@ -452,39 +485,6 @@ where
             .collect::<Result<_, _>>()?;
 
         let mut batch = self.db.batch();
-        for key in keys {
-            batch.remove(&self.logs, key);
-        }
-        batch
-            .commit()
-            .map_err(|e| io::Error::other(e.to_string()))?;
-
-        self.db
-            .persist(PersistMode::SyncAll)
-            .map_err(|e| io::Error::other(e.to_string()))?;
-        Ok(())
-    }
-
-    #[tracing::instrument(skip(self))]
-    async fn purge(&mut self, log_id: LogIdOf<C>) -> Result<(), io::Error> {
-        tracing::debug!("delete_log: [0, {:?}]", log_id);
-
-        // `KEY_PURGED` and every removed entry commit in one `Batch`
-        // (GitHub #1297 item 1): the old code wrote `KEY_PURGED` first,
-        // then removed entries one by one, so a crash mid-way left
-        // `last_purged_log_id` ahead of entries that still physically
-        // existed on disk.
-        let purged_bytes =
-            serde_json::to_vec(&log_id).map_err(|e| io::Error::other(e.to_string()))?;
-        let end = log_id.index().to_be_bytes();
-        let keys: Vec<_> = self
-            .logs
-            .range(..=end)
-            .map(|entry| entry.key().map_err(|e| io::Error::other(e.to_string())))
-            .collect::<Result<_, _>>()?;
-
-        let mut batch = self.db.batch();
-        batch.insert(&self.meta, KEY_PURGED, purged_bytes);
         for key in keys {
             batch.remove(&self.logs, key);
         }

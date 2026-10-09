@@ -59,13 +59,13 @@ pub(super) const DEK_SHADOW_PREFIX: &str = "_meta:dek:shadow:";
 /// Why [`FjallStateMachine::apply_restore`] failed.
 #[derive(Debug)]
 pub(super) enum RestoreError {
-    /// The backup was refused before any state changed. Reported to the
-    /// caller as a violation; the node keeps running.
-    Rejected(String),
     /// Applying the backup failed half-way (I/O error). The node's state no
     /// longer matches its peers, so it must stop like for any other apply
     /// I/O error.
     Fatal(io::Error),
+    /// The backup was refused before any state changed. Reported to the
+    /// caller as a violation; the node keeps running.
+    Rejected(String),
 }
 
 /// Parses the DEK version out of a [`DEK_SHADOW_PREFIX`] key.
@@ -118,6 +118,141 @@ pub(super) enum RaftBookkeeping {
 }
 
 impl FjallStateMachine {
+    /// Applies a committed [`StoreCommand::RestoreApply`]: reassembles the
+    /// staged chunks of `restore_id` into the encrypted backup blob and
+    /// replaces the replicated state with it, keeping this node's Raft
+    /// bookkeeping.
+    ///
+    /// Deterministic across nodes. A rejected backup is reported as
+    /// [`RestoreError::Rejected`] (surfaced to the caller as a violation,
+    /// never as an I/O error that would take the node down) and its staged
+    /// chunks are discarded; that outcome leaves the replicated state
+    /// untouched. An I/O error while writing is [`RestoreError::Fatal`].
+    ///
+    /// Must be called without `keyspace_lifecycle` held.
+    pub(super) fn apply_restore(
+        &self,
+        restore_id: &str,
+        chunks: u32,
+        total_len: u64,
+    ) -> Result<(), RestoreError> {
+        let outcome = self.restore_from_staged(restore_id, chunks, total_len);
+        // On success the install already wiped `meta` (staging included);
+        // on rejection the chunks must still go.
+        if matches!(outcome, Err(RestoreError::Rejected(_))) {
+            self.discard_staged_restore(restore_id);
+        }
+        outcome
+    }
+
+    /// Validate and decrypt an operator backup blob (produced by the `Backup`
+    /// gRPC RPC) and return an OpenRaft `Snapshot` ready for
+    /// `Raft::install_full_snapshot`.
+    ///
+    /// The blob format is `[dek_version_u32_BE; 4] ++ [utc_epoch_u64_BE; 8] ++
+    /// AES-256-GCM(snapshot_file_msgpack)`.  Returns the decoded `Snapshot`
+    /// together with the (utc_epoch, dek_version) pair for audit logging.
+    pub fn decode_backup_blob(
+        &self,
+        bytes: &[u8],
+    ) -> Result<(crate::types::Snapshot, u64, u32), crate::StoreError> {
+        let (snapshot_file, dek_version, utc_epoch) = self.decrypt_backup_file(bytes)?;
+
+        let data_bytes = rmp_serde::to_vec(&snapshot_file.payload)
+            .map_err(|e| crate::StoreError::Other(eyre::eyre!("snapshot re-serialize: {e}")))?;
+
+        let snapshot = openraft::storage::Snapshot {
+            meta: snapshot_file.meta,
+            snapshot: data_bytes,
+        };
+        Ok((snapshot, utc_epoch, dek_version))
+    }
+
+    /// Decrypts an operator backup blob into its [`SnapshotFile`], also
+    /// trying the DEK epochs the backup's own manifest carries (unwrapped
+    /// with this node's KEK): this node usually holds a different DEK than
+    /// the cluster that produced the backup.
+    pub(super) fn decrypt_backup_file(
+        &self,
+        bytes: &[u8],
+    ) -> Result<(SnapshotFile, u32, u64), crate::StoreError> {
+        let extra: Vec<Arc<DekEpoch>> = match read_dek_manifest(bytes) {
+            Ok(manifest) => {
+                let (current, retired) = dek_epochs_from_manifest(&manifest, self.kek.as_ref())?;
+                std::iter::once(current)
+                    .chain(retired.into_values())
+                    .collect()
+            }
+            // Backups taken before snapshot files carried a manifest.
+            Err(_) => Vec::new(),
+        };
+        decrypt_snapshot_file(bytes, &self.dek, &self.old_deks, &self.shadow_deks, &extra)
+    }
+
+    /// Removes every staged chunk of `restore_id`.
+    pub(super) fn discard_staged_restore(&self, restore_id: &str) {
+        let prefix = restore_stage_prefix(restore_id);
+        let mut batch = self.db.batch();
+        for item in self.meta.prefix(&prefix) {
+            if let Ok(key) = item.key() {
+                batch.remove(&self.meta, key);
+            }
+        }
+        if let Err(e) = batch.commit() {
+            tracing::warn!(restore_id, error = %e, "failed to discard staged restore chunks");
+        }
+    }
+
+    /// The `meta` entries that preserve every DEK epoch this node can
+    /// currently read, as [`DEK_SHADOW_PREFIX`] entries: the ones already
+    /// shadowed plus the current, retired and revoked-pending epochs.
+    pub(super) fn displaced_dek_entries(&self) -> io::Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        let other = |e: &dyn std::fmt::Display| io::Error::other(e.to_string());
+        let mut entries: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        let mut wrapped_seen: HashSet<Vec<u8>> = HashSet::new();
+        for item in self.meta.prefix(DEK_SHADOW_PREFIX.as_bytes()) {
+            let (key, value) = item.into_inner().map_err(|e| other(&e))?;
+            wrapped_seen.insert(value.to_vec());
+            entries.push((key.to_vec(), value.to_vec()));
+        }
+
+        let mut candidates: Vec<(u32, Vec<u8>)> = Vec::new();
+        if let Some(cur) = self.meta.get(META_DEK_CURRENT).map_err(|e| other(&e))?
+            && cur.len() > 4
+        {
+            let version = u32::from_be_bytes([cur[0], cur[1], cur[2], cur[3]]);
+            candidates.push((version, cur[4..].to_vec()));
+        }
+        for prefix in [DEK_RETIRED_PREFIX, DEK_REVOKED_PENDING_PREFIX] {
+            for item in self.meta.prefix(prefix.as_bytes()) {
+                let (key, value) = item.into_inner().map_err(|e| other(&e))?;
+                let version = std::str::from_utf8(&key)
+                    .ok()
+                    .and_then(|k| k.strip_prefix(prefix))
+                    .and_then(|v| v.parse::<u32>().ok());
+                if let Some(version) = version {
+                    candidates.push((version, value.to_vec()));
+                }
+            }
+        }
+
+        for (version, wrapped) in candidates {
+            if !wrapped_seen.insert(wrapped.clone()) {
+                continue;
+            }
+            let mut n = 0u32;
+            let key = loop {
+                let key = format!("{DEK_SHADOW_PREFIX}{version}:{n}").into_bytes();
+                if !entries.iter().any(|(k, _)| *k == key) {
+                    break key;
+                }
+                n += 1;
+            };
+            entries.push((key, wrapped));
+        }
+        Ok(entries)
+    }
+
     /// Replaces every replicated keyspace, the ephemeral registry and the
     /// in-memory DEK epochs with the contents of `payload`.
     ///
@@ -320,6 +455,27 @@ impl FjallStateMachine {
         Ok(manifest)
     }
 
+    /// Whether an incoming `meta` entry must be dropped: one this node keeps
+    /// its own of ([`Self::node_local_meta_keys`],
+    /// [`Self::node_local_meta_prefixes`] and, for a restore, in-flight
+    /// restore chunks and displaced-DEK entries), or a re-encryption
+    /// checkpoint, which describes the sending node's sweep and not the
+    /// installed data.
+    pub(super) fn is_node_local_meta_key(&self, key: &[u8], keep_raft_state: bool) -> bool {
+        key.starts_with(REENCRYPT_PROGRESS_PREFIX.as_bytes())
+            || self
+                .node_local_meta_prefixes()
+                .iter()
+                .any(|p| key.starts_with(p))
+            || (keep_raft_state
+                && (key.starts_with(RESTORE_STAGE_PREFIX.as_bytes())
+                    || key.starts_with(DEK_SHADOW_PREFIX.as_bytes())))
+            || self
+                .node_local_meta_keys(keep_raft_state)
+                .iter()
+                .any(|k| k == key)
+    }
+
     /// `meta` keys that belong to this node and survive a snapshot install
     /// or restore. A live restore also keeps the applied/membership pointers
     /// (`keep_raft_state`); a snapshot install sets those explicitly.
@@ -342,136 +498,6 @@ impl FjallStateMachine {
     /// snapshot install or restore: the per-epoch log nonce counters.
     pub(super) fn node_local_meta_prefixes(&self) -> Vec<Vec<u8>> {
         vec![nonce_meta_prefix(self.node_id).into_bytes()]
-    }
-
-    /// Whether an incoming `meta` entry must be dropped: one this node keeps
-    /// its own of ([`Self::node_local_meta_keys`],
-    /// [`Self::node_local_meta_prefixes`] and, for a restore, in-flight
-    /// restore chunks and displaced-DEK entries), or a re-encryption
-    /// checkpoint, which describes the sending node's sweep and not the
-    /// installed data.
-    pub(super) fn is_node_local_meta_key(&self, key: &[u8], keep_raft_state: bool) -> bool {
-        key.starts_with(REENCRYPT_PROGRESS_PREFIX.as_bytes())
-            || self
-                .node_local_meta_prefixes()
-                .iter()
-                .any(|p| key.starts_with(p))
-            || (keep_raft_state
-                && (key.starts_with(RESTORE_STAGE_PREFIX.as_bytes())
-                    || key.starts_with(DEK_SHADOW_PREFIX.as_bytes())))
-            || self
-                .node_local_meta_keys(keep_raft_state)
-                .iter()
-                .any(|k| k == key)
-    }
-
-    /// The `meta` entries that preserve every DEK epoch this node can
-    /// currently read, as [`DEK_SHADOW_PREFIX`] entries: the ones already
-    /// shadowed plus the current, retired and revoked-pending epochs.
-    pub(super) fn displaced_dek_entries(&self) -> io::Result<Vec<(Vec<u8>, Vec<u8>)>> {
-        let other = |e: &dyn std::fmt::Display| io::Error::other(e.to_string());
-        let mut entries: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
-        let mut wrapped_seen: HashSet<Vec<u8>> = HashSet::new();
-        for item in self.meta.prefix(DEK_SHADOW_PREFIX.as_bytes()) {
-            let (key, value) = item.into_inner().map_err(|e| other(&e))?;
-            wrapped_seen.insert(value.to_vec());
-            entries.push((key.to_vec(), value.to_vec()));
-        }
-
-        let mut candidates: Vec<(u32, Vec<u8>)> = Vec::new();
-        if let Some(cur) = self.meta.get(META_DEK_CURRENT).map_err(|e| other(&e))?
-            && cur.len() > 4
-        {
-            let version = u32::from_be_bytes([cur[0], cur[1], cur[2], cur[3]]);
-            candidates.push((version, cur[4..].to_vec()));
-        }
-        for prefix in [DEK_RETIRED_PREFIX, DEK_REVOKED_PENDING_PREFIX] {
-            for item in self.meta.prefix(prefix.as_bytes()) {
-                let (key, value) = item.into_inner().map_err(|e| other(&e))?;
-                let version = std::str::from_utf8(&key)
-                    .ok()
-                    .and_then(|k| k.strip_prefix(prefix))
-                    .and_then(|v| v.parse::<u32>().ok());
-                if let Some(version) = version {
-                    candidates.push((version, value.to_vec()));
-                }
-            }
-        }
-
-        for (version, wrapped) in candidates {
-            if !wrapped_seen.insert(wrapped.clone()) {
-                continue;
-            }
-            let mut n = 0u32;
-            let key = loop {
-                let key = format!("{DEK_SHADOW_PREFIX}{version}:{n}").into_bytes();
-                if !entries.iter().any(|(k, _)| *k == key) {
-                    break key;
-                }
-                n += 1;
-            };
-            entries.push((key, wrapped));
-        }
-        Ok(entries)
-    }
-
-    /// Checks that a decoded backup payload can be installed on this node --
-    /// right format version, and its DEK manifest unwraps under this node's
-    /// KEK -- without touching any state.
-    ///
-    /// The leader runs this before proposing a live restore so a bad backup
-    /// is rejected up front rather than committed and rejected on every node.
-    pub fn validate_backup_payload(&self, payload_bytes: &[u8]) -> io::Result<()> {
-        let payload: SnapshotPayload = deserialize(payload_bytes)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-        check_snapshot_format_version(payload.version)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        let manifest = dek_manifest_from_payload(&payload)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-        dek_epochs_from_manifest(&manifest, self.kek.as_ref())
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-        Ok(())
-    }
-
-    /// Applies a committed [`StoreCommand::RestoreApply`]: reassembles the
-    /// staged chunks of `restore_id` into the encrypted backup blob and
-    /// replaces the replicated state with it, keeping this node's Raft
-    /// bookkeeping.
-    ///
-    /// Deterministic across nodes. A rejected backup is reported as
-    /// [`RestoreError::Rejected`] (surfaced to the caller as a violation,
-    /// never as an I/O error that would take the node down) and its staged
-    /// chunks are discarded; that outcome leaves the replicated state
-    /// untouched. An I/O error while writing is [`RestoreError::Fatal`].
-    ///
-    /// Must be called without `keyspace_lifecycle` held.
-    pub(super) fn apply_restore(
-        &self,
-        restore_id: &str,
-        chunks: u32,
-        total_len: u64,
-    ) -> Result<(), RestoreError> {
-        let outcome = self.restore_from_staged(restore_id, chunks, total_len);
-        // On success the install already wiped `meta` (staging included);
-        // on rejection the chunks must still go.
-        if matches!(outcome, Err(RestoreError::Rejected(_))) {
-            self.discard_staged_restore(restore_id);
-        }
-        outcome
-    }
-
-    /// Removes every staged chunk of `restore_id`.
-    pub(super) fn discard_staged_restore(&self, restore_id: &str) {
-        let prefix = restore_stage_prefix(restore_id);
-        let mut batch = self.db.batch();
-        for item in self.meta.prefix(&prefix) {
-            if let Ok(key) = item.key() {
-                batch.remove(&self.meta, key);
-            }
-        }
-        if let Err(e) = batch.commit() {
-            tracing::warn!(restore_id, error = %e, "failed to discard staged restore chunks");
-        }
     }
 
     pub(super) fn restore_from_staged(
@@ -542,47 +568,21 @@ impl FjallStateMachine {
         }
     }
 
-    /// Decrypts an operator backup blob into its [`SnapshotFile`], also
-    /// trying the DEK epochs the backup's own manifest carries (unwrapped
-    /// with this node's KEK): this node usually holds a different DEK than
-    /// the cluster that produced the backup.
-    pub(super) fn decrypt_backup_file(
-        &self,
-        bytes: &[u8],
-    ) -> Result<(SnapshotFile, u32, u64), crate::StoreError> {
-        let extra: Vec<Arc<DekEpoch>> = match read_dek_manifest(bytes) {
-            Ok(manifest) => {
-                let (current, retired) = dek_epochs_from_manifest(&manifest, self.kek.as_ref())?;
-                std::iter::once(current)
-                    .chain(retired.into_values())
-                    .collect()
-            }
-            // Backups taken before snapshot files carried a manifest.
-            Err(_) => Vec::new(),
-        };
-        decrypt_snapshot_file(bytes, &self.dek, &self.old_deks, &self.shadow_deks, &extra)
-    }
-
-    /// Validate and decrypt an operator backup blob (produced by the `Backup`
-    /// gRPC RPC) and return an OpenRaft `Snapshot` ready for
-    /// `Raft::install_full_snapshot`.
+    /// Checks that a decoded backup payload can be installed on this node --
+    /// right format version, and its DEK manifest unwraps under this node's
+    /// KEK -- without touching any state.
     ///
-    /// The blob format is `[dek_version_u32_BE; 4] ++ [utc_epoch_u64_BE; 8] ++
-    /// AES-256-GCM(snapshot_file_msgpack)`.  Returns the decoded `Snapshot`
-    /// together with the (utc_epoch, dek_version) pair for audit logging.
-    pub fn decode_backup_blob(
-        &self,
-        bytes: &[u8],
-    ) -> Result<(crate::types::Snapshot, u64, u32), crate::StoreError> {
-        let (snapshot_file, dek_version, utc_epoch) = self.decrypt_backup_file(bytes)?;
-
-        let data_bytes = rmp_serde::to_vec(&snapshot_file.payload)
-            .map_err(|e| crate::StoreError::Other(eyre::eyre!("snapshot re-serialize: {e}")))?;
-
-        let snapshot = openraft::storage::Snapshot {
-            meta: snapshot_file.meta,
-            snapshot: data_bytes,
-        };
-        Ok((snapshot, utc_epoch, dek_version))
+    /// The leader runs this before proposing a live restore so a bad backup
+    /// is rejected up front rather than committed and rejected on every node.
+    pub fn validate_backup_payload(&self, payload_bytes: &[u8]) -> io::Result<()> {
+        let payload: SnapshotPayload = deserialize(payload_bytes)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+        check_snapshot_format_version(payload.version)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let manifest = dek_manifest_from_payload(&payload)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+        dek_epochs_from_manifest(&manifest, self.kek.as_ref())
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+        Ok(())
     }
 }

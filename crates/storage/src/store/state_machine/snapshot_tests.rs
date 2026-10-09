@@ -28,29 +28,7 @@ use super::*;
 type KvPair = (Vec<u8>, Vec<u8>);
 
 fn make_sm() -> (Arc<FjallStateMachine>, tempfile::TempDir) {
-    let td = tempfile::TempDir::new().expect("tempdir");
-    let db = Arc::new(Database::builder(td.path()).open().expect("open db"));
-    let kek: Arc<dyn KekProvider> = Arc::new(EnvKek::from_bytes([0x42u8; 32]));
-    let epoch = Arc::new(DekEpoch::from_raw(LockedKey::from_raw([0x21; 32]), 1).expect("epoch"));
-    let (reencrypt_tx, reencrypt_rx) = tokio::sync::mpsc::channel(1);
-    drop(reencrypt_rx);
-    let (quarantine_tx, quarantine_rx) = tokio::sync::mpsc::channel(1);
-    drop(quarantine_rx);
-
-    let sm = FjallStateMachine::new(
-        db,
-        td.path().join("snapshots"),
-        1,
-        Arc::new(RwLock::new(epoch)),
-        Arc::new(Mutex::new(BTreeMap::new())),
-        Arc::new(Mutex::new(HashSet::new())),
-        kek,
-        reencrypt_tx,
-        quarantine_tx,
-        Arc::new(Mutex::new(HashMap::new())),
-    )
-    .expect("construct state machine");
-    seed_current_dek(&sm, [0x21; 32], 1);
+    let (sm, td) = make_seeded_sm(0x21);
     (Arc::new(sm), td)
 }
 

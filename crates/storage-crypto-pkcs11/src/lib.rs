@@ -60,14 +60,6 @@ pub enum SlotSelector {
 
 /// Parameters needed to open (and, if missing, provision) the PKCS#11 KEK.
 pub struct Pkcs11KekParams<'a> {
-    /// Path to the PKCS#11 module (`.so`) to `dlopen`.
-    pub module_path: &'a Path,
-    /// Which slot to open a session on.
-    pub slot: SlotSelector,
-    /// `CKA_LABEL` of the AES key object to use as the KEK.
-    pub key_label: &'a str,
-    /// User PIN for the token, as raw bytes (must be valid UTF-8).
-    pub pin: &'a [u8],
     /// If no key with `key_label` exists on the token, generate a new
     /// non-extractable AES-256 key with that label instead of failing.
     ///
@@ -76,6 +68,14 @@ pub struct Pkcs11KekParams<'a> {
     /// operator/deployment decision (regulated environments may require an
     /// out-of-band key ceremony instead), so the caller must opt in.
     pub auto_generate: bool,
+    /// `CKA_LABEL` of the AES key object to use as the KEK.
+    pub key_label: &'a str,
+    /// Path to the PKCS#11 module (`.so`) to `dlopen`.
+    pub module_path: &'a Path,
+    /// User PIN for the token, as raw bytes (must be valid UTF-8).
+    pub pin: &'a [u8],
+    /// Which slot to open a session on.
+    pub slot: SlotSelector,
 }
 
 /// PKCS#11 HSM-backed KEK (ADR 0016-v2 §2.5.1).
@@ -88,8 +88,8 @@ pub struct Pkcs11Kek {
     // kind at a time) and `Session` is `Send` but not `Sync`; the mutex
     // serializes concurrent wrap/unwrap calls and makes the provider `Sync`
     // as required by `KekProvider`.
-    session: Mutex<Session>,
     key: ObjectHandle,
+    session: Mutex<Session>,
 }
 
 impl Pkcs11Kek {
@@ -184,32 +184,6 @@ fn generate_key(session: &Session, label: &str) -> Result<ObjectHandle, CryptoEr
 }
 
 impl KekProvider for Pkcs11Kek {
-    fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
-        let mut nonce_bytes: [u8; 12] = rand::rng().random();
-        let gcm_params = GcmParams::new(&mut nonce_bytes, DEK_WRAP_AD, 128.into())
-            .map_err(|e| CryptoError::Pkcs11(format!("building GCM parameters: {e}")))?;
-
-        let session = self
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let ciphertext_and_tag = session
-            .encrypt(&Mechanism::AesGcm(gcm_params), self.key, dek)
-            .map_err(|_| CryptoError::AesEncrypt)?;
-        drop(session);
-
-        // ciphertext_and_tag is [32-byte ciphertext][16-byte tag] per the
-        // PKCS#11 CKM_AES_GCM convention (tag appended to the output).
-        if ciphertext_and_tag.len() != 32 + 16 {
-            return Err(CryptoError::AesEncrypt);
-        }
-
-        let mut out = Vec::with_capacity(12 + 32 + 16);
-        out.extend_from_slice(&nonce_bytes);
-        out.extend_from_slice(&ciphertext_and_tag);
-        Ok(out)
-    }
-
     fn unwrap_dek(&self, wrapped: &[u8]) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
         // Layout: [12-byte nonce][32-byte ciphertext][16-byte tag]
         if wrapped.len() != 12 + 32 + 16 {
@@ -239,6 +213,32 @@ impl KekProvider for Pkcs11Kek {
         }
         let mut out = Zeroizing::new([0u8; 32]);
         out.copy_from_slice(&plaintext);
+        Ok(out)
+    }
+
+    fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
+        let mut nonce_bytes: [u8; 12] = rand::rng().random();
+        let gcm_params = GcmParams::new(&mut nonce_bytes, DEK_WRAP_AD, 128.into())
+            .map_err(|e| CryptoError::Pkcs11(format!("building GCM parameters: {e}")))?;
+
+        let session = self
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let ciphertext_and_tag = session
+            .encrypt(&Mechanism::AesGcm(gcm_params), self.key, dek)
+            .map_err(|_| CryptoError::AesEncrypt)?;
+        drop(session);
+
+        // ciphertext_and_tag is [32-byte ciphertext][16-byte tag] per the
+        // PKCS#11 CKM_AES_GCM convention (tag appended to the output).
+        if ciphertext_and_tag.len() != 32 + 16 {
+            return Err(CryptoError::AesEncrypt);
+        }
+
+        let mut out = Vec::with_capacity(12 + 32 + 16);
+        out.extend_from_slice(&nonce_bytes);
+        out.extend_from_slice(&ciphertext_and_tag);
         Ok(out)
     }
 }

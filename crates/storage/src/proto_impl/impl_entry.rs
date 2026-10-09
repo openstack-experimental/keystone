@@ -44,8 +44,12 @@ impl RaftPayload<crate::types::NodeId, pb::raft::Node> for pb::raft::Entry {
 impl RaftEntry for pb::raft::Entry {
     type CommittedLeaderId = u64;
     type D = CommandRequest;
-    type NodeId = u64;
     type Node = pb::raft::Node;
+    type NodeId = u64;
+
+    fn log_id_parts(&self) -> (&u64, u64) {
+        (&self.term, self.index)
+    }
 
     fn new(
         log_id: LogIdOf<TypeConfig>,
@@ -65,10 +69,6 @@ impl RaftEntry for pb::raft::Entry {
             app_data,
             membership,
         }
-    }
-
-    fn log_id_parts(&self) -> (&u64, u64) {
-        (&self.term, self.index)
     }
 
     fn set_log_id(&mut self, new: LogIdOf<TypeConfig>) {

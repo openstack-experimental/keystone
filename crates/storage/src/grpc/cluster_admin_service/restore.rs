@@ -65,11 +65,11 @@ pub(super) fn backup_header(blob: &[u8]) -> Option<(u32, u64)> {
 /// attempt progresses so a failure can say how far it got.
 #[derive(Debug, Default)]
 pub(super) struct RestoreAttempt {
+    /// Size the client declared (0 when undeclared).
+    pub(super) declared_len: u64,
     /// `cluster` or `disaster_recovery`; unknown until the first chunk has
     /// been checked against the node state.
     pub(super) mode: Option<&'static str>,
-    /// Size the client declared (0 when undeclared).
-    pub(super) declared_len: u64,
     /// Bytes received from the client so far.
     pub(super) received_len: u64,
     /// Set when the node refused the attempt only because it is not the
@@ -79,43 +79,18 @@ pub(super) struct RestoreAttempt {
 }
 
 impl ClusterAdminServiceImpl {
-    /// Restores an uninitialized node following OpenRaft's documented
-    /// restore-from-snapshot procedure: the vote is derived from the
-    /// snapshot's last log id and the snapshot -- membership included -- is
-    /// installed. Run it with the same backup on every node, then pass
-    /// `elect` on exactly one.
-    pub(super) async fn restore_uninitialized(
+    pub(super) async fn propose_restore(
         &self,
-        snapshot: Snapshot,
-        elect: bool,
-    ) -> Result<(), Status> {
-        let term = snapshot
-            .meta
-            .last_log_id
-            .as_ref()
-            .map(|log_id| log_id.leader_id)
-            .ok_or_else(|| {
-                Status::failed_precondition(
-                    "backup has no Raft log position (its cluster never committed an entry) \
-                     and cannot be installed into an uninitialized node",
-                )
-            })?;
-        let vote = <pb::raft::Vote as RaftVote>::from_leader_id(
-            <LeaderId as RaftLeaderId>::new(term, self.node_id),
-            true,
-        );
-        self.raft_node
-            .install_full_snapshot(vote, snapshot)
-            .await
-            .map_err(|e| Status::internal(format!("backup install failed: {e}")))?;
-        if elect {
-            self.raft_node
-                .trigger()
-                .elect(false)
-                .await
-                .map_err(|e| Status::internal(format!("election trigger failed: {e}")))?;
+        cmd: StoreCommand,
+    ) -> Result<crate::ZeroizingResponse, Status> {
+        let payload =
+            pb::api::CommandRequest::try_from(cmd).map_err(|e| Status::internal(e.to_string()))?;
+        match self.raft_node.client_write(payload).await {
+            Ok(resp) => Ok(resp.data),
+            // Restore into an initialized cluster must be sent to the
+            // leader; the redirect carries its address.
+            Err(e) => Err(raft_write_status("Raft write failed", e)),
         }
-        Ok(())
     }
 
     /// Restores into an initialized cluster by committing the backup
@@ -162,6 +137,45 @@ impl ClusterAdminServiceImpl {
             }
         }
         outcome
+    }
+
+    /// Restores an uninitialized node following OpenRaft's documented
+    /// restore-from-snapshot procedure: the vote is derived from the
+    /// snapshot's last log id and the snapshot -- membership included -- is
+    /// installed. Run it with the same backup on every node, then pass
+    /// `elect` on exactly one.
+    pub(super) async fn restore_uninitialized(
+        &self,
+        snapshot: Snapshot,
+        elect: bool,
+    ) -> Result<(), Status> {
+        let term = snapshot
+            .meta
+            .last_log_id
+            .as_ref()
+            .map(|log_id| log_id.leader_id)
+            .ok_or_else(|| {
+                Status::failed_precondition(
+                    "backup has no Raft log position (its cluster never committed an entry) \
+                     and cannot be installed into an uninitialized node",
+                )
+            })?;
+        let vote = <pb::raft::Vote as RaftVote>::from_leader_id(
+            <LeaderId as RaftLeaderId>::new(term, self.node_id),
+            true,
+        );
+        self.raft_node
+            .install_full_snapshot(vote, snapshot)
+            .await
+            .map_err(|e| Status::internal(format!("backup install failed: {e}")))?;
+        if elect {
+            self.raft_node
+                .trigger()
+                .elect(false)
+                .await
+                .map_err(|e| Status::internal(format!("election trigger failed: {e}")))?;
+        }
+        Ok(())
     }
 
     pub(super) async fn stage_and_apply(
@@ -250,20 +264,6 @@ impl ClusterAdminServiceImpl {
             .checked_add(1)
             .ok_or_else(|| Status::resource_exhausted("backup has too many chunks"))?;
         Ok(())
-    }
-
-    pub(super) async fn propose_restore(
-        &self,
-        cmd: StoreCommand,
-    ) -> Result<crate::ZeroizingResponse, Status> {
-        let payload =
-            pb::api::CommandRequest::try_from(cmd).map_err(|e| Status::internal(e.to_string()))?;
-        match self.raft_node.client_write(payload).await {
-            Ok(resp) => Ok(resp.data),
-            // Restore into an initialized cluster must be sent to the
-            // leader; the redirect carries its address.
-            Err(e) => Err(raft_write_status("Raft write failed", e)),
-        }
     }
 }
 

@@ -66,13 +66,13 @@ const DEK_WRAP_AD: &[u8] = b"keystone-dek-wrap-v1";
 
 /// Object-safe trait for Key Encryption Key operations.
 pub trait KekProvider: Send + Sync {
+    /// Unwrap (decrypt) a wrapped DEK blob produced by [`wrap_dek`].
+    fn unwrap_dek(&self, wrapped: &[u8]) -> Result<Zeroizing<[u8; 32]>, CryptoError>;
+
     /// Wrap (encrypt) a 256-bit DEK.
     ///
     /// Returns an opaque blob: `[12-byte nonce][ciphertext][16-byte GCM tag]`.
     fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError>;
-
-    /// Unwrap (decrypt) a wrapped DEK blob produced by [`wrap_dek`].
-    fn unwrap_dek(&self, wrapped: &[u8]) -> Result<Zeroizing<[u8; 32]>, CryptoError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -149,23 +149,6 @@ impl EnvKek {
 }
 
 impl KekProvider for EnvKek {
-    fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
-        let nonce_bytes: [u8; 12] = rand::rng().random();
-        let cipher = Aes256Gcm::new(key_ref(&*self.key)?);
-        let gcm_nonce = nonce_ref(&nonce_bytes)?;
-
-        let mut buf = dek.to_vec();
-        let tag = cipher
-            .encrypt_inout_detached(gcm_nonce, DEK_WRAP_AD, buf.as_mut_slice().into())
-            .map_err(|_| CryptoError::AesEncrypt)?;
-
-        let mut out = Vec::with_capacity(12 + 32 + 16);
-        out.extend_from_slice(&nonce_bytes);
-        out.extend_from_slice(&buf);
-        out.extend_from_slice(&tag);
-        Ok(out)
-    }
-
     fn unwrap_dek(&self, wrapped: &[u8]) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
         // Layout: [12-byte nonce][32-byte ciphertext][16-byte tag]
         if wrapped.len() != 12 + 32 + 16 {
@@ -198,6 +181,23 @@ impl KekProvider for EnvKek {
         }
         let mut out = Zeroizing::new([0u8; 32]);
         out.copy_from_slice(&buf);
+        Ok(out)
+    }
+
+    fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
+        let nonce_bytes: [u8; 12] = rand::rng().random();
+        let cipher = Aes256Gcm::new(key_ref(&*self.key)?);
+        let gcm_nonce = nonce_ref(&nonce_bytes)?;
+
+        let mut buf = dek.to_vec();
+        let tag = cipher
+            .encrypt_inout_detached(gcm_nonce, DEK_WRAP_AD, buf.as_mut_slice().into())
+            .map_err(|_| CryptoError::AesEncrypt)?;
+
+        let mut out = Vec::with_capacity(12 + 32 + 16);
+        out.extend_from_slice(&nonce_bytes);
+        out.extend_from_slice(&buf);
+        out.extend_from_slice(&tag);
         Ok(out)
     }
 }

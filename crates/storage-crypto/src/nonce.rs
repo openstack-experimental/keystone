@@ -87,31 +87,41 @@ const WARN_INTERVAL: Duration = Duration::from_secs(60);
 /// interface is kept small and synchronous to keep the nonce manager testable
 /// without a real database.
 pub trait NoncePersistence: Send + Sync {
+    /// Flush any pending writes to durable storage.
+    fn flush(&self) -> Result<(), CryptoError>;
+
     /// Read a `u64` value stored under `key`, or `None` if absent.
     fn read_u64(&self, key: &str) -> Result<Option<u64>, CryptoError>;
 
     /// Atomically write a `u64` value under `key`.
     fn write_u64(&self, key: &str, value: u64) -> Result<(), CryptoError>;
-
-    /// Flush any pending writes to durable storage.
-    fn flush(&self) -> Result<(), CryptoError>;
 }
 
 /// Durable, crash-safe nonce manager for log encryption.
 pub struct NonceManager {
-    node_id: u64,
-    /// DEK epoch the counter belongs to.
-    epoch: u32,
-    /// Next counter value to issue.
-    counter: u32,
     /// End of the currently reserved block (exclusive).
     block_end: u32,
+    /// Next counter value to issue.
+    counter: u32,
+    /// DEK epoch the counter belongs to.
+    epoch: u32,
     /// When the last "approaching rotation threshold" warning was emitted.
     last_warn: Option<Instant>,
+    node_id: u64,
     storage: Box<dyn NoncePersistence>,
 }
 
 impl NonceManager {
+    /// Next counter value to issue for the current epoch.
+    pub fn counter(&self) -> u32 {
+        self.counter
+    }
+
+    /// DEK epoch the counter currently belongs to.
+    pub fn epoch(&self) -> u32 {
+        self.epoch
+    }
+
     /// Initialize the nonce manager for a given `node_id` and DEK `epoch`.
     ///
     /// Reads persisted state, validates against the HWM, then immediately
@@ -135,35 +145,6 @@ impl NonceManager {
         mgr.reserve_block()?;
 
         Ok(mgr)
-    }
-
-    /// DEK epoch the counter currently belongs to.
-    pub fn epoch(&self) -> u32 {
-        self.epoch
-    }
-
-    /// Next counter value to issue for the current epoch.
-    pub fn counter(&self) -> u32 {
-        self.counter
-    }
-
-    /// Whether the counter of the current epoch has entered the last 10%
-    /// before [`ROTATION_THRESHOLD`], i.e. the DEK must be rotated.
-    pub fn rotation_due(&self) -> bool {
-        self.counter >= ROTATION_THRESHOLD - WARN_REMAINING
-    }
-
-    /// Continue with the counter of `epoch`. A no-op when it is already the
-    /// current one.
-    pub fn switch_epoch(&mut self, epoch: u32) -> Result<(), CryptoError> {
-        if epoch == self.epoch {
-            return Ok(());
-        }
-        let start = load_counter(self.storage.as_ref(), self.node_id, epoch)?;
-        self.epoch = epoch;
-        self.counter = start;
-        self.block_end = start;
-        self.reserve_block()
     }
 
     /// Return the next 12-byte nonce and advance the counter.
@@ -245,6 +226,25 @@ impl NonceManager {
 
         self.block_end = new_end;
         Ok(())
+    }
+
+    /// Whether the counter of the current epoch has entered the last 10%
+    /// before [`ROTATION_THRESHOLD`], i.e. the DEK must be rotated.
+    pub fn rotation_due(&self) -> bool {
+        self.counter >= ROTATION_THRESHOLD - WARN_REMAINING
+    }
+
+    /// Continue with the counter of `epoch`. A no-op when it is already the
+    /// current one.
+    pub fn switch_epoch(&mut self, epoch: u32) -> Result<(), CryptoError> {
+        if epoch == self.epoch {
+            return Ok(());
+        }
+        let start = load_counter(self.storage.as_ref(), self.node_id, epoch)?;
+        self.epoch = epoch;
+        self.counter = start;
+        self.block_end = start;
+        self.reserve_block()
     }
 }
 

@@ -12,36 +12,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use openstack_keystone_storage_crypto::EnvKek;
-
 use super::*;
-
-fn make_sm() -> (FjallStateMachine, tempfile::TempDir) {
-    let td = tempfile::TempDir::new().expect("tempdir");
-    let db = Arc::new(Database::builder(td.path()).open().expect("open db"));
-    let kek: Arc<dyn KekProvider> = Arc::new(EnvKek::from_bytes([0x42u8; 32]));
-    let epoch = Arc::new(DekEpoch::from_raw(LockedKey::from_raw([0x09; 32]), 1).expect("epoch"));
-    let (reencrypt_tx, reencrypt_rx) = tokio::sync::mpsc::channel(1);
-    drop(reencrypt_rx);
-    let (quarantine_tx, quarantine_rx) = tokio::sync::mpsc::channel(1);
-    drop(quarantine_rx);
-
-    let sm = FjallStateMachine::new(
-        db,
-        td.path().join("snapshots"),
-        1,
-        Arc::new(RwLock::new(epoch)),
-        Arc::new(Mutex::new(BTreeMap::new())),
-        Arc::new(Mutex::new(HashSet::new())),
-        kek,
-        reencrypt_tx,
-        quarantine_tx,
-        Arc::new(Mutex::new(HashMap::new())),
-    )
-    .expect("construct state machine");
-    seed_current_dek(&sm, [0x09; 32], 1);
-    (sm, td)
-}
 
 /// Directly seeds an ephemeral keyspace the way `apply()`'s `Set`/
 /// `CreateIfAbsent` arms would, without needing to drive a full
@@ -58,7 +29,7 @@ fn seed(sm: &FjallStateMachine, keyspace: &str, key: &[u8], value: &[u8], metada
 
 #[test]
 fn ephemeral_write_never_touches_the_fjall_db() {
-    let (sm, _td) = make_sm();
+    let (sm, _td) = make_seeded_sm(0x09);
     seed(
         &sm,
         "webauthn_state_1",
@@ -75,7 +46,7 @@ fn ephemeral_write_never_touches_the_fjall_db() {
 
 #[test]
 fn ephemeral_get_round_trips_value_and_metadata() {
-    let (sm, _td) = make_sm();
+    let (sm, _td) = make_seeded_sm(0x09);
     let metadata = Metadata::ephemeral();
     seed(
         &sm,
@@ -94,14 +65,14 @@ fn ephemeral_get_round_trips_value_and_metadata() {
 
 #[test]
 fn ephemeral_get_is_none_for_unknown_keyspace() {
-    let (sm, _td) = make_sm();
+    let (sm, _td) = make_seeded_sm(0x09);
     assert!(sm.ephemeral_get("never_written", b"any-key").is_none());
     assert!(!sm.is_ephemeral_keyspace("never_written"));
 }
 
 #[test]
 fn ephemeral_prefix_filters_by_prefix_and_is_none_for_non_ephemeral_keyspace() {
-    let (sm, _td) = make_sm();
+    let (sm, _td) = make_seeded_sm(0x09);
     seed(
         &sm,
         "webauthn_state_1",
@@ -137,7 +108,7 @@ fn ephemeral_prefix_filters_by_prefix_and_is_none_for_non_ephemeral_keyspace() {
 
 #[test]
 fn drop_keyspace_reclaims_an_empty_ephemeral_partition() {
-    let (sm, _td) = make_sm();
+    let (sm, _td) = make_seeded_sm(0x09);
     seed(
         &sm,
         "webauthn_state_1",
@@ -158,7 +129,7 @@ fn drop_keyspace_reclaims_an_empty_ephemeral_partition() {
 
 #[test]
 fn drop_keyspace_refuses_non_empty_ephemeral_partition() {
-    let (sm, _td) = make_sm();
+    let (sm, _td) = make_seeded_sm(0x09);
     seed(
         &sm,
         "webauthn_state_1",

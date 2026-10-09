@@ -11,6 +11,12 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! # `openraft` trait implementations for protobuf types.
+//!
+//! `TypeConfig` uses the generated protobuf messages directly as Raft
+//! types (`Vote`, `LeaderId`, `Entry`, ...). Each submodule implements the
+//! `openraft` traits and the conversions for one message, as `impl`
+//! blocks only; nothing is exported.
 mod impl_admin_response;
 mod impl_append_entries_request;
 mod impl_append_entries_response;

@@ -45,6 +45,9 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+#[cfg(test)]
+mod wire_format_tests;
+
 /// Data sensitivity tier for at-rest encryption AD binding.
 ///
 /// The tier byte is the first byte of the AES-GCM Associated Data in
@@ -100,22 +103,22 @@ pub enum StoreError {
         description: String,
     },
 
+    /// Deserialization error.
+    #[error("deserialization error")]
+    Deserialize(#[from] rmp_serde::decode::Error),
+
     /// Key is already present in the store while the call expects it to be
     /// unset.
     #[error("key is already set")]
     KeyPresent,
 
+    /// Generic error for implementation-specific failures.
+    #[error("{0}")]
+    Other(Box<dyn std::error::Error + Send + Sync + 'static>),
+
     /// Serialization error.
     #[error("serialization error")]
     Serialization(#[from] rmp_serde::encode::Error),
-
-    /// Deserialization error.
-    #[error("deserialization error")]
-    Deserialize(#[from] rmp_serde::decode::Error),
-
-    /// Invalid UTF-8 string.
-    #[error("invalid utf-8")]
-    Utf8(#[from] std::string::FromUtf8Error),
 
     /// The operation could not be completed with a linearizability guarantee
     /// (Raft `ReadIndex`/forwarding failed or was exhausted). Callers MUST
@@ -126,9 +129,9 @@ pub enum StoreError {
     #[error("storage temporarily unavailable: {0}")]
     Unavailable(String),
 
-    /// Generic error for implementation-specific failures.
-    #[error("{0}")]
-    Other(Box<dyn std::error::Error + Send + Sync + 'static>),
+    /// Invalid UTF-8 string.
+    #[error("invalid utf-8")]
+    Utf8(#[from] std::string::FromUtf8Error),
 }
 
 impl StoreError {
@@ -228,6 +231,15 @@ pub struct Metadata {
 }
 
 impl Metadata {
+    /// Create new ephemeral metadata (see [`Self::is_ephemeral`]) with the
+    /// current timestamp.
+    pub fn ephemeral() -> Self {
+        Self {
+            is_ephemeral: true,
+            ..Self::new()
+        }
+    }
+
     /// Create new metadata with the current timestamp and `Internal` tier.
     pub fn new() -> Self {
         Self {
@@ -236,26 +248,6 @@ impl Metadata {
             tier: DataTier::Internal,
             dek_version: None,
             is_ephemeral: false,
-        }
-    }
-
-    /// Create new metadata with the given tier and the current timestamp.
-    pub fn with_tier(tier: DataTier) -> Self {
-        Self {
-            revision: 0,
-            created_at: Utc::now().timestamp(),
-            tier,
-            dek_version: None,
-            is_ephemeral: false,
-        }
-    }
-
-    /// Create new ephemeral metadata (see [`Self::is_ephemeral`]) with the
-    /// current timestamp.
-    pub fn ephemeral() -> Self {
-        Self {
-            is_ephemeral: true,
-            ..Self::new()
         }
     }
 
@@ -281,6 +273,17 @@ impl Metadata {
     /// Deserialize metadata from MessagePack bytes.
     pub fn unpack(value: &[u8]) -> Result<Self, StoreError> {
         Ok(rmp_serde::from_slice(value)?)
+    }
+
+    /// Create new metadata with the given tier and the current timestamp.
+    pub fn with_tier(tier: DataTier) -> Self {
+        Self {
+            revision: 0,
+            created_at: Utc::now().timestamp(),
+            tier,
+            dek_version: None,
+            is_ephemeral: false,
+        }
     }
 }
 
@@ -374,6 +377,28 @@ pub enum Mutation {
 }
 
 impl Mutation {
+    /// Create a create-if-absent mutation.
+    ///
+    /// Returns `StoreError::Serialization` if `value` cannot be serialized.
+    pub fn create_if_absent<K, V, S>(
+        key: K,
+        value: V,
+        metadata: Metadata,
+        keyspace: Option<S>,
+    ) -> Result<Self, StoreError>
+    where
+        K: Into<Vec<u8>>,
+        V: Serialize,
+        S: Into<String>,
+    {
+        Ok(Self::CreateIfAbsent {
+            key: key.into(),
+            value: rmp_serde::to_vec(&value)?,
+            keyspace: keyspace.map(Into::into).unwrap_or("data".into()),
+            metadata,
+        })
+    }
+
     /// Create a remove mutation for the given key.
     pub fn remove<K, S>(key: K, keyspace: Option<S>, expected_revision: Option<u64>) -> Self
     where
@@ -419,28 +444,6 @@ impl Mutation {
         })
     }
 
-    /// Create a create-if-absent mutation.
-    ///
-    /// Returns `StoreError::Serialization` if `value` cannot be serialized.
-    pub fn create_if_absent<K, V, S>(
-        key: K,
-        value: V,
-        metadata: Metadata,
-        keyspace: Option<S>,
-    ) -> Result<Self, StoreError>
-    where
-        K: Into<Vec<u8>>,
-        V: Serialize,
-        S: Into<String>,
-    {
-        Ok(Self::CreateIfAbsent {
-            key: key.into(),
-            value: rmp_serde::to_vec(&value)?,
-            keyspace: keyspace.map(Into::into).unwrap_or("data".into()),
-            metadata,
-        })
-    }
-
     /// Create a set index mutation for the given key.
     /// Create a set_index mutation for the given key.
     pub fn set_index<K>(key: K) -> Self
@@ -461,82 +464,11 @@ pub trait StorageApi: Send + Sync {
     /// Check whether a key exists in the given keyspace.
     async fn contains_key(&self, key: &[u8], keyspace: Option<&str>) -> Result<bool, StoreError>;
 
-    /// Get a value by key.
-    ///
-    /// Returns `None` if the key does not exist. The result envelope contains
-    /// raw bytes; use [`StoreDataEnvelope::try_deserialize`] to get typed data.
-    async fn get_by_key(
-        &self,
-        key: &[u8],
-        keyspace: Option<&str>,
-    ) -> Result<Option<StoreDataEnvelope<Vec<u8>>>, StoreError>;
-
-    /// List all entries with keys matching the given prefix.
-    ///
-    /// Returns raw bytes; use [`StoreDataEnvelope::try_deserialize`] on each
-    /// envelope to get typed data.
-    async fn prefix(
-        &self,
-        prefix: &[u8],
-        keyspace: Option<&str>,
-    ) -> Result<Vec<(String, StoreDataEnvelope<Vec<u8>>)>, StoreError>;
-
-    /// List all index entries with keys matching the given prefix.
-    async fn prefix_index(&self, prefix: &[u8]) -> Result<Vec<String>, StoreError>;
-
-    /// Deletes a value for a given key.
-    ///
-    /// Returns `StoreResponse::KeyAbsent` if the key does not exist.
-    async fn remove(
-        &self,
-        key: String,
-        keyspace: Option<String>,
-    ) -> Result<StoreResponse, StoreError>;
-
-    /// Deletes index key.
-    async fn remove_index(&self, key: String) -> Result<StoreResponse, StoreError>;
-
-    /// Sets a value for a given key.
-    ///
-    /// The `value` envelope must contain pre-serialized bytes.
-    /// Use [`StoreDataEnvelope::try_serialize`] to convert typed data.
-    async fn set_value(
-        &self,
-        key: String,
-        value: StoreDataEnvelope<Vec<u8>>,
-        keyspace: Option<String>,
-        expected_revision: Option<u64>,
-    ) -> Result<StoreResponse, StoreError>;
-
-    /// Sets an index key pointing to a data key.
-    async fn set_index_key(&self, key: String) -> Result<StoreResponse, StoreError>;
-
-    /// Mutation transaction.
-    async fn transaction(&self, mutations: Vec<Mutation>) -> Result<StoreResponse, StoreError>;
-
-    /// Checks if the Raft cluster is initialized.
-    async fn is_initialized(&self) -> Result<bool, StoreError>;
-
-    /// Initializes the Raft cluster with the given node configuration.
-    async fn initialize(&self, nodes: HashMap<u64, Node>) -> Result<(), StoreError>;
-
     /// Returns the Raft leader node id, if a stable leader is elected.
     /// The storage is considered operationally ready only when this returns
     /// `Some(id)`, because without a leader writes will return
     /// `ForwardToLeader(None, None)` (ADR 0016-v2 §4.2).
     async fn current_leader(&self) -> Option<u64>;
-
-    /// Returns `true` if `keyspace` has been created, without creating it as
-    /// a side effect.
-    ///
-    /// Callers that maintain a rotating/time-bucketed set of keyspaces (e.g.
-    /// TTL'd session or ceremony state, to avoid unbounded growth and
-    /// tombstone buildup in a single ever-growing keyspace) use this to skip
-    /// garbage-collecting buckets that were never written to — every other
-    /// read/write method on this trait auto-creates the named keyspace on
-    /// first access, which would otherwise turn a GC sweep into a generator
-    /// of empty partitions.
-    async fn keyspace_exists(&self, keyspace: &str) -> Result<bool, StoreError>;
 
     /// Permanently deletes an empty keyspace/partition.
     ///
@@ -558,6 +490,34 @@ pub trait StorageApi: Send + Sync {
     /// keyspaces.
     async fn drop_keyspace(&self, keyspace: &str) -> Result<(), StoreError>;
 
+    /// Get a value by key.
+    ///
+    /// Returns `None` if the key does not exist. The result envelope contains
+    /// raw bytes; use [`StoreDataEnvelope::try_deserialize`] to get typed data.
+    async fn get_by_key(
+        &self,
+        key: &[u8],
+        keyspace: Option<&str>,
+    ) -> Result<Option<StoreDataEnvelope<Vec<u8>>>, StoreError>;
+
+    /// Initializes the Raft cluster with the given node configuration.
+    async fn initialize(&self, nodes: HashMap<u64, Node>) -> Result<(), StoreError>;
+
+    /// Checks if the Raft cluster is initialized.
+    async fn is_initialized(&self) -> Result<bool, StoreError>;
+
+    /// Returns `true` if `keyspace` has been created, without creating it as
+    /// a side effect.
+    ///
+    /// Callers that maintain a rotating/time-bucketed set of keyspaces (e.g.
+    /// TTL'd session or ceremony state, to avoid unbounded growth and
+    /// tombstone buildup in a single ever-growing keyspace) use this to skip
+    /// garbage-collecting buckets that were never written to — every other
+    /// read/write method on this trait auto-creates the named keyspace on
+    /// first access, which would otherwise turn a GC sweep into a generator
+    /// of empty partitions.
+    async fn keyspace_exists(&self, keyspace: &str) -> Result<bool, StoreError>;
+
     /// Returns this node's own Raft node id.
     ///
     /// Combine with [`Self::current_leader`] (`current_leader().await ==
@@ -566,6 +526,19 @@ pub trait StorageApi: Send + Sync {
     /// driven by wall-clock time — that should only run on one cluster
     /// member at a time.
     async fn node_id(&self) -> u64;
+
+    /// List all entries with keys matching the given prefix.
+    ///
+    /// Returns raw bytes; use [`StoreDataEnvelope::try_deserialize`] on each
+    /// envelope to get typed data.
+    async fn prefix(
+        &self,
+        prefix: &[u8],
+        keyspace: Option<&str>,
+    ) -> Result<Vec<(String, StoreDataEnvelope<Vec<u8>>)>, StoreError>;
+
+    /// List all index entries with keys matching the given prefix.
+    async fn prefix_index(&self, prefix: &[u8]) -> Result<Vec<String>, StoreError>;
 
     /// Reports whether this node is ready to serve traffic.
     ///
@@ -592,4 +565,34 @@ pub trait StorageApi: Send + Sync {
             issues,
         })
     }
+
+    /// Deletes a value for a given key.
+    ///
+    /// Returns `StoreResponse::KeyAbsent` if the key does not exist.
+    async fn remove(
+        &self,
+        key: String,
+        keyspace: Option<String>,
+    ) -> Result<StoreResponse, StoreError>;
+
+    /// Deletes index key.
+    async fn remove_index(&self, key: String) -> Result<StoreResponse, StoreError>;
+
+    /// Sets an index key pointing to a data key.
+    async fn set_index_key(&self, key: String) -> Result<StoreResponse, StoreError>;
+
+    /// Sets a value for a given key.
+    ///
+    /// The `value` envelope must contain pre-serialized bytes.
+    /// Use [`StoreDataEnvelope::try_serialize`] to convert typed data.
+    async fn set_value(
+        &self,
+        key: String,
+        value: StoreDataEnvelope<Vec<u8>>,
+        keyspace: Option<String>,
+        expected_revision: Option<u64>,
+    ) -> Result<StoreResponse, StoreError>;
+
+    /// Mutation transaction.
+    async fn transaction(&self, mutations: Vec<Mutation>) -> Result<StoreResponse, StoreError>;
 }

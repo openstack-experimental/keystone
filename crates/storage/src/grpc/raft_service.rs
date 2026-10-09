@@ -11,6 +11,11 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! # Raft peer gRPC service.
+//!
+//! Server side of the node-to-node Raft protocol; the client side is
+//! [`crate::network`]. Every call is authorized against the peer's
+//! SPIFFE identity (see [`super::authz`]).
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -44,10 +49,10 @@ use crate::types::*;
 /// only be exposed to other trusted Raft cluster nodes, never to external
 /// clients.
 pub struct RaftServiceImpl {
-    /// The local Raft node instance that this service operates on.
-    pub(crate) raft_node: Raft,
     /// Peer certificate role enforcement.
     authz: Arc<PeerAuthz>,
+    /// The local Raft node instance that this service operates on.
+    pub(crate) raft_node: Raft,
 }
 
 impl RaftServiceImpl {
@@ -66,35 +71,8 @@ impl RaftServiceImpl {
 
 #[tonic::async_trait]
 impl RaftService for RaftServiceImpl {
-    /// Handles vote requests during leader election.
-    ///
-    /// # Parameters
-    /// - `request`: The vote request containing candidate information.
-    ///
-    /// # Returns
-    /// A `Result` containing a `Response` with the vote response, or a `Status`
-    /// error.
-    ///
-    /// # Protocol Details
-    /// This implements the RequestVote RPC from the Raft protocol.
-    /// Nodes vote for candidates based on log completeness and term numbers.
-    #[tracing::instrument(level = "trace", skip(self))]
-    async fn vote(&self, request: Request<VoteRequest>) -> Result<Response<VoteResponse>, Status> {
-        self.authz.require(&request, &[PeerRole::Node])?;
-        let vote_resp = self
-            .raft_node
-            .vote(
-                request
-                    .into_inner()
-                    .try_into()
-                    .map_err(|e| Status::internal(format!("Vote operation failed: {}", e)))?,
-            )
-            .await
-            .map_err(|e| Status::internal(format!("Vote operation failed: {}", e)))?;
-
-        trace!("Vote request processed successfully");
-        Ok(Response::new(vote_resp.into()))
-    }
+    type StreamAppendStream =
+        Pin<Box<dyn Stream<Item = Result<pb::raft::AppendEntriesResponse, Status>> + Send>>;
 
     /// Handles append entries requests for log replication.
     ///
@@ -205,9 +183,6 @@ impl RaftService for RaftServiceImpl {
         }))
     }
 
-    type StreamAppendStream =
-        Pin<Box<dyn Stream<Item = Result<pb::raft::AppendEntriesResponse, Status>> + Send>>;
-
     /// Handles streaming append entries requests for pipeline replication.
     ///
     /// This enables efficient pipelining of log replication where multiple
@@ -263,5 +238,35 @@ impl RaftService for RaftServiceImpl {
             .await
             .map_err(|e| Status::internal(format!("Transfer leader failed: {e}")))?;
         Ok(Response::new(resp.into()))
+    }
+
+    /// Handles vote requests during leader election.
+    ///
+    /// # Parameters
+    /// - `request`: The vote request containing candidate information.
+    ///
+    /// # Returns
+    /// A `Result` containing a `Response` with the vote response, or a `Status`
+    /// error.
+    ///
+    /// # Protocol Details
+    /// This implements the RequestVote RPC from the Raft protocol.
+    /// Nodes vote for candidates based on log completeness and term numbers.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn vote(&self, request: Request<VoteRequest>) -> Result<Response<VoteResponse>, Status> {
+        self.authz.require(&request, &[PeerRole::Node])?;
+        let vote_resp = self
+            .raft_node
+            .vote(
+                request
+                    .into_inner()
+                    .try_into()
+                    .map_err(|e| Status::internal(format!("Vote operation failed: {}", e)))?,
+            )
+            .await
+            .map_err(|e| Status::internal(format!("Vote operation failed: {}", e)))?;
+
+        trace!("Vote request processed successfully");
+        Ok(Response::new(vote_resp.into()))
     }
 }

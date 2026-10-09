@@ -16,38 +16,6 @@ use openstack_keystone_storage_crypto::EnvKek;
 
 use super::*;
 
-fn test_epoch(seed: u8, version: u32) -> Arc<DekEpoch> {
-    Arc::new(DekEpoch::from_raw(LockedKey::from_raw([seed; 32]), version).expect("epoch"))
-}
-
-/// Builds a `FjallStateMachine` with directly controllable `dek` /
-/// `old_deks` state, so tests can simulate a rotation transition without
-/// going through the full Raft apply path.
-fn make_sm(current: Arc<DekEpoch>) -> (FjallStateMachine, tempfile::TempDir) {
-    let td = tempfile::TempDir::new().expect("tempdir");
-    let db = Arc::new(Database::builder(td.path()).open().expect("open db"));
-    let kek: Arc<dyn KekProvider> = Arc::new(EnvKek::from_bytes([0x42u8; 32]));
-    let (reencrypt_tx, reencrypt_rx) = tokio::sync::mpsc::channel(1);
-    drop(reencrypt_rx);
-    let (quarantine_tx, quarantine_rx) = tokio::sync::mpsc::channel(1);
-    drop(quarantine_rx);
-
-    let sm = FjallStateMachine::new(
-        db,
-        td.path().join("snapshots"),
-        1, // node_id
-        Arc::new(RwLock::new(current)),
-        Arc::new(Mutex::new(BTreeMap::new())),
-        Arc::new(Mutex::new(HashSet::new())),
-        kek,
-        reencrypt_tx,
-        quarantine_tx,
-        Arc::new(Mutex::new(HashMap::new())),
-    )
-    .expect("construct state machine");
-    (sm, td)
-}
-
 #[test]
 fn decrypt_with_matching_current_version_succeeds() {
     let epoch = test_epoch(0x01, 1);

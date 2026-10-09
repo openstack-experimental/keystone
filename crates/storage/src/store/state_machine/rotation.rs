@@ -40,7 +40,7 @@ pub(crate) const DEK_REVOKED_PREFIX: &str = "_meta:dek:revoked:";
 /// permanently strand every not-yet-migrated record under it.
 pub(crate) const DEK_REVOKED_PENDING_PREFIX: &str = "_meta:dek:revoked_pending:";
 /// Fjall meta key for the current wrapped DEK.
-pub(super) const META_DEK_CURRENT: &[u8] = b"_meta:dek:current";
+pub(crate) const META_DEK_CURRENT: &[u8] = b"_meta:dek:current";
 /// Fjall meta key prefix for pending emergency rotations.
 pub(super) const PENDING_ROTATION_PREFIX: &str = "_meta:rotation:pending:";
 /// Dual-control confirmation window in seconds (5 minutes).
@@ -87,11 +87,11 @@ pub(super) const REENCRYPT_SKIP_KEYSPACES: &[&str] = &["meta", "logs", "index"];
 /// Outcome of attempting to migrate a single record to the current DEK epoch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ReencryptOutcome {
-    /// Re-encrypted under the current epoch.
-    Migrated,
     /// Not eligible: already under a different epoch, or the record/its
     /// metadata vanished before it could be migrated.
     AlreadyCurrent,
+    /// Re-encrypted under the current epoch.
+    Migrated,
     /// Exhausted the CAS retry budget; left for the next rotation cycle.
     Skipped,
 }
@@ -114,11 +114,11 @@ pub(super) enum PendingRotationMutation {
 /// epoch (ADR 0016-v2 §6 step 5 / §6.2 step 4).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ReencryptReport {
-    /// Records successfully re-encrypted under the current epoch.
-    pub migrated: u64,
     /// Records that were already under a different epoch by the time they
     /// were visited.
     pub already_current: u64,
+    /// Records successfully re-encrypted under the current epoch.
+    pub migrated: u64,
     /// Records that exhausted the CAS retry budget this pass.
     pub skipped: u64,
 }
@@ -210,6 +210,22 @@ pub fn load_pending_rotations(
 }
 
 impl FjallStateMachine {
+    /// Best-effort count of Raft log entries still tagged with `version` in
+    /// their on-disk `dek_version` prefix (see `log_store.rs`'s entry
+    /// layout). Returns `0` if the `logs` keyspace could not even be
+    /// opened — finalization is simply deferred to the next sweep rather
+    /// than blocked on an error here.
+    pub(super) fn count_log_entries_under_version(&self, version: u32) -> usize {
+        let Ok(logs) = self.db.keyspace("logs", KeyspaceCreateOptions::default) else {
+            return 0;
+        };
+        let version_prefix = version.to_be_bytes();
+        logs.iter()
+            .filter_map(|item| item.into_inner().ok())
+            .filter(|(_, value)| value.len() >= 4 && value[..4] == version_prefix)
+            .count()
+    }
+
     /// Version of the current DEK epoch.
     pub(crate) fn current_dek_version(&self) -> u32 {
         self.dek.read().unwrap_or_else(|p| p.into_inner()).version
@@ -236,86 +252,6 @@ impl FjallStateMachine {
             )?;
         }
         Ok(())
-    }
-
-    /// Sweep every retired-but-not-yet-fully-migrated DEK epoch and
-    /// re-encrypt whatever records remain under it (ADR 0016-v2 §6 step 5 /
-    /// §6.2 step 4).
-    ///
-    /// Called whenever a DEK rotation completes. Rather than only sweeping
-    /// the epoch that was *just* retired, this revisits every epoch in
-    /// `old_deks` that isn't marked fully migrated yet — this is what gives
-    /// a record that exhausted its CAS retry budget on one rotation cycle
-    /// another chance on the next one, per ADR 0016-v2 §6 step 5 ("skipped
-    /// keys are ... automatically retried on the next scheduled rotation
-    /// cycle") without needing a separate timer.
-    ///
-    /// Runs entirely locally on this node: `InstallDek` is Raft-committed
-    /// and applied identically on every node, and `state_encrypt`/
-    /// `state_decrypt` are deterministic given `(tier, keyspace, pk,
-    /// version)`, so every node converges on the same ciphertext
-    /// independently — the re-encryption writes themselves don't need a
-    /// second consensus round.
-    pub async fn reencrypt_pending(&self) {
-        let epochs: Vec<Arc<DekEpoch>> = {
-            let map = self.old_deks.lock().unwrap_or_else(|p| p.into_inner());
-            map.values().cloned().collect()
-        };
-
-        for epoch in epochs {
-            let done_key = format!("{DEK_REENCRYPT_DONE_PREFIX}{}", epoch.version);
-            if matches!(self.meta.get(done_key.as_bytes()), Ok(Some(_))) {
-                // Already fully migrated: for a normal retired epoch there
-                // is nothing left to do. But an emergency-revoked epoch may
-                // still be sitting in `old_deks` waiting on
-                // `finalize_if_revoked`'s log-purge condition to become
-                // true -- give it another chance every sweep rather than
-                // skipping it (and thus its only remaining finalize
-                // opportunity) forever.
-                self.finalize_if_revoked(&epoch).await;
-                continue;
-            }
-
-            let report = self.reencrypt_epoch(&epoch).await;
-            self.raft_prometheus_metrics
-                .record_reencrypt_report(&report);
-            tracing::info!(
-                old_version = epoch.version,
-                migrated = report.migrated,
-                already_current = report.already_current,
-                skipped = report.skipped,
-                "DEK rotation: background re-encryption pass complete"
-            );
-
-            if report.skipped == 0 {
-                // A clean pass with nothing left to retry: since writes
-                // always target the *current* epoch, no record can ever
-                // reappear under this retired one. Safe to never sweep it
-                // again.
-                if let Err(e) = self.meta.insert(done_key.as_bytes(), b"1") {
-                    tracing::warn!(
-                        old_version = epoch.version,
-                        error = %e,
-                        "failed to persist re-encryption completion marker; \
-                         epoch will be re-swept on the next rotation cycle"
-                    );
-                } else {
-                    tracing::info!(
-                        old_version = epoch.version,
-                        "DEK rotation: epoch fully re-encrypted; retired DEK retained for \
-                         backup decryption only (ADR 0016-v2 §7)"
-                    );
-                    self.finalize_if_revoked(&epoch).await;
-                }
-            } else {
-                tracing::warn!(
-                    old_version = epoch.version,
-                    skipped = report.skipped,
-                    "DEK rotation: some records could not be re-encrypted this pass; \
-                     will retry on the next rotation cycle (ADR 0016-v2 §6 step 5)"
-                );
-            }
-        }
     }
 
     /// If `epoch` was revoked by an emergency rotation (ADR 0016-v2 §6.2)
@@ -394,20 +330,17 @@ impl FjallStateMachine {
         );
     }
 
-    /// Best-effort count of Raft log entries still tagged with `version` in
-    /// their on-disk `dek_version` prefix (see `log_store.rs`'s entry
-    /// layout). Returns `0` if the `logs` keyspace could not even be
-    /// opened — finalization is simply deferred to the next sweep rather
-    /// than blocked on an error here.
-    pub(super) fn count_log_entries_under_version(&self, version: u32) -> usize {
-        let Ok(logs) = self.db.keyspace("logs", KeyspaceCreateOptions::default) else {
-            return 0;
-        };
-        let version_prefix = version.to_be_bytes();
-        logs.iter()
-            .filter_map(|item| item.into_inner().ok())
-            .filter(|(_, value)| value.len() >= 4 && value[..4] == version_prefix)
-            .count()
+    /// Load a re-encryption checkpoint. An unreadable one is ignored, which
+    /// only costs a pass from the start.
+    pub(super) fn load_reencrypt_progress(&self, key: &str) -> Option<ReencryptProgress> {
+        let value = self.meta.get(key.as_bytes()).ok().flatten()?;
+        match rmp_serde::from_slice(&value) {
+            Ok(progress) => Some(progress),
+            Err(e) => {
+                tracing::warn!(error = %e, "ignoring unreadable re-encryption checkpoint");
+                None
+            }
+        }
     }
 
     /// Re-encrypt every record still under `old_epoch` to the current epoch,
@@ -519,34 +452,6 @@ impl FjallStateMachine {
         report
     }
 
-    /// Load a re-encryption checkpoint. An unreadable one is ignored, which
-    /// only costs a pass from the start.
-    pub(super) fn load_reencrypt_progress(&self, key: &str) -> Option<ReencryptProgress> {
-        let value = self.meta.get(key.as_bytes()).ok().flatten()?;
-        match rmp_serde::from_slice(&value) {
-            Ok(progress) => Some(progress),
-            Err(e) => {
-                tracing::warn!(error = %e, "ignoring unreadable re-encryption checkpoint");
-                None
-            }
-        }
-    }
-
-    /// Persist a re-encryption checkpoint. Best effort: a lost checkpoint
-    /// only costs revisiting records on resume.
-    pub(super) fn save_reencrypt_progress(&self, key: &str, progress: &ReencryptProgress) {
-        let saved = rmp_serde::to_vec(progress)
-            .map_err(|e| e.to_string())
-            .and_then(|bytes| {
-                self.meta
-                    .insert(key.as_bytes(), bytes)
-                    .map_err(|e| e.to_string())
-            });
-        if let Err(e) = saved {
-            tracing::warn!(error = %e, "failed to persist re-encryption checkpoint");
-        }
-    }
-
     /// Attempt to migrate a single record from `old_epoch` to the current
     /// DEK epoch, retrying up to `REENCRYPT_MAX_CAS_ATTEMPTS` times if it
     /// finds the record already advanced past `old_epoch` by the time it
@@ -649,5 +554,100 @@ impl FjallStateMachine {
             return ReencryptOutcome::Migrated;
         }
         ReencryptOutcome::Skipped
+    }
+
+    /// Sweep every retired-but-not-yet-fully-migrated DEK epoch and
+    /// re-encrypt whatever records remain under it (ADR 0016-v2 §6 step 5 /
+    /// §6.2 step 4).
+    ///
+    /// Called whenever a DEK rotation completes. Rather than only sweeping
+    /// the epoch that was *just* retired, this revisits every epoch in
+    /// `old_deks` that isn't marked fully migrated yet — this is what gives
+    /// a record that exhausted its CAS retry budget on one rotation cycle
+    /// another chance on the next one, per ADR 0016-v2 §6 step 5 ("skipped
+    /// keys are ... automatically retried on the next scheduled rotation
+    /// cycle") without needing a separate timer.
+    ///
+    /// Runs entirely locally on this node: `InstallDek` is Raft-committed
+    /// and applied identically on every node, and `state_encrypt`/
+    /// `state_decrypt` are deterministic given `(tier, keyspace, pk,
+    /// version)`, so every node converges on the same ciphertext
+    /// independently — the re-encryption writes themselves don't need a
+    /// second consensus round.
+    pub async fn reencrypt_pending(&self) {
+        let epochs: Vec<Arc<DekEpoch>> = {
+            let map = self.old_deks.lock().unwrap_or_else(|p| p.into_inner());
+            map.values().cloned().collect()
+        };
+
+        for epoch in epochs {
+            let done_key = format!("{DEK_REENCRYPT_DONE_PREFIX}{}", epoch.version);
+            if matches!(self.meta.get(done_key.as_bytes()), Ok(Some(_))) {
+                // Already fully migrated: for a normal retired epoch there
+                // is nothing left to do. But an emergency-revoked epoch may
+                // still be sitting in `old_deks` waiting on
+                // `finalize_if_revoked`'s log-purge condition to become
+                // true -- give it another chance every sweep rather than
+                // skipping it (and thus its only remaining finalize
+                // opportunity) forever.
+                self.finalize_if_revoked(&epoch).await;
+                continue;
+            }
+
+            let report = self.reencrypt_epoch(&epoch).await;
+            self.raft_prometheus_metrics
+                .record_reencrypt_report(&report);
+            tracing::info!(
+                old_version = epoch.version,
+                migrated = report.migrated,
+                already_current = report.already_current,
+                skipped = report.skipped,
+                "DEK rotation: background re-encryption pass complete"
+            );
+
+            if report.skipped == 0 {
+                // A clean pass with nothing left to retry: since writes
+                // always target the *current* epoch, no record can ever
+                // reappear under this retired one. Safe to never sweep it
+                // again.
+                if let Err(e) = self.meta.insert(done_key.as_bytes(), b"1") {
+                    tracing::warn!(
+                        old_version = epoch.version,
+                        error = %e,
+                        "failed to persist re-encryption completion marker; \
+                         epoch will be re-swept on the next rotation cycle"
+                    );
+                } else {
+                    tracing::info!(
+                        old_version = epoch.version,
+                        "DEK rotation: epoch fully re-encrypted; retired DEK retained for \
+                         backup decryption only (ADR 0016-v2 §7)"
+                    );
+                    self.finalize_if_revoked(&epoch).await;
+                }
+            } else {
+                tracing::warn!(
+                    old_version = epoch.version,
+                    skipped = report.skipped,
+                    "DEK rotation: some records could not be re-encrypted this pass; \
+                     will retry on the next rotation cycle (ADR 0016-v2 §6 step 5)"
+                );
+            }
+        }
+    }
+
+    /// Persist a re-encryption checkpoint. Best effort: a lost checkpoint
+    /// only costs revisiting records on resume.
+    pub(super) fn save_reencrypt_progress(&self, key: &str, progress: &ReencryptProgress) {
+        let saved = rmp_serde::to_vec(progress)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| {
+                self.meta
+                    .insert(key.as_bytes(), bytes)
+                    .map_err(|e| e.to_string())
+            });
+        if let Err(e) = saved {
+            tracing::warn!(error = %e, "failed to persist re-encryption checkpoint");
+        }
     }
 }

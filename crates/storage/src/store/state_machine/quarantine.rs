@@ -50,6 +50,30 @@ pub(super) struct QuarantineTracker {
 }
 
 impl QuarantineTracker {
+    /// Clears quarantine state for a partition (operator-initiated recovery).
+    pub(super) fn clear(&self, partition: &str) {
+        self.quarantined
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(partition);
+        self.failures
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(partition);
+    }
+
+    /// Directly marks a partition quarantined without threshold bookkeeping.
+    ///
+    /// Used when applying a Raft-committed `Quarantine` mutation reported by
+    /// this node itself — idempotent with respect to `record_failure`, which
+    /// already set the same in-memory state synchronously.
+    pub(super) fn force_quarantine(&self, partition: &str) {
+        self.quarantined
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(partition.to_string());
+    }
+
     /// Initialise from Fjall meta, loading any persisted quarantine markers.
     ///
     /// Only markers reported by `node_id` (this node) are loaded into the
@@ -121,6 +145,13 @@ impl QuarantineTracker {
         })
     }
 
+    pub(super) fn is_quarantined(&self, partition: &str) -> bool {
+        self.quarantined
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains(partition)
+    }
+
     /// Partitions this node currently has quarantined, sorted by name.
     pub(super) fn quarantined_partitions(&self) -> Vec<String> {
         let mut partitions: Vec<String> = self
@@ -132,13 +163,6 @@ impl QuarantineTracker {
             .collect();
         partitions.sort();
         partitions
-    }
-
-    pub(super) fn is_quarantined(&self, partition: &str) -> bool {
-        self.quarantined
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .contains(partition)
     }
 
     /// Records a GCM failure for a partition; returns `true` if newly
@@ -188,40 +212,12 @@ impl QuarantineTracker {
         }
         false
     }
-
-    /// Directly marks a partition quarantined without threshold bookkeeping.
-    ///
-    /// Used when applying a Raft-committed `Quarantine` mutation reported by
-    /// this node itself — idempotent with respect to `record_failure`, which
-    /// already set the same in-memory state synchronously.
-    pub(super) fn force_quarantine(&self, partition: &str) {
-        self.quarantined
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .insert(partition.to_string());
-    }
-
-    /// Clears quarantine state for a partition (operator-initiated recovery).
-    pub(super) fn clear(&self, partition: &str) {
-        self.quarantined
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove(partition);
-        self.failures
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove(partition);
-    }
 }
 
 impl FjallStateMachine {
-    /// Records a GCM tag-verification failure and, if the failure count just
-    /// crossed the quarantine threshold, persists and signals it.
-    pub(super) fn record_quarantine_failure(&self, partition: &str) {
-        self.raft_prometheus_metrics.gcm_failures_total.inc();
-        if self.quarantine.record_failure(partition) {
-            self.persist_and_signal_quarantine(partition);
-        }
+    /// Returns `true` if the given keyspace partition is currently quarantined.
+    pub fn is_quarantined(&self, partition: &str) -> bool {
+        self.quarantine.is_quarantined(partition)
     }
 
     /// Persists the quarantine marker to local Fjall meta (synchronous,
@@ -236,14 +232,18 @@ impl FjallStateMachine {
             .try_send((self.node_id, partition.to_string()));
     }
 
-    /// Returns `true` if the given keyspace partition is currently quarantined.
-    pub fn is_quarantined(&self, partition: &str) -> bool {
-        self.quarantine.is_quarantined(partition)
-    }
-
     /// Partitions this node currently has quarantined (reads blocked),
     /// sorted by name.
     pub fn quarantined_partitions(&self) -> Vec<String> {
         self.quarantine.quarantined_partitions()
+    }
+
+    /// Records a GCM tag-verification failure and, if the failure count just
+    /// crossed the quarantine threshold, persists and signals it.
+    pub(super) fn record_quarantine_failure(&self, partition: &str) {
+        self.raft_prometheus_metrics.gcm_failures_total.inc();
+        if self.quarantine.record_failure(partition) {
+            self.persist_and_signal_quarantine(partition);
+        }
     }
 }

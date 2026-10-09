@@ -17,7 +17,7 @@ crate for crate-level commands.
 ## Raft Storage Tests
 
 `cargo test -p openstack-keystone-distributed-storage` is the authoritative
-suite for the storage crate. Its `tests/test_cluster.rs` starts real multi-node
+suite for the storage crate. Its `tests/test_cluster/` binary (one module per area, shared helpers in `harness.rs`) starts real multi-node
 clusters in one process and covers membership changes, snapshot catch-up,
 DEK rotation, backup and restore, leader transfer, leader failover and node
 restart, and quarantine. It sets the development KEK itself, so it does not

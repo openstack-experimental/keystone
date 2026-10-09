@@ -11,6 +11,12 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! # Storage error type.
+//!
+//! [`StoreError`] is the heavy, implementation-specific error used inside
+//! this crate. Across the [`StorageApi`](crate::StorageApi) boundary it is
+//! converted into the lightweight
+//! [`ApiStoreError`](crate::ApiStoreError) (see the `From` impl below) so consumers do not depend on Raft, Fjall or gRPC types.
 //use std::io;
 
 use openstack_keystone_storage_crypto::CryptoError;
@@ -73,23 +79,19 @@ pub enum StoreError {
     #[error("key is already set")]
     KeyPresent,
 
+    #[error(transparent)]
+    Other(#[from] eyre::Report),
+
+    /// Parse int error.
+    #[error(transparent)]
+    ParseInt {
+        #[from]
+        source: std::num::ParseIntError,
+    },
+
     /// A keyspace partition is quarantined due to repeated GCM tag failures.
     #[error("partition '{0}' is quarantined due to repeated GCM tag failures")]
     Quarantined(String),
-
-    /// Per-record write version exceeded the rotation threshold.
-    #[error("key '{0}' write rate exceeded (version {1} >= threshold)")]
-    WriteRateExceeded(String, u32),
-
-    /// Tls configuration is unset.
-    #[error("missing mTLS configuration")]
-    TlsConfigMissing,
-
-    /// The operation could not be completed with a linearizability guarantee
-    /// (Raft `ReadIndex`/forwarding failed or was exhausted). Callers MUST
-    /// NOT substitute a non-linearizable local read (security invariant 4).
-    #[error("storage temporarily unavailable: {0}")]
-    Unavailable(String),
 
     /// Raft config error.
     #[error(transparent)]
@@ -101,14 +103,6 @@ pub enum StoreError {
     /// Raft empty membership data error.
     #[error("raft membership information missing")]
     RaftEmptyMembership,
-
-    /// Raft initialization error.
-    #[error(transparent)]
-    RaftInitError {
-        #[from]
-        source:
-            openraft::errors::RaftError<TypeConfig, openraft::errors::InitializeError<TypeConfig>>,
-    },
 
     /// Raft error.
     #[error(transparent)]
@@ -124,9 +118,27 @@ pub enum StoreError {
         source: openraft::errors::Fatal<TypeConfig>,
     },
 
+    /// Raft initialization error.
+    #[error(transparent)]
+    RaftInitError {
+        #[from]
+        source:
+            openraft::errors::RaftError<TypeConfig, openraft::errors::InitializeError<TypeConfig>>,
+    },
+
     /// Raft leader is unknown.
     #[error("raft leader is not known")]
     RaftLeaderUnknown,
+
+    /// Raft linear read error.
+    #[error(transparent)]
+    RaftLinearReadError {
+        #[from]
+        source: openraft::errors::RaftError<
+            TypeConfig,
+            openraft::errors::LinearizableReadError<TypeConfig>,
+        >,
+    },
 
     /// Raft membership error.
     #[error(transparent)]
@@ -138,16 +150,6 @@ pub enum StoreError {
     /// Raft empty membership data error.
     #[error("raft required parameter {0} missing")]
     RaftMissingParameter(String),
-
-    /// Raft linear read error.
-    #[error(transparent)]
-    RaftLinearReadError {
-        #[from]
-        source: openraft::errors::RaftError<
-            TypeConfig,
-            openraft::errors::LinearizableReadError<TypeConfig>,
-        >,
-    },
 
     /// Raft RPC error.
     #[error(transparent)]
@@ -170,13 +172,6 @@ pub enum StoreError {
         source: rmp_serde::encode::Error,
     },
 
-    /// Parse int error.
-    #[error(transparent)]
-    ParseInt {
-        #[from]
-        source: std::num::ParseIntError,
-    },
-
     #[error(transparent)]
     Storage {
         #[from]
@@ -189,6 +184,10 @@ pub enum StoreError {
         #[from]
         source: openstack_keystone_storage_api::StoreError,
     },
+
+    /// Tls configuration is unset.
+    #[error("missing mTLS configuration")]
+    TlsConfigMissing,
 
     /// Tonic status error.
     #[error(transparent)]
@@ -203,6 +202,12 @@ pub enum StoreError {
         #[from]
         source: tonic::transport::Error,
     },
+
+    /// The operation could not be completed with a linearizability guarantee
+    /// (Raft `ReadIndex`/forwarding failed or was exhausted). Callers MUST
+    /// NOT substitute a non-linearizable local read (security invariant 4).
+    #[error("storage temporarily unavailable: {0}")]
+    Unavailable(String),
 
     /// URI error.
     #[error(transparent)]
@@ -219,8 +224,9 @@ pub enum StoreError {
         source: std::string::FromUtf8Error,
     },
 
-    #[error(transparent)]
-    Other(#[from] eyre::Report),
+    /// Per-record write version exceeded the rotation threshold.
+    #[error("key '{0}' write rate exceeded (version {1} >= threshold)")]
+    WriteRateExceeded(String, u32),
 }
 
 impl From<StoreError> for std::io::Error {
@@ -233,6 +239,35 @@ impl From<openraft::ConfigError> for StoreError {
     fn from(value: openraft::ConfigError) -> Self {
         Self::RaftConfig {
             source: Box::new(value),
+        }
+    }
+}
+
+/// Convert the heavy storage error type to the lightweight API error type.
+impl From<StoreError> for crate::ApiStoreError {
+    fn from(e: StoreError) -> Self {
+        match e {
+            StoreError::ConfigMissing => Self::ConfigMissing,
+            StoreError::Conflict {
+                subject,
+                description,
+            } => Self::Conflict {
+                subject,
+                description,
+            },
+            StoreError::KeyPresent => Self::KeyPresent,
+            StoreError::Quarantined(partition) => Self::Conflict {
+                subject: partition,
+                description: "partition quarantined due to repeated GCM tag failures".to_string(),
+            },
+            StoreError::WriteRateExceeded(key, version) => Self::Conflict {
+                subject: key,
+                description: format!(
+                    "write rate exceeded at version {version}; DEK rotation required"
+                ),
+            },
+            StoreError::Unavailable(msg) => Self::Unavailable(msg),
+            _ => Self::Other(Box::new(e)),
         }
     }
 }

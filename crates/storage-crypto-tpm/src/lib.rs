@@ -89,19 +89,14 @@ const DEK_WRAP_AD: &[u8] = b"keystone-dek-wrap-v1";
 /// Selects how the AES/HMAC child key pair is identified and persisted.
 #[derive(Debug, Clone)]
 pub enum KeyReference {
-    /// AES key at this persistent TPM handle, HMAC key at `handle + 1`.
-    PersistentHandle(u32),
     /// AES key blobs at this path, HMAC key blobs at `<path>.hmac`.
     ContextFile(PathBuf),
+    /// AES key at this persistent TPM handle, HMAC key at `handle + 1`.
+    PersistentHandle(u32),
 }
 
 /// Parameters needed to open (and, if missing, provision) the TPM KEK.
 pub struct TpmKekParams<'a> {
-    /// TCTI connection string (e.g. `"device:/dev/tpmrm0"` or
-    /// `"swtpm:host=127.0.0.1,port=2321"`).
-    pub tcti: &'a str,
-    /// How to locate/persist the AES and HMAC child keys.
-    pub key_reference: KeyReference,
     /// Auth value applied to both child keys, as raw bytes. `None`/empty
     /// means no auth is required to use them.
     pub auth: Option<&'a [u8]>,
@@ -111,6 +106,11 @@ pub struct TpmKekParams<'a> {
     ///
     /// [`Pkcs11KekParams::auto_generate`]: ../openstack_keystone_storage_crypto_pkcs11/struct.Pkcs11KekParams.html#structfield.auto_generate
     pub auto_generate: bool,
+    /// How to locate/persist the AES and HMAC child keys.
+    pub key_reference: KeyReference,
+    /// TCTI connection string (e.g. `"device:/dev/tpmrm0"` or
+    /// `"swtpm:host=127.0.0.1,port=2321"`).
+    pub tcti: &'a str,
 }
 
 /// TPM 2.0-backed KEK (ADR 0016-v2 §2.5.2).
@@ -118,8 +118,8 @@ pub struct TpmKek {
     // `Context` is `Send` but its FFI session/handle state means concurrent
     // use from multiple threads is unsound; the mutex serializes wrap/unwrap
     // calls and makes the provider `Sync` as `KekProvider` requires.
-    context: Mutex<Context>,
     aes_key: KeyHandle,
+    context: Mutex<Context>,
     hmac_key: KeyHandle,
 }
 
@@ -425,36 +425,6 @@ fn write_key_blob(path: &Path, private: &Private, public: &Public) -> Result<(),
 }
 
 impl KekProvider for TpmKek {
-    fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
-        let iv_bytes: [u8; 16] = rand::rng().random();
-        let mut context = self
-            .context
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-
-        let iv = InitialValue::try_from(iv_bytes.to_vec()).map_err(|_| CryptoError::AesEncrypt)?;
-        let data = MaxBuffer::try_from(dek.to_vec()).map_err(|_| CryptoError::AesEncrypt)?;
-
-        let (ciphertext, _) = context
-            .execute_with_session(Some(AuthSession::Password), |ctx| {
-                ctx.encrypt_decrypt_2(self.aes_key, false, SymmetricMode::Cfb, data, iv)
-            })
-            .map_err(|_| CryptoError::AesEncrypt)?;
-        let ciphertext: Vec<u8> = ciphertext.to_vec();
-        if ciphertext.len() != 32 {
-            return Err(CryptoError::AesEncrypt);
-        }
-
-        let tag = compute_tag(&mut context, self.hmac_key, &iv_bytes, &ciphertext)
-            .map_err(|_| CryptoError::AesEncrypt)?;
-
-        let mut out = Vec::with_capacity(16 + 32 + 32);
-        out.extend_from_slice(&iv_bytes);
-        out.extend_from_slice(&ciphertext);
-        out.extend_from_slice(&tag);
-        Ok(out)
-    }
-
     fn unwrap_dek(&self, wrapped: &[u8]) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
         // Layout: [16-byte iv][32-byte ciphertext][32-byte HMAC tag]
         if wrapped.len() != 16 + 32 + 32 {
@@ -498,6 +468,36 @@ impl KekProvider for TpmKek {
         }
         let mut out = Zeroizing::new([0u8; 32]);
         out.copy_from_slice(plaintext.value());
+        Ok(out)
+    }
+
+    fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
+        let iv_bytes: [u8; 16] = rand::rng().random();
+        let mut context = self
+            .context
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+        let iv = InitialValue::try_from(iv_bytes.to_vec()).map_err(|_| CryptoError::AesEncrypt)?;
+        let data = MaxBuffer::try_from(dek.to_vec()).map_err(|_| CryptoError::AesEncrypt)?;
+
+        let (ciphertext, _) = context
+            .execute_with_session(Some(AuthSession::Password), |ctx| {
+                ctx.encrypt_decrypt_2(self.aes_key, false, SymmetricMode::Cfb, data, iv)
+            })
+            .map_err(|_| CryptoError::AesEncrypt)?;
+        let ciphertext: Vec<u8> = ciphertext.to_vec();
+        if ciphertext.len() != 32 {
+            return Err(CryptoError::AesEncrypt);
+        }
+
+        let tag = compute_tag(&mut context, self.hmac_key, &iv_bytes, &ciphertext)
+            .map_err(|_| CryptoError::AesEncrypt)?;
+
+        let mut out = Vec::with_capacity(16 + 32 + 32);
+        out.extend_from_slice(&iv_bytes);
+        out.extend_from_slice(&ciphertext);
+        out.extend_from_slice(&tag);
         Ok(out)
     }
 }
