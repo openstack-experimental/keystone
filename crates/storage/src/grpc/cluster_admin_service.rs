@@ -11,6 +11,12 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! # Cluster administration gRPC service.
+//!
+//! Operator-facing RPCs, split per concern into submodules: peer
+//! authorization (`auth`), DEK rotation and revocation (`dek`), node join,
+//! leadership inspection and transfer, live restore, status, and
+//! node-local emergency access.
 use std::collections::{BTreeMap, HashMap};
 use std::num::NonZeroU32;
 use std::sync::{Arc, Mutex, RwLock};
@@ -65,37 +71,37 @@ use self::local_emergency::*;
 /// This service implements the client-facing API and should validate all inputs
 /// before processing them through the Raft consensus protocol.
 pub struct ClusterAdminServiceImpl {
-    /// The Raft node instance for consensus operations.
-    pub(crate) raft_node: Raft,
-    /// This node's Raft ID (used to tag audit records for per-node
-    /// attribution).
-    node_id: u64,
-    /// KEK used to wrap newly-generated DEKs during rotation.
-    kek: Arc<dyn KekProvider>,
-    /// Shared current DEK epoch — read to determine the next rotation version.
-    current_dek: Arc<RwLock<Arc<DekEpoch>>>,
     /// Audit event forwarder (non-blocking, HMAC-signed).
     audit: AuditForwarder,
-    /// Pending emergency DEK rotations (shared with FjallStateMachine).
-    pending_rotations: Arc<Mutex<HashMap<String, PendingRotation>>>,
-    /// State machine store — used for backup snapshot building and restore.
-    sm: Arc<StateMachineStore>,
     /// Peer certificate role resolver.
     authz: Arc<PeerAuthz>,
-    /// Per-identity rate limiter for RotateDek (ADR 0016-v2 §1: 2/hour).
-    rotate_dek_limiter: Arc<IdentityLimiter>,
     /// Per-identity rate limiter for ClearQuarantine (ADR 0016-v2 §1: 10/hour).
     clear_quarantine_limiter: Arc<IdentityLimiter>,
-    /// ADR 0028 node-local, quorum-bypass emergency write store.
-    local_emergency_store: Arc<dyn LocalEmergencyStore>,
+    /// Shared current DEK epoch — read to determine the next rotation version.
+    current_dek: Arc<RwLock<Arc<DekEpoch>>>,
+    /// KEK used to wrap newly-generated DEKs during rotation.
+    kek: Arc<dyn KekProvider>,
     /// `[local_emergency]` config, snapshotted at storage init.
     local_emergency_config: LocalEmergencyProvider,
     /// Tracks how long the Raft leader has been unknown, feeding the
     /// quorum-bypass guardrail (ADR 0028 §2).
     local_emergency_leaderless_tracker: LeaderlessTracker,
+    /// ADR 0028 node-local, quorum-bypass emergency write store.
+    local_emergency_store: Arc<dyn LocalEmergencyStore>,
+    /// This node's Raft ID (used to tag audit records for per-node
+    /// attribution).
+    node_id: u64,
+    /// Pending emergency DEK rotations (shared with FjallStateMachine).
+    pending_rotations: Arc<Mutex<HashMap<String, PendingRotation>>>,
+    /// The Raft node instance for consensus operations.
+    pub(crate) raft_node: Raft,
     /// Serializes live restores: their staged chunks share one namespace, and
     /// a second restore starting would supersede the first.
     restore_lock: tokio::sync::Mutex<()>,
+    /// Per-identity rate limiter for RotateDek (ADR 0016-v2 §1: 2/hour).
+    rotate_dek_limiter: Arc<IdentityLimiter>,
+    /// State machine store — used for backup snapshot building and restore.
+    sm: Arc<StateMachineStore>,
     /// Client used to reach other cluster nodes as this node; needed to
     /// adopt the cluster DEK before joining. Set by
     /// [`ClusterAdminServiceImpl::with_tls_client`].
@@ -134,6 +140,47 @@ impl ClusterAdminServiceImpl {
             dek_version,
             details,
         ));
+    }
+
+    /// Retrieves last log index appended to the node's log.
+    ///
+    /// # Returns
+    /// A `Result` containing an `Option` with the last log index, or a
+    /// `StoreError`.
+    pub fn get_last_log_index(&self) -> Result<Option<u64>, StoreError> {
+        let metrics = self.get_metrics()?;
+        Ok(metrics.last_log_index)
+    }
+
+    /// Retrieves metrics about the Raft node.
+    ///
+    /// # Returns
+    /// A `Result` containing `RaftMetrics`, or a `StoreError`.
+    pub fn get_metrics(&self) -> Result<RaftMetrics, StoreError> {
+        Ok(self.raft_node.metrics().borrow_watched().clone())
+    }
+
+    /// Initializes a new Raft cluster with the specified nodes.
+    ///
+    /// # Parameters
+    /// - `nodes`: Contains the initial set of nodes for the cluster.
+    ///
+    /// # Returns
+    /// A `Result` indicating success, or a `StoreError`.
+    #[tracing::instrument(level = "trace", skip(self))]
+    pub async fn init_cluster(&self, nodes: Vec<pb::raft::Node>) -> Result<(), StoreError> {
+        // Convert nodes into required format, storing every address in the
+        // canonical `host:port` form (see `normalize_rpc_addr`).
+        let nodes_map: BTreeMap<u64, pb::raft::Node> = nodes
+            .into_iter()
+            .map(|node| {
+                let rpc_addr = normalize_rpc_addr(&node.rpc_addr).to_owned();
+                (node.node_id, pb::raft::Node { rpc_addr, ..node })
+            })
+            .collect();
+
+        // Initialize the cluster
+        Ok(self.raft_node.initialize(nodes_map).await?)
     }
 
     /// Creates a new instance of the API service.
@@ -186,74 +233,14 @@ impl ClusterAdminServiceImpl {
         self.tls_client = Some(tls_client);
         self
     }
-
-    /// Initializes a new Raft cluster with the specified nodes.
-    ///
-    /// # Parameters
-    /// - `nodes`: Contains the initial set of nodes for the cluster.
-    ///
-    /// # Returns
-    /// A `Result` indicating success, or a `StoreError`.
-    #[tracing::instrument(level = "trace", skip(self))]
-    pub async fn init_cluster(&self, nodes: Vec<pb::raft::Node>) -> Result<(), StoreError> {
-        // Convert nodes into required format, storing every address in the
-        // canonical `host:port` form (see `normalize_rpc_addr`).
-        let nodes_map: BTreeMap<u64, pb::raft::Node> = nodes
-            .into_iter()
-            .map(|node| {
-                let rpc_addr = normalize_rpc_addr(&node.rpc_addr).to_owned();
-                (node.node_id, pb::raft::Node { rpc_addr, ..node })
-            })
-            .collect();
-
-        // Initialize the cluster
-        Ok(self.raft_node.initialize(nodes_map).await?)
-    }
-
-    /// Retrieves metrics about the Raft node.
-    ///
-    /// # Returns
-    /// A `Result` containing `RaftMetrics`, or a `StoreError`.
-    pub fn get_metrics(&self) -> Result<RaftMetrics, StoreError> {
-        Ok(self.raft_node.metrics().borrow_watched().clone())
-    }
-
-    /// Retrieves last log index appended to the node's log.
-    ///
-    /// # Returns
-    /// A `Result` containing an `Option` with the last log index, or a
-    /// `StoreError`.
-    pub fn get_last_log_index(&self) -> Result<Option<u64>, StoreError> {
-        let metrics = self.get_metrics()?;
-        Ok(metrics.last_log_index)
-    }
 }
 
 #[tonic::async_trait]
 
 impl ClusterAdminService for ClusterAdminServiceImpl {
-    /// Initializes a new Raft cluster with the specified nodes.
-    ///
-    /// # Parameters
-    /// - `request`: Contains the initial set of nodes for the cluster.
-    ///
-    /// # Returns
-    /// A `Result` containing a `Response`, or a `Status` error.
-    #[tracing::instrument(level = "trace", skip(self))]
-    async fn init(&self, request: Request<pb::raft::InitRequest>) -> Result<Response<()>, Status> {
-        trace!("Initializing Raft cluster");
-        require_peer(&request, &self.authz, &[PeerRole::Operator])?;
-        let req = request.into_inner();
-
-        // Initialize the cluster
-        let result = self
-            .init_cluster(req.nodes)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to initialize cluster: {}", e)))?;
-
-        trace!("Cluster initialization successful");
-        Ok(Response::new(result))
-    }
+    type BackupStream = std::pin::Pin<
+        Box<dyn futures::Stream<Item = Result<pb::raft::BackupChunk, Status>> + Send>,
+    >;
 
     /// Adds a learner node to the Raft cluster.
     ///
@@ -326,262 +313,15 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         Ok(Response::new(result.into()))
     }
 
-    /// Returns the cluster's currently-installed DEK epoch, wrapped under
-    /// this node's own KEK, so a node joining for the first time can adopt
-    /// it instead of its own bootstrap-generated random DEK (ADR 0016-v2
-    /// §2.5.3).
-    ///
-    /// # Security
-    /// Authenticated the same way as `AddLearner` (peer trust-domain check,
-    /// not the `storage-operator` role): this is node-to-node bootstrap
-    /// traffic between cluster peers, not an operator action.
-    ///
-    /// # Consistency
-    /// `current_dek_wrapped` and `retired_deks_wrapped` are two independent
-    /// reads, not one atomic snapshot -- a `RotateDek`/`InstallDek` commit
-    /// landing between them can produce a torn view (e.g. `dek_version`
-    /// still the pre-rotation epoch while `retired` already includes it).
-    /// This is safe, not just tolerated: both fields come from state that
-    /// was itself committed atomically by `InstallDek`'s `batch.commit()`
-    /// (ADR 0016-v2 §6 step 5) before its in-memory `self.dek` swap, so a
-    /// torn read here only ever yields a *valid prior* current/retired
-    /// combination, never a nonexistent one -- the epoch the joiner adopts
-    /// as "current" is always genuinely readable, just possibly one
-    /// rotation behind. The joiner catches up to the true current epoch
-    /// through normal Raft replication once it registers as a learner.
+    /// Adopts the cluster's DEKs from the leader on this (not yet joined)
+    /// node; the first step of a manual `keystone-manage storage join`.
     #[tracing::instrument(level = "trace", skip(self))]
-    async fn fetch_dek(
+    async fn adopt_cluster_dek(
         &self,
-        request: Request<()>,
-    ) -> Result<Response<pb::raft::FetchDekResponse>, Status> {
-        require_peer(&request, &self.authz, &[PeerRole::Node])?;
-
-        let (dek_version, wrapped_dek) = self
-            .sm
-            .current_dek_wrapped()
-            .map_err(|e| Status::internal(format!("failed to read current DEK: {e}")))?;
-        let retired = self
-            .sm
-            .retired_deks_wrapped()
-            .map_err(|e| Status::internal(format!("failed to read retired DEKs: {e}")))?
-            .into_iter()
-            .map(|(retired_version, retired_wrapped)| pb::raft::RetiredDek {
-                dek_version: retired_version,
-                wrapped_dek: retired_wrapped,
-            })
-            .collect();
-
-        Ok(Response::new(pb::raft::FetchDekResponse {
-            dek_version,
-            wrapped_dek,
-            retired,
-        }))
-    }
-
-    /// Changes the membership of the Raft cluster.
-    ///
-    /// # Parameters
-    /// - `request`: Contains the new member set and retention policy.
-    ///
-    /// # Returns
-    /// A `Result` containing a `Response` with membership change details, or a
-    /// `Status` error.
-    #[tracing::instrument(level = "trace", skip(self))]
-    async fn change_membership(
-        &self,
-        request: Request<pb::raft::ChangeMembershipRequest>,
+        request: Request<pb::raft::AdoptClusterDekRequest>,
     ) -> Result<Response<pb::raft::AdminResponse>, Status> {
-        require_peer(&request, &self.authz, &[PeerRole::Operator])?;
-        self.ensure_leader()?;
-        let req = request.into_inner();
-
-        trace!(
-            "Changing membership. Members: {:?}, Retain: {}",
-            req.members, req.retain
-        );
-
-        let result = self
-            .raft_node
-            .change_membership(req.members, req.retain)
-            .await
-            .map_err(|e| raft_write_status("Failed to change membership", e))?;
-
-        trace!("Successfully changed cluster membership");
-        Ok(Response::new(result.into()))
+        self.handle_adopt_cluster_dek(request).await
     }
-
-    /// Retrieves metrics about the Raft node.
-    ///
-    /// # Parameters
-    /// - `_request`: The request object.
-    ///
-    /// # Returns
-    /// A `Result` containing a `Response` with metrics, or a `Status` error.
-    #[tracing::instrument(level = "trace", skip(self))]
-    async fn metrics(
-        &self,
-        request: Request<()>,
-    ) -> Result<Response<pb::raft::MetricsResponse>, Status> {
-        trace!("Collecting metrics");
-        require_peer(&request, &self.authz, &[PeerRole::Node, PeerRole::Operator])?;
-        let metrics = self
-            .get_metrics()
-            .map_err(|e| Status::internal(format!("Failed to write to store: {}", e)))?;
-        let resp = pb::raft::MetricsResponse {
-            membership: Some(metrics.membership_config.membership().clone().into()),
-            other_metrics: metrics.to_string(),
-            current_leader: metrics.current_leader,
-        };
-        Ok(Response::new(resp))
-    }
-
-    /// Reports this node's Raft role and storage-encryption state (DEK
-    /// epochs, pending emergency rotations, quarantine markers, nonce
-    /// counter). Operator only; answered by any node.
-    #[tracing::instrument(level = "trace", skip(self))]
-    async fn storage_status(
-        &self,
-        request: Request<()>,
-    ) -> Result<Response<pb::raft::StorageStatusResponse>, Status> {
-        self.handle_storage_status(request).await
-    }
-
-    /// Clears the read-only quarantine state triggered by repeated GCM tag
-    /// verification failures.
-    ///
-    /// # Parameters
-    /// - `request`: Empty request (no additional parameters).
-    ///
-    /// # Returns
-    /// A `Result` containing a `Response`, or a `Status` error.
-    ///
-    /// # Security
-    /// This operation is exposed only on the internal management network.
-    /// Access is controlled by network isolation and mTLS authentication
-    /// (SPIFFE SVID or operator-managed TLS).
-    #[tracing::instrument(level = "trace", skip(self))]
-    async fn clear_quarantine(
-        &self,
-        request: Request<pb::raft::ClearQuarantineRequest>,
-    ) -> Result<Response<()>, Status> {
-        self.handle_clear_quarantine(request).await
-    }
-
-    /// Triggers a Data Encryption Key rotation. When emergency is set, the
-    /// current DEK is immediately revoked (not retired).
-    ///
-    /// # Parameters
-    /// - `request`: Contains the `emergency` flag to control rotation type.
-    ///
-    /// # Returns
-    /// A `Result` containing a `Response` with rotation details, or a `Status`
-    /// error.
-    ///
-    /// # Security
-    /// This operation is exposed only on the internal management network.
-    /// Access is controlled by network isolation and mTLS authentication
-    /// (SPIFFE SVID or operator-managed TLS). Emergency rotations require
-    /// operator access and produce distinct audit events.
-    #[tracing::instrument(level = "trace", skip(self))]
-    async fn rotate_dek(
-        &self,
-        request: Request<pb::raft::RotateDekRequest>,
-    ) -> Result<Response<pb::raft::AdminResponse>, Status> {
-        self.handle_rotate_dek(request).await
-    }
-
-    /// Provides dual-control approval for a pending emergency DEK rotation.
-    ///
-    /// # Parameters
-    /// - `request`: Contains the `rotation_id` of the pending emergency
-    ///   rotation.
-    ///
-    /// # Returns
-    /// A `Result` containing a `Response` with confirmation details, or a
-    /// `Status` error.
-    ///
-    /// # Security
-    /// This operation requires a second `storage-operator` SVID and must be
-    /// invoked within 5 minutes of the initial `RotateDekRequest{emergency:
-    /// true}`. Both operator identities are recorded in the audit log.
-    #[tracing::instrument(level = "trace", skip(self))]
-    async fn confirm_rotate_dek(
-        &self,
-        request: Request<pb::raft::ConfirmRotateDekRequest>,
-    ) -> Result<Response<pb::raft::AdminResponse>, Status> {
-        self.handle_confirm_rotate_dek(request).await
-    }
-
-    /// Stages a node-local, quorum-bypass DEK rotation candidate (ADR 0028
-    /// §3, amending ADR 0016-v2 §6.2). Written only to this node's local
-    /// Fjall `local_emergency` keyspace — never proposed to Raft. Refused
-    /// unless this node's `[local_emergency]` guardrail currently permits it.
-    ///
-    /// # Security
-    /// Same operator/mTLS boundary as `RotateDek`. Unlike `RotateDek`, this
-    /// path bypasses Raft entirely by design — it exists only for use when
-    /// the cluster has lost quorum and `RotateDek{emergency: true}` (a Raft
-    /// proposal) would block forever.
-    #[tracing::instrument(level = "trace", skip(self))]
-    async fn rotate_dek_local_emergency(
-        &self,
-        request: Request<pb::raft::RotateDekLocalEmergencyRequest>,
-    ) -> Result<Response<pb::raft::RotateDekLocalEmergencyResponse>, Status> {
-        self.handle_rotate_dek_local_emergency(request).await
-    }
-
-    /// Lists node-local DEK emergency rotation candidates on this node
-    /// (ADR 0028 §6), so an operator can see any `LOCAL_EMERGENCY_CONFLICT`
-    /// before choosing which `rotation_id` to reconcile.
-    #[tracing::instrument(level = "trace", skip(self))]
-    async fn list_dek_local_emergency_candidates(
-        &self,
-        request: Request<()>,
-    ) -> Result<Response<pb::raft::ListDekLocalEmergencyCandidatesResponse>, Status> {
-        self.handle_list_dek_local_emergency_candidates(request)
-            .await
-    }
-
-    /// Reconciles a node-local DEK emergency rotation candidate into
-    /// Raft-replicated state (ADR 0028 §6): installs the chosen candidate's
-    /// DEK via the normal `InstallDek` transaction (same mutation `RotateDek`
-    /// commits for a non-emergency rotation), then clears it from this
-    /// node's local store and revokes any other active candidate (they
-    /// lost).
-    ///
-    /// # Security
-    /// Same operator/mTLS boundary as `RotateDek`. Not guardrail-gated
-    /// (unlike staging): reconciliation is the operation an operator runs
-    /// *after* quorum has returned.
-    #[tracing::instrument(level = "trace", skip(self))]
-    async fn reconcile_dek_local_emergency(
-        &self,
-        request: Request<pb::raft::ReconcileDekLocalEmergencyRequest>,
-    ) -> Result<Response<pb::raft::AdminResponse>, Status> {
-        self.handle_reconcile_dek_local_emergency(request).await
-    }
-
-    /// Receives a best-effort, peer-to-peer gossip push of another node's
-    /// local emergency candidate (ADR 0028 §5). Adopts it if this node holds
-    /// no active candidate for the same subsystem/scope, marks both as
-    /// conflicted if it holds a *different* active one, or no-ops if it
-    /// already has this exact candidate (idempotent re-gossip).
-    ///
-    /// # Security
-    /// Called peer-to-peer between storage nodes, not by a human operator —
-    /// authorized like Raft's own inter-node RPCs
-    /// (`require_peer(.., &[PeerRole::Node])`), not `require_operator`.
-    #[tracing::instrument(level = "trace", skip(self))]
-    async fn gossip_local_emergency_candidate(
-        &self,
-        request: Request<pb::raft::GossipLocalEmergencyCandidateRequest>,
-    ) -> Result<Response<pb::raft::GossipLocalEmergencyCandidateResponse>, Status> {
-        self.handle_gossip_local_emergency_candidate(request).await
-    }
-
-    type BackupStream = std::pin::Pin<
-        Box<dyn futures::Stream<Item = Result<pb::raft::BackupChunk, Status>> + Send>,
-    >;
 
     /// Build a fresh Fjall snapshot and stream the encrypted bytes to the
     /// operator.
@@ -730,6 +470,230 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         Ok(Response::new(Box::pin(stream)))
     }
 
+    /// Changes the membership of the Raft cluster.
+    ///
+    /// # Parameters
+    /// - `request`: Contains the new member set and retention policy.
+    ///
+    /// # Returns
+    /// A `Result` containing a `Response` with membership change details, or a
+    /// `Status` error.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn change_membership(
+        &self,
+        request: Request<pb::raft::ChangeMembershipRequest>,
+    ) -> Result<Response<pb::raft::AdminResponse>, Status> {
+        require_peer(&request, &self.authz, &[PeerRole::Operator])?;
+        self.ensure_leader()?;
+        let req = request.into_inner();
+
+        trace!(
+            "Changing membership. Members: {:?}, Retain: {}",
+            req.members, req.retain
+        );
+
+        let result = self
+            .raft_node
+            .change_membership(req.members, req.retain)
+            .await
+            .map_err(|e| raft_write_status("Failed to change membership", e))?;
+
+        trace!("Successfully changed cluster membership");
+        Ok(Response::new(result.into()))
+    }
+
+    /// Clears the read-only quarantine state triggered by repeated GCM tag
+    /// verification failures.
+    ///
+    /// # Parameters
+    /// - `request`: Empty request (no additional parameters).
+    ///
+    /// # Returns
+    /// A `Result` containing a `Response`, or a `Status` error.
+    ///
+    /// # Security
+    /// This operation is exposed only on the internal management network.
+    /// Access is controlled by network isolation and mTLS authentication
+    /// (SPIFFE SVID or operator-managed TLS).
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn clear_quarantine(
+        &self,
+        request: Request<pb::raft::ClearQuarantineRequest>,
+    ) -> Result<Response<()>, Status> {
+        self.handle_clear_quarantine(request).await
+    }
+
+    /// Provides dual-control approval for a pending emergency DEK rotation.
+    ///
+    /// # Parameters
+    /// - `request`: Contains the `rotation_id` of the pending emergency
+    ///   rotation.
+    ///
+    /// # Returns
+    /// A `Result` containing a `Response` with confirmation details, or a
+    /// `Status` error.
+    ///
+    /// # Security
+    /// This operation requires a second `storage-operator` SVID and must be
+    /// invoked within 5 minutes of the initial `RotateDekRequest{emergency:
+    /// true}`. Both operator identities are recorded in the audit log.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn confirm_rotate_dek(
+        &self,
+        request: Request<pb::raft::ConfirmRotateDekRequest>,
+    ) -> Result<Response<pb::raft::AdminResponse>, Status> {
+        self.handle_confirm_rotate_dek(request).await
+    }
+
+    /// Returns the cluster's currently-installed DEK epoch, wrapped under
+    /// this node's own KEK, so a node joining for the first time can adopt
+    /// it instead of its own bootstrap-generated random DEK (ADR 0016-v2
+    /// §2.5.3).
+    ///
+    /// # Security
+    /// Authenticated the same way as `AddLearner` (peer trust-domain check,
+    /// not the `storage-operator` role): this is node-to-node bootstrap
+    /// traffic between cluster peers, not an operator action.
+    ///
+    /// # Consistency
+    /// `current_dek_wrapped` and `retired_deks_wrapped` are two independent
+    /// reads, not one atomic snapshot -- a `RotateDek`/`InstallDek` commit
+    /// landing between them can produce a torn view (e.g. `dek_version`
+    /// still the pre-rotation epoch while `retired` already includes it).
+    /// This is safe, not just tolerated: both fields come from state that
+    /// was itself committed atomically by `InstallDek`'s `batch.commit()`
+    /// (ADR 0016-v2 §6 step 5) before its in-memory `self.dek` swap, so a
+    /// torn read here only ever yields a *valid prior* current/retired
+    /// combination, never a nonexistent one -- the epoch the joiner adopts
+    /// as "current" is always genuinely readable, just possibly one
+    /// rotation behind. The joiner catches up to the true current epoch
+    /// through normal Raft replication once it registers as a learner.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn fetch_dek(
+        &self,
+        request: Request<()>,
+    ) -> Result<Response<pb::raft::FetchDekResponse>, Status> {
+        require_peer(&request, &self.authz, &[PeerRole::Node])?;
+
+        let (dek_version, wrapped_dek) = self
+            .sm
+            .current_dek_wrapped()
+            .map_err(|e| Status::internal(format!("failed to read current DEK: {e}")))?;
+        let retired = self
+            .sm
+            .retired_deks_wrapped()
+            .map_err(|e| Status::internal(format!("failed to read retired DEKs: {e}")))?
+            .into_iter()
+            .map(|(retired_version, retired_wrapped)| pb::raft::RetiredDek {
+                dek_version: retired_version,
+                wrapped_dek: retired_wrapped,
+            })
+            .collect();
+
+        Ok(Response::new(pb::raft::FetchDekResponse {
+            dek_version,
+            wrapped_dek,
+            retired,
+        }))
+    }
+
+    /// Receives a best-effort, peer-to-peer gossip push of another node's
+    /// local emergency candidate (ADR 0028 §5). Adopts it if this node holds
+    /// no active candidate for the same subsystem/scope, marks both as
+    /// conflicted if it holds a *different* active one, or no-ops if it
+    /// already has this exact candidate (idempotent re-gossip).
+    ///
+    /// # Security
+    /// Called peer-to-peer between storage nodes, not by a human operator —
+    /// authorized like Raft's own inter-node RPCs
+    /// (`require_peer(.., &[PeerRole::Node])`), not `require_operator`.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn gossip_local_emergency_candidate(
+        &self,
+        request: Request<pb::raft::GossipLocalEmergencyCandidateRequest>,
+    ) -> Result<Response<pb::raft::GossipLocalEmergencyCandidateResponse>, Status> {
+        self.handle_gossip_local_emergency_candidate(request).await
+    }
+
+    /// Initializes a new Raft cluster with the specified nodes.
+    ///
+    /// # Parameters
+    /// - `request`: Contains the initial set of nodes for the cluster.
+    ///
+    /// # Returns
+    /// A `Result` containing a `Response`, or a `Status` error.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn init(&self, request: Request<pb::raft::InitRequest>) -> Result<Response<()>, Status> {
+        trace!("Initializing Raft cluster");
+        require_peer(&request, &self.authz, &[PeerRole::Operator])?;
+        let req = request.into_inner();
+
+        // Initialize the cluster
+        let result = self
+            .init_cluster(req.nodes)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to initialize cluster: {}", e)))?;
+
+        trace!("Cluster initialization successful");
+        Ok(Response::new(result))
+    }
+
+    /// Lists node-local DEK emergency rotation candidates on this node
+    /// (ADR 0028 §6), so an operator can see any `LOCAL_EMERGENCY_CONFLICT`
+    /// before choosing which `rotation_id` to reconcile.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn list_dek_local_emergency_candidates(
+        &self,
+        request: Request<()>,
+    ) -> Result<Response<pb::raft::ListDekLocalEmergencyCandidatesResponse>, Status> {
+        self.handle_list_dek_local_emergency_candidates(request)
+            .await
+    }
+
+    /// Retrieves metrics about the Raft node.
+    ///
+    /// # Parameters
+    /// - `_request`: The request object.
+    ///
+    /// # Returns
+    /// A `Result` containing a `Response` with metrics, or a `Status` error.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn metrics(
+        &self,
+        request: Request<()>,
+    ) -> Result<Response<pb::raft::MetricsResponse>, Status> {
+        trace!("Collecting metrics");
+        require_peer(&request, &self.authz, &[PeerRole::Node, PeerRole::Operator])?;
+        let metrics = self
+            .get_metrics()
+            .map_err(|e| Status::internal(format!("Failed to write to store: {}", e)))?;
+        let resp = pb::raft::MetricsResponse {
+            membership: Some(metrics.membership_config.membership().clone().into()),
+            other_metrics: metrics.to_string(),
+            current_leader: metrics.current_leader,
+        };
+        Ok(Response::new(resp))
+    }
+
+    /// Reconciles a node-local DEK emergency rotation candidate into
+    /// Raft-replicated state (ADR 0028 §6): installs the chosen candidate's
+    /// DEK via the normal `InstallDek` transaction (same mutation `RotateDek`
+    /// commits for a non-emergency rotation), then clears it from this
+    /// node's local store and revokes any other active candidate (they
+    /// lost).
+    ///
+    /// # Security
+    /// Same operator/mTLS boundary as `RotateDek`. Not guardrail-gated
+    /// (unlike staging): reconciliation is the operation an operator runs
+    /// *after* quorum has returned.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn reconcile_dek_local_emergency(
+        &self,
+        request: Request<pb::raft::ReconcileDekLocalEmergencyRequest>,
+    ) -> Result<Response<pb::raft::AdminResponse>, Status> {
+        self.handle_reconcile_dek_local_emergency(request).await
+    }
+
     /// Accept a client-streamed encrypted backup and validate its envelope.
     ///
     /// - Initialized cluster: the backup is committed through the Raft log
@@ -748,6 +712,58 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         self.handle_restore(request).await
     }
 
+    /// Triggers a Data Encryption Key rotation. When emergency is set, the
+    /// current DEK is immediately revoked (not retired).
+    ///
+    /// # Parameters
+    /// - `request`: Contains the `emergency` flag to control rotation type.
+    ///
+    /// # Returns
+    /// A `Result` containing a `Response` with rotation details, or a `Status`
+    /// error.
+    ///
+    /// # Security
+    /// This operation is exposed only on the internal management network.
+    /// Access is controlled by network isolation and mTLS authentication
+    /// (SPIFFE SVID or operator-managed TLS). Emergency rotations require
+    /// operator access and produce distinct audit events.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn rotate_dek(
+        &self,
+        request: Request<pb::raft::RotateDekRequest>,
+    ) -> Result<Response<pb::raft::AdminResponse>, Status> {
+        self.handle_rotate_dek(request).await
+    }
+
+    /// Stages a node-local, quorum-bypass DEK rotation candidate (ADR 0028
+    /// §3, amending ADR 0016-v2 §6.2). Written only to this node's local
+    /// Fjall `local_emergency` keyspace — never proposed to Raft. Refused
+    /// unless this node's `[local_emergency]` guardrail currently permits it.
+    ///
+    /// # Security
+    /// Same operator/mTLS boundary as `RotateDek`. Unlike `RotateDek`, this
+    /// path bypasses Raft entirely by design — it exists only for use when
+    /// the cluster has lost quorum and `RotateDek{emergency: true}` (a Raft
+    /// proposal) would block forever.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn rotate_dek_local_emergency(
+        &self,
+        request: Request<pb::raft::RotateDekLocalEmergencyRequest>,
+    ) -> Result<Response<pb::raft::RotateDekLocalEmergencyResponse>, Status> {
+        self.handle_rotate_dek_local_emergency(request).await
+    }
+
+    /// Reports this node's Raft role and storage-encryption state (DEK
+    /// epochs, pending emergency rotations, quarantine markers, nonce
+    /// counter). Operator only; answered by any node.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn storage_status(
+        &self,
+        request: Request<()>,
+    ) -> Result<Response<pb::raft::StorageStatusResponse>, Status> {
+        self.handle_storage_status(request).await
+    }
+
     /// Hands leadership over to another voter and returns once it leads.
     ///
     /// Leader only (non-leaders answer with a leader redirect). Used by
@@ -759,16 +775,6 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         request: Request<pb::raft::TransferLeaderAdminRequest>,
     ) -> Result<Response<pb::raft::AdminResponse>, Status> {
         self.handle_transfer_leader(request).await
-    }
-
-    /// Adopts the cluster's DEKs from the leader on this (not yet joined)
-    /// node; the first step of a manual `keystone-manage storage join`.
-    #[tracing::instrument(level = "trace", skip(self))]
-    async fn adopt_cluster_dek(
-        &self,
-        request: Request<pb::raft::AdoptClusterDekRequest>,
-    ) -> Result<Response<pb::raft::AdminResponse>, Status> {
-        self.handle_adopt_cluster_dek(request).await
     }
 }
 

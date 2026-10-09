@@ -11,6 +11,11 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! # Client-facing storage gRPC service.
+//!
+//! Serves the key/value operations of [`StorageApi`](crate::StorageApi) to
+//! other Keystone nodes, and accepts rate-limited quarantine reports for
+//! propagation through Raft.
 
 use std::collections::BTreeSet;
 use std::num::NonZeroU32;
@@ -43,35 +48,31 @@ pub(crate) const QUARANTINE_REPORTS_PER_HOUR: NonZeroU32 = match NonZeroU32::new
 /// Maximum length (bytes) of a reported quarantine partition name.
 const MAX_QUARANTINE_PARTITION_LEN: usize = 128;
 
-/// Internal service implementation for Raft protocol communications.
-/// This service handles the core Raft consensus protocol operations between
-/// cluster nodes.
+/// gRPC service for the storage API between Keystone nodes.
 ///
 /// # Responsibilities
-/// - Vote requests/responses during leader election
-/// - Log replication between nodes
-/// - Snapshot installation for state synchronization
-/// - Forwarded read requests from followers to leader
+/// - Reads forwarded from followers to the leader (get, prefix, index)
+/// - Writes proposed through Raft on behalf of a follower
+/// - Rate-limited quarantine reports from peers
 ///
 /// # Protocol Safety
-/// This service implements critical consensus protocol operations and should
-/// only be exposed to other trusted Raft cluster nodes, never to external
-/// clients.
+/// Exposed only to authenticated cluster peers; every call is authorized
+/// against the peer's role (see [`super::authz`]).
 pub struct StorageServiceImpl {
-    /// The local Raft node instance that this service operates on.
-    pub(crate) raft_node: Raft,
-    /// Direct access to the state machine store for forwarded reads.
-    state_machine_store: Arc<StateMachineStore>,
-    /// Peer certificate role enforcement.
-    authz: Arc<PeerAuthz>,
     /// Audit record forwarder for quarantine reports.
     audit: AuditForwarder,
+    /// Peer certificate role enforcement.
+    authz: Arc<PeerAuthz>,
     /// Shared current DEK epoch (audit record `dek_version`).
     current_dek: Arc<RwLock<Arc<DekEpoch>>>,
     /// This node's Raft ID (audit record attribution).
     node_id: u64,
     /// Per-reporter-identity rate limiter for `ReportQuarantine`.
     quarantine_limiter: DefaultKeyedRateLimiter<String>,
+    /// The local Raft node instance that this service operates on.
+    pub(crate) raft_node: Raft,
+    /// Direct access to the state machine store for forwarded reads.
+    state_machine_store: Arc<StateMachineStore>,
 }
 
 /// Validate a `ReportQuarantine` request against the current membership.
@@ -123,6 +124,35 @@ pub(crate) fn decode_data_command(payload: &[u8]) -> Result<StoreCommand, Status
 }
 
 impl StorageServiceImpl {
+    /// Re-confirm this node is still leader with an up-to-date read index
+    /// before serving a forwarded read.
+    ///
+    /// A follower that observed `ForwardToLeader` forwards the read here,
+    /// but leadership can change between that observation and this RPC
+    /// landing -- without re-checking, a former leader would serve a local
+    /// read that is no longer guaranteed linearizable (e.g. a competing
+    /// leader committed writes this node hasn't seen), silently breaking
+    /// read-your-writes for the forwarded caller.
+    async fn ensure_leader_linearizable(&self) -> Result<(), Status> {
+        self.raft_node
+            .ensure_linearizable(ReadPolicy::ReadIndex)
+            .await
+            .map(|_| ())
+            .map_err(|e| Status::unavailable(format!("not linearizable leader: {e}")))
+    }
+
+    /// Current cluster membership (voters and learners).
+    fn member_ids(&self) -> BTreeSet<u64> {
+        self.raft_node
+            .metrics()
+            .borrow_watched()
+            .membership_config
+            .membership()
+            .nodes()
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
     /// Creates a new instance of the internal service.
     ///
     /// # Parameters
@@ -152,35 +182,6 @@ impl StorageServiceImpl {
             node_id,
             quarantine_limiter: RateLimiter::keyed(Quota::per_hour(QUARANTINE_REPORTS_PER_HOUR)),
         }
-    }
-
-    /// Current cluster membership (voters and learners).
-    fn member_ids(&self) -> BTreeSet<u64> {
-        self.raft_node
-            .metrics()
-            .borrow_watched()
-            .membership_config
-            .membership()
-            .nodes()
-            .map(|(id, _)| *id)
-            .collect()
-    }
-
-    /// Re-confirm this node is still leader with an up-to-date read index
-    /// before serving a forwarded read.
-    ///
-    /// A follower that observed `ForwardToLeader` forwards the read here,
-    /// but leadership can change between that observation and this RPC
-    /// landing -- without re-checking, a former leader would serve a local
-    /// read that is no longer guaranteed linearizable (e.g. a competing
-    /// leader committed writes this node hasn't seen), silently breaking
-    /// read-your-writes for the forwarded caller.
-    async fn ensure_leader_linearizable(&self) -> Result<(), Status> {
-        self.raft_node
-            .ensure_linearizable(ReadPolicy::ReadIndex)
-            .await
-            .map(|_| ())
-            .map_err(|e| Status::unavailable(format!("not linearizable leader: {e}")))
     }
 }
 

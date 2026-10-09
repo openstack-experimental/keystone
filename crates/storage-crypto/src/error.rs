@@ -17,14 +17,6 @@ use thiserror::Error;
 /// Errors produced by the storage cryptographic layer.
 #[derive(Error, Debug)]
 pub enum CryptoError {
-    /// AES encryption (wrap) failed, whether the AEAD construction is
-    /// AES-256-GCM ([`EnvKek`], PKCS#11) or AES-256-CFB + HMAC
-    /// Encrypt-then-MAC (TPM).
-    ///
-    /// [`EnvKek`]: crate::kek::EnvKek
-    #[error("AES encryption error")]
-    AesEncrypt,
-
     /// AES decryption (unwrap) failed — tag mismatch indicates data
     /// corruption or tampering. Covers both AES-256-GCM ([`EnvKek`],
     /// PKCS#11) and AES-256-CFB + HMAC Encrypt-then-MAC (TPM); the shared
@@ -35,14 +27,40 @@ pub enum CryptoError {
     #[error("AES decryption error: authentication tag verification failed")]
     AesDecrypt,
 
+    /// AES encryption (wrap) failed, whether the AEAD construction is
+    /// AES-256-GCM ([`EnvKek`], PKCS#11) or AES-256-CFB + HMAC
+    /// Encrypt-then-MAC (TPM).
+    ///
+    /// [`EnvKek`]: crate::kek::EnvKek
+    #[error("AES encryption error")]
+    AesEncrypt,
+
+    /// The stored bytes are too short to contain a valid encrypted record.
+    #[error("stored ciphertext is too short to be a valid encrypted record")]
+    CiphertextTooShort,
+
     /// DEK epoch has not been loaded; `bootstrap_dek` must be called first.
     #[error("DEK not loaded — bootstrap must be called before encryption")]
     DekMissing,
 
-    /// The nonce read-back after a persistence write did not match the written
-    /// value, indicating a storage error.
-    #[error("nonce read-back mismatch after write — storage error")]
-    NonceReadbackMismatch,
+    /// A byte slice that should have a fixed AEAD parameter length
+    /// (nonce/tag/key) did not. Should be unreachable in practice — every
+    /// call site passes a statically-sized array — but propagated as an
+    /// error instead of panicking in case that invariant is ever violated.
+    #[error("internal error: fixed-length cryptographic parameter had the wrong size")]
+    InvalidArrayLength,
+
+    /// The supplied hex string is not valid hexadecimal.
+    #[error("invalid hex encoding for key material")]
+    InvalidHex,
+
+    /// The decoded key material has an unexpected length.
+    #[error("invalid key length: expected 32 bytes")]
+    InvalidKeyLength,
+
+    /// KEK is not configured.
+    #[error("KEK not configured or unavailable")]
+    KekMissing,
 
     /// The recovered nonce counter is less than the high-water mark, indicating
     /// rollback or corruption.  Node must not start to prevent nonce reuse.
@@ -57,38 +75,10 @@ pub enum CryptoError {
     #[error("nonce persistence error: {0}")]
     NoncePersistence(String),
 
-    /// KEK is not configured.
-    #[error("KEK not configured or unavailable")]
-    KekMissing,
-
-    /// The supplied hex string is not valid hexadecimal.
-    #[error("invalid hex encoding for key material")]
-    InvalidHex,
-
-    /// The decoded key material has an unexpected length.
-    #[error("invalid key length: expected 32 bytes")]
-    InvalidKeyLength,
-
-    /// The wrapped DEK blob has an unexpected size.
-    #[error("wrapped DEK has wrong format or size")]
-    WrappedDekSize,
-
-    /// The stored bytes are too short to contain a valid encrypted record.
-    #[error("stored ciphertext is too short to be a valid encrypted record")]
-    CiphertextTooShort,
-
-    /// A byte slice that should have a fixed AEAD parameter length
-    /// (nonce/tag/key) did not. Should be unreachable in practice — every
-    /// call site passes a statically-sized array — but propagated as an
-    /// error instead of panicking in case that invariant is ever violated.
-    #[error("internal error: fixed-length cryptographic parameter had the wrong size")]
-    InvalidArrayLength,
-
-    /// Ciphertext was encrypted under a revoked DEK epoch (ADR 0016-v2 §6.2).
-    /// Emergency rotation revokes the compromised DEK; any attempt to decrypt
-    /// data with the revoked key is a fatal error.
-    #[error("DEK epoch {version} was revoked; decryption refused")]
-    RevokedDek { version: u32 },
+    /// The nonce read-back after a persistence write did not match the written
+    /// value, indicating a storage error.
+    #[error("nonce read-back mismatch after write — storage error")]
+    NonceReadbackMismatch,
 
     /// A PKCS#11 setup or session operation failed (module load, slot lookup,
     /// login, key generation/lookup). Wrap/unwrap operation failures use
@@ -97,10 +87,20 @@ pub enum CryptoError {
     #[error("PKCS#11 operation failed: {0}")]
     Pkcs11(String),
 
+    /// Ciphertext was encrypted under a revoked DEK epoch (ADR 0016-v2 §6.2).
+    /// Emergency rotation revokes the compromised DEK; any attempt to decrypt
+    /// data with the revoked key is a fatal error.
+    #[error("DEK epoch {version} was revoked; decryption refused")]
+    RevokedDek { version: u32 },
+
     /// A TPM 2.0 setup or session operation failed (context open, primary
     /// creation, key generation/lookup, persistence). Wrap/unwrap operation
     /// failures use [`CryptoError::AesEncrypt`] / [`CryptoError::AesDecrypt`]
     /// instead, so this variant is confined to provider construction.
     #[error("TPM operation failed: {0}")]
     Tpm(String),
+
+    /// The wrapped DEK blob has an unexpected size.
+    #[error("wrapped DEK has wrong format or size")]
+    WrappedDekSize,
 }

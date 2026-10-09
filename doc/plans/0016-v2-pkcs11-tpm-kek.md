@@ -135,10 +135,10 @@ Full mechanism detail, wire formats, and new invariants (13-15) are in
      and doesn't depend on anything the first PKCS#11 session held in memory.
 
    Also corrected a stale doc comment on
-   `test_kek_gating_production_mode_rejected` (`test_cluster.rs`) that still
+   `test_kek_gating_production_mode_rejected` (`test_cluster/kek.rs`) that still
    claimed no production `KekProvider` existed — no longer true since step 5.
    ✅ done (`crates/storage/tests/test_pkcs11_cluster.rs`,
-   `crates/storage/Cargo.toml`, `crates/storage/tests/test_cluster.rs`).
+   `crates/storage/Cargo.toml`, `crates/storage/tests/test_cluster/kek.rs`).
 7. **CI**: `cargo nextest run --all-features --profile ci` in
    `.github/workflows/ci.yml`'s `test` job already builds both new crates on
    every run (it was silently relying on the runner happening to have the

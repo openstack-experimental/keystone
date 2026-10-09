@@ -66,15 +66,15 @@ pub struct StateDek(pub(crate) LockedKey);
 pub struct BackupDek(pub(crate) LockedKey);
 
 impl BackupDek {
+    /// Access the raw key bytes (e.g. for AES-256-GCM snapshot encryption).
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        self.0.as_bytes()
+    }
+
     /// Wrap raw key bytes into a `BackupDek` (used externally when copying
     /// bytes out of a lock guard before calling backup_encrypt/decrypt).
     pub fn from_raw(raw: [u8; 32]) -> Self {
         Self(LockedKey::from_raw(raw))
-    }
-
-    /// Access the raw key bytes (e.g. for AES-256-GCM snapshot encryption).
-    pub fn as_bytes(&self) -> &[u8; 32] {
-        self.0.as_bytes()
     }
 }
 
@@ -99,16 +99,39 @@ fn backup_info(version: u32) -> Vec<u8> {
 /// The root DEK is stored in a `LockedKey` (mlock'd page) per ADR §9.
 /// Sub-keys are derived via HKDF-Expand and stored independently.
 pub struct DekEpoch {
-    /// Monotonically increasing epoch counter (`dek_version_u32`).
-    pub version: u32,
+    backup_dek: BackupDek,
+    log_dek: LogDek,
     /// Root 256-bit DEK in mlock'd memory (ADR §9, Invariant 8).
     root_dek: LockedKey,
-    log_dek: LogDek,
     state_dek: StateDek,
-    backup_dek: BackupDek,
+    /// Monotonically increasing epoch counter (`dek_version_u32`).
+    pub version: u32,
 }
 
 impl DekEpoch {
+    /// Returns the backup (snapshot) sub-key for this epoch.
+    pub fn backup_dek(&self) -> &BackupDek {
+        &self.backup_dek
+    }
+
+    /// Derive the per-epoch audit HMAC key from the root DEK (ADR §3.1).
+    ///
+    /// `AuditHmacKey = HKDF-Expand(DEK, info = b"keystone-audit-dek-v1" ++
+    /// version_u32_be ++ node_id_u64_be, L=32)`. Binding to both DEK
+    /// version and node ID ensures the audit key rotates with every DEK
+    /// rotation and cannot be forged across nodes.
+    pub fn derive_audit_key(&self, node_id: u64) -> Result<AuditHmacKey, CryptoError> {
+        let mut info = AUDIT_DEK_INFO_PREFIX.to_vec();
+        info.extend_from_slice(&self.version.to_be_bytes());
+        info.extend_from_slice(&node_id.to_be_bytes());
+        let hkdf = Hkdf::<Sha256>::from_prk(self.root_dek.as_bytes().as_ref())
+            .map_err(|_| CryptoError::InvalidKeyLength)?;
+        let mut out = [0u8; 32];
+        hkdf.expand(&info, &mut out)
+            .map_err(|_| CryptoError::InvalidKeyLength)?;
+        Ok(AuditHmacKey::from_raw(out))
+    }
+
     /// Derive a `DekEpoch` from a `LockedKey` containing the root DEK bytes.
     ///
     /// Uses HKDF-Expand (no Extract) to produce domain-separated sub-keys.
@@ -151,29 +174,6 @@ impl DekEpoch {
     /// Returns the state sub-key.
     pub fn state_dek(&self) -> &StateDek {
         &self.state_dek
-    }
-
-    /// Returns the backup (snapshot) sub-key for this epoch.
-    pub fn backup_dek(&self) -> &BackupDek {
-        &self.backup_dek
-    }
-
-    /// Derive the per-epoch audit HMAC key from the root DEK (ADR §3.1).
-    ///
-    /// `AuditHmacKey = HKDF-Expand(DEK, info = b"keystone-audit-dek-v1" ++
-    /// version_u32_be ++ node_id_u64_be, L=32)`. Binding to both DEK
-    /// version and node ID ensures the audit key rotates with every DEK
-    /// rotation and cannot be forged across nodes.
-    pub fn derive_audit_key(&self, node_id: u64) -> Result<AuditHmacKey, CryptoError> {
-        let mut info = AUDIT_DEK_INFO_PREFIX.to_vec();
-        info.extend_from_slice(&self.version.to_be_bytes());
-        info.extend_from_slice(&node_id.to_be_bytes());
-        let hkdf = Hkdf::<Sha256>::from_prk(self.root_dek.as_bytes().as_ref())
-            .map_err(|_| CryptoError::InvalidKeyLength)?;
-        let mut out = [0u8; 32];
-        hkdf.expand(&info, &mut out)
-            .map_err(|_| CryptoError::InvalidKeyLength)?;
-        Ok(AuditHmacKey::from_raw(out))
     }
 }
 

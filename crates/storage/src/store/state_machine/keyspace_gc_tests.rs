@@ -12,44 +12,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use openstack_keystone_storage_crypto::EnvKek;
-
 use super::*;
-
-/// Builds a `FjallStateMachine` for exercising `keyspace_exists` /
-/// `drop_keyspace` against the real Fjall backend (as opposed to
-/// `mock::MockStorage`, which models the same contract in-memory for
-/// driver-level tests).
-fn make_sm() -> (FjallStateMachine, tempfile::TempDir) {
-    let td = tempfile::TempDir::new().expect("tempdir");
-    let db = Arc::new(Database::builder(td.path()).open().expect("open db"));
-    let kek: Arc<dyn KekProvider> = Arc::new(EnvKek::from_bytes([0x42u8; 32]));
-    let epoch = Arc::new(DekEpoch::from_raw(LockedKey::from_raw([0x09; 32]), 1).expect("epoch"));
-    let (reencrypt_tx, reencrypt_rx) = tokio::sync::mpsc::channel(1);
-    drop(reencrypt_rx);
-    let (quarantine_tx, quarantine_rx) = tokio::sync::mpsc::channel(1);
-    drop(quarantine_rx);
-
-    let sm = FjallStateMachine::new(
-        db,
-        td.path().join("snapshots"),
-        1,
-        Arc::new(RwLock::new(epoch)),
-        Arc::new(Mutex::new(BTreeMap::new())),
-        Arc::new(Mutex::new(HashSet::new())),
-        kek,
-        reencrypt_tx,
-        quarantine_tx,
-        Arc::new(Mutex::new(HashMap::new())),
-    )
-    .expect("construct state machine");
-    seed_current_dek(&sm, [0x09; 32], 1);
-    (sm, td)
-}
 
 #[test]
 fn keyspace_exists_is_false_until_first_access_and_never_auto_vivifies() {
-    let (sm, _td) = make_sm();
+    let (sm, _td) = make_seeded_sm(0x09);
     assert!(!sm.keyspace_exists("rotating_bucket_1"));
     // Checking existence must not have created it as a side effect.
     assert!(!sm.keyspace_exists("rotating_bucket_1"));
@@ -60,7 +27,7 @@ fn keyspace_exists_is_false_until_first_access_and_never_auto_vivifies() {
 
 #[test]
 fn keyspace_exists_is_always_true_for_core_keyspaces() {
-    let (sm, _td) = make_sm();
+    let (sm, _td) = make_seeded_sm(0x09);
     assert!(sm.keyspace_exists("data"));
     assert!(sm.keyspace_exists("meta"));
     assert!(sm.keyspace_exists("index"));
@@ -68,14 +35,14 @@ fn keyspace_exists_is_always_true_for_core_keyspaces() {
 
 #[test]
 fn drop_keyspace_is_noop_when_never_created() {
-    let (sm, _td) = make_sm();
+    let (sm, _td) = make_seeded_sm(0x09);
     sm.drop_keyspace("never_created").expect("no-op drop");
     assert!(!sm.keyspace_exists("never_created"));
 }
 
 #[test]
 fn drop_keyspace_reclaims_an_empty_partition() {
-    let (sm, _td) = make_sm();
+    let (sm, _td) = make_seeded_sm(0x09);
     sm.keyspace("rotating_bucket_2").expect("create keyspace");
     assert!(sm.keyspace_exists("rotating_bucket_2"));
 
@@ -86,7 +53,7 @@ fn drop_keyspace_reclaims_an_empty_partition() {
 
 #[test]
 fn drop_keyspace_refuses_non_empty_partition() {
-    let (sm, _td) = make_sm();
+    let (sm, _td) = make_seeded_sm(0x09);
     let ks = sm.keyspace("rotating_bucket_3").expect("create keyspace");
     ks.insert(b"leftover-key", b"leftover-value")
         .expect("insert");
@@ -100,7 +67,7 @@ fn drop_keyspace_refuses_non_empty_partition() {
 
 #[test]
 fn drop_keyspace_refuses_core_keyspaces() {
-    let (sm, _td) = make_sm();
+    let (sm, _td) = make_seeded_sm(0x09);
     for core in ["data", "meta", "index"] {
         let err = sm
             .drop_keyspace(core)
@@ -121,7 +88,7 @@ fn drop_keyspace_refuses_core_keyspaces() {
 /// checks).
 #[test]
 fn keyspace_lifecycle_lock_excludes_concurrent_readers_and_writer() {
-    let (sm, _td) = make_sm();
+    let (sm, _td) = make_seeded_sm(0x09);
     sm.keyspace("rotating_bucket_race")
         .expect("create keyspace");
 

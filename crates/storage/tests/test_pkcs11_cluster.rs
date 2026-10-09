@@ -40,36 +40,24 @@ use cryptoki::session::UserType;
 use cryptoki::types::AuthPin;
 use eyre::Result;
 use openraft::type_config::TypeConfigExt;
-use rcgen::{
-    BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
-    Issuer, KeyPair, KeyUsagePurpose, SanType,
-};
-
-use openstack_keystone_config::{TlsConfiguration, TlsConfigurationBuilder};
+use openstack_keystone_config::TlsConfiguration;
+use openstack_keystone_distributed_storage::StorageApi;
 use openstack_keystone_distributed_storage::TypeConfig;
 use openstack_keystone_distributed_storage::app::init_storage;
 use openstack_keystone_distributed_storage::config::{
     DistributedStorageConfiguration, KekProvider, Pkcs11KekConfiguration, RaftTlsConfiguration,
     config_manager,
 };
-use openstack_keystone_distributed_storage::{
-    DataTier, Metadata, StorageApi, StoreDataEnvelope, StoreError,
-};
 use openstack_keystone_storage_crypto_pkcs11::{Pkcs11Kek, Pkcs11KekParams, SlotSelector};
+
+mod common;
+
+use common::{make_certificates, make_sensitive_env};
 
 const SO_PIN: &str = "1234567890";
 const USER_PIN: &str = "fedcba0987";
 const TOKEN_LABEL: &str = "keystone-storage-test";
 const KEY_LABEL: &str = "keystone-kek";
-
-fn make_sensitive_env<T: serde::Serialize + ?Sized>(
-    value: &T,
-) -> Result<StoreDataEnvelope<Vec<u8>>, StoreError> {
-    Ok(StoreDataEnvelope {
-        data: rmp_serde::to_vec(value)?,
-        metadata: Metadata::with_tier(DataTier::Sensitive),
-    })
-}
 
 fn module_path() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("TEST_PKCS11_MODULE") {
@@ -155,48 +143,9 @@ fn provision_token(module: &PathBuf) {
     );
 }
 
-fn make_certificates() -> Result<TlsConfiguration> {
-    let mut ca_params = CertificateParams::default();
-    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-    ca_params.key_usages = vec![
-        KeyUsagePurpose::KeyCertSign,
-        KeyUsagePurpose::DigitalSignature,
-        KeyUsagePurpose::CrlSign,
-    ];
-
-    let mut ca_dn = DistinguishedName::new();
-    ca_dn.push(DnType::CommonName, "CA");
-    ca_params.distinguished_name = ca_dn;
-
-    let ca_key = KeyPair::generate()?;
-    let ca_cert = ca_params.self_signed(&ca_key)?;
-    let ca = Issuer::new(ca_params, ca_key);
-
-    let mut peer_cert_params = CertificateParams::default();
-    let now = time::OffsetDateTime::now_utc();
-    peer_cert_params.not_before = now - time::Duration::days(1);
-    peer_cert_params.not_after = now + time::Duration::days(28);
-
-    let client_ip: std::net::IpAddr = "127.0.0.1".parse()?;
-    peer_cert_params.subject_alt_names = vec![SanType::IpAddress(client_ip)];
-    peer_cert_params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
-    peer_cert_params.extended_key_usages = vec![
-        ExtendedKeyUsagePurpose::ServerAuth,
-        ExtendedKeyUsagePurpose::ClientAuth,
-    ];
-    let peer_key = KeyPair::generate()?;
-    let peer_cert = peer_cert_params.signed_by(&peer_key, &ca)?;
-
-    Ok(TlsConfigurationBuilder::default()
-        .tls_client_ca_content(ca_cert.pem().as_bytes().to_vec())
-        .tls_cert_content(peer_cert.pem().as_bytes().to_vec())
-        .tls_key_content(peer_key.serialize_pem().as_bytes().to_vec())
-        .build()?)
-}
-
 /// Config for a single, unnetworked node backed by the real SoftHSM2 token
-/// at `module`. No gRPC server is started — as in `test_cluster.rs`'s
-/// `test_quarantine_committed_via_raft`, the Raft handle is exercised
+/// at `module`. No gRPC server is started — as in `test_cluster`'s
+/// `quarantine::test_quarantine_committed_via_raft`, the Raft handle is exercised
 /// directly, which is enough to drive the state machine's DEK wrap/unwrap
 /// path without needing a live network listener.
 fn pkcs11_ds_config(

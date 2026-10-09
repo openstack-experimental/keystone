@@ -11,6 +11,16 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! # gRPC services.
+//!
+//! - [`raft_service`]: node-to-node Raft RPCs (votes, replication,
+//!   snapshots). Peers only.
+//! - [`storage_service`]: the client-facing key/value API and quarantine
+//!   reporting.
+//! - [`cluster_admin_service`]: operator-facing cluster administration
+//!   (membership, DEK rotation, restore, emergency access).
+//! - [`authz`]: role checks on the authenticated peer identity shared by all
+//!   three.
 pub mod authz;
 pub mod cluster_admin_service;
 pub mod raft_service;

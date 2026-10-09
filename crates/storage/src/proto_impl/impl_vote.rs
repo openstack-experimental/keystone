@@ -27,13 +27,13 @@ impl RaftVote for pb::raft::Vote {
         }
     }
 
+    fn is_committed(&self) -> bool {
+        self.committed
+    }
+
     #[allow(clippy::expect_used)]
     fn leader_id(&self) -> &LeaderId {
         self.leader_id.as_ref().expect("Vote must have a leader_id")
-    }
-
-    fn is_committed(&self) -> bool {
-        self.committed
     }
 }
 

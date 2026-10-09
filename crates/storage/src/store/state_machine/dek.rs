@@ -48,120 +48,6 @@ impl FjallStateMachine {
         Ok((version, stored[4..].to_vec()))
     }
 
-    /// Installs a DEK epoch fetched from the cluster leader via `FetchDek`,
-    /// bypassing Raft entirely.
-    ///
-    /// Must only be called once, before this node registers as a learner
-    /// (see `Storage::join_cluster`) — at that point `data` is still empty,
-    /// so overwriting the node's own bootstrap-generated placeholder DEK
-    /// loses no ciphertext. Calling this after the node holds real data
-    /// would strand it under the discarded epoch, since (unlike a
-    /// Raft-replicated `InstallDek`) no `old_deks` retirement entry is
-    /// written here.
-    ///
-    /// Fails closed, without persisting anything, if `wrapped_dek` cannot be
-    /// unwrapped with this node's own KEK — which signals the KEK material
-    /// differs from the leader's (ADR 0016-v2 §2.5), a misconfiguration that
-    /// must abort the join rather than silently fall back to a private DEK.
-    pub fn install_fetched_dek(
-        &self,
-        dek_version: u32,
-        wrapped_dek: &[u8],
-    ) -> Result<(), StoreError> {
-        if !self.data.is_empty()? {
-            return Err(StoreError::Other(eyre::eyre!(
-                "refusing to install fetched DEK version {dek_version}: this node already \
-                 holds data under its own DEK epoch (join_cluster must call this before the \
-                 node registers as a learner, while `data` is still empty)"
-            )));
-        }
-        let raw = self.kek.unwrap_dek(wrapped_dek)?;
-        let locked = LockedKey::from_raw(*raw);
-        let epoch = Arc::new(DekEpoch::from_raw(locked, dek_version)?);
-
-        let mut persisted = dek_version.to_be_bytes().to_vec();
-        persisted.extend_from_slice(wrapped_dek);
-        self.meta.insert(META_DEK_CURRENT, &persisted)?;
-        self.db.persist(PersistMode::SyncAll)?;
-
-        let mut guard = self.dek.write().unwrap_or_else(|p| p.into_inner());
-        *guard = epoch;
-        Ok(())
-    }
-
-    /// Returns this node's retired-but-still-readable DEK epochs in their
-    /// on-disk wrapped form: `(version, wrapped_bytes)` for each entry under
-    /// `_meta:dek:retired:*`.
-    ///
-    /// A rotation's background re-encryption sweep (`reencrypt_pending`) is
-    /// best-effort and asynchronous, so records under a retired epoch can
-    /// remain un-migrated for a while after `InstallDek` commits. Used by
-    /// the `FetchDek` gRPC handler alongside `current_dek_wrapped` so a
-    /// joining node can decrypt such records too, not just ones under the
-    /// current epoch.
-    pub fn retired_deks_wrapped(&self) -> Result<Vec<(u32, Vec<u8>)>, StoreError> {
-        let mut out = Vec::new();
-        for item in self.meta.prefix(DEK_RETIRED_PREFIX.as_bytes()) {
-            let (key_bytes, wrapped) = item.into_inner()?;
-            let Ok(key_str) = std::str::from_utf8(&key_bytes) else {
-                continue;
-            };
-            let Some(version_str) = key_str.strip_prefix(DEK_RETIRED_PREFIX) else {
-                continue;
-            };
-            let Ok(version) = version_str.parse::<u32>() else {
-                tracing::warn!(
-                    key = key_str,
-                    "retired DEK key has non-numeric version suffix"
-                );
-                continue;
-            };
-            out.push((version, wrapped.to_vec()));
-        }
-        Ok(out)
-    }
-
-    /// Installs a retired DEK epoch fetched from the cluster leader via
-    /// `FetchDek`, bypassing Raft entirely.
-    ///
-    /// Companion to `install_fetched_dek`, called once per retired epoch the
-    /// leader reports, under the same ordering and safety constraints (must
-    /// run before this node registers as a learner). Populates both
-    /// `old_deks` (in-memory, consulted by `decrypt_state_by_version`) and
-    /// the on-disk `_meta:dek:retired:<version>` record, matching what a
-    /// normal `InstallDek` apply writes -- but does **not** `fsync`, since a
-    /// caller adopting several retired epochs in a loop (`join_cluster`)
-    /// would otherwise pay one `PersistMode::SyncAll` per epoch. The caller
-    /// must call `self.db.persist(PersistMode::SyncAll)` itself once, after
-    /// its last `install_fetched_retired_dek` call, or the on-disk record
-    /// won't survive a crash before the next unrelated persist.
-    ///
-    /// Fails closed, without writing anything, if `wrapped_dek` cannot be
-    /// unwrapped with this node's own KEK.
-    pub fn install_fetched_retired_dek(
-        &self,
-        dek_version: u32,
-        wrapped_dek: &[u8],
-    ) -> Result<(), StoreError> {
-        if !self.data.is_empty()? {
-            return Err(StoreError::Other(eyre::eyre!(
-                "refusing to install fetched retired DEK version {dek_version}: this node \
-                 already holds data (join_cluster must call this before the node registers as \
-                 a learner, while `data` is still empty)"
-            )));
-        }
-        let raw = self.kek.unwrap_dek(wrapped_dek)?;
-        let locked = LockedKey::from_raw(*raw);
-        let epoch = Arc::new(DekEpoch::from_raw(locked, dek_version)?);
-
-        let retired_key = format!("{DEK_RETIRED_PREFIX}{dek_version}");
-        self.meta.insert(retired_key.as_bytes(), wrapped_dek)?;
-
-        let mut old_deks = self.old_deks.lock().unwrap_or_else(|p| p.into_inner());
-        old_deks.insert(dek_version, epoch);
-        Ok(())
-    }
-
     /// Decrypt state bytes previously written by [`state_encrypt`].
     ///
     /// `tier`, `keyspace`, and `pk` must match the values used at write time;
@@ -464,5 +350,119 @@ impl FjallStateMachine {
             (encrypted, guard.version)
         };
         Ok((encrypted, dek_version))
+    }
+
+    /// Installs a DEK epoch fetched from the cluster leader via `FetchDek`,
+    /// bypassing Raft entirely.
+    ///
+    /// Must only be called once, before this node registers as a learner
+    /// (see `Storage::join_cluster`) — at that point `data` is still empty,
+    /// so overwriting the node's own bootstrap-generated placeholder DEK
+    /// loses no ciphertext. Calling this after the node holds real data
+    /// would strand it under the discarded epoch, since (unlike a
+    /// Raft-replicated `InstallDek`) no `old_deks` retirement entry is
+    /// written here.
+    ///
+    /// Fails closed, without persisting anything, if `wrapped_dek` cannot be
+    /// unwrapped with this node's own KEK — which signals the KEK material
+    /// differs from the leader's (ADR 0016-v2 §2.5), a misconfiguration that
+    /// must abort the join rather than silently fall back to a private DEK.
+    pub fn install_fetched_dek(
+        &self,
+        dek_version: u32,
+        wrapped_dek: &[u8],
+    ) -> Result<(), StoreError> {
+        if !self.data.is_empty()? {
+            return Err(StoreError::Other(eyre::eyre!(
+                "refusing to install fetched DEK version {dek_version}: this node already \
+                 holds data under its own DEK epoch (join_cluster must call this before the \
+                 node registers as a learner, while `data` is still empty)"
+            )));
+        }
+        let raw = self.kek.unwrap_dek(wrapped_dek)?;
+        let locked = LockedKey::from_raw(*raw);
+        let epoch = Arc::new(DekEpoch::from_raw(locked, dek_version)?);
+
+        let mut persisted = dek_version.to_be_bytes().to_vec();
+        persisted.extend_from_slice(wrapped_dek);
+        self.meta.insert(META_DEK_CURRENT, &persisted)?;
+        self.db.persist(PersistMode::SyncAll)?;
+
+        let mut guard = self.dek.write().unwrap_or_else(|p| p.into_inner());
+        *guard = epoch;
+        Ok(())
+    }
+
+    /// Installs a retired DEK epoch fetched from the cluster leader via
+    /// `FetchDek`, bypassing Raft entirely.
+    ///
+    /// Companion to `install_fetched_dek`, called once per retired epoch the
+    /// leader reports, under the same ordering and safety constraints (must
+    /// run before this node registers as a learner). Populates both
+    /// `old_deks` (in-memory, consulted by `decrypt_state_by_version`) and
+    /// the on-disk `_meta:dek:retired:<version>` record, matching what a
+    /// normal `InstallDek` apply writes -- but does **not** `fsync`, since a
+    /// caller adopting several retired epochs in a loop (`join_cluster`)
+    /// would otherwise pay one `PersistMode::SyncAll` per epoch. The caller
+    /// must call `self.db.persist(PersistMode::SyncAll)` itself once, after
+    /// its last `install_fetched_retired_dek` call, or the on-disk record
+    /// won't survive a crash before the next unrelated persist.
+    ///
+    /// Fails closed, without writing anything, if `wrapped_dek` cannot be
+    /// unwrapped with this node's own KEK.
+    pub fn install_fetched_retired_dek(
+        &self,
+        dek_version: u32,
+        wrapped_dek: &[u8],
+    ) -> Result<(), StoreError> {
+        if !self.data.is_empty()? {
+            return Err(StoreError::Other(eyre::eyre!(
+                "refusing to install fetched retired DEK version {dek_version}: this node \
+                 already holds data (join_cluster must call this before the node registers as \
+                 a learner, while `data` is still empty)"
+            )));
+        }
+        let raw = self.kek.unwrap_dek(wrapped_dek)?;
+        let locked = LockedKey::from_raw(*raw);
+        let epoch = Arc::new(DekEpoch::from_raw(locked, dek_version)?);
+
+        let retired_key = format!("{DEK_RETIRED_PREFIX}{dek_version}");
+        self.meta.insert(retired_key.as_bytes(), wrapped_dek)?;
+
+        let mut old_deks = self.old_deks.lock().unwrap_or_else(|p| p.into_inner());
+        old_deks.insert(dek_version, epoch);
+        Ok(())
+    }
+
+    /// Returns this node's retired-but-still-readable DEK epochs in their
+    /// on-disk wrapped form: `(version, wrapped_bytes)` for each entry under
+    /// `_meta:dek:retired:*`.
+    ///
+    /// A rotation's background re-encryption sweep (`reencrypt_pending`) is
+    /// best-effort and asynchronous, so records under a retired epoch can
+    /// remain un-migrated for a while after `InstallDek` commits. Used by
+    /// the `FetchDek` gRPC handler alongside `current_dek_wrapped` so a
+    /// joining node can decrypt such records too, not just ones under the
+    /// current epoch.
+    pub fn retired_deks_wrapped(&self) -> Result<Vec<(u32, Vec<u8>)>, StoreError> {
+        let mut out = Vec::new();
+        for item in self.meta.prefix(DEK_RETIRED_PREFIX.as_bytes()) {
+            let (key_bytes, wrapped) = item.into_inner()?;
+            let Ok(key_str) = std::str::from_utf8(&key_bytes) else {
+                continue;
+            };
+            let Some(version_str) = key_str.strip_prefix(DEK_RETIRED_PREFIX) else {
+                continue;
+            };
+            let Ok(version) = version_str.parse::<u32>() else {
+                tracing::warn!(
+                    key = key_str,
+                    "retired DEK key has non-numeric version suffix"
+                );
+                continue;
+            };
+            out.push((version, wrapped.to_vec()));
+        }
+        Ok(out)
     }
 }

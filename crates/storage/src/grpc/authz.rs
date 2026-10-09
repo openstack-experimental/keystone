@@ -37,12 +37,12 @@ enum Mode {
         operator_role: String,
         allowed_peer_svids: Vec<String>,
     },
+    /// dev_mode-only: no role derivation, every CA-signed peer accepted.
+    TlsLegacy,
     TlsRoles {
         san_prefix: String,
         operator_role: String,
     },
-    /// dev_mode-only: no role derivation, every CA-signed peer accepted.
-    TlsLegacy,
 }
 
 /// Resolves peer certificates to [`PeerRole`]s and enforces per-RPC roles.
@@ -108,46 +108,62 @@ pub fn extract_peer_identity<T>(request: &Request<T>) -> String {
 }
 
 impl PeerAuthz {
-    /// SPIFFE mode: roles derive from the SPIFFE ID path.
-    pub fn spiffe(
-        trust_domains: Vec<String>,
-        path_prefix: String,
-        operator_role: String,
-        allowed_peer_svids: Vec<String>,
-    ) -> Self {
-        Self {
-            mode: Mode::Spiffe {
-                trust_domains,
-                path_prefix,
-                operator_role,
-                allowed_peer_svids,
-            },
+    /// Pure core of [`Self::require`]. `uri_san` is the peer's first URI SAN
+    /// (the only role source); `identity` is for audit/rate-limit keys.
+    pub(crate) fn authorize(
+        &self,
+        uri_san: Option<&str>,
+        identity: &str,
+        allowed: &[PeerRole],
+    ) -> Result<(String, PeerRole), Status> {
+        if allowed.is_empty() {
+            return Err(Status::permission_denied(
+                "no role is authorised for this RPC",
+            ));
         }
-    }
-
-    /// TLS mode: roles derive from a URI SAN with the given prefix.
-    pub fn tls_roles(san_prefix: String) -> Self {
-        Self {
-            mode: Mode::TlsRoles {
-                san_prefix,
-                operator_role: "storage-operator".into(),
-            },
+        if matches!(self.mode, Mode::TlsLegacy) {
+            static WARN_ONCE: std::sync::Once = std::sync::Once::new();
+            WARN_ONCE.call_once(|| {
+                tracing::warn!(
+                    "peer role check skipped: TLS mode without tls_role_san_prefix (dev_mode only)"
+                );
+            });
+            return Ok((identity.to_owned(), allowed[0]));
         }
-    }
-
-    /// Legacy permissive TLS mode (dev_mode only): no role checks.
-    ///
-    /// The role returned by [`Self::require`] in this mode is NOT verified;
-    /// it is nominally the first allowed role.
-    pub fn tls_legacy() -> Self {
-        Self {
-            mode: Mode::TlsLegacy,
+        let san = uri_san
+            .ok_or_else(|| Status::permission_denied("peer certificate carries no URI SAN"))?;
+        let role = self.role_of_identity(san)?;
+        if allowed.contains(&role) {
+            Ok((identity.to_owned(), role))
+        } else {
+            Err(Status::permission_denied(format!(
+                "role {role:?} is not authorised for this RPC"
+            )))
         }
     }
 
     /// Whether peers are authenticated by SPIFFE SVIDs (SPIFFE mode only).
     pub fn is_spiffe(&self) -> bool {
         matches!(self.mode, Mode::Spiffe { .. })
+    }
+
+    /// Enforce that the caller holds one of `allowed`. Returns identity+role.
+    ///
+    /// The role is derived from the first URI SAN only, never the CN. In
+    /// `TlsLegacy` (dev_mode) mode the role is NOT verified: the first
+    /// allowed role is returned nominally and any CA-signed peer passes.
+    pub fn require<T>(
+        &self,
+        request: &Request<T>,
+        allowed: &[PeerRole],
+    ) -> Result<(String, PeerRole), Status> {
+        let der = peer_leaf_der(request);
+        let uri_san = der.as_deref().and_then(uri_san_from_der);
+        let identity = uri_san
+            .clone()
+            .or_else(|| der.as_deref().and_then(cn_from_der))
+            .unwrap_or_else(|| "unknown".to_owned());
+        self.authorize(uri_san.as_deref(), &identity, allowed)
     }
 
     /// Map a peer identity string (URI SAN) to a role. Pure; no I/O.
@@ -209,56 +225,40 @@ impl PeerAuthz {
         }
     }
 
-    /// Enforce that the caller holds one of `allowed`. Returns identity+role.
-    ///
-    /// The role is derived from the first URI SAN only, never the CN. In
-    /// `TlsLegacy` (dev_mode) mode the role is NOT verified: the first
-    /// allowed role is returned nominally and any CA-signed peer passes.
-    pub fn require<T>(
-        &self,
-        request: &Request<T>,
-        allowed: &[PeerRole],
-    ) -> Result<(String, PeerRole), Status> {
-        let der = peer_leaf_der(request);
-        let uri_san = der.as_deref().and_then(uri_san_from_der);
-        let identity = uri_san
-            .clone()
-            .or_else(|| der.as_deref().and_then(cn_from_der))
-            .unwrap_or_else(|| "unknown".to_owned());
-        self.authorize(uri_san.as_deref(), &identity, allowed)
+    /// SPIFFE mode: roles derive from the SPIFFE ID path.
+    pub fn spiffe(
+        trust_domains: Vec<String>,
+        path_prefix: String,
+        operator_role: String,
+        allowed_peer_svids: Vec<String>,
+    ) -> Self {
+        Self {
+            mode: Mode::Spiffe {
+                trust_domains,
+                path_prefix,
+                operator_role,
+                allowed_peer_svids,
+            },
+        }
     }
 
-    /// Pure core of [`Self::require`]. `uri_san` is the peer's first URI SAN
-    /// (the only role source); `identity` is for audit/rate-limit keys.
-    pub(crate) fn authorize(
-        &self,
-        uri_san: Option<&str>,
-        identity: &str,
-        allowed: &[PeerRole],
-    ) -> Result<(String, PeerRole), Status> {
-        if allowed.is_empty() {
-            return Err(Status::permission_denied(
-                "no role is authorised for this RPC",
-            ));
+    /// Legacy permissive TLS mode (dev_mode only): no role checks.
+    ///
+    /// The role returned by [`Self::require`] in this mode is NOT verified;
+    /// it is nominally the first allowed role.
+    pub fn tls_legacy() -> Self {
+        Self {
+            mode: Mode::TlsLegacy,
         }
-        if matches!(self.mode, Mode::TlsLegacy) {
-            static WARN_ONCE: std::sync::Once = std::sync::Once::new();
-            WARN_ONCE.call_once(|| {
-                tracing::warn!(
-                    "peer role check skipped: TLS mode without tls_role_san_prefix (dev_mode only)"
-                );
-            });
-            return Ok((identity.to_owned(), allowed[0]));
-        }
-        let san = uri_san
-            .ok_or_else(|| Status::permission_denied("peer certificate carries no URI SAN"))?;
-        let role = self.role_of_identity(san)?;
-        if allowed.contains(&role) {
-            Ok((identity.to_owned(), role))
-        } else {
-            Err(Status::permission_denied(format!(
-                "role {role:?} is not authorised for this RPC"
-            )))
+    }
+
+    /// TLS mode: roles derive from a URI SAN with the given prefix.
+    pub fn tls_roles(san_prefix: String) -> Self {
+        Self {
+            mode: Mode::TlsRoles {
+                san_prefix,
+                operator_role: "storage-operator".into(),
+            },
         }
     }
 }

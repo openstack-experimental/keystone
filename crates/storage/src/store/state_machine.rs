@@ -65,7 +65,9 @@ mod snapshot_file;
 mod status;
 
 pub(crate) use self::restore::MAX_LIVE_RESTORE_SIZE;
-pub(crate) use self::rotation::{DEK_REVOKED_PENDING_PREFIX, DEK_REVOKED_PREFIX, unix_now};
+pub(crate) use self::rotation::{
+    DEK_REVOKED_PENDING_PREFIX, DEK_REVOKED_PREFIX, META_DEK_CURRENT, unix_now,
+};
 pub use self::rotation::{PENDING_ROTATION_TTL_SECS, ReencryptReport, load_pending_rotations};
 pub use self::status::EncryptionStatus;
 
@@ -145,38 +147,29 @@ type EphemeralEntry = (Vec<u8>, Vec<u8>, Metadata);
 /// rotation completes remains readable until background re-encryption finishes.
 #[derive(Clone)]
 pub struct FjallStateMachine {
-    db: Arc<Database>,
-    meta: Keyspace,
+    /// Audit forwarder, set once after construction. Receives the new audit
+    /// HMAC key on every DEK epoch swap and the apply-side audit records
+    /// (ADR 0016-v2 §3.1). Unset in unit tests that do not exercise audit.
+    audit: std::sync::OnceLock<crate::audit::AuditForwarder>,
     data: Keyspace,
-    index: Keyspace,
-    snapshot_dir: PathBuf,
-    /// This node's Raft ID — tags Quarantine mutations proposed by this node
-    /// and scopes which persisted quarantine markers block local reads.
-    node_id: u64,
+    db: Arc<Database>,
     /// Current active DEK epoch (shared with FjallLogStore via Arc).
     dek: Arc<RwLock<Arc<DekEpoch>>>,
-    /// Retired DEK epochs held during re-encryption transition (shared with
-    /// FjallLogStore).
-    old_deks: Arc<Mutex<BTreeMap<u32, Arc<DekEpoch>>>>,
-    /// Revoked DEK versions — shared with FjallLogStore for immediate rejection
-    /// (H3).
-    revoked_deks: Arc<Mutex<HashSet<u32>>>,
-    /// DEK epochs displaced by a live restore, tried by version after
-    /// `old_deks` when reading pre-restore log entries and snapshot files
-    /// (see [`DEK_SHADOW_PREFIX`]). Shared with the log store.
-    shadow_deks: Arc<Mutex<Vec<Arc<DekEpoch>>>>,
+    /// Ephemeral (non-Fjall-backed) keyspaces, keyed by keyspace name.
+    ///
+    /// Populated the first time `apply()` sees a `Set`/`CreateIfAbsent`
+    /// mutation whose `Metadata::is_ephemeral` is `true` for that keyspace
+    /// name; every node derives the same population independently since
+    /// `apply()` runs identically, in the same log order, everywhere — no
+    /// separate consensus needed (same principle `drop_keyspace` already
+    /// relies on for non-core keyspace lifecycle). A keyspace is either
+    /// always ephemeral or always Fjall-backed for the life of its name; an
+    /// outer entry existing (even with an empty inner map) is equivalent to
+    /// a Fjall partition existing.
+    ephemeral: DashMap<String, EphemeralKeyspace>,
+    index: Keyspace,
     /// Key Encryption Key used to unwrap new DEKs on InstallDek apply.
     kek: Arc<dyn KekProvider>,
-    /// Channel to trigger background re-encryption after DEK rotation.
-    reencrypt_tx: tokio::sync::mpsc::Sender<Arc<DekEpoch>>,
-    /// Channel signalling `(node_id, partition)` quarantine events for
-    /// best-effort Raft propagation (ADR 0016-v2 §10 invariant 5).
-    quarantine_tx: tokio::sync::mpsc::Sender<(u64, String)>,
-    quarantine: Arc<QuarantineTracker>,
-    /// Pending emergency DEK rotations awaiting dual-control confirmation.
-    /// Shared with `ClusterAdminServiceImpl` so the gRPC handler can inspect
-    /// the map without going through Raft.
-    pub pending_rotations: Arc<Mutex<HashMap<String, PendingRotation>>>,
     /// Serializes non-core keyspace lifecycle changes (`drop_keyspace`)
     /// against `apply()`'s writes.
     ///
@@ -191,34 +184,200 @@ pub struct FjallStateMachine {
     /// silently land in an already-deregistered, soon-to-be-discarded
     /// partition — applied per Raft, invisible to every future read.
     keyspace_lifecycle: Arc<RwLock<()>>,
-    /// Ephemeral (non-Fjall-backed) keyspaces, keyed by keyspace name.
-    ///
-    /// Populated the first time `apply()` sees a `Set`/`CreateIfAbsent`
-    /// mutation whose `Metadata::is_ephemeral` is `true` for that keyspace
-    /// name; every node derives the same population independently since
-    /// `apply()` runs identically, in the same log order, everywhere — no
-    /// separate consensus needed (same principle `drop_keyspace` already
-    /// relies on for non-core keyspace lifecycle). A keyspace is either
-    /// always ephemeral or always Fjall-backed for the life of its name; an
-    /// outer entry existing (even with an empty inner map) is equivalent to
-    /// a Fjall partition existing.
-    ephemeral: DashMap<String, EphemeralKeyspace>,
+    meta: Keyspace,
+    /// This node's Raft ID — tags Quarantine mutations proposed by this node
+    /// and scopes which persisted quarantine markers block local reads.
+    node_id: u64,
+    /// Retired DEK epochs held during re-encryption transition (shared with
+    /// FjallLogStore).
+    old_deks: Arc<Mutex<BTreeMap<u32, Arc<DekEpoch>>>>,
+    /// Pending emergency DEK rotations awaiting dual-control confirmation.
+    /// Shared with `ClusterAdminServiceImpl` so the gRPC handler can inspect
+    /// the map without going through Raft.
+    pub pending_rotations: Arc<Mutex<HashMap<String, PendingRotation>>>,
+    quarantine: Arc<QuarantineTracker>,
+    /// Channel signalling `(node_id, partition)` quarantine events for
+    /// best-effort Raft propagation (ADR 0016-v2 §10 invariant 5).
+    quarantine_tx: tokio::sync::mpsc::Sender<(u64, String)>,
     /// ADR 0031 Raft Prometheus metrics. Owned here (rather than only on
     /// `app::Storage`) because `apply_duration_seconds` must be recorded at
     /// the actual per-entry apply call site below; `app::Storage` reaches
     /// the same instance via `raft_prometheus_metrics()` to also render the
     /// `openraft`-snapshot-derived gauges for `/metrics`.
     raft_prometheus_metrics: Arc<crate::prometheus_metrics::KeystoneRaftPrometheusMetrics>,
-    /// Audit forwarder, set once after construction. Receives the new audit
-    /// HMAC key on every DEK epoch swap and the apply-side audit records
-    /// (ADR 0016-v2 §3.1). Unset in unit tests that do not exercise audit.
-    audit: std::sync::OnceLock<crate::audit::AuditForwarder>,
+    /// Channel to trigger background re-encryption after DEK rotation.
+    reencrypt_tx: tokio::sync::mpsc::Sender<Arc<DekEpoch>>,
+    /// Revoked DEK versions — shared with FjallLogStore for immediate rejection
+    /// (H3).
+    revoked_deks: Arc<Mutex<HashSet<u32>>>,
+    /// DEK epochs displaced by a live restore, tried by version after
+    /// `old_deks` when reading pre-restore log entries and snapshot files
+    /// (see [`DEK_SHADOW_PREFIX`]). Shared with the log store.
+    shadow_deks: Arc<Mutex<Vec<Arc<DekEpoch>>>>,
+    snapshot_dir: PathBuf,
     /// Per-key write version at which further writes to the key are
     /// rejected (`[distributed_storage] write_rate_threshold`).
     write_rate_threshold: Arc<AtomicU32>,
 }
 
 impl FjallStateMachine {
+    /// Get the data `keyspace` handle.
+    pub fn data(&self) -> &Keyspace {
+        &self.data
+    }
+
+    /// Get the database handle.
+    pub fn db(&self) -> &Arc<Database> {
+        &self.db
+    }
+
+    /// Permanently deletes an empty, non-core keyspace/partition.
+    ///
+    /// Returns an error, without deleting anything, if the keyspace still
+    /// has entries or if it names one of the core `"data"` / `"meta"` /
+    /// `"index"` keyspaces. A no-op if the keyspace does not exist.
+    ///
+    /// Not part of the replicated Raft log: dropping an already-empty
+    /// partition has no effect observable through `StorageApi`, so every
+    /// node may reclaim it independently once it locally observes the
+    /// keyspace is drained (analogous to local LSM compaction).
+    pub fn drop_keyspace<S: AsRef<str>>(&self, name: S) -> Result<(), StoreError> {
+        let name = name.as_ref();
+        if matches!(name, "data" | "meta" | "index") {
+            return Err(StoreError::Other(eyre::eyre!(
+                "refusing to drop core keyspace '{name}'"
+            )));
+        }
+        // Ephemeral keyspaces live purely in memory: no on-disk emptiness
+        // check or `keyspace_lifecycle` coordination with `apply()` is
+        // needed, since `DashMap::remove` is atomic per-entry and `apply()`
+        // only ever inserts into a *different* per-keyspace inner map, not
+        // this outer registry.
+        if let Some((_, inner)) = self.ephemeral.remove(name) {
+            if !inner.is_empty() {
+                self.ephemeral.insert(name.to_string(), inner);
+                return Err(StoreError::Other(eyre::eyre!(
+                    "refusing to drop non-empty keyspace '{name}'"
+                )));
+            }
+            return Ok(());
+        }
+        // Excludes any concurrent `apply()` call for the whole
+        // exists/is-empty/delete sequence, so a write that `apply()` is
+        // mid-way through queuing into this keyspace's batch can't be
+        // silently discarded by a delete that lands between the emptiness
+        // check and the physical drop.
+        let _lifecycle_guard = self
+            .keyspace_lifecycle
+            .write()
+            .unwrap_or_else(|p| p.into_inner());
+        if !self.db.keyspace_exists(name) {
+            return Ok(());
+        }
+        let ks = self.db.keyspace(name, KeyspaceCreateOptions::default)?;
+        if !ks.is_empty()? {
+            return Err(StoreError::Other(eyre::eyre!(
+                "refusing to drop non-empty keyspace '{name}'"
+            )));
+        }
+        self.db.delete_keyspace(ks)?;
+        Ok(())
+    }
+
+    /// Reads a single key from an ephemeral keyspace.
+    ///
+    /// Returns `None` both when `keyspace` is not ephemeral and when the
+    /// key is absent — callers that need to distinguish "not an ephemeral
+    /// keyspace" (fall through to Fjall) from "no such key" (return `None`
+    /// to the caller) must check [`Self::is_ephemeral_keyspace`] first.
+    pub fn ephemeral_get<S: AsRef<str>>(
+        &self,
+        keyspace: S,
+        key: &[u8],
+    ) -> Option<(Vec<u8>, Metadata)> {
+        self.ephemeral
+            .get(keyspace.as_ref())?
+            .get(key)
+            .map(|e| e.value().clone())
+    }
+
+    /// Lists all entries in an ephemeral keyspace whose key starts with
+    /// `prefix`. Returns `None` if `keyspace` is not ephemeral.
+    pub fn ephemeral_prefix<S: AsRef<str>>(
+        &self,
+        keyspace: S,
+        prefix: &[u8],
+    ) -> Option<Vec<EphemeralEntry>> {
+        let ks = self.ephemeral.get(keyspace.as_ref())?;
+        Some(
+            ks.iter()
+                .filter(|entry| entry.key().starts_with(prefix))
+                .map(|entry| {
+                    let (cipher, metadata) = entry.value().clone();
+                    (entry.key().clone(), cipher, metadata)
+                })
+                .collect(),
+        )
+    }
+
+    #[allow(clippy::result_large_err)]
+    #[tracing::instrument(skip(self))]
+    fn get_meta(
+        &self,
+    ) -> Result<(Option<LogIdOf<TypeConfig>>, StoredMembershipOf<TypeConfig>), StoreError> {
+        let last_applied_log = self
+            .meta
+            .get(KEY_LAST_APPLIED_LOG)?
+            .map(|x| deserialize(&x))
+            .transpose()?;
+        let last_membership = self
+            .meta
+            .get(KEY_LAST_MEMBERSHIP)?
+            .map(|x| deserialize(&x))
+            .transpose()?
+            .unwrap_or_default();
+        Ok((last_applied_log, last_membership))
+    }
+
+    /// Get the index `keyspace` handle.
+    pub fn index(&self) -> &Keyspace {
+        &self.index
+    }
+
+    /// Returns `true` if `name` is a registered ephemeral (in-memory,
+    /// non-Fjall) keyspace.
+    pub fn is_ephemeral_keyspace<S: AsRef<str>>(&self, name: S) -> bool {
+        self.ephemeral.contains_key(name.as_ref())
+    }
+
+    /// Get the Fjall `keyspace` handle by name.
+    pub fn keyspace<S: AsRef<str>>(&self, name: S) -> Result<Keyspace, StoreError> {
+        Ok(match name.as_ref() {
+            "data" => self.data.clone(),
+            "meta" => self.meta.clone(),
+            "index" => self.index.clone(),
+            other => self
+                .db
+                .keyspace(other.as_ref(), KeyspaceCreateOptions::default)?,
+        })
+    }
+
+    /// Returns `true` if `name` names a keyspace that currently exists.
+    ///
+    /// Unlike [`Self::keyspace`], this never auto-vivifies an empty
+    /// partition — safe to call speculatively when probing for
+    /// garbage-collection candidates.
+    pub fn keyspace_exists<S: AsRef<str>>(&self, name: S) -> bool {
+        matches!(name.as_ref(), "data" | "meta" | "index")
+            || self.ephemeral.contains_key(name.as_ref())
+            || self.db.keyspace_exists(name.as_ref())
+    }
+
+    /// Get the metadata `keyspace` handle.
+    pub fn meta(&self) -> &Keyspace {
+        &self.meta
+    }
+
     #[allow(clippy::result_large_err, clippy::too_many_arguments)]
     /// Create a new `FjallStateMachine`.
     ///
@@ -295,48 +454,6 @@ impl FjallStateMachine {
         })
     }
 
-    /// Set the per-key write version threshold. Values of `0` are ignored.
-    pub fn set_write_rate_threshold(&self, threshold: u32) {
-        if threshold > 0 {
-            self.write_rate_threshold
-                .store(threshold, std::sync::atomic::Ordering::Relaxed);
-        }
-    }
-
-    /// Current per-key write version threshold.
-    pub(crate) fn write_rate_threshold(&self) -> u32 {
-        self.write_rate_threshold
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Attach the audit forwarder. First call wins; later calls are ignored.
-    ///
-    /// Re-syncs the forwarder's key with the current DEK epoch: a swap
-    /// applied before the forwarder was attached could not rotate its key.
-    pub fn set_audit_forwarder(&self, forwarder: crate::audit::AuditForwarder) {
-        if self.audit.set(forwarder).is_err() {
-            return;
-        }
-        let epoch = self.dek.read().unwrap_or_else(|p| p.into_inner()).clone();
-        if let Some(audit) = self.audit.get() {
-            match epoch.derive_audit_key(self.node_id) {
-                Ok(key) => audit.rotate_key(epoch.version, key),
-                Err(e) => tracing::error!(
-                    error = %e,
-                    version = epoch.version,
-                    "AUDIT: failed to derive audit key for current DEK epoch"
-                ),
-            }
-        }
-    }
-
-    /// This node's ADR 0031 Raft Prometheus metrics.
-    pub fn raft_prometheus_metrics(
-        &self,
-    ) -> &Arc<crate::prometheus_metrics::KeystoneRaftPrometheusMetrics> {
-        &self.raft_prometheus_metrics
-    }
-
     /// Point-in-time node state for the `/metrics` endpoint (GitHub
     /// #1306). The log nonce counter lives in the log store and is left
     /// unset here.
@@ -392,166 +509,51 @@ impl FjallStateMachine {
         }
     }
 
+    /// This node's ADR 0031 Raft Prometheus metrics.
+    pub fn raft_prometheus_metrics(
+        &self,
+    ) -> &Arc<crate::prometheus_metrics::KeystoneRaftPrometheusMetrics> {
+        &self.raft_prometheus_metrics
+    }
+
+    /// Attach the audit forwarder. First call wins; later calls are ignored.
+    ///
+    /// Re-syncs the forwarder's key with the current DEK epoch: a swap
+    /// applied before the forwarder was attached could not rotate its key.
+    pub fn set_audit_forwarder(&self, forwarder: crate::audit::AuditForwarder) {
+        if self.audit.set(forwarder).is_err() {
+            return;
+        }
+        let epoch = self.dek.read().unwrap_or_else(|p| p.into_inner()).clone();
+        if let Some(audit) = self.audit.get() {
+            match epoch.derive_audit_key(self.node_id) {
+                Ok(key) => audit.rotate_key(epoch.version, key),
+                Err(e) => tracing::error!(
+                    error = %e,
+                    version = epoch.version,
+                    "AUDIT: failed to derive audit key for current DEK epoch"
+                ),
+            }
+        }
+    }
+
+    /// Set the per-key write version threshold. Values of `0` are ignored.
+    pub fn set_write_rate_threshold(&self, threshold: u32) {
+        if threshold > 0 {
+            self.write_rate_threshold
+                .store(threshold, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
     /// The displaced-DEK list, to share with the log store.
     pub fn shadow_deks(&self) -> Arc<Mutex<Vec<Arc<DekEpoch>>>> {
         self.shadow_deks.clone()
     }
 
-    /// Get the database handle.
-    pub fn db(&self) -> &Arc<Database> {
-        &self.db
-    }
-
-    /// Get the data `keyspace` handle.
-    pub fn data(&self) -> &Keyspace {
-        &self.data
-    }
-
-    /// Get the index `keyspace` handle.
-    pub fn index(&self) -> &Keyspace {
-        &self.index
-    }
-
-    /// Get the metadata `keyspace` handle.
-    pub fn meta(&self) -> &Keyspace {
-        &self.meta
-    }
-
-    /// Returns `true` if `name` is a registered ephemeral (in-memory,
-    /// non-Fjall) keyspace.
-    pub fn is_ephemeral_keyspace<S: AsRef<str>>(&self, name: S) -> bool {
-        self.ephemeral.contains_key(name.as_ref())
-    }
-
-    /// Reads a single key from an ephemeral keyspace.
-    ///
-    /// Returns `None` both when `keyspace` is not ephemeral and when the
-    /// key is absent — callers that need to distinguish "not an ephemeral
-    /// keyspace" (fall through to Fjall) from "no such key" (return `None`
-    /// to the caller) must check [`Self::is_ephemeral_keyspace`] first.
-    pub fn ephemeral_get<S: AsRef<str>>(
-        &self,
-        keyspace: S,
-        key: &[u8],
-    ) -> Option<(Vec<u8>, Metadata)> {
-        self.ephemeral
-            .get(keyspace.as_ref())?
-            .get(key)
-            .map(|e| e.value().clone())
-    }
-
-    /// Lists all entries in an ephemeral keyspace whose key starts with
-    /// `prefix`. Returns `None` if `keyspace` is not ephemeral.
-    pub fn ephemeral_prefix<S: AsRef<str>>(
-        &self,
-        keyspace: S,
-        prefix: &[u8],
-    ) -> Option<Vec<EphemeralEntry>> {
-        let ks = self.ephemeral.get(keyspace.as_ref())?;
-        Some(
-            ks.iter()
-                .filter(|entry| entry.key().starts_with(prefix))
-                .map(|entry| {
-                    let (cipher, metadata) = entry.value().clone();
-                    (entry.key().clone(), cipher, metadata)
-                })
-                .collect(),
-        )
-    }
-
-    /// Get the Fjall `keyspace` handle by name.
-    pub fn keyspace<S: AsRef<str>>(&self, name: S) -> Result<Keyspace, StoreError> {
-        Ok(match name.as_ref() {
-            "data" => self.data.clone(),
-            "meta" => self.meta.clone(),
-            "index" => self.index.clone(),
-            other => self
-                .db
-                .keyspace(other.as_ref(), KeyspaceCreateOptions::default)?,
-        })
-    }
-
-    /// Returns `true` if `name` names a keyspace that currently exists.
-    ///
-    /// Unlike [`Self::keyspace`], this never auto-vivifies an empty
-    /// partition — safe to call speculatively when probing for
-    /// garbage-collection candidates.
-    pub fn keyspace_exists<S: AsRef<str>>(&self, name: S) -> bool {
-        matches!(name.as_ref(), "data" | "meta" | "index")
-            || self.ephemeral.contains_key(name.as_ref())
-            || self.db.keyspace_exists(name.as_ref())
-    }
-
-    /// Permanently deletes an empty, non-core keyspace/partition.
-    ///
-    /// Returns an error, without deleting anything, if the keyspace still
-    /// has entries or if it names one of the core `"data"` / `"meta"` /
-    /// `"index"` keyspaces. A no-op if the keyspace does not exist.
-    ///
-    /// Not part of the replicated Raft log: dropping an already-empty
-    /// partition has no effect observable through `StorageApi`, so every
-    /// node may reclaim it independently once it locally observes the
-    /// keyspace is drained (analogous to local LSM compaction).
-    pub fn drop_keyspace<S: AsRef<str>>(&self, name: S) -> Result<(), StoreError> {
-        let name = name.as_ref();
-        if matches!(name, "data" | "meta" | "index") {
-            return Err(StoreError::Other(eyre::eyre!(
-                "refusing to drop core keyspace '{name}'"
-            )));
-        }
-        // Ephemeral keyspaces live purely in memory: no on-disk emptiness
-        // check or `keyspace_lifecycle` coordination with `apply()` is
-        // needed, since `DashMap::remove` is atomic per-entry and `apply()`
-        // only ever inserts into a *different* per-keyspace inner map, not
-        // this outer registry.
-        if let Some((_, inner)) = self.ephemeral.remove(name) {
-            if !inner.is_empty() {
-                self.ephemeral.insert(name.to_string(), inner);
-                return Err(StoreError::Other(eyre::eyre!(
-                    "refusing to drop non-empty keyspace '{name}'"
-                )));
-            }
-            return Ok(());
-        }
-        // Excludes any concurrent `apply()` call for the whole
-        // exists/is-empty/delete sequence, so a write that `apply()` is
-        // mid-way through queuing into this keyspace's batch can't be
-        // silently discarded by a delete that lands between the emptiness
-        // check and the physical drop.
-        let _lifecycle_guard = self
-            .keyspace_lifecycle
-            .write()
-            .unwrap_or_else(|p| p.into_inner());
-        if !self.db.keyspace_exists(name) {
-            return Ok(());
-        }
-        let ks = self.db.keyspace(name, KeyspaceCreateOptions::default)?;
-        if !ks.is_empty()? {
-            return Err(StoreError::Other(eyre::eyre!(
-                "refusing to drop non-empty keyspace '{name}'"
-            )));
-        }
-        self.db.delete_keyspace(ks)?;
-        Ok(())
-    }
-
-    #[allow(clippy::result_large_err)]
-    #[tracing::instrument(skip(self))]
-    fn get_meta(
-        &self,
-    ) -> Result<(Option<LogIdOf<TypeConfig>>, StoredMembershipOf<TypeConfig>), StoreError> {
-        let last_applied_log = self
-            .meta
-            .get(KEY_LAST_APPLIED_LOG)?
-            .map(|x| deserialize(&x))
-            .transpose()?;
-        let last_membership = self
-            .meta
-            .get(KEY_LAST_MEMBERSHIP)?
-            .map(|x| deserialize(&x))
-            .transpose()?
-            .unwrap_or_default();
-        Ok((last_applied_log, last_membership))
+    /// Current per-key write version threshold.
+    pub(crate) fn write_rate_threshold(&self) -> u32 {
+        self.write_rate_threshold
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -563,28 +565,10 @@ fn deserialize<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, StorageE
     rmp_serde::from_slice(bytes).map_err(|e| StorageError::read(TypeConfig::err_from_error(&e)))
 }
 
-/// Persists `raw` as the node's current DEK in the `meta` keyspace exactly
-/// like `bootstrap_dek` does, which hand-built test state machines skip but
-/// snapshot building now requires (the snapshot's DEK manifest is derived
-/// from it).
 #[cfg(test)]
-fn seed_current_dek(sm: &FjallStateMachine, raw: [u8; 32], version: u32) {
-    let wrapped = sm.kek.wrap_dek(&raw).expect("wrap dek");
-    let mut persisted = version.to_be_bytes().to_vec();
-    persisted.extend_from_slice(&wrapped);
-    sm.meta
-        .insert(META_DEK_CURRENT, &persisted)
-        .expect("persist current dek");
-}
-
-/// A manifest naming the state machine's persisted current DEK.
+mod test_support;
 #[cfg(test)]
-fn current_manifest(sm: &FjallStateMachine) -> DekManifest {
-    DekManifest {
-        current: sm.current_dek_wrapped().expect("current dek"),
-        retired: Vec::new(),
-    }
-}
+use test_support::*;
 
 #[cfg(test)]
 mod quarantine_tests;
@@ -606,3 +590,6 @@ mod ephemeral_tests;
 
 #[cfg(test)]
 mod snapshot_tests;
+
+#[cfg(test)]
+mod wire_format_tests;

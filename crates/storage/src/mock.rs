@@ -35,17 +35,17 @@ use crate::types::{Metadata, StoreDataEnvelope};
 pub struct MockStorage {
     /// keyspace -> data_key -> serialized data bytes.
     data: Mutex<HashMap<String, HashMap<String, Vec<u8>>>>,
+    /// index_key -> ()  (flat, no keyspace).
+    indexes: Mutex<HashMap<Vec<u8>, ()>>,
+    /// The simulated current Raft leader id. Defaults to `None` (no
+    /// leader), matching `current_leader()`'s prior hardcoded behavior.
+    leader_id: Mutex<Option<u64>>,
     /// data_key -> serialized `Metadata`.
     /// Stored flat, regardless of keyspace, matching the real Fjall
     /// state machine which keeps metadata in a single "meta" keyspace.
     metadata: Mutex<HashMap<String, Vec<u8>>>,
-    /// index_key -> ()  (flat, no keyspace).
-    indexes: Mutex<HashMap<Vec<u8>, ()>>,
     /// This node's simulated Raft node id. Defaults to `0`.
     node_id: Mutex<u64>,
-    /// The simulated current Raft leader id. Defaults to `None` (no
-    /// leader), matching `current_leader()`'s prior hardcoded behavior.
-    leader_id: Mutex<Option<u64>>,
 }
 
 fn lock<'a, T>(m: &'a Mutex<T>) -> Result<std::sync::MutexGuard<'a, T>, StoreError> {
@@ -55,16 +55,51 @@ fn lock<'a, T>(m: &'a Mutex<T>) -> Result<std::sync::MutexGuard<'a, T>, StoreErr
 }
 
 impl MockStorage {
-    /// Sets this node's simulated Raft node id, for tests exercising
-    /// leader-only logic (`current_leader() == Some(node_id())`).
-    pub fn set_node_id(&self, id: u64) {
-        *self.node_id.lock().unwrap_or_else(|p| p.into_inner()) = id;
+    /// Create a value under `key` only if the key does not already exist.
+    /// Returns a `Violation` with type "CONFLICT" when the key already exists.
+    /// When a violation occurs, the write is skipped.
+    fn create_if_absent_inner(
+        data: &mut HashMap<String, HashMap<String, Vec<u8>>>,
+        metadata_map: &mut HashMap<String, Vec<u8>>,
+        key: &str,
+        keyspace: &str,
+        value_bytes: Vec<u8>,
+        metadata: &Metadata,
+    ) -> Result<Option<Violation>, StoreError> {
+        let exists = metadata_map.contains_key(key);
+        if exists {
+            Ok(Some(Violation {
+                r#type: "CONFLICT".to_string(),
+                subject: key.to_string(),
+                description: "key already exists (create_if_absent)".to_string(),
+            }))
+        } else {
+            data.entry(keyspace.to_string())
+                .or_default()
+                .insert(key.to_string(), value_bytes);
+            metadata_map.insert(key.to_string(), metadata.pack()?);
+            Ok(None)
+        }
+    }
+
+    /// Fetch `Metadata` for a key, returning a default if absent.
+    fn get_metadata(metadata_map: &HashMap<String, Vec<u8>>, key: &str) -> Metadata {
+        metadata_map
+            .get(key)
+            .and_then(|m| Metadata::unpack(m).ok())
+            .unwrap_or_default()
     }
 
     /// Sets the simulated current Raft leader id, for tests exercising
     /// leader-only logic.
     pub fn set_current_leader(&self, leader: Option<u64>) {
         *self.leader_id.lock().unwrap_or_else(|p| p.into_inner()) = leader;
+    }
+
+    /// Sets this node's simulated Raft node id, for tests exercising
+    /// leader-only logic (`current_leader() == Some(node_id())`).
+    pub fn set_node_id(&self, id: u64) {
+        *self.node_id.lock().unwrap_or_else(|p| p.into_inner()) = id;
     }
 
     /// Store a value under `key` in `keyspace`, recording `metadata`.
@@ -103,41 +138,6 @@ impl MockStorage {
         }
         Ok(violation)
     }
-
-    /// Create a value under `key` only if the key does not already exist.
-    /// Returns a `Violation` with type "CONFLICT" when the key already exists.
-    /// When a violation occurs, the write is skipped.
-    fn create_if_absent_inner(
-        data: &mut HashMap<String, HashMap<String, Vec<u8>>>,
-        metadata_map: &mut HashMap<String, Vec<u8>>,
-        key: &str,
-        keyspace: &str,
-        value_bytes: Vec<u8>,
-        metadata: &Metadata,
-    ) -> Result<Option<Violation>, StoreError> {
-        let exists = metadata_map.contains_key(key);
-        if exists {
-            Ok(Some(Violation {
-                r#type: "CONFLICT".to_string(),
-                subject: key.to_string(),
-                description: "key already exists (create_if_absent)".to_string(),
-            }))
-        } else {
-            data.entry(keyspace.to_string())
-                .or_default()
-                .insert(key.to_string(), value_bytes);
-            metadata_map.insert(key.to_string(), metadata.pack()?);
-            Ok(None)
-        }
-    }
-
-    /// Fetch `Metadata` for a key, returning a default if absent.
-    fn get_metadata(metadata_map: &HashMap<String, Vec<u8>>, key: &str) -> Metadata {
-        metadata_map
-            .get(key)
-            .and_then(|m| Metadata::unpack(m).ok())
-            .unwrap_or_default()
-    }
 }
 
 #[async_trait]
@@ -153,6 +153,26 @@ impl StorageApi for MockStorage {
             .get(&ks)
             .is_some_and(|m| m.contains_key(&key_str));
         Ok(res)
+    }
+
+    async fn current_leader(&self) -> Option<u64> {
+        *self.leader_id.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    async fn drop_keyspace(&self, keyspace: &str) -> Result<(), ApiStoreError> {
+        if matches!(keyspace, "data" | "meta" | "index") {
+            return Err(ApiStoreError::other(format!(
+                "refusing to drop core keyspace '{keyspace}'"
+            )));
+        }
+        let mut data = lock(&self.data)?;
+        if data.get(keyspace).is_some_and(|m| !m.is_empty()) {
+            return Err(ApiStoreError::other(format!(
+                "refusing to drop non-empty keyspace '{keyspace}'"
+            )));
+        }
+        data.remove(keyspace);
+        Ok(())
     }
 
     async fn get_by_key(
@@ -179,6 +199,25 @@ impl StorageApi for MockStorage {
             data: value_bytes.clone(),
             metadata: meta,
         }))
+    }
+
+    async fn initialize(
+        &self,
+        _nodes: HashMap<u64, openstack_keystone_storage_api::Node>,
+    ) -> Result<(), ApiStoreError> {
+        Ok(())
+    }
+
+    async fn is_initialized(&self) -> Result<bool, ApiStoreError> {
+        Ok(false)
+    }
+
+    async fn keyspace_exists(&self, keyspace: &str) -> Result<bool, ApiStoreError> {
+        Ok(lock(&self.data)?.contains_key(keyspace))
+    }
+
+    async fn node_id(&self) -> u64 {
+        *self.node_id.lock().unwrap_or_else(|p| p.into_inner())
     }
 
     async fn prefix(
@@ -256,6 +295,14 @@ impl StorageApi for MockStorage {
         })
     }
 
+    async fn set_index_key(&self, key: String) -> Result<StoreResponse, ApiStoreError> {
+        lock(&self.indexes)?.insert(key.into_bytes(), ());
+        Ok(StoreResponse {
+            value: None,
+            violations: vec![],
+        })
+    }
+
     async fn set_value(
         &self,
         key: String,
@@ -281,14 +328,6 @@ impl StorageApi for MockStorage {
         Ok(StoreResponse {
             value: None,
             violations,
-        })
-    }
-
-    async fn set_index_key(&self, key: String) -> Result<StoreResponse, ApiStoreError> {
-        lock(&self.indexes)?.insert(key.into_bytes(), ());
-        Ok(StoreResponse {
-            value: None,
-            violations: vec![],
         })
     }
 
@@ -398,45 +437,6 @@ impl StorageApi for MockStorage {
             value: None,
             violations,
         })
-    }
-
-    async fn is_initialized(&self) -> Result<bool, ApiStoreError> {
-        Ok(false)
-    }
-
-    async fn current_leader(&self) -> Option<u64> {
-        *self.leader_id.lock().unwrap_or_else(|p| p.into_inner())
-    }
-
-    async fn keyspace_exists(&self, keyspace: &str) -> Result<bool, ApiStoreError> {
-        Ok(lock(&self.data)?.contains_key(keyspace))
-    }
-
-    async fn drop_keyspace(&self, keyspace: &str) -> Result<(), ApiStoreError> {
-        if matches!(keyspace, "data" | "meta" | "index") {
-            return Err(ApiStoreError::other(format!(
-                "refusing to drop core keyspace '{keyspace}'"
-            )));
-        }
-        let mut data = lock(&self.data)?;
-        if data.get(keyspace).is_some_and(|m| !m.is_empty()) {
-            return Err(ApiStoreError::other(format!(
-                "refusing to drop non-empty keyspace '{keyspace}'"
-            )));
-        }
-        data.remove(keyspace);
-        Ok(())
-    }
-
-    async fn node_id(&self) -> u64 {
-        *self.node_id.lock().unwrap_or_else(|p| p.into_inner())
-    }
-
-    async fn initialize(
-        &self,
-        _nodes: HashMap<u64, openstack_keystone_storage_api::Node>,
-    ) -> Result<(), ApiStoreError> {
-        Ok(())
     }
 }
 

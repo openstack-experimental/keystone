@@ -11,6 +11,10 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+//! # Crate-internal type aliases.
+//!
+//! Short names for the `openraft` types instantiated with this crate's
+//! [`TypeConfig`], so signatures elsewhere stay readable.
 
 use std::sync::Arc;
 
@@ -61,11 +65,17 @@ pub type StreamAppendResult = openraft::raft::StreamAppendResult<TypeConfig>;
 /// meta keyspace.  `flush` calls `Database::persist(SyncAll)` to guarantee
 /// durability before returning.
 pub struct FjallNoncePersistence {
-    pub(crate) keyspace: Keyspace,
     pub(crate) db: Arc<Database>,
+    pub(crate) keyspace: Keyspace,
 }
 
 impl NoncePersistence for FjallNoncePersistence {
+    fn flush(&self) -> Result<(), CryptoError> {
+        self.db
+            .persist(PersistMode::SyncAll)
+            .map_err(|e| CryptoError::NoncePersistence(e.to_string()))
+    }
+
     fn read_u64(&self, key: &str) -> Result<Option<u64>, CryptoError> {
         let v = self
             .keyspace
@@ -85,12 +95,6 @@ impl NoncePersistence for FjallNoncePersistence {
     fn write_u64(&self, key: &str, value: u64) -> Result<(), CryptoError> {
         self.keyspace
             .insert(key.as_bytes(), value.to_be_bytes())
-            .map_err(|e| CryptoError::NoncePersistence(e.to_string()))
-    }
-
-    fn flush(&self) -> Result<(), CryptoError> {
-        self.db
-            .persist(PersistMode::SyncAll)
             .map_err(|e| CryptoError::NoncePersistence(e.to_string()))
     }
 }

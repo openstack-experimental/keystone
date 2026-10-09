@@ -17,123 +17,14 @@
 use super::*;
 
 impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
-    type SnapshotData = Vec<u8>;
     type SnapshotBuilder = Self;
+    type SnapshotData = Vec<u8>;
 
     #[tracing::instrument(skip(self))]
     async fn applied_state(
         &mut self,
     ) -> Result<(Option<LogIdOf<TypeConfig>>, StoredMembershipOf<TypeConfig>), io::Error> {
         self.get_meta().map_err(|e| io::Error::other(e.to_string()))
-    }
-
-    #[tracing::instrument(skip(self))]
-    async fn get_snapshot_builder(&mut self) -> Self::SnapshotBuilder {
-        self.clone()
-    }
-
-    #[tracing::instrument(skip(self))]
-    async fn install_snapshot(
-        &mut self,
-        meta: &SnapshotMetaOf<TypeConfig>,
-        snapshot: Vec<u8>,
-    ) -> Result<(), io::Error> {
-        tracing::info!(
-            { snapshot_size = snapshot.len() },
-            "decoding snapshot for installation"
-        );
-
-        let payload: SnapshotPayload = deserialize(snapshot.as_ref())
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-
-        check_snapshot_format_version(payload.version)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-
-        let payload_clone = payload.clone();
-
-        let last_applied_bytes = meta
-            .last_log_id
-            .as_ref()
-            .map(|log_id| {
-                serialize(log_id)
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
-            })
-            .transpose()?;
-
-        let last_membership_bytes = serialize(&meta.last_membership)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-
-        let manifest = self.install_payload(
-            payload,
-            RaftBookkeeping::Install(last_applied_bytes, last_membership_bytes),
-        )?;
-
-        let snapshot_idx: u64 = rand::rng().random_range(0..1000);
-        let snapshot_id = if let Some(last) = meta.last_log_id.as_ref() {
-            format!(
-                "{}-{}-{}",
-                last.committed_leader_id(),
-                last.index(),
-                snapshot_idx
-            )
-        } else {
-            format!("--{}", snapshot_idx)
-        };
-
-        let snapshot_file = SnapshotFile {
-            meta: meta.clone(),
-            payload: payload_clone,
-        };
-        let file_bytes = serialize(&snapshot_file)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-
-        // Encrypt the snapshot file at rest with the current BackupDek,
-        // persist it, record it as the newest snapshot and GC stale files.
-        self.persist_snapshot_file(&snapshot_id, &file_bytes, &manifest)?;
-
-        Ok(())
-    }
-
-    #[tracing::instrument(skip(self))]
-    async fn get_current_snapshot(
-        &mut self,
-    ) -> Result<Option<SnapshotOf<TypeConfig, Vec<u8>>>, io::Error> {
-        // Try every retained snapshot file, newest first, falling back to
-        // an older one if the newest turns out corrupt or undecryptable
-        // (GitHub #1296 item 3) rather than refusing to start.
-        for snapshot_id in self.snapshot_history()? {
-            let snapshot_path = self.snapshot_dir.join(&snapshot_id);
-            let disk_bytes = match fs::read(&snapshot_path) {
-                Ok(bytes) => bytes,
-                Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
-                Err(e) => return Err(e),
-            };
-            match decrypt_snapshot_file(
-                &disk_bytes,
-                &self.dek,
-                &self.old_deks,
-                &self.shadow_deks,
-                &[],
-            ) {
-                Ok((snapshot_file, _, _)) => {
-                    let data_bytes = rmp_serde::to_vec(&snapshot_file.payload)
-                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-                    return Ok(Some(Snapshot {
-                        meta: snapshot_file.meta,
-                        snapshot: data_bytes,
-                    }));
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        snapshot_id,
-                        error = %e,
-                        "local snapshot file failed to decode; trying an older one"
-                    );
-                }
-            }
-        }
-        tracing::warn!("no usable local snapshot file found on startup; starting without one");
-        Ok(None)
     }
 
     #[tracing::instrument(skip(self, entries))]
@@ -1158,6 +1049,115 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
         for (responder, response) in pending_responses {
             responder.send(response);
         }
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn get_current_snapshot(
+        &mut self,
+    ) -> Result<Option<SnapshotOf<TypeConfig, Vec<u8>>>, io::Error> {
+        // Try every retained snapshot file, newest first, falling back to
+        // an older one if the newest turns out corrupt or undecryptable
+        // (GitHub #1296 item 3) rather than refusing to start.
+        for snapshot_id in self.snapshot_history()? {
+            let snapshot_path = self.snapshot_dir.join(&snapshot_id);
+            let disk_bytes = match fs::read(&snapshot_path) {
+                Ok(bytes) => bytes,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(e),
+            };
+            match decrypt_snapshot_file(
+                &disk_bytes,
+                &self.dek,
+                &self.old_deks,
+                &self.shadow_deks,
+                &[],
+            ) {
+                Ok((snapshot_file, _, _)) => {
+                    let data_bytes = rmp_serde::to_vec(&snapshot_file.payload)
+                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+                    return Ok(Some(Snapshot {
+                        meta: snapshot_file.meta,
+                        snapshot: data_bytes,
+                    }));
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        snapshot_id,
+                        error = %e,
+                        "local snapshot file failed to decode; trying an older one"
+                    );
+                }
+            }
+        }
+        tracing::warn!("no usable local snapshot file found on startup; starting without one");
+        Ok(None)
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn get_snapshot_builder(&mut self) -> Self::SnapshotBuilder {
+        self.clone()
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn install_snapshot(
+        &mut self,
+        meta: &SnapshotMetaOf<TypeConfig>,
+        snapshot: Vec<u8>,
+    ) -> Result<(), io::Error> {
+        tracing::info!(
+            { snapshot_size = snapshot.len() },
+            "decoding snapshot for installation"
+        );
+
+        let payload: SnapshotPayload = deserialize(snapshot.as_ref())
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+
+        check_snapshot_format_version(payload.version)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+        let payload_clone = payload.clone();
+
+        let last_applied_bytes = meta
+            .last_log_id
+            .as_ref()
+            .map(|log_id| {
+                serialize(log_id)
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
+            })
+            .transpose()?;
+
+        let last_membership_bytes = serialize(&meta.last_membership)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+
+        let manifest = self.install_payload(
+            payload,
+            RaftBookkeeping::Install(last_applied_bytes, last_membership_bytes),
+        )?;
+
+        let snapshot_idx: u64 = rand::rng().random_range(0..1000);
+        let snapshot_id = if let Some(last) = meta.last_log_id.as_ref() {
+            format!(
+                "{}-{}-{}",
+                last.committed_leader_id(),
+                last.index(),
+                snapshot_idx
+            )
+        } else {
+            format!("--{}", snapshot_idx)
+        };
+
+        let snapshot_file = SnapshotFile {
+            meta: meta.clone(),
+            payload: payload_clone,
+        };
+        let file_bytes = serialize(&snapshot_file)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+
+        // Encrypt the snapshot file at rest with the current BackupDek,
+        // persist it, record it as the newest snapshot and GC stale files.
+        self.persist_snapshot_file(&snapshot_id, &file_bytes, &manifest)?;
+
         Ok(())
     }
 }
