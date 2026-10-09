@@ -18,7 +18,6 @@ path="src/bin/keystone.rs"
 
 [dependencies]
 async-trait.workspace = true
-askama = { workspace = true, features = ["derive"] }
 axum = { workspace = true, features = ["form", "http1", "http2", "macros", "matched-path", "original-uri", "query", "tokio", "tracing"] }
 axum-extra = { workspace = true, features = ["cookie"] }
 base64.workspace = true
@@ -36,6 +35,7 @@ hyper.workspace = true
 inventory.workspace = true
 ipnet = { workspace = true }
 jsonwebtoken = { workspace = true }
+minijinja.workspace = true
 nix = { workspace = true, features = ["socket", "user"] }
 openstack-keystone-api-key-driver-raft.workspace = true
 openstack-keystone-api-types = { workspace = true, features = ["openapi", "validate", "conv"]}

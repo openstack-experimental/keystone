@@ -16,7 +16,6 @@
 //! verification page): security headers, the login/consent/error
 //! templates, and CSRF token derivation (ADR 0026 §8).
 
-use askama::Template;
 use axum::{
     http::{HeaderName, HeaderValue, StatusCode, header},
     response::{Html, IntoResponse, Response},
@@ -24,29 +23,43 @@ use axum::{
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
-#[derive(Template)]
-#[template(path = "oauth2/login.html")]
-pub(super) struct LoginTemplate<'a> {
-    pub(super) client_id: &'a str,
-    pub(super) csrf_token: &'a str,
-    pub(super) error: Option<&'a str>,
-    pub(super) action: String,
+use super::renderer::{ConsentCtx, DeviceEntryCtx, DeviceResultCtx, ErrorCtx, LoginCtx, renderer};
+
+/// Wrap a rendered page into a `200` response with the security headers, or
+/// fall back to the error page when the (operator-supplied) template fails
+/// at render time.
+fn page(rendered: Result<String, minijinja::Error>) -> Response {
+    match rendered {
+        Ok(body) => security_headers((StatusCode::OK, Html(body)).into_response()),
+        Err(e) => {
+            tracing::error!("OAuth2 page template failed to render: {e}");
+            error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
+        }
+    }
 }
 
-#[derive(Template)]
-#[template(path = "oauth2/consent.html")]
-pub(super) struct ConsentTemplate<'a> {
-    pub(super) client_id: &'a str,
-    pub(super) scopes: &'a [String],
-    pub(super) csrf_token: &'a str,
-    pub(super) action: String,
+pub(super) fn login_page(ctx: &LoginCtx) -> Response {
+    page(renderer().render_login(ctx))
 }
 
-#[derive(Template)]
-#[template(path = "oauth2/error.html")]
-pub(super) struct ErrorTemplate<'a> {
-    pub(super) message: &'a str,
+pub(super) fn consent_page(ctx: &ConsentCtx) -> Response {
+    page(renderer().render_consent(ctx))
 }
+
+pub(super) fn device_entry_page(ctx: &DeviceEntryCtx) -> Response {
+    page(renderer().render_device_entry(ctx))
+}
+
+pub(super) fn device_result_page(ctx: &DeviceResultCtx) -> Response {
+    page(renderer().render_device_result(ctx))
+}
+
+/// Operator stylesheets and logos load from this origin (or `data:` images);
+/// scripts and framing stay blocked. `form-action` is deliberately not set:
+/// browsers apply it to the redirect that answers a form POST, which would
+/// block the redirect back to the relying party's `redirect_uri`.
+const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; style-src 'self'; img-src 'self' data:; \
+     script-src 'none'; frame-ancestors 'none'";
 
 /// ADR 0026 §8: defense-in-depth headers on every server-rendered OP
 /// response (HTML pages and the redirects between them alike).
@@ -54,7 +67,7 @@ pub(super) fn security_headers(mut response: Response) -> Response {
     let headers = response.headers_mut();
     headers.insert(
         HeaderName::from_static("content-security-policy"),
-        HeaderValue::from_static("default-src 'self'"),
+        HeaderValue::from_static(CONTENT_SECURITY_POLICY),
     );
     headers.insert(
         HeaderName::from_static("x-frame-options"),
@@ -86,9 +99,11 @@ pub(super) fn no_store(mut response: Response) -> Response {
 }
 
 pub(super) fn error_page(status: StatusCode, message: &str) -> Response {
-    let body = ErrorTemplate { message }
-        .render()
-        .unwrap_or_else(|_| message.to_string());
+    let body = renderer()
+        .render_error(&ErrorCtx {
+            message: message.to_string(),
+        })
+        .unwrap_or_else(|_| "internal error".to_string());
     security_headers((status, Html(body)).into_response())
 }
 
@@ -137,6 +152,19 @@ mod tests {
         assert_eq!(headers["cache-control"], "no-store");
         assert_eq!(headers["pragma"], "no-cache");
         assert_eq!(headers["referrer-policy"], "no-referrer");
+    }
+
+    #[test]
+    fn test_csp_allows_assets_but_not_scripts() {
+        let response = security_headers(StatusCode::OK.into_response());
+        let csp = response.headers()["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(csp.contains("style-src 'self'"));
+        assert!(csp.contains("img-src 'self' data:"));
+        assert!(csp.contains("script-src 'none'"));
+        assert!(csp.contains("frame-ancestors 'none'"));
     }
 
     #[test]
