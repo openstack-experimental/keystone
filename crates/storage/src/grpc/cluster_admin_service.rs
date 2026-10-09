@@ -49,6 +49,7 @@ mod leader;
 mod local_emergency;
 mod restore;
 mod status;
+mod transfer;
 
 use self::auth::*;
 use self::leader::*;
@@ -733,6 +734,19 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         request: Request<Streaming<pb::raft::RestoreChunk>>,
     ) -> Result<Response<pb::raft::AdminResponse>, Status> {
         self.handle_restore(request).await
+    }
+
+    /// Hands leadership over to another voter and returns once it leads.
+    ///
+    /// Leader only (non-leaders answer with a leader redirect). Used by
+    /// `demote`/`remove-peer` before they take the leader out of the voter
+    /// set, and for planned restarts of the leader.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn transfer_leader(
+        &self,
+        request: Request<pb::raft::TransferLeaderAdminRequest>,
+    ) -> Result<Response<pb::raft::AdminResponse>, Status> {
+        self.handle_transfer_leader(request).await
     }
 }
 

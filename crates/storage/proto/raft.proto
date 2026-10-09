@@ -163,6 +163,41 @@ service RaftService {
 
   // Snapshot handles install snapshot RPC.
   rpc Snapshot(stream SnapshotRequest) returns (SnapshotResponse) {}
+
+  // TransferLeader tells the target node that the leader is handing
+  // leadership over to it, so it starts an election immediately instead of
+  // waiting for the leader lease to expire.
+  rpc TransferLeader(TransferLeaderRequest) returns (TransferLeaderResponse) {}
+}
+
+// Sent by the current leader to every node when it transfers leadership.
+message TransferLeaderRequest {
+  // The vote of the leader that is transferring leadership.
+  Vote from_leader = 1;
+  // The node that is to become the next leader.
+  uint64 to_node_id = 2;
+  // The last log id the target must have to take over.
+  LogId last_log_id = 3;
+}
+
+// The target's vote changed before it could accept the transfer.
+message TransferLeaderVoteChanged {
+  Vote expected = 1;
+  Vote actual = 2;
+}
+
+// The target has not flushed the leader's last log entry yet.
+message TransferLeaderLogNotFlushed {
+  LogId expected = 1;
+  LogId actual = 2;
+}
+
+// An empty response means the transfer was accepted.
+message TransferLeaderResponse {
+  oneof rejection {
+    TransferLeaderVoteChanged vote_changed = 1;
+    TransferLeaderLogNotFlushed log_not_flushed = 2;
+  }
 }
 
 // InitRequest contains the initial set of nodes for cluster initialization.
@@ -312,6 +347,16 @@ service ClusterAdminService {
   // with its own KEK, which requires all cluster nodes to share identical
   // KEK material.
   rpc FetchDek(google.protobuf.Empty) returns (FetchDekResponse) {}
+
+  // TransferLeader hands leadership of the cluster over to another voter and
+  // returns once that node is the leader, so the current leader can be
+  // demoted, removed or restarted without a leaderless window. Leader only.
+  rpc TransferLeader(TransferLeaderAdminRequest) returns (AdminResponse) {}
+}
+
+message TransferLeaderAdminRequest {
+  // The voter that is to become the leader.
+  uint64 node_id = 1;
 }
 
 // A pending emergency DEK rotation awaiting dual-control confirmation.

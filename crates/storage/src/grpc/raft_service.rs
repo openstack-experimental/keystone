@@ -244,4 +244,24 @@ impl RaftService for RaftServiceImpl {
 
         Ok(Response::new(Box::pin(output_stream)))
     }
+
+    /// Handles a leadership transfer announced by the current leader: the
+    /// target starts an election right away.
+    #[tracing::instrument(level = "trace", skip(self))]
+    async fn transfer_leader(
+        &self,
+        request: Request<pb::raft::TransferLeaderRequest>,
+    ) -> Result<Response<pb::raft::TransferLeaderResponse>, Status> {
+        self.authz.require(&request, &[PeerRole::Node])?;
+        let req = request
+            .into_inner()
+            .try_into()
+            .map_err(|e| Status::invalid_argument(format!("Invalid transfer request: {e}")))?;
+        let resp = self
+            .raft_node
+            .handle_transfer_leader(req)
+            .await
+            .map_err(|e| Status::internal(format!("Transfer leader failed: {e}")))?;
+        Ok(Response::new(resp.into()))
+    }
 }

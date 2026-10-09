@@ -396,15 +396,21 @@ impl NetBackoff<TypeConfig> for NetworkConnection {
 impl NetTransferLeader<TypeConfig> for NetworkConnection {
     async fn transfer_leader(
         &mut self,
-        _req: TransferLeaderRequest<TypeConfig>,
+        req: TransferLeaderRequest<TypeConfig>,
         _option: RPCOption,
     ) -> Result<
         openraft::raft::TransferLeaderResponse<TypeConfig>,
         openraft::error::RPCError<TypeConfig>,
     > {
-        Err(openraft::error::RPCError::Unreachable(Unreachable::new(
-            &AnyError::error("transfer_leader not implemented"),
-        )))
+        let mut client = self.make_client().await?;
+        let response = client
+            .transfer_leader(pb::raft::TransferLeaderRequest::from(req))
+            .await
+            .map_err(|e| RPCError::Network(NetworkError::<TypeConfig>::new(&e)))?;
+        response
+            .into_inner()
+            .try_into()
+            .map_err(|e| RPCError::Network(NetworkError::<TypeConfig>::new(&e)))
     }
 }
 

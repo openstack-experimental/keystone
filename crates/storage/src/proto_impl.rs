@@ -20,6 +20,7 @@ mod impl_leader_id;
 mod impl_log_id;
 mod impl_membership;
 mod impl_snapshot_request;
+mod impl_transfer_leader;
 mod impl_vote;
 mod impl_vote_request;
 mod impl_vote_response;
