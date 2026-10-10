@@ -47,11 +47,12 @@ use openstack_keystone_core_types::identity::{
 use openstack_keystone_core_types::oauth2_client::{GrantType, OAuth2ClientResource};
 use openstack_keystone_core_types::oauth2_session::PreAuthSession;
 
+use super::federated::{idp_views, login_idps, redirect_to_upstream};
 use super::html::{
     client_view, consent_page, error_page, fetch_client, login_page, mfa_page, security_headers,
     too_many_requests, view_of,
 };
-use super::renderer::{ClientView, ConsentCtx, LoginCtx, MfaCtx};
+use super::renderer::{ClientView, ConsentCtx, IdpView, LoginCtx, MfaCtx};
 use crate::api::common::PeerAddr;
 use crate::audit::{
     CorrelationId, build_initiator_from_user_id, build_initiator_unknown, emit_oauth2_session_event,
@@ -78,6 +79,11 @@ pub(super) struct AuthorizeQuery {
     code_challenge_method: Option<String>,
     #[serde(default)]
     nonce: Option<String>,
+    /// Skip the login chooser and go straight to this upstream identity
+    /// provider. Only a registered, enabled IdP of the domain is honoured;
+    /// anything else is ignored.
+    #[serde(default)]
+    idp_hint: Option<String>,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -162,11 +168,12 @@ pub(super) fn session_cookie(session_id: String, secure: bool) -> Cookie<'static
         .build()
 }
 
-fn render_login(
+pub(super) fn render_login(
     domain_id: &str,
     session: &PreAuthSession,
     client: &ClientView,
     error: Option<&str>,
+    idps: Vec<IdpView>,
 ) -> Response {
     let Some(csrf_token) = compute_csrf_token(session) else {
         return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
@@ -176,6 +183,8 @@ fn render_login(
         csrf_token,
         error: error.map(str::to_string),
         action: format!("/v4/oauth2/{domain_id}/authorize/login"),
+        idps,
+        federated_action: format!("/v4/oauth2/{domain_id}/authorize/federated"),
     })
 }
 
@@ -417,7 +426,31 @@ pub(super) async fn authorize(
         cookie_secure(&state, &headers).await,
     ));
     let client_ui = client_view(&state, &session.client_id).await;
-    let response = render_login(&domain_id, &session, &client_ui, None);
+    let idps = login_idps(&state, &domain_id).await;
+    if let Some(hint) = query.idp_hint.as_deref()
+        && let Some(idp) = idps.iter().find(|idp| idp.id == hint).cloned()
+    {
+        let response = match redirect_to_upstream(
+            &state,
+            &headers,
+            &domain_id,
+            &session.session_id,
+            idp,
+        )
+        .await
+        {
+            Ok(redirect) => redirect,
+            Err(message) => render_login(
+                &domain_id,
+                &session,
+                &client_ui,
+                Some(message),
+                idp_views(&idps),
+            ),
+        };
+        return Ok((jar, response).into_response());
+    }
+    let response = render_login(&domain_id, &session, &client_ui, None, idp_views(&idps));
     Ok((jar, response).into_response())
 }
 
@@ -517,6 +550,7 @@ pub(super) async fn authorize_login(
                 &session,
                 &client_ui,
                 Some("invalid username or password"),
+                idp_views(&login_idps(&state, &domain_id).await),
             ));
         }
     };
@@ -545,6 +579,7 @@ pub(super) async fn authorize_login(
                 &session,
                 &client_ui,
                 Some("invalid username or password"),
+                idp_views(&login_idps(&state, &domain_id).await),
             ));
         }
     };
@@ -784,6 +819,7 @@ async fn finish_consent(
                 } else {
                     session.amr.clone()
                 },
+                upstream: session.upstream.clone(),
             },
         )
         .await
@@ -991,6 +1027,8 @@ mod tests {
             .expect_start_pre_auth_session()
             .returning(|_, req| {
                 Ok(PreAuthSession {
+                    pending_upstream: None,
+                    upstream: None,
                     session_id: "session-1".to_string(),
                     domain_id: req.domain_id,
                     client_id: req.client_id,
@@ -1065,6 +1103,8 @@ mod tests {
 
     fn sample_session() -> PreAuthSession {
         PreAuthSession {
+            pending_upstream: None,
+            upstream: None,
             session_id: "session-1".to_string(),
             domain_id: "domain-1".to_string(),
             client_id: "client-1".to_string(),
@@ -1266,7 +1306,13 @@ mod tests {
     fn test_render_login_and_consent_headers() {
         let session = sample_session();
         for response in [
-            super::render_login("domain-1", &session, &super::ClientView::from_id("c"), None),
+            super::render_login(
+                "domain-1",
+                &session,
+                &super::ClientView::from_id("c"),
+                None,
+                Vec::new(),
+            ),
             super::render_consent("domain-1", &session, &super::ClientView::from_id("c")),
         ] {
             assert_eq!(response.headers()["cache-control"], "no-store");

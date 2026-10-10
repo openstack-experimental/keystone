@@ -360,6 +360,7 @@ mod tests {
 
     fn sample_refresh_record(spent_at: Option<i64>) -> RefreshToken {
         RefreshToken {
+            upstream: None,
             token_id: "irrelevant".to_string(),
             family_id: "family-1".to_string(),
             parent_token_id: None,

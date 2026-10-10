@@ -241,6 +241,31 @@ impl Oauth2SessionApi for Oauth2SessionService {
             .await
     }
 
+    #[tracing::instrument(name = "provider.oauth2_session.begin_upstream_login", level = "debug", skip_all, fields(session_id = %session_id))]
+    async fn begin_upstream_login(
+        &self,
+        state: &ServiceState,
+        session_id: &str,
+        idp_id: &str,
+        upstream_state: &str,
+    ) -> Result<PreAuthSession, Oauth2SessionProviderError> {
+        self.backend_driver
+            .begin_pre_auth_session_upstream(state, session_id, idp_id, upstream_state)
+            .await
+    }
+
+    #[tracing::instrument(name = "provider.oauth2_session.complete_upstream_login", level = "debug", skip_all, fields(session_id = %session_id))]
+    async fn complete_upstream_login(
+        &self,
+        state: &ServiceState,
+        session_id: &str,
+        completion: UpstreamLoginCompletion,
+    ) -> Result<PreAuthSession, Oauth2SessionProviderError> {
+        self.backend_driver
+            .complete_pre_auth_session_upstream(state, session_id, completion)
+            .await
+    }
+
     #[tracing::instrument(name = "provider.oauth2_session.begin_mfa", level = "debug", skip_all, fields(session_id = %session_id))]
     async fn begin_mfa(
         &self,
@@ -317,6 +342,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
                     nonce: req.nonce,
                     auth_time: req.auth_time,
                     amr: req.amr,
+                    upstream: req.upstream,
                     created_at,
                     expires_at,
                 },
@@ -382,6 +408,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
                     user_id: req.user_id,
                     scope: req.scope,
                     amr: req.amr,
+                    upstream: req.upstream,
                     issued_at,
                     expires_at: expires_at.min(family_expires_at),
                     family_expires_at,
@@ -475,6 +502,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
                             user_id: record.user_id.clone(),
                             scope: record.scope.clone(),
                             amr: record.amr.clone(),
+                            upstream: record.upstream.clone(),
                             issued_at: now,
                             expires_at,
                             family_expires_at,
@@ -1026,6 +1054,8 @@ mod tests {
         user_id: Option<&str>,
     ) -> PreAuthSession {
         PreAuthSession {
+            pending_upstream: None,
+            upstream: None,
             session_id: session_id.to_string(),
             domain_id: domain_id.to_string(),
             client_id: "client-1".to_string(),
@@ -1133,6 +1163,7 @@ mod tests {
 
     fn sample_refresh_token(spent_at: Option<i64>) -> RefreshToken {
         RefreshToken {
+            upstream: None,
             token_id: "irrelevant".to_string(),
             family_id: "family-1".to_string(),
             parent_token_id: None,
@@ -1155,6 +1186,8 @@ mod tests {
         let mut mock = MockOauth2SessionBackend::new();
         mock.expect_get_pre_auth_session().returning(|_, _| {
             Ok(Some(PreAuthSession {
+                pending_upstream: None,
+                upstream: None,
                 session_id: "s1".to_string(),
                 domain_id: "d1".to_string(),
                 client_id: "c1".to_string(),
@@ -1190,6 +1223,7 @@ mod tests {
         let mut mock = MockOauth2SessionBackend::new();
         mock.expect_take_authorization_code().returning(|_, _| {
             Ok(Some(AuthorizationCode {
+                upstream: None,
                 code: "code-1".to_string(),
                 domain_id: "d1".to_string(),
                 client_id: "c1".to_string(),
@@ -1224,6 +1258,7 @@ mod tests {
             .returning(|_, _, _| Ok(()));
         mock.expect_create_refresh_token().returning(|_, data| {
             Ok(RefreshToken {
+                upstream: None,
                 token_id: data.token_id,
                 family_id: data.family_id,
                 parent_token_id: data.parent_token_id,
@@ -1287,6 +1322,7 @@ mod tests {
             })
             .returning(|_, data| {
                 Ok(RefreshToken {
+                    upstream: None,
                     token_id: data.token_id,
                     family_id: data.family_id,
                     parent_token_id: data.parent_token_id,
@@ -1333,6 +1369,7 @@ mod tests {
             })
             .returning(|_, data| {
                 Ok(RefreshToken {
+                    upstream: None,
                     token_id: data.token_id,
                     family_id: data.family_id,
                     parent_token_id: data.parent_token_id,
@@ -1370,6 +1407,7 @@ mod tests {
             })
             .returning(|_, data| {
                 Ok(RefreshToken {
+                    upstream: None,
                     token_id: data.token_id,
                     family_id: data.family_id,
                     parent_token_id: data.parent_token_id,
@@ -1393,6 +1431,7 @@ mod tests {
             .issue_refresh_token(
                 &state,
                 IssueRefreshTokenRequest {
+                    upstream: None,
                     domain_id: "d".to_string(),
                     client_id: "c".to_string(),
                     user_id: "u".to_string(),
@@ -1468,6 +1507,7 @@ mod tests {
             .returning(|_, _, _| Ok(()));
         mock.expect_create_refresh_token().returning(|_, data| {
             Ok(RefreshToken {
+                upstream: None,
                 token_id: data.token_id,
                 family_id: data.family_id,
                 parent_token_id: data.parent_token_id,

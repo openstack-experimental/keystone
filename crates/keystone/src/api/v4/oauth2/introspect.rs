@@ -433,6 +433,7 @@ mod tests {
     fn record(modify: impl FnOnce(&mut RefreshToken)) -> RefreshToken {
         let now = chrono::Utc::now().timestamp();
         let mut record = RefreshToken {
+            upstream: None,
             token_id: "irrelevant".to_string(),
             family_id: "family-1".to_string(),
             parent_token_id: None,

@@ -228,6 +228,8 @@ impl RaftOauth2SessionBackend {
             pending_user_id: None,
             pending_factors: vec![],
             mfa_attempts: 0,
+            pending_upstream: None,
+            upstream: None,
         };
         let mutations = vec![
             Mutation::set(
@@ -269,6 +271,59 @@ impl RaftOauth2SessionBackend {
         record.user_id = Some(user_id.to_string());
         record.auth_time = Some(auth_time);
         record.amr = amr;
+        record.pending_user_id = None;
+        record.pending_factors = Vec::new();
+        record.mfa_attempts = 0;
+        put(storage, session_key(session_id), &record)
+            .await
+            .map_err(store_err)?;
+        Ok(record)
+    }
+
+    async fn begin_pre_auth_session_upstream_impl(
+        &self,
+        storage: &dyn StorageApi,
+        session_id: &str,
+        idp_id: &str,
+        upstream_state: &str,
+    ) -> Result<PreAuthSession, Oauth2SessionProviderError> {
+        let mut record: PreAuthSession = get(storage, &session_key(session_id))
+            .await
+            .map_err(store_err)?
+            .ok_or_else(|| Oauth2SessionProviderError::NotFound(session_id.to_string()))?;
+        record.pending_upstream = Some(PendingUpstream {
+            idp_id: idp_id.to_string(),
+            state: upstream_state.to_string(),
+        });
+        put(storage, session_key(session_id), &record)
+            .await
+            .map_err(store_err)?;
+        Ok(record)
+    }
+
+    async fn complete_pre_auth_session_upstream_impl(
+        &self,
+        storage: &dyn StorageApi,
+        session_id: &str,
+        completion: UpstreamLoginCompletion,
+    ) -> Result<PreAuthSession, Oauth2SessionProviderError> {
+        let mut record: PreAuthSession = get(storage, &session_key(session_id))
+            .await
+            .map_err(store_err)?
+            .ok_or_else(|| Oauth2SessionProviderError::NotFound(session_id.to_string()))?;
+        // The callback must answer exactly the redirect this session sent.
+        let pending = record
+            .pending_upstream
+            .take()
+            .filter(|p| {
+                p.idp_id == completion.upstream.idp_id && p.state == completion.upstream_state
+            })
+            .ok_or_else(|| Oauth2SessionProviderError::NotFound(session_id.to_string()))?;
+        drop(pending);
+        record.user_id = Some(completion.user_id);
+        record.auth_time = Some(completion.auth_time);
+        record.amr = completion.amr;
+        record.upstream = Some(completion.upstream);
         record.pending_user_id = None;
         record.pending_factors = Vec::new();
         record.mfa_attempts = 0;
@@ -377,6 +432,7 @@ impl RaftOauth2SessionBackend {
             amr: data.amr,
             created_at: data.created_at,
             expires_at: data.expires_at,
+            upstream: data.upstream,
         };
         let mutations = vec![
             Mutation::set(
@@ -438,6 +494,7 @@ impl RaftOauth2SessionBackend {
             revoked_at: None,
             revocation_reason: None,
             amr: data.amr,
+            upstream: data.upstream,
         };
         let mutations = vec![
             Mutation::set(
@@ -1013,6 +1070,34 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
         .await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_session.begin_pre_auth_session_upstream", level = "debug", skip_all, fields(session_id = %session_id))]
+    async fn begin_pre_auth_session_upstream(
+        &self,
+        state: &ServiceState,
+        session_id: &str,
+        idp_id: &str,
+        upstream_state: &str,
+    ) -> Result<PreAuthSession, Oauth2SessionProviderError> {
+        self.begin_pre_auth_session_upstream_impl(
+            self.storage(state)?,
+            session_id,
+            idp_id,
+            upstream_state,
+        )
+        .await
+    }
+
+    #[tracing::instrument(name = "driver.raft.oauth2_session.complete_pre_auth_session_upstream", level = "debug", skip_all, fields(session_id = %session_id))]
+    async fn complete_pre_auth_session_upstream(
+        &self,
+        state: &ServiceState,
+        session_id: &str,
+        completion: UpstreamLoginCompletion,
+    ) -> Result<PreAuthSession, Oauth2SessionProviderError> {
+        self.complete_pre_auth_session_upstream_impl(self.storage(state)?, session_id, completion)
+            .await
+    }
+
     #[tracing::instrument(name = "driver.raft.oauth2_session.begin_pre_auth_session_mfa", level = "debug", skip_all, fields(session_id = %session_id))]
     async fn begin_pre_auth_session_mfa(
         &self,
@@ -1398,6 +1483,119 @@ mod tests {
         assert!(fetched.user_id.is_none());
     }
 
+    fn upstream_completion(state: &str, idp_id: &str) -> UpstreamLoginCompletion {
+        UpstreamLoginCompletion {
+            upstream_state: state.to_string(),
+            user_id: "user-1".to_string(),
+            auth_time: 1500,
+            amr: vec!["federated".to_string()],
+            upstream: UpstreamLogin {
+                idp_id: idp_id.to_string(),
+                sid: Some("sid-1".to_string()),
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn test_pre_auth_session_upstream_login_completes_once() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_pre_auth_session_impl(&storage, sample_session_create())
+            .await
+            .unwrap();
+
+        let pending = backend
+            .begin_pre_auth_session_upstream_impl(&storage, "session-1", "idp-1", "state-1")
+            .await
+            .unwrap();
+        // Redirected upstream, but nobody is signed in yet.
+        assert_eq!(pending.user_id, None);
+        assert_eq!(
+            pending.pending_upstream,
+            Some(PendingUpstream {
+                idp_id: "idp-1".into(),
+                state: "state-1".into(),
+            })
+        );
+
+        let done = backend
+            .complete_pre_auth_session_upstream_impl(
+                &storage,
+                "session-1",
+                upstream_completion("state-1", "idp-1"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(done.user_id.as_deref(), Some("user-1"));
+        assert_eq!(done.auth_time, Some(1500));
+        assert_eq!(done.amr, vec!["federated".to_string()]);
+        assert_eq!(done.pending_upstream, None);
+        assert_eq!(
+            done.upstream.as_ref().map(|u| u.idp_id.as_str()),
+            Some("idp-1")
+        );
+        assert_eq!(done.upstream.and_then(|u| u.sid).as_deref(), Some("sid-1"));
+
+        // The pending redirect is consumed: a replayed callback fails.
+        assert!(matches!(
+            backend
+                .complete_pre_auth_session_upstream_impl(
+                    &storage,
+                    "session-1",
+                    upstream_completion("state-1", "idp-1"),
+                )
+                .await,
+            Err(Oauth2SessionProviderError::NotFound(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_pre_auth_session_upstream_login_rejects_foreign_state_or_idp() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_pre_auth_session_impl(&storage, sample_session_create())
+            .await
+            .unwrap();
+
+        // Nothing pending at all.
+        assert!(
+            backend
+                .complete_pre_auth_session_upstream_impl(
+                    &storage,
+                    "session-1",
+                    upstream_completion("state-1", "idp-1"),
+                )
+                .await
+                .is_err()
+        );
+
+        backend
+            .begin_pre_auth_session_upstream_impl(&storage, "session-1", "idp-1", "state-1")
+            .await
+            .unwrap();
+        for (state, idp) in [("other-state", "idp-1"), ("state-1", "other-idp")] {
+            assert!(
+                backend
+                    .complete_pre_auth_session_upstream_impl(
+                        &storage,
+                        "session-1",
+                        upstream_completion(state, idp),
+                    )
+                    .await
+                    .is_err(),
+                "state={state} idp={idp} must not complete the login"
+            );
+        }
+        let still = backend
+            .get_pre_auth_session_impl(&storage, "session-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(still.user_id, None, "a failed attempt must not sign in");
+    }
+
     #[tokio::test]
     async fn test_pre_auth_session_mfa_pending_then_authenticated() {
         let backend = RaftOauth2SessionBackend::default();
@@ -1537,6 +1735,7 @@ mod tests {
 
     fn sample_code_create() -> AuthorizationCodeCreate {
         AuthorizationCodeCreate {
+            upstream: None,
             code: "code-1".to_string(),
             domain_id: "domain-1".to_string(),
             client_id: "client-1".to_string(),
@@ -1577,6 +1776,7 @@ mod tests {
 
     fn sample_refresh_create(token_id: &str, family_id: &str) -> RefreshTokenCreate {
         RefreshTokenCreate {
+            upstream: None,
             token_id: token_id.to_string(),
             family_id: family_id.to_string(),
             parent_token_id: None,

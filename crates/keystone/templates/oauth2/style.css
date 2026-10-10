@@ -77,3 +77,7 @@ footer a { color: inherit; }
 .client-logo { display: block; max-width: 100%; max-height: 3rem; margin: 0 0 1rem; }
 .client-description { opacity: 0.85; }
 .client-links { display: flex; gap: 1rem; flex-wrap: wrap; font-size: 0.9rem; }
+
+.idps { margin-top: 1.5rem; border-top: 1px solid #ccc; padding-top: 1rem; }
+.idps form { margin-top: 0.5rem; }
+button.secondary { background: transparent; color: inherit; border: 1px solid currentColor; }

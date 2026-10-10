@@ -32,6 +32,7 @@ mod device;
 mod device_authorization;
 mod device_mfa;
 mod ensure_signing_key;
+mod federated;
 mod html;
 mod introspect;
 mod jwks;
@@ -70,6 +71,8 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .routes(routes!(authorize::authorize))
         .routes(routes!(authorize::authorize_login))
         .routes(routes!(authorize_mfa::authorize_mfa))
+        .routes(routes!(federated::authorize_federated))
+        .routes(routes!(federated::authorize_federated_callback))
         .routes(routes!(authorize::authorize_consent))
         .routes(routes!(device_authorization::device_authorization))
         .routes(routes!(device::device, device::device_login_code))

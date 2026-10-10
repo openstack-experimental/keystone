@@ -37,6 +37,7 @@ use cadf::sanitize::{HostKind, sanitize_initiator_host};
 use cadf::types::{Host, Initiator};
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core_types::auth::AuthenticationResult;
+use openstack_keystone_core_types::federation::{AuthState, IdentityProvider};
 use openstack_keystone_core_types::mapping::auth::MappingAuthRequest;
 use openstack_keystone_core_types::mapping::resolution::IdentitySource;
 
@@ -151,6 +152,36 @@ async fn callback_inner(
         return Err(OidcError::IdentityProviderDisabled.into());
     }
 
+    let (auth_result, _claims) =
+        authenticate_upstream(state, &exec, &auth_state, &idp, &query.code).await?;
+
+    // Resolve scope from the original auth request. The scope may be None
+    // (unscoped) or a specific project/domain scope that was requested during
+    // OIDC auth init.
+    let (token_str, api_token) =
+        common::build_token_response(state, &auth_result, auth_state.scope.as_ref()).await?;
+
+    tracing::trace!("Token response is {:?}", api_token);
+    Ok((
+        StatusCode::OK,
+        [("x-subject-token", token_str)],
+        axum::Json(api_token),
+    )
+        .into_response())
+}
+
+/// Exchange the authorization `code` at the upstream IdP, verify the ID
+/// token and resolve the user through the mapping engine.
+///
+/// Returns the authentication result and the verified ID token claims.
+/// Shared by the v4 federation callback and the OAuth2 OP login page.
+pub(crate) async fn authenticate_upstream(
+    state: &ServiceState,
+    exec: &ExecutionContext<'_>,
+    auth_state: &AuthState,
+    idp: &IdentityProvider,
+    code: &str,
+) -> Result<(AuthenticationResult, serde_json::Value), KeystoneApiError> {
     // Build the HTTP client with strict redirect policy.
     let http_client = build_http_client()?;
 
@@ -178,7 +209,7 @@ async fn callback_inner(
         client_id,
         // Exposure boundary: unwrapped only to build the token-endpoint request.
         idp.oidc_client_secret.as_ref().map(|s| s.expose_secret()),
-        &query.code,
+        code,
         &auth_state.redirect_uri,
         &auth_state.pkce_verifier,
         &http_client,
@@ -254,22 +285,10 @@ async fn callback_inner(
     let auth_result: AuthenticationResult = state
         .provider
         .get_mapping_provider()
-        .authenticate_by_mapping(&exec, &mapping_req)
+        .authenticate_by_mapping(exec, &mapping_req)
         .await?;
 
-    // Resolve scope from the original auth request. The scope may be None
-    // (unscoped) or a specific project/domain scope that was requested during
-    // OIDC auth init.
-    let (token_str, api_token) =
-        common::build_token_response(state, &auth_result, auth_state.scope.as_ref()).await?;
-
-    tracing::trace!("Token response is {:?}", api_token);
-    Ok((
-        StatusCode::OK,
-        [("x-subject-token", token_str)],
-        axum::Json(api_token),
-    )
-        .into_response())
+    Ok((auth_result, claims_value))
 }
 
 #[cfg(test)]
@@ -331,5 +350,118 @@ mod tests {
         assert_eq!(initiator.id(), "unknown");
         assert!(initiator.host().is_none());
         assert!(receivers.perimeter.try_recv().is_err(), "exactly one event");
+    }
+
+    fn mapped_user_result() -> openstack_keystone_core_types::auth::AuthenticationResult {
+        use openstack_keystone_core_types::auth::*;
+        AuthenticationResultBuilder::default()
+            .context(AuthenticationContext::Password)
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id("shadow-user")
+                        .build()
+                        .unwrap(),
+                ),
+            })
+            .authorization(
+                AuthzInfoBuilder::default()
+                    .scope(ScopeInfo::Unscoped)
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap()
+    }
+
+    /// Code exchange, ID-token verification and mapping run end to end
+    /// against a mocked upstream; the claims come back for the caller.
+    #[tokio::test]
+    async fn test_authenticate_upstream_resolves_user_through_mapping() {
+        use super::super::oidc_utils::fixtures::*;
+        use httpmock::prelude::*;
+        use openstack_keystone_core_types::federation::{AuthState, IdentityProvider};
+
+        let server = MockServer::start();
+        let issuer = server.base_url();
+        server.mock(|when, then| {
+            when.method(GET).path("/.well-known/openid-configuration");
+            then.status(200).json_body(json!({
+                "issuer": issuer,
+                "authorization_endpoint": format!("{issuer}/authorize"),
+                "token_endpoint": format!("{issuer}/token"),
+                "jwks_uri": format!("{issuer}/jwks"),
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/jwks");
+            then.status(200).json_body(json!({"keys": [{
+                "kty": "RSA", "use": "sig", "alg": "RS256", "kid": TEST_KID,
+                "n": TEST_JWK_N, "e": TEST_JWK_E,
+            }]}));
+        });
+        let id_token = make_jwt(
+            &json!({
+                "iss": issuer,
+                "aud": "op-client",
+                "sub": "upstream-sub",
+                "sid": "upstream-sid",
+                "nonce": "the-nonce",
+                "iat": chrono::Utc::now().timestamp(),
+                "exp": chrono::Utc::now().timestamp() + 600,
+            }),
+            Some(TEST_KID),
+        );
+        server.mock(|when, then| {
+            when.method(POST).path("/token");
+            then.status(200)
+                .json_body(json!({"id_token": id_token, "token_type": "Bearer"}));
+        });
+
+        let mut mapping_mock = crate::mapping::MockMappingProvider::default();
+        mapping_mock
+            .expect_authenticate_by_mapping()
+            .withf(|_, req| {
+                req.unique_workload_id == "upstream-sub"
+                    && req.domain_id.as_deref() == Some("domain-1")
+                    && req.rule_name.as_deref() == Some("corp-rule")
+            })
+            .returning(|_, _| Ok(mapped_user_result()));
+        let state = openstack_keystone_core::api::tests::get_mocked_state(
+            Provider::mocked_builder().mock_mapping(mapping_mock),
+            true,
+            None,
+        )
+        .await;
+
+        let idp = IdentityProvider {
+            id: "idp-1".into(),
+            name: "Corp".into(),
+            domain_id: Some("domain-1".into()),
+            enabled: true,
+            oidc_discovery_url: Some(server.base_url()),
+            oidc_client_id: Some("op-client".into()),
+            default_mapping_name: Some("corp-rule".into()),
+            ..Default::default()
+        };
+        let auth_state = AuthState {
+            idp_id: "idp-1".into(),
+            nonce: "the-nonce".into(),
+            pkce_verifier: "verifier".into(),
+            redirect_uri: "https://op.example.com/cb".into(),
+            state: "state-1".into(),
+            ..Default::default()
+        };
+
+        let exec = openstack_keystone_core::auth::ExecutionContext::internal(&state);
+        let (result, claims) =
+            super::authenticate_upstream(&state, &exec, &auth_state, &idp, "code")
+                .await
+                .unwrap();
+        assert!(matches!(
+            result.principal.identity,
+            openstack_keystone_core_types::auth::IdentityInfo::User(ref u) if u.user_id == "shadow-user"
+        ));
+        assert_eq!(claims["sid"], "upstream-sid");
     }
 }

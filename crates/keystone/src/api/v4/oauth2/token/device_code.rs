@@ -220,6 +220,7 @@ pub(super) async fn handle_device_code_grant(
                     user_id: user_id.clone(),
                     scope: record.scope.clone(),
                     amr: record.amr.clone(),
+                    upstream: None,
                 },
             )
             .await

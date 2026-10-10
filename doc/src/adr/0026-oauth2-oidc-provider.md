@@ -1216,6 +1216,29 @@ success the session is stamped with `amr = ["pwd", "otp", "mfa"]`, which is
 copied to the id_token and to refresh tokens so rotation preserves it. WebAuthn
 is not part of this amendment.
 
+### Amendment: Federated Sign-In on the Login Page
+
+The browser login page can hand the user to an upstream federation IdP of the
+same domain (`POST /authorize/federated`, or `idp_hint` on `GET /authorize`) and
+receives the answer at `GET /authorize/federated/callback`. The upstream
+`state` is the primary key of the stored federation `AuthState` and is also
+written to the pre-auth session (`pending_upstream`); the callback only
+completes when the session cookie's session waits on exactly that IdP and
+`state`, and both the pending value and the `AuthState` are consumed on use.
+(The issue text proposed an HMAC over the session id; a server-side comparison
+against the stored value gives the same binding without a second secret.) The
+redirect target comes only from a registered, enabled IdP of the domain, never
+from a request parameter. Code exchange, ID-token verification and the mapping
+engine are shared with `/v4/federation/oidc/callback`. The session records
+`UpstreamLogin { idp_id, sid }`, copied to the authorization code and to every
+refresh token of the family. The endpoints also require the session to belong
+to the path domain. A federated login replaces the local second factor: the
+IdP is the only authenticator, and the `amr` values it reports are attested by
+the IdP, not by this OP. Replay protection comes from consuming
+`pending_upstream` in `complete_upstream_login`, not from the non-atomic
+`AuthState` lookup/delete. Not yet implemented: the device-code page, and
+group-membership expiry re-checks at rotation.
+
 ## 9. Cryptographic Auditing & Non-Repudiation
 
 Every single token issuance event, token refresh lifecycle step, and

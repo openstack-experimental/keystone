@@ -697,6 +697,23 @@ brute-force short human-facing codes (device `user_code`) with no throttle.
   should now hit `429` after one request under a tight burst config, matching
   `/authorize`'s behavior.
 
+### V8b — Federated sign-in on the OP login page (open redirect, state fixation, callback replay)
+
+The OP login page can send the browser to an upstream IdP
+(`oauth2/federated.rs`). Threats and controls:
+
+| Threat | Control |
+| --- | --- |
+| Open redirect through `idp_hint` / `idp_id` | Both are only compared with the ids of enabled IdPs registered for the domain; an unknown `idp_hint` is ignored, an unknown `idp_id` is `400`. The redirect URL is built from that IdP's own discovery document. |
+| State fixation / login CSRF (attacker feeds the victim a callback for the attacker's account) | The callback is honoured only when the session cookie's pre-auth session is waiting on exactly that `state` and IdP (`pending_upstream`, compared in constant time, and compared again when the session is completed). The attacker's `state` does not match the victim's session, so nothing is signed in. The start of the flow is a POST carrying the session CSRF token. |
+| Callback replay | The federation `AuthState` is deleted and `pending_upstream` is cleared on first use; a second callback finds neither. The upstream authorization code is single-use at the IdP. |
+| Mix-up (answer from another IdP) | The stored `AuthState.idp_id` must equal the pending IdP; the ID token `iss`/`aud`/nonce checks of the federation path apply. |
+| Weak upstream claims a strong `amr` | Only a list of at most 8 short strings is copied; otherwise `["federated"]`. Operators who do not trust an IdP's `amr` should not register it for OP login. |
+| Rate limiting | Both endpoints run the per-IP limiter before any lookup. |
+
+Residual: federated sign-in is not offered on the device-code page, and
+expiring group membership is not re-checked at refresh rotation.
+
 ### V9 — Secret leakage into policy input, logs, and audit (P2, mitigated)
 
 **Attack.** Decrypted credential blobs (EC2 secret keys, TOTP seeds) reaching
