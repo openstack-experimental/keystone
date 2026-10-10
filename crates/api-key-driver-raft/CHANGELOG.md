@@ -1,0 +1,22 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.1.0](https://github.com/openstack-experimental/keystone/releases/tag/openstack-keystone-api-key-driver-raft-v0.1.0) - 2026-10-10
+
+### Added
+
+- Enable OpenTelemetry metrics and traces support ([#1456](https://github.com/openstack-experimental/keystone/pull/1456))
+- Auto-register backend drivers via inventory ([#1105](https://github.com/openstack-experimental/keystone/pull/1105))
+- Generalize marker pagination for v3/v4 lists ([#1086](https://github.com/openstack-experimental/keystone/pull/1086))
+- ADR 0021 admin surface, simulate-access, and janitor ([#896](https://github.com/openstack-experimental/keystone/pull/896))
+- Implement stateless SCIM ingress auth (ADR 0021) ([#891](https://github.com/openstack-experimental/keystone/pull/891))
+
+### Other
+
+- Fix clippy lints across workspace ([#1361](https://github.com/openstack-experimental/keystone/pull/1361))
