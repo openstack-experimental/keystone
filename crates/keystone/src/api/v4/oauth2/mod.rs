@@ -81,13 +81,14 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         ))
         .routes(routes!(local_emergency_key::reconcile_local_emergency_key))
         .merge(clients::openapi_router())
+        .layer(axum::middleware::from_fn(renderer::locale_middleware))
 }
 
 /// Validate the `[oauth2]` UI configuration and install the page renderer
 /// built from it. Called once at startup; templates are read here, so a
 /// restart is required to pick up template changes.
 pub(crate) fn init_ui(cfg: &openstack_keystone_config::Oauth2Provider) -> Result<(), String> {
-    cfg.validate_ui_paths()?;
+    cfg.validate_ui()?;
     let renderer = renderer::renderer_from_config(cfg).map_err(|e| e.to_string())?;
     renderer::install(renderer);
     Ok(())

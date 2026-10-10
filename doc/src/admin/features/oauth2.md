@@ -55,6 +55,10 @@ code), see the [OAuth2 / OIDC user guide](../../user/features/oauth2.md).
 | `allow_host_header_issuer`              | `false` | **Development only.** Lets the issuer and cookie `Secure` flag follow the request `Host`/`X-Forwarded-Proto` headers when `[DEFAULT] public_endpoint` is unset. |
 | `templates_dir`                         | unset   | Directory with operator-supplied page templates (see [Customising the login pages](#customising-the-login-pages)). Read once at startup. |
 | `static_dir`                            | unset   | Directory with operator static assets (stylesheets, logos) served at `/v4/oauth2/static/`.                                                       |
+| `ui_product_name`                       | `OpenStack` | Product name in page titles, logo `alt` text and the footer.                                                                               |
+| `ui_logo_url`                           | unset   | Logo at the top of every page: an absolute path such as `/v4/oauth2/static/logo.svg` (external URLs are blocked by the page CSP).                                  |
+| `ui_support_url`, `ui_privacy_url`, `ui_terms_url` | unset | Footer links (`https://` URL or absolute path).                                                                                       |
+| `ui_default_locale`                     | `en`    | Locale used when `Accept-Language` matches no available locale.                                                                                  |
 
 Exceeding a rate limit returns `429 Too Many Requests`.
 
@@ -65,6 +69,12 @@ from Jinja-style templates (`minijinja`, HTML autoescaping on). The built-in
 templates are in `crates/keystone/templates/oauth2/`; copy the ones you want
 to change into `[oauth2] templates_dir`. A page whose file is missing there
 falls back to the built-in one, so a single page can be rebranded on its own.
+
+Every template additionally receives `branding` (`product_name`, `logo_url`,
+`support_url`, `privacy_url`, `terms_url`), `locale` and the translation
+function `t("key", name=value)`. The page frame (viewport meta tag, `lang`
+attribute, stylesheet link, logo, footer) lives in `base.html`, which the
+other templates extend; override it to change all pages at once.
 
 | File                | Context variables                                                              |
 | ------------------- | ------------------------------------------------------------------------------ |
@@ -79,6 +89,22 @@ Keep the form field names (`csrf_token`, `username`, `password`, `decision`,
 
 Templates are parsed at startup: an unreadable directory or a template with a
 syntax error stops Keystone from starting. Changes need a restart.
+
+### Styling and languages
+
+The default pages ship with a small responsive stylesheet (system fonts,
+centred card, dark-mode aware, visible focus rings) served at
+`/v4/oauth2/static/style.css`. Put a `style.css` into `static_dir` to replace
+it, or link additional files from your templates.
+
+Page texts come from per-locale TOML bundles, selected by the request's
+`Accept-Language` header (exact tag, then primary language, then
+`ui_default_locale`). Only `en` is built in
+(`crates/keystone/templates/oauth2/locales/en.toml`). To add a language copy
+that file to `<templates_dir>/locales/<lang>.toml` (for example `de.toml`)
+and translate the values; keys missing from a bundle fall back to English.
+The quoted keys at the end of the file translate the messages produced by the
+server (for example `"invalid username or password"`).
 
 Reference stylesheets and logos with `/v4/oauth2/static/<file>` (served from
 `[oauth2] static_dir`; the route answers `404` when it is not configured and

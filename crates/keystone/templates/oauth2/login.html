@@ -1,20 +1,15 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>Sign in</title>
-</head>
-<body>
-<h1>Sign in</h1>
-<p>{{ client.name }} is requesting access to your account.</p>
-{% if error %}
-<p class="error">{{ error }}</p>
-{% endif %}
+{% extends "base.html" %}
+{% block title %}{{ t("sign_in") }}{% endblock %}
+{% block content %}
+<h1>{{ t("sign_in") }}</h1>
+<p>{{ t("requesting_access", client=client.name) }}</p>
+<p class="error" id="error" aria-live="polite">{% if error %}{{ t(error) }}{% endif %}</p>
 <form method="post" action="{{ action }}">
 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-<label>Username <input type="text" name="username" autocomplete="username" required></label>
-<label>Password <input type="password" name="password" autocomplete="current-password" required></label>
-<button type="submit">Sign in</button>
+<label for="username">{{ t("username") }}</label>
+<input id="username" type="text" name="username" autocomplete="username" autofocus required>
+<label for="password">{{ t("password") }}</label>
+<input id="password" type="password" name="password" autocomplete="current-password" required>
+<button type="submit">{{ t("sign_in") }}</button>
 </form>
-</body>
-</html>
+{% endblock %}

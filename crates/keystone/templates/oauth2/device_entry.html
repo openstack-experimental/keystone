@@ -1,18 +1,12 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>Enter code</title>
-</head>
-<body>
-<h1>Enter code</h1>
-<p>Enter the code displayed on your device.</p>
-{% if error %}
-<p class="error">{{ error }}</p>
-{% endif %}
+{% extends "base.html" %}
+{% block title %}{{ t("enter_code") }}{% endblock %}
+{% block content %}
+<h1>{{ t("enter_code") }}</h1>
+<p>{{ t("enter_code_help") }}</p>
+<p class="error" id="error" aria-live="polite">{% if error %}{{ t(error) }}{% endif %}</p>
 <form method="post" action="{{ action }}">
-<label>Code <input type="text" name="user_code" value="{{ prefill }}" autocomplete="off" required></label>
-<button type="submit">Continue</button>
+<label for="user_code">{{ t("code") }}</label>
+<input id="user_code" type="text" name="user_code" value="{{ prefill }}" autocomplete="off" inputmode="text" autocapitalize="characters" pattern="[A-Za-z0-9\-]+" spellcheck="false" autofocus required>
+<button type="submit">{{ t("continue") }}</button>
 </form>
-</body>
-</html>
+{% endblock %}
