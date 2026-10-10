@@ -82,6 +82,22 @@ fn family_idx_prefix(family_id: &str) -> String {
     format!("oauth2:refresh_family_idx:v1:{family_id}:")
 }
 
+fn sso_key(sso_id: &str) -> String {
+    format!("oauth2:sso:v1:{sso_id}")
+}
+
+/// Secondary index of SSO sessions by (domain_id, user_id): ending every
+/// session of a user or domain is a prefix scan. Pure index-keyspace key.
+fn sso_idx_key(domain_id: &str, user_id: &str, sso_id: &str) -> String {
+    format!("oauth2:sso_idx:v1:{domain_id}:{user_id}:{sso_id}")
+}
+
+fn sso_idx_prefix(domain_id: &str) -> String {
+    format!("oauth2:sso_idx:v1:{domain_id}:")
+}
+
+const SSO_IDX_PREFIX: &str = "oauth2:sso_idx:v1:";
+
 fn device_code_key(device_code: &str) -> String {
     format!("oauth2:device_code:v1:{device_code}")
 }
@@ -280,6 +296,29 @@ impl RaftOauth2SessionBackend {
         Ok(record)
     }
 
+    async fn mark_pre_auth_session_sso_impl(
+        &self,
+        storage: &dyn StorageApi,
+        session_id: &str,
+        sso: &SsoSession,
+    ) -> Result<PreAuthSession, Oauth2SessionProviderError> {
+        let mut record: PreAuthSession = get(storage, &session_key(session_id))
+            .await
+            .map_err(store_err)?
+            .ok_or_else(|| Oauth2SessionProviderError::NotFound(session_id.to_string()))?;
+        record.user_id = Some(sso.user_id.clone());
+        record.auth_time = Some(sso.auth_time);
+        record.amr = sso.amr.clone();
+        record.upstream = sso.upstream.clone();
+        record.pending_user_id = None;
+        record.pending_factors = Vec::new();
+        record.mfa_attempts = 0;
+        put(storage, session_key(session_id), &record)
+            .await
+            .map_err(store_err)?;
+        Ok(record)
+    }
+
     async fn begin_pre_auth_session_upstream_impl(
         &self,
         storage: &dyn StorageApi,
@@ -387,6 +426,94 @@ impl RaftOauth2SessionBackend {
             .await
             .map_err(store_err)?;
         Ok(record)
+    }
+
+    async fn create_sso_session_impl(
+        &self,
+        storage: &dyn StorageApi,
+        data: SsoSessionCreate,
+    ) -> Result<SsoSession, Oauth2SessionProviderError> {
+        let record = SsoSession {
+            sso_id: data.sso_id.clone(),
+            domain_id: data.domain_id,
+            user_id: data.user_id,
+            auth_time: data.auth_time,
+            amr: data.amr,
+            upstream: data.upstream,
+            created_at: data.created_at,
+            expires_at: data.expires_at,
+        };
+        let mutations = vec![
+            Mutation::set(
+                sso_key(&data.sso_id),
+                &record,
+                Metadata::new(),
+                None::<&str>,
+                None,
+            )
+            .map_err(store_err)?,
+            Mutation::set_index(sso_idx_key(
+                &record.domain_id,
+                &record.user_id,
+                &data.sso_id,
+            )),
+            Mutation::set_index(expiry_idx_key(data.expires_at, "sso", &data.sso_id)),
+        ];
+        storage.transaction(mutations).await.map_err(store_err)?;
+        Ok(record)
+    }
+
+    async fn get_sso_session_impl(
+        &self,
+        storage: &dyn StorageApi,
+        sso_id: &str,
+    ) -> Result<Option<SsoSession>, Oauth2SessionProviderError> {
+        get(storage, &sso_key(sso_id)).await.map_err(store_err)
+    }
+
+    async fn delete_sso_session_impl(
+        &self,
+        storage: &dyn StorageApi,
+        sso_id: &str,
+    ) -> Result<(), Oauth2SessionProviderError> {
+        let Some(record) = self.get_sso_session_impl(storage, sso_id).await? else {
+            return Ok(());
+        };
+        let mutations = vec![
+            Mutation::remove(sso_key(sso_id), None::<&str>, None),
+            Mutation::remove_index(sso_idx_key(&record.domain_id, &record.user_id, sso_id)),
+            Mutation::remove_index(expiry_idx_key(record.expires_at, "sso", sso_id)),
+        ];
+        storage.transaction(mutations).await.map_err(store_err)?;
+        Ok(())
+    }
+
+    /// Delete every SSO session whose index key under `prefix` matches
+    /// `keep` (given `(user_id, sso_id)`).
+    async fn delete_sso_sessions_matching(
+        &self,
+        storage: &dyn StorageApi,
+        prefix: &str,
+        matches: impl Fn(&str) -> bool,
+    ) -> Result<usize, Oauth2SessionProviderError> {
+        let keys = storage
+            .prefix_index(prefix.as_bytes())
+            .await
+            .map_err(store_err)?;
+        let mut deleted = 0;
+        for key in keys {
+            // `<prefix><...>:<user_id>:<sso_id>` -- ids never contain ':'.
+            let mut parts = key.rsplitn(3, ':');
+            let (Some(sso_id), Some(user_id)) = (parts.next(), parts.next()) else {
+                continue;
+            };
+            if !matches(user_id) {
+                continue;
+            }
+            self.delete_sso_session_impl(storage, sso_id).await?;
+            deleted += 1;
+        }
+        Ok(deleted)
     }
 
     async fn delete_pre_auth_session_impl(
@@ -1070,6 +1197,17 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
         .await
     }
 
+    #[tracing::instrument(name = "driver.raft.oauth2_session.mark_pre_auth_session_sso", level = "debug", skip_all, fields(session_id = %session_id))]
+    async fn mark_pre_auth_session_sso(
+        &self,
+        state: &ServiceState,
+        session_id: &str,
+        sso: &SsoSession,
+    ) -> Result<PreAuthSession, Oauth2SessionProviderError> {
+        self.mark_pre_auth_session_sso_impl(self.storage(state)?, session_id, sso)
+            .await
+    }
+
     #[tracing::instrument(name = "driver.raft.oauth2_session.begin_pre_auth_session_upstream", level = "debug", skip_all, fields(session_id = %session_id))]
     async fn begin_pre_auth_session_upstream(
         &self,
@@ -1159,6 +1297,70 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
     ) -> Result<PreAuthSession, Oauth2SessionProviderError> {
         self.mark_pre_auth_session_consent_impl(self.storage(state)?, session_id, granted)
             .await
+    }
+
+    #[tracing::instrument(
+        name = "driver.raft.oauth2_session.create_sso_session",
+        level = "debug",
+        skip_all
+    )]
+    async fn create_sso_session(
+        &self,
+        state: &ServiceState,
+        data: SsoSessionCreate,
+    ) -> Result<SsoSession, Oauth2SessionProviderError> {
+        self.create_sso_session_impl(self.storage(state)?, data)
+            .await
+    }
+
+    #[tracing::instrument(
+        name = "driver.raft.oauth2_session.get_sso_session",
+        level = "debug",
+        skip_all
+    )]
+    async fn get_sso_session(
+        &self,
+        state: &ServiceState,
+        sso_id: &str,
+    ) -> Result<Option<SsoSession>, Oauth2SessionProviderError> {
+        self.get_sso_session_impl(self.storage(state)?, sso_id)
+            .await
+    }
+
+    #[tracing::instrument(
+        name = "driver.raft.oauth2_session.delete_sso_session",
+        level = "debug",
+        skip_all
+    )]
+    async fn delete_sso_session(
+        &self,
+        state: &ServiceState,
+        sso_id: &str,
+    ) -> Result<(), Oauth2SessionProviderError> {
+        self.delete_sso_session_impl(self.storage(state)?, sso_id)
+            .await
+    }
+
+    #[tracing::instrument(name = "driver.raft.oauth2_session.delete_sso_sessions_by_user", level = "debug", skip_all, fields(user_id = %user_id))]
+    async fn delete_sso_sessions_by_user(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError> {
+        self.delete_sso_sessions_matching(self.storage(state)?, SSO_IDX_PREFIX, |u| u == user_id)
+            .await
+    }
+
+    #[tracing::instrument(name = "driver.raft.oauth2_session.delete_sso_sessions_by_domain", level = "debug", skip_all, fields(domain_id = %domain_id))]
+    async fn delete_sso_sessions_by_domain(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError> {
+        self.delete_sso_sessions_matching(self.storage(state)?, &sso_idx_prefix(domain_id), |_| {
+            true
+        })
+        .await
     }
 
     #[tracing::instrument(name = "driver.raft.oauth2_session.delete_pre_auth_session", level = "debug", skip_all, fields(session_id = %session_id))]
@@ -1494,6 +1696,164 @@ mod tests {
                 sid: Some("sid-1".to_string()),
             },
         }
+    }
+
+    fn sso_create(sso_id: &str, domain_id: &str, user_id: &str) -> SsoSessionCreate {
+        SsoSessionCreate {
+            sso_id: sso_id.to_string(),
+            domain_id: domain_id.to_string(),
+            user_id: user_id.to_string(),
+            auth_time: 1000,
+            amr: vec!["pwd".to_string()],
+            upstream: None,
+            created_at: 1000,
+            expires_at: 2000,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sso_session_roundtrip_and_delete() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        let created = backend
+            .create_sso_session_impl(&storage, sso_create("sso-1", "domain-1", "user-1"))
+            .await
+            .unwrap();
+        let fetched = backend
+            .get_sso_session_impl(&storage, "sso-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(created, fetched);
+        assert_eq!(fetched.auth_time, 1000);
+
+        backend
+            .delete_sso_session_impl(&storage, "sso-1")
+            .await
+            .unwrap();
+        assert!(
+            backend
+                .get_sso_session_impl(&storage, "sso-1")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        // The expiry index entry went with it.
+        assert!(
+            backend
+                .list_expired_impl(&storage, Some("sso"), i64::MAX, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        // Deleting a missing session is not an error.
+        backend
+            .delete_sso_session_impl(&storage, "sso-1")
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_sso_sessions_are_listed_for_the_expiry_sweep() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_sso_session_impl(&storage, sso_create("sso-1", "domain-1", "user-1"))
+            .await
+            .unwrap();
+        assert_eq!(
+            backend
+                .list_expired_impl(&storage, Some("sso"), 2001, 10)
+                .await
+                .unwrap(),
+            vec![("sso".to_string(), "sso-1".to_string())]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_sso_sessions_by_user_and_domain() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        for (id, domain, user) in [
+            ("sso-1", "domain-1", "user-1"),
+            ("sso-2", "domain-1", "user-1"),
+            ("sso-3", "domain-1", "user-2"),
+            ("sso-4", "domain-2", "user-1"),
+        ] {
+            backend
+                .create_sso_session_impl(&storage, sso_create(id, domain, user))
+                .await
+                .unwrap();
+        }
+
+        // Every session of user-1, in every domain.
+        let deleted = backend
+            .delete_sso_sessions_matching(&storage, SSO_IDX_PREFIX, |u| u == "user-1")
+            .await
+            .unwrap();
+        assert_eq!(deleted, 3);
+        for gone in ["sso-1", "sso-2", "sso-4"] {
+            assert!(
+                backend
+                    .get_sso_session_impl(&storage, gone)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        assert!(
+            backend
+                .get_sso_session_impl(&storage, "sso-3")
+                .await
+                .unwrap()
+                .is_some()
+        );
+
+        // The rest of the domain.
+        let deleted = backend
+            .delete_sso_sessions_matching(&storage, &sso_idx_prefix("domain-1"), |_| true)
+            .await
+            .unwrap();
+        assert_eq!(deleted, 1);
+        assert!(
+            backend
+                .get_sso_session_impl(&storage, "sso-3")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mark_pre_auth_session_sso_copies_the_login() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_pre_auth_session_impl(&storage, sample_session_create())
+            .await
+            .unwrap();
+        let sso = SsoSession {
+            sso_id: "sso-1".into(),
+            domain_id: "domain-1".into(),
+            user_id: "user-1".into(),
+            auth_time: 900,
+            amr: vec!["pwd".into(), "otp".into(), "mfa".into()],
+            upstream: Some(UpstreamLogin {
+                idp_id: "idp-1".into(),
+                sid: None,
+            }),
+            created_at: 900,
+            expires_at: 5000,
+        };
+        let session = backend
+            .mark_pre_auth_session_sso_impl(&storage, "session-1", &sso)
+            .await
+            .unwrap();
+        assert_eq!(session.user_id.as_deref(), Some("user-1"));
+        // The real time of the primary login, not the time of this request.
+        assert_eq!(session.auth_time, Some(900));
+        assert_eq!(session.amr.len(), 3);
+        assert_eq!(session.upstream, sso.upstream);
     }
 
     #[tokio::test]

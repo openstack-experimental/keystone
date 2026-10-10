@@ -38,10 +38,12 @@ mod introspect;
 mod jwks;
 mod jwks_revocation;
 mod local_emergency_key;
+mod logout;
 mod mfa;
 mod renderer;
 mod revoke;
 mod rotate_signing_key;
+mod sso;
 mod static_files;
 mod token;
 mod userinfo;
@@ -74,6 +76,7 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .routes(routes!(federated::authorize_federated))
         .routes(routes!(federated::authorize_federated_callback))
         .routes(routes!(authorize::authorize_consent))
+        .routes(routes!(logout::logout, logout::logout_post))
         .routes(routes!(device_authorization::device_authorization))
         .routes(routes!(device::device, device::device_login_code))
         .routes(routes!(device::device_login))

@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{% if confirm %}{{ t("sign_out") }}{% else %}{{ t("signed_out") }}{% endif %}{% endblock %}
+{% block content %}
+{% if confirm %}
+<h1>{{ t("sign_out") }}</h1>
+<p>{{ t("confirm_sign_out") }}</p>
+<form method="post" action="{{ action }}">
+{% for field in fields %}
+<input type="hidden" name="{{ field[0] }}" value="{{ field[1] }}">
+{% endfor %}
+<button type="submit">{{ t("sign_out") }}</button>
+</form>
+{% else %}
+<h1>{{ t("signed_out") }}</h1>
+<p>{{ t("signed_out_help") }}</p>
+{% endif %}
+{% endblock %}

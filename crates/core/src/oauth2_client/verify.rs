@@ -31,7 +31,8 @@ use std::collections::HashSet;
 use thiserror::Error;
 
 use openstack_keystone_core_types::oauth2_client::{
-    DelegationContext, OidcAccessTokenClaims, OpenStackAccessTokenClaims, OpenStackScope,
+    DelegationContext, IdTokenClaims, OidcAccessTokenClaims, OpenStackAccessTokenClaims,
+    OpenStackScope,
 };
 use openstack_keystone_key_repository::asymmetric::{SigningAlgorithm, jwt_algorithm};
 
@@ -288,6 +289,55 @@ pub fn verify_oidc_access_token(
         ));
     }
 
+    Ok(claims)
+}
+
+/// Verify an `id_token` presented as `id_token_hint` (OIDC RP-Initiated
+/// Logout 1.0 §2), given an already-fetched [`JwkSet`].
+///
+/// Enforces the signature, the configured algorithm, the `iss` allowlist and
+/// `token_use == "id"`. Expiry is deliberately **not** enforced: a hint is
+/// expected to be a token the OP issued earlier, usually long expired by the
+/// time the user logs out. `aud` is the relying party, which the caller must
+/// resolve to a registered client of the domain.
+///
+/// # Errors
+/// See [`TokenVerificationError`].
+pub fn verify_id_token_hint(
+    token: &str,
+    jwks: &JwkSet,
+    expected_algorithm: SigningAlgorithm,
+    expected_issuers: &[String],
+) -> Result<IdTokenClaims, TokenVerificationError> {
+    let header = decode_header(token)?;
+    let expected_alg = jwt_algorithm(expected_algorithm);
+    if header.alg != expected_alg {
+        return Err(TokenVerificationError::AlgorithmMismatch {
+            actual: header.alg,
+            expected: expected_alg,
+        });
+    }
+
+    let kid = header.kid.ok_or(TokenVerificationError::MissingKeyId)?;
+    let jwk = jwks
+        .find(&kid)
+        .ok_or_else(|| TokenVerificationError::UnknownKeyId(kid.clone()))?;
+    let decoding_key = DecodingKey::from_jwk(jwk)?;
+
+    let mut validation = Validation::new(expected_alg);
+    validation.set_required_spec_claims(&["iss", "aud", "sub"]);
+    validation.validate_aud = false;
+    validation.validate_exp = false;
+    validation.validate_nbf = false;
+
+    let claims = decode::<IdTokenClaims>(token, &decoding_key, &validation)?.claims;
+
+    if !expected_issuers.iter().any(|iss| iss == &claims.iss) {
+        return Err(TokenVerificationError::UntrustedIssuer(claims.iss));
+    }
+    if claims.token_use != "id" {
+        return Err(TokenVerificationError::WrongTokenUse(claims.token_use));
+    }
     Ok(claims)
 }
 
@@ -1024,5 +1074,79 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, TokenVerificationError::UntrustedIssuer(_)));
+    }
+
+    fn id_claims(now: i64, token_use: &str) -> IdTokenClaims {
+        IdTokenClaims {
+            iss: ISSUER.to_string(),
+            sub: "user-1".to_string(),
+            aud: "client-1".to_string(),
+            exp: now - 3600,
+            iat: now - 4500,
+            nbf: now - 4500,
+            auth_time: now - 4500,
+            nonce: None,
+            amr: vec!["pwd".to_string()],
+            at_hash: None,
+            token_use: token_use.to_string(),
+            extra_claims: Default::default(),
+        }
+    }
+
+    #[test]
+    fn test_id_token_hint_accepts_an_expired_id_token() {
+        let now = chrono::Utc::now().timestamp();
+        let (token, jwks, _kid) = sign(&id_claims(now, "id"));
+        let claims = verify_id_token_hint(
+            &token,
+            &jwks,
+            SigningAlgorithm::Es256,
+            &[ISSUER.to_string()],
+        )
+        .unwrap();
+        assert_eq!(claims.sub, "user-1");
+        assert_eq!(claims.aud, "client-1");
+    }
+
+    #[test]
+    fn test_id_token_hint_rejects_access_tokens_and_foreign_issuers() {
+        let now = chrono::Utc::now().timestamp();
+        let (token, jwks, _kid) = sign(&id_claims(now, "access"));
+        assert!(matches!(
+            verify_id_token_hint(
+                &token,
+                &jwks,
+                SigningAlgorithm::Es256,
+                &[ISSUER.to_string()]
+            ),
+            Err(TokenVerificationError::WrongTokenUse(_))
+        ));
+
+        let (token, jwks, _kid) = sign(&id_claims(now, "id"));
+        assert!(matches!(
+            verify_id_token_hint(
+                &token,
+                &jwks,
+                SigningAlgorithm::Es256,
+                &["https://other.example".to_string()]
+            ),
+            Err(TokenVerificationError::UntrustedIssuer(_))
+        ));
+    }
+
+    #[test]
+    fn test_id_token_hint_rejects_a_token_signed_by_another_key() {
+        let now = chrono::Utc::now().timestamp();
+        let (token, _own_jwks, _kid) = sign(&id_claims(now, "id"));
+        let (_other, other_jwks, _kid) = sign(&id_claims(now, "id"));
+        assert!(
+            verify_id_token_hint(
+                &token,
+                &other_jwks,
+                SigningAlgorithm::Es256,
+                &[ISSUER.to_string()]
+            )
+            .is_err()
+        );
     }
 }

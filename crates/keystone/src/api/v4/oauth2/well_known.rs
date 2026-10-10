@@ -67,6 +67,10 @@ pub struct OpenIdConfiguration {
     pub issuer: String,
     /// JWKS document URL.
     pub jwks_uri: String,
+    /// RP-Initiated Logout endpoint URL (OIDC RP-Initiated Logout 1.0).
+    pub end_session_endpoint: String,
+    /// Supported `prompt` values (OIDC Core §3.1.2.1).
+    pub prompt_values_supported: Vec<String>,
     /// Whether the `request` parameter is supported.
     pub request_parameter_supported: bool,
     /// Whether the `request_uri` parameter is supported.
@@ -134,6 +138,8 @@ impl Default for OpenIdConfiguration {
             id_token_signing_alg_values_supported: Vec::new(),
             issuer: String::new(),
             jwks_uri: String::new(),
+            end_session_endpoint: String::new(),
+            prompt_values_supported: strings(&["none", "login", "consent", "select_account"]),
             request_parameter_supported: false,
             request_uri_parameter_supported: false,
             response_modes_supported: strings(&["query"]),
@@ -256,6 +262,7 @@ pub(super) async fn well_known(
     let doc = OpenIdConfiguration {
         authorization_endpoint: format!("{issuer}/authorize"),
         device_authorization_endpoint: format!("{issuer}/device_authorization"),
+        end_session_endpoint: format!("{issuer}/logout"),
         id_token_signing_alg_values_supported: vec![signing_algorithm],
         issuer: issuer.clone(),
         jwks_uri: format!("{issuer}/jwks"),
@@ -347,6 +354,8 @@ mod tests {
             "id_token_signing_alg_values_supported",
             "userinfo_endpoint",
             "userinfo_signing_alg_values_supported",
+            "end_session_endpoint",
+            "prompt_values_supported",
         ] {
             assert!(
                 !doc.get(field).unwrap().is_null(),

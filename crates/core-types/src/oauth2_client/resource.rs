@@ -159,6 +159,12 @@ pub struct OAuth2ClientResource {
     #[serde(default)]
     #[builder(default)]
     pub contacts: Vec<String>,
+
+    /// URIs the OP may redirect to after RP-initiated logout (OIDC
+    /// RP-Initiated Logout 1.0 `post_logout_redirect_uris`); matched exactly.
+    #[serde(default)]
+    #[builder(default)]
+    pub post_logout_redirect_uris: Vec<String>,
 }
 
 impl std::fmt::Debug for OAuth2ClientResource {
@@ -193,6 +199,7 @@ impl std::fmt::Debug for OAuth2ClientResource {
             .field("policy_uri", &self.policy_uri)
             .field("tos_uri", &self.tos_uri)
             .field("contacts", &self.contacts)
+            .field("post_logout_redirect_uris", &self.post_logout_redirect_uris)
             .finish()
     }
 }
@@ -224,6 +231,9 @@ impl OAuth2ClientResource {
             policy_uri: apply_optional(update.policy_uri, self.policy_uri),
             tos_uri: apply_optional(update.tos_uri, self.tos_uri),
             contacts: update.contacts.unwrap_or(self.contacts),
+            post_logout_redirect_uris: update
+                .post_logout_redirect_uris
+                .unwrap_or(self.post_logout_redirect_uris),
             updated_at: now,
             deleted_at,
             ..self
@@ -324,6 +334,10 @@ pub struct OAuth2ClientResourceCreate {
     /// Contact addresses of the client's operators.
     #[builder(default)]
     pub contacts: Vec<String>,
+
+    /// URIs the OP may redirect to after RP-initiated logout.
+    #[builder(default)]
+    pub post_logout_redirect_uris: Vec<String>,
 }
 
 impl std::fmt::Debug for OAuth2ClientResourceCreate {
@@ -353,6 +367,7 @@ impl std::fmt::Debug for OAuth2ClientResourceCreate {
             .field("policy_uri", &self.policy_uri)
             .field("tos_uri", &self.tos_uri)
             .field("contacts", &self.contacts)
+            .field("post_logout_redirect_uris", &self.post_logout_redirect_uris)
             .finish()
     }
 }
@@ -404,6 +419,9 @@ pub struct OAuth2ClientResourceUpdate {
 
     /// `None` = unchanged.
     pub contacts: Option<Vec<String>>,
+
+    /// `None` = unchanged.
+    pub post_logout_redirect_uris: Option<Vec<String>>,
 }
 
 /// Filter parameters for `GET /v4/oauth2/{domain_id}/clients`.

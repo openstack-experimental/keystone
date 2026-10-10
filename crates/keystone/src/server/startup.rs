@@ -194,9 +194,18 @@ pub async fn run() -> Result<(), Report> {
 ///
 /// Without `[DEFAULT] public_endpoint` the OP endpoints (`/authorize`,
 /// `/device_authorization`, `/token`, discovery) answer `503` unless the
-/// development-only `[oauth2] allow_host_header_issuer` override is on.
+/// development-only `[oauth2] allow_host_header_issuer` override is on. A
+/// non-`https` `public_endpoint` is also reported, since it turns off the
+/// `Secure` attribute of every OAuth2 cookie.
 pub(crate) fn check_oauth2_public_endpoint(cfg: &Config) {
-    if cfg.default.public_endpoint.is_some() {
+    if let Some(endpoint) = &cfg.default.public_endpoint {
+        if endpoint.scheme() != "https" {
+            warn!(
+                "[DEFAULT] public_endpoint is not https: the OAuth2 pre-auth, device and SSO \
+                 session cookies are sent without the Secure attribute and can be read and \
+                 replayed by anyone on the network path. Use an https public_endpoint."
+            );
+        }
         return;
     }
     if cfg.oauth2.allow_host_header_issuer {

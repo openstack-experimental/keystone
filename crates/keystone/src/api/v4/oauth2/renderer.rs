@@ -49,6 +49,10 @@ const TEMPLATES: &[(&str, &str)] = &[
         include_str!("../../../../templates/oauth2/consent.html"),
     ),
     (
+        "logout.html",
+        include_str!("../../../../templates/oauth2/logout.html"),
+    ),
+    (
         "mfa.html",
         include_str!("../../../../templates/oauth2/mfa.html"),
     ),
@@ -122,11 +126,24 @@ pub(super) async fn locale_middleware(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
-    let value = request
+    let header = request
         .headers()
         .get(axum::http::header::ACCEPT_LANGUAGE)
         .and_then(|v| v.to_str().ok())
         .map(str::to_string);
+    // OIDC Core §3.1.2.1 `ui_locales`: the RP's preferred languages, most
+    // preferred first, ahead of the browser's own preference.
+    let ui_locales = request.uri().query().and_then(|q| {
+        url::form_urlencoded::parse(q.as_bytes())
+            .find(|(k, _)| k == "ui_locales")
+            .map(|(_, v)| v.split_whitespace().collect::<Vec<_>>().join(", "))
+            .filter(|v| !v.is_empty())
+    });
+    let value = match (ui_locales, header) {
+        (Some(ui), Some(header)) => Some(format!("{ui}, {header}")),
+        (Some(ui), None) => Some(ui),
+        (None, header) => header,
+    };
     ACCEPT_LANGUAGE.scope(value, next.run(request)).await
 }
 
@@ -301,6 +318,8 @@ pub(crate) struct LoginCtx {
     pub idps: Vec<IdpView>,
     /// Form target of the "Sign in with ..." buttons.
     pub federated_action: String,
+    /// Prefilled username (OIDC `login_hint`).
+    pub login_hint: Option<String>,
 }
 
 /// An upstream identity provider as the login page shows it.
@@ -326,6 +345,18 @@ pub(crate) struct ConsentCtx {
     pub scopes: Vec<String>,
     pub csrf_token: String,
     pub action: String,
+}
+
+/// Context of `logout.html`.
+#[derive(Debug, Serialize)]
+pub(crate) struct LogoutCtx {
+    /// `true`: ask the user to confirm; `false`: report that they are signed
+    /// out.
+    pub confirm: bool,
+    /// Form target of the confirmation.
+    pub action: String,
+    /// Request parameters carried through the confirmation form.
+    pub fields: Vec<(String, String)>,
 }
 
 /// Context of `device_entry.html`.
@@ -354,6 +385,7 @@ pub(crate) trait Renderer: Send + Sync {
     fn render_login(&self, ctx: &LoginCtx) -> Result<String, minijinja::Error>;
     fn render_consent(&self, ctx: &ConsentCtx) -> Result<String, minijinja::Error>;
     fn render_mfa(&self, ctx: &MfaCtx) -> Result<String, minijinja::Error>;
+    fn render_logout(&self, ctx: &LogoutCtx) -> Result<String, minijinja::Error>;
     fn render_device_entry(&self, ctx: &DeviceEntryCtx) -> Result<String, minijinja::Error>;
     fn render_device_result(&self, ctx: &DeviceResultCtx) -> Result<String, minijinja::Error>;
     fn render_error(&self, ctx: &ErrorCtx) -> Result<String, minijinja::Error>;
@@ -443,6 +475,9 @@ impl Renderer for JinjaRenderer {
     fn render_mfa(&self, ctx: &MfaCtx) -> Result<String, minijinja::Error> {
         self.render("mfa.html", ctx)
     }
+    fn render_logout(&self, ctx: &LogoutCtx) -> Result<String, minijinja::Error> {
+        self.render("logout.html", ctx)
+    }
     fn render_device_entry(&self, ctx: &DeviceEntryCtx) -> Result<String, minijinja::Error> {
         self.render("device_entry.html", ctx)
     }
@@ -485,6 +520,7 @@ mod tests {
 
     fn login_ctx() -> LoginCtx {
         LoginCtx {
+            login_hint: Default::default(),
             federated_action: Default::default(),
             idps: Default::default(),
             client: ClientView::from_id("<b>app</b>"),
@@ -550,6 +586,7 @@ mod tests {
         let client = || ClientView::from_id("c");
         let pages = [
             r.render_login(&LoginCtx {
+                login_hint: Default::default(),
                 federated_action: Default::default(),
                 idps: Default::default(),
                 client: client(),
@@ -632,6 +669,7 @@ mod tests {
 
         let login = r
             .render_login(&LoginCtx {
+                login_hint: Default::default(),
                 federated_action: Default::default(),
                 idps: Default::default(),
                 client: rich_client(true),
@@ -648,6 +686,7 @@ mod tests {
     fn test_client_view_from_resource() {
         use openstack_keystone_core_types::oauth2_client::OAuth2ClientResource;
         let mut client = OAuth2ClientResource {
+            post_logout_redirect_uris: Default::default(),
             client_id: "cid".into(),
             provider_id: "prov".into(),
             domain_id: "d".into(),

@@ -61,6 +61,7 @@ code), see the [OAuth2 / OIDC user guide](../../user/features/oauth2.md).
 | `ui_show_client_logos`                  | `false` | Render the `logo_uri` registered for a client on its login and consent pages. Lets the CSP load `https:` images, which leaks sign-in activity to the client's host. |
 | `ui_default_locale`                     | `en`    | Locale used when `Accept-Language` matches no available locale.                                                                                  |
 | `mfa_max_attempts`                      | 5       | Second-factor codes accepted for checking per login attempt before the pre-auth session is discarded and the user must start over. Best-effort and per session; the per-user rate limit (`[rate_limit_user_auth]`) is the primary brute-force control. |
+| `sso_session_lifetime_minutes`        | 480     | Lifetime of the browser SSO session started by a successful sign-in. Later authorization requests in the same browser skip the login form while it lives. `0` is not allowed. |
 
 Exceeding a rate limit returns `429 Too Many Requests`.
 
@@ -103,6 +104,58 @@ Not covered yet: federated sign-in on the device-code verification page, and
 re-checking expiring group membership
 ([ADR 0013](../../adr/0013-federation-oidc-expiring-group-membership.md)) at
 refresh-token rotation (the OP issues no group or role claims today).
+
+## Single sign-on and logout
+
+A successful sign-in (password, TOTP or upstream provider) starts an SSO
+session stored in Raft and tied to the browser by the `keystone_oauth2_sso`
+cookie (`HttpOnly`, `SameSite=Lax`, and `Secure` when the public endpoint is
+`https`, like the pre-auth and device cookies; with a plain `http` endpoint the
+session can be replayed from the network path and Keystone logs a warning at
+startup). While it lives, `/authorize` skips the login form and resumes the
+original sign-in time and `amr`, so `auth_time` in the ID token is the real
+login time. The session is ignored when its user is disabled or belongs to
+another domain, and is deleted when the user or domain is disabled or deleted,
+or when the user's password changes.
+
+Limits to be aware of:
+
+- An SSO session keeps the `amr` of the sign-in that created it for its whole
+  lifetime. Enrolling a TOTP credential or enabling
+  `multi_factor_auth_enabled` for a user does not end existing sessions, so a
+  session started with a password alone stays valid (as `["pwd"]`) until it
+  expires. Lower `sso_session_lifetime_minutes`, or have the user log out,
+  when a stronger factor must apply immediately.
+- There is no per-user cap on SSO sessions. Each sign-in from a browser that
+  presents no valid SSO cookie adds a record that lives until it expires; the
+  janitor removes expired ones, and the login endpoints are rate limited per
+  IP.
+
+The authorization endpoint honours the OIDC request parameters:
+
+- `prompt=none` never shows a page: it answers with `login_required` or
+  `consent_required` redirects, or issues a code when the user is signed in and
+  the client is pre-authorized. It never sets cookies.
+- `prompt=login` and `prompt=select_account` force a fresh login.
+- `max_age` forces a fresh login when the SSO session is older than the value
+  (`0` always does).
+- `login_hint` pre-fills the user name; `ui_locales` selects the page language.
+
+`GET`/`POST /v4/oauth2/{domain_id}/logout` implements OpenID Connect
+RP-Initiated Logout 1.0 and is advertised as `end_session_endpoint`. An
+`id_token_hint` is verified against the domain keys (expired tokens are
+accepted) and must belong to the signed-in user. A
+`post_logout_redirect_uri` is only followed when it is registered in the
+client's `post_logout_redirect_uris`. Without an `id_token_hint` the user is
+asked to confirm first, because any page could otherwise log them out. On
+success the SSO session is deleted and the cookie cleared. Logout only ends
+the browser SSO session: access tokens and refresh-token families already
+issued stay valid until they expire or are revoked (RFC 7009 revocation, user
+or domain disable/delete, password change).
+
+Not covered yet: back-channel/front-channel logout notifications to relying
+parties, and ending the upstream provider session at logout (the upstream
+`sid` is stored for it).
 
 ## Customising the login pages
 
@@ -167,7 +220,9 @@ must be served from the same origin and inline styles or scripts do not run.
   (`iss` claim, discovery `issuer`, `token_endpoint`, `jwks_uri`, the device
   flow `verification_uri`) so no request header can influence them, and its
   scheme decides whether the pre-auth and device cookies carry `Secure`
-  (`https` → `Secure`, independent of `X-Forwarded-Proto`). Use `https`.
+  (`https` → `Secure`, independent of `X-Forwarded-Proto`), and so does the SSO
+  session cookie. Use `https`: with an `http` endpoint all of them travel
+  unprotected and Keystone logs a warning at startup.
 - When `public_endpoint` is unset, Keystone logs an error at startup and
   `/authorize`, `/device_authorization`, `/token` and discovery answer `503`
   (`server_error`). `[oauth2] allow_host_header_issuer = true` restores the

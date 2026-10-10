@@ -67,7 +67,14 @@ const MAX_PURGED_PER_KIND: usize = 50_000;
 
 /// Record kinds swept, in order (the expiry index kinds written by the raft
 /// driver).
-const KINDS: [&str; 5] = ["session", "code", "device", "refresh", "refresh_tombstone"];
+const KINDS: [&str; 6] = [
+    "session",
+    "code",
+    "device",
+    "sso",
+    "refresh",
+    "refresh_tombstone",
+];
 
 /// Outcome of a single sweep pass.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]

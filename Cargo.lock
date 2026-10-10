@@ -5162,6 +5162,7 @@ dependencies = [
  "spiffe-rustls-tokio",
  "tempfile",
  "thiserror 2.0.20",
+ "time",
  "tokio",
  "tokio-rustls",
  "tokio-util",

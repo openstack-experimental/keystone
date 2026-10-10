@@ -111,6 +111,7 @@ mod tests {
 
     fn sample_resource(confidential: bool) -> provider_types::OAuth2ClientResource {
         provider_types::OAuth2ClientResource {
+            post_logout_redirect_uris: Default::default(),
             client_id: "client-1".into(),
             provider_id: "provider-1".into(),
             domain_id: "domain_id".into(),
@@ -139,6 +140,7 @@ mod tests {
     fn sample_create(confidential: bool) -> OAuth2ClientCreateRequest {
         OAuth2ClientCreateRequest {
             oauth2_client: OAuth2ClientCreate {
+                post_logout_redirect_uris: Default::default(),
                 provider_id: "provider-1".into(),
                 confidential,
                 redirect_uris: vec!["https://rp.example.com/callback".into()],
