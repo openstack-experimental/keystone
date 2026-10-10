@@ -373,6 +373,7 @@ mod tests {
             revocation_reason: None,
             expires_at: 1000 + 2_592_000,
             family_expires_at: 0,
+            amr: vec![],
         }
     }
 

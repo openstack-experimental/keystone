@@ -60,8 +60,18 @@ code), see the [OAuth2 / OIDC user guide](../../user/features/oauth2.md).
 | `ui_support_url`, `ui_privacy_url`, `ui_terms_url` | unset | Footer links (`https://` URL or absolute path).                                                                                       |
 | `ui_show_client_logos`                  | `false` | Render the `logo_uri` registered for a client on its login and consent pages. Lets the CSP load `https:` images, which leaks sign-in activity to the client's host. |
 | `ui_default_locale`                     | `en`    | Locale used when `Accept-Language` matches no available locale.                                                                                  |
+| `mfa_max_attempts`                      | 5       | Second-factor codes accepted for checking per login attempt before the pre-auth session is discarded and the user must start over. Best-effort and per session; the per-user rate limit (`[rate_limit_user_auth]`) is the primary brute-force control. |
 
 Exceeding a rate limit returns `429 Too Many Requests`.
+
+## Second factor (TOTP)
+
+When the user has an enabled TOTP credential, the password step is followed by
+a verification-code page on both the browser flow and the device-code flow. The
+consent page is unreachable until the code is accepted. The issued `id_token`
+and refresh tokens carry `amr` of `["pwd", "otp", "mfa"]` instead of `["pwd"]`.
+If the credential lookup fails the login is refused (fail closed). WebAuthn is
+not offered on the OP login pages yet.
 
 ## Customising the login pages
 

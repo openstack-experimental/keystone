@@ -224,6 +224,10 @@ impl RaftOauth2SessionBackend {
             consent_granted: None,
             created_at: data.created_at,
             expires_at: data.expires_at,
+            amr: vec![],
+            pending_user_id: None,
+            pending_factors: vec![],
+            mfa_attempts: 0,
         };
         let mutations = vec![
             Mutation::set(
@@ -256,6 +260,7 @@ impl RaftOauth2SessionBackend {
         session_id: &str,
         user_id: &str,
         auth_time: i64,
+        amr: Vec<String>,
     ) -> Result<PreAuthSession, Oauth2SessionProviderError> {
         let mut record: PreAuthSession = get(storage, &session_key(session_id))
             .await
@@ -263,6 +268,49 @@ impl RaftOauth2SessionBackend {
             .ok_or_else(|| Oauth2SessionProviderError::NotFound(session_id.to_string()))?;
         record.user_id = Some(user_id.to_string());
         record.auth_time = Some(auth_time);
+        record.amr = amr;
+        record.pending_user_id = None;
+        record.pending_factors = Vec::new();
+        record.mfa_attempts = 0;
+        put(storage, session_key(session_id), &record)
+            .await
+            .map_err(store_err)?;
+        Ok(record)
+    }
+
+    async fn begin_pre_auth_session_mfa_impl(
+        &self,
+        storage: &dyn StorageApi,
+        session_id: &str,
+        user_id: &str,
+        factors: Vec<String>,
+    ) -> Result<PreAuthSession, Oauth2SessionProviderError> {
+        let mut record: PreAuthSession = get(storage, &session_key(session_id))
+            .await
+            .map_err(store_err)?
+            .ok_or_else(|| Oauth2SessionProviderError::NotFound(session_id.to_string()))?;
+        record.user_id = None;
+        record.auth_time = None;
+        record.pending_user_id = Some(user_id.to_string());
+        record.pending_factors = factors;
+        // `mfa_attempts` is deliberately not reset: re-entering the password
+        // must not hand out a fresh attempt budget.
+        put(storage, session_key(session_id), &record)
+            .await
+            .map_err(store_err)?;
+        Ok(record)
+    }
+
+    async fn record_pre_auth_session_mfa_attempt_impl(
+        &self,
+        storage: &dyn StorageApi,
+        session_id: &str,
+    ) -> Result<PreAuthSession, Oauth2SessionProviderError> {
+        let mut record: PreAuthSession = get(storage, &session_key(session_id))
+            .await
+            .map_err(store_err)?
+            .ok_or_else(|| Oauth2SessionProviderError::NotFound(session_id.to_string()))?;
+        record.mfa_attempts = record.mfa_attempts.saturating_add(1);
         put(storage, session_key(session_id), &record)
             .await
             .map_err(store_err)?;
@@ -389,6 +437,7 @@ impl RaftOauth2SessionBackend {
             family_expires_at: data.family_expires_at,
             revoked_at: None,
             revocation_reason: None,
+            amr: data.amr,
         };
         let mutations = vec![
             Mutation::set(
@@ -752,6 +801,9 @@ impl RaftOauth2SessionBackend {
             last_polled_at: None,
             created_at: data.created_at,
             expires_at: data.expires_at,
+            pending_user_id: None,
+            pending_factors: vec![],
+            mfa_attempts: 0,
         };
         let mutations = vec![
             Mutation::set(
@@ -815,6 +867,48 @@ impl RaftOauth2SessionBackend {
         record.user_id = Some(user_id.to_string());
         record.auth_time = Some(auth_time);
         record.amr = amr;
+        record.pending_user_id = None;
+        record.pending_factors = Vec::new();
+        record.mfa_attempts = 0;
+        put(storage, device_code_key(device_code), &record)
+            .await
+            .map_err(store_err)?;
+        Ok(record)
+    }
+
+    async fn begin_device_code_grant_mfa_impl(
+        &self,
+        storage: &dyn StorageApi,
+        device_code: &str,
+        user_id: &str,
+        factors: Vec<String>,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError> {
+        let mut record: DeviceCodeGrant = get(storage, &device_code_key(device_code))
+            .await
+            .map_err(store_err)?
+            .ok_or_else(|| Oauth2SessionProviderError::NotFound(device_code.to_string()))?;
+        record.user_id = None;
+        record.auth_time = None;
+        record.pending_user_id = Some(user_id.to_string());
+        record.pending_factors = factors;
+        // `mfa_attempts` is deliberately not reset: re-entering the password
+        // must not hand out a fresh attempt budget.
+        put(storage, device_code_key(device_code), &record)
+            .await
+            .map_err(store_err)?;
+        Ok(record)
+    }
+
+    async fn record_device_code_grant_mfa_attempt_impl(
+        &self,
+        storage: &dyn StorageApi,
+        device_code: &str,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError> {
+        let mut record: DeviceCodeGrant = get(storage, &device_code_key(device_code))
+            .await
+            .map_err(store_err)?
+            .ok_or_else(|| Oauth2SessionProviderError::NotFound(device_code.to_string()))?;
+        record.mfa_attempts = record.mfa_attempts.saturating_add(1);
         put(storage, device_code_key(device_code), &record)
             .await
             .map_err(store_err)?;
@@ -907,14 +1001,68 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
         session_id: &str,
         user_id: &str,
         auth_time: i64,
+        amr: Vec<String>,
     ) -> Result<PreAuthSession, Oauth2SessionProviderError> {
         self.mark_pre_auth_session_authenticated_impl(
             self.storage(state)?,
             session_id,
             user_id,
             auth_time,
+            amr,
         )
         .await
+    }
+
+    #[tracing::instrument(name = "driver.raft.oauth2_session.begin_pre_auth_session_mfa", level = "debug", skip_all, fields(session_id = %session_id))]
+    async fn begin_pre_auth_session_mfa(
+        &self,
+        state: &ServiceState,
+        session_id: &str,
+        user_id: &str,
+        factors: Vec<String>,
+    ) -> Result<PreAuthSession, Oauth2SessionProviderError> {
+        self.begin_pre_auth_session_mfa_impl(self.storage(state)?, session_id, user_id, factors)
+            .await
+    }
+
+    #[tracing::instrument(name = "driver.raft.oauth2_session.record_pre_auth_session_mfa_attempt", level = "debug", skip_all, fields(session_id = %session_id))]
+    async fn record_pre_auth_session_mfa_attempt(
+        &self,
+        state: &ServiceState,
+        session_id: &str,
+    ) -> Result<PreAuthSession, Oauth2SessionProviderError> {
+        self.record_pre_auth_session_mfa_attempt_impl(self.storage(state)?, session_id)
+            .await
+    }
+
+    #[tracing::instrument(
+        name = "driver.raft.oauth2_session.begin_device_code_grant_mfa",
+        level = "debug",
+        skip_all
+    )]
+    async fn begin_device_code_grant_mfa(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+        user_id: &str,
+        factors: Vec<String>,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError> {
+        self.begin_device_code_grant_mfa_impl(self.storage(state)?, device_code, user_id, factors)
+            .await
+    }
+
+    #[tracing::instrument(
+        name = "driver.raft.oauth2_session.record_device_code_grant_mfa_attempt",
+        level = "debug",
+        skip_all
+    )]
+    async fn record_device_code_grant_mfa_attempt(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError> {
+        self.record_device_code_grant_mfa_attempt_impl(self.storage(state)?, device_code)
+            .await
     }
 
     #[tracing::instrument(name = "driver.raft.oauth2_session.mark_pre_auth_session_consent", level = "debug", skip_all, fields(session_id = %session_id))]
@@ -1251,6 +1399,93 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_pre_auth_session_mfa_pending_then_authenticated() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_pre_auth_session_impl(&storage, sample_session_create())
+            .await
+            .unwrap();
+
+        let pending = backend
+            .begin_pre_auth_session_mfa_impl(
+                &storage,
+                "session-1",
+                "user-1",
+                vec!["totp".to_string()],
+            )
+            .await
+            .unwrap();
+        // The user is not signed in until every factor has passed.
+        assert_eq!(pending.user_id, None);
+        assert_eq!(pending.pending_user_id.as_deref(), Some("user-1"));
+        assert_eq!(pending.pending_factors, vec!["totp".to_string()]);
+
+        let failed = backend
+            .record_pre_auth_session_mfa_attempt_impl(&storage, "session-1")
+            .await
+            .unwrap();
+        assert_eq!(failed.mfa_attempts, 1);
+
+        let done = backend
+            .mark_pre_auth_session_authenticated_impl(
+                &storage,
+                "session-1",
+                "user-1",
+                1500,
+                vec!["pwd".to_string(), "otp".to_string(), "mfa".to_string()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(done.user_id.as_deref(), Some("user-1"));
+        assert_eq!(done.pending_user_id, None);
+        assert!(done.pending_factors.is_empty());
+        assert_eq!(done.mfa_attempts, 0);
+        assert_eq!(done.amr.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_device_grant_mfa_pending_then_authenticated() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_device_code_grant_impl(&storage, sample_device_grant_create())
+            .await
+            .unwrap();
+        let device_code = sample_device_grant_create().device_code;
+
+        let pending = backend
+            .begin_device_code_grant_mfa_impl(
+                &storage,
+                &device_code,
+                "user-1",
+                vec!["totp".to_string()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(pending.user_id, None);
+        assert_eq!(pending.pending_user_id.as_deref(), Some("user-1"));
+        let failed = backend
+            .record_device_code_grant_mfa_attempt_impl(&storage, &device_code)
+            .await
+            .unwrap();
+        assert_eq!(failed.mfa_attempts, 1);
+        let done = backend
+            .mark_device_code_grant_authenticated_impl(
+                &storage,
+                &device_code,
+                "user-1",
+                1500,
+                vec!["pwd".to_string(), "otp".to_string(), "mfa".to_string()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(done.user_id.as_deref(), Some("user-1"));
+        assert_eq!(done.pending_user_id, None);
+        assert_eq!(done.mfa_attempts, 0);
+    }
+
+    #[tokio::test]
     async fn test_mark_pre_auth_session_authenticated_and_consent() {
         let backend = RaftOauth2SessionBackend::default();
         let storage = MockStorage::default();
@@ -1260,11 +1495,18 @@ mod tests {
             .unwrap();
 
         let authenticated = backend
-            .mark_pre_auth_session_authenticated_impl(&storage, "session-1", "user-1", 1500)
+            .mark_pre_auth_session_authenticated_impl(
+                &storage,
+                "session-1",
+                "user-1",
+                1500,
+                vec!["pwd".to_string()],
+            )
             .await
             .unwrap();
         assert_eq!(authenticated.user_id.as_deref(), Some("user-1"));
         assert_eq!(authenticated.auth_time, Some(1500));
+        assert_eq!(authenticated.amr, vec!["pwd".to_string()]);
 
         let consented = backend
             .mark_pre_auth_session_consent_impl(&storage, "session-1", true)
@@ -1345,6 +1587,7 @@ mod tests {
             issued_at: 1000,
             expires_at: 1000 + 2_592_000,
             family_expires_at: 1000 + 7_776_000,
+            amr: vec![],
         }
     }
 

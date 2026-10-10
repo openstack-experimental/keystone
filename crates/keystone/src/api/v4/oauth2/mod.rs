@@ -25,16 +25,19 @@ use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod authorize;
+mod authorize_mfa;
 mod clients;
 mod confirm_rotate_signing_key;
 mod device;
 mod device_authorization;
+mod device_mfa;
 mod ensure_signing_key;
 mod html;
 mod introspect;
 mod jwks;
 mod jwks_revocation;
 mod local_emergency_key;
+mod mfa;
 mod renderer;
 mod revoke;
 mod rotate_signing_key;
@@ -66,10 +69,12 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .routes(routes!(userinfo::userinfo_get, userinfo::userinfo_post))
         .routes(routes!(authorize::authorize))
         .routes(routes!(authorize::authorize_login))
+        .routes(routes!(authorize_mfa::authorize_mfa))
         .routes(routes!(authorize::authorize_consent))
         .routes(routes!(device_authorization::device_authorization))
         .routes(routes!(device::device, device::device_login_code))
         .routes(routes!(device::device_login))
+        .routes(routes!(device_mfa::device_mfa))
         .routes(routes!(device::device_consent))
         .routes(routes!(rotate_signing_key::rotate_signing_key))
         .routes(routes!(

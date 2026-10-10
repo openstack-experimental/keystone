@@ -239,6 +239,16 @@ pub struct Oauth2Provider {
     #[serde(default)]
     pub ui_terms_url: Option<String>,
 
+    /// Second-factor (TOTP) attempts allowed on one login before the pending
+    /// sign-in is discarded and the user has to start over. Attempts are
+    /// counted before the code is checked and are not reset by entering the
+    /// password again, but this is a best-effort, per-session limit: the
+    /// per-user `[rate_limit_user_auth]` limiter is the primary brute-force
+    /// control.
+    #[serde(default = "default_mfa_max_attempts")]
+    #[validate(range(min = 1, max = 20))]
+    pub mfa_max_attempts: u32,
+
     /// Show the `logo_uri` registered for a client on its login and consent
     /// pages. The browser then fetches that image from the client's host
     /// (allowed by adding `https:` to the CSP `img-src`), which tells that
@@ -250,6 +260,10 @@ pub struct Oauth2Provider {
     /// locale bundles.
     #[serde(default = "default_ui_default_locale")]
     pub ui_default_locale: String,
+}
+
+fn default_mfa_max_attempts() -> u32 {
+    5
 }
 
 fn default_ui_product_name() -> String {
@@ -364,6 +378,7 @@ impl Default for Oauth2Provider {
             ui_support_url: None,
             ui_privacy_url: None,
             ui_terms_url: None,
+            mfa_max_attempts: default_mfa_max_attempts(),
             ui_show_client_logos: false,
             ui_default_locale: default_ui_default_locale(),
         }

@@ -219,6 +219,7 @@ pub(super) async fn handle_device_code_grant(
                     client_id: client.client_id.clone(),
                     user_id: user_id.clone(),
                     scope: record.scope.clone(),
+                    amr: record.amr.clone(),
                 },
             )
             .await

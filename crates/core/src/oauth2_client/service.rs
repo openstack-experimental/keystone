@@ -617,7 +617,8 @@ mod tests {
         let state = get_mocked_state(None, None).await;
         let ctx = ExecutionContext::internal(&state);
 
-        let cases: Vec<Box<dyn Fn(&mut OAuth2ClientResourceCreate)>> = vec![
+        type Mutation = Box<dyn Fn(&mut OAuth2ClientResourceCreate)>;
+        let cases: Vec<Mutation> = vec![
             Box::new(|r| r.name = String::new()),
             Box::new(|r| r.name = "   ".into()),
             Box::new(|r| r.name = "x".repeat(129)),

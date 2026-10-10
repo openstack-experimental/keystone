@@ -149,6 +149,7 @@ pub(super) async fn handle_authorization_code_grant(
                     client_id: client.client_id.clone(),
                     user_id: record.user_id.clone(),
                     scope: record.scope.clone(),
+                    amr: record.amr.clone(),
                 },
             )
             .await
@@ -519,6 +520,7 @@ mod tests {
                     revocation_reason: None,
                     expires_at: 1000 + 2_592_000,
                     family_expires_at: 0,
+                    amr: vec![],
                 },
                 "refresh-bearer".to_string(),
             ))
@@ -580,6 +582,7 @@ mod tests {
                     revocation_reason: None,
                     expires_at: 1000 + 2_592_000,
                     family_expires_at: 0,
+                    amr: vec![],
                 },
                 "refresh-bearer".to_string(),
             ))

@@ -60,6 +60,7 @@ fn refresh_create(token_id: &str, family_id: &str, expires_at: i64) -> RefreshTo
         issued_at: expires_at - 1000,
         expires_at,
         family_expires_at: 0,
+        amr: Vec::new(),
     }
 }
 
