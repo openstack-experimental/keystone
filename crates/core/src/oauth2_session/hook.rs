@@ -135,6 +135,13 @@ impl Oauth2SessionHook {
                 provider
                     .delete_sso_sessions_by_user(&self.state, user_id)
                     .await?;
+                // A disabled user keeps their remembered consents; a deleted
+                // one has no use for them.
+                if reason == RefreshTokenRevocationReason::UserDeleted {
+                    provider
+                        .delete_consents_by_user(&self.state, user_id)
+                        .await?;
+                }
                 (family_ids, reason)
             }
             Revocation::Domain { domain_id, reason } => {
@@ -147,6 +154,11 @@ impl Oauth2SessionHook {
                 provider
                     .delete_sso_sessions_by_domain(&self.state, domain_id)
                     .await?;
+                if reason == RefreshTokenRevocationReason::DomainDeleted {
+                    provider
+                        .delete_consents_by_domain(&self.state, domain_id)
+                        .await?;
+                }
                 (family_ids, reason)
             }
         };
@@ -253,6 +265,13 @@ mod tests {
             .withf(|_, u| u == "user-1")
             .times(1)
             .returning(|_, _| Ok(1));
+        // Remembered consents go only with a deleted user.
+        let deleted = reason == RefreshTokenRevocationReason::UserDeleted;
+        session
+            .expect_delete_consents_by_user()
+            .withf(|_, u| u == "user-1")
+            .times(usize::from(deleted))
+            .returning(|_, _| Ok(1));
     }
 
     fn expect_domain_revocation(
@@ -273,6 +292,12 @@ mod tests {
             .expect_delete_sso_sessions_by_domain()
             .withf(|_, d| d == "domain-1")
             .times(1)
+            .returning(|_, _| Ok(1));
+        let deleted = reason == RefreshTokenRevocationReason::DomainDeleted;
+        session
+            .expect_delete_consents_by_domain()
+            .withf(|_, d| d == "domain-1")
+            .times(usize::from(deleted))
             .returning(|_, _| Ok(1));
     }
 

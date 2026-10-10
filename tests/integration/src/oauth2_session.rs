@@ -91,6 +91,7 @@ async fn test_authorization_code_flow_and_refresh_reuse_collapses_family() -> Re
                 code_challenge: "challenge-abc".to_string(),
                 code_challenge_method: "S256".to_string(),
                 nonce: Some("nonce-1".to_string()),
+                force_consent: false,
             },
         )
         .await?;
@@ -636,5 +637,118 @@ fn sample_pre_auth_request(domain_id: &str) -> StartPreAuthSessionRequest {
         code_challenge: "challenge-abc".to_string(),
         code_challenge_method: "S256".to_string(),
         nonce: None,
+        force_consent: false,
     }
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_remembered_consent_lifecycle() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let sessions = state.provider.get_oauth2_session_provider();
+    let scopes = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+
+    // Nothing is remembered at first.
+    assert!(
+        sessions
+            .get_consent(&state, "domain-1", "user-1", "client-1")
+            .await?
+            .is_none()
+    );
+
+    // Remembering stores the scopes; a wider approval extends them and keeps
+    // the original `granted_at`.
+    let first = sessions
+        .remember_consent(
+            &state,
+            "domain-1",
+            "user-1",
+            "client-1",
+            &scopes(&["openid"]),
+        )
+        .await?;
+    let widened = sessions
+        .remember_consent(
+            &state,
+            "domain-1",
+            "user-1",
+            "client-1",
+            &scopes(&["openid", "email"]),
+        )
+        .await?;
+    assert_eq!(widened.scopes, scopes(&["openid", "email"]));
+    assert_eq!(widened.granted_at, first.granted_at);
+    sessions
+        .remember_consent(
+            &state,
+            "domain-1",
+            "user-1",
+            "client-2",
+            &scopes(&["openid"]),
+        )
+        .await?;
+    sessions
+        .remember_consent(
+            &state,
+            "domain-1",
+            "user-2",
+            "client-1",
+            &scopes(&["openid"]),
+        )
+        .await?;
+
+    let mut listed: Vec<String> = sessions
+        .list_consents(&state, "domain-1", "user-1")
+        .await?
+        .into_iter()
+        .map(|c| c.client_id)
+        .collect();
+    listed.sort();
+    assert_eq!(listed, ["client-1", "client-2"]);
+
+    // Withdrawing removes only that consent.
+    let (existed, families) = sessions
+        .revoke_consent(&state, "domain-1", "user-1", "client-1")
+        .await?;
+    assert!(existed);
+    assert!(families.is_empty());
+    assert!(
+        sessions
+            .get_consent(&state, "domain-1", "user-1", "client-1")
+            .await?
+            .is_none()
+    );
+    assert!(
+        sessions
+            .get_consent(&state, "domain-1", "user-1", "client-2")
+            .await?
+            .is_some()
+    );
+    let (existed, _) = sessions
+        .revoke_consent(&state, "domain-1", "user-1", "client-1")
+        .await?;
+    assert!(!existed);
+
+    // Deleting a client forgets its remaining consents, deleting a user all
+    // of theirs.
+    assert_eq!(
+        sessions
+            .delete_consents_by_client(&state, "client-1")
+            .await?,
+        1
+    );
+    assert_eq!(sessions.delete_consents_by_user(&state, "user-1").await?, 1);
+    assert!(
+        sessions
+            .list_consents(&state, "domain-1", "user-1")
+            .await?
+            .is_empty()
+    );
+    assert!(
+        sessions
+            .list_consents(&state, "domain-1", "user-2")
+            .await?
+            .is_empty()
+    );
+    Ok(())
 }

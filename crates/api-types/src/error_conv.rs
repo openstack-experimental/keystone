@@ -38,6 +38,7 @@ use openstack_keystone_core_types::limit::LimitProviderError;
 use openstack_keystone_core_types::mapping::MappingProviderError;
 use openstack_keystone_core_types::oauth2_client::Oauth2ClientProviderError;
 use openstack_keystone_core_types::oauth2_key::Oauth2KeyProviderError;
+use openstack_keystone_core_types::oauth2_session::Oauth2SessionProviderError;
 use openstack_keystone_core_types::policy_store::PolicyStoreProviderError;
 use openstack_keystone_core_types::resource::ResourceProviderError;
 use openstack_keystone_core_types::revoke::RevokeProviderError;
@@ -496,6 +497,21 @@ impl From<Oauth2ClientProviderError> for KeystoneApiError {
             Oauth2ClientProviderError::Validation(x) => Self::UnprocessableEntity(x),
             Oauth2ClientProviderError::RaftNotAvailable => Self::NotImplemented(
                 "OAuth2 client storage requires distributed storage (raft)".to_string(),
+            ),
+            other => Self::InternalError(other.to_string()),
+        }
+    }
+}
+
+impl From<Oauth2SessionProviderError> for KeystoneApiError {
+    fn from(value: Oauth2SessionProviderError) -> Self {
+        match value {
+            Oauth2SessionProviderError::NotFound(x) => Self::NotFound {
+                resource: "oauth2_session".into(),
+                identifier: x,
+            },
+            Oauth2SessionProviderError::RaftNotAvailable => Self::NotImplemented(
+                "OAuth2 session storage requires distributed storage (raft)".to_string(),
             ),
             other => Self::InternalError(other.to_string()),
         }
@@ -1186,6 +1202,17 @@ mod tests {
     #[test]
     fn oauth2_client_raft_not_available_returns_501() {
         let err = Oauth2ClientProviderError::RaftNotAvailable;
+        let api_err: KeystoneApiError = err.into();
+        assert!(matches!(api_err, KeystoneApiError::NotImplemented(..)));
+        assert_eq!(
+            <KeystoneApiError as IntoResponse>::into_response(api_err).status(),
+            StatusCode::NOT_IMPLEMENTED
+        );
+    }
+
+    #[test]
+    fn oauth2_session_raft_not_available_returns_501() {
+        let err = Oauth2SessionProviderError::RaftNotAvailable;
         let api_err: KeystoneApiError = err.into();
         assert!(matches!(api_err, KeystoneApiError::NotImplemented(..)));
         assert_eq!(

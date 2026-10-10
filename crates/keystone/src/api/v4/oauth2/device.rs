@@ -76,6 +76,9 @@ pub(super) struct DeviceLoginForm {
 pub(super) struct DeviceConsentForm {
     csrf_token: String,
     decision: String,
+    /// Present (any value) when the "remember" checkbox was ticked.
+    #[serde(default)]
+    remember: Option<String>,
 }
 
 /// CSRF token derivation, mirroring `authorize.rs`'s but keyed on the
@@ -151,7 +154,12 @@ pub(super) fn render_mfa(
     })
 }
 
-fn render_consent(domain_id: &str, client: &ClientView, grant: &DeviceCodeGrant) -> Response {
+fn render_consent(
+    domain_id: &str,
+    client: &ClientView,
+    grant: &DeviceCodeGrant,
+    remember: Option<bool>,
+) -> Response {
     let Some(csrf_token) = compute_csrf_token(grant) else {
         return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
     };
@@ -160,6 +168,7 @@ fn render_consent(domain_id: &str, client: &ClientView, grant: &DeviceCodeGrant)
         scopes: grant.scope.clone(),
         csrf_token,
         action: format!("/v4/oauth2/{domain_id}/device/consent"),
+        remember,
     })
 }
 
@@ -262,6 +271,14 @@ pub(super) async fn device_login_code(
         }
     };
 
+    if grant.domain_id != domain_id {
+        return Ok(render_entry(
+            &domain_id,
+            Some("invalid or expired code"),
+            &form.user_code,
+        ));
+    }
+
     let client = client_view(&state, &grant.client_id).await;
     let jar = jar.add(device_cookie(
         grant.device_code.clone(),
@@ -340,6 +357,13 @@ pub(super) async fn device_login(
         }
     };
 
+    // A grant only belongs to the domain it was started in.
+    if grant.domain_id != domain_id {
+        return Ok(error_page(
+            StatusCode::BAD_REQUEST,
+            "code expired; please restart",
+        ));
+    }
     if !verify_csrf_token(&grant, &form.csrf_token) {
         return Ok(error_page(
             StatusCode::BAD_REQUEST,
@@ -494,7 +518,20 @@ pub(super) async fn after_device_authentication(
         return finish_decision(state, grant, true, correlation_id).await;
     }
 
-    render_consent(domain_id, &view_of(client, &grant.client_id), grant)
+    // A remembered consent that covers the request replaces the page.
+    if let (Some(c), Some(user_id)) = (client, grant.user_id.as_deref())
+        && super::consent::is_covered(state, domain_id, user_id, &c.client_id, &grant.scope).await
+    {
+        return finish_decision(state, grant, true, correlation_id).await;
+    }
+
+    let remember = super::consent::remember_choice(client, &grant.scope);
+    render_consent(
+        domain_id,
+        &view_of(client, &grant.client_id),
+        grant,
+        remember,
+    )
 }
 
 /// `POST /v4/oauth2/{domain_id}/device/consent`.
@@ -518,7 +555,7 @@ pub(super) async fn after_device_authentication(
     err(Debug)
 )]
 pub(super) async fn device_consent(
-    Path(_domain_id): Path<String>,
+    Path(domain_id): Path<String>,
     State(state): State<ServiceState>,
     correlation_id: CorrelationId,
     jar: CookieJar,
@@ -552,6 +589,13 @@ pub(super) async fn device_consent(
         }
     };
 
+    // A grant only belongs to the domain it was started in.
+    if grant.domain_id != domain_id {
+        return Ok(error_page(
+            StatusCode::BAD_REQUEST,
+            "code expired; please restart",
+        ));
+    }
     if !verify_csrf_token(&grant, &form.csrf_token) {
         return Ok(error_page(
             StatusCode::BAD_REQUEST,
@@ -566,6 +610,27 @@ pub(super) async fn device_consent(
     }
 
     let granted = form.decision == "allow";
+    if granted
+        && form.remember.is_some()
+        && let Some(user_id) = grant.user_id.as_deref()
+    {
+        let client = state
+            .provider
+            .get_oauth2_client_provider()
+            .get_by_client_id(&ExecutionContext::internal(&state), &grant.client_id)
+            .await
+            .ok()
+            .flatten();
+        super::consent::remember(
+            &state,
+            client.as_ref(),
+            &domain_id,
+            user_id,
+            &grant.scope,
+            &correlation_id.0,
+        )
+        .await;
+    }
     Ok(finish_decision(&state, &grant, granted, &correlation_id.0).await)
 }
 
@@ -920,6 +985,9 @@ mod tests {
         let csrf = super::compute_csrf_token(&grant(true, 0)).unwrap();
         let mut session_mock = MockOauth2SessionProvider::default();
         session_mock
+            .expect_get_consent()
+            .returning(|_, _, _, _| Ok(None));
+        session_mock
             .expect_get_device_code_grant()
             .returning(|_, _| Ok(Some(grant(true, 0))));
         session_mock
@@ -1023,5 +1091,36 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_device_login_and_consent_reject_a_grant_of_another_domain() {
+        let csrf = super::compute_csrf_token(&grant(true, 0)).unwrap();
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_get_device_code_grant()
+            .returning(|_, _| Ok(Some(grant(true, 0))));
+        let provider = Provider::mocked_builder().mock_oauth2_session(session_mock);
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        for (uri, body) in [
+            (
+                "/domain-2/device/login",
+                format!("csrf_token={csrf}&username=alice&password=pass"),
+            ),
+            (
+                "/domain-2/device/consent",
+                format!("csrf_token={csrf}&decision=allow&remember=on"),
+            ),
+        ] {
+            let response = api
+                .as_service()
+                .oneshot(device_post(uri, &body))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{uri}");
+        }
     }
 }

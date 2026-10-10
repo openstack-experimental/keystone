@@ -16,8 +16,8 @@
 use async_trait::async_trait;
 
 use openstack_keystone_core_types::oauth2_session::{
-    AuthorizationCode, DeviceCodeGrant, PreAuthSession, RefreshToken, RefreshTokenRevocationReason,
-    SsoSession, UpstreamLogin, UpstreamLoginCompletion,
+    AuthorizationCode, Consent, DeviceCodeGrant, PreAuthSession, RefreshToken,
+    RefreshTokenRevocationReason, SsoSession, UpstreamLogin, UpstreamLoginCompletion,
 };
 
 use crate::keystone::ServiceState;
@@ -44,6 +44,8 @@ pub struct StartPreAuthSessionRequest {
     pub code_challenge_method: String,
     /// OIDC `nonce`.
     pub nonce: Option<String>,
+    /// The request carried `prompt=consent`.
+    pub force_consent: bool,
 }
 
 /// Input to [`Oauth2SessionApi::issue_authorization_code`]. The code value
@@ -267,6 +269,67 @@ pub trait Oauth2SessionApi: Send + Sync {
         &self,
         state: &ServiceState,
         domain_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError>;
+
+    /// Remember that the user approved the client for `scopes`. The stored
+    /// scopes are the union with an earlier consent, and `granted_at` of an
+    /// existing consent is kept.
+    async fn remember_consent(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        user_id: &str,
+        client_id: &str,
+        scopes: &[String],
+    ) -> Result<Consent, Oauth2SessionProviderError>;
+
+    /// The remembered consent of the user for the client, if any.
+    async fn get_consent(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        user_id: &str,
+        client_id: &str,
+    ) -> Result<Option<Consent>, Oauth2SessionProviderError>;
+
+    /// The remembered consents of the user.
+    async fn list_consents(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        user_id: &str,
+    ) -> Result<Vec<Consent>, Oauth2SessionProviderError>;
+
+    /// Withdraw the consent of the user for the client and revoke the
+    /// user's refresh token families of that client. Returns whether a
+    /// consent existed and the ids of the families revoked.
+    async fn revoke_consent(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        user_id: &str,
+        client_id: &str,
+    ) -> Result<(bool, Vec<String>), Oauth2SessionProviderError>;
+
+    /// Delete every consent of the user in any domain (user deleted).
+    async fn delete_consents_by_user(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError>;
+
+    /// Delete every consent within the domain (domain deleted).
+    async fn delete_consents_by_domain(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError>;
+
+    /// Delete every consent given to the client (client deleted).
+    async fn delete_consents_by_client(
+        &self,
+        state: &ServiceState,
+        client_id: &str,
     ) -> Result<usize, Oauth2SessionProviderError>;
 
     /// Sign the pre-auth session in with a valid SSO session: `user_id`,
