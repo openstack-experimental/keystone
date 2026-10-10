@@ -90,6 +90,6 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
 pub(crate) fn init_ui(cfg: &openstack_keystone_config::Oauth2Provider) -> Result<(), String> {
     cfg.validate_ui()?;
     let renderer = renderer::renderer_from_config(cfg).map_err(|e| e.to_string())?;
-    renderer::install(renderer);
+    renderer::install(renderer, cfg.ui_show_client_logos);
     Ok(())
 }

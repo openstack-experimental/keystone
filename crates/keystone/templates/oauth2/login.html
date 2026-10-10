@@ -2,7 +2,19 @@
 {% block title %}{{ t("sign_in") }}{% endblock %}
 {% block content %}
 <h1>{{ t("sign_in") }}</h1>
+{% if client.logo_uri %}
+<img class="client-logo" src="{{ client.logo_uri }}" alt="" referrerpolicy="no-referrer">
+{% endif %}
 <p>{{ t("requesting_access", client=client.name) }}</p>
+{% if client.description %}
+<p class="client-description">{{ client.description }}</p>
+{% endif %}
+{% if client.policy_uri or client.tos_uri %}
+<p class="client-links">
+{% if client.policy_uri %}<a href="{{ client.policy_uri }}" target="_blank" rel="noopener noreferrer">{{ t("client_privacy_policy") }}</a>{% endif %}
+{% if client.tos_uri %}<a href="{{ client.tos_uri }}" target="_blank" rel="noopener noreferrer">{{ t("client_terms_of_service") }}</a>{% endif %}
+</p>
+{% endif %}
 <p class="error" id="error" aria-live="polite">{% if error %}{{ t(error) }}{% endif %}</p>
 <form method="post" action="{{ action }}">
 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

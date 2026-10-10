@@ -22,6 +22,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use minijinja::value::{Kwargs, Value};
@@ -30,6 +31,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use openstack_keystone_config::Oauth2Provider;
+use openstack_keystone_core_types::oauth2_client::OAuth2ClientResource;
 
 /// Template names understood by the renderer. Each is looked up in
 /// `templates_dir` first and falls back to the embedded default.
@@ -227,18 +229,59 @@ impl Locales {
     }
 }
 
+static SHOW_CLIENT_LOGOS: AtomicBool = AtomicBool::new(false);
+
+/// Whether client-supplied logos are rendered (and the CSP allows loading
+/// them): `[oauth2] ui_show_client_logos`.
+pub(crate) fn show_client_logos() -> bool {
+    SHOW_CLIENT_LOGOS.load(Ordering::Relaxed)
+}
+
 /// The registered client as shown to the user.
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct ClientView {
     pub id: String,
     pub name: String,
+    pub description: Option<String>,
+    /// Only set when `ui_show_client_logos` is on.
+    pub logo_uri: Option<String>,
+    pub policy_uri: Option<String>,
+    pub tos_uri: Option<String>,
 }
 
 impl ClientView {
+    /// Fallback for a client that cannot be looked up: show its id.
     pub(crate) fn from_id(client_id: &str) -> Self {
         Self {
             id: client_id.to_string(),
             name: client_id.to_string(),
+            description: None,
+            logo_uri: None,
+            policy_uri: None,
+            tos_uri: None,
+        }
+    }
+
+    pub(crate) fn from_resource(client: &OAuth2ClientResource) -> Self {
+        // Registration only accepts https URLs (the scheme is matched
+        // case-insensitively there); link only those regardless.
+        let https = |u: &Option<String>| {
+            u.clone().filter(|u| {
+                u.get(..8)
+                    .is_some_and(|p| p.eq_ignore_ascii_case("https://"))
+            })
+        };
+        Self {
+            id: client.client_id.clone(),
+            name: client.display_name().to_string(),
+            description: client.description.clone(),
+            logo_uri: if show_client_logos() {
+                https(&client.logo_uri)
+            } else {
+                None
+            },
+            policy_uri: https(&client.policy_uri),
+            tos_uri: https(&client.tos_uri),
         }
     }
 }
@@ -395,7 +438,8 @@ static RENDERER: OnceLock<Arc<dyn Renderer>> = OnceLock::new();
 
 /// Install the process-wide renderer. Called once at startup, after the
 /// configuration is validated; later calls are ignored.
-pub(crate) fn install(renderer: Arc<dyn Renderer>) {
+pub(crate) fn install(renderer: Arc<dyn Renderer>, show_logos: bool) {
+    SHOW_CLIENT_LOGOS.store(show_logos, Ordering::Relaxed);
     let _ = RENDERER.set(renderer);
 }
 
@@ -519,6 +563,91 @@ mod tests {
             assert!(html.contains("Privacy"));
             assert!(!html.contains("Support"));
         }
+    }
+
+    fn rich_client(logo: bool) -> ClientView {
+        ClientView {
+            id: "id-1".into(),
+            name: "Fancy <App>".into(),
+            description: Some("Does things".into()),
+            logo_uri: logo.then(|| "https://rp.example.com/logo.png".to_string()),
+            policy_uri: Some("https://rp.example.com/privacy".into()),
+            tos_uri: Some("https://rp.example.com/tos".into()),
+        }
+    }
+
+    #[test]
+    fn test_consent_shows_client_metadata() {
+        let r = JinjaRenderer::embedded();
+        let ctx = |logo| ConsentCtx {
+            client: rich_client(logo),
+            scopes: vec!["openid".into()],
+            csrf_token: "t".into(),
+            action: "/a".into(),
+        };
+        let with_logo = r.render_consent(&ctx(true)).unwrap();
+        assert!(with_logo.contains("Fancy &lt;App&gt;"));
+        assert!(!with_logo.contains("id-1"));
+        assert!(with_logo.contains("Does things"));
+        assert!(with_logo.contains("class=\"client-logo\""));
+        assert!(with_logo.contains("rp.example.com&#x2f;logo.png"));
+        assert!(with_logo.contains("rp.example.com&#x2f;privacy"));
+        assert!(with_logo.contains("rp.example.com&#x2f;tos"));
+
+        let without = r.render_consent(&ctx(false)).unwrap();
+        assert!(!without.contains("client-logo\""));
+        assert!(without.contains("Fancy &lt;App&gt;"));
+
+        let login = r
+            .render_login(&LoginCtx {
+                client: rich_client(true),
+                csrf_token: "t".into(),
+                error: None,
+                action: "/a".into(),
+            })
+            .unwrap();
+        assert!(login.contains("Fancy &lt;App&gt;"));
+        assert!(login.contains("class=\"client-logo\""));
+    }
+
+    #[test]
+    fn test_client_view_from_resource() {
+        use openstack_keystone_core_types::oauth2_client::OAuth2ClientResource;
+        let mut client = OAuth2ClientResource {
+            client_id: "cid".into(),
+            provider_id: "prov".into(),
+            domain_id: "d".into(),
+            client_secret_hash: None,
+            redirect_uris: vec![],
+            token_endpoint_auth_method: "none".into(),
+            grant_types: vec![],
+            require_pkce: true,
+            allowed_scopes: vec![],
+            pre_authorized: false,
+            enabled: true,
+            claims_template: Default::default(),
+            created_at: 0,
+            updated_at: 0,
+            deleted_at: None,
+            name: String::new(),
+            description: None,
+            logo_uri: Some("https://rp.example.com/l.png".into()),
+            policy_uri: Some("http://insecure.example.com/p".into()),
+            tos_uri: None,
+            contacts: vec![],
+        };
+        // Pre-existing records without a name show the provider id.
+        let view = ClientView::from_resource(&client);
+        assert_eq!(view.name, "prov");
+        assert_eq!(view.id, "cid");
+        // Logos are off by default; non-https links are never rendered.
+        assert!(view.logo_uri.is_none());
+        assert!(view.policy_uri.is_none());
+        // The URL parser accepts an upper-case scheme at registration.
+        client.policy_uri = Some("HTTPS://rp.example.com/p".into());
+        assert!(ClientView::from_resource(&client).policy_uri.is_some());
+        client.name = "Named".into();
+        assert_eq!(ClientView::from_resource(&client).name, "Named");
     }
 
     #[test]

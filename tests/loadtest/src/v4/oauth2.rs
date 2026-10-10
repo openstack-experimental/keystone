@@ -83,6 +83,7 @@ pub async fn create_client(user: &mut GooseUser) -> TransactionResult {
             "confidential": true,
             "grant_types": ["client_credentials"],
             "provider_id": provider_id,
+            "name": "Load test client",
             "token_endpoint_auth_method": "client_secret_basic"
         }
     });

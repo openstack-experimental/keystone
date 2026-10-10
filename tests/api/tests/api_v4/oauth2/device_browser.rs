@@ -62,7 +62,7 @@ async fn test_device_browser_full_flow_grants_and_polls_succeed() -> Result<()> 
     let (status, login_html) = session.submit_user_code(&start.user_code).await?;
     assert_eq!(status, StatusCode::OK);
     assert!(
-        login_html.contains(&client_id),
+        login_html.contains(&format!("API test client {provider_id}")),
         "login page must display the requesting client's identity: {login_html}"
     );
     let login_csrf = extract_hidden_value(&login_html, "csrf_token")
@@ -75,7 +75,7 @@ async fn test_device_browser_full_flow_grants_and_polls_succeed() -> Result<()> 
     // Consent dialog security check: the user must be shown which client is
     // asking and exactly which scopes it is requesting before approving.
     assert!(
-        consent_html.contains(&client_id),
+        consent_html.contains(&format!("API test client {provider_id}")),
         "consent page must display the requesting client's identity: {consent_html}"
     );
     assert!(

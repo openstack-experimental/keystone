@@ -58,6 +58,7 @@ code), see the [OAuth2 / OIDC user guide](../../user/features/oauth2.md).
 | `ui_product_name`                       | `OpenStack` | Product name in page titles, logo `alt` text and the footer.                                                                               |
 | `ui_logo_url`                           | unset   | Logo at the top of every page: an absolute path such as `/v4/oauth2/static/logo.svg` (external URLs are blocked by the page CSP).                                  |
 | `ui_support_url`, `ui_privacy_url`, `ui_terms_url` | unset | Footer links (`https://` URL or absolute path).                                                                                       |
+| `ui_show_client_logos`                  | `false` | Render the `logo_uri` registered for a client on its login and consent pages. Lets the CSP load `https:` images, which leaks sign-in activity to the client's host. |
 | `ui_default_locale`                     | `en`    | Locale used when `Accept-Language` matches no available locale.                                                                                  |
 
 Exceeding a rate limit returns `429 Too Many Requests`.
@@ -78,11 +79,15 @@ other templates extend; override it to change all pages at once.
 
 | File                | Context variables                                                              |
 | ------------------- | ------------------------------------------------------------------------------ |
-| `login.html`        | `client.id`, `client.name`, `csrf_token`, `error` (optional), `action`          |
-| `consent.html`      | `client.id`, `client.name`, `scopes` (list), `csrf_token`, `action`             |
+| `login.html`        | `client.*`, `csrf_token`, `error` (optional), `action`                         |
+| `consent.html`      | `client.*`, `scopes` (list), `csrf_token`, `action`                             |
 | `device_entry.html` | `error` (optional), `prefill`, `action`                                         |
-| `device_result.html`| `granted` (bool), `client.id`, `client.name`                                    |
+| `device_result.html`| `granted` (bool), `client.*`                                                    |
 | `error.html`        | `message`                                                                       |
+
+`client` carries `id`, `name`, `description`, `logo_uri` (only with
+`ui_show_client_logos`), `policy_uri` and `tos_uri`; the optional ones are
+unset when the client has none.
 
 Keep the form field names (`csrf_token`, `username`, `password`, `decision`,
 `user_code`) and the `action` URL: the handlers depend on them.
@@ -160,6 +165,38 @@ DELETE /v4/oauth2/{domain_id}/clients/{provider_id}
   globally unique (it's the sole key presented at `/token`, before `domain_id`
   is known).
 - `client_id`, `provider_id`, `domain_id` are immutable after creation.
+- `name` (required on create, 1-128 characters) is what users see on the login
+  and consent pages instead of the raw `client_id`; users are otherwise asked to
+  approve an opaque UUID, which is what consent phishing relies on. Clients
+  registered before names existed show their `provider_id`.
+  Optional display metadata follows the RFC 7591 names: `description` (up to
+  1024 characters), `logo_uri`, `policy_uri` and `tos_uri` (absolute `https://`
+  URLs without credentials) and `contacts` (up to 10 entries). On update, an
+  empty string clears `description`, `logo_uri`, `policy_uri` and `tos_uri`.
+  `GET .../clients?name=<text>` filters by case-insensitive name substring.
+- The consent page links `policy_uri` and `tos_uri`. `logo_uri` is only
+  rendered when `[oauth2] ui_show_client_logos = true`, because the browser then
+  loads the image from the client's host (the CSP `img-src` gains `https:`),
+  which tells that host who is signing in.
+
+```json
+{
+  "oauth2_client": {
+    "provider_id": "grafana",
+    "name": "Grafana",
+    "description": "Operations dashboards",
+    "logo_uri": "https://grafana.example.com/logo.png",
+    "policy_uri": "https://grafana.example.com/privacy",
+    "tos_uri": "https://grafana.example.com/terms",
+    "contacts": ["ops@example.com"],
+    "confidential": true,
+    "token_endpoint_auth_method": "client_secret_basic",
+    "grant_types": ["authorization_code", "refresh_token"],
+    "redirect_uris": ["https://grafana.example.com/login/generic_oauth"],
+    "allowed_scopes": ["openid", "profile", "email"]
+  }
+}
+```
 - Setting `pre_authorized: true` (skips user consent for trusted first-party
   device-code clients) requires `SystemAdmin` regardless of the Tier 2
   self-service path otherwise available on this endpoint, and is rejected

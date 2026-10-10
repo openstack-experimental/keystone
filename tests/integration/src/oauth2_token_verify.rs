@@ -99,6 +99,7 @@ async fn provision_client_credentials_client(
                 .client_id("")
                 .provider_id(provider_id)
                 .domain_id(domain_id)
+                .name("Integration test client")
                 .token_endpoint_auth_method("client_secret_basic")
                 .grant_types(vec![GrantType::ClientCredentials])
                 .build()?,

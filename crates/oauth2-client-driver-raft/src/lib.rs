@@ -114,6 +114,12 @@ impl RaftOauth2ClientBackend {
             created_at: now,
             updated_at: now,
             deleted_at: None,
+            name: data.name,
+            description: data.description,
+            logo_uri: data.logo_uri,
+            policy_uri: data.policy_uri,
+            tos_uri: data.tos_uri,
+            contacts: data.contacts,
         };
         let primary_key = self.get_resource_key_name(&obj.domain_id, &obj.provider_id);
         let index_key = self.get_client_id_idx_key_name(&obj.client_id);
@@ -259,6 +265,14 @@ impl RaftOauth2ClientBackend {
             let candidate = envelope.try_deserialize::<OAuth2ClientResource>()?.data;
             if let Some(enabled) = params.enabled
                 && candidate.enabled != enabled
+            {
+                continue;
+            }
+            if let Some(needle) = &params.name
+                && !candidate
+                    .display_name()
+                    .to_lowercase()
+                    .contains(&needle.to_lowercase())
             {
                 continue;
             }
@@ -521,6 +535,12 @@ mod tests {
             allowed_scopes: vec!["openid".to_string()],
             pre_authorized: false,
             claims_template: HashMap::new(),
+            name: "Test client".into(),
+            description: None,
+            logo_uri: None,
+            policy_uri: None,
+            tos_uri: None,
+            contacts: vec![],
         }
     }
 
@@ -620,6 +640,101 @@ mod tests {
         };
         let listed = backend.list_impl(&storage, &params).await.unwrap();
         assert_eq!(listed.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_display_metadata_persisted_and_name_filter() {
+        let backend = RaftOauth2ClientBackend::default();
+        let storage = MockStorage::default();
+
+        let mut first = make_create("provider-1", "domain-1", "client-1");
+        first.name = "Grafana Dashboard".into();
+        first.logo_uri = Some("https://rp.example.com/logo.png".into());
+        first.contacts = vec!["ops@example.com".into()];
+        backend.create_impl(&storage, first).await.unwrap();
+        let mut second = make_create("provider-2", "domain-1", "client-2");
+        second.name = "CLI".into();
+        backend.create_impl(&storage, second).await.unwrap();
+
+        let fetched = backend
+            .get_impl(&storage, "domain-1", "provider-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.name, "Grafana Dashboard");
+        assert_eq!(fetched.contacts, vec!["ops@example.com".to_string()]);
+
+        let params = OAuth2ClientResourceListParameters {
+            domain_id: "domain-1".to_string(),
+            name: Some("grafana".to_string()),
+            ..Default::default()
+        };
+        let listed = backend.list_impl(&storage, &params).await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].provider_id, "provider-1");
+
+        let updated = backend
+            .update_impl(
+                &storage,
+                "domain-1",
+                "provider-1",
+                OAuth2ClientResourceUpdate {
+                    name: Some("Grafana".into()),
+                    logo_uri: Some(String::new()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.name, "Grafana");
+        assert_eq!(updated.logo_uri, None);
+    }
+
+    #[test]
+    fn test_record_without_display_fields_deserializes() {
+        // Records are stored as positional MessagePack arrays; one written
+        // before the display fields existed is shorter and must still load.
+        #[derive(serde::Serialize)]
+        struct Legacy(
+            String,
+            String,
+            String,
+            Option<String>,
+            Vec<String>,
+            String,
+            Vec<GrantType>,
+            bool,
+            Vec<String>,
+            bool,
+            bool,
+            HashMap<String, String>,
+            i64,
+            i64,
+            Option<i64>,
+        );
+        let legacy = Legacy(
+            "cid".into(),
+            "prov".into(),
+            "dom".into(),
+            None,
+            vec![],
+            "none".into(),
+            vec![],
+            true,
+            vec![],
+            false,
+            true,
+            HashMap::new(),
+            1,
+            2,
+            None,
+        );
+        let bytes = rmp_serde::to_vec(&legacy).unwrap();
+        let parsed: OAuth2ClientResource = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(parsed.client_id, "cid");
+        assert_eq!(parsed.name, "");
+        assert!(parsed.contacts.is_empty());
+        assert_eq!(parsed.display_name(), "prov");
     }
 
     #[tokio::test]
