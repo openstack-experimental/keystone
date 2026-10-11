@@ -387,7 +387,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
         &self,
         state: &ServiceState,
         user_id: &str,
-    ) -> Result<usize, Oauth2SessionProviderError> {
+    ) -> Result<Vec<String>, Oauth2SessionProviderError> {
         self.backend_driver
             .delete_rp_sessions_by_user(state, user_id)
             .await

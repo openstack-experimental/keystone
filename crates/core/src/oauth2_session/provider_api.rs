@@ -271,13 +271,14 @@ pub trait Oauth2SessionApi: Send + Sync {
         user_id: &str,
     ) -> Result<Vec<String>, Oauth2SessionProviderError>;
 
-    /// Forget the user's relying parties after they were notified; returns
-    /// how many.
+    /// Forget the user's relying parties and return the ones removed: the
+    /// caller notifies exactly these. A relying party recorded after the
+    /// removal stays for the next logout, so none is dropped unnotified.
     async fn delete_rp_sessions_by_user(
         &self,
         state: &ServiceState,
         user_id: &str,
-    ) -> Result<usize, Oauth2SessionProviderError>;
+    ) -> Result<Vec<String>, Oauth2SessionProviderError>;
 
     /// End every SSO session of the user (user disabled, deleted, password
     /// changed); returns how many.

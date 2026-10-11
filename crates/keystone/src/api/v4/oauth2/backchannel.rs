@@ -179,8 +179,8 @@ async fn deliver(
 }
 
 /// Tell every relying party of `user_id` that registered a
-/// `backchannel_logout_uri` that the session ended, then forget the user's
-/// relying parties. `base_url` is the public endpoint (no trailing slash).
+/// `backchannel_logout_uri` that the session ended, forgetting the user's
+/// relying parties as it takes them. `base_url` is the public endpoint (no trailing slash).
 ///
 /// Returns the delivery tasks: production callers drop them (fire and
 /// forget); tests await them.
@@ -192,21 +192,18 @@ pub async fn notify_user_logout(
     user_id: &str,
 ) -> Vec<JoinHandle<bool>> {
     let sessions = state.provider.get_oauth2_session_provider();
-    let client_ids = match sessions.list_rp_client_ids_by_user(state, user_id).await {
+    // List and clear in one step: the relying parties removed are exactly
+    // the ones notified, so one recorded in between is kept for the next
+    // logout instead of being dropped unnotified.
+    let client_ids = match sessions.delete_rp_sessions_by_user(state, user_id).await {
         Ok(ids) => ids,
         // No raft storage, no OP sessions, nothing to notify.
         Err(Oauth2SessionProviderError::RaftNotAvailable) => return Vec::new(),
         Err(e) => {
-            tracing::warn!(error = %e, "back-channel logout: relying party lookup failed");
+            tracing::warn!(error = %e, "back-channel logout: relying parties not cleared");
             return Vec::new();
         }
     };
-    if client_ids.is_empty() {
-        return Vec::new();
-    }
-    if let Err(e) = sessions.delete_rp_sessions_by_user(state, user_id).await {
-        tracing::warn!(error = %e, "back-channel logout: relying parties not cleared");
-    }
 
     let exec = ExecutionContext::internal(state);
     let mut tasks = Vec::new();
@@ -404,17 +401,13 @@ mod tests {
     async fn state_with(
         rp_clients: Vec<&'static str>,
         clients: Vec<OAuth2ClientResource>,
-        cleared: usize,
         public_key: Arc<Mutex<Option<KeyMaterial>>>,
     ) -> ServiceState {
         let mut sessions = MockOauth2SessionProvider::default();
         sessions
-            .expect_list_rp_client_ids_by_user()
-            .returning(move |_, _| Ok(rp_clients.iter().map(|c| c.to_string()).collect()));
-        sessions
             .expect_delete_rp_sessions_by_user()
-            .times(cleared)
-            .returning(|_, _| Ok(1));
+            .times(1)
+            .returning(move |_, _| Ok(rp_clients.iter().map(|c| c.to_string()).collect()));
         let mut client_mock = MockOauth2ClientProvider::default();
         client_mock
             .expect_get_by_client_id()
@@ -445,7 +438,6 @@ mod tests {
                 client("with-uri", Some("https://rp.example.com/bc")),
                 client("without-uri", None),
             ],
-            1,
             public_key.clone(),
         )
         .await;
@@ -487,7 +479,6 @@ mod tests {
         let state = state_with(
             vec!["c"],
             vec![client("c", Some("https://rp.example.com/bc"))],
-            1,
             Arc::new(Mutex::new(None)),
         )
         .await;
@@ -503,7 +494,6 @@ mod tests {
         let state = state_with(
             vec!["c"],
             vec![client("c", Some("https://rp.example.com/bc"))],
-            1,
             Arc::new(Mutex::new(None)),
         )
         .await;
@@ -524,7 +514,6 @@ mod tests {
         let state = state_with(
             vec!["off", "gone"],
             vec![disabled, deleted],
-            1,
             Arc::new(Mutex::new(None)),
         )
         .await;
@@ -537,7 +526,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_user_without_relying_parties_does_nothing() {
-        let state = state_with(vec![], vec![], 0, Arc::new(Mutex::new(None))).await;
+        let state = state_with(vec![], vec![], Arc::new(Mutex::new(None))).await;
         let transport = Recorder::new(vec![]);
         let tasks =
             notify_user_logout(&state, transport.clone(), fast(), "https://k", "user-1").await;
@@ -549,7 +538,7 @@ mod tests {
         use openstack_keystone_core_types::events::Operation;
         let mut sessions = MockOauth2SessionProvider::default();
         sessions
-            .expect_list_rp_client_ids_by_user()
+            .expect_delete_rp_sessions_by_user()
             .times(1)
             .returning(|_, _| Ok(Vec::new()));
         let mut config = openstack_keystone_config::Config::default();

@@ -562,19 +562,21 @@ impl RaftOauth2SessionBackend {
         &self,
         storage: &dyn StorageApi,
         user_id: &str,
-    ) -> Result<usize, Oauth2SessionProviderError> {
+    ) -> Result<Vec<String>, Oauth2SessionProviderError> {
         let clients = self
             .list_rp_client_ids_by_user_impl(storage, user_id)
             .await?;
         if clients.is_empty() {
-            return Ok(0);
+            return Ok(clients);
         }
+        // Remove exactly what was listed: an entry added after the listing
+        // is not touched and is returned by the next call.
         let mutations: Vec<_> = clients
             .iter()
             .map(|client_id| Mutation::remove_index(rp_idx_key(user_id, client_id)))
             .collect();
         storage.transaction(mutations).await.map_err(store_err)?;
-        Ok(clients.len())
+        Ok(clients)
     }
 
     async fn delete_sso_session_impl(
@@ -1712,7 +1714,7 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
         &self,
         state: &ServiceState,
         user_id: &str,
-    ) -> Result<usize, Oauth2SessionProviderError> {
+    ) -> Result<Vec<String>, Oauth2SessionProviderError> {
         self.delete_rp_sessions_by_user_impl(self.storage(state)?, user_id)
             .await
     }
@@ -2616,12 +2618,19 @@ mod tests {
         clients.sort();
         assert_eq!(clients, vec!["client-1", "client-2"]);
 
-        assert_eq!(
+        let mut removed = backend
+            .delete_rp_sessions_by_user_impl(&storage, "user-1")
+            .await
+            .unwrap();
+        removed.sort();
+        assert_eq!(removed, vec!["client-1", "client-2"]);
+        // A second logout has nothing left to notify.
+        assert!(
             backend
                 .delete_rp_sessions_by_user_impl(&storage, "user-1")
                 .await
-                .unwrap(),
-            2
+                .unwrap()
+                .is_empty()
         );
         assert!(
             backend

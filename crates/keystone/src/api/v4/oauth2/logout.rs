@@ -567,7 +567,7 @@ mod tests {
             .expect_list_sso_sessions_by_user()
             .returning(|_, _, _| Ok(Vec::new()));
         sessions
-            .expect_list_rp_client_ids_by_user()
+            .expect_delete_rp_sessions_by_user()
             .returning(|_, _| Ok(Vec::new()));
         sessions
     }
@@ -701,14 +701,10 @@ mod tests {
             .expect_list_sso_sessions_by_user()
             .returning(|_, _, _| Ok(Vec::new()));
         sessions
-            .expect_list_rp_client_ids_by_user()
+            .expect_delete_rp_sessions_by_user()
             .times(1)
             .withf(|_, user_id| user_id == "user-1")
             .returning(|_, _| Ok(vec!["client-1".to_string()]));
-        sessions
-            .expect_delete_rp_sessions_by_user()
-            .times(1)
-            .returning(|_, _| Ok(1));
         let response = router(sessions)
             .await
             .oneshot(post("client_id=client-1"))
@@ -730,7 +726,6 @@ mod tests {
             .expect_list_sso_sessions_by_user()
             .returning(|_, _, _| Ok(vec![sso("domain-1")]));
         // Another browser stays signed in: nobody is told to log out.
-        sessions.expect_list_rp_client_ids_by_user().never();
         sessions.expect_delete_rp_sessions_by_user().never();
         let response = router(sessions)
             .await

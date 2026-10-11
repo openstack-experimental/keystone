@@ -92,13 +92,13 @@ pub trait Oauth2SessionBackend: Send + Sync {
         user_id: &str,
     ) -> Result<Vec<String>, Oauth2SessionProviderError>;
 
-    /// Forget the relying parties of the user once they were told the
-    /// session ended; returns how many.
+    /// Forget the relying parties of the user and return the ones removed.
+    /// Only the returned ones may be told the session ended.
     async fn delete_rp_sessions_by_user(
         &self,
         state: &ServiceState,
         user_id: &str,
-    ) -> Result<usize, Oauth2SessionProviderError>;
+    ) -> Result<Vec<String>, Oauth2SessionProviderError>;
 
     /// Delete every SSO session of `user_id`; returns how many.
     async fn delete_sso_sessions_by_user(
