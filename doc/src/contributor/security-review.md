@@ -711,8 +711,12 @@ The OP login page can send the browser to an upstream IdP
 | Weak upstream claims a strong `amr` | Only a list of at most 8 short strings is copied; otherwise `["federated"]`. Operators who do not trust an IdP's `amr` should not register it for OP login. |
 | Rate limiting | Both endpoints run the per-IP limiter before any lookup. |
 
-Residual: federated sign-in is not offered on the device-code page, and
-expiring group membership is not re-checked at refresh rotation.
+The device-code page (`oauth2/device_federated.rs`) applies the same controls
+with the device grant in place of the pre-auth session: the pending redirect is
+stored on the grant, compared in constant time, consumed atomically, and a
+grant of another domain is refused.
+
+Residual: expiring group membership is not re-checked at refresh rotation.
 
 ### V8c — Remembered consent (silent grants, escalation, delegated management)
 

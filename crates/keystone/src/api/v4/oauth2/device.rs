@@ -41,11 +41,14 @@ use openstack_keystone_core_types::identity::{
 use openstack_keystone_core_types::oauth2_client::OAuth2ClientResource;
 use openstack_keystone_core_types::oauth2_session::DeviceCodeGrant;
 
+use super::federated::{idp_views, login_idps};
 use super::html::{
     client_view, consent_page, device_entry_page, device_result_page, error_page, fetch_client,
     login_page, mfa_page, too_many_requests, view_of,
 };
-use super::renderer::{ClientView, ConsentCtx, DeviceEntryCtx, DeviceResultCtx, LoginCtx, MfaCtx};
+use super::renderer::{
+    ClientView, ConsentCtx, DeviceEntryCtx, DeviceResultCtx, IdpView, LoginCtx, MfaCtx,
+};
 use crate::api::common::PeerAddr;
 use crate::audit::{
     CorrelationId, build_initiator_from_user_id, build_initiator_unknown, emit_oauth2_session_event,
@@ -116,11 +119,12 @@ fn render_entry(domain_id: &str, error: Option<&str>, prefill: &str) -> Response
     })
 }
 
-fn render_login(
+pub(super) fn render_login(
     domain_id: &str,
     client: &ClientView,
     grant: &DeviceCodeGrant,
     error: Option<&str>,
+    idps: Vec<IdpView>,
 ) -> Response {
     let Some(csrf_token) = compute_csrf_token(grant) else {
         return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
@@ -130,9 +134,8 @@ fn render_login(
         csrf_token,
         error: error.map(str::to_string),
         action: format!("/v4/oauth2/{domain_id}/device/login"),
-        // Federated sign-in is not offered on the device flow yet.
-        idps: Vec::new(),
-        federated_action: String::new(),
+        idps,
+        federated_action: format!("/v4/oauth2/{domain_id}/device/federated"),
         login_hint: None,
     })
 }
@@ -284,7 +287,8 @@ pub(super) async fn device_login_code(
         grant.device_code.clone(),
         cookie_secure(&state, &headers).await,
     ));
-    let response = render_login(&domain_id, &client, &grant, None);
+    let idps = idp_views(&login_idps(&state, &domain_id).await);
+    let response = render_login(&domain_id, &client, &grant, None, idps);
     Ok((jar, response).into_response())
 }
 
@@ -390,6 +394,7 @@ pub(super) async fn device_login(
                 &client,
                 &grant,
                 Some("invalid username or password"),
+                idp_views(&login_idps(&state, &domain_id).await),
             ));
         }
     };
@@ -418,6 +423,7 @@ pub(super) async fn device_login(
                 &client,
                 &grant,
                 Some("invalid username or password"),
+                idp_views(&login_idps(&state, &domain_id).await),
             ));
         }
     };
@@ -836,6 +842,8 @@ mod tests {
             pending_user_id: pending.then(|| "user-1".to_string()),
             pending_factors: if pending { vec!["totp".into()] } else { vec![] },
             mfa_attempts: attempts,
+            pending_upstream: None,
+            upstream: None,
         }
     }
 

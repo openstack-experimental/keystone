@@ -57,7 +57,7 @@ use crate::keystone::ServiceState;
 
 /// The error shown on the login page when the upstream sign-in fails. The
 /// reason is logged, never shown.
-const UPSTREAM_FAILED: &str = "sign-in with the identity provider failed";
+pub(super) const UPSTREAM_FAILED: &str = "sign-in with the identity provider failed";
 
 /// Longest `amr` list / entry accepted from an upstream ID token.
 const MAX_UPSTREAM_AMR: usize = 8;
@@ -69,6 +69,16 @@ pub(super) struct FederatedForm {
     idp_id: String,
 }
 
+impl FederatedForm {
+    pub(super) fn csrf_token(&self) -> &str {
+        &self.csrf_token
+    }
+
+    pub(super) fn idp_id(&self) -> &str {
+        &self.idp_id
+    }
+}
+
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub(super) struct FederatedCallbackQuery {
     #[serde(default)]
@@ -77,6 +87,12 @@ pub(super) struct FederatedCallbackQuery {
     state: Option<String>,
     #[serde(default)]
     error: Option<String>,
+}
+
+impl FederatedCallbackQuery {
+    pub(super) fn state(&self) -> Option<&str> {
+        self.state.as_deref()
+    }
 }
 
 /// The IdPs of `domain_id` the login page may offer: enabled, usable for
@@ -137,12 +153,147 @@ pub(super) fn idp_views(idps: &[IdentityProvider]) -> Vec<IdpView> {
 }
 
 /// Where the upstream IdP sends the browser back to.
-async fn callback_url(state: &ServiceState, headers: &HeaderMap, domain_id: &str) -> String {
+async fn callback_url(
+    state: &ServiceState,
+    headers: &HeaderMap,
+    domain_id: &str,
+    callback_path: &str,
+) -> String {
     let base = crate::api::common::public_base_url(state, headers).await;
     format!(
-        "{}/v4/oauth2/{domain_id}/authorize/federated/callback",
+        "{}/v4/oauth2/{domain_id}/{callback_path}",
         base.trim_end_matches('/')
     )
+}
+
+/// Path (below the domain) of the browser flow's upstream callback.
+const AUTHORIZE_CALLBACK_PATH: &str = "authorize/federated/callback";
+
+/// What starting an upstream sign-in produced: where to send the browser and
+/// the `state` the callback has to present.
+pub(super) struct UpstreamRedirect {
+    pub(super) auth_url: String,
+    pub(super) state: String,
+}
+
+/// Start the sign-in at `idp`, answering to `callback_path`. Errors are the
+/// (already user-safe) message to show.
+pub(super) async fn begin_upstream(
+    state: &ServiceState,
+    headers: &HeaderMap,
+    domain_id: &str,
+    callback_path: &str,
+    idp: IdentityProvider,
+) -> Result<UpstreamRedirect, &'static str> {
+    let redirect_uri = callback_url(state, headers, domain_id, callback_path).await;
+    let idp_id = idp.id.clone();
+    let started = begin_upstream_auth(state, idp, &redirect_uri, None)
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, idp_id = %idp_id, "starting the upstream sign-in failed");
+            UPSTREAM_FAILED
+        })?;
+    Ok(UpstreamRedirect {
+        auth_url: started.auth_url,
+        state: started.state,
+    })
+}
+
+/// The `303` to the upstream IdP.
+pub(super) fn upstream_redirect_response(auth_url: &str) -> Response {
+    security_headers(Redirect::to(auth_url).into_response())
+}
+
+/// What the upstream callback has to answer: the redirect the browser was
+/// sent on.
+pub(super) struct PendingRedirect<'a> {
+    pub(super) idp_id: &'a str,
+    pub(super) state: &'a str,
+}
+
+/// An upstream sign-in that succeeded.
+pub(super) struct UpstreamIdentity {
+    pub(super) user_id: String,
+    pub(super) amr: Vec<String>,
+    pub(super) upstream: UpstreamLogin,
+}
+
+/// Validate the callback and authenticate the user at the upstream IdP.
+///
+/// The `state` must be the one the browser was sent with (and is consumed on
+/// use), the IdP must still be a registered, enabled one of the domain, and
+/// the answer must carry a code. `Err` is the audit reason; details are
+/// logged, never shown.
+pub(super) async fn complete_upstream(
+    state: &ServiceState,
+    idps: &[IdentityProvider],
+    pending: &PendingRedirect<'_>,
+    query: &FederatedCallbackQuery,
+) -> Result<UpstreamIdentity, &'static str> {
+    let exec = ExecutionContext::internal(state);
+    // Best-effort single use of the auth state. `complete_upstream_login`
+    // also consumes the pending redirect, but as a read-modify-write: it
+    // narrows replay, it is not a compare-and-swap.
+    let auth_state = match state
+        .provider
+        .get_federation_provider()
+        .get_auth_state(&exec, pending.state)
+        .await
+    {
+        Ok(Some(a)) => a,
+        Ok(None) => return Err("UpstreamStateUnknown"),
+        Err(e) => {
+            tracing::warn!(error = %e, "upstream auth state lookup failed");
+            return Err("UpstreamStateUnknown");
+        }
+    };
+    if let Err(e) = state
+        .provider
+        .get_federation_provider()
+        .delete_auth_state(&exec, pending.state)
+        .await
+    {
+        tracing::warn!(error = %e, "upstream auth state could not be consumed");
+        return Err("UpstreamStateUnknown");
+    }
+    if auth_state.expires_at < Utc::now() || auth_state.idp_id != pending.idp_id {
+        return Err("UpstreamStateExpired");
+    }
+
+    // Only a registered, enabled IdP of this domain is ever trusted.
+    let Some(idp) = idps.iter().find(|idp| idp.id == pending.idp_id) else {
+        return Err("UpstreamIdpUnavailable");
+    };
+
+    let (Some(code), None) = (query.code.as_deref(), query.error.as_deref()) else {
+        tracing::debug!("upstream IdP returned an error response");
+        return Err("UpstreamError");
+    };
+
+    let (auth_result, claims) =
+        match authenticate_upstream(state, &exec, &auth_state, idp, code).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(error = %e, idp_id = %idp.id, "upstream sign-in failed");
+                return Err("UpstreamAuthenticationFailed");
+            }
+        };
+    let IdentityInfo::User(user_info) = &auth_result.principal.identity else {
+        tracing::warn!(idp_id = %idp.id, "upstream sign-in did not resolve to a user");
+        return Err("UpstreamAuthenticationFailed");
+    };
+    Ok(UpstreamIdentity {
+        user_id: user_info.user_id.clone(),
+        amr: upstream_amr(&claims),
+        upstream: UpstreamLogin {
+            idp_id: idp.id.clone(),
+            sid: claims
+                .get("sid")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty() && s.len() <= 256)
+                .map(str::to_string),
+        },
+    })
 }
 
 /// Remember the redirect on the session and answer with the `303` to the
@@ -154,14 +305,8 @@ pub(super) async fn redirect_to_upstream(
     session_id: &str,
     idp: IdentityProvider,
 ) -> Result<Response, &'static str> {
-    let redirect_uri = callback_url(state, headers, domain_id).await;
     let idp_id = idp.id.clone();
-    let started = begin_upstream_auth(state, idp, &redirect_uri, None)
-        .await
-        .map_err(|e| {
-            tracing::warn!(error = %e, idp_id = %idp_id, "starting the upstream sign-in failed");
-            UPSTREAM_FAILED
-        })?;
+    let started = begin_upstream(state, headers, domain_id, AUTHORIZE_CALLBACK_PATH, idp).await?;
     state
         .provider
         .get_oauth2_session_provider()
@@ -171,9 +316,7 @@ pub(super) async fn redirect_to_upstream(
             tracing::warn!(error = %e, "oauth2 pre-auth session update failed");
             UPSTREAM_FAILED
         })?;
-    Ok(security_headers(
-        Redirect::to(&started.auth_url).into_response(),
-    ))
+    Ok(upstream_redirect_response(&started.auth_url))
 }
 
 /// Load the pre-auth session of the cookie. A session only ever belongs to the
@@ -358,7 +501,8 @@ pub(super) async fn authorize_federated_callback(
             "invalid or expired sign-in; please restart sign-in",
         )
     };
-    let (Some(pending), Some(returned_state)) = (session.pending_upstream.clone(), query.state)
+    let (Some(pending), Some(returned_state)) =
+        (session.pending_upstream.clone(), query.state.clone())
     else {
         return Ok(invalid());
     };
@@ -387,59 +531,21 @@ pub(super) async fn authorize_federated_callback(
         )
     };
 
-    let exec = ExecutionContext::internal(&state);
-    // Best-effort single use of the auth state. The replay guarantee itself is
-    // `complete_upstream_login`, which consumes `pending_upstream` atomically,
-    // so two racing callbacks cannot both sign the session in.
-    let auth_state = match state
-        .provider
-        .get_federation_provider()
-        .get_auth_state(&exec, &returned_state)
-        .await
+    let identity = match complete_upstream(
+        &state,
+        &idps,
+        &PendingRedirect {
+            idp_id: &pending.idp_id,
+            state: &returned_state,
+        },
+        &query,
+    )
+    .await
     {
-        Ok(Some(a)) => a,
-        Ok(None) => return Ok(fail(&session, "UpstreamStateUnknown")),
-        Err(e) => {
-            tracing::warn!(error = %e, "upstream auth state lookup failed");
-            return Ok(fail(&session, "UpstreamStateUnknown"));
-        }
+        Ok(identity) => identity,
+        Err(reason) => return Ok(fail(&session, reason)),
     };
-    if let Err(e) = state
-        .provider
-        .get_federation_provider()
-        .delete_auth_state(&exec, &returned_state)
-        .await
-    {
-        tracing::warn!(error = %e, "upstream auth state could not be consumed");
-        return Ok(fail(&session, "UpstreamStateUnknown"));
-    }
-    if auth_state.expires_at < Utc::now() || auth_state.idp_id != pending.idp_id {
-        return Ok(fail(&session, "UpstreamStateExpired"));
-    }
-
-    // Only a registered, enabled IdP of this domain is ever trusted.
-    let Some(idp) = idps.iter().find(|idp| idp.id == pending.idp_id) else {
-        return Ok(fail(&session, "UpstreamIdpUnavailable"));
-    };
-
-    let (Some(code), None) = (query.code.as_deref(), query.error.as_deref()) else {
-        tracing::debug!("upstream IdP returned an error response");
-        return Ok(fail(&session, "UpstreamError"));
-    };
-
-    let (auth_result, claims) =
-        match authenticate_upstream(&state, &exec, &auth_state, idp, code).await {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!(error = %e, idp_id = %idp.id, "upstream sign-in failed");
-                return Ok(fail(&session, "UpstreamAuthenticationFailed"));
-            }
-        };
-    let IdentityInfo::User(user_info) = &auth_result.principal.identity else {
-        tracing::warn!(idp_id = %idp.id, "upstream sign-in did not resolve to a user");
-        return Ok(fail(&session, "UpstreamAuthenticationFailed"));
-    };
-    let user_id = user_info.user_id.clone();
+    let user_id = identity.user_id.clone();
 
     let session = match state
         .provider
@@ -449,17 +555,10 @@ pub(super) async fn authorize_federated_callback(
             &session.session_id,
             UpstreamLoginCompletion {
                 upstream_state: returned_state,
-                user_id: user_id.clone(),
+                user_id: identity.user_id,
                 auth_time: Utc::now().timestamp(),
-                amr: upstream_amr(&claims),
-                upstream: UpstreamLogin {
-                    idp_id: idp.id.clone(),
-                    sid: claims
-                        .get("sid")
-                        .and_then(|v| v.as_str())
-                        .filter(|s| !s.is_empty() && s.len() <= 256)
-                        .map(str::to_string),
-                },
+                amr: identity.amr,
+                upstream: identity.upstream,
             },
         )
         .await

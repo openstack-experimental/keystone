@@ -485,6 +485,13 @@ pub struct DeviceCodeGrant {
     /// Second-factor attempts so far (counted before verification).
     #[serde(default)]
     pub mfa_attempts: u32,
+    /// Set once the user is redirected to an upstream IdP, cleared when the
+    /// callback completes the login.
+    #[serde(default)]
+    pub pending_upstream: Option<PendingUpstream>,
+    /// Set alongside `user_id` when the login was federated.
+    #[serde(default)]
+    pub upstream: Option<UpstreamLogin>,
 }
 
 /// Input to create a new [`DeviceCodeGrant`].

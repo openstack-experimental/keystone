@@ -31,6 +31,7 @@ mod confirm_rotate_signing_key;
 mod consent;
 mod device;
 mod device_authorization;
+mod device_federated;
 mod device_mfa;
 mod ensure_signing_key;
 mod federated;
@@ -82,6 +83,8 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .routes(routes!(device::device, device::device_login_code))
         .routes(routes!(device::device_login))
         .routes(routes!(device_mfa::device_mfa))
+        .routes(routes!(device_federated::device_federated))
+        .routes(routes!(device_federated::device_federated_callback))
         .routes(routes!(device::device_consent))
         .routes(routes!(rotate_signing_key::rotate_signing_key))
         .routes(routes!(

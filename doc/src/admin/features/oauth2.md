@@ -102,8 +102,14 @@ derived from the `Host` header. The provider id and the upstream
 `sid` claim are stored with the session, the authorization code and the refresh
 token family, so logout can later chain to the upstream session.
 
-Not covered yet: federated sign-in on the device-code verification page, and
-re-checking expiring group membership
+The device-code verification page offers the same providers. Its browser
+returns to `<public_endpoint>/v4/oauth2/<domain_id>/device/federated/callback`,
+which also has to be allowed by a provider that restricts redirect URIs; the
+upstream `state` is bound to the device grant exactly as it is bound to the
+pre-auth session in the browser flow, and the upstream `amr`, provider id and
+`sid` are copied to the grant and the refresh token family.
+
+Not covered yet: re-checking expiring group membership
 ([ADR 0013](../../adr/0013-federation-oidc-expiring-group-membership.md)) at
 refresh-token rotation (the OP issues no group or role claims today).
 

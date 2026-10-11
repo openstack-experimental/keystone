@@ -1169,6 +1169,8 @@ impl RaftOauth2SessionBackend {
             pending_user_id: None,
             pending_factors: vec![],
             mfa_attempts: 0,
+            pending_upstream: None,
+            upstream: None,
         };
         let mutations = vec![
             Mutation::set(
@@ -1232,6 +1234,62 @@ impl RaftOauth2SessionBackend {
         record.user_id = Some(user_id.to_string());
         record.auth_time = Some(auth_time);
         record.amr = amr;
+        // A password login must not inherit the identity of an earlier
+        // federated one on the same grant.
+        record.upstream = None;
+        record.pending_upstream = None;
+        record.pending_user_id = None;
+        record.pending_factors = Vec::new();
+        record.mfa_attempts = 0;
+        put(storage, device_code_key(device_code), &record)
+            .await
+            .map_err(store_err)?;
+        Ok(record)
+    }
+
+    async fn begin_device_code_grant_upstream_impl(
+        &self,
+        storage: &dyn StorageApi,
+        device_code: &str,
+        idp_id: &str,
+        upstream_state: &str,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError> {
+        let mut record: DeviceCodeGrant = get(storage, &device_code_key(device_code))
+            .await
+            .map_err(store_err)?
+            .ok_or_else(|| Oauth2SessionProviderError::NotFound(device_code.to_string()))?;
+        record.pending_upstream = Some(PendingUpstream {
+            idp_id: idp_id.to_string(),
+            state: upstream_state.to_string(),
+        });
+        put(storage, device_code_key(device_code), &record)
+            .await
+            .map_err(store_err)?;
+        Ok(record)
+    }
+
+    async fn complete_device_code_grant_upstream_impl(
+        &self,
+        storage: &dyn StorageApi,
+        device_code: &str,
+        completion: UpstreamLoginCompletion,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError> {
+        let mut record: DeviceCodeGrant = get(storage, &device_code_key(device_code))
+            .await
+            .map_err(store_err)?
+            .ok_or_else(|| Oauth2SessionProviderError::NotFound(device_code.to_string()))?;
+        // The callback must answer exactly the redirect this grant sent.
+        record
+            .pending_upstream
+            .take()
+            .filter(|p| {
+                p.idp_id == completion.upstream.idp_id && p.state == completion.upstream_state
+            })
+            .ok_or_else(|| Oauth2SessionProviderError::NotFound(device_code.to_string()))?;
+        record.user_id = Some(completion.user_id);
+        record.auth_time = Some(completion.auth_time);
+        record.amr = completion.amr;
+        record.upstream = Some(completion.upstream);
         record.pending_user_id = None;
         record.pending_factors = Vec::new();
         record.mfa_attempts = 0;
@@ -1254,6 +1312,8 @@ impl RaftOauth2SessionBackend {
             .ok_or_else(|| Oauth2SessionProviderError::NotFound(device_code.to_string()))?;
         record.user_id = None;
         record.auth_time = None;
+        record.upstream = None;
+        record.pending_upstream = None;
         record.pending_user_id = Some(user_id.to_string());
         record.pending_factors = factors;
         // `mfa_attempts` is deliberately not reset: re-entering the password
@@ -1436,6 +1496,42 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
         session_id: &str,
     ) -> Result<PreAuthSession, Oauth2SessionProviderError> {
         self.record_pre_auth_session_mfa_attempt_impl(self.storage(state)?, session_id)
+            .await
+    }
+
+    #[tracing::instrument(
+        name = "driver.raft.oauth2_session.begin_device_code_grant_upstream",
+        level = "debug",
+        skip_all
+    )]
+    async fn begin_device_code_grant_upstream(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+        idp_id: &str,
+        upstream_state: &str,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError> {
+        self.begin_device_code_grant_upstream_impl(
+            self.storage(state)?,
+            device_code,
+            idp_id,
+            upstream_state,
+        )
+        .await
+    }
+
+    #[tracing::instrument(
+        name = "driver.raft.oauth2_session.complete_device_code_grant_upstream",
+        level = "debug",
+        skip_all
+    )]
+    async fn complete_device_code_grant_upstream(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+        completion: UpstreamLoginCompletion,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError> {
+        self.complete_device_code_grant_upstream_impl(self.storage(state)?, device_code, completion)
             .await
     }
 
@@ -3412,5 +3508,150 @@ mod tests {
             .collect();
         ids.sort();
         assert_eq!(ids, ["sso-1", "sso-2"]);
+    }
+
+    #[tokio::test]
+    async fn test_device_grant_upstream_login_is_bound_to_the_pending_redirect() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_device_code_grant_impl(&storage, sample_device_grant_create())
+            .await
+            .unwrap();
+        let device_code = sample_device_grant_create().device_code;
+        let completion = |state: &str| UpstreamLoginCompletion {
+            upstream_state: state.to_string(),
+            user_id: "user-1".to_string(),
+            auth_time: 1234,
+            amr: vec!["mfa".to_string()],
+            upstream: UpstreamLogin {
+                idp_id: "idp-1".to_string(),
+                sid: Some("sid-1".to_string()),
+            },
+        };
+
+        // Nothing pending: no callback can complete the login.
+        assert!(
+            backend
+                .complete_device_code_grant_upstream_impl(
+                    &storage,
+                    &device_code,
+                    completion("state-1")
+                )
+                .await
+                .is_err()
+        );
+
+        let pending = backend
+            .begin_device_code_grant_upstream_impl(&storage, &device_code, "idp-1", "state-1")
+            .await
+            .unwrap();
+        assert_eq!(
+            pending.pending_upstream,
+            Some(PendingUpstream {
+                idp_id: "idp-1".to_string(),
+                state: "state-1".to_string(),
+            })
+        );
+
+        // A callback with another state is refused and leaves the redirect.
+        assert!(
+            backend
+                .complete_device_code_grant_upstream_impl(
+                    &storage,
+                    &device_code,
+                    completion("other")
+                )
+                .await
+                .is_err()
+        );
+
+        let done = backend
+            .complete_device_code_grant_upstream_impl(&storage, &device_code, completion("state-1"))
+            .await
+            .unwrap();
+        assert_eq!(done.user_id.as_deref(), Some("user-1"));
+        assert_eq!(done.amr, ["mfa"]);
+        assert_eq!(
+            done.upstream.as_ref().map(|u| u.idp_id.as_str()),
+            Some("idp-1")
+        );
+        assert!(done.pending_upstream.is_none());
+
+        // Single use: the same callback cannot complete twice.
+        assert!(
+            backend
+                .complete_device_code_grant_upstream_impl(
+                    &storage,
+                    &device_code,
+                    completion("state-1")
+                )
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_device_grant_password_login_drops_the_upstream_identity() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_device_code_grant_impl(&storage, sample_device_grant_create())
+            .await
+            .unwrap();
+        let device_code = sample_device_grant_create().device_code;
+        backend
+            .begin_device_code_grant_upstream_impl(&storage, &device_code, "idp-1", "state-1")
+            .await
+            .unwrap();
+        backend
+            .complete_device_code_grant_upstream_impl(
+                &storage,
+                &device_code,
+                UpstreamLoginCompletion {
+                    upstream_state: "state-1".to_string(),
+                    user_id: "user-a".to_string(),
+                    auth_time: 1,
+                    amr: vec!["mfa".to_string()],
+                    upstream: UpstreamLogin {
+                        idp_id: "idp-1".to_string(),
+                        sid: Some("sid-a".to_string()),
+                    },
+                },
+            )
+            .await
+            .unwrap();
+
+        // Another user then signs in with a password on the same grant.
+        let after = backend
+            .mark_device_code_grant_authenticated_impl(
+                &storage,
+                &device_code,
+                "user-b",
+                2,
+                vec!["pwd".to_string()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(after.user_id.as_deref(), Some("user-b"));
+        assert!(after.upstream.is_none());
+
+        // So does the start of a second-factor step, which also drops a
+        // redirect still pending from before.
+        backend
+            .begin_device_code_grant_upstream_impl(&storage, &device_code, "idp-1", "state-2")
+            .await
+            .unwrap();
+        let mfa = backend
+            .begin_device_code_grant_mfa_impl(
+                &storage,
+                &device_code,
+                "user-b",
+                vec!["totp".to_string()],
+            )
+            .await
+            .unwrap();
+        assert!(mfa.upstream.is_none());
+        assert!(mfa.pending_upstream.is_none());
     }
 }

@@ -558,6 +558,23 @@ pub trait Oauth2SessionApi: Send + Sync {
         amr: Vec<String>,
     ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError>;
 
+    /// Device flow counterpart of [`Self::begin_upstream_login`].
+    async fn begin_device_upstream_login(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+        idp_id: &str,
+        upstream_state: &str,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError>;
+
+    /// Device flow counterpart of [`Self::complete_upstream_login`].
+    async fn complete_device_upstream_login(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+        completion: UpstreamLoginCompletion,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError>;
+
     /// Device flow counterpart of [`Self::begin_mfa`].
     async fn begin_device_mfa(
         &self,

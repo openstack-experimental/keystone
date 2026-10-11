@@ -86,6 +86,25 @@ pub struct Oauth2SessionService {
 }
 
 impl Oauth2SessionService {
+    /// A device grant can only be signed in while it is still `Pending` and
+    /// unexpired; a decided or expired one must not be re-authenticated.
+    async fn ensure_device_grant_open(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+    ) -> Result<(), Oauth2SessionProviderError> {
+        match self
+            .backend_driver
+            .get_device_code_grant(state, device_code)
+            .await?
+        {
+            Some(g) if g.status == DeviceGrantStatus::Pending && g.expires_at > now() => Ok(()),
+            _ => Err(Oauth2SessionProviderError::NotFound(
+                device_code.to_string(),
+            )),
+        }
+    }
+
     /// Create a new `Oauth2SessionService`.
     pub fn new<P: PluginManagerApi>(
         config: &Config,
@@ -1050,6 +1069,41 @@ impl Oauth2SessionApi for Oauth2SessionService {
     ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError> {
         self.backend_driver
             .mark_device_code_grant_authenticated(state, device_code, user_id, auth_time, amr)
+            .await
+    }
+
+    #[tracing::instrument(
+        name = "provider.oauth2_session.begin_device_upstream_login",
+        level = "debug",
+        skip_all
+    )]
+    async fn begin_device_upstream_login(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+        idp_id: &str,
+        upstream_state: &str,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError> {
+        self.ensure_device_grant_open(state, device_code).await?;
+        self.backend_driver
+            .begin_device_code_grant_upstream(state, device_code, idp_id, upstream_state)
+            .await
+    }
+
+    #[tracing::instrument(
+        name = "provider.oauth2_session.complete_device_upstream_login",
+        level = "debug",
+        skip_all
+    )]
+    async fn complete_device_upstream_login(
+        &self,
+        state: &ServiceState,
+        device_code: &str,
+        completion: UpstreamLoginCompletion,
+    ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError> {
+        self.ensure_device_grant_open(state, device_code).await?;
+        self.backend_driver
+            .complete_device_code_grant_upstream(state, device_code, completion)
             .await
     }
 
@@ -2063,6 +2117,8 @@ mod tests {
             pending_user_id: None,
             pending_factors: vec![],
             mfa_attempts: 0,
+            pending_upstream: None,
+            upstream: None,
         }
     }
 
@@ -2088,6 +2144,8 @@ mod tests {
                 pending_user_id: None,
                 pending_factors: vec![],
                 mfa_attempts: 0,
+                pending_upstream: None,
+                upstream: None,
             })
         });
         let service = service_with(mock);
@@ -2567,5 +2625,68 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(revoked, ["f1"]);
+    }
+
+    fn completion() -> UpstreamLoginCompletion {
+        UpstreamLoginCompletion {
+            upstream_state: "state-1".into(),
+            user_id: "user-1".into(),
+            auth_time: 1,
+            amr: vec![],
+            upstream: UpstreamLogin {
+                idp_id: "idp-1".into(),
+                sid: None,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn test_device_upstream_login_requires_an_open_grant() {
+        let state = get_mocked_state(None, None).await;
+        let expired = || {
+            let mut g = sample_device_grant(DeviceGrantStatus::Pending, None);
+            g.expires_at = now() - 1;
+            g
+        };
+        for grant in [
+            sample_device_grant(DeviceGrantStatus::Authorized, None),
+            sample_device_grant(DeviceGrantStatus::Denied, None),
+            expired(),
+        ] {
+            let mut mock = MockOauth2SessionBackend::new();
+            mock.expect_get_device_code_grant()
+                .returning(move |_, _| Ok(Some(grant.clone())));
+            mock.expect_begin_device_code_grant_upstream().never();
+            mock.expect_complete_device_code_grant_upstream().never();
+            let service = service_with(mock);
+            assert!(matches!(
+                service
+                    .begin_device_upstream_login(&state, "device-code-1", "idp-1", "state-1")
+                    .await,
+                Err(Oauth2SessionProviderError::NotFound(_))
+            ));
+            assert!(matches!(
+                service
+                    .complete_device_upstream_login(&state, "device-code-1", completion())
+                    .await,
+                Err(Oauth2SessionProviderError::NotFound(_))
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_device_upstream_login_proceeds_on_a_pending_grant() {
+        let state = get_mocked_state(None, None).await;
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_get_device_code_grant()
+            .returning(|_, _| Ok(Some(sample_device_grant(DeviceGrantStatus::Pending, None))));
+        mock.expect_begin_device_code_grant_upstream()
+            .times(1)
+            .returning(|_, _, _, _| Ok(sample_device_grant(DeviceGrantStatus::Pending, None)));
+        let service = service_with(mock);
+        service
+            .begin_device_upstream_login(&state, "device-code-1", "idp-1", "state-1")
+            .await
+            .unwrap();
     }
 }

@@ -635,6 +635,21 @@ mod oauth2_session {
                 amr: Vec<String>,
             ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError>;
 
+            async fn begin_device_upstream_login(
+                &self,
+                state: &ServiceState,
+                device_code: &str,
+                idp_id: &str,
+                upstream_state: &str,
+            ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError>;
+
+            async fn complete_device_upstream_login(
+                &self,
+                state: &ServiceState,
+                device_code: &str,
+                completion: UpstreamLoginCompletion,
+            ) -> Result<DeviceCodeGrant, Oauth2SessionProviderError>;
+
             async fn begin_device_mfa(
                 &self,
                 state: &ServiceState,
