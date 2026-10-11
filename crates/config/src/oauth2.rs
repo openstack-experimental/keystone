@@ -246,6 +246,19 @@ pub struct Oauth2Provider {
     #[validate(range(min = 1))]
     pub sso_session_lifetime_minutes: u32,
 
+    /// Most SSO sessions one user may hold at a time. A sign-in beyond the
+    /// limit ends the oldest session of that user.
+    #[serde(default = "default_sso_max_sessions_per_user")]
+    #[validate(range(min = 1))]
+    pub sso_max_sessions_per_user: u32,
+
+    /// Also revoke the user's refresh tokens issued to the client when
+    /// RP-initiated logout names a client (verified `id_token_hint` or
+    /// `client_id`). Refresh tokens of other clients are kept. Access tokens
+    /// already issued stay valid until they expire either way.
+    #[serde(default)]
+    pub logout_revokes_refresh_tokens: bool,
+
     /// Second-factor (TOTP) attempts allowed on one login before the pending
     /// sign-in is discarded and the user has to start over. Attempts are
     /// counted before the code is checked and are not reset by entering the
@@ -271,6 +284,10 @@ pub struct Oauth2Provider {
 
 fn default_sso_session_lifetime_minutes() -> u32 {
     480
+}
+
+fn default_sso_max_sessions_per_user() -> u32 {
+    10
 }
 
 fn default_mfa_max_attempts() -> u32 {
@@ -389,6 +406,8 @@ impl Default for Oauth2Provider {
             ui_support_url: None,
             ui_privacy_url: None,
             ui_terms_url: None,
+            sso_max_sessions_per_user: default_sso_max_sessions_per_user(),
+            logout_revokes_refresh_tokens: false,
             mfa_max_attempts: default_mfa_max_attempts(),
             sso_session_lifetime_minutes: default_sso_session_lifetime_minutes(),
             ui_show_client_logos: false,

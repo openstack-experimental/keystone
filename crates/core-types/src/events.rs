@@ -43,6 +43,10 @@ pub struct Event {
 /// or administrative), emitted with [`EventPayload::User`].
 pub const PASSWORD_CHANGE_OPERATION: &str = "password_change";
 
+/// [`Operation::Other`] value of a user's `multi_factor_auth_enabled`
+/// option being turned on, emitted with [`EventPayload::User`].
+pub const MFA_ENABLED_OPERATION: &str = "mfa_enabled";
+
 /// CRUD operation type.
 #[derive(Debug, Clone)]
 pub enum Operation {

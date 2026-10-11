@@ -459,6 +459,15 @@ mod oauth2_session {
                 client_id: &str,
             ) -> Result<(bool, Vec<String>), Oauth2SessionProviderError>;
 
+            async fn revoke_refresh_token_families_by_user_client(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+                user_id: &str,
+                client_id: &str,
+                reason: RefreshTokenRevocationReason,
+            ) -> Result<Vec<String>, Oauth2SessionProviderError>;
+
             async fn delete_consents_by_user(
                 &self,
                 state: &ServiceState,

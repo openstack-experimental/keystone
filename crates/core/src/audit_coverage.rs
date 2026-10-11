@@ -176,6 +176,12 @@ const ALLOW_LIST: &[(&str, &str, &str)] = &[
     ),
     (
         "oauth2_session",
+        "revoke_refresh_token_families_by_user_client",
+        "audited by the RP-initiated logout handler (one refresh family \
+         revoked event per family, with the signed-in user as initiator)",
+    ),
+    (
+        "oauth2_session",
         "delete_sso_sessions_by_user",
         "called by the OAuth2 session lifecycle hook after the audited user \
          disable, delete or password change",

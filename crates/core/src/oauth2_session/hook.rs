@@ -23,7 +23,7 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use openstack_keystone_core_types::events::{
-    Event, EventPayload, Operation, PASSWORD_CHANGE_OPERATION,
+    Event, EventPayload, MFA_ENABLED_OPERATION, Operation, PASSWORD_CHANGE_OPERATION,
 };
 use openstack_keystone_core_types::oauth2_session::RefreshTokenRevocationReason;
 
@@ -42,6 +42,10 @@ enum Revocation<'e> {
         user_id: &'e str,
         reason: RefreshTokenRevocationReason,
     },
+    /// Only the browser SSO sessions of the user: a stronger second factor
+    /// now applies, and a session that started without it must not outlive
+    /// it. Refresh tokens and pending grants are unaffected.
+    SsoOfUser { user_id: &'e str },
     /// Every family within the domain, and its pending grants.
     Domain {
         domain_id: &'e str,
@@ -65,6 +69,9 @@ fn revocation_for(event: &Event) -> Option<Revocation<'_>> {
                 user_id: id,
                 reason: RefreshTokenRevocationReason::PasswordChanged,
             })
+        }
+        (Operation::Other(op), EventPayload::User { id }) if op == MFA_ENABLED_OPERATION => {
+            Some(Revocation::SsoOfUser { user_id: id })
         }
         (Operation::Delete, EventPayload::Domain { id }) => Some(Revocation::Domain {
             domain_id: id,
@@ -113,9 +120,33 @@ impl Oauth2SessionHook {
         }
     }
 
+    /// Whether the credential is a TOTP seed. A failed lookup counts as
+    /// "no": ending sessions is a hardening step, not worth failing on.
+    async fn is_totp(&self, credential_id: &str) -> bool {
+        match self
+            .state
+            .provider
+            .get_credential_provider()
+            .get_credential(&ExecutionContext::internal(&self.state), credential_id)
+            .await
+        {
+            Ok(credential) => credential.is_some_and(|c| c.r#type == "totp"),
+            Err(e) => {
+                tracing::error!(error = %e, "OAuth2 session hook: credential lookup failed, SSO sessions kept");
+                false
+            }
+        }
+    }
+
     async fn revoke(&self, revocation: &Revocation<'_>) -> Result<(), Oauth2SessionProviderError> {
         let provider = self.state.provider.get_oauth2_session_provider();
         let (family_ids, reason) = match *revocation {
+            Revocation::SsoOfUser { user_id } => {
+                provider
+                    .delete_sso_sessions_by_user(&self.state, user_id)
+                    .await?;
+                return Ok(());
+            }
             Revocation::User { user_id, reason } => {
                 let domain_id = match reason {
                     RefreshTokenRevocationReason::UserDeleted => None,
@@ -182,6 +213,19 @@ impl Oauth2SessionHook {
 #[async_trait]
 impl ProviderHooks for Oauth2SessionHook {
     async fn on_event(&self, event: &Event) {
+        // Enrolling a TOTP credential: the credential type is not part of
+        // the event, so look it up.
+        if let (Operation::Create, EventPayload::Credential { id, user_id }) =
+            (&event.operation, &event.payload)
+        {
+            if self.is_totp(id).await
+                && let Err(e) = self.revoke(&Revocation::SsoOfUser { user_id }).await
+                && !matches!(e, Oauth2SessionProviderError::RaftNotAvailable)
+            {
+                tracing::error!(error = %e, "Failed to end SSO sessions after TOTP enrollment");
+            }
+            return;
+        }
         let Some(revocation) = revocation_for(event) else {
             return;
         };
@@ -433,5 +477,92 @@ mod tests {
         session.expect_delete_sso_sessions_by_domain().never();
         let hook = hook_with(MockIdentityProvider::default(), session).await;
         hook.on_event(&domain_event(Operation::Disable)).await;
+    }
+
+    fn credential_event(operation: Operation) -> Event {
+        Event::new(
+            operation,
+            EventPayload::Credential {
+                id: "cred-1".to_string(),
+                user_id: "user-1".to_string(),
+            },
+        )
+    }
+
+    async fn hook_with_credential(
+        credential_type: Option<&'static str>,
+        session: MockOauth2SessionProvider,
+    ) -> Oauth2SessionHook {
+        let mut credential = crate::credential::MockCredentialProvider::default();
+        credential.expect_get_credential().returning(move |_, _| {
+            Ok(credential_type.map(|t| {
+                openstack_keystone_core_types::credential::CredentialBuilder::default()
+                    .id("cred-1")
+                    .blob("{}")
+                    .r#type(t)
+                    .user_id("user-1")
+                    .build()
+                    .unwrap()
+            }))
+        });
+        Oauth2SessionHook::new(
+            get_mocked_state(
+                None,
+                Some(
+                    Provider::mocked_builder()
+                        .mock_credential(credential)
+                        .mock_oauth2_session(session),
+                ),
+            )
+            .await,
+        )
+    }
+
+    fn expect_only_sso_sessions_ended(session: &mut MockOauth2SessionProvider) {
+        session
+            .expect_delete_sso_sessions_by_user()
+            .withf(|_, u| u == "user-1")
+            .times(1)
+            .returning(|_, _| Ok(1));
+        // Refresh tokens and pending grants stay.
+        session
+            .expect_revoke_refresh_token_families_by_user()
+            .never();
+        session.expect_purge_pending_grants_by_user().never();
+    }
+
+    #[tokio::test]
+    async fn test_totp_enrollment_ends_only_the_users_sso_sessions() {
+        let mut session = MockOauth2SessionProvider::new();
+        expect_only_sso_sessions_ended(&mut session);
+        let hook = hook_with_credential(Some("totp"), session).await;
+        hook.on_event(&credential_event(Operation::Create)).await;
+    }
+
+    #[tokio::test]
+    async fn test_other_credential_types_keep_the_sso_sessions() {
+        let mut session = MockOauth2SessionProvider::new();
+        session.expect_delete_sso_sessions_by_user().never();
+        let hook = hook_with_credential(Some("ec2"), session).await;
+        hook.on_event(&credential_event(Operation::Create)).await;
+    }
+
+    #[tokio::test]
+    async fn test_credential_updates_keep_the_sso_sessions() {
+        let mut session = MockOauth2SessionProvider::new();
+        session.expect_delete_sso_sessions_by_user().never();
+        let hook = hook_with_credential(Some("totp"), session).await;
+        hook.on_event(&credential_event(Operation::Update)).await;
+    }
+
+    #[tokio::test]
+    async fn test_enabling_mfa_ends_only_the_users_sso_sessions() {
+        let mut session = MockOauth2SessionProvider::new();
+        expect_only_sso_sessions_ended(&mut session);
+        let hook = hook_with(MockIdentityProvider::default(), session).await;
+        hook.on_event(&user_event(Operation::Other(
+            MFA_ENABLED_OPERATION.to_string(),
+        )))
+        .await;
     }
 }

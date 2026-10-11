@@ -508,6 +508,29 @@ impl RaftOauth2SessionBackend {
         get(storage, &sso_key(sso_id)).await.map_err(store_err)
     }
 
+    async fn list_sso_sessions_by_user_impl(
+        &self,
+        storage: &dyn StorageApi,
+        domain_id: &str,
+        user_id: &str,
+    ) -> Result<Vec<SsoSession>, Oauth2SessionProviderError> {
+        let prefix = format!("{}{user_id}:", sso_idx_prefix(domain_id));
+        let keys = storage
+            .prefix_index(prefix.as_bytes())
+            .await
+            .map_err(store_err)?;
+        let mut sessions = Vec::new();
+        for key in keys {
+            let Some(sso_id) = key.strip_prefix(&prefix) else {
+                continue;
+            };
+            if let Some(session) = self.get_sso_session_impl(storage, sso_id).await? {
+                sessions.push(session);
+            }
+        }
+        Ok(sessions)
+    }
+
     async fn delete_sso_session_impl(
         &self,
         storage: &dyn StorageApi,
@@ -1496,6 +1519,17 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
         sso_id: &str,
     ) -> Result<(), Oauth2SessionProviderError> {
         self.delete_sso_session_impl(self.storage(state)?, sso_id)
+            .await
+    }
+
+    #[tracing::instrument(name = "driver.raft.oauth2_session.list_sso_sessions_by_user", level = "debug", skip_all, fields(user_id = %user_id))]
+    async fn list_sso_sessions_by_user(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        user_id: &str,
+    ) -> Result<Vec<SsoSession>, Oauth2SessionProviderError> {
+        self.list_sso_sessions_by_user_impl(self.storage(state)?, domain_id, user_id)
             .await
     }
 
@@ -3352,5 +3386,31 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
+    }
+
+    #[tokio::test]
+    async fn test_list_sso_sessions_by_user_is_scoped_to_domain_and_user() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        for (id, domain, user) in [
+            ("sso-1", "domain-1", "user-1"),
+            ("sso-2", "domain-1", "user-1"),
+            ("sso-3", "domain-1", "user-2"),
+            ("sso-4", "domain-2", "user-1"),
+        ] {
+            backend
+                .create_sso_session_impl(&storage, sso_create(id, domain, user))
+                .await
+                .unwrap();
+        }
+        let mut ids: Vec<String> = backend
+            .list_sso_sessions_by_user_impl(&storage, "domain-1", "user-1")
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|s| s.sso_id)
+            .collect();
+        ids.sort();
+        assert_eq!(ids, ["sso-1", "sso-2"]);
     }
 }

@@ -311,6 +311,17 @@ pub trait Oauth2SessionApi: Send + Sync {
         client_id: &str,
     ) -> Result<(bool, Vec<String>), Oauth2SessionProviderError>;
 
+    /// Revoke the refresh token families of `user_id` issued to `client_id`;
+    /// returns the ids of the families revoked.
+    async fn revoke_refresh_token_families_by_user_client(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        user_id: &str,
+        client_id: &str,
+        reason: RefreshTokenRevocationReason,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError>;
+
     /// Delete every consent of the user in any domain (user deleted).
     async fn delete_consents_by_user(
         &self,

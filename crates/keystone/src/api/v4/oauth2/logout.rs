@@ -36,6 +36,7 @@ use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::oauth2_client::verify_id_token_hint;
 use openstack_keystone_core_types::oauth2_client::{IdTokenClaims, OAuth2ClientResource};
 use openstack_keystone_core_types::oauth2_key::Oauth2KeyProviderError;
+use openstack_keystone_core_types::oauth2_session::RefreshTokenRevocationReason;
 use openstack_keystone_key_repository::asymmetric::SigningAlgorithm;
 
 use super::authorize::{cookie_secure, redirect_with_params};
@@ -45,7 +46,8 @@ use super::sso::{SSO_COOKIE_NAME, clear_cookie};
 use crate::api::common::PeerAddr;
 use crate::api::v4::oauth2::well_known::base_url;
 use crate::audit::{
-    CorrelationId, build_initiator_from_user_id, build_initiator_unknown, emit_oauth2_session_event,
+    CorrelationId, build_initiator_from_user_id, build_initiator_unknown,
+    emit_oauth2_refresh_family_revoked_event, emit_oauth2_session_event,
 };
 use crate::keystone::ServiceState;
 
@@ -342,6 +344,51 @@ async fn logout_inner(
         });
     }
 
+    // Optionally also end the client's refresh tokens for this user. The
+    // revocation is keyed on (user, client), not on the SSO session id:
+    // refresh tokens do not carry it. It needs the browser's own SSO session,
+    // so presenting an `id_token_hint` alone never revokes anything.
+    if let (Some(client_id), Some(user_id)) = (
+        client_id.as_deref(),
+        sso.as_ref().map(|s| s.user_id.as_str()),
+    ) && state
+        .config_manager
+        .config
+        .read()
+        .await
+        .oauth2
+        .logout_revokes_refresh_tokens
+    {
+        match provider
+            .revoke_refresh_token_families_by_user_client(
+                state,
+                domain_id,
+                user_id,
+                client_id,
+                RefreshTokenRevocationReason::Logout,
+            )
+            .await
+        {
+            Ok(families) => {
+                for family_id in &families {
+                    emit_oauth2_refresh_family_revoked_event(
+                        &state.audit_dispatcher,
+                        correlation_id,
+                        build_initiator_from_user_id(user_id, domain_id),
+                        family_id,
+                        RefreshTokenRevocationReason::Logout.as_str(),
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "oauth2 logout: refresh tokens could not be revoked");
+                return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
+            }
+        }
+    }
+
+    // The SSO session goes last: if a revocation above failed the session is
+    // still there, so the user can retry the logout.
     if let Some(sso) = &sso
         && let Err(e) = provider.delete_sso_session(state, &sso.sso_id).await
     {
@@ -386,7 +433,7 @@ mod tests {
 
     use openstack_keystone_config::Config;
     use openstack_keystone_core_types::oauth2_client::{GrantType, OAuth2ClientResource};
-    use openstack_keystone_core_types::oauth2_session::SsoSession;
+    use openstack_keystone_core_types::oauth2_session::{RefreshTokenRevocationReason, SsoSession};
 
     use super::super::openapi_router;
     use crate::api::tests::get_mocked_state_with_config;
@@ -442,12 +489,21 @@ mod tests {
         sessions: MockOauth2SessionProvider,
         keys: crate::oauth2_key::MockOauth2KeyProvider,
     ) -> axum::Router {
+        router_with(sessions, keys, false).await
+    }
+
+    async fn router_with(
+        sessions: MockOauth2SessionProvider,
+        keys: crate::oauth2_key::MockOauth2KeyProvider,
+        revoke_refresh_tokens: bool,
+    ) -> axum::Router {
         let mut clients = MockOauth2ClientProvider::default();
         clients
             .expect_get_by_client_id()
             .returning(|_, id| Ok((id == "client-1").then(client)));
         let mut config = Config::default();
         config.oauth2.allow_host_header_issuer = true;
+        config.oauth2.logout_revokes_refresh_tokens = revoke_refresh_tokens;
         let state = get_mocked_state_with_config(
             Provider::mocked_builder()
                 .mock_oauth2_session(sessions)
@@ -611,5 +667,78 @@ mod tests {
         // there is nothing to confirm.
         let response = router(sessions).await.oneshot(get("", true)).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    const CONFIRMED: &str =
+        "client_id=client-1&post_logout_redirect_uri=https%3A%2F%2Frp.example.com%2Fbye&state=xyz";
+
+    #[tokio::test]
+    async fn test_logout_revokes_the_clients_refresh_tokens_when_configured() {
+        let mut sessions = sessions_with_sso(1);
+        sessions
+            .expect_revoke_refresh_token_families_by_user_client()
+            .withf(|_, domain, user, client, reason| {
+                domain == "domain-1"
+                    && user == "user-1"
+                    && client == "client-1"
+                    && *reason == RefreshTokenRevocationReason::Logout
+            })
+            .times(1)
+            .returning(|_, _, _, _, _| Ok(vec!["f1".into()]));
+        let response = router_with(sessions, Default::default(), true)
+            .await
+            .oneshot(post(CONFIRMED))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    }
+
+    #[tokio::test]
+    async fn test_logout_keeps_refresh_tokens_by_default() {
+        let mut sessions = sessions_with_sso(1);
+        sessions
+            .expect_revoke_refresh_token_families_by_user_client()
+            .never();
+        let response = router(sessions)
+            .await
+            .oneshot(post(CONFIRMED))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    }
+
+    #[tokio::test]
+    async fn test_logout_without_a_client_revokes_no_refresh_tokens() {
+        let mut sessions = sessions_with_sso(1);
+        sessions
+            .expect_revoke_refresh_token_families_by_user_client()
+            .never();
+        let response = router_with(sessions, Default::default(), true)
+            .await
+            .oneshot(post(""))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_logout_keeps_the_sso_session_when_revocation_fails() {
+        let mut sessions = MockOauth2SessionProvider::default();
+        sessions
+            .expect_get_sso_session()
+            .returning(|_, _| Ok(Some(sso("domain-1"))));
+        sessions
+            .expect_revoke_refresh_token_families_by_user_client()
+            .returning(|_, _, _, _, _| {
+                Err(openstack_keystone_core_types::oauth2_session::Oauth2SessionProviderError::RaftNotAvailable)
+            });
+        // The session must survive so the user can retry.
+        sessions.expect_delete_sso_session().never();
+        let response = router_with(sessions, Default::default(), true)
+            .await
+            .oneshot(post(CONFIRMED))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

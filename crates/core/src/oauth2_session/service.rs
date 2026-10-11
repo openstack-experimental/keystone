@@ -255,7 +255,10 @@ impl Oauth2SessionApi for Oauth2SessionService {
         let created_at = now();
         let expires_at =
             created_at + i64::from(self.oauth2_config.sso_session_lifetime_minutes) * 60;
-        self.backend_driver
+        let domain_id = req.domain_id.clone();
+        let user_id = req.user_id.clone();
+        let created = self
+            .backend_driver
             .create_sso_session(
                 state,
                 SsoSessionCreate {
@@ -269,7 +272,38 @@ impl Oauth2SessionApi for Oauth2SessionService {
                     expires_at,
                 },
             )
+            .await?;
+
+        // Keep the user within the cap by ending the oldest sessions. A
+        // failure here must not fail the sign-in that just succeeded; the
+        // next sign-in retries.
+        let cap = self.oauth2_config.sso_max_sessions_per_user as usize;
+        match self
+            .backend_driver
+            .list_sso_sessions_by_user(state, &domain_id, &user_id)
             .await
+        {
+            Ok(mut sessions) if sessions.len() > cap => {
+                sessions.sort_by_key(|s| (s.created_at, s.sso_id.clone()));
+                let excess = sessions.len() - cap;
+                for old in sessions
+                    .iter()
+                    .filter(|s| s.sso_id != created.sso_id)
+                    .take(excess)
+                {
+                    if let Err(e) = self
+                        .backend_driver
+                        .delete_sso_session(state, &old.sso_id)
+                        .await
+                    {
+                        tracing::warn!(error = %e, "oauth2 SSO session eviction failed");
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!(error = %e, "oauth2 SSO session cap check failed"),
+        }
+        Ok(created)
     }
 
     #[tracing::instrument(
@@ -410,24 +444,12 @@ impl Oauth2SessionApi for Oauth2SessionService {
             .backend_driver
             .delete_consent(state, domain_id, user_id, client_id)
             .await?;
-        // Only the families that belong to both the user and the client.
-        let of_client: std::collections::HashSet<String> = self
-            .backend_driver
-            .list_refresh_families_by_client(state, client_id)
-            .await?
-            .into_iter()
-            .collect();
-        let family_ids: Vec<String> = self
-            .backend_driver
-            .list_refresh_families_by_user(state, domain_id, user_id)
-            .await?
-            .into_iter()
-            .filter(|f| of_client.contains(f))
-            .collect();
         let family_ids = self
-            .revoke_families(
+            .revoke_refresh_token_families_by_user_client(
                 state,
-                family_ids,
+                domain_id,
+                user_id,
+                client_id,
                 RefreshTokenRevocationReason::ConsentRevoked,
             )
             .await?;
@@ -863,6 +885,32 @@ impl Oauth2SessionApi for Oauth2SessionService {
                     .await?
             }
         };
+        self.revoke_families(state, family_ids, reason).await
+    }
+
+    #[tracing::instrument(name = "provider.oauth2_session.revoke_refresh_token_families_by_user_client", level = "debug", skip_all, fields(client_id = %client_id))]
+    async fn revoke_refresh_token_families_by_user_client(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        user_id: &str,
+        client_id: &str,
+        reason: RefreshTokenRevocationReason,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError> {
+        // Only the families that belong to both the user and the client.
+        let of_client: std::collections::HashSet<String> = self
+            .backend_driver
+            .list_refresh_families_by_client(state, client_id)
+            .await?
+            .into_iter()
+            .collect();
+        let family_ids: Vec<String> = self
+            .backend_driver
+            .list_refresh_families_by_user(state, domain_id, user_id)
+            .await?
+            .into_iter()
+            .filter(|f| of_client.contains(f))
+            .collect();
         self.revoke_families(state, family_ids, reason).await
     }
 
@@ -1494,6 +1542,8 @@ mod tests {
                     expires_at: data.expires_at,
                 })
             });
+        mock.expect_list_sso_sessions_by_user()
+            .returning(|_, _, _| Ok(vec![]));
         let mut service = service_with(mock);
         service.oauth2_config.sso_session_lifetime_minutes = 480;
         let state = get_mocked_state(None, None).await;
@@ -2397,5 +2447,125 @@ mod tests {
             .unwrap();
         assert!(!existed);
         assert!(families.is_empty());
+    }
+
+    fn sso(id: &str, created_at: i64) -> SsoSession {
+        SsoSession {
+            sso_id: id.to_string(),
+            domain_id: "domain-1".into(),
+            user_id: "user-1".into(),
+            auth_time: created_at,
+            amr: vec!["pwd".into()],
+            upstream: None,
+            created_at,
+            expires_at: i64::MAX,
+        }
+    }
+
+    fn sso_request() -> CreateSsoSessionRequest {
+        CreateSsoSessionRequest {
+            domain_id: "domain-1".into(),
+            user_id: "user-1".into(),
+            auth_time: 1,
+            amr: vec!["pwd".into()],
+            upstream: None,
+        }
+    }
+
+    fn service_with_cap(mock: MockOauth2SessionBackend, cap: u32) -> Oauth2SessionService {
+        let mut service = service_with(mock);
+        service.oauth2_config.sso_max_sessions_per_user = cap;
+        service
+    }
+
+    #[tokio::test]
+    async fn test_sso_cap_evicts_the_oldest_sessions() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_create_sso_session().returning(|_, data| {
+            Ok(SsoSession {
+                sso_id: data.sso_id,
+                domain_id: data.domain_id,
+                user_id: data.user_id,
+                auth_time: data.auth_time,
+                amr: data.amr,
+                upstream: None,
+                created_at: data.created_at,
+                expires_at: data.expires_at,
+            })
+        });
+        // Two older sessions exist; the just-created one has the newest
+        // timestamp. With a cap of 2 the oldest one goes.
+        mock.expect_list_sso_sessions_by_user()
+            .returning(|_, _, _| {
+                Ok(vec![
+                    sso("old-2", 20),
+                    sso("old-1", 10),
+                    sso("new", i64::MAX),
+                ])
+            });
+        mock.expect_delete_sso_session()
+            .withf(|_, id| id == "old-1")
+            .times(1)
+            .returning(|_, _| Ok(()));
+        let service = service_with_cap(mock, 2);
+        let state = get_mocked_state(None, None).await;
+        service
+            .create_sso_session(&state, sso_request())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_sso_cap_leaves_a_user_within_the_cap_alone() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_create_sso_session().returning(|_, data| {
+            Ok(SsoSession {
+                sso_id: data.sso_id,
+                domain_id: data.domain_id,
+                user_id: data.user_id,
+                auth_time: data.auth_time,
+                amr: data.amr,
+                upstream: None,
+                created_at: data.created_at,
+                expires_at: data.expires_at,
+            })
+        });
+        mock.expect_list_sso_sessions_by_user()
+            .returning(|_, _, _| Ok(vec![sso("a", 1), sso("b", 2)]));
+        mock.expect_delete_sso_session().never();
+        let service = service_with_cap(mock, 2);
+        let state = get_mocked_state(None, None).await;
+        service
+            .create_sso_session(&state, sso_request())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_revoke_families_by_user_client_touches_only_the_intersection() {
+        let mut mock = MockOauth2SessionBackend::new();
+        mock.expect_list_refresh_families_by_client()
+            .returning(|_, _| Ok(vec!["f1".to_string(), "f3".to_string()]));
+        mock.expect_list_refresh_families_by_user()
+            .returning(|_, _, _| Ok(vec!["f1".to_string(), "f2".to_string()]));
+        mock.expect_revoke_refresh_token_family()
+            .withf(|_, family_id, reason, _| {
+                family_id == "f1" && *reason == RefreshTokenRevocationReason::Logout
+            })
+            .times(1)
+            .returning(|_, _, _, _| Ok(()));
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+        let revoked = service
+            .revoke_refresh_token_families_by_user_client(
+                &state,
+                "domain-1",
+                "user-1",
+                "client-1",
+                RefreshTokenRevocationReason::Logout,
+            )
+            .await
+            .unwrap();
+        assert_eq!(revoked, ["f1"]);
     }
 }

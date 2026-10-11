@@ -26,7 +26,7 @@ use validator::Validate;
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::domain_config::DomainConfigGroupName;
 use openstack_keystone_core_types::events::{
-    Event, EventPayload, Operation, PASSWORD_CHANGE_OPERATION,
+    Event, EventPayload, MFA_ENABLED_OPERATION, Operation, PASSWORD_CHANGE_OPERATION,
 };
 use openstack_keystone_core_types::identity::*;
 use openstack_keystone_core_types::idmapping::IdMappingEntityType;
@@ -1812,13 +1812,23 @@ impl IdentityApi for IdentityService {
         // subscribers (the OAuth2 session hook) can revoke what the user
         // holds. A request that does both is reported as a disable, which
         // revokes the same.
+        // Turning multi-factor authentication on is reported too: sessions
+        // that started without a second factor must not outlive it.
+        let enables_mfa = user
+            .options
+            .as_ref()
+            .is_some_and(|o| o.multi_factor_auth_enabled == Some(true));
         let operation = if user.enabled == Some(false) {
             Operation::Disable
         } else if user.password.is_some() {
             Operation::Other(PASSWORD_CHANGE_OPERATION.to_string())
+        } else if enables_mfa {
+            Operation::Other(MFA_ENABLED_OPERATION.to_string())
         } else {
             Operation::Update
         };
+        let reported_mfa =
+            matches!(&operation, Operation::Other(op) if op == MFA_ENABLED_OPERATION);
         let mut user = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &backend_driver;
             let state = ctx.state();
@@ -1853,6 +1863,19 @@ impl IdentityApi for IdentityService {
         if !Arc::ptr_eq(&backend_driver, &self.backend_driver) {
             // See `get_user`: restore the public id the caller asked for.
             user.id = user_id.to_string();
+        }
+        // The request carried a more specific change as well (password,
+        // disable); MFA being turned on still has to be reported.
+        if enables_mfa && !reported_mfa {
+            ctx.state()
+                .event_dispatcher
+                .emit(Event::new(
+                    Operation::Other(MFA_ENABLED_OPERATION.to_string()),
+                    EventPayload::User {
+                        id: user_id.to_string(),
+                    },
+                ))
+                .await;
         }
         cache_set(USER_CACHE_NS, user_id, user.clone());
         Ok(user)

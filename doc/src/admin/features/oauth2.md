@@ -60,6 +60,8 @@ code), see the [OAuth2 / OIDC user guide](../../user/features/oauth2.md).
 | `ui_support_url`, `ui_privacy_url`, `ui_terms_url` | unset | Footer links (`https://` URL or absolute path).                                                                                       |
 | `ui_show_client_logos`                  | `false` | Render the `logo_uri` registered for a client on its login and consent pages. Lets the CSP load `https:` images, which leaks sign-in activity to the client's host. |
 | `ui_default_locale`                     | `en`    | Locale used when `Accept-Language` matches no available locale.                                                                                  |
+| `sso_max_sessions_per_user`             | 10      | Most SSO sessions one user may hold; a new sign-in beyond it ends the oldest. |
+| `logout_revokes_refresh_tokens`         | false   | RP-initiated logout naming a client also revokes the user's refresh tokens of that client. |
 | `mfa_max_attempts`                      | 5       | Second-factor codes accepted for checking per login attempt before the pre-auth session is discarded and the user must start over. Best-effort and per session; the per-user rate limit (`[rate_limit_user_auth]`) is the primary brute-force control. |
 | `sso_session_lifetime_minutes`        | 480     | Lifetime of the browser SSO session started by a successful sign-in. Later authorization requests in the same browser skip the login form while it lives. `0` is not allowed. |
 
@@ -118,18 +120,18 @@ login time. The session is ignored when its user is disabled or belongs to
 another domain, and is deleted when the user or domain is disabled or deleted,
 or when the user's password changes.
 
-Limits to be aware of:
+Session hardening:
 
-- An SSO session keeps the `amr` of the sign-in that created it for its whole
-  lifetime. Enrolling a TOTP credential or enabling
-  `multi_factor_auth_enabled` for a user does not end existing sessions, so a
-  session started with a password alone stays valid (as `["pwd"]`) until it
-  expires. Lower `sso_session_lifetime_minutes`, or have the user log out,
-  when a stronger factor must apply immediately.
-- There is no per-user cap on SSO sessions. Each sign-in from a browser that
-  presents no valid SSO cookie adds a record that lives until it expires; the
-  janitor removes expired ones, and the login endpoints are rate limited per
-  IP.
+- Enrolling a TOTP credential, or turning `multi_factor_auth_enabled` on for a
+  user, ends that user's SSO sessions (refresh tokens are kept), so a session
+  that started with a password alone cannot outlive the stronger requirement.
+- `sso_max_sessions_per_user` (default 10) caps the SSO sessions of one user;
+  a sign-in beyond the cap ends the user's oldest session.
+- With `logout_revokes_refresh_tokens = true`, RP-initiated logout that names a
+  client (verified `id_token_hint` or `client_id`) also revokes the user's
+  refresh tokens issued to that client. It needs the browser's own SSO
+  session, applies to that client only, and does not depend on `sid`. Access
+  tokens already issued stay valid until they expire.
 
 The authorization endpoint honours the OIDC request parameters:
 

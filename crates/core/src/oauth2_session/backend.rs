@@ -75,6 +75,14 @@ pub trait Oauth2SessionBackend: Send + Sync {
         sso_id: &str,
     ) -> Result<(), Oauth2SessionProviderError>;
 
+    /// List the SSO sessions of `user_id` in `domain_id`.
+    async fn list_sso_sessions_by_user(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        user_id: &str,
+    ) -> Result<Vec<SsoSession>, Oauth2SessionProviderError>;
+
     /// Delete every SSO session of `user_id`; returns how many.
     async fn delete_sso_sessions_by_user(
         &self,

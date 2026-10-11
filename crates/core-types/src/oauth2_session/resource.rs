@@ -393,6 +393,8 @@ pub enum RefreshTokenRevocationReason {
     PasswordChanged,
     /// The user withdrew their consent for the client.
     ConsentRevoked,
+    /// The user logged out of the client (RP-initiated logout).
+    Logout,
 }
 
 impl RefreshTokenRevocationReason {
@@ -411,6 +413,7 @@ impl RefreshTokenRevocationReason {
             Self::DomainDeleted => "domain_deleted",
             Self::PasswordChanged => "password_changed",
             Self::ConsentRevoked => "consent_revoked",
+            Self::Logout => "logout",
         }
     }
 }
