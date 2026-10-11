@@ -67,14 +67,41 @@ code), see the [OAuth2 / OIDC user guide](../../user/features/oauth2.md).
 
 Exceeding a rate limit returns `429 Too Many Requests`.
 
-## Second factor (TOTP)
+## Second factor (TOTP and passkeys)
 
-When the user has an enabled TOTP credential, the password step is followed by
-a verification-code page on both the browser flow and the device-code flow. The
-consent page is unreachable until the code is accepted. The issued `id_token`
-and refresh tokens carry `amr` of `["pwd", "otp", "mfa"]` instead of `["pwd"]`.
-If the credential lookup fails the login is refused (fail closed). WebAuthn is
-not offered on the OP login pages yet.
+After the password step a user holding a second factor must pass it on both
+the browser flow and the device-code flow; the consent page is unreachable
+until then. Two factors are offered:
+
+- **TOTP**: the user has an enabled `totp` credential. A verification-code
+  form is shown.
+- **Passkey / security key**: the WebAuthn extension is enabled
+  (`[webauthn] enabled = true`) and the user has a registered passkey. The
+  page shows a "Use a passkey or security key" button that runs the browser
+  WebAuthn ceremony against the same `[webauthn]` relying party the
+  `/v4/auth/passkey` API uses. Without the extension no passkey is ever
+  offered or required.
+
+A user holding both factors may pass either one. The issued `id_token` and
+refresh tokens carry `amr` of `["pwd", "otp", "mfa"]` for TOTP and
+`["pwd", "hwk", "mfa"]` for a passkey instead of `["pwd"]`. Users with
+`multi_factor_auth_enabled = false` skip the step. If a factor lookup or
+challenge cannot be produced the login is refused (fail closed).
+
+Each ceremony challenge is single use and bound to the user that passed the
+password step; a wrong assertion re-renders the page with a fresh challenge.
+The challenge is stored in a slot of its own, derived from the pre-auth
+session (or device code) of the login, so calls to the public
+`/v4/auth/passkey/start` endpoint and other simultaneous sign-ins of the same
+user can neither replace nor consume it.
+Attempts count against the same per-session budget (`mfa_max_attempts`) and
+the same per-user rate limit (`[rate_limit_user_auth]`) as TOTP codes.
+
+The passkey page is the only OP page with JavaScript: an inline script
+allowed through a per-response CSP `script-src 'nonce-...'`. Every other page
+(and the TOTP-only page) keeps `script-src 'none'`. A customised `mfa.html`
+template must keep the `passkey-form` markup and its script block to keep the
+passkey flow working.
 
 ## Signing in through an upstream identity provider
 

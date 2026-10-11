@@ -28,43 +28,28 @@ use openstack_keystone_api_types::v3::auth::token::TokenResponse;
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::auth::*;
 
-/// Finish user passkey authentication.
+/// Verify a signed passkey assertion of the `user_id` against the pending
+/// authentication challenge and persist the updated credential counter.
 ///
-/// Exchange the challenge signed with one of the users passkeys or security
-/// devices for the unscoped Keystone API token.
-#[utoipa::path(
-    post,
-    path = "/finish",
-    operation_id = "/auth/passkey/finish:post",
-    request_body = PasskeyAuthenticationFinishRequest,
-    responses(
-        (status = CREATED, description = "Authentication Token object", body = TokenResponse,
-        headers(
-            ("x-subject-token" = String, description = "Keystone token"),
-        )
-        ),
-    ),
-    tags = ["passkey", "auth"]
-)]
-#[tracing::instrument(
-    name = "api::user_webauthn_credential_login_finish",
-    level = "debug",
-    skip(state, req),
-    err
-)]
-pub async fn finish(
-    State(state): State<CombinedExtensionState>,
-    Json(req): Json<PasskeyAuthenticationFinishRequest>,
-) -> Result<impl IntoResponse, KeystoneApiError> {
-    req.validate()?;
-    let user_id = req.user_id.clone();
+/// The challenge is consumed unconditionally once the request is well formed,
+/// so it can never be replayed. Shared by the token endpoint and by the
+/// OAuth2 provider's second-factor step. `ceremony` must be the one the challenge was started
+/// with.
+pub async fn verify_assertion(
+    state: &CombinedExtensionState,
+    user_id: &str,
+    ceremony: Option<&str>,
+    req: PasskeyAuthenticationFinishRequest,
+) -> Result<(), KeystoneApiError> {
+    let user_id = user_id.to_string();
+    let slot = crate::api::auth_state_slot(&user_id, ceremony);
 
     let Some(s) = state
         .extension
         .provider
         .get_user_webauthn_credential_authentication_state(
             &ExecutionContext::internal(&state.core),
-            &user_id,
+            &slot,
         )
         .await?
     else {
@@ -85,7 +70,7 @@ pub async fn finish(
         .provider
         .delete_user_webauthn_credential_authentication_state(
             &ExecutionContext::internal(&state.core),
-            &user_id,
+            &slot,
         )
         .await?;
 
@@ -150,6 +135,40 @@ pub async fn finish(
             &credential,
         )
         .await?;
+    Ok(())
+}
+
+/// Finish user passkey authentication.
+///
+/// Exchange the challenge signed with one of the users passkeys or security
+/// devices for the unscoped Keystone API token.
+#[utoipa::path(
+    post,
+    path = "/finish",
+    operation_id = "/auth/passkey/finish:post",
+    request_body = PasskeyAuthenticationFinishRequest,
+    responses(
+        (status = CREATED, description = "Authentication Token object", body = TokenResponse,
+        headers(
+            ("x-subject-token" = String, description = "Keystone token"),
+        )
+        ),
+    ),
+    tags = ["passkey", "auth"]
+)]
+#[tracing::instrument(
+    name = "api::user_webauthn_credential_login_finish",
+    level = "debug",
+    skip(state, req),
+    err
+)]
+pub async fn finish(
+    State(state): State<CombinedExtensionState>,
+    Json(req): Json<PasskeyAuthenticationFinishRequest>,
+) -> Result<impl IntoResponse, KeystoneApiError> {
+    req.validate()?;
+    let user_id = req.user_id.clone();
+    verify_assertion(&state, &user_id, None, req).await?;
 
     let user = state
         .core

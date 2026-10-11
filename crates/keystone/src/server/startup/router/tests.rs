@@ -170,6 +170,51 @@ async fn build_router_never_inserts_interface_extension() {
     );
 }
 
+async fn passkey_probe_handler(req: Request<Body>) -> &'static str {
+    if req.extensions().get::<Arc<dyn PasskeyFactor>>().is_some() {
+        "present"
+    } else {
+        "absent"
+    }
+}
+
+// The OAuth2 provider only sees the passkey handle if `mount_extensions`
+// layers it over the main routes, so a route of the main router has to get it
+// when WebAuthn is enabled, and must not when it is not.
+#[tokio::test]
+async fn build_router_hands_the_passkey_factor_to_main_routes_only_when_enabled() {
+    for enabled in [true, false] {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cfg = test_config(tmp.path().to_path_buf());
+        cfg.webauthn.enabled = enabled;
+        cfg.webauthn.relying_party = Some(crate::config::RelyingParty {
+            id: "localhost".into(),
+            name: None,
+            origin: "http://localhost:8080".parse().unwrap(),
+        });
+        let startup = test_startup(cfg).await;
+        let main_router: Router<ServiceState> = Router::new().route(
+            "/__test_passkey_probe",
+            axum::routing::get(passkey_probe_handler),
+        );
+        let (app, _http_metrics) = build(&startup, main_router, api::ApiDoc::openapi())
+            .await
+            .expect("router assembly succeeds");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/__test_passkey_probe")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(body, if enabled { "present" } else { "absent" });
+    }
+}
+
 // ADR 0023 §2.1: a client-supplied `x-openstack-request-id` must never become
 // the correlation id of the audit trail (spoofing guard); the server mints a
 // fresh one and returns it.

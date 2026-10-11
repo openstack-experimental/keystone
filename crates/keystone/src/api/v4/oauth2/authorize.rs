@@ -52,6 +52,8 @@ use super::html::{
     client_view, consent_page, error_page, fetch_client, login_page, mfa_page, security_headers,
     too_many_requests, view_of,
 };
+use super::mfa::MfaOffer;
+use super::passkey::Passkeys;
 use super::renderer::{ClientView, ConsentCtx, IdpView, LoginCtx, MfaCtx};
 use crate::api::common::PeerAddr;
 use crate::audit::{
@@ -250,6 +252,7 @@ pub(super) fn render_mfa(
     domain_id: &str,
     session: &PreAuthSession,
     client: &ClientView,
+    offer: MfaOffer,
     error: Option<&str>,
 ) -> Response {
     let Some(csrf_token) = compute_csrf_token(session) else {
@@ -260,6 +263,9 @@ pub(super) fn render_mfa(
         csrf_token,
         error: error.map(str::to_string),
         action: format!("/v4/oauth2/{domain_id}/authorize/mfa"),
+        totp: offer.totp,
+        passkey: offer.passkey,
+        nonce: None,
     })
 }
 
@@ -656,6 +662,7 @@ pub(super) async fn authorize(
     skip(state, form),
     err(Debug)
 )]
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn authorize_login(
     Path(domain_id): Path<String>,
     State(state): State<ServiceState>,
@@ -663,6 +670,7 @@ pub(super) async fn authorize_login(
     PeerAddr(peer_addr): PeerAddr,
     correlation_id: CorrelationId,
     jar: CookieJar,
+    passkeys: Passkeys,
     Form(form): Form<LoginForm>,
 ) -> Result<Response, std::convert::Infallible> {
     // §7.B "Post-Lookup User Throttle for Browser /authorize" step 1: global
@@ -780,17 +788,19 @@ pub(super) async fn authorize_login(
     let user_id = user_info.user_id.clone();
     let now = chrono::Utc::now().timestamp();
 
-    let factors = match super::mfa::required_factors(&state, &user_id).await {
-        Ok(f) => f,
-        Err(e) => {
-            // Fail closed: never skip a second factor because the lookup failed.
-            tracing::warn!(error = %e, "oauth2 second-factor lookup failed");
-            return Ok(error_page(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal error",
-            ));
-        }
-    };
+    let factors =
+        match super::mfa::required_factors(&state, passkeys.as_ref().map(|e| &e.0), &user_id).await
+        {
+            Ok(f) => f,
+            Err(e) => {
+                // Fail closed: never skip a second factor because the lookup failed.
+                tracing::warn!(error = %e, "oauth2 second-factor lookup failed");
+                return Ok(error_page(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal error",
+                ));
+            }
+        };
     if !factors.is_empty() {
         return Ok(
             match state
@@ -799,7 +809,20 @@ pub(super) async fn authorize_login(
                 .begin_mfa(&state, &session_id, &user_id, factors)
                 .await
             {
-                Ok(pending) => render_mfa(&domain_id, &pending, &client_ui, None),
+                Ok(pending) => match super::mfa::mfa_offer(
+                    passkeys.as_ref().map(|e| &e.0),
+                    &pending.pending_factors,
+                    &user_id,
+                    &session_id,
+                )
+                .await
+                {
+                    Ok(offer) => render_mfa(&domain_id, &pending, &client_ui, offer, None),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "oauth2 passkey challenge failed");
+                        error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
+                    }
+                },
                 Err(e) => {
                     tracing::warn!(error = %e, "oauth2 pre-auth session update failed");
                     error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
@@ -1778,6 +1801,246 @@ mod tests {
         let body = text_body(response).await;
         assert!(body.contains("name=\"passcode\""));
         assert!(!body.contains("Allow"));
+    }
+
+    /// Records the ceremony of every `start` and `verify`.
+    #[derive(Debug, Default)]
+    struct FakePasskeys {
+        ceremonies: std::sync::Mutex<Vec<(&'static str, String)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl super::super::passkey::PasskeyFactor for FakePasskeys {
+        async fn has_passkey(&self, _user_id: &str) -> Result<bool, String> {
+            Ok(true)
+        }
+        async fn start(&self, _user_id: &str, ceremony: &str) -> Result<String, String> {
+            if let Ok(mut c) = self.ceremonies.lock() {
+                c.push(("start", ceremony.to_string()));
+            }
+            Ok(r#"{"public_key":{"challenge":"abc"}}"#.to_string())
+        }
+        async fn verify(
+            &self,
+            _user_id: &str,
+            ceremony: &str,
+            assertion: &str,
+        ) -> super::super::passkey::PasskeyOutcome {
+            if let Ok(mut c) = self.ceremonies.lock() {
+                c.push(("verify", ceremony.to_string()));
+            }
+            if assertion == "good" {
+                super::super::passkey::PasskeyOutcome::Verified
+            } else {
+                super::super::passkey::PasskeyOutcome::Invalid
+            }
+        }
+    }
+
+    fn passkey_layer() -> axum::Extension<std::sync::Arc<dyn super::super::passkey::PasskeyFactor>>
+    {
+        axum::Extension(std::sync::Arc::new(FakePasskeys::default()))
+    }
+
+    /// Like [`passkey_layer`], keeping a handle on the fake to inspect.
+    fn recording_passkey_layer() -> (
+        axum::Extension<std::sync::Arc<dyn super::super::passkey::PasskeyFactor>>,
+        std::sync::Arc<FakePasskeys>,
+    ) {
+        let fake = std::sync::Arc::new(FakePasskeys::default());
+        (axum::Extension(fake.clone()), fake)
+    }
+
+    #[tokio::test]
+    async fn test_login_with_passkey_renders_nonce_script_and_csp() {
+        let (passkey_layer, passkeys) = recording_passkey_layer();
+        let session = sample_session();
+        let expected_ceremony = session.session_id.clone();
+        let csrf = csrf_for(&session);
+
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_get_pre_auth_session()
+            .returning(move |_, _| Ok(Some(session.clone())));
+        session_mock
+            .expect_begin_mfa()
+            .withf(|_, _, user_id, factors| user_id == "user-1" && *factors == ["webauthn"])
+            .returning(|_, _, _, _| {
+                Ok(PreAuthSession {
+                    pending_factors: vec!["webauthn".into()],
+                    ..pending_session(0)
+                })
+            });
+
+        let (identity_mock, _) = totp_user_mocks();
+        let mut credential_mock = crate::credential::MockCredentialProvider::default();
+        credential_mock
+            .expect_list_credentials_for_user()
+            .returning(|_, _, _| Ok(Vec::new()));
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_session(session_mock)
+            .mock_identity(identity_mock)
+            .mock_credential(credential_mock)
+            .mock_oauth2_client(client_mock());
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(passkey_layer.clone())
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(login_post_request(&format!(
+                "csrf_token={csrf}&username=alice&password=pass"
+            )))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let csp = response
+            .headers()
+            .get("content-security-policy")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let body = text_body(response).await;
+        let nonce = csp
+            .split("script-src 'nonce-")
+            .nth(1)
+            .and_then(|r| r.split('\'').next())
+            .unwrap()
+            .to_string();
+        assert!(!nonce.is_empty());
+        assert!(body.contains(&format!("<script nonce=\"{nonce}\">")));
+        assert!(body.contains("name=\"factor\" value=\"webauthn\""));
+        assert!(!body.contains("name=\"passcode\""));
+        // The challenge belongs to this login's session, not to the user.
+        assert_eq!(
+            *passkeys.ceremonies.lock().unwrap(),
+            [("start", expected_ceremony)]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mfa_passkey_assertion_signs_in_with_hwk_amr() {
+        let session = PreAuthSession {
+            pending_factors: vec!["webauthn".into()],
+            ..pending_session(0)
+        };
+        let csrf = csrf_for(&session);
+
+        let mut session_mock = MockOauth2SessionProvider::default();
+        let s = session.clone();
+        session_mock
+            .expect_get_pre_auth_session()
+            .returning(move |_, _| Ok(Some(s.clone())));
+        session_mock
+            .expect_record_mfa_attempt()
+            .times(1)
+            .returning(|_, _| Ok(pending_session(1)));
+        session_mock
+            .expect_mark_authenticated()
+            .withf(|_, _, user_id, _, amr| user_id == "user-1" && *amr == ["pwd", "hwk", "mfa"])
+            .returning(|_, _, _, _, _| Ok(sample_session()));
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_session(session_mock)
+            .mock_oauth2_client(client_mock());
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(passkey_layer())
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(mfa_post_request(&format!(
+                "csrf_token={csrf}&factor=webauthn&assertion=good"
+            )))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(text_body(response).await.contains("name=\"decision\""));
+    }
+
+    #[tokio::test]
+    async fn test_mfa_bad_passkey_assertion_rerenders_with_fresh_challenge() {
+        let (passkey_layer, passkeys) = recording_passkey_layer();
+        let session = PreAuthSession {
+            pending_factors: vec!["webauthn".into()],
+            ..pending_session(0)
+        };
+        let csrf = csrf_for(&session);
+
+        let mut session_mock = MockOauth2SessionProvider::default();
+        let s = session.clone();
+        session_mock
+            .expect_get_pre_auth_session()
+            .returning(move |_, _| Ok(Some(s.clone())));
+        let s = session.clone();
+        session_mock
+            .expect_record_mfa_attempt()
+            .times(1)
+            .returning(move |_, _| {
+                Ok(PreAuthSession {
+                    mfa_attempts: 1,
+                    ..s.clone()
+                })
+            });
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_session(session_mock)
+            .mock_oauth2_client(client_mock());
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(passkey_layer.clone())
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let response = api
+            .as_service()
+            .oneshot(mfa_post_request(&format!(
+                "csrf_token={csrf}&factor=webauthn&assertion=bad"
+            )))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = text_body(response).await;
+        assert!(body.contains("passkey verification failed"));
+        assert!(body.contains("&quot;challenge&quot;"));
+        // Verified against, and re-challenged in, the session's own slot.
+        assert_eq!(
+            *passkeys.ceremonies.lock().unwrap(),
+            [
+                ("verify", session.session_id.clone()),
+                ("start", session.session_id.clone())
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mfa_passkey_not_pending_is_bad_request() {
+        // Only TOTP is pending: a `webauthn` submission must be refused.
+        let session = pending_session(0);
+        let csrf = csrf_for(&session);
+        let mut session_mock = MockOauth2SessionProvider::default();
+        session_mock
+            .expect_get_pre_auth_session()
+            .returning(move |_, _| Ok(Some(session.clone())));
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_session(session_mock)
+            .mock_oauth2_client(client_mock());
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(passkey_layer())
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        let response = api
+            .as_service()
+            .oneshot(mfa_post_request(&format!(
+                "csrf_token={csrf}&factor=webauthn&assertion=good"
+            )))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

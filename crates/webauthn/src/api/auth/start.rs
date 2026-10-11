@@ -22,6 +22,75 @@ use openstack_keystone_core::auth::ExecutionContext;
 use crate::WebauthnError;
 use crate::api::types::{CombinedExtensionState, auth::*};
 
+/// Issue a passkey authentication challenge for `user_id` and remember the
+/// ceremony state. Unknown users and users without passkeys get decoy
+/// credential IDs. Shared by the token endpoint and by the OAuth2 provider's
+/// second-factor step.
+///
+/// `ceremony` selects the challenge slot, see
+/// [`auth_state_slot`](crate::api::auth_state_slot): `None` for the shared
+/// per-user slot of the public flow.
+pub async fn start_challenge(
+    state: &CombinedExtensionState,
+    user_id: &str,
+    ceremony: Option<&str>,
+) -> Result<PasskeyAuthenticationStartResponse, KeystoneApiError> {
+    let allow_credentials: Vec<webauthn_rs::prelude::Passkey> = state
+        .extension
+        .provider
+        .list_user_webauthn_credentials(&ExecutionContext::internal(&state.core), user_id)
+        .await?
+        .into_iter()
+        .map(|x| x.data)
+        .collect();
+    let res = match state
+        .extension
+        .webauthn
+        .start_passkey_authentication(allow_credentials.as_ref())
+    {
+        Ok((mut rcr, auth_state)) => {
+            if allow_credentials.is_empty() {
+                // The user does not exist or has no registered passkeys. To
+                // prevent user enumeration respond with deterministic decoy
+                // credential IDs (stable per user_id) instead of an empty
+                // `allow_credentials` list. The ceremony state is stored as
+                // usual; completing it fails exactly like an attempt against
+                // a real user with a credential that is not in the allow
+                // list.
+                rcr.public_key.allow_credentials = state
+                    .extension
+                    .fake_credential_generator
+                    .generate(user_id.as_bytes())
+                    .map_err(WebauthnError::from)?
+                    .iter()
+                    .map(|id| webauthn_rs_proto::options::AllowCredentials {
+                        type_: "public-key".to_string(),
+                        id: id.as_ref().into(),
+                        transports: None,
+                    })
+                    .collect();
+            }
+            state
+                .extension
+                .provider
+                .save_user_webauthn_credential_authentication_state(
+                    &ExecutionContext::internal(&state.core),
+                    &crate::api::auth_state_slot(user_id, ceremony),
+                    &auth_state,
+                )
+                .await?;
+            PasskeyAuthenticationStartResponse::from(rcr)
+        }
+        Err(err) => {
+            return Err(KeystoneApiError::InternalError(format!(
+                "unexpected error in the webauthn extension: {:?}",
+                err
+            )));
+        }
+    };
+    Ok(res)
+}
+
 /// Start passkey authentication for the user.
 ///
 /// Initiate a passkey login for the user. The user must have at least one
@@ -48,62 +117,6 @@ pub async fn start(
     Json(req): Json<PasskeyAuthenticationStartRequest>,
 ) -> Result<impl IntoResponse, KeystoneApiError> {
     req.validate()?;
-    let allow_credentials: Vec<webauthn_rs::prelude::Passkey> = state
-        .extension
-        .provider
-        .list_user_webauthn_credentials(
-            &ExecutionContext::internal(&state.core),
-            &req.passkey.user_id,
-        )
-        .await?
-        .into_iter()
-        .map(|x| x.data)
-        .collect();
-    let res = match state
-        .extension
-        .webauthn
-        .start_passkey_authentication(allow_credentials.as_ref())
-    {
-        Ok((mut rcr, auth_state)) => {
-            if allow_credentials.is_empty() {
-                // The user does not exist or has no registered passkeys. To
-                // prevent user enumeration respond with deterministic decoy
-                // credential IDs (stable per user_id) instead of an empty
-                // `allow_credentials` list. The ceremony state is stored as
-                // usual; completing it fails exactly like an attempt against
-                // a real user with a credential that is not in the allow
-                // list.
-                rcr.public_key.allow_credentials = state
-                    .extension
-                    .fake_credential_generator
-                    .generate(req.passkey.user_id.as_bytes())
-                    .map_err(WebauthnError::from)?
-                    .iter()
-                    .map(|id| webauthn_rs_proto::options::AllowCredentials {
-                        type_: "public-key".to_string(),
-                        id: id.as_ref().into(),
-                        transports: None,
-                    })
-                    .collect();
-            }
-            state
-                .extension
-                .provider
-                .save_user_webauthn_credential_authentication_state(
-                    &ExecutionContext::internal(&state.core),
-                    &req.passkey.user_id,
-                    &auth_state,
-                )
-                .await?;
-            Json(PasskeyAuthenticationStartResponse::from(rcr))
-        }
-        Err(err) => {
-            return Err(KeystoneApiError::InternalError(format!(
-                "unexpected error in the webauthn extension: {:?}",
-                err
-            )));
-        }
-    };
-
-    Ok((StatusCode::CREATED, res))
+    let res = start_challenge(&state, &req.passkey.user_id, None).await?;
+    Ok((StatusCode::CREATED, Json(res)))
 }

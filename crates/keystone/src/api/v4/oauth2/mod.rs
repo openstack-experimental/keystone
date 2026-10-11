@@ -42,6 +42,7 @@ mod jwks_revocation;
 mod local_emergency_key;
 mod logout;
 mod mfa;
+pub mod passkey;
 mod renderer;
 mod revoke;
 mod rotate_signing_key;

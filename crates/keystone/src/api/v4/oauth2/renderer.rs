@@ -330,12 +330,19 @@ pub(crate) struct IdpView {
 }
 
 /// Context of `mfa.html`.
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct MfaCtx {
     pub client: ClientView,
     pub csrf_token: String,
     pub error: Option<String>,
     pub action: String,
+    /// Offer the TOTP passcode form.
+    pub totp: bool,
+    /// JSON request options of the pending passkey challenge; `Some` offers
+    /// the passkey button and needs `nonce`.
+    pub passkey: Option<String>,
+    /// CSP nonce of the inline passkey script; set by the page helper.
+    pub nonce: Option<String>,
 }
 
 /// Context of `consent.html`.
@@ -737,6 +744,9 @@ mod tests {
                 csrf_token: "tok".into(),
                 error: Some("invalid verification code".into()),
                 action: "/v4/oauth2/d/authorize/mfa".into(),
+                totp: true,
+                passkey: None,
+                nonce: None,
             })
             .unwrap();
         assert!(html.contains("name=\"passcode\""));
@@ -744,6 +754,50 @@ mod tests {
         assert!(html.contains("name=\"factor\" value=\"totp\""));
         assert!(html.contains("value=\"tok\""));
         assert!(html.contains(">invalid verification code</p>"));
+        assert!(!html.contains("<script"));
+    }
+
+    #[test]
+    fn test_mfa_page_passkey() {
+        let r = JinjaRenderer::embedded();
+        let ctx = |totp| MfaCtx {
+            client: ClientView::from_id("c"),
+            csrf_token: "tok".into(),
+            error: None,
+            action: "/v4/oauth2/d/authorize/mfa".into(),
+            totp,
+            passkey: Some(r#"{"public_key":{"challenge":"abc"}}"#.into()),
+            nonce: Some("test-nonce".into()),
+        };
+        let html = r.render_mfa(&ctx(false)).unwrap();
+        assert!(html.contains("<script nonce=\"test-nonce\">"));
+        assert!(html.contains("name=\"factor\" value=\"webauthn\""));
+        assert!(html.contains("name=\"assertion\""));
+        // The options are attribute-escaped, never raw markup.
+        assert!(html.contains("&quot;challenge&quot;"));
+        assert!(!html.contains("name=\"passcode\""));
+        let both = r.render_mfa(&ctx(true)).unwrap();
+        assert!(both.contains("name=\"passcode\""));
+    }
+
+    #[test]
+    fn test_mfa_page_passkey_options_cannot_break_out_of_the_attribute() {
+        let r = JinjaRenderer::embedded();
+        let html = r
+            .render_mfa(&MfaCtx {
+                client: ClientView::from_id("c"),
+                csrf_token: "tok".into(),
+                error: None,
+                action: "/v4/oauth2/d/authorize/mfa".into(),
+                totp: false,
+                passkey: Some(r#"{"x":"\"><script>alert(1)</script>'"}"#.into()),
+                nonce: Some("test-nonce".into()),
+            })
+            .unwrap();
+        // The only script is the page's own, carrying the nonce.
+        assert_eq!(html.matches("<script").count(), 1);
+        assert!(!html.contains("<script>alert"));
+        assert!(html.contains("&lt;script&gt;alert(1)"));
     }
 
     #[test]

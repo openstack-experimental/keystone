@@ -13,6 +13,7 @@ async-trait.workspace = true
 axum = { workspace = true, features = ["macros"] }
 base64.workspace = true
 chrono.workspace = true
+data-encoding.workspace = true
 derive_builder.workspace = true
 eyre.workspace = true
 inventory.workspace = true
@@ -26,6 +27,7 @@ secrecy.workspace = true
 sea-orm-migration = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "signal"] }
 tokio-util.workspace = true

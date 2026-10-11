@@ -304,3 +304,58 @@ async fn test_webauthn_roundtrip() -> Result<()> {
 
     Ok(())
 }
+
+// A login that runs its own ceremony (the OAuth2 provider's second factor)
+// gets a challenge slot nobody else can overwrite: neither the public
+// per-user slot nor another ceremony of the same user touches it.
+#[tracing_test::traced_test]
+#[tokio::test]
+async fn test_webauthn_auth_ceremony_slots_are_isolated() -> Result<()> {
+    use openstack_keystone_webauthn::api::{auth_state_slot, start_challenge};
+
+    let (state, _dir) = get_state(None).await?;
+    let user_id = Uuid::new_v4().to_string();
+    let exec = ExecutionContext::internal(&state.core);
+    let provider = &state.extension.provider;
+    let slot_of = |ceremony: Option<&str>| auth_state_slot(&user_id, ceremony);
+
+    start_challenge(&state, &user_id, Some("session-a")).await?;
+    let a = provider
+        .get_user_webauthn_credential_authentication_state(&exec, &slot_of(Some("session-a")))
+        .await?
+        .map(|s| serde_json::to_value(&s))
+        .transpose()?
+        .expect("ceremony a has a challenge");
+
+    // The public endpoint and another ceremony of the same user start
+    // challenges of their own.
+    start_challenge(&state, &user_id, None).await?;
+    start_challenge(&state, &user_id, Some("session-b")).await?;
+
+    let a_after = provider
+        .get_user_webauthn_credential_authentication_state(&exec, &slot_of(Some("session-a")))
+        .await?
+        .map(|s| serde_json::to_value(&s))
+        .transpose()?;
+    assert_eq!(a_after, Some(a), "ceremony a kept its challenge");
+    for other in [None, Some("session-b")] {
+        assert!(
+            provider
+                .get_user_webauthn_credential_authentication_state(&exec, &slot_of(other))
+                .await?
+                .is_some()
+        );
+    }
+
+    // Consuming the public slot leaves the ceremony's untouched.
+    provider
+        .delete_user_webauthn_credential_authentication_state(&exec, &slot_of(None))
+        .await?;
+    assert!(
+        provider
+            .get_user_webauthn_credential_authentication_state(&exec, &slot_of(Some("session-a")))
+            .await?
+            .is_some()
+    );
+    Ok(())
+}

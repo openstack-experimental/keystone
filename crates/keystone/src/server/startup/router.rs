@@ -38,6 +38,7 @@ use utoipa_swagger_ui::SwaggerUi;
 use uuid::Uuid;
 
 use super::Startup;
+use crate::api::v4::oauth2::passkey::{PasskeyFactor, WebauthnPasskeys};
 use crate::server::access_log::log_request;
 use crate::server::error_log::log_error_body;
 use crate::server::http_metrics::{HttpMetrics, record_http_metrics};
@@ -100,9 +101,13 @@ pub async fn build(
 async fn mount_extensions(mut app: Router, startup: &Startup) -> Result<Router, Report> {
     let state = &startup.state;
     if state.config_manager.config.read().await.webauthn.enabled {
-        let webauthn_extension =
-            webauthn::api::init_extension(state.clone(), startup.token.clone()).await?;
-        app = app.nest("/v4", webauthn_extension);
+        let extension_state =
+            webauthn::api::init_extension_state(state.clone(), startup.token.clone()).await?;
+        // Let the OAuth2 provider offer passkeys as a second factor. The layer
+        // wraps only the routes merged so far, i.e. the main API.
+        let passkeys: Arc<dyn PasskeyFactor> = Arc::new(WebauthnPasskeys(extension_state.clone()));
+        app = app.layer(Extension(passkeys));
+        app = app.nest("/v4", webauthn::api::extension_router(extension_state));
     } else {
         info!("Not enabling the WebAuthN extension due to the `config.webauthn.enabled` flag.");
     }

@@ -34,9 +34,30 @@ pub mod hook;
 mod register;
 pub mod types;
 
+pub use crate::api::auth::finish::verify_assertion;
+pub use crate::api::auth::start::start_challenge;
 use crate::api::hook::WebauthnHook;
 use crate::api::types::{CombinedExtensionState, ExtensionState};
 use crate::{WebauthnApi, WebauthnError, driver::*};
+
+/// The storage slot of a pending authentication challenge.
+///
+/// The public `/v4/auth/passkey` flow (`ceremony = None`) keeps one slot per
+/// user, so any `start` call for the user replaces the pending challenge.
+/// A caller that runs its own ceremony, like the OAuth2 provider's second
+/// factor step, passes a `ceremony` secret it holds (the pre-auth session
+/// or device code) and gets a slot nobody else can overwrite or consume. Only
+/// a digest of the secret is stored.
+pub fn auth_state_slot(user_id: &str, ceremony: Option<&str>) -> String {
+    use sha2::{Digest, Sha256};
+    match ceremony {
+        None => user_id.to_string(),
+        Some(c) => format!(
+            "{user_id}#{}",
+            data_encoding::HEXLOWER.encode(&Sha256::digest(c.as_bytes()))
+        ),
+    }
+}
 
 /// OpenApi specification for the user passkey support.
 #[derive(OpenApi)]
@@ -135,6 +156,28 @@ pub async fn init_extension_state(
     Ok(combined_state)
 }
 
+/// Whether `user_id` has at least one registered passkey.
+pub async fn user_has_passkeys(
+    state: &CombinedExtensionState,
+    user_id: &str,
+) -> Result<bool, KeystoneError> {
+    Ok(!state
+        .extension
+        .provider
+        .list_user_webauthn_credentials(&ExecutionContext::internal(&state.core), user_id)
+        .await?
+        .is_empty())
+}
+
+/// Router of the extension API bound to an already initialized state.
+pub fn extension_router(combined_state: CombinedExtensionState) -> Router {
+    let (router, _openapi) = OpenApiRouter::new()
+        .merge(openapi_router())
+        .with_state(combined_state)
+        .split_for_parts();
+    router
+}
+
 /// Initialize the extension.
 ///
 /// # Parameters
@@ -148,11 +191,7 @@ pub async fn init_extension(
     cancellation_token: CancellationToken,
 ) -> Result<Router, KeystoneError> {
     let combined_state = init_extension_state(main_state, cancellation_token).await?;
-    let (router, _openapi) = OpenApiRouter::new()
-        .merge(openapi_router())
-        .with_state(combined_state)
-        .split_for_parts();
-    Ok(router)
+    Ok(extension_router(combined_state))
 }
 
 /// Periodic cleanup job.
@@ -177,5 +216,22 @@ async fn cleanup(cancel: CancellationToken, state: CombinedExtensionState) {
                 break; // Exit the loop
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod slot_tests {
+    use super::auth_state_slot;
+
+    #[test]
+    fn test_auth_state_slot() {
+        // The public flow keeps the per-user slot.
+        assert_eq!(auth_state_slot("u1", None), "u1");
+        let a = auth_state_slot("u1", Some("session-a"));
+        assert_ne!(a, auth_state_slot("u1", Some("session-b")));
+        assert_ne!(a, auth_state_slot("u2", Some("session-a")));
+        assert_eq!(a, auth_state_slot("u1", Some("session-a")));
+        // Only a digest of the secret is stored.
+        assert!(!a.contains("session-a"));
     }
 }

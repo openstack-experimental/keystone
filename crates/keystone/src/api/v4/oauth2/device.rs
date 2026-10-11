@@ -46,6 +46,8 @@ use super::html::{
     client_view, consent_page, device_entry_page, device_result_page, error_page, fetch_client,
     login_page, mfa_page, too_many_requests, view_of,
 };
+use super::mfa::MfaOffer;
+use super::passkey::Passkeys;
 use super::renderer::{
     ClientView, ConsentCtx, DeviceEntryCtx, DeviceResultCtx, IdpView, LoginCtx, MfaCtx,
 };
@@ -144,6 +146,7 @@ pub(super) fn render_mfa(
     domain_id: &str,
     client: &ClientView,
     grant: &DeviceCodeGrant,
+    offer: MfaOffer,
     error: Option<&str>,
 ) -> Response {
     let Some(csrf_token) = compute_csrf_token(grant) else {
@@ -154,6 +157,9 @@ pub(super) fn render_mfa(
         csrf_token,
         error: error.map(str::to_string),
         action: format!("/v4/oauth2/{domain_id}/device/mfa"),
+        totp: offer.totp,
+        passkey: offer.passkey,
+        nonce: None,
     })
 }
 
@@ -312,6 +318,7 @@ pub(super) async fn device_login_code(
     skip(state, form),
     err(Debug)
 )]
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn device_login(
     Path(domain_id): Path<String>,
     State(state): State<ServiceState>,
@@ -319,6 +326,7 @@ pub(super) async fn device_login(
     PeerAddr(peer_addr): PeerAddr,
     correlation_id: CorrelationId,
     jar: CookieJar,
+    passkeys: Passkeys,
     Form(form): Form<DeviceLoginForm>,
 ) -> Result<Response, std::convert::Infallible> {
     // §7.B "pre-hash enforcement" (mirrors `authorize_login`): global per-IP
@@ -437,17 +445,19 @@ pub(super) async fn device_login(
     let user_id = user_info.user_id.clone();
     let now = chrono::Utc::now().timestamp();
 
-    let factors = match super::mfa::required_factors(&state, &user_id).await {
-        Ok(f) => f,
-        Err(e) => {
-            // Fail closed: never skip a second factor because the lookup failed.
-            tracing::warn!(error = %e, "oauth2 second-factor lookup failed");
-            return Ok(error_page(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal error",
-            ));
-        }
-    };
+    let factors =
+        match super::mfa::required_factors(&state, passkeys.as_ref().map(|e| &e.0), &user_id).await
+        {
+            Ok(f) => f,
+            Err(e) => {
+                // Fail closed: never skip a second factor because the lookup failed.
+                tracing::warn!(error = %e, "oauth2 second-factor lookup failed");
+                return Ok(error_page(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal error",
+                ));
+            }
+        };
     if !factors.is_empty() {
         return Ok(
             match state
@@ -456,7 +466,20 @@ pub(super) async fn device_login(
                 .begin_device_mfa(&state, &device_code, &user_id, factors)
                 .await
             {
-                Ok(pending) => render_mfa(&domain_id, &client, &pending, None),
+                Ok(pending) => match super::mfa::mfa_offer(
+                    passkeys.as_ref().map(|e| &e.0),
+                    &pending.pending_factors,
+                    &user_id,
+                    &device_code,
+                )
+                .await
+                {
+                    Ok(offer) => render_mfa(&domain_id, &client, &pending, offer, None),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "oauth2 passkey challenge failed");
+                        error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
+                    }
+                },
                 Err(e) => {
                     tracing::warn!(error = %e, "oauth2 device code grant update failed");
                     error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error")

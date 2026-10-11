@@ -3,13 +3,85 @@
 {% block content %}
 <h1>{{ t("verification_code") }}</h1>
 <p>{{ t("requesting_access", client=client.name) }}</p>
-<p>{{ t("enter_verification_code") }}</p>
 <p class="error" id="error" aria-live="polite">{% if error %}{{ t(error) }}{% endif %}</p>
+{% if totp %}
+<p>{{ t("enter_verification_code") }}</p>
 <form method="post" action="{{ action }}">
 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 <input type="hidden" name="factor" value="totp">
 <label for="passcode">{{ t("verification_code") }}</label>
-<input id="passcode" type="text" name="passcode" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]*" spellcheck="false" autofocus required>
+<input id="passcode" type="text" name="passcode" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]*" spellcheck="false" {% if not passkey %}autofocus {% endif %}required>
 <button type="submit">{{ t("verify") }}</button>
 </form>
+{% endif %}
+{% if passkey %}
+<p>{{ t("use_passkey_hint") }}</p>
+<form method="post" action="{{ action }}" id="passkey-form" data-options="{{ passkey }}" data-unsupported="{{ t('passkey_unsupported') }}" data-failed="{{ t('passkey_failed') }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<input type="hidden" name="factor" value="webauthn">
+<input type="hidden" name="assertion" id="assertion" value="">
+<button type="submit">{{ t("use_passkey") }}</button>
+</form>
+<script nonce="{{ nonce }}">
+(function () {
+  var form = document.getElementById("passkey-form");
+  var err = document.getElementById("error");
+  function dec(s) {
+    s = s.replace(/-/g, "+").replace(/_/g, "/");
+    while (s.length % 4) { s += "="; }
+    var bin = atob(s), out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) { out[i] = bin.charCodeAt(i); }
+    return out.buffer;
+  }
+  function enc(buf) {
+    var b = new Uint8Array(buf), s = "";
+    for (var i = 0; i < b.length; i++) { s += String.fromCharCode(b[i]); }
+    return btoa(s).replace(/\+/g, "-").replace(/\//g, "_");
+  }
+  var busy = false;
+  form.addEventListener("submit", function (ev) {
+    if (document.getElementById("assertion").value) { return; }
+    ev.preventDefault();
+    if (busy) { return; }
+    if (!window.PublicKeyCredential || !navigator.credentials) {
+      err.textContent = form.dataset.unsupported;
+      return;
+    }
+    var pk = JSON.parse(form.dataset.options).public_key;
+    var opts = {
+      challenge: dec(pk.challenge),
+      rpId: pk.rp_id,
+      timeout: pk.timeout || undefined,
+      userVerification: pk.user_verification === "Required" ? "required" :
+        (pk.user_verification === "Preferred" ? "preferred" : "discouraged"),
+      allowCredentials: (pk.allow_credentials || []).map(function (c) {
+        return { type: c.type_, id: dec(c.id) };
+      })
+    };
+    busy = true;
+    navigator.credentials.get({ publicKey: opts }).then(function (cred) {
+      var r = cred.response;
+      var ext = cred.getClientExtensionResults ? cred.getClientExtensionResults() : {};
+      document.getElementById("assertion").value = JSON.stringify({
+        id: cred.id,
+        raw_id: enc(cred.rawId),
+        type_: cred.type,
+        extensions: ext.appid === undefined ? {} : { appid: ext.appid },
+        response: {
+          authenticator_data: enc(r.authenticatorData),
+          client_data_json: enc(r.clientDataJSON),
+          signature: enc(r.signature),
+          user_handle: r.userHandle ? enc(r.userHandle) : null
+        },
+        user_id: ""
+      });
+      form.submit();
+    }, function () {
+      busy = false;
+      err.textContent = form.dataset.failed;
+    });
+  });
+})();
+</script>
+{% endif %}
 {% endblock %}

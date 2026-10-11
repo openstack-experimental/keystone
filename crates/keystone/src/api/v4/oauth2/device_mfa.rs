@@ -27,7 +27,8 @@ use super::device::{
     DEVICE_COOKIE_NAME, after_device_authentication, render_mfa, verify_csrf_token,
 };
 use super::html::{client_view, error_page, fetch_client, too_many_requests};
-use super::mfa::{FACTOR_TOTP, TotpOutcome, amr_for, verify_totp};
+use super::mfa::{FACTOR_TOTP, FACTOR_WEBAUTHN, FactorOutcome, amr_for, mfa_offer, verify_factor};
+use super::passkey::Passkeys;
 use crate::api::common::PeerAddr;
 use crate::audit::{CorrelationId, build_initiator_from_user_id, emit_oauth2_session_event};
 use crate::keystone::ServiceState;
@@ -36,7 +37,10 @@ use crate::keystone::ServiceState;
 pub(super) struct DeviceMfaForm {
     csrf_token: String,
     factor: String,
+    #[serde(default)]
     passcode: String,
+    #[serde(default)]
+    assertion: String,
 }
 
 /// `POST /v4/oauth2/{domain_id}/device/mfa`.
@@ -57,9 +61,10 @@ pub(super) struct DeviceMfaForm {
 #[tracing::instrument(
     name = "api::v4::oauth2::device_mfa",
     level = "debug",
-    skip(state, form),
+    skip(state, form, headers, jar),
     err(Debug)
 )]
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn device_mfa(
     Path(domain_id): Path<String>,
     State(state): State<ServiceState>,
@@ -67,6 +72,7 @@ pub(super) async fn device_mfa(
     PeerAddr(peer_addr): PeerAddr,
     correlation_id: CorrelationId,
     jar: CookieJar,
+    passkeys: Passkeys,
     Form(form): Form<DeviceMfaForm>,
 ) -> Result<Response, std::convert::Infallible> {
     if let Err(retry_after) = state
@@ -119,7 +125,7 @@ pub(super) async fn device_mfa(
         ));
     };
     if grant.user_id.is_some()
-        || form.factor != FACTOR_TOTP
+        || (form.factor != FACTOR_TOTP && form.factor != FACTOR_WEBAUTHN)
         || !grant.pending_factors.iter().any(|f| f == &form.factor)
     {
         return Ok(error_page(
@@ -162,16 +168,26 @@ pub(super) async fn device_mfa(
         ));
     }
 
-    match verify_totp(&state, &user_id, form.passcode.trim()).await {
-        TotpOutcome::Verified => {}
-        TotpOutcome::RateLimited(retry_after) => return Ok(too_many_requests(retry_after)),
-        TotpOutcome::Failed => {
+    match verify_factor(
+        &state,
+        passkeys.as_ref().map(|e| &e.0),
+        &form.factor,
+        &user_id,
+        &device_code,
+        &form.passcode,
+        &form.assertion,
+    )
+    .await
+    {
+        FactorOutcome::Verified => {}
+        FactorOutcome::RateLimited(retry_after) => return Ok(too_many_requests(retry_after)),
+        FactorOutcome::Failed => {
             return Ok(error_page(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal error",
             ));
         }
-        TotpOutcome::Invalid => {
+        FactorOutcome::Invalid => {
             emit_oauth2_session_event(
                 &state.audit_dispatcher,
                 &correlation_id.0,
@@ -191,11 +207,34 @@ pub(super) async fn device_mfa(
                 ));
             }
             let client = client_view(&state, &attempted.client_id).await;
+            // A challenge is single use: every re-render needs a fresh one.
+            let offer = match mfa_offer(
+                passkeys.as_ref().map(|e| &e.0),
+                &attempted.pending_factors,
+                &user_id,
+                &device_code,
+            )
+            .await
+            {
+                Ok(o) => o,
+                Err(e) => {
+                    tracing::warn!(error = %e, "oauth2 passkey challenge failed");
+                    return Ok(error_page(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "internal error",
+                    ));
+                }
+            };
             return Ok(render_mfa(
                 &domain_id,
                 &client,
                 &attempted,
-                Some("invalid verification code"),
+                offer,
+                Some(if form.factor == FACTOR_WEBAUTHN {
+                    "passkey verification failed"
+                } else {
+                    "invalid verification code"
+                }),
             ));
         }
     }
@@ -207,7 +246,7 @@ pub(super) async fn device_mfa(
             &device_code,
             &user_id,
             now,
-            amr_for(&grant.pending_factors),
+            amr_for(std::slice::from_ref(&form.factor)),
         )
         .await
     {

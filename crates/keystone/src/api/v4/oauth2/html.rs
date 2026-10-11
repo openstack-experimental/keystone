@@ -82,8 +82,37 @@ pub(super) fn logout_page(ctx: &LogoutCtx) -> Response {
     page(renderer().render_logout(ctx))
 }
 
+/// The MFA page. Only when it embeds a passkey challenge does it carry an
+/// inline script, allowed through a fresh per-response CSP nonce; every other
+/// OP page keeps `script-src 'none'`.
 pub(super) fn mfa_page(ctx: &MfaCtx) -> Response {
-    page(renderer().render_mfa(ctx))
+    if ctx.passkey.is_none() {
+        return page(renderer().render_mfa(ctx));
+    }
+    let nonce = new_nonce();
+    let mut with_nonce = ctx.clone();
+    with_nonce.nonce = Some(nonce.clone());
+    let mut response = page(renderer().render_mfa(&with_nonce));
+    if response.status() == StatusCode::OK
+        && let Ok(csp) = HeaderValue::from_str(&content_security_policy_str(
+            show_client_logos(),
+            &format!("'nonce-{nonce}'"),
+        ))
+    {
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static("content-security-policy"), csp);
+    }
+    response
+}
+
+/// 128 random bits, base64url, for a CSP `script-src` nonce.
+fn new_nonce() -> String {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    use rand::RngExt;
+    let mut bytes = [0u8; 16];
+    rand::rng().fill(&mut bytes);
+    URL_SAFE_NO_PAD.encode(bytes)
 }
 
 pub(super) fn consent_page(ctx: &ConsentCtx) -> Response {
@@ -103,16 +132,20 @@ pub(super) fn device_result_page(ctx: &DeviceResultCtx) -> Response {
 /// browsers apply it to the redirect that answers a form POST, which would
 /// block the redirect back to the relying party's `redirect_uri`.
 fn content_security_policy(show_client_logos: bool) -> HeaderValue {
+    HeaderValue::from_str(&content_security_policy_str(show_client_logos, "'none'"))
+        .unwrap_or_else(|_| HeaderValue::from_static("default-src 'self'"))
+}
+
+fn content_security_policy_str(show_client_logos: bool, script_src: &str) -> String {
     let img_src = if show_client_logos {
         "'self' data: https:"
     } else {
         "'self' data:"
     };
-    HeaderValue::from_str(&format!(
-        "default-src 'self'; style-src 'self'; img-src {img_src}; script-src 'none'; \
+    format!(
+        "default-src 'self'; style-src 'self'; img-src {img_src}; script-src {script_src}; \
          frame-ancestors 'none'"
-    ))
-    .unwrap_or_else(|_| HeaderValue::from_static("default-src 'self'"))
+    )
 }
 
 /// ADR 0026 §8: defense-in-depth headers on every server-rendered OP
