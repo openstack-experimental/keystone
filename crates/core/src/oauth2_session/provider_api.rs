@@ -255,6 +255,30 @@ pub trait Oauth2SessionApi: Send + Sync {
         sso_id: &str,
     ) -> Result<(), Oauth2SessionProviderError>;
 
+    /// The SSO sessions of the user in the domain.
+    async fn list_sso_sessions_by_user(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        user_id: &str,
+    ) -> Result<Vec<SsoSession>, Oauth2SessionProviderError>;
+
+    /// Clients that may hold a session for the user (the targets of
+    /// back-channel logout).
+    async fn list_rp_client_ids_by_user(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError>;
+
+    /// Forget the user's relying parties after they were notified; returns
+    /// how many.
+    async fn delete_rp_sessions_by_user(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError>;
+
     /// End every SSO session of the user (user disabled, deleted, password
     /// changed); returns how many.
     async fn delete_sso_sessions_by_user(

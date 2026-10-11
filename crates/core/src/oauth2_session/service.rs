@@ -359,6 +359,40 @@ impl Oauth2SessionApi for Oauth2SessionService {
         self.backend_driver.delete_sso_session(state, sso_id).await
     }
 
+    #[tracing::instrument(name = "provider.oauth2_session.list_sso_sessions_by_user", level = "debug", skip_all, fields(user_id = %user_id))]
+    async fn list_sso_sessions_by_user(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        user_id: &str,
+    ) -> Result<Vec<SsoSession>, Oauth2SessionProviderError> {
+        self.backend_driver
+            .list_sso_sessions_by_user(state, domain_id, user_id)
+            .await
+    }
+
+    #[tracing::instrument(name = "provider.oauth2_session.list_rp_client_ids_by_user", level = "debug", skip_all, fields(user_id = %user_id))]
+    async fn list_rp_client_ids_by_user(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError> {
+        self.backend_driver
+            .list_rp_client_ids_by_user(state, user_id)
+            .await
+    }
+
+    #[tracing::instrument(name = "provider.oauth2_session.delete_rp_sessions_by_user", level = "debug", skip_all, fields(user_id = %user_id))]
+    async fn delete_rp_sessions_by_user(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError> {
+        self.backend_driver
+            .delete_rp_sessions_by_user(state, user_id)
+            .await
+    }
+
     #[tracing::instrument(name = "provider.oauth2_session.delete_sso_sessions_by_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn delete_sso_sessions_by_user(
         &self,

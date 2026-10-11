@@ -69,6 +69,12 @@ pub struct OpenIdConfiguration {
     pub jwks_uri: String,
     /// RP-Initiated Logout endpoint URL (OIDC RP-Initiated Logout 1.0).
     pub end_session_endpoint: String,
+    /// Whether clients can register a `backchannel_logout_uri` (OIDC
+    /// Back-Channel Logout 1.0).
+    pub backchannel_logout_supported: bool,
+    /// Whether logout tokens carry a `sid`. They do not: the id token has no
+    /// session id, so a logout applies to all of the user's sessions.
+    pub backchannel_logout_session_supported: bool,
     /// Supported `prompt` values (OIDC Core §3.1.2.1).
     pub prompt_values_supported: Vec<String>,
     /// Whether the `request` parameter is supported.
@@ -139,6 +145,8 @@ impl Default for OpenIdConfiguration {
             issuer: String::new(),
             jwks_uri: String::new(),
             end_session_endpoint: String::new(),
+            backchannel_logout_supported: true,
+            backchannel_logout_session_supported: false,
             prompt_values_supported: strings(&["none", "login", "consent", "select_account"]),
             request_parameter_supported: false,
             request_uri_parameter_supported: false,
@@ -391,6 +399,8 @@ mod tests {
             serde_json::json!(["query"])
         );
         assert_eq!(doc["claim_types_supported"], serde_json::json!(["normal"]));
+        assert_eq!(doc["backchannel_logout_supported"], true);
+        assert_eq!(doc["backchannel_logout_session_supported"], false);
         assert_eq!(doc["request_parameter_supported"], false);
         assert_eq!(doc["request_uri_parameter_supported"], false);
         let claims = doc["claims_supported"].as_array().unwrap();

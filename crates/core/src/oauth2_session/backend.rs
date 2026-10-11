@@ -83,6 +83,23 @@ pub trait Oauth2SessionBackend: Send + Sync {
         user_id: &str,
     ) -> Result<Vec<SsoSession>, Oauth2SessionProviderError>;
 
+    /// IDs of the clients that were issued an authorization code for the
+    /// user (the relying parties that may hold a session for them). The
+    /// backend records the pair whenever it stores a code.
+    async fn list_rp_client_ids_by_user(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError>;
+
+    /// Forget the relying parties of the user once they were told the
+    /// session ended; returns how many.
+    async fn delete_rp_sessions_by_user(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError>;
+
     /// Delete every SSO session of `user_id`; returns how many.
     async fn delete_sso_sessions_by_user(
         &self,

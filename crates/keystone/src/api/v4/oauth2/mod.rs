@@ -26,6 +26,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod authorize;
 mod authorize_mfa;
+pub mod backchannel;
 mod clients;
 mod confirm_rotate_signing_key;
 mod consent;

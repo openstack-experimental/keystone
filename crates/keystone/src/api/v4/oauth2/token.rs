@@ -25,6 +25,7 @@
 mod authorization_code;
 mod client_credentials;
 mod common;
+pub(super) use common::sign_jwt_typed;
 mod device_code;
 mod error;
 mod refresh_token;

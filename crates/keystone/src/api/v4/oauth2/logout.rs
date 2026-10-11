@@ -22,6 +22,8 @@
 //! the client is identified by a verified `id_token_hint` or `client_id`. A
 //! request that fails any check renders an error page and changes nothing.
 
+use std::sync::Arc;
+
 use axum::{
     Form,
     extract::{Path, Query, State},
@@ -40,6 +42,7 @@ use openstack_keystone_core_types::oauth2_session::RefreshTokenRevocationReason;
 use openstack_keystone_key_repository::asymmetric::SigningAlgorithm;
 
 use super::authorize::{cookie_secure, redirect_with_params};
+use super::backchannel::{ReqwestLogoutTransport, RetryPolicy, notify_user_logout};
 use super::html::{error_page, logout_page, too_many_requests};
 use super::renderer::LogoutCtx;
 use super::sso::{SSO_COOKIE_NAME, clear_cookie};
@@ -396,6 +399,36 @@ async fn logout_inner(
         return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
     }
 
+    // Tell the relying parties once the user has no browser session left.
+    // The user may be signed in from several browsers; without a `sid` the
+    // logout token ends all of the user's sessions at the relying party, so
+    // it is only sent when this was the last one.
+    if let Some(sso) = &sso {
+        match provider
+            .list_sso_sessions_by_user(state, domain_id, &sso.user_id)
+            .await
+        {
+            Ok(remaining) if remaining.is_empty() => {
+                let base_url = base_url(state, headers).await;
+                // Delivery runs in detached tasks; only the lookups are awaited.
+                drop(
+                    notify_user_logout(
+                        state,
+                        Arc::new(ReqwestLogoutTransport),
+                        RetryPolicy::default(),
+                        &base_url,
+                        &sso.user_id,
+                    )
+                    .await,
+                );
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, "oauth2 logout: remaining sessions unknown, no back-channel logout");
+            }
+        }
+    }
+
     emit_oauth2_session_event(
         &state.audit_dispatcher,
         correlation_id,
@@ -465,6 +498,7 @@ mod tests {
             tos_uri: None,
             contacts: vec![],
             post_logout_redirect_uris: vec!["https://rp.example.com/bye".into()],
+            backchannel_logout_uri: None,
         }
     }
 
@@ -527,6 +561,14 @@ mod tests {
             .expect_delete_sso_session()
             .times(delete_times)
             .returning(|_, _| Ok(()));
+        // No other browser session and no relying party with a
+        // back-channel endpoint by default.
+        sessions
+            .expect_list_sso_sessions_by_user()
+            .returning(|_, _, _| Ok(Vec::new()));
+        sessions
+            .expect_list_rp_client_ids_by_user()
+            .returning(|_, _| Ok(Vec::new()));
         sessions
     }
 
@@ -644,6 +686,58 @@ mod tests {
         let cookie = response.headers()[header::SET_COOKIE].to_str().unwrap();
         assert!(cookie.starts_with("keystone_oauth2_sso="), "{cookie}");
         assert!(cookie.contains("Max-Age=0"), "{cookie}");
+    }
+
+    #[tokio::test]
+    async fn test_last_session_logout_looks_up_relying_parties_and_clears_them() {
+        let mut sessions = MockOauth2SessionProvider::default();
+        sessions
+            .expect_get_sso_session()
+            .returning(|_, _| Ok(Some(sso("domain-1"))));
+        sessions
+            .expect_delete_sso_session()
+            .returning(|_, _| Ok(()));
+        sessions
+            .expect_list_sso_sessions_by_user()
+            .returning(|_, _, _| Ok(Vec::new()));
+        sessions
+            .expect_list_rp_client_ids_by_user()
+            .times(1)
+            .withf(|_, user_id| user_id == "user-1")
+            .returning(|_, _| Ok(vec!["client-1".to_string()]));
+        sessions
+            .expect_delete_rp_sessions_by_user()
+            .times(1)
+            .returning(|_, _| Ok(1));
+        let response = router(sessions)
+            .await
+            .oneshot(post("client_id=client-1"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_logout_keeps_relying_parties_while_another_session_exists() {
+        let mut sessions = MockOauth2SessionProvider::default();
+        sessions
+            .expect_get_sso_session()
+            .returning(|_, _| Ok(Some(sso("domain-1"))));
+        sessions
+            .expect_delete_sso_session()
+            .returning(|_, _| Ok(()));
+        sessions
+            .expect_list_sso_sessions_by_user()
+            .returning(|_, _, _| Ok(vec![sso("domain-1")]));
+        // Another browser stays signed in: nobody is told to log out.
+        sessions.expect_list_rp_client_ids_by_user().never();
+        sessions.expect_delete_rp_sessions_by_user().never();
+        let response = router(sessions)
+            .await
+            .oneshot(post("client_id=client-1"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]

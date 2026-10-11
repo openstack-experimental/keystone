@@ -68,6 +68,7 @@ impl From<api::OAuth2ClientCreateRequest> for core::OAuth2ClientResourceCreate {
             tos_uri: c.tos_uri,
             contacts: c.contacts,
             post_logout_redirect_uris: c.post_logout_redirect_uris,
+            backchannel_logout_uri: c.backchannel_logout_uri,
         }
     }
 }
@@ -97,6 +98,7 @@ impl From<api::OAuth2ClientUpdate> for core::OAuth2ClientResourceUpdate {
             tos_uri: value.tos_uri,
             contacts: value.contacts,
             post_logout_redirect_uris: value.post_logout_redirect_uris,
+            backchannel_logout_uri: value.backchannel_logout_uri,
         }
     }
 }
@@ -127,6 +129,7 @@ impl From<core::OAuth2ClientResource> for api::OAuth2Client {
             tos_uri: value.tos_uri,
             contacts: value.contacts,
             post_logout_redirect_uris: value.post_logout_redirect_uris,
+            backchannel_logout_uri: value.backchannel_logout_uri,
         }
     }
 }

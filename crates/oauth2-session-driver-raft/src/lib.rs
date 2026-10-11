@@ -98,6 +98,17 @@ fn sso_idx_prefix(domain_id: &str) -> String {
 
 const SSO_IDX_PREFIX: &str = "oauth2:sso_idx:v1:";
 
+/// Index of the clients that were issued an authorization code for a user:
+/// the relying parties that may hold a session for them (back-channel
+/// logout targets). Ids never contain `:`.
+fn rp_idx_key(user_id: &str, client_id: &str) -> String {
+    format!("{}{client_id}", rp_idx_prefix(user_id))
+}
+
+fn rp_idx_prefix(user_id: &str) -> String {
+    format!("oauth2:rp_idx:v1:{user_id}:")
+}
+
 fn consent_key(domain_id: &str, user_id: &str, client_id: &str) -> String {
     format!("oauth2:consent:v1:{domain_id}:{user_id}:{client_id}")
 }
@@ -531,6 +542,41 @@ impl RaftOauth2SessionBackend {
         Ok(sessions)
     }
 
+    async fn list_rp_client_ids_by_user_impl(
+        &self,
+        storage: &dyn StorageApi,
+        user_id: &str,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError> {
+        let prefix = rp_idx_prefix(user_id);
+        let keys = storage
+            .prefix_index(prefix.as_bytes())
+            .await
+            .map_err(store_err)?;
+        Ok(keys
+            .iter()
+            .filter_map(|key| key.strip_prefix(&prefix).map(str::to_string))
+            .collect())
+    }
+
+    async fn delete_rp_sessions_by_user_impl(
+        &self,
+        storage: &dyn StorageApi,
+        user_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError> {
+        let clients = self
+            .list_rp_client_ids_by_user_impl(storage, user_id)
+            .await?;
+        if clients.is_empty() {
+            return Ok(0);
+        }
+        let mutations: Vec<_> = clients
+            .iter()
+            .map(|client_id| Mutation::remove_index(rp_idx_key(user_id, client_id)))
+            .collect();
+        storage.transaction(mutations).await.map_err(store_err)?;
+        Ok(clients.len())
+    }
+
     async fn delete_sso_session_impl(
         &self,
         storage: &dyn StorageApi,
@@ -752,6 +798,7 @@ impl RaftOauth2SessionBackend {
             )
             .map_err(store_err)?,
             Mutation::set_index(expiry_idx_key(data.expires_at, "code", &data.code)),
+            Mutation::set_index(rp_idx_key(&record.user_id, &record.client_id)),
         ];
         storage.transaction(mutations).await.map_err(store_err)?;
         Ok(record)
@@ -1351,9 +1398,30 @@ impl RaftOauth2SessionBackend {
             .map_err(store_err)?
             .ok_or_else(|| Oauth2SessionProviderError::NotFound(device_code.to_string()))?;
         record.status = status;
-        put(storage, device_code_key(device_code), &record)
-            .await
-            .map_err(store_err)?;
+        match (&record.status, record.user_id.as_deref()) {
+            // The client will be issued tokens for the user: remember it as a
+            // relying party, as for an authorization code, so that
+            // back-channel logout reaches device-flow clients too.
+            (DeviceGrantStatus::Authorized, Some(user_id)) => {
+                let mutations = vec![
+                    Mutation::set(
+                        device_code_key(device_code),
+                        &record,
+                        Metadata::new(),
+                        None::<&str>,
+                        None,
+                    )
+                    .map_err(store_err)?,
+                    Mutation::set_index(rp_idx_key(user_id, &record.client_id)),
+                ];
+                storage.transaction(mutations).await.map_err(store_err)?;
+            }
+            _ => {
+                put(storage, device_code_key(device_code), &record)
+                    .await
+                    .map_err(store_err)?;
+            }
+        }
         Ok(record)
     }
 
@@ -1626,6 +1694,26 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
         user_id: &str,
     ) -> Result<Vec<SsoSession>, Oauth2SessionProviderError> {
         self.list_sso_sessions_by_user_impl(self.storage(state)?, domain_id, user_id)
+            .await
+    }
+
+    #[tracing::instrument(name = "driver.raft.oauth2_session.list_rp_client_ids_by_user", level = "debug", skip_all, fields(user_id = %user_id))]
+    async fn list_rp_client_ids_by_user(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError> {
+        self.list_rp_client_ids_by_user_impl(self.storage(state)?, user_id)
+            .await
+    }
+
+    #[tracing::instrument(name = "driver.raft.oauth2_session.delete_rp_sessions_by_user", level = "debug", skip_all, fields(user_id = %user_id))]
+    async fn delete_rp_sessions_by_user(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+    ) -> Result<usize, Oauth2SessionProviderError> {
+        self.delete_rp_sessions_by_user_impl(self.storage(state)?, user_id)
             .await
     }
 
@@ -2496,6 +2584,60 @@ mod tests {
             created_at: 1000,
             expires_at: 1060,
         }
+    }
+
+    #[tokio::test]
+    async fn test_issued_codes_register_the_relying_party_of_the_user() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        for (code, client, user) in [
+            ("c1", "client-1", "user-1"),
+            ("c2", "client-2", "user-1"),
+            ("c3", "client-1", "user-1"),
+            ("c4", "client-3", "user-2"),
+        ] {
+            backend
+                .create_authorization_code_impl(
+                    &storage,
+                    AuthorizationCodeCreate {
+                        code: code.into(),
+                        client_id: client.into(),
+                        user_id: user.into(),
+                        ..sample_code_create()
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        let mut clients = backend
+            .list_rp_client_ids_by_user_impl(&storage, "user-1")
+            .await
+            .unwrap();
+        clients.sort();
+        assert_eq!(clients, vec!["client-1", "client-2"]);
+
+        assert_eq!(
+            backend
+                .delete_rp_sessions_by_user_impl(&storage, "user-1")
+                .await
+                .unwrap(),
+            2
+        );
+        assert!(
+            backend
+                .list_rp_client_ids_by_user_impl(&storage, "user-1")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        // Another user's registrations are untouched.
+        assert_eq!(
+            backend
+                .list_rp_client_ids_by_user_impl(&storage, "user-2")
+                .await
+                .unwrap(),
+            vec!["client-3"]
+        );
     }
 
     #[tokio::test]
@@ -3653,5 +3795,61 @@ mod tests {
             .unwrap();
         assert!(mfa.upstream.is_none());
         assert!(mfa.pending_upstream.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_authorized_device_grant_records_the_relying_party() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        backend
+            .create_device_code_grant_impl(&storage, sample_device_grant_create())
+            .await
+            .unwrap();
+        let device_code = sample_device_grant_create().device_code;
+        backend
+            .mark_device_code_grant_authenticated_impl(
+                &storage,
+                &device_code,
+                "user-1",
+                1500,
+                vec!["pwd".to_string()],
+            )
+            .await
+            .unwrap();
+        let rps = |user: &'static str| {
+            let backend = &backend;
+            let storage = &storage;
+            async move {
+                backend
+                    .list_rp_client_ids_by_user_impl(storage, user)
+                    .await
+                    .unwrap()
+            }
+        };
+        // Signed in but not yet approved, or denied: no tokens, no relying party.
+        assert!(rps("user-1").await.is_empty());
+        backend
+            .mark_device_code_grant_decision_impl(&storage, &device_code, DeviceGrantStatus::Denied)
+            .await
+            .unwrap();
+        assert!(rps("user-1").await.is_empty());
+
+        let decided = backend
+            .mark_device_code_grant_decision_impl(
+                &storage,
+                &device_code,
+                DeviceGrantStatus::Authorized,
+            )
+            .await
+            .unwrap();
+        assert_eq!(decided.status, DeviceGrantStatus::Authorized);
+        assert_eq!(rps("user-1").await, vec!["client-1"]);
+        // The grant itself is stored as before.
+        let stored = backend
+            .get_device_code_grant_impl(&storage, &device_code)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.status, DeviceGrantStatus::Authorized);
     }
 }

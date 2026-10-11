@@ -1122,6 +1122,7 @@ mod tests {
     fn authz_client() -> provider_types::OAuth2ClientResource {
         provider_types::OAuth2ClientResource {
             post_logout_redirect_uris: Default::default(),
+            backchannel_logout_uri: None,
             client_id: "client-1".into(),
             provider_id: "provider-1".into(),
             domain_id: "domain-1".into(),

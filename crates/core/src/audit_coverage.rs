@@ -182,6 +182,12 @@ const ALLOW_LIST: &[(&str, &str, &str)] = &[
     ),
     (
         "oauth2_session",
+        "delete_rp_sessions_by_user",
+        "bookkeeping of the relying parties notified by back-channel logout, \
+         which follows the audited logout or user disable/delete",
+    ),
+    (
+        "oauth2_session",
         "delete_sso_sessions_by_user",
         "called by the OAuth2 session lifecycle hook after the audited user \
          disable, delete or password change",

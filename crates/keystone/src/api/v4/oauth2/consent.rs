@@ -183,6 +183,7 @@ mod tests {
             tos_uri: None,
             contacts: vec![],
             post_logout_redirect_uris: vec![],
+            backchannel_logout_uri: None,
         }
     }
 

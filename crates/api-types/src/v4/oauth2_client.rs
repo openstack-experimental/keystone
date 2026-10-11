@@ -120,6 +120,10 @@ pub struct OAuth2Client {
 
     /// URIs the provider may redirect to after RP-initiated logout.
     pub post_logout_redirect_uris: Vec<String>,
+
+    /// `https://` OIDC Back-Channel Logout endpoint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backchannel_logout_uri: Option<String>,
 }
 
 /// OAuth2 client creation payload.
@@ -198,6 +202,12 @@ pub struct OAuth2ClientCreate {
     /// match, same scheme rules as `redirect_uris`).
     #[serde(default)]
     pub post_logout_redirect_uris: Vec<String>,
+
+    /// `https://` OIDC Back-Channel Logout endpoint; receives a signed
+    /// `logout_token` when the user's sign-in session ends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "validate", validate(length(max = 2048)))]
+    pub backchannel_logout_uri: Option<String>,
 }
 
 /// OAuth2 client creation request wrapper.
@@ -290,6 +300,11 @@ pub struct OAuth2ClientUpdate {
     /// New post-logout redirect URIs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub post_logout_redirect_uris: Option<Vec<String>>,
+
+    /// New Back-Channel Logout endpoint; an empty string clears it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "validate", validate(length(max = 2048)))]
+    pub backchannel_logout_uri: Option<String>,
 }
 
 /// OAuth2 client update request wrapper.

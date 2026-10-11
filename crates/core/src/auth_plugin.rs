@@ -921,6 +921,16 @@ async fn resolve_validated_addr(
         .ok_or_else(|| DynamicPluginHostError::NoAllowedAddress(host.to_string()))
 }
 
+/// Resolve `host` to an address that passes the SSRF filter of
+/// [`resolve_validated_addr`], for callers outside this module that connect
+/// to an untrusted, operator- or tenant-supplied URL (e.g. OIDC back-channel
+/// logout). The caller must connect to exactly the returned address.
+pub async fn resolve_public_addr(host: &str, port: u16) -> Result<SocketAddr, String> {
+    resolve_validated_addr(host, port)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// True if `ip` falls in a private, loopback, link-local (which includes
 /// the `169.254.169.254` cloud-metadata address), multicast, or otherwise
 /// non-public range that `http_fetch` must never connect to (ADR §6.A).

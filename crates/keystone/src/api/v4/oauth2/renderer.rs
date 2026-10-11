@@ -699,6 +699,7 @@ mod tests {
         use openstack_keystone_core_types::oauth2_client::OAuth2ClientResource;
         let mut client = OAuth2ClientResource {
             post_logout_redirect_uris: Default::default(),
+            backchannel_logout_uri: None,
             client_id: "cid".into(),
             provider_id: "prov".into(),
             domain_id: "d".into(),

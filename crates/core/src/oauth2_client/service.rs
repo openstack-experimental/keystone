@@ -304,6 +304,9 @@ impl Oauth2ClientApi for Oauth2ClientService {
         validate_redirect_uris(&data.redirect_uris, confidential)?;
         validate_require_pkce(data.require_pkce, confidential)?;
         validate_post_logout_redirect_uris(&data.post_logout_redirect_uris, confidential)?;
+        if let Some(uri) = &data.backchannel_logout_uri {
+            validate_https_uri("backchannel_logout_uri", uri)?;
+        }
         validate_claims_template(&data.claims_template)?;
         validate_display(
             Some(&data.name),
@@ -470,6 +473,13 @@ impl Oauth2ClientApi for Oauth2ClientService {
         if let Some(redirect_uris) = &data.redirect_uris {
             validate_redirect_uris(redirect_uris, confidential)?;
         }
+        if let Some(uri) = data
+            .backchannel_logout_uri
+            .as_deref()
+            .filter(|u| !u.is_empty())
+        {
+            validate_https_uri("backchannel_logout_uri", uri)?;
+        }
         if let Some(uris) = &data.post_logout_redirect_uris {
             validate_post_logout_redirect_uris(uris, confidential)?;
         }
@@ -551,6 +561,7 @@ mod tests {
     fn sample_create() -> OAuth2ClientResourceCreate {
         OAuth2ClientResourceCreate {
             post_logout_redirect_uris: Default::default(),
+            backchannel_logout_uri: None,
             client_id: String::new(),
             provider_id: "provider-1".into(),
             domain_id: "domain-1".into(),
@@ -624,6 +635,29 @@ mod tests {
             result,
             Err(Oauth2ClientProviderError::Validation(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn test_create_validates_backchannel_logout_uri() {
+        let service = service_with(MockOauth2ClientBackend::new());
+        let state = get_mocked_state(None, None).await;
+        let ctx = ExecutionContext::internal(&state);
+
+        for bad in [
+            "http://rp.example.com/bc",
+            "https://user:pw@rp.example.com/bc",
+            "not a url",
+        ] {
+            let mut req = sample_create();
+            req.backchannel_logout_uri = Some(bad.into());
+            assert!(
+                matches!(
+                    service.create(&ctx, req, true).await,
+                    Err(Oauth2ClientProviderError::Validation(_))
+                ),
+                "{bad} must be rejected"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1030,6 +1064,7 @@ mod tests {
             tos_uri: data.tos_uri,
             contacts: data.contacts,
             post_logout_redirect_uris: data.post_logout_redirect_uris,
+            backchannel_logout_uri: data.backchannel_logout_uri,
         }
     }
 

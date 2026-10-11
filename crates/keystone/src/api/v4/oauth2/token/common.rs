@@ -78,6 +78,16 @@ pub(super) async fn sign_jwt<T: Serialize>(
     domain_id: &str,
     claims: &T,
 ) -> Result<String, Oauth2TokenError> {
+    sign_jwt_typed(state, domain_id, claims, None).await
+}
+
+/// [`sign_jwt`] with an explicit JOSE `typ` header (e.g. `logout+jwt`).
+pub(in crate::api::v4::oauth2) async fn sign_jwt_typed<T: Serialize>(
+    state: &ServiceState,
+    domain_id: &str,
+    claims: &T,
+    typ: Option<&str>,
+) -> Result<String, Oauth2TokenError> {
     let signing_key = state
         .provider
         .get_oauth2_key_provider()
@@ -95,6 +105,7 @@ pub(super) async fn sign_jwt<T: Serialize>(
     header.kid = Some(openstack_keystone_key_repository::asymmetric::derive_kid(
         &signing_key.public_key_der,
     ));
+    header.typ = typ.map(str::to_string).or(header.typ);
     jsonwebtoken::encode(&header, claims, &encoding_key).map_err(|e| {
         tracing::warn!(error = %e, "oauth2 token signing failed");
         Oauth2TokenError::internal("token issuance failed")

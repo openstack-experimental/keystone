@@ -415,6 +415,25 @@ mod oauth2_session {
                 sso_id: &str,
             ) -> Result<(), Oauth2SessionProviderError>;
 
+            async fn list_sso_sessions_by_user(
+                &self,
+                state: &ServiceState,
+                domain_id: &str,
+                user_id: &str,
+            ) -> Result<Vec<SsoSession>, Oauth2SessionProviderError>;
+
+            async fn list_rp_client_ids_by_user(
+                &self,
+                state: &ServiceState,
+                user_id: &str,
+            ) -> Result<Vec<String>, Oauth2SessionProviderError>;
+
+            async fn delete_rp_sessions_by_user(
+                &self,
+                state: &ServiceState,
+                user_id: &str,
+            ) -> Result<usize, Oauth2SessionProviderError>;
+
             async fn delete_sso_sessions_by_user(
                 &self,
                 state: &ServiceState,

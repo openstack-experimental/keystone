@@ -188,9 +188,46 @@ the browser SSO session: access tokens and refresh-token families already
 issued stay valid until they expire or are revoked (RFC 7009 revocation, user
 or domain disable/delete, password change).
 
-Not covered yet: back-channel/front-channel logout notifications to relying
-parties, and ending the upstream provider session at logout (the upstream
-`sid` is stored for it).
+### Back-channel logout
+
+A client may register a `backchannel_logout_uri` (`https://`, no credentials;
+set to an empty string on update to clear it). OIDC Back-Channel Logout 1.0 is
+advertised as `backchannel_logout_supported`. When a user's sign-in ends, every
+enabled client that was issued an authorization code for the user and has such
+a URI receives `POST logout_token=<JWT>` (form encoded, `Cache-Control:
+no-store`). The token is signed with the domain's active key, carries
+a JOSE type header of `logout+jwt`, `iss`, `aud` (the client), `sub` (the user), `iat`, a
+two-minute `exp`, a `jti` and the
+`http://schemas.openid.net/event/backchannel-logout` event, and has no
+`nonce`.
+
+The notification is sent:
+
+- on RP-initiated logout, when the user has no other browser SSO session left
+  (several signed-in browsers keep the relying parties logged in until the
+  last one signs out);
+- when the user is disabled, deleted or changes their password.
+
+Delivery never blocks the request that caused it. A relying party that does
+not answer `200` or `204` (or cannot be reached within 5 seconds) is retried
+twice, after 2 s and 10 s, then given up on with a warning in the log.
+There is no persistent queue: a notification pending when the node stops is
+lost.
+
+The endpoint is untrusted input. Its host is resolved by the server on every
+attempt and refused when any address is private, loopback, link-local,
+cloud-metadata or otherwise internal; the connection is pinned to the checked
+address and redirects are never followed. Only `https://` is delivered.
+
+Id tokens do not carry a session id, so logout tokens carry no `sid` and
+discovery reports `backchannel_logout_session_supported: false`: the relying
+party should end all sessions of the user. The set of relying parties is
+recorded when an authorization code is issued and cleared once they were
+notified.
+
+Not covered yet: front-channel logout, back-channel logout when an SSO session
+merely expires (janitor) or when a domain is disabled or deleted, and ending
+the upstream provider session at logout (the upstream `sid` is stored for it).
 
 ## Remembered consent
 

@@ -28,6 +28,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 
 use super::{Startup, debug_elapsed};
+use crate::api::v4::oauth2::backchannel::BackchannelLogoutHook;
 use crate::application_credential::ApplicationCredentialHook;
 use crate::assignment::AssignmentHook;
 use crate::auth_plugin_http_client::KeystoneDynamicPluginHttpFetcher;
@@ -135,6 +136,7 @@ async fn subscribe_event_hooks(state: &ServiceState) {
     subscribe!(
         ApplicationCredentialHook,
         AssignmentHook,
+        BackchannelLogoutHook,
         CatalogHook,
         DynamicPluginIdentityHook,
         FederationHook,

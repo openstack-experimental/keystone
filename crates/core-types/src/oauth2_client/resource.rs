@@ -165,6 +165,12 @@ pub struct OAuth2ClientResource {
     #[serde(default)]
     #[builder(default)]
     pub post_logout_redirect_uris: Vec<String>,
+
+    /// `https://` endpoint receiving OIDC Back-Channel Logout 1.0 logout
+    /// tokens when the user's session ends.
+    #[serde(default)]
+    #[builder(default)]
+    pub backchannel_logout_uri: Option<String>,
 }
 
 impl std::fmt::Debug for OAuth2ClientResource {
@@ -200,6 +206,7 @@ impl std::fmt::Debug for OAuth2ClientResource {
             .field("tos_uri", &self.tos_uri)
             .field("contacts", &self.contacts)
             .field("post_logout_redirect_uris", &self.post_logout_redirect_uris)
+            .field("backchannel_logout_uri", &self.backchannel_logout_uri)
             .finish()
     }
 }
@@ -234,6 +241,10 @@ impl OAuth2ClientResource {
             post_logout_redirect_uris: update
                 .post_logout_redirect_uris
                 .unwrap_or(self.post_logout_redirect_uris),
+            backchannel_logout_uri: apply_optional(
+                update.backchannel_logout_uri,
+                self.backchannel_logout_uri,
+            ),
             updated_at: now,
             deleted_at,
             ..self
@@ -338,6 +349,10 @@ pub struct OAuth2ClientResourceCreate {
     /// URIs the OP may redirect to after RP-initiated logout.
     #[builder(default)]
     pub post_logout_redirect_uris: Vec<String>,
+
+    /// `https://` Back-Channel Logout endpoint.
+    #[builder(default)]
+    pub backchannel_logout_uri: Option<String>,
 }
 
 impl std::fmt::Debug for OAuth2ClientResourceCreate {
@@ -368,6 +383,7 @@ impl std::fmt::Debug for OAuth2ClientResourceCreate {
             .field("tos_uri", &self.tos_uri)
             .field("contacts", &self.contacts)
             .field("post_logout_redirect_uris", &self.post_logout_redirect_uris)
+            .field("backchannel_logout_uri", &self.backchannel_logout_uri)
             .finish()
     }
 }
@@ -422,6 +438,9 @@ pub struct OAuth2ClientResourceUpdate {
 
     /// `None` = unchanged.
     pub post_logout_redirect_uris: Option<Vec<String>>,
+
+    /// `None` = unchanged, empty string = clear.
+    pub backchannel_logout_uri: Option<String>,
 }
 
 /// Filter parameters for `GET /v4/oauth2/{domain_id}/clients`.
