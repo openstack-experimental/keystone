@@ -53,6 +53,7 @@ pub(crate) const RESERVED_CLAIM_NAMES: &[&str] = &[
     "at_hash",
     "c_hash",
     "sid",
+    "fid",
     "azp",
     "jti",
     "client_id",

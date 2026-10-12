@@ -634,7 +634,7 @@ access tokens (see the user guide). Operationally:
   token's `exp` passes.
 - The endpoint is rate limited per client (`token_rate_limit_*`) and per source
   IP (global IP limiter) before any token lookup.
-- OIDC access tokens carry a private `sid` claim (the refresh family id).
+- OIDC access tokens carry a private `fid` claim (the refresh family id; tokens issued before it was renamed carry it as `sid`, which revocation still accepts). The `sid` claim of id and logout tokens is the SSO session.
   Revoking such an access token also revokes that family. The reverse does not
   hold: revoking a refresh token does not revoke access tokens already minted
   from its family (the list is keyed by `jti`; the server does not track

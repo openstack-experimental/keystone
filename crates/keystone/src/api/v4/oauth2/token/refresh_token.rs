@@ -206,7 +206,7 @@ pub(super) async fn handle_refresh_token_grant(
         jti: uuid::Uuid::new_v4().to_string(),
         scope: record.scope.join(" "),
         token_use: "access".to_string(),
-        sid: Some(record.family_id.clone()),
+        family_id: Some(record.family_id.clone()),
     };
     let access_token = sign_jwt(state, domain_id, &access_claims).await?;
 
@@ -502,7 +502,7 @@ mod tests {
         assert!(body.get("id_token").is_none());
         // The rotated family id rides along as `sid` for RFC 7009.
         let claims = jwt_claims(body["access_token"].as_str().unwrap());
-        assert_eq!(claims["sid"], "family-1");
+        assert_eq!(claims["fid"], "family-1");
     }
 
     /// Run a refresh grant whose rotation succeeds and whose family, if

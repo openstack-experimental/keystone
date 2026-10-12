@@ -357,8 +357,9 @@ pub struct RevocableAccessToken {
     pub jti: String,
     /// Token expiry (unix seconds); the revocation entry may be swept after.
     pub exp: i64,
-    /// Refresh family (`sid` claim) that minted the token, if any.
-    pub sid: Option<String>,
+    /// Refresh family (`fid` claim, `sid` on older tokens) that minted the
+    /// token, if any.
+    pub family_id: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -372,8 +373,8 @@ struct RevocableClaims {
     client_id: Option<String>,
     #[serde(default)]
     token_use: Option<String>,
-    #[serde(default)]
-    sid: Option<String>,
+    #[serde(default, alias = "sid")]
+    fid: Option<String>,
 }
 
 /// Verify an access token presented to the RFC 7009 revocation endpoint and
@@ -438,7 +439,7 @@ pub fn verify_revocable_access_token(
     Ok(RevocableAccessToken {
         jti,
         exp: claims.exp,
-        sid: claims.sid,
+        family_id: claims.fid,
     })
 }
 
@@ -581,7 +582,7 @@ mod tests {
             jti: "jti-1".to_string(),
             scope: "openid profile".to_string(),
             token_use: "access".to_string(),
-            sid: None,
+            family_id: None,
         }
     }
 
@@ -726,7 +727,30 @@ mod tests {
         )
         .unwrap();
         assert_eq!(got.jti, "jti-oidc");
-        assert_eq!(got.sid.as_deref(), Some("family-1"));
+        assert_eq!(got.family_id.as_deref(), Some("family-1"));
+    }
+
+    #[test]
+    fn test_revocable_token_reads_the_family_from_fid_and_legacy_sid() {
+        let now = chrono::Utc::now().timestamp();
+        for claim in ["fid", "sid"] {
+            let mut claims = serde_json::json!({
+                "iss": ISSUER, "sub": "u", "aud": "client-1", "exp": now + 900,
+                "iat": now, "nbf": now, "jti": "jti-oidc", "scope": "openid",
+                "token_use": "access",
+            });
+            claims[claim] = "family-1".into();
+            let (token, jwks, _kid) = sign(&claims);
+            let got = verify_revocable_access_token(
+                &token,
+                &jwks,
+                SigningAlgorithm::Es256,
+                &[ISSUER.to_string()],
+                "client-1",
+            )
+            .unwrap();
+            assert_eq!(got.family_id.as_deref(), Some("family-1"), "{claim}");
+        }
     }
 
     #[test]

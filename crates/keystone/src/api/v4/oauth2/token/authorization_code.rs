@@ -174,7 +174,7 @@ pub(super) async fn handle_authorization_code_grant(
             jti: uuid::Uuid::new_v4().to_string(),
             scope: record.scope.join(" "),
             token_use: "access".to_string(),
-            sid: sid.clone(),
+            family_id: sid.clone(),
         };
         let access_token = sign_jwt(state, domain_id, &access_claims).await?;
 
@@ -492,7 +492,7 @@ mod tests {
         assert!(body.get("refresh_token").is_none());
         // No refresh family, hence no session id.
         let claims = jwt_claims(body["access_token"].as_str().unwrap());
-        assert!(claims.get("sid").is_none());
+        assert!(claims.get("fid").is_none());
     }
 
     #[tokio::test]
@@ -552,7 +552,7 @@ mod tests {
         let body = json_body(response).await;
         assert_eq!(body["refresh_token"], "refresh-bearer");
         let claims = jwt_claims(body["access_token"].as_str().unwrap());
-        assert_eq!(claims["sid"], "family-9");
+        assert_eq!(claims["fid"], "family-9");
     }
 
     #[tokio::test]

@@ -319,7 +319,7 @@ impl RevokeContext<'_> {
         // no-op). The token itself is already revoked at this point, so a
         // failure here is logged and audited but does not fail the request:
         // answering 5xx would imply the presented token is still live.
-        if let Some(family_id) = revocable.sid.as_deref() {
+        if let Some(family_id) = revocable.family_id.as_deref() {
             let reason = RefreshTokenRevocationReason::RpRevoke;
             match self
                 .state
@@ -446,7 +446,7 @@ mod tests {
             &serde_json::json!({
                 "iss": ISSUER, "sub": "user-1", "aud": aud, "exp": now + 900,
                 "iat": now, "nbf": now, "jti": "jti-1", "scope": "openid",
-                "token_use": "access", "sid": sid,
+                "token_use": "access", "fid": sid,
             }),
             &to_encoding_key(&material).unwrap(),
         )
