@@ -14,7 +14,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  rust_min: 1.94.0
+  rust_min: 1.96.0
 
 jobs:
   clippy:
