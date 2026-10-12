@@ -377,8 +377,10 @@ impl Oauth2SessionApi for Oauth2SessionService {
             return Ok(None);
         };
         if session.expires_at < now() {
-            // Best-effort cleanup on expired read.
-            let _ = self.end_sso_session(state, sso_id, true).await;
+            // Best-effort cleanup on expired read; the janitor retries.
+            if let Err(e) = self.end_sso_session(state, sso_id, true).await {
+                tracing::warn!(error = %e, "oauth2 expired SSO session could not be ended");
+            }
             return Ok(None);
         }
         Ok(Some(session))
