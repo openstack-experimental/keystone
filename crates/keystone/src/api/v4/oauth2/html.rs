@@ -82,6 +82,25 @@ pub(super) fn logout_page(ctx: &LogoutCtx) -> Response {
     page(renderer().render_logout(ctx))
 }
 
+/// The logout page loading the relying parties' front-channel logout URIs in
+/// hidden frames. Framing stays blocked except for exactly those origins.
+pub(super) fn logout_page_with_frames(ctx: &LogoutCtx, frame_origins: &[String]) -> Response {
+    let mut response = logout_page(ctx);
+    if response.status() == StatusCode::OK
+        && !frame_origins.is_empty()
+        && let Ok(csp) = HeaderValue::from_str(&format!(
+            "{}; frame-src {}",
+            content_security_policy_str(show_client_logos(), "'none'"),
+            frame_origins.join(" ")
+        ))
+    {
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static("content-security-policy"), csp);
+    }
+    response
+}
+
 /// The MFA page. Only when it embeds a passkey challenge does it carry an
 /// inline script, allowed through a fresh per-response CSP nonce; every other
 /// OP page keeps `script-src 'none'`.

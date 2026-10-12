@@ -42,8 +42,10 @@ use openstack_keystone_core_types::oauth2_session::RefreshTokenRevocationReason;
 use openstack_keystone_key_repository::asymmetric::SigningAlgorithm;
 
 use super::authorize::{cookie_secure, redirect_with_params};
-use super::backchannel::{EndedSessions, ReqwestLogoutTransport, RetryPolicy, notify_logout};
-use super::html::{error_page, logout_page, too_many_requests};
+use super::backchannel::{
+    EndedSessions, ReqwestLogoutTransport, RetryPolicy, notify_logout_with_frontchannel,
+};
+use super::html::{error_page, logout_page, logout_page_with_frames, too_many_requests};
 use super::renderer::LogoutCtx;
 use super::sso::{SSO_COOKIE_NAME, clear_cookie};
 use crate::api::common::PeerAddr;
@@ -227,6 +229,10 @@ async fn find_client(
         .ok_or_else(unknown)
 }
 
+/// Time given to the relying parties' front-channel frames to load before
+/// the browser moves on to the `post_logout_redirect_uri`.
+const FRONTCHANNEL_GRACE_SECONDS: u32 = 2;
+
 #[allow(clippy::too_many_arguments)]
 async fn logout_inner(
     state: &ServiceState,
@@ -345,6 +351,9 @@ async fn logout_inner(
             confirm: true,
             action: format!("/v4/oauth2/{domain_id}/logout"),
             fields,
+            frames: Vec::new(),
+            refresh: None,
+            refresh_seconds: 0,
         });
     }
 
@@ -403,20 +412,23 @@ async fn logout_inner(
     // Tell the relying parties that were issued under this session; the
     // user's other browser sessions keep theirs. The logout token carries
     // the `sid` of the session.
+    // Relying parties with a front-channel logout URI are told through this
+    // browser instead.
+    let mut frontchannel = Vec::new();
     if let Some(sso) = &sso {
         let base_url = base_url(state, headers).await;
         // Delivery runs in detached tasks; only the lookups are awaited.
-        drop(
-            notify_logout(
-                state,
-                Arc::new(ReqwestLogoutTransport),
-                RetryPolicy::default(),
-                &base_url,
-                &sso.user_id,
-                EndedSessions::Sso(&sso_ref(&sso.sso_id)),
-            )
-            .await,
-        );
+        let notice = notify_logout_with_frontchannel(
+            state,
+            Arc::new(ReqwestLogoutTransport),
+            RetryPolicy::default(),
+            &base_url,
+            &sso.user_id,
+            EndedSessions::Sso(&sso_ref(&sso.sso_id)),
+        )
+        .await;
+        drop(notice.tasks);
+        frontchannel = notice.frontchannel;
     }
 
     emit_oauth2_session_event(
@@ -431,15 +443,31 @@ async fn logout_inner(
         None,
     );
 
-    let response = match redirect {
-        Some(uri) => {
-            redirect_with_params(&uri, &[("state", params.state.as_deref().unwrap_or(""))])
+    let frames: Vec<String> = frontchannel.iter().map(|t| t.url.clone()).collect();
+    let mut origins: Vec<String> = frontchannel.into_iter().map(|t| t.origin).collect();
+    origins.sort();
+    origins.dedup();
+    let target = redirect.and_then(|uri| {
+        let mut url = url::Url::parse(&uri).ok()?;
+        if let Some(state_param) = params.state.as_deref().filter(|s| !s.is_empty()) {
+            url.query_pairs_mut().append_pair("state", state_param);
         }
-        None => logout_page(&LogoutCtx {
-            confirm: false,
-            action: String::new(),
-            fields: Vec::new(),
-        }),
+        Some(url.to_string())
+    });
+    let response = match (target, frames.is_empty()) {
+        // Nothing to notify through the browser: redirect right away.
+        (Some(uri), true) => redirect_with_params(&uri, &[]),
+        (target, _) => {
+            let ctx = LogoutCtx {
+                confirm: false,
+                action: String::new(),
+                fields: Vec::new(),
+                frames,
+                refresh: target,
+                refresh_seconds: FRONTCHANNEL_GRACE_SECONDS,
+            };
+            logout_page_with_frames(&ctx, &origins)
+        }
     };
     let clear = clear_cookie(cookie_secure(state, headers).await);
     (CookieJar::new().add(clear), response).into_response()
@@ -533,7 +561,21 @@ mod tests {
         let mut clients = MockOauth2ClientProvider::default();
         clients
             .expect_get_by_client_id()
-            .returning(|_, id| Ok((id == "client-1").then(client)));
+            .returning(|_, id| match id {
+                "client-1" => Ok(Some(client())),
+                "client-fc" => Ok(Some(OAuth2ClientResource {
+                    client_id: "client-fc".into(),
+                    frontchannel_logout_uri: Some("https://fc.example.com/logout".into()),
+                    frontchannel_logout_session_required: true,
+                    ..client()
+                })),
+                "client-fc-plain" => Ok(Some(OAuth2ClientResource {
+                    client_id: "client-fc-plain".into(),
+                    frontchannel_logout_uri: Some("https://plain.example.com/out".into()),
+                    ..client()
+                })),
+                _ => Ok(None),
+            });
         let mut config = Config::default();
         config.oauth2.allow_host_header_issuer = true;
         config.oauth2.logout_revokes_refresh_tokens = revoke_refresh_tokens;
@@ -681,6 +723,90 @@ mod tests {
         let cookie = response.headers()[header::SET_COOKIE].to_str().unwrap();
         assert!(cookie.starts_with("keystone_oauth2_sso="), "{cookie}");
         assert!(cookie.contains("Max-Age=0"), "{cookie}");
+    }
+
+    #[tokio::test]
+    async fn test_frontchannel_rps_are_loaded_in_frames_before_the_redirect() {
+        let mut sessions = MockOauth2SessionProvider::default();
+        sessions
+            .expect_get_sso_session()
+            .returning(|_, _| Ok(Some(sso("domain-1"))));
+        sessions
+            .expect_delete_sso_session()
+            .returning(|_, _| Ok(()));
+        sessions
+            .expect_delete_rp_sessions_by_sso()
+            .returning(|_, _, _| {
+                Ok(vec![
+                    RpSession {
+                        client_id: "client-fc".to_string(),
+                        sso_ref: Some(sso_ref_of("sso-1")),
+                    },
+                    RpSession {
+                        client_id: "client-fc-plain".to_string(),
+                        sso_ref: None,
+                    },
+                ])
+            });
+        let response = router(sessions)
+            .await
+            .oneshot(post(
+                "client_id=client-1&post_logout_redirect_uri=https%3A%2F%2Frp.example.com%2Fbye&state=xyz",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let csp = response.headers()["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(
+            csp.contains("frame-src https://fc.example.com https://plain.example.com"),
+            "{csp}"
+        );
+        assert!(csp.contains("script-src 'none'"), "{csp}");
+        assert!(response.headers().contains_key(header::SET_COOKIE));
+        // The template escapes `/` and `&` in attributes.
+        let body = text(response)
+            .await
+            .replace("&#x2f;", "/")
+            .replace("&amp;", "&");
+        let sid =
+            openstack_keystone_core::oauth2_session::derive_sid(&sso_ref_of("sso-1"), "client-fc");
+        assert!(
+            body.contains(&format!("sid={sid}")) && body.contains("iss="),
+            "{body}"
+        );
+        assert!(body.contains("https://plain.example.com/out"), "{body}");
+        assert!(body.contains("http-equiv=\"refresh\""), "{body}");
+        assert!(body.contains("rp.example.com/bye?state=xyz"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn test_frontchannel_rp_requiring_sid_is_skipped_without_one() {
+        let mut sessions = MockOauth2SessionProvider::default();
+        sessions
+            .expect_get_sso_session()
+            .returning(|_, _| Ok(Some(sso("domain-1"))));
+        sessions
+            .expect_delete_sso_session()
+            .returning(|_, _| Ok(()));
+        sessions
+            .expect_delete_rp_sessions_by_sso()
+            .returning(|_, _, _| {
+                Ok(vec![RpSession {
+                    client_id: "client-fc".to_string(),
+                    sso_ref: None,
+                }])
+            });
+        let response = router(sessions)
+            .await
+            .oneshot(post(
+                "client_id=client-1&post_logout_redirect_uri=https%3A%2F%2Frp.example.com%2Fbye",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
     }
 
     #[tokio::test]

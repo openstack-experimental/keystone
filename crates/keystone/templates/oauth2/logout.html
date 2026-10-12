@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{% if confirm %}{{ t("sign_out") }}{% else %}{{ t("signed_out") }}{% endif %}{% endblock %}
+{% block head %}{% if refresh %}<meta http-equiv="refresh" content="{{ refresh_seconds }};url={{ refresh }}">{% endif %}{% endblock %}
 {% block content %}
 {% if confirm %}
 <h1>{{ t("sign_out") }}</h1>
@@ -14,4 +15,7 @@
 <h1>{{ t("signed_out") }}</h1>
 <p>{{ t("signed_out_help") }}</p>
 {% endif %}
+{% for frame in frames %}
+<iframe class="logout-frame" src="{{ frame }}" width="0" height="0" hidden aria-hidden="true" tabindex="-1" referrerpolicy="no-referrer"></iframe>
+{% endfor %}
 {% endblock %}

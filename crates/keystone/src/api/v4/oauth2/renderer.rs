@@ -366,6 +366,14 @@ pub(crate) struct LogoutCtx {
     pub action: String,
     /// Request parameters carried through the confirmation form.
     pub fields: Vec<(String, String)>,
+    /// Front-channel logout URIs of the relying parties, loaded in hidden
+    /// frames.
+    pub frames: Vec<String>,
+    /// Where to go once the frames had time to load (`post_logout_redirect_uri`
+    /// with `state`); the page cannot run scripts, so this is a meta refresh.
+    pub refresh: Option<String>,
+    /// Seconds before `refresh`.
+    pub refresh_seconds: u32,
 }
 
 /// Context of `device_entry.html`.

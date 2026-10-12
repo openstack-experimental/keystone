@@ -208,6 +208,70 @@ pub async fn notify_logout(
     user_id: &str,
     ended: EndedSessions<'_>,
 ) -> Vec<JoinHandle<bool>> {
+    notify_logout_with_frontchannel(state, transport, policy, base_url, user_id, ended)
+        .await
+        .tasks
+}
+
+/// A relying party to notify through the user's browser (OIDC Front-Channel
+/// Logout 1.0 §3).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FrontchannelTarget {
+    /// `frontchannel_logout_uri` with `iss` and `sid` appended when the RP
+    /// requires them.
+    pub url: String,
+    /// Origin of the URI, for the page's `frame-src`.
+    pub origin: String,
+}
+
+/// Outcome of [`notify_logout_with_frontchannel`].
+pub struct LogoutNotice {
+    /// Back-channel delivery tasks.
+    pub tasks: Vec<JoinHandle<bool>>,
+    /// Relying parties to be notified by the browser.
+    pub frontchannel: Vec<FrontchannelTarget>,
+}
+
+fn frontchannel_target(
+    client: &OAuth2ClientResource,
+    base_url: &str,
+    domain_id: &str,
+    sid: Option<&str>,
+) -> Option<FrontchannelTarget> {
+    let uri = client
+        .frontchannel_logout_uri
+        .as_deref()
+        .filter(|u| !u.is_empty())?;
+    let mut url = url::Url::parse(uri).ok()?;
+    if url.scheme() != "https" {
+        return None;
+    }
+    if client.frontchannel_logout_session_required {
+        // The RP asked for `iss` and `sid`; without a session id it cannot
+        // tell which session to end.
+        let sid = sid?;
+        url.query_pairs_mut()
+            .append_pair("iss", &format!("{base_url}/v4/oauth2/{domain_id}"))
+            .append_pair("sid", sid);
+    }
+    let origin = url.origin().ascii_serialization();
+    Some(FrontchannelTarget {
+        url: url.to_string(),
+        origin,
+    })
+}
+
+/// [`notify_logout`] that also reports the relying parties with a
+/// front-channel logout URI.
+pub async fn notify_logout_with_frontchannel(
+    state: &ServiceState,
+    transport: Arc<dyn LogoutTransport>,
+    policy: RetryPolicy,
+    base_url: &str,
+    user_id: &str,
+    ended: EndedSessions<'_>,
+) -> LogoutNotice {
+    let mut frontchannel = Vec::new();
     let sessions = state.provider.get_oauth2_session_provider();
     // List and clear in one step: the relying parties removed are exactly
     // the ones notified, so one recorded in between is kept for the next
@@ -223,10 +287,18 @@ pub async fn notify_logout(
     let rps = match removed {
         Ok(rps) => rps,
         // No raft storage, no OP sessions, nothing to notify.
-        Err(Oauth2SessionProviderError::RaftNotAvailable) => return Vec::new(),
+        Err(Oauth2SessionProviderError::RaftNotAvailable) => {
+            return LogoutNotice {
+                tasks: Vec::new(),
+                frontchannel,
+            };
+        }
         Err(e) => {
             tracing::warn!(error = %e, "back-channel logout: relying parties not cleared");
-            return Vec::new();
+            return LogoutNotice {
+                tasks: Vec::new(),
+                frontchannel,
+            };
         }
     };
 
@@ -250,6 +322,16 @@ pub async fn notify_logout(
                 continue;
             }
         };
+        let sid = rp
+            .sso_ref
+            .as_deref()
+            .map(|sso_ref| derive_sid(sso_ref, &client_id));
+        frontchannel.extend(frontchannel_target(
+            &client,
+            base_url,
+            &client.domain_id,
+            sid.as_deref(),
+        ));
         let Some(url) = client
             .backchannel_logout_uri
             .clone()
@@ -257,10 +339,6 @@ pub async fn notify_logout(
         else {
             continue;
         };
-        let sid = rp
-            .sso_ref
-            .as_deref()
-            .map(|sso_ref| derive_sid(sso_ref, &client_id));
         if client.backchannel_logout_session_required && sid.is_none() {
             // The RP never received a `sid` (grant without an SSO
             // session), so it cannot match a token that must carry one.
@@ -310,7 +388,10 @@ pub async fn notify_logout(
             deliver(transport.as_ref(), &policy, &client_id, &url, &token).await
         }));
     }
-    tasks
+    LogoutNotice {
+        tasks,
+        frontchannel,
+    }
 }
 
 /// [`notify_logout`] for every session of the user.
@@ -462,6 +543,32 @@ mod tests {
                 statuses.remove(0)
             }
         }
+    }
+
+    #[test]
+    fn test_frontchannel_target_adds_iss_and_sid_only_when_required() {
+        let mut c = client("c", None);
+        c.frontchannel_logout_uri = Some("https://rp.example.com/fc?x=1".into());
+        let plain = frontchannel_target(&c, "https://op", "d1", Some("sid-1")).unwrap();
+        assert_eq!(plain.url, "https://rp.example.com/fc?x=1");
+        assert_eq!(plain.origin, "https://rp.example.com");
+
+        c.frontchannel_logout_session_required = true;
+        let with_sid = frontchannel_target(&c, "https://op", "d1", Some("sid-1")).unwrap();
+        assert_eq!(
+            with_sid.url,
+            "https://rp.example.com/fc?x=1&iss=https%3A%2F%2Fop%2Fv4%2Foauth2%2Fd1&sid=sid-1"
+        );
+        assert!(frontchannel_target(&c, "https://op", "d1", None).is_none());
+    }
+
+    #[test]
+    fn test_frontchannel_target_requires_https() {
+        let mut c = client("c", None);
+        c.frontchannel_logout_uri = Some("http://rp.example.com/fc".into());
+        assert!(frontchannel_target(&c, "https://op", "d1", None).is_none());
+        c.frontchannel_logout_uri = None;
+        assert!(frontchannel_target(&c, "https://op", "d1", None).is_none());
     }
 
     fn client(id: &str, uri: Option<&str>) -> OAuth2ClientResource {
