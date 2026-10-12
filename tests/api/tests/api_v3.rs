@@ -19,6 +19,7 @@
 mod api_v3 {
     mod assignment;
     mod auth;
+    mod cascade;
     mod credential;
     mod domain_config;
     mod endpoint;
