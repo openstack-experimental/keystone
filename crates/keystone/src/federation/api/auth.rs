@@ -126,6 +126,41 @@ pub(crate) struct UpstreamAuthStart {
     pub state: String,
 }
 
+/// URL that ends the user's session at the upstream IdP (OIDC RP-Initiated
+/// Logout 1.0), or `None` when the IdP offers none or cannot be reached. The
+/// IdP then returns the browser to `post_logout_redirect_uri`.
+///
+/// Discovery is repeated here instead of being persisted with the IdP, so the
+/// answer follows what the IdP currently publishes. Failures are logged and
+/// degrade to a local-only logout.
+pub(crate) async fn upstream_end_session_url(
+    idp: &IdentityProvider,
+    post_logout_redirect_uri: &str,
+) -> Option<String> {
+    let discovery_url = idp.oidc_discovery_url.as_deref()?;
+    let client_id = idp.oidc_client_id.as_deref()?;
+    let http_client = build_http_client().ok()?;
+    let metadata = match discover(discovery_url, &http_client).await {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!(idp_id = %idp.id, error = %e, "upstream logout: discovery failed");
+            return None;
+        }
+    };
+    let endpoint = metadata.end_session_endpoint?;
+    let mut url = match url::Url::parse(&endpoint) {
+        Ok(u) if u.scheme() == "https" => u,
+        _ => {
+            tracing::warn!(idp_id = %idp.id, "upstream logout: end_session_endpoint is not an https URL");
+            return None;
+        }
+    };
+    url.query_pairs_mut()
+        .append_pair("client_id", client_id)
+        .append_pair("post_logout_redirect_uri", post_logout_redirect_uri);
+    Some(url.to_string())
+}
+
 /// Validate `idp`, run discovery and store the auth state for an OIDC
 /// authorization request that returns to `redirect_uri`.
 ///

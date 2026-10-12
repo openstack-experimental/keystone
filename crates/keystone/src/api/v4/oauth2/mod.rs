@@ -50,6 +50,7 @@ mod rotate_signing_key;
 mod sso;
 mod static_files;
 mod token;
+mod upstream_logout;
 mod userinfo;
 mod well_known;
 
@@ -81,6 +82,7 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .routes(routes!(federated::authorize_federated_callback))
         .routes(routes!(authorize::authorize_consent))
         .routes(routes!(logout::logout, logout::logout_post))
+        .routes(routes!(upstream_logout::logout_complete))
         .routes(routes!(device_authorization::device_authorization))
         .routes(routes!(device::device, device::device_login_code))
         .routes(routes!(device::device_login))

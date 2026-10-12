@@ -35,6 +35,9 @@ pub(super) struct OidcProviderMetadata {
     pub authorization_endpoint: String,
     pub token_endpoint: String,
     pub jwks_uri: String,
+    /// RP-Initiated Logout 1.0 endpoint, when the IdP supports it.
+    #[serde(default)]
+    pub end_session_endpoint: Option<String>,
 }
 
 /// Fetch and parse OIDC discovery metadata from

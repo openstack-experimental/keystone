@@ -259,6 +259,15 @@ pub struct Oauth2Provider {
     #[serde(default)]
     pub logout_revokes_refresh_tokens: bool,
 
+    /// End the upstream identity provider session too when the user signed
+    /// in through a federated IdP: after the local logout the browser is sent
+    /// to the IdP's `end_session_endpoint` (OIDC RP-Initiated Logout). The
+    /// IdP must have `{public_endpoint}/v4/oauth2/{domain_id}/logout/complete`
+    /// registered as a post-logout redirect URI. Off by default: the IdP
+    /// session may be shared with applications that must stay signed in.
+    #[serde(default)]
+    pub upstream_logout: bool,
+
     /// Second-factor (TOTP) attempts allowed on one login before the pending
     /// sign-in is discarded and the user has to start over. Attempts are
     /// counted before the code is checked and are not reset by entering the
@@ -408,6 +417,7 @@ impl Default for Oauth2Provider {
             ui_terms_url: None,
             sso_max_sessions_per_user: default_sso_max_sessions_per_user(),
             logout_revokes_refresh_tokens: false,
+            upstream_logout: false,
             mfa_max_attempts: default_mfa_max_attempts(),
             sso_session_lifetime_minutes: default_sso_session_lifetime_minutes(),
             ui_show_client_logos: false,

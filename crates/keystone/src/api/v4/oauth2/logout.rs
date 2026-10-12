@@ -48,6 +48,7 @@ use super::backchannel::{
 use super::html::{error_page, logout_page, logout_page_with_frames, too_many_requests};
 use super::renderer::LogoutCtx;
 use super::sso::{SSO_COOKIE_NAME, clear_cookie};
+use super::upstream_logout::{self, ReturnTo};
 use crate::api::common::PeerAddr;
 use crate::api::v4::oauth2::well_known::base_url;
 use crate::audit::{
@@ -447,6 +448,14 @@ async fn logout_inner(
     let mut origins: Vec<String> = frontchannel.into_iter().map(|t| t.origin).collect();
     origins.sort();
     origins.dedup();
+    let return_to = match (&redirect, &client_id) {
+        (Some(uri), Some(client_id)) => Some(ReturnTo {
+            client_id: client_id.clone(),
+            post_logout_redirect_uri: uri.clone(),
+            state: params.state.clone().unwrap_or_default(),
+        }),
+        _ => None,
+    };
     let target = redirect.and_then(|uri| {
         let mut url = url::Url::parse(&uri).ok()?;
         if let Some(state_param) = params.state.as_deref().filter(|s| !s.is_empty()) {
@@ -454,6 +463,17 @@ async fn logout_inner(
         }
         Some(url.to_string())
     });
+    // A session that came from an upstream IdP can end there too; the
+    // browser then returns through `logout/complete`.
+    let mut return_cookie = None;
+    let mut target = target;
+    if let Some(sso) = &sso
+        && let Some(upstream) =
+            upstream_logout::begin(state, headers, domain_id, sso, return_to).await
+    {
+        target = Some(upstream.url);
+        return_cookie = upstream.cookie;
+    }
     let response = match (target, frames.is_empty()) {
         // Nothing to notify through the browser: redirect right away.
         (Some(uri), true) => redirect_with_params(&uri, &[]),
@@ -470,7 +490,11 @@ async fn logout_inner(
         }
     };
     let clear = clear_cookie(cookie_secure(state, headers).await);
-    (CookieJar::new().add(clear), response).into_response()
+    let mut cookies = CookieJar::new().add(clear);
+    if let Some(cookie) = return_cookie {
+        cookies = cookies.add(cookie);
+    }
+    (cookies, response).into_response()
 }
 
 #[cfg(test)]
@@ -807,6 +831,177 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    }
+
+    async fn upstream_router(
+        sessions: MockOauth2SessionProvider,
+        discovery: &str,
+        upstream_logout: bool,
+    ) -> axum::Router {
+        use crate::federation::MockFederationProvider;
+        use openstack_keystone_core_types::federation::IdentityProvider;
+        let mut clients = MockOauth2ClientProvider::default();
+        clients
+            .expect_get_by_client_id()
+            .returning(|_, id| Ok((id == "client-1").then(client)));
+        let idp = IdentityProvider {
+            id: "idp-1".into(),
+            name: "Corp SSO".into(),
+            domain_id: Some("domain-1".into()),
+            enabled: true,
+            oidc_discovery_url: Some(discovery.into()),
+            oidc_client_id: Some("op-client".into()),
+            ..Default::default()
+        };
+        let mut federation = MockFederationProvider::default();
+        federation
+            .expect_get_identity_provider()
+            .returning(move |_, id| Ok((id == "idp-1").then(|| idp.clone())));
+        let mut config = Config::default();
+        config.oauth2.allow_host_header_issuer = true;
+        config.oauth2.upstream_logout = upstream_logout;
+        let state = get_mocked_state_with_config(
+            Provider::mocked_builder()
+                .mock_oauth2_session(sessions)
+                .mock_oauth2_client(clients)
+                .mock_federation(federation),
+            true,
+            None,
+            config,
+        )
+        .await;
+        let (router, _) = openapi_router().split_for_parts();
+        router.with_state(state)
+    }
+
+    fn upstream_sessions() -> MockOauth2SessionProvider {
+        use openstack_keystone_core_types::oauth2_session::UpstreamLogin;
+        let mut sessions = MockOauth2SessionProvider::default();
+        sessions.expect_get_sso_session().returning(|_, _| {
+            Ok(Some(SsoSession {
+                upstream: Some(UpstreamLogin {
+                    idp_id: "idp-1".into(),
+                    sid: None,
+                }),
+                ..sso("domain-1")
+            }))
+        });
+        sessions
+            .expect_delete_sso_session()
+            .returning(|_, _| Ok(()));
+        sessions
+            .expect_delete_rp_sessions_by_sso()
+            .returning(|_, _, _| Ok(Vec::new()));
+        sessions
+    }
+
+    fn discovery_with_end_session(
+        server: &httpmock::MockServer,
+        end_session: Option<&str>,
+    ) -> String {
+        let issuer = server.base_url();
+        let mut doc = serde_json::json!({
+            "issuer": issuer,
+            "authorization_endpoint": format!("{issuer}/authorize"),
+            "token_endpoint": format!("{issuer}/token"),
+            "jwks_uri": format!("{issuer}/jwks"),
+        });
+        if let Some(e) = end_session {
+            doc["end_session_endpoint"] = e.into();
+        }
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/.well-known/openid-configuration");
+            then.status(200).json_body(doc);
+        });
+        issuer
+    }
+
+    const REDIRECT_POST: &str =
+        "client_id=client-1&post_logout_redirect_uri=https%3A%2F%2Frp.example.com%2Fbye&state=xyz";
+
+    #[tokio::test]
+    async fn test_upstream_logout_sends_the_browser_to_the_idp() {
+        let server = httpmock::MockServer::start();
+        let issuer = discovery_with_end_session(&server, Some("https://idp.example.com/logout"));
+        let response = upstream_router(upstream_sessions(), &issuer, true)
+            .await
+            .oneshot(post(REDIRECT_POST))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        let location = response.headers()[header::LOCATION].to_str().unwrap();
+        assert!(
+            location.starts_with("https://idp.example.com/logout?client_id=op-client"),
+            "{location}"
+        );
+        assert!(
+            location.contains(
+                "post_logout_redirect_uri=http%3A%2F%2Flocalhost%2Fv4%2Foauth2%2Fdomain-1%2Flogout%2Fcomplete"
+            ),
+            "{location}"
+        );
+        let cookies: Vec<_> = response
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .map(|c| c.to_str().unwrap().to_string())
+            .collect();
+        assert!(
+            cookies
+                .iter()
+                .any(|c| c.starts_with("keystone_oauth2_logout_return=")
+                    && c.contains("Path=/v4/oauth2/domain-1/logout/complete")),
+            "{cookies:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_upstream_logout_is_off_by_default() {
+        let server = httpmock::MockServer::start();
+        let issuer = discovery_with_end_session(&server, Some("https://idp.example.com/logout"));
+        let response = upstream_router(upstream_sessions(), &issuer, false)
+            .await
+            .oneshot(post(REDIRECT_POST))
+            .await
+            .unwrap();
+        let location = response.headers()[header::LOCATION].to_str().unwrap();
+        assert!(
+            location.starts_with("https://rp.example.com/bye"),
+            "{location}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_upstream_without_end_session_endpoint_logs_out_locally() {
+        let server = httpmock::MockServer::start();
+        let issuer = discovery_with_end_session(&server, None);
+        let response = upstream_router(upstream_sessions(), &issuer, true)
+            .await
+            .oneshot(post(REDIRECT_POST))
+            .await
+            .unwrap();
+        let location = response.headers()[header::LOCATION].to_str().unwrap();
+        assert!(
+            location.starts_with("https://rp.example.com/bye"),
+            "{location}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_upstream_end_session_endpoint_must_be_https() {
+        let server = httpmock::MockServer::start();
+        let issuer = discovery_with_end_session(&server, Some("http://idp.example.com/logout"));
+        let response = upstream_router(upstream_sessions(), &issuer, true)
+            .await
+            .oneshot(post(REDIRECT_POST))
+            .await
+            .unwrap();
+        let location = response.headers()[header::LOCATION].to_str().unwrap();
+        assert!(
+            location.starts_with("https://rp.example.com/bye"),
+            "{location}"
+        );
     }
 
     #[tokio::test]
