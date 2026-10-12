@@ -62,6 +62,7 @@ code), see the [OAuth2 / OIDC user guide](../../user/features/oauth2.md).
 | `ui_default_locale`                     | `en`    | Locale used when `Accept-Language` matches no available locale.                                                                                  |
 | `sso_max_sessions_per_user`             | 10      | Most SSO sessions one user may hold; a new sign-in beyond it ends the oldest. |
 | `logout_revokes_refresh_tokens`         | false   | RP-initiated logout naming a client also revokes the user's refresh tokens of that client. |
+| `upstream_logout`                       | false   | Logout of a session that came from a federated IdP also ends the IdP session (see [Upstream provider logout](#upstream-provider-logout)). |
 | `mfa_max_attempts`                      | 5       | Second-factor codes accepted for checking per login attempt before the pre-auth session is discarded and the user must start over. Best-effort and per session; the per-user rate limit (`[rate_limit_user_auth]`) is the primary brute-force control. |
 | `sso_session_lifetime_minutes`        | 480     | Lifetime of the browser SSO session started by a successful sign-in. Later authorization requests in the same browser skip the login form while it lives. `0` is not allowed. |
 
@@ -188,25 +189,45 @@ the browser SSO session: access tokens and refresh-token families already
 issued stay valid until they expire or are revoked (RFC 7009 revocation, user
 or domain disable/delete, password change).
 
+### Session ids (`sid`)
+
+Every id token issued under a browser SSO session carries a `sid` claim: an
+opaque, per-client value derived from the session (a one-way hash of the SSO
+session and the client id), stable across code redemption and refresh. Two
+clients never see the same `sid`, and the `sid` cannot be turned back into the
+SSO cookie. Grants without a browser session (device code) have no `sid`.
+
 ### Back-channel logout
 
 A client may register a `backchannel_logout_uri` (`https://`, no credentials;
-set to an empty string on update to clear it). OIDC Back-Channel Logout 1.0 is
-advertised as `backchannel_logout_supported`. When a user's sign-in ends, every
-enabled client that was issued an authorization code for the user and has such
+set to an empty string on update to clear it) and
+`backchannel_logout_session_required`. OIDC Back-Channel Logout 1.0 is
+advertised as `backchannel_logout_supported` and
+`backchannel_logout_session_supported`. When a user's sign-in ends, every
+enabled client that was issued an authorization code under it and has such
 a URI receives `POST logout_token=<JWT>` (form encoded, `Cache-Control:
 no-store`). The token is signed with the domain's active key, carries
 a JOSE type header of `logout+jwt`, `iss`, `aud` (the client), `sub` (the user), `iat`, a
-two-minute `exp`, a `jti` and the
+two-minute `exp`, a `jti`, the `sid` of the ended session and the
 `http://schemas.openid.net/event/backchannel-logout` event, and has no
 `nonce`.
 
-The notification is sent:
+The notification is sent when an SSO session ends:
 
-- on RP-initiated logout, when the user has no other browser SSO session left
-  (several signed-in browsers keep the relying parties logged in until the
-  last one signs out);
-- when the user is disabled, deleted or changes their password.
+- on RP-initiated logout;
+- when the session expires (janitor), is evicted by `sso_max_sessions_per_user`
+  or is removed because its domain is disabled or deleted;
+- for every session of the user, when the user is disabled, deleted or changes
+  their password.
+
+A session end only reaches clients through that session: the relying parties
+are recorded per SSO session when a code is issued and removed when notified.
+A client that does not set `backchannel_logout_session_required` may treat the
+token as "end all sessions of the user", so it is only notified about a single
+session when the user has no other SSO session left. A client that requires the
+`sid` is always notified with it, and skipped for grants that carry none.
+Replacing a session by signing in again in the same browser sends nothing: the
+relying parties stay recorded for the next logout.
 
 Delivery never blocks the request that caused it. A relying party that does
 not answer `200` or `204` (or cannot be reached within 5 seconds) is retried
@@ -219,15 +240,37 @@ attempt and refused when any address is private, loopback, link-local,
 cloud-metadata or otherwise internal; the connection is pinned to the checked
 address and redirects are never followed. Only `https://` is delivered.
 
-Id tokens do not carry a session id, so logout tokens carry no `sid` and
-discovery reports `backchannel_logout_session_supported: false`: the relying
-party should end all sessions of the user. The set of relying parties is
-recorded when an authorization code is issued and cleared once they were
-notified.
+### Front-channel logout
 
-Not covered yet: front-channel logout, back-channel logout when an SSO session
-merely expires (janitor) or when a domain is disabled or deleted, and ending
-the upstream provider session at logout (the upstream `sid` is stored for it).
+A client may register a `frontchannel_logout_uri` (`https://`) and
+`frontchannel_logout_session_required`. OIDC Front-Channel Logout 1.0 is
+advertised as `frontchannel_logout_supported` and
+`frontchannel_logout_session_supported`. On RP-initiated logout the page that
+reports the sign-out loads each such URI of the ended session in a hidden
+frame; with `frontchannel_logout_session_required` the URI gets `iss` and `sid`
+query parameters. The page's `Content-Security-Policy` allows framing only the
+origins of those URIs. If a `post_logout_redirect_uri` was requested, the
+browser follows it two seconds later (the page runs no scripts, so this is a
+`<meta http-equiv="refresh">`). The relying party must allow being framed by the
+provider (`frame-ancestors`, `SameSite` cookies still apply). Front-channel
+logout happens only in the browser that logs out; sessions that end without a
+browser (expiry, disabled user) use back-channel logout.
+
+### Upstream provider logout
+
+With `[oauth2] upstream_logout = true`, logging out a session that was started
+through a federated identity provider also ends the session at that provider.
+After the local logout the browser is redirected to the provider's
+`end_session_endpoint` (read from its discovery document on every logout; it
+must be `https://`) with `client_id` and a `post_logout_redirect_uri` of
+`{public_endpoint}/v4/oauth2/{domain_id}/logout/complete`, which has to be
+registered at the provider. `logout/complete` then sends the browser on to the
+relying party's `post_logout_redirect_uri` (remembered in a short-lived cookie,
+checked against the client's registered URIs again) or shows the signed-out
+page. A provider without an `end_session_endpoint`, a discovery failure or a
+non-`https` endpoint leave the logout local-only, with a warning in the log.
+The setting is off by default because the provider session may be shared with
+applications that must stay signed in. No `id_token_hint` is sent upstream.
 
 ## Remembered consent
 
