@@ -415,6 +415,12 @@ mod oauth2_session {
                 sso_id: &str,
             ) -> Result<(), Oauth2SessionProviderError>;
 
+            async fn replace_sso_session(
+                &self,
+                state: &ServiceState,
+                sso_id: &str,
+            ) -> Result<(), Oauth2SessionProviderError>;
+
             async fn list_sso_sessions_by_user(
                 &self,
                 state: &ServiceState,

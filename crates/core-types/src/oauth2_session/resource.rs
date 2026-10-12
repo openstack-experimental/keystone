@@ -311,9 +311,10 @@ pub struct AuthorizationCodeCreate {
 pub struct RpSession {
     /// The relying party.
     pub client_id: String,
-    /// The SSO session it was issued under; `None` for grants without a
-    /// browser session (device flow).
-    pub sso_id: Option<String>,
+    /// Non-secret reference of the SSO session it was issued under (see
+    /// `sso_ref` in the core crate); `None` for grants without a browser
+    /// session (device flow).
+    pub sso_ref: Option<String>,
 }
 
 /// A single node in a `refresh_token` rotation family tree (ADR 0026 §2,

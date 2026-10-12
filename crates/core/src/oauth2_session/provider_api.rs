@@ -258,6 +258,16 @@ pub trait Oauth2SessionApi: Send + Sync {
         sso_id: &str,
     ) -> Result<(), Oauth2SessionProviderError>;
 
+    /// End an SSO session because a new sign-in replaces it. Unlike
+    /// [`Oauth2SessionApi::delete_sso_session`] the relying parties are not
+    /// told: the user is signing in again right now, and a logout token
+    /// from an RP that ignores `sid` would end the new session as well.
+    async fn replace_sso_session(
+        &self,
+        state: &ServiceState,
+        sso_id: &str,
+    ) -> Result<(), Oauth2SessionProviderError>;
+
     /// The SSO sessions of the user in the domain.
     async fn list_sso_sessions_by_user(
         &self,

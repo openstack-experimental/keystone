@@ -24,7 +24,7 @@ use governor::clock::Clock as _;
 use openstack_keystone_core::oauth2_client::{
     IdTokenParams, TemplateScope, build_id_token_claims, pkce,
 };
-use openstack_keystone_core::oauth2_session::{IssueRefreshTokenRequest, derive_sid};
+use openstack_keystone_core::oauth2_session::{IssueRefreshTokenRequest, derive_sid, sso_ref};
 use openstack_keystone_core_types::oauth2_client::{GrantType, OidcAccessTokenClaims};
 
 use crate::audit::{Oauth2Grant, build_initiator_from_user_id, emit_oauth2_grant_event};
@@ -194,7 +194,7 @@ pub(super) async fn handle_authorization_code_grant(
                 sid: record
                     .sso_id
                     .as_deref()
-                    .map(|sso_id| derive_sid(sso_id, &client_id)),
+                    .map(|sso_id| derive_sid(&sso_ref(sso_id), &client_id)),
             },
             &record.scope,
             &TemplateScope::default(),

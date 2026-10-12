@@ -38,16 +38,26 @@ pub use provider_api::{
 };
 pub use service::Oauth2SessionService;
 
-/// The OIDC `sid` of an SSO session as seen by one relying party.
+/// Non-secret reference of an SSO session.
 ///
-/// A hash of the (secret, cookie-valued) `sso_id` and the `client_id`:
-/// stable for the lifetime of the session, different per relying party so
-/// two RPs cannot correlate users by it, and not reversible to the cookie.
-pub fn derive_sid(sso_id: &str, client_id: &str) -> String {
+/// The `sso_id` is the bearer value of the SSO cookie; the relying party
+/// index, audit events and the `sid` derive from this one-way hash instead,
+/// so none of them can be used to hijack the session.
+pub fn sso_ref(sso_id: &str) -> String {
+    use sha2::{Digest, Sha256};
+    data_encoding::HEXLOWER.encode(&Sha256::digest(sso_id.as_bytes()))
+}
+
+/// The OIDC `sid` a relying party sees for an SSO session (identified by its
+/// [`sso_ref`]).
+///
+/// Stable for the lifetime of the session, different per relying party so
+/// two of them cannot correlate users by it, and not reversible.
+pub fn derive_sid(sso_ref: &str, client_id: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(b"keystone-oauth2-sid\0");
-    hasher.update(sso_id.as_bytes());
+    hasher.update(sso_ref.as_bytes());
     hasher.update([0]);
     hasher.update(client_id.as_bytes());
     data_encoding::BASE64URL_NOPAD.encode(&hasher.finalize())
@@ -55,13 +65,18 @@ pub fn derive_sid(sso_id: &str, client_id: &str) -> String {
 
 #[cfg(test)]
 mod sid_tests {
-    use super::derive_sid;
+    use super::{derive_sid, sso_ref};
 
     #[test]
     fn test_derive_sid_is_stable_and_scoped() {
-        assert_eq!(derive_sid("sso-1", "rp-1"), derive_sid("sso-1", "rp-1"));
-        assert_ne!(derive_sid("sso-1", "rp-1"), derive_sid("sso-1", "rp-2"));
-        assert_ne!(derive_sid("sso-1", "rp-1"), derive_sid("sso-2", "rp-1"));
-        assert!(!derive_sid("sso-1", "rp-1").contains("sso-1"));
+        let a = sso_ref("sso-1");
+        assert_eq!(derive_sid(&a, "rp-1"), derive_sid(&a, "rp-1"));
+        assert_ne!(derive_sid(&a, "rp-1"), derive_sid(&a, "rp-2"));
+        assert_ne!(
+            derive_sid(&a, "rp-1"),
+            derive_sid(&sso_ref("sso-2"), "rp-1")
+        );
+        assert!(!derive_sid(&a, "rp-1").contains("sso-1"));
+        assert!(!a.contains("sso-1"));
     }
 }

@@ -127,7 +127,7 @@ pub(super) async fn establish(
     };
     let provider = state.provider.get_oauth2_session_provider();
     if let Some(previous) = jar.get(SSO_COOKIE_NAME)
-        && let Err(e) = provider.delete_sso_session(state, previous.value()).await
+        && let Err(e) = provider.replace_sso_session(state, previous.value()).await
     {
         // The new session has a fresh id; the old record just lingers
         // until it expires.
@@ -658,7 +658,7 @@ mod tests {
             .returning(move |_, _, _, _, _| Ok(signed_in.clone()));
         // The previous SSO session of this browser is replaced.
         sessions
-            .expect_delete_sso_session()
+            .expect_replace_sso_session()
             .withf(|_, id| id == "stale-sso")
             .times(1)
             .returning(|_, _| Ok(()));

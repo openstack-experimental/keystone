@@ -83,6 +83,13 @@ pub trait Oauth2SessionBackend: Send + Sync {
         user_id: &str,
     ) -> Result<Vec<SsoSession>, Oauth2SessionProviderError>;
 
+    /// The SSO sessions of every user in `domain_id`.
+    async fn list_sso_sessions_by_domain(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+    ) -> Result<Vec<SsoSession>, Oauth2SessionProviderError>;
+
     /// IDs of the clients that were issued an authorization code for the
     /// user (the relying parties that may hold a session for them). The
     /// backend records the pair whenever it stores a code.

@@ -53,6 +53,7 @@ use crate::audit::{
     emit_oauth2_refresh_family_revoked_event, emit_oauth2_session_event,
 };
 use crate::keystone::ServiceState;
+use openstack_keystone_core::oauth2_session::sso_ref;
 
 /// Request parameters, from the query (`GET`) or the form (`POST`).
 #[derive(Debug, Default, Clone, Deserialize, Serialize, utoipa::ToSchema, utoipa::IntoParams)]
@@ -412,7 +413,7 @@ async fn logout_inner(
                 RetryPolicy::default(),
                 &base_url,
                 &sso.user_id,
-                EndedSessions::Sso(&sso.sso_id),
+                EndedSessions::Sso(&sso_ref(&sso.sso_id)),
             )
             .await,
         );
@@ -494,6 +495,10 @@ mod tests {
             frontchannel_logout_uri: None,
             frontchannel_logout_session_required: false,
         }
+    }
+
+    fn sso_ref_of(sso_id: &str) -> String {
+        openstack_keystone_core::oauth2_session::sso_ref(sso_id)
     }
 
     fn sso(domain: &str) -> SsoSession {
@@ -692,11 +697,11 @@ mod tests {
         sessions
             .expect_delete_rp_sessions_by_sso()
             .times(1)
-            .withf(|_, user_id, sso_id| user_id == "user-1" && sso_id == "sso-1")
+            .withf(|_, user_id, sso_ref| user_id == "user-1" && sso_ref == sso_ref_of("sso-1"))
             .returning(|_, _, _| {
                 Ok(vec![RpSession {
                     client_id: "client-1".to_string(),
-                    sso_id: Some("sso-1".to_string()),
+                    sso_ref: Some("sso-ref".to_string()),
                 }])
             });
         sessions.expect_delete_rp_sessions_by_user().never();

@@ -221,6 +221,15 @@ pub enum EventPayload {
         provider_id: String,
     },
 
+    // An OAuth2 SSO (browser) session that ended: logout, expiry, eviction,
+    // domain disable or delete. `sso_ref` is a one-way reference, never the
+    // session id (which is the bearer cookie value).
+    Oauth2SsoSession {
+        domain_id: String,
+        user_id: String,
+        sso_ref: String,
+    },
+
     // Per-domain OAuth2 signing key set (rotation, emergency rotation).
     Oauth2SigningKey {
         domain_id: String,

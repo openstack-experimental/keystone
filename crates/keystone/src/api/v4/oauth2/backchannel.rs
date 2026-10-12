@@ -188,7 +188,8 @@ async fn deliver(
 pub enum EndedSessions<'a> {
     /// All sessions of the user (disabled, deleted, password changed).
     AllOfUser,
-    /// The SSO session with this id (logout, expiry, eviction).
+    /// The SSO session with this reference (`sso_ref`): logout, expiry,
+    /// eviction, domain disable or delete.
     Sso(&'a str),
 }
 
@@ -213,9 +214,9 @@ pub async fn notify_logout(
     // logout instead of being dropped unnotified.
     let removed = match ended {
         EndedSessions::AllOfUser => sessions.delete_rp_sessions_by_user(state, user_id).await,
-        EndedSessions::Sso(sso_id) => {
+        EndedSessions::Sso(sso_ref) => {
             sessions
-                .delete_rp_sessions_by_sso(state, user_id, sso_id)
+                .delete_rp_sessions_by_sso(state, user_id, sso_ref)
                 .await
         }
     };
@@ -231,6 +232,9 @@ pub async fn notify_logout(
 
     let exec = ExecutionContext::internal(state);
     let mut tasks = Vec::new();
+    // Whether the user still has another browser session, looked up once and
+    // only if a relying party needs it.
+    let mut other_sessions: Option<bool> = None;
     for rp in rps {
         let client_id = rp.client_id;
         let client = match state
@@ -254,9 +258,9 @@ pub async fn notify_logout(
             continue;
         };
         let sid = rp
-            .sso_id
+            .sso_ref
             .as_deref()
-            .map(|sso_id| derive_sid(sso_id, &client_id));
+            .map(|sso_ref| derive_sid(sso_ref, &client_id));
         if client.backchannel_logout_session_required && sid.is_none() {
             // The RP never received a `sid` (grant without an SSO
             // session), so it cannot match a token that must carry one.
@@ -265,6 +269,33 @@ pub async fn notify_logout(
                 "back-channel logout: no session id for an RP that requires it"
             );
             continue;
+        }
+        if matches!(ended, EndedSessions::Sso(_)) && !client.backchannel_logout_session_required {
+            // Without `sid` support the RP may take the token as "log the
+            // user out everywhere", which would end the sessions the user
+            // still has in other browsers.
+            let remain = match other_sessions {
+                Some(remain) => remain,
+                None => {
+                    let remain = match sessions
+                        .list_sso_sessions_by_user(state, &client.domain_id, user_id)
+                        .await
+                    {
+                        Ok(s) => !s.is_empty(),
+                        // Unknown: do not log the user out of other sessions.
+                        Err(_) => true,
+                    };
+                    other_sessions = Some(remain);
+                    remain
+                }
+            };
+            if remain {
+                tracing::debug!(
+                    client_id,
+                    "back-channel logout: user has other sessions and the RP does not require a sid"
+                );
+                continue;
+            }
         }
         let token = match logout_token(state, base_url, &client, user_id, sid).await {
             Ok(t) => t,
@@ -328,13 +359,23 @@ impl BackchannelLogoutHook {
 #[async_trait]
 impl ProviderHooks for BackchannelLogoutHook {
     async fn on_event(&self, event: &Event) {
-        let user_id = match (&event.operation, &event.payload) {
-            (Operation::Delete | Operation::Disable, EventPayload::User { id }) => id,
+        let (user_id, ended) = match (&event.operation, &event.payload) {
+            (Operation::Delete | Operation::Disable, EventPayload::User { id }) => {
+                (id, EndedSessions::AllOfUser)
+            }
             (Operation::Other(op), EventPayload::User { id })
                 if op == PASSWORD_CHANGE_OPERATION =>
             {
-                id
+                (id, EndedSessions::AllOfUser)
             }
+            // One session ended: logout, expiry, eviction, domain
+            // disable or delete.
+            (
+                Operation::Delete,
+                EventPayload::Oauth2SsoSession {
+                    user_id, sso_ref, ..
+                },
+            ) => (user_id, EndedSessions::Sso(sso_ref)),
             _ => return,
         };
         let Some(base_url) = self
@@ -362,12 +403,13 @@ impl ProviderHooks for BackchannelLogoutHook {
             return;
         };
         drop(
-            notify_user_logout(
+            notify_logout(
                 &self.state,
                 Arc::clone(&self.transport),
                 self.policy.clone(),
                 &base_url,
                 user_id,
+                ended,
             )
             .await,
         );
@@ -386,7 +428,7 @@ mod tests {
     use crate::oauth2_session::MockOauth2SessionProvider;
     use crate::provider::Provider;
     use openstack_keystone_core_types::oauth2_client::GrantType;
-    use openstack_keystone_core_types::oauth2_session::RpSession;
+    use openstack_keystone_core_types::oauth2_session::{RpSession, SsoSession};
     use openstack_keystone_key_repository::asymmetric::{
         KeyMaterial, SigningAlgorithm, generate_keypair, to_decoding_key,
     };
@@ -464,12 +506,21 @@ mod tests {
         clients: Vec<OAuth2ClientResource>,
         public_key: Arc<Mutex<Option<KeyMaterial>>>,
     ) -> ServiceState {
+        state_with_other_sessions(rp_clients, clients, public_key, Vec::new()).await
+    }
+
+    async fn state_with_other_sessions(
+        rp_clients: Vec<&'static str>,
+        clients: Vec<OAuth2ClientResource>,
+        public_key: Arc<Mutex<Option<KeyMaterial>>>,
+        other: Vec<SsoSession>,
+    ) -> ServiceState {
         // A relying party called `device` was issued without an SSO session.
         let rps: Vec<RpSession> = rp_clients
             .iter()
             .map(|c| RpSession {
                 client_id: c.to_string(),
-                sso_id: (*c != "device").then(|| "sso-1".to_string()),
+                sso_ref: (*c != "device").then(|| "ref-1".to_string()),
             })
             .collect();
         let by_sso = rps.clone();
@@ -480,6 +531,9 @@ mod tests {
         sessions
             .expect_delete_rp_sessions_by_sso()
             .returning(move |_, _, _| Ok(by_sso.clone()));
+        sessions
+            .expect_list_sso_sessions_by_user()
+            .returning(move |_, _, _| Ok(other.clone()));
         let mut client_mock = MockOauth2ClientProvider::default();
         client_mock
             .expect_get_by_client_id()
@@ -575,7 +629,7 @@ mod tests {
             fast(),
             "https://k",
             "user-1",
-            EndedSessions::Sso("sso-1"),
+            EndedSessions::Sso("ref-1"),
         )
         .await;
         for task in tasks {
@@ -583,7 +637,78 @@ mod tests {
         }
         let token = transport.calls.lock().unwrap()[0].1.clone();
         let claims = token_claims(&public_key, &token, "c").await;
-        assert_eq!(claims["sid"], derive_sid("sso-1", "c"));
+        assert_eq!(claims["sid"], derive_sid("ref-1", "c"));
+    }
+
+    fn other_session() -> SsoSession {
+        SsoSession {
+            sso_id: "sso-2".into(),
+            domain_id: "domain-1".into(),
+            user_id: "user-1".into(),
+            auth_time: 0,
+            amr: vec![],
+            upstream: None,
+            created_at: 0,
+            expires_at: i64::MAX,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_session_logout_spares_rps_without_sid_support_while_other_sessions_exist() {
+        let mut required = client("required", Some("https://rp.example.com/bc"));
+        required.backchannel_logout_session_required = true;
+        let plain = client("plain", Some("https://rp.example.com/bc2"));
+        let state = state_with_other_sessions(
+            vec!["required", "plain"],
+            vec![required, plain],
+            Arc::new(Mutex::new(None)),
+            vec![other_session()],
+        )
+        .await;
+        let transport = Recorder::new(vec![]);
+        let tasks = notify_logout(
+            &state,
+            transport.clone(),
+            fast(),
+            "https://k",
+            "user-1",
+            EndedSessions::Sso("ref-1"),
+        )
+        .await;
+        // Only the RP that matches on `sid` is told; the other one could
+        // read the token as "log the user out everywhere".
+        assert_eq!(tasks.len(), 1);
+        for task in tasks {
+            assert!(task.await.unwrap());
+        }
+        assert_eq!(
+            transport.calls.lock().unwrap()[0].0,
+            "https://rp.example.com/bc"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_session_logout_tells_every_rp_when_it_was_the_last_session() {
+        let state = state_with(
+            vec!["a", "b"],
+            vec![
+                client("a", Some("https://rp.example.com/a")),
+                client("b", Some("https://rp.example.com/b")),
+            ],
+            Arc::new(Mutex::new(None)),
+        )
+        .await;
+        let transport = Recorder::new(vec![]);
+        let tasks = notify_logout(
+            &state,
+            transport.clone(),
+            fast(),
+            "https://k",
+            "user-1",
+            EndedSessions::Sso("ref-1"),
+        )
+        .await;
+        assert_eq!(tasks.len(), 2);
     }
 
     #[tokio::test]
