@@ -58,6 +58,7 @@ default-members = [
 ]
 exclude = [
   "tests/loadtest",
+  "tests/soak",
   "tests/otel-bench"
 ]
 resolver = "3"
