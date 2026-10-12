@@ -33,8 +33,8 @@ use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::oauth2_client::{IdTokenParams, TemplateScope, build_id_token_claims};
 use openstack_keystone_core::oauth2_session::backend::Oauth2SessionBackend;
 use openstack_keystone_core::oauth2_session::{
-    IssueAuthorizationCodeRequest, IssueRefreshTokenRequest, Oauth2SessionHook,
-    RefreshTokenRedemption, StartPreAuthSessionRequest,
+    CreateSsoSessionRequest, IssueAuthorizationCodeRequest, IssueRefreshTokenRequest,
+    Oauth2SessionHook, RefreshTokenRedemption, StartPreAuthSessionRequest, sso_ref,
 };
 use openstack_keystone_core_types::identity::UserPasswordAuthRequestBuilder;
 use openstack_keystone_core_types::identity::{UserCreateBuilder, UserUpdate};
@@ -752,5 +752,122 @@ async fn test_remembered_consent_lifecycle() -> Result<()> {
             .await?
             .is_empty()
     );
+    Ok(())
+}
+
+fn code_request(sso_id: Option<&str>, client_id: &str) -> IssueAuthorizationCodeRequest {
+    IssueAuthorizationCodeRequest {
+        upstream: None,
+        sso_id: sso_id.map(str::to_string),
+        domain_id: "domain-1".to_string(),
+        client_id: client_id.to_string(),
+        user_id: "user-1".to_string(),
+        redirect_uri: "https://rp.example.com/cb".to_string(),
+        code_challenge: "challenge".to_string(),
+        code_challenge_method: "S256".to_string(),
+        scope: vec!["openid".to_string()],
+        nonce: None,
+        auth_time: 1_000,
+        amr: vec!["pwd".to_string()],
+    }
+}
+
+fn sso_request() -> CreateSsoSessionRequest {
+    CreateSsoSessionRequest {
+        domain_id: "domain-1".to_string(),
+        user_id: "user-1".to_string(),
+        auth_time: 1_000,
+        amr: vec!["pwd".to_string()],
+        upstream: None,
+    }
+}
+
+/// Relying parties are recorded per SSO session: ending one session hands
+/// back exactly its clients, tagged with the one-way session reference the
+/// `sid` is derived from.
+#[tokio::test]
+#[traced_test]
+async fn test_relying_parties_are_tracked_per_sso_session() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let sessions = state.provider.get_oauth2_session_provider();
+
+    let first = sessions.create_sso_session(&state, sso_request()).await?;
+    let second = sessions.create_sso_session(&state, sso_request()).await?;
+    sessions
+        .issue_authorization_code(&state, code_request(Some(&first.sso_id), "client-a"))
+        .await?;
+    sessions
+        .issue_authorization_code(&state, code_request(Some(&first.sso_id), "client-b"))
+        .await?;
+    sessions
+        .issue_authorization_code(&state, code_request(Some(&second.sso_id), "client-a"))
+        .await?;
+    // A grant without a browser session is recorded without a reference.
+    sessions
+        .issue_authorization_code(&state, code_request(None, "client-device"))
+        .await?;
+
+    let ended = sessions
+        .delete_rp_sessions_by_sso(&state, "user-1", &sso_ref(&first.sso_id))
+        .await?;
+    let mut clients: Vec<_> = ended.iter().map(|r| r.client_id.as_str()).collect();
+    clients.sort();
+    assert_eq!(clients, ["client-a", "client-b"]);
+    assert!(
+        ended
+            .iter()
+            .all(|r| r.sso_ref.as_deref() == Some(sso_ref(&first.sso_id).as_str()))
+    );
+    // The same call again finds nothing.
+    assert!(
+        sessions
+            .delete_rp_sessions_by_sso(&state, "user-1", &sso_ref(&first.sso_id))
+            .await?
+            .is_empty()
+    );
+
+    // A user-wide logout still reaches everything left, `sid` or not.
+    let mut rest: Vec<_> = sessions
+        .delete_rp_sessions_by_user(&state, "user-1")
+        .await?
+        .into_iter()
+        .map(|r| (r.client_id, r.sso_ref))
+        .collect();
+    rest.sort();
+    assert_eq!(
+        rest,
+        [
+            ("client-a".to_string(), Some(sso_ref(&second.sso_id))),
+            ("client-device".to_string(), None),
+        ]
+    );
+    Ok(())
+}
+
+/// Replacing an SSO session (sign-in again in the same browser) keeps the
+/// relying parties recorded, so a later user-wide logout still reaches them.
+#[tokio::test]
+#[traced_test]
+async fn test_replacing_an_sso_session_keeps_its_relying_parties() -> Result<()> {
+    let (state, _tmp) = get_state().await?;
+    let sessions = state.provider.get_oauth2_session_provider();
+
+    let old = sessions.create_sso_session(&state, sso_request()).await?;
+    sessions
+        .issue_authorization_code(&state, code_request(Some(&old.sso_id), "client-a"))
+        .await?;
+    sessions.replace_sso_session(&state, &old.sso_id).await?;
+    assert!(
+        sessions
+            .get_sso_session(&state, &old.sso_id)
+            .await?
+            .is_none()
+    );
+
+    let kept = sessions
+        .delete_rp_sessions_by_user(&state, "user-1")
+        .await?;
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].client_id, "client-a");
     Ok(())
 }

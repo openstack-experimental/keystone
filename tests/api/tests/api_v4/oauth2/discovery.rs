@@ -95,6 +95,14 @@ async fn test_discovery_document_lists_adr0026_endpoints_and_grants() -> Result<
             .unwrap()
             .ends_with(&format!("/v4/oauth2/{domain_id}/device_authorization"))
     );
+    for flag in [
+        "backchannel_logout_supported",
+        "backchannel_logout_session_supported",
+        "frontchannel_logout_supported",
+        "frontchannel_logout_session_supported",
+    ] {
+        assert_eq!(doc[flag], serde_json::json!(true), "{flag}: {doc}");
+    }
     assert_eq!(
         doc["code_challenge_methods_supported"],
         serde_json::json!(["S256"])

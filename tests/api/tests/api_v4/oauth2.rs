@@ -18,6 +18,7 @@ mod device_browser;
 mod discovery;
 mod introspect;
 mod jwks_revocation;
+mod logout;
 mod revoke;
 mod token_device_grant;
 mod userinfo;
