@@ -111,6 +111,7 @@ pub mod nova_client;
 pub mod oauth2_client;
 pub mod oauth2_key;
 pub mod oauth2_session;
+pub mod orphan_sweep;
 pub mod plugin_manager;
 pub mod policy;
 pub mod policy_metrics;

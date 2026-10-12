@@ -54,6 +54,7 @@ use openstack_keystone_core::cadf_hook::CadfAuditHook;
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_core::oauth2_key::janitor as oauth2_key_janitor;
 use openstack_keystone_core::oauth2_session::janitor as oauth2_session_janitor;
+use openstack_keystone_core::orphan_sweep;
 use openstack_keystone_core::scim_resource::janitor as scim_resource_janitor;
 
 /// Spawn every background task and perform the post-construction hook/plugin
@@ -80,6 +81,11 @@ pub async fn spawn_all(startup: &Startup, phase_start: Instant) {
     scim_resource_janitor::spawn(state.clone());
     oauth2_key_janitor::spawn(state.clone());
     oauth2_session_janitor::spawn(state.clone());
+
+    // Report-only sweep of role assignments whose user, group, project or
+    // domain no longer exists (safety net for the delete cascades). Read-only
+    // and idempotent, so it runs on every node.
+    orphan_sweep::spawn(state.clone());
 
     // Config-reload reactors.
     spawn(reset_dummy_hash_on_reload(token.clone(), state.clone()));
