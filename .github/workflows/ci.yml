@@ -166,6 +166,11 @@ jobs:
             sudo apparmor_parser -R /etc/apparmor.d/usr.sbin.slapd
           fi
 
+      - name: Run integration tests for raft drivers
+        if: needs.changes.outputs.code == 'true'
+        working-directory: tests/soak
+        run: cargo build
+
       - name: Run LDAP tests
         if: needs.changes.outputs.code == 'true'
         run: cargo nextest run -p openstack-keystone-identity-driver-ldap --profile ci-ldap
