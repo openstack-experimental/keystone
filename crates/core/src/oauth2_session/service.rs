@@ -90,8 +90,8 @@ impl Oauth2SessionService {
     /// End an SSO session and announce it.
     ///
     /// `notify` = the relying parties are to be told (`Delete`); otherwise
-    /// the session was replaced by a new sign-in, its relying parties are
-    /// forgotten without a logout token and the event is audit-only.
+    /// the session was replaced by a new sign-in, no logout token is sent
+    /// and the event is audit-only.
     async fn end_sso_session(
         &self,
         state: &ServiceState,
@@ -106,19 +106,12 @@ impl Oauth2SessionService {
             return Ok(());
         };
         let reference = sso_ref(sso_id);
+        // A replaced session keeps its relying-party records: they are
+        // still signed in, and a later user-wide logout (disable, delete,
+        // password change) must reach them.
         let operation = if notify {
             Operation::Delete
         } else {
-            match self
-                .backend_driver
-                .delete_rp_sessions_by_sso(state, &session.user_id, &reference)
-                .await
-            {
-                Ok(_) | Err(Oauth2SessionProviderError::RaftNotAvailable) => {}
-                Err(e) => {
-                    tracing::warn!(error = %e, "oauth2 replaced SSO session: relying parties not cleared")
-                }
-            }
             Operation::Other("sso_session_replaced".to_string())
         };
         state
@@ -2860,7 +2853,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_replacing_an_sso_session_forgets_its_rps_without_a_logout_event() {
+    async fn test_replacing_an_sso_session_keeps_its_rps_and_sends_no_logout_event() {
         let state = get_mocked_state(None, None).await;
         let hook = Arc::new(SsoEvents(Default::default()));
         state.event_dispatcher.subscribe(hook.clone()).await;
@@ -2868,10 +2861,8 @@ mod tests {
         mock.expect_get_sso_session()
             .returning(|_, _| Ok(Some(sso("sso-1", 10))));
         mock.expect_delete_sso_session().returning(|_, _| Ok(()));
-        mock.expect_delete_rp_sessions_by_sso()
-            .times(1)
-            .withf(|_, _, sso_ref_arg| sso_ref_arg == sso_ref("sso-1"))
-            .returning(|_, _, _| Ok(Vec::new()));
+        // The relying parties stay recorded for a later user-wide logout.
+        mock.expect_delete_rp_sessions_by_sso().never();
         let service = service_with(mock);
         service.replace_sso_session(&state, "sso-1").await.unwrap();
 
