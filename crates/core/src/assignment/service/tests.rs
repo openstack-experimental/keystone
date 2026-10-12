@@ -278,6 +278,228 @@ async fn test_revoke_grant_user_creates_event() {
 }
 
 #[tokio::test]
+async fn test_delete_assignments_for_user() {
+    let mut revoke_mock = MockRevokeProvider::default();
+    revoke_mock
+        .expect_create_revocation_event()
+        .times(2)
+        .returning(|_, _| Ok(RevocationEvent::default()));
+    let state = get_mocked_state(
+        None,
+        Some(Provider::mocked_builder().mock_revoke(revoke_mock)),
+    )
+    .await;
+    let mut backend = MockAssignmentBackend::default();
+    backend
+        .expect_list_assignments()
+        .withf(|_, params: &RoleAssignmentListParameters| params.user_id.as_deref() == Some("uid"))
+        .returning(|_, _| {
+            Ok(vec![
+                AssignmentBuilder::default()
+                    .actor_id("uid")
+                    .role_id("rid1")
+                    .target_id("pid")
+                    .r#type(AssignmentType::UserProject)
+                    .build()
+                    .unwrap(),
+                AssignmentBuilder::default()
+                    .actor_id("uid")
+                    .role_id("rid2")
+                    .target_id("did")
+                    .r#type(AssignmentType::UserDomain)
+                    .build()
+                    .unwrap(),
+            ])
+        });
+    backend
+        .expect_revoke_grant()
+        .times(2)
+        .withf(|_, params: &Assignment| params.actor_id == "uid")
+        .returning(|_, _| Ok(()));
+    let provider = AssignmentService::from_backend(Arc::new(backend));
+
+    provider
+        .delete_assignments_for_user(&ExecutionContext::internal(&state), "uid")
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_delete_assignments_for_project_keeps_inherited_parent_grants() {
+    let mut revoke_mock = MockRevokeProvider::default();
+    revoke_mock
+        .expect_create_revocation_event()
+        .times(1)
+        .returning(|_, _| Ok(RevocationEvent::default()));
+    let state = get_mocked_state(
+        None,
+        Some(Provider::mocked_builder().mock_revoke(revoke_mock)),
+    )
+    .await;
+    let mut backend = MockAssignmentBackend::default();
+    backend.expect_list_assignments().returning(|_, _| {
+        Ok(vec![
+            AssignmentBuilder::default()
+                .actor_id("uid")
+                .role_id("rid1")
+                .target_id("pid")
+                .r#type(AssignmentType::UserProject)
+                .build()
+                .unwrap(),
+            // Inherited from the parent project: must not be revoked.
+            AssignmentBuilder::default()
+                .actor_id("uid")
+                .role_id("rid2")
+                .target_id("parent")
+                .r#type(AssignmentType::UserProject)
+                .inherited(true)
+                .build()
+                .unwrap(),
+        ])
+    });
+    backend
+        .expect_revoke_grant()
+        .times(1)
+        .withf(|_, params: &Assignment| params.target_id == "pid")
+        .returning(|_, _| Ok(()));
+    let provider = AssignmentService::from_backend(Arc::new(backend));
+
+    provider
+        .delete_assignments_for_project(&ExecutionContext::internal(&state), "pid")
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_delete_assignments_for_project_revokes_inheritable_grants() {
+    let mut revoke_mock = MockRevokeProvider::default();
+    revoke_mock
+        .expect_create_revocation_event()
+        .times(1)
+        .returning(|_, _| Ok(RevocationEvent::default()));
+    let state = get_mocked_state(
+        None,
+        Some(Provider::mocked_builder().mock_revoke(revoke_mock)),
+    )
+    .await;
+    let mut backend = MockAssignmentBackend::default();
+    backend
+        .expect_list_assignments()
+        .returning(|_, params: &RoleAssignmentListParameters| {
+            // The direct listing is empty, the inheritable one has the grant.
+            Ok(if params.inherited == Some(true) {
+                vec![
+                    AssignmentBuilder::default()
+                        .actor_id("uid")
+                        .role_id("rid1")
+                        .target_id("pid")
+                        .r#type(AssignmentType::UserProject)
+                        .inherited(true)
+                        .build()
+                        .unwrap(),
+                ]
+            } else {
+                Vec::new()
+            })
+        });
+    backend
+        .expect_revoke_grant()
+        .times(1)
+        .withf(|_, params: &Assignment| params.target_id == "pid" && params.inherited)
+        .returning(|_, _| Ok(()));
+    let provider = AssignmentService::from_backend(Arc::new(backend));
+
+    provider
+        .delete_assignments_for_project(&ExecutionContext::internal(&state), "pid")
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_delete_assignments_for_domain_revokes_inheritable_grants() {
+    let mut revoke_mock = MockRevokeProvider::default();
+    revoke_mock
+        .expect_create_revocation_event()
+        .times(1)
+        .returning(|_, _| Ok(RevocationEvent::default()));
+    let state = get_mocked_state(
+        None,
+        Some(Provider::mocked_builder().mock_revoke(revoke_mock)),
+    )
+    .await;
+    let mut backend = MockAssignmentBackend::default();
+    backend
+        .expect_list_assignments()
+        .returning(|_, params: &RoleAssignmentListParameters| {
+            Ok(if params.inherited == Some(true) {
+                vec![
+                    AssignmentBuilder::default()
+                        .actor_id("uid")
+                        .role_id("rid1")
+                        .target_id("did")
+                        .r#type(AssignmentType::UserDomain)
+                        .inherited(true)
+                        .build()
+                        .unwrap(),
+                ]
+            } else {
+                Vec::new()
+            })
+        });
+    backend
+        .expect_revoke_grant()
+        .times(1)
+        .withf(|_, params: &Assignment| params.target_id == "did" && params.inherited)
+        .returning(|_, _| Ok(()));
+    let provider = AssignmentService::from_backend(Arc::new(backend));
+
+    provider
+        .delete_assignments_for_domain(&ExecutionContext::internal(&state), "did")
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_delete_assignments_for_group_revokes_all_targets() {
+    let state = get_mocked_state(None, None).await;
+    let mut backend = MockAssignmentBackend::default();
+    backend
+        .expect_list_assignments()
+        .withf(|_, params: &RoleAssignmentListParameters| params.group_id.as_deref() == Some("gid"))
+        .returning(|_, _| {
+            Ok(vec![
+                // A grant on a target of another domain.
+                AssignmentBuilder::default()
+                    .actor_id("gid")
+                    .role_id("rid1")
+                    .target_id("other-pid")
+                    .r#type(AssignmentType::GroupProject)
+                    .build()
+                    .unwrap(),
+                AssignmentBuilder::default()
+                    .actor_id("gid")
+                    .role_id("rid2")
+                    .target_id("other-did")
+                    .r#type(AssignmentType::GroupDomain)
+                    .inherited(true)
+                    .build()
+                    .unwrap(),
+            ])
+        });
+    backend
+        .expect_revoke_grant()
+        .times(2)
+        .withf(|_, params: &Assignment| params.actor_id == "gid")
+        .returning(|_, _| Ok(()));
+    let provider = AssignmentService::from_backend(Arc::new(backend));
+
+    provider
+        .delete_assignments_for_group(&ExecutionContext::internal(&state), "gid")
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn test_create_grant_existing_is_idempotent() {
     let state = get_mocked_state(None, None).await;
     let mut backend = MockAssignmentBackend::default();

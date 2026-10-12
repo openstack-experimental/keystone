@@ -27,12 +27,15 @@ use openstack_keystone_core_types::identity::{
 };
 
 use super::*;
+use crate::application_credential::MockApplicationCredentialProvider;
+use crate::assignment::MockAssignmentProvider;
 use crate::auth::ValidatedSecurityContext;
 use crate::credential::MockCredentialProvider;
 use crate::identity::backend::MockIdentityBackend;
 use crate::provider::Provider;
 use crate::resource::MockResourceProvider;
 use crate::tests::get_mocked_state;
+use crate::trust::MockTrustProvider;
 use openstack_keystone_core_types::auth::{
     AuthenticationContext, AuthzInfoBuilder, IdentityInfo, PrincipalInfo, ScopeInfo,
     SecurityContext, UserIdentityInfoBuilder,
@@ -234,9 +237,33 @@ async fn test_delete_user() {
         .expect_delete_credentials_for_user()
         .withf(|_, uid: &'_ str| uid == "uid")
         .returning(|_, _| Ok(()));
+    let mut appcred_mock = MockApplicationCredentialProvider::default();
+    appcred_mock
+        .expect_delete_application_credentials_for_user()
+        .times(1)
+        .withf(|_, uid: &'_ str| uid == "uid")
+        .returning(|_, _| Ok(()));
+    let mut trust_mock = MockTrustProvider::default();
+    trust_mock
+        .expect_delete_trusts_for_user()
+        .times(1)
+        .withf(|_, uid: &'_ str| uid == "uid")
+        .returning(|_, _| Ok(()));
+    let mut assignment_mock = MockAssignmentProvider::default();
+    assignment_mock
+        .expect_delete_assignments_for_user()
+        .times(1)
+        .withf(|_, uid: &'_ str| uid == "uid")
+        .returning(|_, _| Ok(()));
     let state = get_mocked_state(
         None,
-        Some(Provider::mocked_builder().mock_credential(credential_mock)),
+        Some(
+            Provider::mocked_builder()
+                .mock_credential(credential_mock)
+                .mock_application_credential(appcred_mock)
+                .mock_trust(trust_mock)
+                .mock_assignment(assignment_mock),
+        ),
     )
     .await;
     let mut backend = MockIdentityBackend::default();
@@ -1136,9 +1163,32 @@ async fn test_delete_user_invalidates_cache() {
         .expect_delete_credentials_for_user()
         .withf(|_, uid: &'_ str| uid == "uid")
         .returning(|_, _| Ok(()));
+    let mut appcred_mock = MockApplicationCredentialProvider::default();
+    appcred_mock
+        .expect_delete_application_credentials_for_user()
+        .withf(|_, uid: &'_ str| uid == "uid")
+        .returning(|_, _| Ok(()));
+    let mut trust_mock = MockTrustProvider::default();
+    trust_mock
+        .expect_delete_trusts_for_user()
+        .times(1)
+        .withf(|_, uid: &'_ str| uid == "uid")
+        .returning(|_, _| Ok(()));
+    let mut assignment_mock = MockAssignmentProvider::default();
+    assignment_mock
+        .expect_delete_assignments_for_user()
+        .times(1)
+        .withf(|_, uid: &'_ str| uid == "uid")
+        .returning(|_, _| Ok(()));
     let state = get_mocked_state(
         None,
-        Some(Provider::mocked_builder().mock_credential(credential_mock)),
+        Some(
+            Provider::mocked_builder()
+                .mock_credential(credential_mock)
+                .mock_application_credential(appcred_mock)
+                .mock_trust(trust_mock)
+                .mock_assignment(assignment_mock),
+        ),
     )
     .await;
     let mut backend = MockIdentityBackend::default();
@@ -1279,7 +1329,17 @@ async fn test_update_group_refreshes_cache_instead_of_refetching() {
 
 #[tokio::test]
 async fn test_delete_group_invalidates_cache() {
-    let state = get_mocked_state(None, None).await;
+    let mut assignment_mock = MockAssignmentProvider::default();
+    assignment_mock
+        .expect_delete_assignments_for_group()
+        .times(1)
+        .withf(|_, gid: &'_ str| gid == "gid")
+        .returning(|_, _| Ok(()));
+    let state = get_mocked_state(
+        None,
+        Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
+    )
+    .await;
     let mut backend = MockIdentityBackend::default();
     backend
         .expect_get_group()
@@ -1299,6 +1359,30 @@ async fn test_delete_group_invalidates_cache() {
         provider.get_group(&ctx, "gid").await.unwrap();
     })
     .await;
+}
+
+#[tokio::test]
+async fn test_delete_group_already_gone_still_runs_cascade() {
+    let mut assignment_mock = MockAssignmentProvider::default();
+    assignment_mock
+        .expect_delete_assignments_for_group()
+        .times(1)
+        .returning(|_, _| Ok(()));
+    let state = get_mocked_state(
+        None,
+        Some(Provider::mocked_builder().mock_assignment(assignment_mock)),
+    )
+    .await;
+    let mut backend = MockIdentityBackend::default();
+    backend
+        .expect_delete_group()
+        .returning(|_, gid: &'_ str| Err(IdentityProviderError::GroupNotFound(gid.to_string())));
+    let provider = IdentityService::from_driver(backend);
+
+    let res = provider
+        .delete_group(&ExecutionContext::internal(&state), "gid")
+        .await;
+    assert!(matches!(res, Err(IdentityProviderError::GroupNotFound(_))));
 }
 
 #[path = "tests/per_domain_dispatch.rs"]

@@ -196,4 +196,12 @@ pub struct TrustListParameters {
     /// Page marker (id of the last entry on the previous page.
     #[builder(default)]
     pub marker: Option<String>,
+
+    /// Only the trusts delegated by this user.
+    #[builder(default)]
+    pub trustor_user_id: Option<String>,
+
+    /// Only the trusts that this user can consume.
+    #[builder(default)]
+    pub trustee_user_id: Option<String>,
 }

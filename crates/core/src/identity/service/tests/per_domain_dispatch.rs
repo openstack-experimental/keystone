@@ -888,12 +888,29 @@ async fn delete_user_on_a_domain_specific_backend_forgets_the_id_mapping() {
     credential_mock
         .expect_delete_credentials_for_user()
         .returning(|_, _| Ok(()));
+    let mut appcred_mock =
+        crate::application_credential::MockApplicationCredentialProvider::default();
+    appcred_mock
+        .expect_delete_application_credentials_for_user()
+        .returning(|_, _| Ok(()));
+    let mut trust_mock = crate::trust::MockTrustProvider::default();
+    trust_mock
+        .expect_delete_trusts_for_user()
+        .returning(|_, _| Ok(()));
+    let mut assignment_mock = crate::assignment::MockAssignmentProvider::default();
+    assignment_mock
+        .expect_delete_assignments_for_user()
+        .times(1)
+        .returning(|_, _| Ok(()));
     let state = get_mocked_state(
         None,
         Some(
             Provider::mocked_builder()
                 .mock_idmapping(idmapping)
-                .mock_credential(credential_mock),
+                .mock_credential(credential_mock)
+                .mock_application_credential(appcred_mock)
+                .mock_trust(trust_mock)
+                .mock_assignment(assignment_mock),
         ),
     )
     .await;

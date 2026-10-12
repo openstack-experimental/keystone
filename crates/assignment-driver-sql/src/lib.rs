@@ -317,7 +317,7 @@ impl AssignmentBackend for SqlBackend {
             targets.push(RoleAssignmentTarget {
                 id: val.clone(),
                 r#type: RoleAssignmentTargetType::Project,
-                inherited: Some(false),
+                inherited: Some(params.inherited.unwrap_or(false)),
             });
             if let Some(parents) = state
                 .provider
@@ -339,13 +339,13 @@ impl AssignmentBackend for SqlBackend {
             targets.push(RoleAssignmentTarget {
                 id: val.clone(),
                 r#type: RoleAssignmentTargetType::Domain,
-                inherited: Some(false),
+                inherited: Some(params.inherited.unwrap_or(false)),
             });
         } else if let Some(val) = &params.system_id {
             targets.push(RoleAssignmentTarget {
                 id: val.clone(),
                 r#type: RoleAssignmentTargetType::System,
-                inherited: Some(false),
+                inherited: Some(params.inherited.unwrap_or(false)),
             })
         }
 

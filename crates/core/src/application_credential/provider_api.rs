@@ -86,6 +86,25 @@ pub trait ApplicationCredentialApi: Send + Sync {
         rec: ApplicationCredential,
     ) -> Result<(), ApplicationCredentialProviderError>;
 
+    /// Delete all application credentials and access rules owned by a user.
+    ///
+    /// Called when the user is deleted: the credentials must not outlive it.
+    async fn delete_application_credentials_for_user<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        user_id: &'a str,
+    ) -> Result<(), ApplicationCredentialProviderError>;
+
+    /// Delete all application credentials scoped to a project.
+    ///
+    /// Called when the project is deleted: the credentials must not outlive
+    /// it.
+    async fn delete_application_credentials_for_project<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        project_id: &'a str,
+    ) -> Result<(), ApplicationCredentialProviderError>;
+
     /// Get a user's access rule by its ID.
     ///
     /// # Parameters

@@ -566,6 +566,58 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
 
         Ok(())
     }
+    /// Delete all application credentials and access rules owned by a user.
+    #[tracing::instrument(name = "provider.application_credential.delete_application_credentials_for_user", level = "debug", skip_all, fields(user_id = %user_id))]
+    async fn delete_application_credentials_for_user<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        user_id: &'a str,
+    ) -> Result<(), ApplicationCredentialProviderError> {
+        let op = async {
+            self.backend_driver
+                .delete_application_credentials_for_user(ctx.state(), user_id)
+                .await
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: Event::new(
+                Operation::Delete,
+                EventPayload::ApplicationCredentialSet {
+                    user_id: Some(user_id.to_string()),
+                    project_id: None,
+                },
+            ),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| ApplicationCredentialProviderError::Driver("audit dispatch failed".into()),
+        }
+    }
+
+    /// Delete all application credentials scoped to a project.
+    #[tracing::instrument(name = "provider.application_credential.delete_application_credentials_for_project", level = "debug", skip_all, fields(project_id = %project_id))]
+    async fn delete_application_credentials_for_project<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        project_id: &'a str,
+    ) -> Result<(), ApplicationCredentialProviderError> {
+        let op = async {
+            self.backend_driver
+                .delete_application_credentials_for_project(ctx.state(), project_id)
+                .await
+        };
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: Event::new(
+                Operation::Delete,
+                EventPayload::ApplicationCredentialSet {
+                    user_id: None,
+                    project_id: Some(project_id.to_string()),
+                },
+            ),
+            operation: op,
+            on_audit_error: |_: AuditDispatchError| ApplicationCredentialProviderError::Driver("audit dispatch failed".into()),
+        }
+    }
+
     /// Get a user's access rule by its ID.
     ///
     /// # Parameters

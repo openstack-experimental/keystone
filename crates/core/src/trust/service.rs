@@ -343,6 +343,44 @@ impl TrustApi for TrustService {
         Ok(())
     }
 
+    /// Delete every trust the user delegated or can consume.
+    #[tracing::instrument(name = "provider.trust.delete_trusts_for_user", level = "debug", skip_all, fields(user_id = %user_id))]
+    async fn delete_trusts_for_user<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        user_id: &'a str,
+    ) -> Result<(), TrustProviderError> {
+        let mut ids: Vec<String> = Vec::new();
+        for params in [
+            TrustListParameters {
+                trustor_user_id: Some(user_id.to_string()),
+                ..Default::default()
+            },
+            TrustListParameters {
+                trustee_user_id: Some(user_id.to_string()),
+                ..Default::default()
+            },
+        ] {
+            for trust in self
+                .backend_driver
+                .list_trusts(ctx.state(), &params)
+                .await?
+            {
+                if !ids.contains(&trust.id) {
+                    ids.push(trust.id);
+                }
+            }
+        }
+        for id in &ids {
+            match self.delete_trust(ctx, id).await {
+                // Removed meanwhile (e.g. as a redelegation of an earlier one).
+                Ok(()) | Err(TrustProviderError::TrustNotFound(_)) => {}
+                Err(err) => return Err(err),
+            }
+        }
+        Ok(())
+    }
+
     /// Get trust by ID.
     ///
     /// # Parameters
@@ -1216,6 +1254,64 @@ mod tests {
 
         trust_provider
             .delete_trust(&ExecutionContext::internal(&state), "trust_id")
+            .await
+            .unwrap();
+    }
+
+    /// Trusts the user delegated and trusts it can consume are both deleted,
+    /// each exactly once and through `delete_trust` (so its revocation event
+    /// is created).
+    #[tokio::test]
+    async fn test_delete_trusts_for_user() {
+        let mut revoke_mock = MockRevokeProvider::default();
+        revoke_mock
+            .expect_create_revocation_event()
+            .times(2)
+            .returning(|_, _| Ok(RevocationEvent::default()));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_revoke(revoke_mock)),
+        )
+        .await;
+
+        let mut backend = MockTrustBackend::new();
+        backend
+            .expect_list_trusts()
+            .withf(|_, p: &TrustListParameters| p.trustor_user_id.as_deref() == Some("uid"))
+            .returning(|_, _| {
+                Ok(vec![Trust {
+                    id: "as_trustor".into(),
+                    ..Default::default()
+                }])
+            });
+        backend
+            .expect_list_trusts()
+            .withf(|_, p: &TrustListParameters| p.trustee_user_id.as_deref() == Some("uid"))
+            .returning(|_, _| {
+                Ok(vec![
+                    Trust {
+                        id: "as_trustor".into(),
+                        ..Default::default()
+                    },
+                    Trust {
+                        id: "as_trustee".into(),
+                        ..Default::default()
+                    },
+                ])
+            });
+        backend
+            .expect_delete_trust()
+            .times(1)
+            .withf(|_, id: &'_ str| id == "as_trustor")
+            .returning(|_, _| Ok(()));
+        backend
+            .expect_delete_trust()
+            .times(1)
+            .withf(|_, id: &'_ str| id == "as_trustee")
+            .returning(|_, _| Ok(()));
+
+        create_trust_service(backend)
+            .delete_trusts_for_user(&ExecutionContext::internal(&state), "uid")
             .await
             .unwrap();
     }

@@ -244,7 +244,10 @@ pub fn identity_failure_reason(e: &IdentityProviderError) -> &'static str {
         IdentityProviderError::Authentication { source } => auth_failure_reason(source),
         IdentityProviderError::Conflict(_) => "Conflict",
         IdentityProviderError::CrossBackendNotAllowed { .. } => "CrossBackendNotAllowed",
-        IdentityProviderError::CredentialProvider { .. } => "ProviderError",
+        IdentityProviderError::ApplicationCredentialProvider { .. }
+        | IdentityProviderError::AssignmentProvider { .. }
+        | IdentityProviderError::TrustProvider { .. }
+        | IdentityProviderError::CredentialProvider { .. } => "ProviderError",
         IdentityProviderError::DateError => "DateError",
         IdentityProviderError::Driver(_) => "Driver",
         IdentityProviderError::GroupNotFound(_) => "GroupNotFound",

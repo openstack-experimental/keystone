@@ -308,8 +308,12 @@ pub struct RoleAssignmentListParameters {
     #[validate(length(max = 64))]
     pub system_id: Option<String>,
 
-    // #[builder(default)]
-    // pub inherited: Option<bool>,
+    /// Whether the assignments on the requested project, domain or system
+    /// target are the inheritable ones. Unset lists the direct (non
+    /// inheritable) assignments only.
+    #[builder(default)]
+    pub inherited: Option<bool>,
+
     /// Query the effective assignments, including any assignments gained by
     /// virtue of group membership.
     #[builder(default)]

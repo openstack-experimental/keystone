@@ -1083,13 +1083,34 @@ impl IdentityApi for IdentityService {
                     EventPayload::Group { id: group_id.to_string() },
                 ),
                 operation: async {
-                    backend_driver.delete_group(ctx.state(), &local_id).await?;
-                    Ok::<(), IdentityProviderError>(())
+                    // See `delete_user`: finish the cascade of a group that
+                    // an earlier attempt already deleted.
+                    let deleted = match backend_driver.delete_group(ctx.state(), &local_id).await {
+                        Ok(()) => Ok(()),
+                        Err(err @ IdentityProviderError::GroupNotFound(_)) => Err(err),
+                        Err(err) => return Err(err),
+                    };
+                    ctx.state()
+                        .provider
+                        .get_assignment_provider()
+                        .delete_assignments_for_group(ctx, group_id)
+                        .await?;
+                    deleted
                 },
                 on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
             }?;
         } else {
-            backend_driver.delete_group(ctx.state(), &local_id).await?;
+            let deleted = match backend_driver.delete_group(ctx.state(), &local_id).await {
+                Ok(()) => Ok(()),
+                Err(err @ IdentityProviderError::GroupNotFound(_)) => Err(err),
+                Err(err) => return Err(err),
+            };
+            ctx.state()
+                .provider
+                .get_assignment_provider()
+                .delete_assignments_for_group(ctx, group_id)
+                .await?;
+            deleted?;
             ctx.state()
                 .event_dispatcher
                 .emit(Event::new(
@@ -1127,7 +1148,15 @@ impl IdentityApi for IdentityService {
                 EventPayload::User { id: user_id.to_string() },
             ),
             operation: async {
-                backend_driver.delete_user(ctx.state(), &local_id).await?;
+                // A user that is already gone still gets its dependents
+                // removed: a previous attempt may have deleted the user and
+                // failed in the cascade, and a retry must be able to finish
+                // it. The NotFound is returned once the cascade is done.
+                let deleted = match backend_driver.delete_user(ctx.state(), &local_id).await {
+                    Ok(()) => Ok(()),
+                    Err(err @ IdentityProviderError::UserNotFound(_)) => Err(err),
+                    Err(err) => return Err(err),
+                };
                 if self.caching {
                     self.user_id_domain_id_cache
                         .write()
@@ -1139,7 +1168,22 @@ impl IdentityApi for IdentityService {
                     .get_credential_provider()
                     .delete_credentials_for_user(ctx, user_id)
                     .await?;
-                Ok::<(), IdentityProviderError>(())
+                ctx.state()
+                    .provider
+                    .get_application_credential_provider()
+                    .delete_application_credentials_for_user(ctx, user_id)
+                    .await?;
+                ctx.state()
+                    .provider
+                    .get_trust_provider()
+                    .delete_trusts_for_user(ctx, user_id)
+                    .await?;
+                ctx.state()
+                    .provider
+                    .get_assignment_provider()
+                    .delete_assignments_for_user(ctx, user_id)
+                    .await?;
+                deleted
             },
             on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
         }?;

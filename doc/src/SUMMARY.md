@@ -138,3 +138,4 @@
     - [Config Engine and Section Registry](adr/0039-config-engine-and-section-registry.md)
     - [OpenTelemetry Telemetry Pipeline](adr/0040-opentelemetry.md)
     - [OAuth2 Provider Session Management](adr/0041-oauth2-session-management.md)
+    - [Provider Event Delivery and Delete Cascades](adr/0042-event-delivery-and-cascades.md)

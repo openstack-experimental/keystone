@@ -13,12 +13,16 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # Resource provider
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 use validator::Validate;
 
 use openstack_keystone_config::Config;
 use openstack_keystone_core_types::events::{Event, EventPayload, Operation};
+use openstack_keystone_core_types::identity::{
+    GroupListParameters, IdentityProviderError, UserListParameters,
+};
 use openstack_keystone_core_types::resource::*;
 
 use crate::auth::{ExecutionContext, scope_domain_id};
@@ -157,6 +161,120 @@ impl ResourceService {
         {
             return Err(ResourceProviderError::Immutable(project_id.to_string()));
         }
+        Ok(())
+    }
+
+    /// Delete everything the domain owns before the domain itself.
+    ///
+    /// Projects go leaf first, then the users and groups, then the grants on
+    /// the domain. Every deletion goes through the owning provider, so the
+    /// per-entity cascades (credentials, application credentials, trusts,
+    /// assignments) and audit events run as for a direct delete. Users and
+    /// groups of a read-only identity backend are not ours to remove and are
+    /// skipped. The cascade is idempotent: a failure leaves the domain in
+    /// place and a retry resumes with what is left. The same holds for each
+    /// entity: deleting one that is already gone still runs its cascade.
+    async fn delete_domain_contents<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+    ) -> Result<(), ResourceProviderError> {
+        let projects = self
+            .backend_driver
+            .list_projects(
+                ctx.state(),
+                &ProjectListParameters {
+                    domain_id: Some(domain_id.to_string()),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        let identity = ctx.state().provider.get_identity_provider();
+        let users = identity
+            .list_users(
+                ctx,
+                &UserListParameters {
+                    domain_id: Some(domain_id.to_string()),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        let groups = identity
+            .list_groups(
+                ctx,
+                &GroupListParameters {
+                    domain_id: Some(domain_id.to_string()),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        // The cascade is destructive: an enabled domain is only deleted when
+        // there is nothing to cascade into. Existing callers that delete an
+        // empty domain are unaffected.
+        let has_contents =
+            projects.iter().any(|x| x.id != domain_id) || !users.is_empty() || !groups.is_empty();
+        if has_contents
+            && self
+                .get_domain(ctx, domain_id)
+                .await?
+                .is_some_and(|x| x.enabled)
+        {
+            return Err(ResourceProviderError::DomainEnabled(domain_id.to_string()));
+        }
+        let parents: HashMap<&str, &str> = projects
+            .iter()
+            .filter_map(|x| x.parent_id.as_deref().map(|p| (x.id.as_str(), p)))
+            .collect();
+        // Children before their parents: the deeper the project, the earlier.
+        let depth = |id: &str| {
+            let mut depth = 0usize;
+            let mut cur = id;
+            // Bounded by the number of projects: a corrupt parent loop must
+            // not hang the delete.
+            while let Some(parent) = parents.get(cur) {
+                depth += 1;
+                cur = parent;
+                if depth > projects.len() {
+                    break;
+                }
+            }
+            depth
+        };
+        let mut ordered: Vec<(usize, &str)> = projects
+            .iter()
+            .filter(|x| x.id != domain_id)
+            .map(|x| (depth(&x.id), x.id.as_str()))
+            .collect();
+        ordered.sort_by(|a, b| b.0.cmp(&a.0));
+        for (_, id) in ordered {
+            match self.delete_project(ctx, id).await {
+                Ok(()) | Err(ResourceProviderError::ProjectNotFound(_)) => {}
+                Err(err) => return Err(err),
+            }
+        }
+
+        for user in &users {
+            match identity.delete_user(ctx, &user.id).await {
+                Ok(())
+                | Err(IdentityProviderError::UserNotFound(_))
+                | Err(IdentityProviderError::Readonly(_)) => {}
+                Err(err) => return Err(err.into()),
+            }
+        }
+        for group in &groups {
+            match identity.delete_group(ctx, &group.id).await {
+                Ok(())
+                | Err(IdentityProviderError::GroupNotFound(_))
+                | Err(IdentityProviderError::Readonly(_)) => {}
+                Err(err) => return Err(err.into()),
+            }
+        }
+
+        ctx.state()
+            .provider
+            .get_assignment_provider()
+            .delete_assignments_for_domain(ctx, domain_id)
+            .await?;
         Ok(())
     }
 
@@ -386,6 +504,7 @@ impl ResourceApi for ResourceService {
                 EventPayload::Domain { id: id.to_string() },
             ),
             operation: async {
+                self.delete_domain_contents(ctx, id).await?;
                 self.backend_driver.delete_domain(ctx.state(), id).await?;
                 ctx.state()
                     .provider
@@ -424,13 +543,30 @@ impl ResourceApi for ResourceService {
                 EventPayload::Project { id: id.to_string() },
             ),
             operation: async {
-                self.backend_driver.delete_project(ctx.state(), id).await?;
+                // See `IdentityService::delete_user`: a project that an
+                // earlier attempt already deleted still gets its dependents
+                // removed, then the NotFound is returned.
+                let deleted = match self.backend_driver.delete_project(ctx.state(), id).await {
+                    Ok(()) => Ok(()),
+                    Err(err @ ResourceProviderError::ProjectNotFound(_)) => Err(err),
+                    Err(err) => return Err(err),
+                };
                 ctx.state()
                     .provider
                     .get_credential_provider()
                     .delete_credentials_for_project(ctx, id)
                     .await?;
-                Ok::<(), ResourceProviderError>(())
+                ctx.state()
+                    .provider
+                    .get_application_credential_provider()
+                    .delete_application_credentials_for_project(ctx, id)
+                    .await?;
+                ctx.state()
+                    .provider
+                    .get_assignment_provider()
+                    .delete_assignments_for_project(ctx, id)
+                    .await?;
+                deleted
             },
             on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
         }?;
@@ -621,6 +757,36 @@ mod tests {
     use crate::provider::Provider;
     use crate::resource::backend::MockResourceBackend;
     use crate::tests::get_mocked_state;
+
+    /// Mocks for a domain that owns nothing, so the contents cascade is a
+    /// no-op.
+    fn empty_domain_builder(idmapping: MockIdMappingProvider) -> crate::provider::ProviderBuilder {
+        let mut identity = crate::identity::MockIdentityProvider::default();
+        identity.expect_list_users().returning(|_, _| Ok(vec![]));
+        identity.expect_list_groups().returning(|_, _| Ok(vec![]));
+        let mut assignment = crate::assignment::MockAssignmentProvider::default();
+        assignment
+            .expect_delete_assignments_for_domain()
+            .returning(|_, _| Ok(()));
+        Provider::mocked_builder()
+            .mock_idmapping(idmapping)
+            .mock_identity(identity)
+            .mock_assignment(assignment)
+    }
+
+    fn project_appcred_mock() -> crate::application_credential::MockApplicationCredentialProvider {
+        let mut mock = crate::application_credential::MockApplicationCredentialProvider::default();
+        mock.expect_delete_application_credentials_for_project()
+            .returning(|_, _| Ok(()));
+        mock
+    }
+
+    fn project_assignment_mock() -> crate::assignment::MockAssignmentProvider {
+        let mut mock = crate::assignment::MockAssignmentProvider::default();
+        mock.expect_delete_assignments_for_project()
+            .returning(|_, _| Ok(()));
+        mock
+    }
     use openstack_keystone_core_types::auth::{
         AuthenticationContext, AuthzInfoBuilder, IdentityInfo, PrincipalInfo, ScopeInfo,
         SecurityContext, UserIdentityInfoBuilder,
@@ -766,7 +932,12 @@ mod tests {
             .returning(|_, _| Ok(()));
         let state = get_mocked_state(
             None,
-            Some(Provider::mocked_builder().mock_credential(credential_mock)),
+            Some(
+                Provider::mocked_builder()
+                    .mock_credential(credential_mock)
+                    .mock_application_credential(project_appcred_mock())
+                    .mock_assignment(project_assignment_mock()),
+            ),
         )
         .await;
         let count = Arc::new(AtomicUsize::new(0));
@@ -802,11 +973,7 @@ mod tests {
         idmapping
             .expect_delete_mappings_for_domain()
             .returning(|_, _| Ok(()));
-        let state = get_mocked_state(
-            None,
-            Some(Provider::mocked_builder().mock_idmapping(idmapping)),
-        )
-        .await;
+        let state = get_mocked_state(None, Some(empty_domain_builder(idmapping))).await;
         let count = Arc::new(AtomicUsize::new(0));
         state
             .event_dispatcher
@@ -815,6 +982,7 @@ mod tests {
             }))
             .await;
         let mut backend = MockResourceBackend::default();
+        backend.expect_list_projects().returning(|_, _| Ok(vec![]));
         backend.expect_get_domain().returning(|_, _| Ok(None));
         backend.expect_delete_domain().returning(|_, _| Ok(()));
         let provider = ResourceService {
@@ -835,15 +1003,205 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_delete_domain_deletes_contents_children_first() {
+        use openstack_keystone_core_types::identity::{
+            GroupBuilder, IdentityProviderError, UserResponseBuilder,
+        };
+        use std::sync::Mutex;
+
+        let deleted: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+
+        let mut identity = crate::identity::MockIdentityProvider::default();
+        identity.expect_list_users().times(1).returning(|_, _| {
+            Ok(["u1", "ldap"]
+                .into_iter()
+                .map(|id| {
+                    UserResponseBuilder::default()
+                        .id(id)
+                        .domain_id("did")
+                        .enabled(true)
+                        .name(id)
+                        .build()
+                        .unwrap()
+                })
+                .collect())
+        });
+        let log = Arc::clone(&deleted);
+        identity
+            .expect_delete_user()
+            .times(2)
+            .returning(move |_, id: &'_ str| {
+                if id == "ldap" {
+                    return Err(IdentityProviderError::Readonly("ldap".into()));
+                }
+                log.lock().unwrap().push(format!("user:{id}"));
+                Ok(())
+            });
+        identity.expect_list_groups().times(1).returning(|_, _| {
+            Ok(vec![
+                GroupBuilder::default()
+                    .id("g1")
+                    .domain_id("did")
+                    .name("g1")
+                    .build()
+                    .unwrap(),
+            ])
+        });
+        let log = Arc::clone(&deleted);
+        identity
+            .expect_delete_group()
+            .times(1)
+            .returning(move |_, id: &'_ str| {
+                log.lock().unwrap().push(format!("group:{id}"));
+                Ok(())
+            });
+        let mut assignment = crate::assignment::MockAssignmentProvider::default();
+        assignment
+            .expect_delete_assignments_for_project()
+            .times(2)
+            .returning(|_, _| Ok(()));
+        assignment
+            .expect_delete_assignments_for_domain()
+            .times(1)
+            .withf(|_, id: &'_ str| id == "did")
+            .returning(|_, _| Ok(()));
+        let mut credential_mock = MockCredentialProvider::default();
+        credential_mock
+            .expect_delete_credentials_for_project()
+            .returning(|_, _| Ok(()));
+        let mut idmapping = MockIdMappingProvider::default();
+        idmapping
+            .expect_delete_mappings_for_domain()
+            .returning(|_, _| Ok(()));
+        let state = get_mocked_state(
+            None,
+            Some(
+                Provider::mocked_builder()
+                    .mock_idmapping(idmapping)
+                    .mock_identity(identity)
+                    .mock_assignment(assignment)
+                    .mock_credential(credential_mock)
+                    .mock_application_credential(project_appcred_mock()),
+            ),
+        )
+        .await;
+
+        let mut backend = MockResourceBackend::default();
+        backend.expect_get_domain().returning(|_, _| Ok(None));
+        backend.expect_get_project().returning(|_, _| Ok(None));
+        backend.expect_list_projects().returning(|_, _| {
+            // Listed parent first on purpose: the cascade must reorder.
+            let mut child = make_project("child", "did");
+            child.parent_id = Some("parent".into());
+            Ok(vec![make_project("parent", "did"), child])
+        });
+        let log = Arc::clone(&deleted);
+        backend
+            .expect_delete_project()
+            .times(2)
+            .returning(move |_, id: &'_ str| {
+                log.lock().unwrap().push(format!("project:{id}"));
+                Ok(())
+            });
+        let log = Arc::clone(&deleted);
+        backend
+            .expect_delete_domain()
+            .times(1)
+            .returning(move |_, id: &'_ str| {
+                log.lock().unwrap().push(format!("domain:{id}"));
+                Ok(())
+            });
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        provider
+            .delete_domain(&ExecutionContext::internal(&state), "did")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            *deleted.lock().unwrap(),
+            [
+                "project:child",
+                "project:parent",
+                "user:u1",
+                "group:g1",
+                "domain:did"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_enabled_domain_with_contents_is_refused() {
+        use openstack_keystone_core_types::identity::UserResponseBuilder;
+
+        let mut identity = crate::identity::MockIdentityProvider::default();
+        identity.expect_list_users().returning(|_, _| {
+            Ok(vec![
+                UserResponseBuilder::default()
+                    .id("u1")
+                    .domain_id("did")
+                    .enabled(true)
+                    .name("u1")
+                    .build()
+                    .unwrap(),
+            ])
+        });
+        identity.expect_list_groups().returning(|_, _| Ok(vec![]));
+        let state = get_mocked_state(
+            None,
+            Some(Provider::mocked_builder().mock_identity(identity)),
+        )
+        .await;
+        let mut backend = MockResourceBackend::default();
+        // Enabled domain: the cascade must stop before deleting anything
+        // (no delete_user / delete_project / delete_domain expectations).
+        backend
+            .expect_get_domain()
+            .returning(|_, _| Ok(Some(make_domain("did"))));
+        backend.expect_list_projects().returning(|_, _| Ok(vec![]));
+        let provider = ResourceService {
+            backend_driver: Arc::new(backend),
+        };
+
+        let res = provider
+            .delete_domain(&ExecutionContext::internal(&state), "did")
+            .await;
+        assert!(
+            matches!(res, Err(ResourceProviderError::DomainEnabled(_))),
+            "{res:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn test_delete_project_cascades_credentials() {
         let mut credential_mock = MockCredentialProvider::default();
         credential_mock
             .expect_delete_credentials_for_project()
             .withf(|_, pid: &'_ str| pid == "pid")
             .returning(|_, _| Ok(()));
+        let mut appcred_mock =
+            crate::application_credential::MockApplicationCredentialProvider::default();
+        appcred_mock
+            .expect_delete_application_credentials_for_project()
+            .times(1)
+            .withf(|_, pid: &'_ str| pid == "pid")
+            .returning(|_, _| Ok(()));
+        let mut assignment_mock = crate::assignment::MockAssignmentProvider::default();
+        assignment_mock
+            .expect_delete_assignments_for_project()
+            .times(1)
+            .withf(|_, pid: &'_ str| pid == "pid")
+            .returning(|_, _| Ok(()));
         let state = get_mocked_state(
             None,
-            Some(Provider::mocked_builder().mock_credential(credential_mock)),
+            Some(
+                Provider::mocked_builder()
+                    .mock_credential(credential_mock)
+                    .mock_application_credential(appcred_mock)
+                    .mock_assignment(assignment_mock),
+            ),
         )
         .await;
         let mut backend = MockResourceBackend::default();
@@ -1362,12 +1720,9 @@ mod tests {
             .expect_delete_mappings_for_domain()
             .withf(|_, id: &'_ str| id == "did")
             .returning(|_, _| Ok(()));
-        let state = get_mocked_state(
-            None,
-            Some(Provider::mocked_builder().mock_idmapping(idmapping)),
-        )
-        .await;
+        let state = get_mocked_state(None, Some(empty_domain_builder(idmapping))).await;
         let mut backend = MockResourceBackend::default();
+        backend.expect_list_projects().returning(|_, _| Ok(vec![]));
         // Populated once by the initial `get_domain`, hit from cache inside
         // `check_domain_mutable`, then re-fetched from the backend after
         // deletion invalidates the cache entry.
@@ -1450,7 +1805,12 @@ mod tests {
             .returning(|_, _| Ok(()));
         let state = get_mocked_state(
             None,
-            Some(Provider::mocked_builder().mock_credential(credential_mock)),
+            Some(
+                Provider::mocked_builder()
+                    .mock_credential(credential_mock)
+                    .mock_application_credential(project_appcred_mock())
+                    .mock_assignment(project_assignment_mock()),
+            ),
         )
         .await;
         let mut backend = MockResourceBackend::default();
@@ -1568,7 +1928,12 @@ mod tests {
             .returning(|_, _| Ok(()));
         let state = get_mocked_state(
             None,
-            Some(Provider::mocked_builder().mock_credential(credential_mock)),
+            Some(
+                Provider::mocked_builder()
+                    .mock_credential(credential_mock)
+                    .mock_application_credential(project_appcred_mock())
+                    .mock_assignment(project_assignment_mock()),
+            ),
         )
         .await;
         let mut backend = MockResourceBackend::default();

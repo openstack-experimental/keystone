@@ -78,6 +78,16 @@ fn build_target_from_event(event: &Event) -> Target {
             (id, "data/security/identity/application-credential")
         }
         EventPayload::AccessRule { id, .. } => (id, "data/security/identity/access-rule"),
+        EventPayload::ApplicationCredentialSet {
+            user_id,
+            project_id,
+        } => (
+            user_id
+                .as_deref()
+                .or(project_id.as_deref())
+                .unwrap_or(UNKNOWN_TARGET_ID),
+            "data/security/identity/application-credential",
+        ),
         EventPayload::Credential { id, .. } => (id, "data/security/identity/credential"),
         EventPayload::CredentialSet {
             user_id,

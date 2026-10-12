@@ -417,7 +417,8 @@ impl From<ResourceProviderError> for KeystoneApiError {
                 identifier: x,
             },
             ResourceProviderError::InvalidProjectDomain(x) => Self::BadRequest(x),
-            err @ ResourceProviderError::Immutable(..) => Self::forbidden(err),
+            err @ (ResourceProviderError::Immutable(..)
+            | ResourceProviderError::DomainEnabled(..)) => Self::forbidden(err),
             other => Self::InternalError(other.to_string()),
         }
     }

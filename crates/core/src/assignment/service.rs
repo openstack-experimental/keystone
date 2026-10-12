@@ -771,6 +771,111 @@ impl AssignmentApi for AssignmentService {
         Ok(assignments)
     }
 
+    /// Revoke every role assignment held by the user.
+    #[tracing::instrument(name = "provider.assignment.delete_assignments_for_user", level = "debug", skip_all, fields(user_id = %user_id))]
+    async fn delete_assignments_for_user<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        user_id: &'a str,
+    ) -> Result<(), AssignmentProviderError> {
+        let assignments = self
+            .list_role_assignments(
+                ctx,
+                &RoleAssignmentListParameters {
+                    user_id: Some(user_id.to_string()),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        for assignment in assignments {
+            self.revoke_grant(ctx, assignment).await?;
+        }
+        Ok(())
+    }
+
+    /// Revoke every role assignment on the project.
+    #[tracing::instrument(name = "provider.assignment.delete_assignments_for_project", level = "debug", skip_all, fields(project_id = %project_id))]
+    async fn delete_assignments_for_project<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        project_id: &'a str,
+    ) -> Result<(), AssignmentProviderError> {
+        // The direct and the inheritable grants on the project are separate
+        // listings. Each also returns the inheritable assignments of the
+        // parent projects, which stay: only the grants on this project go.
+        for inherited in [false, true] {
+            let assignments = self
+                .list_role_assignments(
+                    ctx,
+                    &RoleAssignmentListParameters {
+                        project_id: Some(project_id.to_string()),
+                        inherited: Some(inherited),
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            for assignment in assignments
+                .into_iter()
+                .filter(|x| x.target_id == project_id && x.inherited == inherited)
+            {
+                self.revoke_grant(ctx, assignment).await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Revoke every role assignment on the domain.
+    #[tracing::instrument(name = "provider.assignment.delete_assignments_for_domain", level = "debug", skip_all, fields(domain_id = %domain_id))]
+    async fn delete_assignments_for_domain<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+    ) -> Result<(), AssignmentProviderError> {
+        // The direct and the inheritable grants on the domain are separate
+        // listings.
+        for inherited in [false, true] {
+            let assignments = self
+                .list_role_assignments(
+                    ctx,
+                    &RoleAssignmentListParameters {
+                        domain_id: Some(domain_id.to_string()),
+                        inherited: Some(inherited),
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            for assignment in assignments
+                .into_iter()
+                .filter(|x| x.target_id == domain_id && x.inherited == inherited)
+            {
+                self.revoke_grant(ctx, assignment).await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Revoke every role assignment held by the group.
+    #[tracing::instrument(name = "provider.assignment.delete_assignments_for_group", level = "debug", skip_all, fields(group_id = %group_id))]
+    async fn delete_assignments_for_group<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        group_id: &'a str,
+    ) -> Result<(), AssignmentProviderError> {
+        let assignments = self
+            .list_role_assignments(
+                ctx,
+                &RoleAssignmentListParameters {
+                    group_id: Some(group_id.to_string()),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        for assignment in assignments {
+            self.revoke_grant(ctx, assignment).await?;
+        }
+        Ok(())
+    }
+
     /// Revoke grant.
     ///
     /// # Parameters

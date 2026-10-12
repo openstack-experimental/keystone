@@ -47,6 +47,20 @@ pub trait TrustApi: Send + Sync {
         id: &'a str,
     ) -> Result<(), TrustProviderError>;
 
+    /// Delete every trust the user delegated or can consume.
+    ///
+    /// Called when the user is deleted: each trust goes through
+    /// [`TrustApi::delete_trust`], so the revocation of the tokens minted
+    /// under it is not skipped.
+    ///
+    /// * `ctx` - The execution context.
+    /// * `user_id` - The ID of the user.
+    async fn delete_trusts_for_user<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        user_id: &'a str,
+    ) -> Result<(), TrustProviderError>;
+
     /// Get trust by ID.
     ///
     /// * `state` - The current service state.

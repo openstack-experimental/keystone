@@ -16,11 +16,14 @@ use thiserror::Error;
 
 use openstack_keystone_config::SecurityComplianceError;
 
+use crate::application_credential::ApplicationCredentialProviderError;
+use crate::assignment::AssignmentProviderError;
 use crate::auth::AuthenticationError;
 use crate::credential::CredentialProviderError;
 use crate::error::BuilderError;
 use crate::idmapping::IdMappingProviderError;
 use crate::resource::ResourceProviderError;
+use crate::trust::TrustProviderError;
 
 /// Identity provider error.
 #[derive(Error, Debug)]
@@ -49,12 +52,37 @@ pub enum IdentityProviderError {
         group_id: String,
     },
 
+    /// Application credential provider error, surfaced when cascading a user
+    /// deletion into `delete_application_credentials_for_user`.
+    #[error(transparent)]
+    ApplicationCredentialProvider {
+        #[from]
+        source: ApplicationCredentialProviderError,
+    },
+
     /// Credential provider error, surfaced when cascading a user deletion
     /// into `delete_credentials_for_user` (ADR 0019 §3).
     #[error(transparent)]
     CredentialProvider {
         #[from]
         source: CredentialProviderError,
+    },
+
+    /// Assignment provider error, surfaced when cascading a user deletion into
+    /// `delete_assignments_for_user`.
+    #[error(transparent)]
+    AssignmentProvider {
+        /// Boxed: the assignment error embeds this one.
+        source: Box<AssignmentProviderError>,
+    },
+
+    /// Trust provider error, surfaced when cascading a user deletion into
+    /// `delete_trusts_for_user`.
+    #[error(transparent)]
+    TrustProvider {
+        /// Boxed: the trust error embeds the assignment error, which embeds
+        /// this one.
+        source: Box<TrustProviderError>,
     },
 
     #[error("Date calculation error")]
@@ -201,6 +229,22 @@ impl IdentityProviderError {
         E: std::error::Error + Send + Sync + 'static,
     {
         Self::Join {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<AssignmentProviderError> for IdentityProviderError {
+    fn from(source: AssignmentProviderError) -> Self {
+        Self::AssignmentProvider {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<TrustProviderError> for IdentityProviderError {
+    fn from(source: TrustProviderError) -> Self {
+        Self::TrustProvider {
             source: Box::new(source),
         }
     }

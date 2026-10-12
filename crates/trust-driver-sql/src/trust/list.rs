@@ -37,6 +37,13 @@ fn get_list_query(
         select = select.filter(db_trust::Column::DeletedAt.is_null());
     };
 
+    if let Some(trustor_user_id) = &params.trustor_user_id {
+        select = select.filter(db_trust::Column::TrustorUserId.eq(trustor_user_id));
+    }
+    if let Some(trustee_user_id) = &params.trustee_user_id {
+        select = select.filter(db_trust::Column::TrusteeUserId.eq(trustee_user_id));
+    }
+
     let mut cursor = select.cursor_by(db_trust::Column::Id);
     if let Some(limit) = params.limit {
         cursor.first(limit);
@@ -108,6 +115,27 @@ mod tests {
             )
             .to_string(PostgresQueryBuilder)
             .contains("\"trust\".\"deleted\" IS NULL")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_query_user_filters() {
+        let sql = QuerySelect::query(
+            &mut get_list_query(&TrustListParameters {
+                trustor_user_id: Some("tor".into()),
+                trustee_user_id: Some("tee".into()),
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .to_string(PostgresQueryBuilder);
+        assert!(
+            sql.contains("\"trust\".\"trustor_user_id\" = 'tor'"),
+            "{sql}"
+        );
+        assert!(
+            sql.contains("\"trust\".\"trustee_user_id\" = 'tee'"),
+            "{sql}"
         );
     }
 

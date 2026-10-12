@@ -31,7 +31,7 @@ mod get;
 mod list;
 mod verify;
 pub use create::create;
-pub use delete::delete;
+pub use delete::{delete, delete_for_project, delete_for_user};
 pub use get::get;
 pub use list::list;
 pub use verify::verify_secret;

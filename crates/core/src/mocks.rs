@@ -775,6 +775,18 @@ mod application_credential {
                 rec: ApplicationCredential,
             ) -> Result<(), ApplicationCredentialProviderError>;
 
+            async fn delete_application_credentials_for_user<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                user_id: &'a str,
+            ) -> Result<(), ApplicationCredentialProviderError>;
+
+            async fn delete_application_credentials_for_project<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
+            ) -> Result<(), ApplicationCredentialProviderError>;
+
             async fn get_access_rule<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,
@@ -958,6 +970,30 @@ mod assignment {
                 &self,
                 ctx: &ExecutionContext<'a>,
                 params: Assignment,
+            ) -> Result<(), AssignmentProviderError>;
+
+            async fn delete_assignments_for_user<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                user_id: &'a str,
+            ) -> Result<(), AssignmentProviderError>;
+
+            async fn delete_assignments_for_group<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                group_id: &'a str,
+            ) -> Result<(), AssignmentProviderError>;
+
+            async fn delete_assignments_for_domain<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+            ) -> Result<(), AssignmentProviderError>;
+
+            async fn delete_assignments_for_project<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                project_id: &'a str,
             ) -> Result<(), AssignmentProviderError>;
         }
     }
@@ -2150,6 +2186,12 @@ mod trust {
                 ctx: &ExecutionContext<'a>,
                 id: &'a str,
             ) -> Result<Option<Vec<Trust>>, TrustProviderError>;
+
+            async fn delete_trusts_for_user<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                user_id: &'a str,
+            ) -> Result<(), TrustProviderError>;
 
             async fn list_trusts<'a>(
                 &self,

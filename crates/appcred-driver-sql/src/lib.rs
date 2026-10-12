@@ -141,6 +141,25 @@ impl ApplicationCredentialBackend for SqlBackend {
     ) -> Result<(), ApplicationCredentialProviderError> {
         application_credential::delete(&state.db.connection(), id).await
     }
+    /// Delete all application credentials and access rules owned by a user.
+    #[tracing::instrument(name = "driver.sql.appcred.delete_application_credentials_for_user", level = "debug", skip_all, fields(user_id = %user_id))]
+    async fn delete_application_credentials_for_user<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<(), ApplicationCredentialProviderError> {
+        application_credential::delete_for_user(&state.db.connection(), user_id).await
+    }
+    /// Delete all application credentials scoped to a project.
+    #[tracing::instrument(name = "driver.sql.appcred.delete_application_credentials_for_project", level = "debug", skip_all, fields(project_id = %project_id))]
+    async fn delete_application_credentials_for_project<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+    ) -> Result<(), ApplicationCredentialProviderError> {
+        application_credential::delete_for_project(&state.db.connection(), project_id).await
+    }
+
     /// Get a user's access rule by its ID.
     ///
     /// # Parameters

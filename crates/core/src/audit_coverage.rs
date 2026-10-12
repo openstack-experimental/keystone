@@ -53,6 +53,19 @@ const AUDIT_MARKERS: &[&str] = &["audited_op!", "audited_notify_op!", "audited_i
 /// surface for "why is this not in the audit trail".
 const ALLOW_LIST: &[(&str, &str, &str)] = &[
     (
+        "resource",
+        "delete_domain_contents",
+        "cascade of a domain deletion that only calls the audited delete_project, \
+         delete_user, delete_group and revoke_grant for each entity of the domain; \
+         it changes no state on its own",
+    ),
+    (
+        "trust",
+        "delete_trusts_for_user",
+        "cascade of a user deletion that only calls the audited delete_trust \
+         for each trust of the user; it changes no state on its own",
+    ),
+    (
         "api_key",
         "update_last_used",
         "bookkeeping of the last-use timestamp on every authentication; the \

@@ -89,6 +89,30 @@ pub trait ApplicationCredentialBackend: Send + Sync {
         id: &'a str,
     ) -> Result<(), ApplicationCredentialProviderError>;
 
+    /// Delete all application credentials and access rules owned by a user
+    /// (identity lifecycle cascade).
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `user_id`: The ID of the user.
+    async fn delete_application_credentials_for_user<'a>(
+        &self,
+        state: &ServiceState,
+        user_id: &'a str,
+    ) -> Result<(), ApplicationCredentialProviderError>;
+
+    /// Delete all application credentials scoped to a project (resource
+    /// lifecycle cascade). Access rules are owned by users and stay.
+    ///
+    /// # Parameters
+    /// - `state`: The current service state.
+    /// - `project_id`: The ID of the project.
+    async fn delete_application_credentials_for_project<'a>(
+        &self,
+        state: &ServiceState,
+        project_id: &'a str,
+    ) -> Result<(), ApplicationCredentialProviderError>;
+
     /// Get a user's access rule by its ID.
     ///
     /// # Parameters

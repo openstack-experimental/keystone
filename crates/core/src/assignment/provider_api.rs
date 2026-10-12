@@ -89,6 +89,57 @@ pub trait AssignmentApi: Send + Sync {
         params: Assignment,
     ) -> Result<(), AssignmentProviderError>;
 
+    /// Revoke every role assignment held by the user.
+    ///
+    /// Called when the user is deleted: each assignment goes through
+    /// [`AssignmentApi::revoke_grant`], so the audit and the revocation of
+    /// the tokens carrying the role are not skipped.
+    ///
+    /// # Parameters
+    /// - `ctx`: The execution context.
+    /// - `user_id`: The ID of the user.
+    async fn delete_assignments_for_user<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        user_id: &'a str,
+    ) -> Result<(), AssignmentProviderError>;
+
+    /// Revoke every role assignment on the project, for users and groups.
+    ///
+    /// Called when the project is deleted: each assignment goes through
+    /// [`AssignmentApi::revoke_grant`], so the audit event and the revocation
+    /// of the tokens carrying the role are not skipped.
+    ///
+    /// # Parameters
+    /// - `ctx`: The execution context.
+    /// - `project_id`: The ID of the project.
+    async fn delete_assignments_for_project<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        project_id: &'a str,
+    ) -> Result<(), AssignmentProviderError>;
+
+    /// Revoke every role assignment on the domain itself, for users and
+    /// groups.
+    ///
+    /// Called when the domain is deleted. Only the grants whose target is the
+    /// domain go; each one is revoked through [`AssignmentApi::revoke_grant`].
+    async fn delete_assignments_for_domain<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        domain_id: &'a str,
+    ) -> Result<(), AssignmentProviderError>;
+
+    /// Revoke every role assignment held by the group, on any target.
+    ///
+    /// Called when the group is deleted. Each one is revoked through
+    /// [`AssignmentApi::revoke_grant`].
+    async fn delete_assignments_for_group<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+        group_id: &'a str,
+    ) -> Result<(), AssignmentProviderError>;
+
     /// Rebuild the per-domain dispatch bundle — the global backend, the named
     /// `[assignment.backends.*]` instances and the fan-out set — from the
     /// current configuration and the stored `assignment/driver` bindings

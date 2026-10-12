@@ -20,8 +20,8 @@ use openstack_keystone_core::application_credential::ApplicationCredentialProvid
 use openstack_keystone_core::error::DbContextExt;
 
 use crate::entity::{
-    application_credential as db_application_credential,
-    prelude::ApplicationCredential as DbApplicationCredential,
+    access_rule as db_access_rule, application_credential as db_application_credential,
+    prelude::{AccessRule as DbAccessRule, ApplicationCredential as DbApplicationCredential},
 };
 
 pub async fn delete(
@@ -39,6 +39,45 @@ pub async fn delete(
         Err(ApplicationCredentialProviderError::ApplicationCredentialNotFound(id.to_string()))
     }
 }
+/// Delete all application credentials and access rules owned by a user
+/// (identity lifecycle cascade).
+///
+/// The credentials go first: an access rule still attached to one could not
+/// be removed. The role and access-rule association rows follow their
+/// credential through the foreign keys.
+pub async fn delete_for_user(
+    db: &DatabaseConnection,
+    user_id: &str,
+) -> Result<(), ApplicationCredentialProviderError> {
+    DbApplicationCredential::delete_many()
+        .filter(db_application_credential::Column::UserId.eq(user_id))
+        .exec(db)
+        .await
+        .context("deleting application credentials for user")?;
+    DbAccessRule::delete_many()
+        .filter(db_access_rule::Column::UserId.eq(user_id))
+        .exec(db)
+        .await
+        .context("deleting access rules for user")?;
+    Ok(())
+}
+
+/// Delete all application credentials scoped to a project (resource
+/// lifecycle cascade). The role and access-rule association rows follow their
+/// credential through the foreign keys; the access rules themselves belong to
+/// users and stay.
+pub async fn delete_for_project(
+    db: &DatabaseConnection,
+    project_id: &str,
+) -> Result<(), ApplicationCredentialProviderError> {
+    DbApplicationCredential::delete_many()
+        .filter(db_application_credential::Column::ProjectId.eq(project_id))
+        .exec(db)
+        .await
+        .context("deleting application credentials for project")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, Transaction};
@@ -81,5 +120,60 @@ mod tests {
             result,
             Err(ApplicationCredentialProviderError::ApplicationCredentialNotFound(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn test_delete_for_project() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results([MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 2,
+            }])
+            .into_connection();
+
+        delete_for_project(&db, "project_id").await.unwrap();
+
+        assert_eq!(
+            db.into_transaction_log(),
+            [Transaction::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"DELETE FROM "application_credential" WHERE "application_credential"."project_id" = $1"#,
+                ["project_id".into()]
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_for_user() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results([
+                MockExecResult {
+                    last_insert_id: 0,
+                    rows_affected: 2,
+                },
+                MockExecResult {
+                    last_insert_id: 0,
+                    rows_affected: 1,
+                },
+            ])
+            .into_connection();
+
+        delete_for_user(&db, "user_id").await.unwrap();
+
+        assert_eq!(
+            db.into_transaction_log(),
+            [
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"DELETE FROM "application_credential" WHERE "application_credential"."user_id" = $1"#,
+                    ["user_id".into()]
+                ),
+                Transaction::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"DELETE FROM "access_rule" WHERE "access_rule"."user_id" = $1"#,
+                    ["user_id".into()]
+                ),
+            ]
+        );
     }
 }
