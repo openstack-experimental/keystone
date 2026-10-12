@@ -245,7 +245,7 @@ impl TrustApi for TrustService {
         let created = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
             let trust_clone = trust.clone();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -295,7 +295,7 @@ impl TrustApi for TrustService {
     ) -> Result<(), TrustProviderError> {
         if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(

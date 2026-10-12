@@ -537,7 +537,7 @@ impl IdentityApi for IdentityService {
     ) -> Result<(), IdentityProviderError> {
         let backend_driver = self.membership_backend(ctx, user_id, group_id).await?;
         if let Some(vsc) = ctx.ctx() {
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -589,7 +589,7 @@ impl IdentityApi for IdentityService {
     ) -> Result<(), IdentityProviderError> {
         let backend_driver = self.membership_backend(ctx, user_id, group_id).await?;
         if let Some(vsc) = ctx.ctx() {
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -656,7 +656,7 @@ impl IdentityApi for IdentityService {
                 .iter()
                 .map(|(u, g)| (u.to_string(), g.to_string()))
                 .collect::<Vec<_>>();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -728,7 +728,7 @@ impl IdentityApi for IdentityService {
                 .map(|(u, g)| (u.to_string(), g.to_string()))
                 .collect::<Vec<_>>();
             let idp_id = idp_id.to_string();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -948,7 +948,7 @@ impl IdentityApi for IdentityService {
             let backend_driver = &backend_driver;
             let state = ctx.state();
             let res_clone = res.clone();
-            let dispatch = crate::audited_op! {
+            let dispatch = crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -1024,7 +1024,7 @@ impl IdentityApi for IdentityService {
         let user = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &backend_driver;
             let state = ctx.state();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -1075,7 +1075,7 @@ impl IdentityApi for IdentityService {
     ) -> Result<(), IdentityProviderError> {
         let (backend_driver, local_id) = self.resolve_public_id(ctx, group_id).await?;
         if let Some(vsc) = ctx.ctx() {
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -1120,53 +1120,29 @@ impl IdentityApi for IdentityService {
         user_id: &'a str,
     ) -> Result<(), IdentityProviderError> {
         let (backend_driver, local_id) = self.resolve_public_id(ctx, user_id).await?;
-        if let Some(vsc) = ctx.ctx() {
-            // Audited delete – fail‐closed on pre‐audit failure.
-            crate::audited_op! {
-                dispatcher: &ctx.state().event_dispatcher,
-                ctx: vsc,
-                event: Event::new(
-                    Operation::Delete,
-                    EventPayload::User { id: user_id.to_string() },
-                ),
-                operation: async {
-                    backend_driver.delete_user(ctx.state(), &local_id).await?;
-                    if self.caching {
-                        self.user_id_domain_id_cache
-                            .write()
-                            .await
-                            .remove(user_id);
-                    }
-                    ctx.state()
-                        .provider
-                        .get_credential_provider()
-                        .delete_credentials_for_user(ctx, user_id)
-                        .await?;
-                    Ok::<(), IdentityProviderError>(())
-                },
-                on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
-            }?;
-        } else {
-            // No validated context – perform operation and emit on perimeter.
-            backend_driver.delete_user(ctx.state(), &local_id).await?;
-            if self.caching {
-                self.user_id_domain_id_cache.write().await.remove(user_id);
-            }
-            ctx.state()
-                .provider
-                .get_credential_provider()
-                .delete_credentials_for_user(ctx, user_id)
-                .await?;
-            ctx.state()
-                .event_dispatcher
-                .emit(Event::new(
-                    Operation::Delete,
-                    EventPayload::User {
-                        id: user_id.to_string(),
-                    },
-                ))
-                .await;
-        }
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: Event::new(
+                Operation::Delete,
+                EventPayload::User { id: user_id.to_string() },
+            ),
+            operation: async {
+                backend_driver.delete_user(ctx.state(), &local_id).await?;
+                if self.caching {
+                    self.user_id_domain_id_cache
+                        .write()
+                        .await
+                        .remove(user_id);
+                }
+                ctx.state()
+                    .provider
+                    .get_credential_provider()
+                    .delete_credentials_for_user(ctx, user_id)
+                    .await?;
+                Ok::<(), IdentityProviderError>(())
+            },
+            on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
+        }?;
 
         if !Arc::ptr_eq(&backend_driver, &self.backend_driver) {
             self.forget_id_mapping(ctx, user_id).await?;
@@ -1488,7 +1464,7 @@ impl IdentityApi for IdentityService {
             let backend_driver = &backend_driver;
             let state = ctx.state();
             let group_id_clone = group_id.to_string();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -1539,7 +1515,7 @@ impl IdentityApi for IdentityService {
     ) -> Result<(), IdentityProviderError> {
         let backend_driver = self.membership_backend(ctx, user_id, group_id).await?;
         if let Some(vsc) = ctx.ctx() {
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -1591,7 +1567,7 @@ impl IdentityApi for IdentityService {
     ) -> Result<(), IdentityProviderError> {
         let backend_driver = self.membership_backend(ctx, user_id, group_id).await?;
         if let Some(vsc) = ctx.ctx() {
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -1644,7 +1620,7 @@ impl IdentityApi for IdentityService {
         if let Some(vsc) = ctx.ctx() {
             let group_ids_clone = group_ids_vec.clone();
             let user_id_str = user_id.to_string();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -1700,7 +1676,7 @@ impl IdentityApi for IdentityService {
             let group_ids_clone = group_ids_vec.clone();
             let user_id_str = user_id.to_string();
             let idp_id_str = idp_id.to_string();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -1753,7 +1729,7 @@ impl IdentityApi for IdentityService {
         if let Some(vsc) = ctx.ctx() {
             let group_ids_clone = group_ids_vec.clone();
             let user_id_str = user_id.to_string();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -1829,36 +1805,17 @@ impl IdentityApi for IdentityService {
         };
         let reported_mfa =
             matches!(&operation, Operation::Other(op) if op == MFA_ENABLED_OPERATION);
-        let mut user = if let Some(vsc) = ctx.ctx() {
-            let backend_driver = &backend_driver;
-            let state = ctx.state();
-            crate::audited_op! {
-                dispatcher: &ctx.state().event_dispatcher,
-                ctx: vsc,
-                event: Event::new(
-                    operation,
-                    EventPayload::User { id: user_id.to_string() },
-                ),
-                operation: async {
-                    backend_driver.update_user(state, &local_id, user).await
-                },
-                on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
-            }?
-        } else {
-            let user = backend_driver
-                .update_user(ctx.state(), &local_id, user)
-                .await?;
-            ctx.state()
-                .event_dispatcher
-                .emit(Event::new(
-                    operation,
-                    EventPayload::User {
-                        id: user_id.to_string(),
-                    },
-                ))
-                .await;
-            user
-        };
+        let mut user = crate::audited_if_ctx! {
+            ctx: ctx,
+            event: Event::new(
+                operation,
+                EventPayload::User { id: user_id.to_string() },
+            ),
+            operation: async {
+                backend_driver.update_user(ctx.state(), &local_id, user).await
+            },
+            on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
+        }?;
 
         if !Arc::ptr_eq(&backend_driver, &self.backend_driver) {
             // See `get_user`: restore the public id the caller asked for.
@@ -1899,38 +1856,19 @@ impl IdentityApi for IdentityService {
         let cfg = ctx.state().config_manager.config.read().await;
         cfg.security_compliance.validate_password(&new_password)?;
         let (backend_driver, local_id) = self.resolve_public_id(ctx, user_id).await?;
-        if let Some(vsc) = ctx.ctx() {
-            let backend_driver = &backend_driver;
-            let state = ctx.state();
-            let event_user_id = user_id.to_string();
-            let orig_pwd = original_password.clone();
-            let new_pwd = new_password.clone();
-            crate::audited_op! {
-                dispatcher: &ctx.state().event_dispatcher,
-                ctx: vsc,
-                event: Event::new(
-                    Operation::Other(PASSWORD_CHANGE_OPERATION.to_string()),
-                    EventPayload::User { id: event_user_id },
-                ),
-                operation: async {
-                    backend_driver.update_user_password(state, &local_id, orig_pwd, new_pwd).await
-                },
-                on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
-            }?;
-        } else {
-            backend_driver
-                .update_user_password(ctx.state(), &local_id, original_password, new_password)
-                .await?;
-            ctx.state()
-                .event_dispatcher
-                .emit(Event::new(
-                    Operation::Other(PASSWORD_CHANGE_OPERATION.to_string()),
-                    EventPayload::User {
-                        id: user_id.to_string(),
-                    },
-                ))
-                .await;
-        }
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: Event::new(
+                Operation::Other(PASSWORD_CHANGE_OPERATION.to_string()),
+                EventPayload::User { id: user_id.to_string() },
+            ),
+            operation: async {
+                backend_driver
+                    .update_user_password(ctx.state(), &local_id, original_password, new_password)
+                    .await
+            },
+            on_audit_error: |_: AuditDispatchError| IdentityProviderError::Driver("audit dispatch failed".into()),
+        }?;
         cache_remove(USER_CACHE_NS, user_id);
         Ok(())
     }
@@ -1958,7 +1896,7 @@ impl IdentityApi for IdentityService {
             let group_ids_clone = group_ids_vec.clone();
             let user_id_str = user_id.to_string();
             let idp_id_str = idp_id.to_string();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(

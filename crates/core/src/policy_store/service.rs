@@ -84,7 +84,7 @@ impl PolicyStoreApi for PolicyStoreService {
 
         let policy = if let Some(vsc) = exec.ctx() {
             let backend_driver = &self.backend_driver;
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &exec.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -133,7 +133,7 @@ impl PolicyStoreApi for PolicyStoreService {
         id: &'a str,
     ) -> Result<(), PolicyStoreProviderError> {
         if let Some(vsc) = exec.ctx() {
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &exec.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -220,7 +220,7 @@ impl PolicyStoreApi for PolicyStoreService {
         policy.validate()?;
         let updated = if let Some(vsc) = exec.ctx() {
             let backend_driver = &self.backend_driver;
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &exec.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(

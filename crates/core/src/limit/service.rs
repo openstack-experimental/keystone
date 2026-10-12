@@ -65,21 +65,11 @@ impl LimitService {
     where
         F: Future<Output = Result<T, LimitProviderError>> + Send + 'f,
     {
-        if let Some(vsc) = exec.ctx() {
-            crate::audited_op! {
-                dispatcher: &exec.state().event_dispatcher,
-                ctx: vsc,
-                event: Event::new(operation, payload),
-                operation: fut,
-                on_audit_error: |_: AuditDispatchError| LimitProviderError::Driver("audit dispatch failed".into()),
-            }
-        } else {
-            let res = fut.await?;
-            exec.state()
-                .event_dispatcher
-                .emit(Event::new(operation, payload))
-                .await;
-            Ok(res)
+        crate::audited_if_ctx! {
+            ctx: exec,
+            event: Event::new(operation, payload),
+            operation: fut,
+            on_audit_error: |_: AuditDispatchError| LimitProviderError::Driver("audit dispatch failed".into()),
         }
     }
 

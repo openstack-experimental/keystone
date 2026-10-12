@@ -64,7 +64,7 @@ impl ScimRealmApi for ScimRealmService {
         let provider_id = data.provider_id.clone();
         if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -121,7 +121,7 @@ impl ScimRealmApi for ScimRealmService {
         if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
             let data_clone = data.clone();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(

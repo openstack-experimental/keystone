@@ -70,7 +70,7 @@ impl CatalogApi for CatalogService {
     ) -> Result<(), CatalogProviderError> {
         if let Some(vsc) = exec.ctx() {
             let backend_driver = &self.backend_driver;
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &exec.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -122,7 +122,7 @@ impl CatalogApi for CatalogService {
     ) -> Result<(), CatalogProviderError> {
         if let Some(vsc) = exec.ctx() {
             let backend_driver = &self.backend_driver;
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &exec.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -219,7 +219,7 @@ impl CatalogApi for CatalogService {
         let endpoint = if let Some(vsc) = exec.ctx() {
             let backend_driver = &self.backend_driver;
             let endpoint_clone = endpoint.clone();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &exec.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -276,7 +276,7 @@ impl CatalogApi for CatalogService {
         let endpoint_group = if let Some(vsc) = exec.ctx() {
             let backend_driver = &self.backend_driver;
             let eg_clone = endpoint_group.clone();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &exec.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -326,7 +326,7 @@ impl CatalogApi for CatalogService {
         let region = if let Some(vsc) = exec.ctx() {
             let backend_driver = &self.backend_driver;
             let region_clone = region.clone();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &exec.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -380,7 +380,7 @@ impl CatalogApi for CatalogService {
             let backend_driver = &self.backend_driver;
             let service_clone = service.clone();
             let service_id = service_clone.id.clone().unwrap_or_default();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &exec.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -429,7 +429,7 @@ impl CatalogApi for CatalogService {
         id: &'a str,
     ) -> Result<(), CatalogProviderError> {
         if let Some(vsc) = exec.ctx() {
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &exec.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -474,7 +474,7 @@ impl CatalogApi for CatalogService {
         id: &'a str,
     ) -> Result<(), CatalogProviderError> {
         if let Some(vsc) = exec.ctx() {
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &exec.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -519,7 +519,7 @@ impl CatalogApi for CatalogService {
         id: &'a str,
     ) -> Result<(), CatalogProviderError> {
         if let Some(vsc) = exec.ctx() {
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &exec.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -562,7 +562,7 @@ impl CatalogApi for CatalogService {
         id: &'a str,
     ) -> Result<(), CatalogProviderError> {
         if let Some(vsc) = exec.ctx() {
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &exec.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -832,7 +832,7 @@ impl CatalogApi for CatalogService {
     ) -> Result<(), CatalogProviderError> {
         if let Some(vsc) = exec.ctx() {
             let backend_driver = &self.backend_driver;
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &exec.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -884,7 +884,7 @@ impl CatalogApi for CatalogService {
     ) -> Result<(), CatalogProviderError> {
         if let Some(vsc) = exec.ctx() {
             let backend_driver = &self.backend_driver;
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &exec.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -939,7 +939,7 @@ impl CatalogApi for CatalogService {
         let updated = if let Some(vsc) = exec.ctx() {
             let backend_driver = &self.backend_driver;
             let endpoint_clone = endpoint.clone();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &exec.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -989,7 +989,7 @@ impl CatalogApi for CatalogService {
         let updated = if let Some(vsc) = exec.ctx() {
             let backend_driver = &self.backend_driver;
             let eg_clone = endpoint_group.clone();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &exec.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -1038,7 +1038,7 @@ impl CatalogApi for CatalogService {
         let updated = if let Some(vsc) = exec.ctx() {
             let backend_driver = &self.backend_driver;
             let region_clone = region.clone();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &exec.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -1088,7 +1088,7 @@ impl CatalogApi for CatalogService {
         let updated = if let Some(vsc) = exec.ctx() {
             let backend_driver = &self.backend_driver;
             let service_clone = service.clone();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &exec.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(

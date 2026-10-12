@@ -749,7 +749,7 @@ impl MappingApi for MappingService {
         let created = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
             let ruleset_obj_clone = ruleset_obj.clone();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -798,7 +798,7 @@ impl MappingApi for MappingService {
         if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
             let mapping_id_str = mapping_id.to_string();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -889,7 +889,7 @@ impl MappingApi for MappingService {
         if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
             let user_id_str = user_id.to_string();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -1122,7 +1122,7 @@ impl MappingApi for MappingService {
         let updated = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
             let update_payload_clone = update_payload.clone();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -1207,7 +1207,7 @@ impl MappingApi for MappingService {
         let updated = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
             let data_clone = data.clone();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -1256,7 +1256,7 @@ impl MappingApi for MappingService {
     ) -> Result<VirtualUser, MappingProviderError> {
         let vu = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -1296,7 +1296,7 @@ impl MappingApi for MappingService {
     ) -> Result<VirtualUser, MappingProviderError> {
         let vu = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(

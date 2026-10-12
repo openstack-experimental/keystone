@@ -516,14 +516,56 @@ macro_rules! audited_op {
     }};
 }
 
-/// Run `$op` as a fail-closed audited operation when the call carries a
-/// security context, and as a plain operation followed by a best-effort
-/// event when it does not (internal callers such as janitors, hooks and
-/// token validation have no principal to attribute the action to).
+/// [`audited_op!`] followed, once the operation has succeeded, by a
+/// best-effort [`EventDispatcher::emit`] of the same event to the
+/// [`ProviderHooks`] subscribers.
+///
+/// Use it on the security-context arm of a provider operation whose
+/// no-context arm emits the event itself, so both arms notify the hooks.
+/// Takes the arguments of [`audited_op!`] (without `reason:`).
+#[macro_export]
+macro_rules! audited_notify_op {
+    (
+        dispatcher: $dispatcher:expr,
+        ctx:        $ctx:expr,
+        event:      $event:expr,
+        operation:  $op:expr,
+        on_audit_error: $on_audit_error:expr $(,)?
+    ) => {{
+        let __dispatcher = $dispatcher;
+        let __event = $event;
+        let __result = $crate::audited_op! {
+            dispatcher: __dispatcher,
+            ctx: $ctx,
+            event: __event.clone(),
+            operation: $op,
+            on_audit_error: $on_audit_error,
+        };
+        if __result.is_ok() {
+            __dispatcher.emit(__event).await;
+        }
+        __result
+    }};
+}
+
+/// Run `$op` as a state-changing provider operation: fail-closed audited when
+/// the call carries a security context, plain when it does not (internal
+/// callers such as janitors, hooks and token validation have no principal to
+/// attribute the action to).
+///
+/// In both cases, once the operation has succeeded, the [`ProviderHooks`]
+/// subscribers are notified (best-effort, [`EventDispatcher::emit`]). The
+/// audit path ([`audited_op!`]) never does that, so an authenticated API call
+/// would otherwise skip every hook that cleans up after the resource.
 ///
 /// `$ctx` is a `&ExecutionContext`; `$op` is a future (bind the operation to a
 /// local with `let op = async { .. };` so it is written once). The failure
 /// reason is the static variant name of the error (see [`AuditReason`]).
+///
+/// `hook_events:` (optional) is an iterable of the [`Event`]s sent to the
+/// hooks when it differs from the audited `event`, e.g. an update that is
+/// audited as one `Update` but must reach the hooks as `Disable` and
+/// `password_change`. It defaults to the audited event.
 #[macro_export]
 macro_rules! audited_if_ctx {
     (
@@ -532,8 +574,24 @@ macro_rules! audited_if_ctx {
         operation: $op:expr,
         on_audit_error: $on_audit_error:expr $(,)?
     ) => {{
+        let __event = $event;
+        $crate::audited_if_ctx! {
+            ctx: $ctx,
+            event: __event.clone(),
+            hook_events: [__event],
+            operation: $op,
+            on_audit_error: $on_audit_error,
+        }
+    }};
+    (
+        ctx: $ctx:expr,
+        event: $event:expr,
+        hook_events: $hook_events:expr,
+        operation: $op:expr,
+        on_audit_error: $on_audit_error:expr $(,)?
+    ) => {{
         let __exec = $ctx;
-        match __exec.ctx() {
+        let __result = match __exec.ctx() {
             Some(__vsc) => {
                 $crate::audited_op! {
                     dispatcher: &__exec.state().event_dispatcher,
@@ -543,15 +601,14 @@ macro_rules! audited_if_ctx {
                     on_audit_error: $on_audit_error,
                 }
             }
-            None => {
-                let __event = $event;
-                let __result = $op.await;
-                if __result.is_ok() {
-                    __exec.state().event_dispatcher.emit(__event).await;
-                }
-                __result
+            None => $op.await,
+        };
+        if __result.is_ok() {
+            for __hook_event in $hook_events {
+                __exec.state().event_dispatcher.emit(__hook_event).await;
             }
         }
+        __result
     }};
 }
 
@@ -1145,6 +1202,118 @@ mod tests {
         // Both hooks should have been called
         assert_eq!(count1.load(Ordering::SeqCst), 1);
         assert_eq!(count2.load(Ordering::SeqCst), 1);
+    }
+
+    /// Counts the events a `ProviderHooks` subscriber receives.
+    struct EventCount(Arc<AtomicUsize>);
+
+    #[async_trait]
+    impl ProviderHooks for EventCount {
+        async fn on_event(&self, _event: &Event) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    async fn settle() {
+        // `emit()` spawns the hook dispatch; give it a beat to run.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    /// With and without a security context a successful operation reaches the
+    /// `ProviderHooks`; an `audited_op!` alone never does.
+    #[tokio::test]
+    async fn audited_if_ctx_notifies_provider_hooks_with_and_without_context() {
+        use crate::auth::ExecutionContext;
+        use crate::tests::get_mocked_state;
+
+        let state = get_mocked_state(None, None).await;
+        let count = Arc::new(AtomicUsize::new(0));
+        state
+            .event_dispatcher
+            .subscribe(Arc::new(EventCount(Arc::clone(&count))))
+            .await;
+        let vsc = make_vsc();
+
+        for ctx in [
+            ExecutionContext::from_auth(&state, &vsc),
+            ExecutionContext::internal(&state),
+        ] {
+            let res: Result<(), &str> = async {
+                crate::audited_if_ctx! {
+                    ctx: &ctx,
+                    event: make_event(),
+                    operation: async { Ok::<(), &str>(()) },
+                    on_audit_error: |_| "audit error",
+                }
+            }
+            .await;
+            assert!(res.is_ok());
+        }
+        settle().await;
+        assert_eq!(count.load(Ordering::SeqCst), 2);
+    }
+
+    /// A failed operation does not notify the hooks, whatever the context.
+    #[tokio::test]
+    async fn audited_if_ctx_does_not_notify_provider_hooks_on_failure() {
+        use crate::auth::ExecutionContext;
+        use crate::tests::get_mocked_state;
+
+        let state = get_mocked_state(None, None).await;
+        let count = Arc::new(AtomicUsize::new(0));
+        state
+            .event_dispatcher
+            .subscribe(Arc::new(EventCount(Arc::clone(&count))))
+            .await;
+        let vsc = make_vsc();
+
+        for ctx in [
+            ExecutionContext::from_auth(&state, &vsc),
+            ExecutionContext::internal(&state),
+        ] {
+            let res: Result<(), &str> = async {
+                crate::audited_if_ctx! {
+                    ctx: &ctx,
+                    event: make_event(),
+                    operation: async { Err::<(), &str>("boom") },
+                    on_audit_error: |_| "audit error",
+                }
+            }
+            .await;
+            assert!(res.is_err());
+        }
+        settle().await;
+        assert_eq!(count.load(Ordering::SeqCst), 0);
+    }
+
+    /// `hook_events` replaces the audited event as what the hooks receive.
+    #[tokio::test]
+    async fn audited_if_ctx_sends_the_hook_events_to_provider_hooks() {
+        use crate::auth::ExecutionContext;
+        use crate::tests::get_mocked_state;
+
+        let state = get_mocked_state(None, None).await;
+        let count = Arc::new(AtomicUsize::new(0));
+        state
+            .event_dispatcher
+            .subscribe(Arc::new(EventCount(Arc::clone(&count))))
+            .await;
+        let vsc = make_vsc();
+        let ctx = ExecutionContext::from_auth(&state, &vsc);
+
+        let res: Result<(), &str> = async {
+            crate::audited_if_ctx! {
+                ctx: &ctx,
+                event: make_event(),
+                hook_events: [make_event(), make_event(), make_event()],
+                operation: async { Ok::<(), &str>(()) },
+                on_audit_error: |_| "audit error",
+            }
+        }
+        .await;
+        assert!(res.is_ok());
+        settle().await;
+        assert_eq!(count.load(Ordering::SeqCst), 3);
     }
 
     /// Audit hook counting its calls and optionally failing.

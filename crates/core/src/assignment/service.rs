@@ -604,7 +604,7 @@ impl AssignmentApi for AssignmentService {
             let grant_role_id = grant.role_id.clone();
             let grant_actor_id = grant.actor_id.clone();
             let grant_target_id = grant.target_id.clone();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -813,7 +813,7 @@ impl AssignmentApi for AssignmentService {
 
         if let Some(vsc) = ctx.ctx() {
             let backend_driver = &backend_driver;
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(

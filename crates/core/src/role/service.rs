@@ -117,7 +117,7 @@ impl RoleApi for RoleService {
         let role = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
             let state = ctx.state();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -169,7 +169,7 @@ impl RoleApi for RoleService {
             let implied = implied_role_id.to_string();
             let backend_driver = &self.backend_driver;
             let state = ctx.state();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -246,7 +246,7 @@ impl RoleApi for RoleService {
             let backend_driver = &self.backend_driver;
             let state = ctx.state();
             let role_id_clone = role_id.to_string();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -292,7 +292,7 @@ impl RoleApi for RoleService {
     ) -> Result<(), RoleProviderError> {
         self.check_role_mutable(ctx, id, None).await?;
         if let Some(vsc) = ctx.ctx() {
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -338,7 +338,7 @@ impl RoleApi for RoleService {
         if let Some(vsc) = ctx.ctx() {
             let prior = prior_role_id.to_string();
             let implied = implied_role_id.to_string();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(

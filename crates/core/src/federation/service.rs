@@ -91,7 +91,7 @@ impl FederationApi for FederationService {
         let auth_state_result = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
             let auth_state_clone = auth_state.clone();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -149,7 +149,7 @@ impl FederationApi for FederationService {
         let provider = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
             let mod_idp_clone = mod_idp.clone();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -195,7 +195,7 @@ impl FederationApi for FederationService {
         id: &'a str,
     ) -> Result<(), FederationProviderError> {
         if let Some(vsc) = ctx.ctx() {
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -238,7 +238,7 @@ impl FederationApi for FederationService {
         id: &'a str,
     ) -> Result<(), FederationProviderError> {
         if let Some(vsc) = ctx.ctx() {
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -345,7 +345,7 @@ impl FederationApi for FederationService {
         let provider = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
             let idp_clone = idp.clone();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(

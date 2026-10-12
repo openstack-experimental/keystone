@@ -173,7 +173,7 @@ impl CredentialApi for CredentialService {
         let credential = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
             let rec_clone = rec.clone();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -326,7 +326,7 @@ impl CredentialApi for CredentialService {
         let credential = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
             let rec_clone = rec.clone();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -364,7 +364,7 @@ impl CredentialApi for CredentialService {
             .unwrap_or_default();
 
         if let Some(vsc) = ctx.ctx() {
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(

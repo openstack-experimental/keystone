@@ -624,7 +624,7 @@ impl TokenApi for TokenService {
         let result = if let Some(vsc) = ctx.ctx() {
             let tr_backend_driver = &self.tr_backend_driver;
             let restriction_clone = restriction.clone();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -693,7 +693,7 @@ impl TokenApi for TokenService {
         let updated = if let Some(vsc) = ctx.ctx() {
             let tr_backend_driver = &self.tr_backend_driver;
             let restriction_clone = restriction.clone();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -737,7 +737,7 @@ impl TokenApi for TokenService {
         id: &'a str,
     ) -> Result<(), TokenProviderError> {
         if let Some(vsc) = ctx.ctx() {
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(

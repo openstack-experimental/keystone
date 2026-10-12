@@ -111,7 +111,7 @@ impl K8sAuthApi for K8sAuthService {
         let result = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
             let new_clone = new.clone();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -156,7 +156,7 @@ impl K8sAuthApi for K8sAuthService {
         id: &'a str,
     ) -> Result<(), K8sAuthProviderError> {
         if let Some(vsc) = ctx.ctx() {
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -242,7 +242,7 @@ impl K8sAuthApi for K8sAuthService {
         let result = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
             let data_clone = data.clone();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(

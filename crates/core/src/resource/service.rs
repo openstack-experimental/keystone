@@ -226,58 +226,17 @@ impl ResourceApi for ResourceService {
             did
         };
         new_domain.validate()?;
-        let domain = if let Some(vsc) = ctx.ctx() {
-            let backend_driver = &self.backend_driver;
-            let state = ctx.state();
-            let new_domain_clone = new_domain.clone();
-            let domain = crate::audited_op! {
-                dispatcher: &ctx.state().event_dispatcher,
-                ctx: vsc,
-                event: Event::new(
-                    Operation::Create,
-                    EventPayload::Domain { id: domain_id.clone() },
-                ),
-                operation: async {
-                    backend_driver.create_domain(state, new_domain_clone).await
-                },
-                on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
-            }?;
-
-            // `audited_op!` only dispatches to `AuditHook` subscribers
-            // (ADR 0023's fail-closed audit path) -- it never notifies
-            // `ProviderHooks` subscribers (e.g. `Oauth2KeyHook`, which
-            // provisions OAuth2 signing keys per ADR 0026 §3). Emit here too
-            // so real, authenticated domain creation actually fires them,
-            // matching the internal/no-context branch below.
-            ctx.state()
-                .event_dispatcher
-                .emit(Event::new(
-                    Operation::Create,
-                    EventPayload::Domain {
-                        id: domain.id.clone(),
-                    },
-                ))
-                .await;
-
-            domain
-        } else {
-            let domain = self
-                .backend_driver
-                .create_domain(ctx.state(), new_domain)
-                .await?;
-
-            ctx.state()
-                .event_dispatcher
-                .emit(Event::new(
-                    Operation::Create,
-                    EventPayload::Domain {
-                        id: domain.id.clone(),
-                    },
-                ))
-                .await;
-
-            domain
-        };
+        let domain = crate::audited_if_ctx! {
+            ctx: ctx,
+            event: Event::new(
+                Operation::Create,
+                EventPayload::Domain { id: domain_id.clone() },
+            ),
+            operation: async {
+                self.backend_driver.create_domain(ctx.state(), new_domain).await
+            },
+            on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
+        }?;
 
         Ok(domain)
     }
@@ -310,40 +269,17 @@ impl ResourceApi for ResourceService {
                 .await?,
         );
         new_project.validate()?;
-        let project = if let Some(vsc) = ctx.ctx() {
-            let backend_driver = &self.backend_driver;
-            let state = ctx.state();
-            let new_project_clone = new_project.clone();
-            crate::audited_op! {
-                dispatcher: &ctx.state().event_dispatcher,
-                ctx: vsc,
-                event: Event::new(
-                    Operation::Create,
-                    EventPayload::Project { id: project_id.clone() },
-                ),
-                operation: async {
-                    backend_driver.create_project(state, new_project_clone).await
-                },
-                on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
-            }?
-        } else {
-            let project = self
-                .backend_driver
-                .create_project(ctx.state(), new_project)
-                .await?;
-
-            ctx.state()
-                .event_dispatcher
-                .emit(Event::new(
-                    Operation::Create,
-                    EventPayload::Project {
-                        id: project.id.clone(),
-                    },
-                ))
-                .await;
-
-            project
-        };
+        let project = crate::audited_if_ctx! {
+            ctx: ctx,
+            event: Event::new(
+                Operation::Create,
+                EventPayload::Project { id: project_id.clone() },
+            ),
+            operation: async {
+                self.backend_driver.create_project(ctx.state(), new_project).await
+            },
+            on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
+        }?;
 
         Ok(project)
     }
@@ -375,38 +311,17 @@ impl ResourceApi for ResourceService {
         } else {
             Operation::Update
         };
-        let domain = if let Some(vsc) = ctx.ctx() {
-            let backend_driver = &self.backend_driver;
-            let state = ctx.state();
-            let domain_id_clone = domain_id.to_string();
-            crate::audited_op! {
-                dispatcher: &ctx.state().event_dispatcher,
-                ctx: vsc,
-                event: Event::new(
-                    operation,
-                    EventPayload::Domain { id: domain_id_clone },
-                ),
-                operation: async {
-                    backend_driver.update_domain(state, domain_id, domain).await
-                },
-                on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
-            }?
-        } else {
-            let domain = self
-                .backend_driver
-                .update_domain(ctx.state(), domain_id, domain)
-                .await?;
-            ctx.state()
-                .event_dispatcher
-                .emit(Event::new(
-                    operation,
-                    EventPayload::Domain {
-                        id: domain.id.clone(),
-                    },
-                ))
-                .await;
-            domain
-        };
+        let domain = crate::audited_if_ctx! {
+            ctx: ctx,
+            event: Event::new(
+                operation,
+                EventPayload::Domain { id: domain_id.to_string() },
+            ),
+            operation: async {
+                self.backend_driver.update_domain(ctx.state(), domain_id, domain).await
+            },
+            on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
+        }?;
 
         cache_set(DOMAIN_CACHE_NS, domain_id, domain.clone());
         Ok(domain)
@@ -432,38 +347,17 @@ impl ResourceApi for ResourceService {
         project.validate()?;
         self.check_project_mutable(ctx, project_id, project.options.as_ref())
             .await?;
-        let project = if let Some(vsc) = ctx.ctx() {
-            let backend_driver = &self.backend_driver;
-            let state = ctx.state();
-            let project_id_clone = project_id.to_string();
-            crate::audited_op! {
-                dispatcher: &ctx.state().event_dispatcher,
-                ctx: vsc,
-                event: Event::new(
-                    Operation::Update,
-                    EventPayload::Project { id: project_id_clone },
-                ),
-                operation: async {
-                    backend_driver.update_project(state, project_id, project).await
-                },
-                on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
-            }?
-        } else {
-            let project = self
-                .backend_driver
-                .update_project(ctx.state(), project_id, project)
-                .await?;
-            ctx.state()
-                .event_dispatcher
-                .emit(Event::new(
-                    Operation::Update,
-                    EventPayload::Project {
-                        id: project.id.clone(),
-                    },
-                ))
-                .await;
-            project
-        };
+        let project = crate::audited_if_ctx! {
+            ctx: ctx,
+            event: Event::new(
+                Operation::Update,
+                EventPayload::Project { id: project_id.to_string() },
+            ),
+            operation: async {
+                self.backend_driver.update_project(ctx.state(), project_id, project).await
+            },
+            on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
+        }?;
 
         cache_set(PROJECT_CACHE_NS, project_id, project.clone());
         Ok(project)
@@ -485,53 +379,23 @@ impl ResourceApi for ResourceService {
         id: &'a str,
     ) -> Result<(), ResourceProviderError> {
         self.check_domain_mutable(ctx, id, None).await?;
-        if let Some(vsc) = ctx.ctx() {
-            crate::audited_op! {
-                dispatcher: &ctx.state().event_dispatcher,
-                ctx: vsc,
-                event: Event::new(
-                    Operation::Delete,
-                    EventPayload::Domain { id: id.to_string() },
-                ),
-                operation: async {
-                    self.backend_driver.delete_domain(ctx.state(), id).await?;
-                    ctx.state()
-                        .provider
-                        .get_idmapping_provider()
-                        .delete_mappings_for_domain(ctx, id)
-                        .await?;
-                    Ok::<(), ResourceProviderError>(())
-                },
-                on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
-            }?;
-
-            // `audited_op!` only reaches the `AuditHook` subscribers; the
-            // `ProviderHooks` (e.g. `LimitHook`) need their own event, as
-            // in the internal branch below.
-            ctx.state()
-                .event_dispatcher
-                .emit(Event::new(
-                    Operation::Delete,
-                    EventPayload::Domain { id: id.to_string() },
-                ))
-                .await;
-        } else {
-            self.backend_driver.delete_domain(ctx.state(), id).await?;
-
-            ctx.state()
-                .provider
-                .get_idmapping_provider()
-                .delete_mappings_for_domain(ctx, id)
-                .await?;
-
-            ctx.state()
-                .event_dispatcher
-                .emit(Event::new(
-                    Operation::Delete,
-                    EventPayload::Domain { id: id.to_string() },
-                ))
-                .await;
-        }
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: Event::new(
+                Operation::Delete,
+                EventPayload::Domain { id: id.to_string() },
+            ),
+            operation: async {
+                self.backend_driver.delete_domain(ctx.state(), id).await?;
+                ctx.state()
+                    .provider
+                    .get_idmapping_provider()
+                    .delete_mappings_for_domain(ctx, id)
+                    .await?;
+                Ok::<(), ResourceProviderError>(())
+            },
+            on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
+        }?;
 
         cache_remove(DOMAIN_CACHE_NS, id);
         Ok(())
@@ -553,53 +417,23 @@ impl ResourceApi for ResourceService {
         id: &'a str,
     ) -> Result<(), ResourceProviderError> {
         self.check_project_mutable(ctx, id, None).await?;
-        if let Some(vsc) = ctx.ctx() {
-            crate::audited_op! {
-                dispatcher: &ctx.state().event_dispatcher,
-                ctx: vsc,
-                event: Event::new(
-                    Operation::Delete,
-                    EventPayload::Project { id: id.to_string() },
-                ),
-                operation: async {
-                    self.backend_driver.delete_project(ctx.state(), id).await?;
-                    ctx.state()
-                        .provider
-                        .get_credential_provider()
-                        .delete_credentials_for_project(ctx, id)
-                        .await?;
-                    Ok::<(), ResourceProviderError>(())
-                },
-                on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
-            }?;
-
-            // `audited_op!` only reaches the `AuditHook` subscribers; the
-            // `ProviderHooks` (e.g. `LimitHook`) need their own event, as
-            // in the internal branch below.
-            ctx.state()
-                .event_dispatcher
-                .emit(Event::new(
-                    Operation::Delete,
-                    EventPayload::Project { id: id.to_string() },
-                ))
-                .await;
-        } else {
-            self.backend_driver.delete_project(ctx.state(), id).await?;
-
-            ctx.state()
-                .provider
-                .get_credential_provider()
-                .delete_credentials_for_project(ctx, id)
-                .await?;
-
-            ctx.state()
-                .event_dispatcher
-                .emit(Event::new(
-                    Operation::Delete,
-                    EventPayload::Project { id: id.to_string() },
-                ))
-                .await;
-        }
+        crate::audited_if_ctx! {
+            ctx: ctx,
+            event: Event::new(
+                Operation::Delete,
+                EventPayload::Project { id: id.to_string() },
+            ),
+            operation: async {
+                self.backend_driver.delete_project(ctx.state(), id).await?;
+                ctx.state()
+                    .provider
+                    .get_credential_provider()
+                    .delete_credentials_for_project(ctx, id)
+                    .await?;
+                Ok::<(), ResourceProviderError>(())
+            },
+            on_audit_error: |_: AuditDispatchError| ResourceProviderError::Driver("audit dispatch failed".into()),
+        }?;
 
         cache_remove(PROJECT_CACHE_NS, id);
         cache_remove(PROJECT_PARENTS_CACHE_NS, id);

@@ -46,7 +46,7 @@ const MUTATING_PREFIXES: &[&str] = &[
 ];
 
 /// Markers that make a method audited.
-const AUDIT_MARKERS: &[&str] = &["audited_op!", "audited_if_ctx!"];
+const AUDIT_MARKERS: &[&str] = &["audited_op!", "audited_notify_op!", "audited_if_ctx!"];
 
 /// `(provider directory, method, reason)` of the mutating methods that are
 /// deliberately not audited. Keep reasons specific: this list is the review
@@ -342,6 +342,46 @@ fn every_mutating_provider_method_is_audited_or_allow_listed() {
         "mutating provider methods without an audited_op!/audited_if_ctx! call \
          site (wrap them, or add an ALLOW_LIST entry with a reason):\n  {}",
         unaudited.join("\n  ")
+    );
+}
+
+/// `audited_op!` only reaches the fail-closed `AuditHook`s, never the
+/// `ProviderHooks`, so a provider service that calls it directly silently
+/// skips every hook that cleans up after the resource on authenticated API
+/// calls. Services use `audited_if_ctx!` or `audited_notify_op!`, which
+/// notify the hooks once the operation has succeeded.
+#[test]
+fn services_notify_provider_hooks_on_audited_operations() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut bare = Vec::new();
+    for dir in fs::read_dir(&root)
+        .expect("read src")
+        .filter_map(Result::ok)
+        .filter(|e| e.path().is_dir())
+    {
+        let provider = dir.file_name().to_string_lossy().to_string();
+        let Ok(source) = fs::read_to_string(dir.path().join("service.rs")) else {
+            continue;
+        };
+        let production = source
+            .rfind("#[cfg(test)]")
+            .map_or(source.as_str(), |idx| &source[..idx]);
+        for (name, body) in methods(production) {
+            let uncommented = body
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if uncommented.contains("audited_op!") {
+                bare.push(format!("{provider}::{name}"));
+            }
+        }
+    }
+    assert!(
+        bare.is_empty(),
+        "provider service methods calling `audited_op!` directly never notify \
+         the ProviderHooks; use `audited_if_ctx!` or `audited_notify_op!`:\n  {}",
+        bare.join("\n  ")
     );
 }
 

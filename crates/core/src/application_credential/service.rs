@@ -297,7 +297,7 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
         let access_rule = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
             let rule_clone = rule.clone();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -421,7 +421,7 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
         let response = if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
             let new_rec_clone = new_rec.clone();
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -477,7 +477,7 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
         id: &'a str,
     ) -> Result<(), ApplicationCredentialProviderError> {
         if let Some(vsc) = ctx.ctx() {
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
@@ -534,7 +534,7 @@ impl ApplicationCredentialApi for ApplicationCredentialService {
     ) -> Result<(), ApplicationCredentialProviderError> {
         if let Some(vsc) = ctx.ctx() {
             let backend_driver = &self.backend_driver;
-            crate::audited_op! {
+            crate::audited_notify_op! {
                 dispatcher: &ctx.state().event_dispatcher,
                 ctx: vsc,
                 event: Event::new(
