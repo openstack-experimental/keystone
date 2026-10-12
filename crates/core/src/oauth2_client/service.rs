@@ -52,6 +52,7 @@ pub(crate) const RESERVED_CLAIM_NAMES: &[&str] = &[
     "amr",
     "at_hash",
     "c_hash",
+    "sid",
     "azp",
     "jti",
     "client_id",
@@ -205,6 +206,24 @@ fn validate_https_uri(field: &str, uri: &str) -> Result<(), Oauth2ClientProvider
     Ok(())
 }
 
+/// Validate a logout endpoint registration: the URI (if any) must be a
+/// plain `https://` URL and `session_required` needs an endpoint.
+fn validate_logout_endpoint(
+    field: &str,
+    uri: Option<&str>,
+    session_required: bool,
+) -> Result<(), Oauth2ClientProviderError> {
+    let uri = uri.filter(|u| !u.is_empty());
+    if let Some(uri) = uri {
+        validate_https_uri(field, uri)?;
+    } else if session_required {
+        return Err(Oauth2ClientProviderError::Validation(format!(
+            "{field}_session_required requires {field}"
+        )));
+    }
+    Ok(())
+}
+
 /// Validate the user-facing registration metadata. `name` is `None` on an
 /// update that leaves it unchanged.
 fn validate_display(
@@ -304,9 +323,16 @@ impl Oauth2ClientApi for Oauth2ClientService {
         validate_redirect_uris(&data.redirect_uris, confidential)?;
         validate_require_pkce(data.require_pkce, confidential)?;
         validate_post_logout_redirect_uris(&data.post_logout_redirect_uris, confidential)?;
-        if let Some(uri) = &data.backchannel_logout_uri {
-            validate_https_uri("backchannel_logout_uri", uri)?;
-        }
+        validate_logout_endpoint(
+            "backchannel_logout_uri",
+            data.backchannel_logout_uri.as_deref(),
+            data.backchannel_logout_session_required,
+        )?;
+        validate_logout_endpoint(
+            "frontchannel_logout_uri",
+            data.frontchannel_logout_uri.as_deref(),
+            data.frontchannel_logout_session_required,
+        )?;
         validate_claims_template(&data.claims_template)?;
         validate_display(
             Some(&data.name),
@@ -473,13 +499,24 @@ impl Oauth2ClientApi for Oauth2ClientService {
         if let Some(redirect_uris) = &data.redirect_uris {
             validate_redirect_uris(redirect_uris, confidential)?;
         }
-        if let Some(uri) = data
-            .backchannel_logout_uri
-            .as_deref()
-            .filter(|u| !u.is_empty())
-        {
-            validate_https_uri("backchannel_logout_uri", uri)?;
-        }
+        // Validate the effective post-update state (`None` = unchanged,
+        // empty string = clear).
+        validate_logout_endpoint(
+            "backchannel_logout_uri",
+            data.backchannel_logout_uri
+                .as_deref()
+                .or(current.backchannel_logout_uri.as_deref()),
+            data.backchannel_logout_session_required
+                .unwrap_or(current.backchannel_logout_session_required),
+        )?;
+        validate_logout_endpoint(
+            "frontchannel_logout_uri",
+            data.frontchannel_logout_uri
+                .as_deref()
+                .or(current.frontchannel_logout_uri.as_deref()),
+            data.frontchannel_logout_session_required
+                .unwrap_or(current.frontchannel_logout_session_required),
+        )?;
         if let Some(uris) = &data.post_logout_redirect_uris {
             validate_post_logout_redirect_uris(uris, confidential)?;
         }
@@ -562,6 +599,9 @@ mod tests {
         OAuth2ClientResourceCreate {
             post_logout_redirect_uris: Default::default(),
             backchannel_logout_uri: None,
+            backchannel_logout_session_required: false,
+            frontchannel_logout_uri: None,
+            frontchannel_logout_session_required: false,
             client_id: String::new(),
             provider_id: "provider-1".into(),
             domain_id: "domain-1".into(),
@@ -1065,6 +1105,9 @@ mod tests {
             contacts: data.contacts,
             post_logout_redirect_uris: data.post_logout_redirect_uris,
             backchannel_logout_uri: data.backchannel_logout_uri,
+            backchannel_logout_session_required: data.backchannel_logout_session_required,
+            frontchannel_logout_uri: data.frontchannel_logout_uri,
+            frontchannel_logout_session_required: data.frontchannel_logout_session_required,
         }
     }
 

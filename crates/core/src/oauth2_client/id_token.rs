@@ -90,6 +90,8 @@ pub struct IdTokenParams {
     pub amr: Vec<String>,
     /// `at_hash` of the co-issued access token.
     pub at_hash: Option<String>,
+    /// `sid` of the SSO session the grant was issued under.
+    pub sid: Option<String>,
 }
 
 fn is_forbidden_char(c: char) -> bool {
@@ -253,6 +255,7 @@ pub async fn build_id_token_claims(
         nonce: params.nonce,
         amr: params.amr,
         at_hash: params.at_hash,
+        sid: params.sid,
         token_use: "id".to_string(),
         extra_claims,
     })

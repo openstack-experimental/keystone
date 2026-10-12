@@ -114,6 +114,9 @@ mod tests {
         provider_types::OAuth2ClientResource {
             post_logout_redirect_uris: Default::default(),
             backchannel_logout_uri: None,
+            backchannel_logout_session_required: false,
+            frontchannel_logout_uri: None,
+            frontchannel_logout_session_required: false,
             client_id: "client-1".into(),
             provider_id: "provider-1".into(),
             domain_id: "domain_id".into(),

@@ -124,6 +124,16 @@ pub struct OAuth2Client {
     /// `https://` OIDC Back-Channel Logout endpoint.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backchannel_logout_uri: Option<String>,
+
+    /// Whether logout tokens must carry the `sid` claim.
+    pub backchannel_logout_session_required: bool,
+
+    /// `https://` OIDC Front-Channel Logout endpoint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frontchannel_logout_uri: Option<String>,
+
+    /// Whether front-channel logout requests must carry `iss` and `sid`.
+    pub frontchannel_logout_session_required: bool,
 }
 
 /// OAuth2 client creation payload.
@@ -208,6 +218,22 @@ pub struct OAuth2ClientCreate {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "validate", validate(length(max = 2048)))]
     pub backchannel_logout_uri: Option<String>,
+
+    /// Require the `sid` claim in logout tokens; needs
+    /// `backchannel_logout_uri`.
+    #[serde(default)]
+    pub backchannel_logout_session_required: bool,
+
+    /// `https://` OIDC Front-Channel Logout endpoint; rendered in a hidden
+    /// iframe when the user logs out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "validate", validate(length(max = 2048)))]
+    pub frontchannel_logout_uri: Option<String>,
+
+    /// Pass `iss` and `sid` on front-channel logout requests; needs
+    /// `frontchannel_logout_uri`.
+    #[serde(default)]
+    pub frontchannel_logout_session_required: bool,
 }
 
 /// OAuth2 client creation request wrapper.
@@ -305,6 +331,19 @@ pub struct OAuth2ClientUpdate {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "validate", validate(length(max = 2048)))]
     pub backchannel_logout_uri: Option<String>,
+
+    /// New `backchannel_logout_session_required` value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backchannel_logout_session_required: Option<bool>,
+
+    /// New Front-Channel Logout endpoint; an empty string clears it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "validate", validate(length(max = 2048)))]
+    pub frontchannel_logout_uri: Option<String>,
+
+    /// New `frontchannel_logout_session_required` value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frontchannel_logout_session_required: Option<bool>,
 }
 
 /// OAuth2 client update request wrapper.

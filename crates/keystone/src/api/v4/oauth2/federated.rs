@@ -581,15 +581,20 @@ pub(super) async fn authorize_federated_callback(
     );
 
     let client = fetch_client(&state, &session.client_id).await;
+    let established = super::sso::establish(&state, &headers, &jar, &session).await;
     let response = after_authentication(
         &state,
         &domain_id,
         &session,
         client.as_ref(),
+        established.as_ref().map(|e| e.sso_id.as_str()),
         &correlation_id.0,
     )
     .await;
-    Ok(super::sso::attach(&state, &headers, &jar, &session, response).await)
+    Ok(super::sso::with_cookie(
+        established.map(|e| e.cookie),
+        response,
+    ))
 }
 
 #[cfg(test)]
@@ -641,6 +646,9 @@ mod tests {
         client_types::OAuth2ClientResource {
             post_logout_redirect_uris: Default::default(),
             backchannel_logout_uri: None,
+            backchannel_logout_session_required: false,
+            frontchannel_logout_uri: None,
+            frontchannel_logout_session_required: false,
             client_id: "client-1".into(),
             provider_id: "provider-1".into(),
             domain_id: "domain-1".into(),

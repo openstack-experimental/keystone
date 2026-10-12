@@ -69,6 +69,9 @@ impl From<api::OAuth2ClientCreateRequest> for core::OAuth2ClientResourceCreate {
             contacts: c.contacts,
             post_logout_redirect_uris: c.post_logout_redirect_uris,
             backchannel_logout_uri: c.backchannel_logout_uri,
+            backchannel_logout_session_required: c.backchannel_logout_session_required,
+            frontchannel_logout_uri: c.frontchannel_logout_uri,
+            frontchannel_logout_session_required: c.frontchannel_logout_session_required,
         }
     }
 }
@@ -99,6 +102,9 @@ impl From<api::OAuth2ClientUpdate> for core::OAuth2ClientResourceUpdate {
             contacts: value.contacts,
             post_logout_redirect_uris: value.post_logout_redirect_uris,
             backchannel_logout_uri: value.backchannel_logout_uri,
+            backchannel_logout_session_required: value.backchannel_logout_session_required,
+            frontchannel_logout_uri: value.frontchannel_logout_uri,
+            frontchannel_logout_session_required: value.frontchannel_logout_session_required,
         }
     }
 }
@@ -130,6 +136,9 @@ impl From<core::OAuth2ClientResource> for api::OAuth2Client {
             contacts: value.contacts,
             post_logout_redirect_uris: value.post_logout_redirect_uris,
             backchannel_logout_uri: value.backchannel_logout_uri,
+            backchannel_logout_session_required: value.backchannel_logout_session_required,
+            frontchannel_logout_uri: value.frontchannel_logout_uri,
+            frontchannel_logout_session_required: value.frontchannel_logout_session_required,
         }
     }
 }

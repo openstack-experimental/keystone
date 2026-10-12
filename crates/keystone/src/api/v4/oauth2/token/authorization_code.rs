@@ -24,7 +24,7 @@ use governor::clock::Clock as _;
 use openstack_keystone_core::oauth2_client::{
     IdTokenParams, TemplateScope, build_id_token_claims, pkce,
 };
-use openstack_keystone_core::oauth2_session::IssueRefreshTokenRequest;
+use openstack_keystone_core::oauth2_session::{IssueRefreshTokenRequest, derive_sid};
 use openstack_keystone_core_types::oauth2_client::{GrantType, OidcAccessTokenClaims};
 
 use crate::audit::{Oauth2Grant, build_initiator_from_user_id, emit_oauth2_grant_event};
@@ -191,6 +191,10 @@ pub(super) async fn handle_authorization_code_grant(
                 nonce: record.nonce.clone(),
                 amr: record.amr.clone(),
                 at_hash: Some(compute_at_hash(&access_token)),
+                sid: record
+                    .sso_id
+                    .as_deref()
+                    .map(|sso_id| derive_sid(sso_id, &client_id)),
             },
             &record.scope,
             &TemplateScope::default(),
@@ -261,6 +265,7 @@ mod tests {
 
     fn sample_authz_code(scope: Vec<String>) -> AuthorizationCode {
         AuthorizationCode {
+            sso_id: None,
             upstream: None,
             code: "code-1".to_string(),
             domain_id: "domain-1".to_string(),

@@ -387,9 +387,21 @@ impl Oauth2SessionApi for Oauth2SessionService {
         &self,
         state: &ServiceState,
         user_id: &str,
-    ) -> Result<Vec<String>, Oauth2SessionProviderError> {
+    ) -> Result<Vec<RpSession>, Oauth2SessionProviderError> {
         self.backend_driver
             .delete_rp_sessions_by_user(state, user_id)
+            .await
+    }
+
+    #[tracing::instrument(name = "provider.oauth2_session.delete_rp_sessions_by_sso", level = "debug", skip_all, fields(user_id = %user_id))]
+    async fn delete_rp_sessions_by_sso(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+        sso_id: &str,
+    ) -> Result<Vec<RpSession>, Oauth2SessionProviderError> {
+        self.backend_driver
+            .delete_rp_sessions_by_sso(state, user_id, sso_id)
             .await
     }
 
@@ -656,6 +668,7 @@ impl Oauth2SessionApi for Oauth2SessionService {
                     auth_time: req.auth_time,
                     amr: req.amr,
                     upstream: req.upstream,
+                    sso_id: req.sso_id,
                     created_at,
                     expires_at,
                 },
@@ -1695,6 +1708,7 @@ mod tests {
         mock.expect_take_authorization_code().returning(|_, _| {
             Ok(Some(AuthorizationCode {
                 upstream: None,
+                sso_id: None,
                 code: "code-1".to_string(),
                 domain_id: "d1".to_string(),
                 client_id: "c1".to_string(),

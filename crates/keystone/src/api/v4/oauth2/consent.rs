@@ -184,6 +184,9 @@ mod tests {
             contacts: vec![],
             post_logout_redirect_uris: vec![],
             backchannel_logout_uri: None,
+            backchannel_logout_session_required: false,
+            frontchannel_logout_uri: None,
+            frontchannel_logout_session_required: false,
         }
     }
 

@@ -134,6 +134,7 @@ async fn test_authorization_code_flow_and_refresh_reuse_collapses_family() -> Re
             &state,
             IssueAuthorizationCodeRequest {
                 upstream: None,
+                sso_id: None,
                 domain_id: domain.id.clone(),
                 client_id: session.client_id.clone(),
                 user_id: uid.clone(),
@@ -426,6 +427,7 @@ async fn test_id_token_claims_include_profile_email_and_template() -> Result<()>
             nonce: Some("nonce-1".to_string()),
             amr: vec!["pwd".to_string()],
             at_hash: None,
+            sid: None,
         },
         &[
             "openid".to_string(),

@@ -262,6 +262,8 @@ pub(super) async fn handle_device_code_grant(
                     nonce: record.nonce.clone(),
                     amr: record.amr.clone(),
                     at_hash: Some(compute_at_hash(&access_token)),
+                    // Device grants have no SSO session, hence no `sid`.
+                    sid: None,
                 },
                 &record.scope,
                 &TemplateScope::default(),

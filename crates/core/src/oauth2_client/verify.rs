@@ -838,6 +838,7 @@ mod tests {
             nonce: None,
             amr: vec!["pwd".to_string()],
             at_hash: None,
+            sid: None,
             token_use: "id".to_string(),
             extra_claims: Default::default(),
         };
@@ -1249,6 +1250,7 @@ mod tests {
             nonce: None,
             amr: vec!["pwd".to_string()],
             at_hash: None,
+            sid: None,
             token_use: token_use.to_string(),
             extra_claims: Default::default(),
         }

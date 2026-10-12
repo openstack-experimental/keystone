@@ -700,6 +700,9 @@ mod tests {
         let mut client = OAuth2ClientResource {
             post_logout_redirect_uris: Default::default(),
             backchannel_logout_uri: None,
+            backchannel_logout_session_required: false,
+            frontchannel_logout_uri: None,
+            frontchannel_logout_session_required: false,
             client_id: "cid".into(),
             provider_id: "prov".into(),
             domain_id: "d".into(),

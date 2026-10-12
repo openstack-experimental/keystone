@@ -264,13 +264,18 @@ pub(super) async fn authorize_mfa(
     );
 
     let client = fetch_client(&state, &session.client_id).await;
+    let established = super::sso::establish(&state, &headers, &jar, &session).await;
     let response = after_authentication(
         &state,
         &domain_id,
         &session,
         client.as_ref(),
+        established.as_ref().map(|e| e.sso_id.as_str()),
         &correlation_id.0,
     )
     .await;
-    Ok(super::sso::attach(&state, &headers, &jar, &session, response).await)
+    Ok(super::sso::with_cookie(
+        established.map(|e| e.cookie),
+        response,
+    ))
 }

@@ -42,7 +42,7 @@ use openstack_keystone_core_types::oauth2_session::RefreshTokenRevocationReason;
 use openstack_keystone_key_repository::asymmetric::SigningAlgorithm;
 
 use super::authorize::{cookie_secure, redirect_with_params};
-use super::backchannel::{ReqwestLogoutTransport, RetryPolicy, notify_user_logout};
+use super::backchannel::{EndedSessions, ReqwestLogoutTransport, RetryPolicy, notify_logout};
 use super::html::{error_page, logout_page, too_many_requests};
 use super::renderer::LogoutCtx;
 use super::sso::{SSO_COOKIE_NAME, clear_cookie};
@@ -399,34 +399,23 @@ async fn logout_inner(
         return error_page(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
     }
 
-    // Tell the relying parties once the user has no browser session left.
-    // The user may be signed in from several browsers; without a `sid` the
-    // logout token ends all of the user's sessions at the relying party, so
-    // it is only sent when this was the last one.
+    // Tell the relying parties that were issued under this session; the
+    // user's other browser sessions keep theirs. The logout token carries
+    // the `sid` of the session.
     if let Some(sso) = &sso {
-        match provider
-            .list_sso_sessions_by_user(state, domain_id, &sso.user_id)
-            .await
-        {
-            Ok(remaining) if remaining.is_empty() => {
-                let base_url = base_url(state, headers).await;
-                // Delivery runs in detached tasks; only the lookups are awaited.
-                drop(
-                    notify_user_logout(
-                        state,
-                        Arc::new(ReqwestLogoutTransport),
-                        RetryPolicy::default(),
-                        &base_url,
-                        &sso.user_id,
-                    )
-                    .await,
-                );
-            }
-            Ok(_) => {}
-            Err(e) => {
-                tracing::warn!(error = %e, "oauth2 logout: remaining sessions unknown, no back-channel logout");
-            }
-        }
+        let base_url = base_url(state, headers).await;
+        // Delivery runs in detached tasks; only the lookups are awaited.
+        drop(
+            notify_logout(
+                state,
+                Arc::new(ReqwestLogoutTransport),
+                RetryPolicy::default(),
+                &base_url,
+                &sso.user_id,
+                EndedSessions::Sso(&sso.sso_id),
+            )
+            .await,
+        );
     }
 
     emit_oauth2_session_event(
@@ -466,7 +455,9 @@ mod tests {
 
     use openstack_keystone_config::Config;
     use openstack_keystone_core_types::oauth2_client::{GrantType, OAuth2ClientResource};
-    use openstack_keystone_core_types::oauth2_session::{RefreshTokenRevocationReason, SsoSession};
+    use openstack_keystone_core_types::oauth2_session::{
+        RefreshTokenRevocationReason, RpSession, SsoSession,
+    };
 
     use super::super::openapi_router;
     use crate::api::tests::get_mocked_state_with_config;
@@ -499,6 +490,9 @@ mod tests {
             contacts: vec![],
             post_logout_redirect_uris: vec!["https://rp.example.com/bye".into()],
             backchannel_logout_uri: None,
+            backchannel_logout_session_required: false,
+            frontchannel_logout_uri: None,
+            frontchannel_logout_session_required: false,
         }
     }
 
@@ -561,14 +555,10 @@ mod tests {
             .expect_delete_sso_session()
             .times(delete_times)
             .returning(|_, _| Ok(()));
-        // No other browser session and no relying party with a
-        // back-channel endpoint by default.
+        // No relying party with a back-channel endpoint by default.
         sessions
-            .expect_list_sso_sessions_by_user()
+            .expect_delete_rp_sessions_by_sso()
             .returning(|_, _, _| Ok(Vec::new()));
-        sessions
-            .expect_delete_rp_sessions_by_user()
-            .returning(|_, _| Ok(Vec::new()));
         sessions
     }
 
@@ -689,7 +679,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_last_session_logout_looks_up_relying_parties_and_clears_them() {
+    async fn test_logout_looks_up_relying_parties_of_the_session_and_clears_them() {
         let mut sessions = MockOauth2SessionProvider::default();
         sessions
             .expect_get_sso_session()
@@ -697,35 +687,18 @@ mod tests {
         sessions
             .expect_delete_sso_session()
             .returning(|_, _| Ok(()));
+        // Only the relying parties of the ended session, whatever other
+        // browser sessions the user has.
         sessions
-            .expect_list_sso_sessions_by_user()
-            .returning(|_, _, _| Ok(Vec::new()));
-        sessions
-            .expect_delete_rp_sessions_by_user()
+            .expect_delete_rp_sessions_by_sso()
             .times(1)
-            .withf(|_, user_id| user_id == "user-1")
-            .returning(|_, _| Ok(vec!["client-1".to_string()]));
-        let response = router(sessions)
-            .await
-            .oneshot(post("client_id=client-1"))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-    }
-
-    #[tokio::test]
-    async fn test_logout_keeps_relying_parties_while_another_session_exists() {
-        let mut sessions = MockOauth2SessionProvider::default();
-        sessions
-            .expect_get_sso_session()
-            .returning(|_, _| Ok(Some(sso("domain-1"))));
-        sessions
-            .expect_delete_sso_session()
-            .returning(|_, _| Ok(()));
-        sessions
-            .expect_list_sso_sessions_by_user()
-            .returning(|_, _, _| Ok(vec![sso("domain-1")]));
-        // Another browser stays signed in: nobody is told to log out.
+            .withf(|_, user_id, sso_id| user_id == "user-1" && sso_id == "sso-1")
+            .returning(|_, _, _| {
+                Ok(vec![RpSession {
+                    client_id: "client-1".to_string(),
+                    sso_id: Some("sso-1".to_string()),
+                }])
+            });
         sessions.expect_delete_rp_sessions_by_user().never();
         let response = router(sessions)
             .await

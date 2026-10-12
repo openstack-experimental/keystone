@@ -37,3 +37,31 @@ pub use provider_api::{
     RefreshTokenRedemption, StartDeviceAuthorizationRequest, StartPreAuthSessionRequest,
 };
 pub use service::Oauth2SessionService;
+
+/// The OIDC `sid` of an SSO session as seen by one relying party.
+///
+/// A hash of the (secret, cookie-valued) `sso_id` and the `client_id`:
+/// stable for the lifetime of the session, different per relying party so
+/// two RPs cannot correlate users by it, and not reversible to the cookie.
+pub fn derive_sid(sso_id: &str, client_id: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(b"keystone-oauth2-sid\0");
+    hasher.update(sso_id.as_bytes());
+    hasher.update([0]);
+    hasher.update(client_id.as_bytes());
+    data_encoding::BASE64URL_NOPAD.encode(&hasher.finalize())
+}
+
+#[cfg(test)]
+mod sid_tests {
+    use super::derive_sid;
+
+    #[test]
+    fn test_derive_sid_is_stable_and_scoped() {
+        assert_eq!(derive_sid("sso-1", "rp-1"), derive_sid("sso-1", "rp-1"));
+        assert_ne!(derive_sid("sso-1", "rp-1"), derive_sid("sso-1", "rp-2"));
+        assert_ne!(derive_sid("sso-1", "rp-1"), derive_sid("sso-2", "rp-1"));
+        assert!(!derive_sid("sso-1", "rp-1").contains("sso-1"));
+    }
+}

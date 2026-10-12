@@ -17,7 +17,7 @@ use async_trait::async_trait;
 
 use openstack_keystone_core_types::oauth2_session::{
     AuthorizationCode, Consent, DeviceCodeGrant, PreAuthSession, RefreshToken,
-    RefreshTokenRevocationReason, SsoSession, UpstreamLogin, UpstreamLoginCompletion,
+    RefreshTokenRevocationReason, RpSession, SsoSession, UpstreamLogin, UpstreamLoginCompletion,
 };
 
 use crate::keystone::ServiceState;
@@ -74,6 +74,9 @@ pub struct IssueAuthorizationCodeRequest {
     pub amr: Vec<String>,
     /// Upstream login the session came from (federated sign-in only).
     pub upstream: Option<UpstreamLogin>,
+    /// The SSO session the code is issued under; basis of the `sid`
+    /// claim.
+    pub sso_id: Option<String>,
 }
 
 /// Input to [`Oauth2SessionApi::issue_refresh_token`] (family root) --
@@ -278,7 +281,16 @@ pub trait Oauth2SessionApi: Send + Sync {
         &self,
         state: &ServiceState,
         user_id: &str,
-    ) -> Result<Vec<String>, Oauth2SessionProviderError>;
+    ) -> Result<Vec<RpSession>, Oauth2SessionProviderError>;
+
+    /// Forget the relying parties issued under one SSO session and return
+    /// the ones removed: the caller notifies exactly these.
+    async fn delete_rp_sessions_by_sso(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+        sso_id: &str,
+    ) -> Result<Vec<RpSession>, Oauth2SessionProviderError>;
 
     /// End every SSO session of the user (user disabled, deleted, password
     /// changed); returns how many.

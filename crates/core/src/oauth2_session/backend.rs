@@ -98,7 +98,17 @@ pub trait Oauth2SessionBackend: Send + Sync {
         &self,
         state: &ServiceState,
         user_id: &str,
-    ) -> Result<Vec<String>, Oauth2SessionProviderError>;
+    ) -> Result<Vec<RpSession>, Oauth2SessionProviderError>;
+
+    /// Forget the relying parties issued under one SSO session and return
+    /// the ones removed. Used when only that session ends (logout, expiry,
+    /// eviction); the user's other sessions keep their relying parties.
+    async fn delete_rp_sessions_by_sso(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+        sso_id: &str,
+    ) -> Result<Vec<RpSession>, Oauth2SessionProviderError>;
 
     /// Delete every SSO session of `user_id`; returns how many.
     async fn delete_sso_sessions_by_user(

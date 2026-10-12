@@ -58,6 +58,12 @@ pub struct IdTokenClaims {
     /// access-token substitution attacks at the RP. Omitted when no
     /// `access_token` is issued alongside it.
     pub at_hash: Option<String>,
+    /// Identifier of the SSO session as seen by this relying party (OIDC
+    /// Front/Back-Channel Logout `sid`); equals the `sid` of the logout
+    /// token sent when that session ends. Omitted for grants without an
+    /// SSO session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sid: Option<String>,
     /// Fixed `"id"` (OIDC Core §3.1.3.4). Downstream services reject this
     /// token as authorization.
     pub token_use: String,
@@ -432,6 +438,7 @@ mod tests {
             nonce: Some("abc".to_string()),
             amr: vec!["pwd".to_string()],
             at_hash: None,
+            sid: None,
             token_use: "id".to_string(),
             extra_claims,
         };

@@ -122,6 +122,9 @@ impl RaftOauth2ClientBackend {
             contacts: data.contacts,
             post_logout_redirect_uris: data.post_logout_redirect_uris,
             backchannel_logout_uri: data.backchannel_logout_uri,
+            backchannel_logout_session_required: data.backchannel_logout_session_required,
+            frontchannel_logout_uri: data.frontchannel_logout_uri,
+            frontchannel_logout_session_required: data.frontchannel_logout_session_required,
         };
         let primary_key = self.get_resource_key_name(&obj.domain_id, &obj.provider_id);
         let index_key = self.get_client_id_idx_key_name(&obj.client_id);
@@ -528,6 +531,9 @@ mod tests {
         OAuth2ClientResourceCreate {
             post_logout_redirect_uris: Default::default(),
             backchannel_logout_uri: None,
+            backchannel_logout_session_required: false,
+            frontchannel_logout_uri: None,
+            frontchannel_logout_session_required: false,
             client_id: client_id.to_string(),
             provider_id: provider_id.to_string(),
             domain_id: domain_id.to_string(),

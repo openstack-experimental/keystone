@@ -101,8 +101,25 @@ const SSO_IDX_PREFIX: &str = "oauth2:sso_idx:v1:";
 /// Index of the clients that were issued an authorization code for a user:
 /// the relying parties that may hold a session for them (back-channel
 /// logout targets). Ids never contain `:`.
-fn rp_idx_key(user_id: &str, client_id: &str) -> String {
-    format!("{}{client_id}", rp_idx_prefix(user_id))
+fn rp_idx_key(user_id: &str, sso_id: Option<&str>, client_id: &str) -> String {
+    format!(
+        "{}{}:{client_id}",
+        rp_idx_prefix(user_id),
+        sso_id.unwrap_or(RP_IDX_NO_SSO)
+    )
+}
+
+/// Placeholder in the `rp_idx` key for grants without an SSO session
+/// (device flow); cannot collide with a base64url session id.
+const RP_IDX_NO_SSO: &str = "~";
+
+/// Split the suffix of an `rp_idx` key (`<sso>:<client>`).
+fn parse_rp_idx_suffix(suffix: &str) -> Option<RpSession> {
+    let (sso, client) = suffix.split_once(':')?;
+    Some(RpSession {
+        client_id: client.to_string(),
+        sso_id: (sso != RP_IDX_NO_SSO).then(|| sso.to_string()),
+    })
 }
 
 fn rp_idx_prefix(user_id: &str) -> String {
@@ -542,11 +559,12 @@ impl RaftOauth2SessionBackend {
         Ok(sessions)
     }
 
-    async fn list_rp_client_ids_by_user_impl(
+    /// Every `(sso, client)` registration of the user.
+    async fn list_rp_sessions_by_user_impl(
         &self,
         storage: &dyn StorageApi,
         user_id: &str,
-    ) -> Result<Vec<String>, Oauth2SessionProviderError> {
+    ) -> Result<Vec<RpSession>, Oauth2SessionProviderError> {
         let prefix = rp_idx_prefix(user_id);
         let keys = storage
             .prefix_index(prefix.as_bytes())
@@ -554,29 +572,71 @@ impl RaftOauth2SessionBackend {
             .map_err(store_err)?;
         Ok(keys
             .iter()
-            .filter_map(|key| key.strip_prefix(&prefix).map(str::to_string))
+            .filter_map(|key| key.strip_prefix(&prefix).and_then(parse_rp_idx_suffix))
             .collect())
+    }
+
+    async fn list_rp_client_ids_by_user_impl(
+        &self,
+        storage: &dyn StorageApi,
+        user_id: &str,
+    ) -> Result<Vec<String>, Oauth2SessionProviderError> {
+        let mut ids: Vec<String> = self
+            .list_rp_sessions_by_user_impl(storage, user_id)
+            .await?
+            .into_iter()
+            .map(|rp| rp.client_id)
+            .collect();
+        ids.sort();
+        ids.dedup();
+        Ok(ids)
+    }
+
+    /// Remove exactly the listed registrations: an entry added after the
+    /// listing is not touched and is returned by the next call.
+    async fn remove_rp_sessions(
+        &self,
+        storage: &dyn StorageApi,
+        user_id: &str,
+        sessions: &[RpSession],
+    ) -> Result<(), Oauth2SessionProviderError> {
+        if sessions.is_empty() {
+            return Ok(());
+        }
+        let mutations: Vec<_> = sessions
+            .iter()
+            .map(|rp| {
+                Mutation::remove_index(rp_idx_key(user_id, rp.sso_id.as_deref(), &rp.client_id))
+            })
+            .collect();
+        storage.transaction(mutations).await.map_err(store_err)?;
+        Ok(())
     }
 
     async fn delete_rp_sessions_by_user_impl(
         &self,
         storage: &dyn StorageApi,
         user_id: &str,
-    ) -> Result<Vec<String>, Oauth2SessionProviderError> {
-        let clients = self
-            .list_rp_client_ids_by_user_impl(storage, user_id)
-            .await?;
-        if clients.is_empty() {
-            return Ok(clients);
-        }
-        // Remove exactly what was listed: an entry added after the listing
-        // is not touched and is returned by the next call.
-        let mutations: Vec<_> = clients
-            .iter()
-            .map(|client_id| Mutation::remove_index(rp_idx_key(user_id, client_id)))
+    ) -> Result<Vec<RpSession>, Oauth2SessionProviderError> {
+        let sessions = self.list_rp_sessions_by_user_impl(storage, user_id).await?;
+        self.remove_rp_sessions(storage, user_id, &sessions).await?;
+        Ok(sessions)
+    }
+
+    async fn delete_rp_sessions_by_sso_impl(
+        &self,
+        storage: &dyn StorageApi,
+        user_id: &str,
+        sso_id: &str,
+    ) -> Result<Vec<RpSession>, Oauth2SessionProviderError> {
+        let sessions: Vec<RpSession> = self
+            .list_rp_sessions_by_user_impl(storage, user_id)
+            .await?
+            .into_iter()
+            .filter(|rp| rp.sso_id.as_deref() == Some(sso_id))
             .collect();
-        storage.transaction(mutations).await.map_err(store_err)?;
-        Ok(clients)
+        self.remove_rp_sessions(storage, user_id, &sessions).await?;
+        Ok(sessions)
     }
 
     async fn delete_sso_session_impl(
@@ -789,6 +849,7 @@ impl RaftOauth2SessionBackend {
             created_at: data.created_at,
             expires_at: data.expires_at,
             upstream: data.upstream,
+            sso_id: data.sso_id,
         };
         let mutations = vec![
             Mutation::set(
@@ -800,7 +861,11 @@ impl RaftOauth2SessionBackend {
             )
             .map_err(store_err)?,
             Mutation::set_index(expiry_idx_key(data.expires_at, "code", &data.code)),
-            Mutation::set_index(rp_idx_key(&record.user_id, &record.client_id)),
+            Mutation::set_index(rp_idx_key(
+                &record.user_id,
+                record.sso_id.as_deref(),
+                &record.client_id,
+            )),
         ];
         storage.transaction(mutations).await.map_err(store_err)?;
         Ok(record)
@@ -1414,7 +1479,7 @@ impl RaftOauth2SessionBackend {
                         None,
                     )
                     .map_err(store_err)?,
-                    Mutation::set_index(rp_idx_key(user_id, &record.client_id)),
+                    Mutation::set_index(rp_idx_key(user_id, None, &record.client_id)),
                 ];
                 storage.transaction(mutations).await.map_err(store_err)?;
             }
@@ -1714,8 +1779,19 @@ impl Oauth2SessionBackend for RaftOauth2SessionBackend {
         &self,
         state: &ServiceState,
         user_id: &str,
-    ) -> Result<Vec<String>, Oauth2SessionProviderError> {
+    ) -> Result<Vec<RpSession>, Oauth2SessionProviderError> {
         self.delete_rp_sessions_by_user_impl(self.storage(state)?, user_id)
+            .await
+    }
+
+    #[tracing::instrument(name = "driver.raft.oauth2_session.delete_rp_sessions_by_sso", level = "debug", skip_all, fields(user_id = %user_id))]
+    async fn delete_rp_sessions_by_sso(
+        &self,
+        state: &ServiceState,
+        user_id: &str,
+        sso_id: &str,
+    ) -> Result<Vec<RpSession>, Oauth2SessionProviderError> {
+        self.delete_rp_sessions_by_sso_impl(self.storage(state)?, user_id, sso_id)
             .await
     }
 
@@ -2585,7 +2661,61 @@ mod tests {
             amr: vec!["pwd".to_string()],
             created_at: 1000,
             expires_at: 1060,
+            sso_id: None,
         }
+    }
+
+    #[tokio::test]
+    async fn test_rp_sessions_are_scoped_to_their_sso_session() {
+        let backend = RaftOauth2SessionBackend::default();
+        let storage = MockStorage::default();
+        for (code, client, sso) in [
+            ("c1", "client-1", "sso-a"),
+            ("c2", "client-2", "sso-a"),
+            ("c3", "client-1", "sso-b"),
+        ] {
+            backend
+                .create_authorization_code_impl(
+                    &storage,
+                    AuthorizationCodeCreate {
+                        code: code.into(),
+                        client_id: client.into(),
+                        sso_id: Some(sso.into()),
+                        ..sample_code_create()
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        let mut ended = backend
+            .delete_rp_sessions_by_sso_impl(&storage, "user-1", "sso-a")
+            .await
+            .unwrap();
+        ended.sort();
+        assert_eq!(
+            ended,
+            vec![
+                RpSession {
+                    client_id: "client-1".into(),
+                    sso_id: Some("sso-a".into())
+                },
+                RpSession {
+                    client_id: "client-2".into(),
+                    sso_id: Some("sso-a".into())
+                }
+            ]
+        );
+        // The other session keeps its relying party.
+        assert_eq!(
+            backend
+                .list_rp_sessions_by_user_impl(&storage, "user-1")
+                .await
+                .unwrap(),
+            vec![RpSession {
+                client_id: "client-1".into(),
+                sso_id: Some("sso-b".into())
+            }]
+        );
     }
 
     #[tokio::test]
@@ -2623,7 +2753,19 @@ mod tests {
             .await
             .unwrap();
         removed.sort();
-        assert_eq!(removed, vec!["client-1", "client-2"]);
+        assert_eq!(
+            removed,
+            vec![
+                RpSession {
+                    client_id: "client-1".into(),
+                    sso_id: None
+                },
+                RpSession {
+                    client_id: "client-2".into(),
+                    sso_id: None
+                }
+            ]
+        );
         // A second logout has nothing left to notify.
         assert!(
             backend

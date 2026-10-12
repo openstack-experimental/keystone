@@ -262,6 +262,10 @@ pub struct AuthorizationCode {
     /// Upstream login this originated from (federated sign-in only).
     #[serde(default)]
     pub upstream: Option<UpstreamLogin>,
+    /// The SSO session the code was issued under; basis of the `sid`
+    /// claim. Trailing `#[serde(default)]` field.
+    #[serde(default)]
+    pub sso_id: Option<String>,
 }
 
 /// Input to create a new [`AuthorizationCode`].
@@ -296,6 +300,20 @@ pub struct AuthorizationCodeCreate {
     /// Upstream login this originated from (federated sign-in only).
     #[serde(default)]
     pub upstream: Option<UpstreamLogin>,
+    /// The SSO session the code is issued under.
+    #[serde(default)]
+    pub sso_id: Option<String>,
+}
+
+/// A relying party that may hold a session for a user: a client that was
+/// issued an authorization code (or device grant) for them.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RpSession {
+    /// The relying party.
+    pub client_id: String,
+    /// The SSO session it was issued under; `None` for grants without a
+    /// browser session (device flow).
+    pub sso_id: Option<String>,
 }
 
 /// A single node in a `refresh_token` rotation family tree (ADR 0026 §2,

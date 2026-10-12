@@ -72,9 +72,14 @@ pub struct OpenIdConfiguration {
     /// Whether clients can register a `backchannel_logout_uri` (OIDC
     /// Back-Channel Logout 1.0).
     pub backchannel_logout_supported: bool,
-    /// Whether logout tokens carry a `sid`. They do not: the id token has no
-    /// session id, so a logout applies to all of the user's sessions.
+    /// Whether logout tokens carry a `sid` that matches the `sid` of the
+    /// id token.
     pub backchannel_logout_session_supported: bool,
+    /// Whether clients can register a `frontchannel_logout_uri` (OIDC
+    /// Front-Channel Logout 1.0).
+    pub frontchannel_logout_supported: bool,
+    /// Whether the front-channel logout request carries `iss` and `sid`.
+    pub frontchannel_logout_session_supported: bool,
     /// Supported `prompt` values (OIDC Core §3.1.2.1).
     pub prompt_values_supported: Vec<String>,
     /// Whether the `request` parameter is supported.
@@ -146,7 +151,9 @@ impl Default for OpenIdConfiguration {
             jwks_uri: String::new(),
             end_session_endpoint: String::new(),
             backchannel_logout_supported: true,
-            backchannel_logout_session_supported: false,
+            backchannel_logout_session_supported: true,
+            frontchannel_logout_supported: true,
+            frontchannel_logout_session_supported: true,
             prompt_values_supported: strings(&["none", "login", "consent", "select_account"]),
             request_parameter_supported: false,
             request_uri_parameter_supported: false,
@@ -400,7 +407,9 @@ mod tests {
         );
         assert_eq!(doc["claim_types_supported"], serde_json::json!(["normal"]));
         assert_eq!(doc["backchannel_logout_supported"], true);
-        assert_eq!(doc["backchannel_logout_session_supported"], false);
+        assert_eq!(doc["backchannel_logout_session_supported"], true);
+        assert_eq!(doc["frontchannel_logout_supported"], true);
+        assert_eq!(doc["frontchannel_logout_session_supported"], true);
         assert_eq!(doc["request_parameter_supported"], false);
         assert_eq!(doc["request_uri_parameter_supported"], false);
         let claims = doc["claims_supported"].as_array().unwrap();

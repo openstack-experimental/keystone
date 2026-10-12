@@ -590,6 +590,7 @@ pub(super) async fn authorize(
             &domain_id,
             &session,
             Some(&client),
+            Some(&sso.sso_id),
             &correlation_id.0,
         )
         .await;
@@ -857,15 +858,20 @@ pub(super) async fn authorize_login(
         None,
     );
 
+    let established = super::sso::establish(&state, &headers, &jar, &session).await;
     let response = after_authentication(
         &state,
         &domain_id,
         &session,
         client.as_ref(),
+        established.as_ref().map(|e| e.sso_id.as_str()),
         &correlation_id.0,
     )
     .await;
-    Ok(super::sso::attach(&state, &headers, &jar, &session, response).await)
+    Ok(super::sso::with_cookie(
+        established.map(|e| e.cookie),
+        response,
+    ))
 }
 
 /// Everything after a completed login (password and any second factor):
@@ -875,6 +881,7 @@ pub(super) async fn after_authentication(
     domain_id: &str,
     session: &PreAuthSession,
     client: Option<&OAuth2ClientResource>,
+    sso_id: Option<&str>,
     correlation_id: &str,
 ) -> Response {
     // `pre_authorized` consent-skip check (ADR 0026 §7.C's invariant applied
@@ -882,7 +889,7 @@ pub(super) async fn after_authentication(
     // `allowed_scopes`, enforced at CRUD time, so skipping consent here
     // cannot silently grant OpenStack authorization).
     if client.is_some_and(|c| c.pre_authorized) {
-        return finish_consent(state, domain_id, session, true, correlation_id).await;
+        return finish_consent(state, domain_id, session, true, sso_id, correlation_id).await;
     }
 
     // A remembered consent that covers the request replaces the page, unless
@@ -891,7 +898,7 @@ pub(super) async fn after_authentication(
         && let (Some(c), Some(user_id)) = (client, session.user_id.as_deref())
         && super::consent::is_covered(state, domain_id, user_id, &c.client_id, &session.scope).await
     {
-        return finish_consent(state, domain_id, session, true, correlation_id).await;
+        return finish_consent(state, domain_id, session, true, sso_id, correlation_id).await;
     }
 
     let client_ui = view_of(client, &session.client_id);
@@ -996,7 +1003,20 @@ pub(super) async fn authorize_consent(
         )
         .await;
     }
-    Ok(finish_consent(&state, &domain_id, &session, granted, &correlation_id.0).await)
+    // The SSO session the login ran under: the cookie set when it completed.
+    let sso_id = super::sso::current(&state, &jar, &domain_id)
+        .await
+        .filter(|s| session.user_id.as_deref() == Some(s.user_id.as_str()))
+        .map(|s| s.sso_id);
+    Ok(finish_consent(
+        &state,
+        &domain_id,
+        &session,
+        granted,
+        sso_id.as_deref(),
+        &correlation_id.0,
+    )
+    .await)
 }
 
 /// Complete the flow after consent is known (explicit consent POST, or the
@@ -1007,6 +1027,7 @@ async fn finish_consent(
     domain_id: &str,
     session: &PreAuthSession,
     granted: bool,
+    sso_id: Option<&str>,
     correlation_id: &str,
 ) -> Response {
     // Single-flight: the pre-auth session is consumed either way.
@@ -1069,6 +1090,7 @@ async fn finish_consent(
                     session.amr.clone()
                 },
                 upstream: session.upstream.clone(),
+                sso_id: sso_id.map(str::to_string),
             },
         )
         .await
@@ -1123,6 +1145,9 @@ mod tests {
         provider_types::OAuth2ClientResource {
             post_logout_redirect_uris: Default::default(),
             backchannel_logout_uri: None,
+            backchannel_logout_session_required: false,
+            frontchannel_logout_uri: None,
+            frontchannel_logout_session_required: false,
             client_id: "client-1".into(),
             provider_id: "provider-1".into(),
             domain_id: "domain-1".into(),

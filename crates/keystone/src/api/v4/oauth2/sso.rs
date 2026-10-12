@@ -98,31 +98,30 @@ pub(super) async fn current(
     }
 }
 
-/// Start the SSO session for a login that just completed (see
-/// [`establish`]) and set its cookie on `response`.
-pub(super) async fn attach(
-    state: &ServiceState,
-    headers: &HeaderMap,
-    jar: &CookieJar,
-    session: &PreAuthSession,
-    response: Response,
-) -> Response {
-    match establish(state, headers, jar, session).await {
+/// Set the SSO `cookie` (when a session was established) on `response`.
+pub(super) fn with_cookie(cookie: Option<Cookie<'static>>, response: Response) -> Response {
+    match cookie {
         Some(cookie) => (CookieJar::new().add(cookie), response).into_response(),
         None => response,
     }
 }
 
+/// An SSO session that was just established: its cookie and its id.
+pub(super) struct Established {
+    pub cookie: Cookie<'static>,
+    pub sso_id: String,
+}
+
 /// Start the SSO session for a login that just completed on `session`,
 /// replacing the one the browser presented (if any). Returns the cookie to
-/// set; `None` (logged) leaves the user signed in for this authorization
-/// only.
+/// set with the session id; `None` (logged) leaves the user signed in for
+/// this authorization only.
 pub(super) async fn establish(
     state: &ServiceState,
     headers: &HeaderMap,
     jar: &CookieJar,
     session: &PreAuthSession,
-) -> Option<Cookie<'static>> {
+) -> Option<Established> {
     let (Some(user_id), Some(auth_time)) = (session.user_id.clone(), session.auth_time) else {
         return None;
     };
@@ -154,11 +153,14 @@ pub(super) async fn establish(
         )
         .await
     {
-        Ok(sso) => Some(sso_cookie(
-            sso.sso_id,
-            super::authorize::cookie_secure(state, headers).await,
-            lifetime_minutes,
-        )),
+        Ok(sso) => Some(Established {
+            cookie: sso_cookie(
+                sso.sso_id.clone(),
+                super::authorize::cookie_secure(state, headers).await,
+                lifetime_minutes,
+            ),
+            sso_id: sso.sso_id,
+        }),
         Err(e) => {
             tracing::warn!(error = %e, "oauth2 SSO session creation failed");
             None
@@ -215,6 +217,9 @@ mod tests {
             contacts: vec![],
             post_logout_redirect_uris: vec![],
             backchannel_logout_uri: None,
+            backchannel_logout_session_required: false,
+            frontchannel_logout_uri: None,
+            frontchannel_logout_session_required: false,
         }
     }
 

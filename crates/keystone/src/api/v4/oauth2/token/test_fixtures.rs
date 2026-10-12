@@ -53,6 +53,9 @@ pub(in crate::api::v4::oauth2) async fn confidential_client() -> provider_types:
     provider_types::OAuth2ClientResource {
         post_logout_redirect_uris: Default::default(),
         backchannel_logout_uri: None,
+        backchannel_logout_session_required: false,
+        frontchannel_logout_uri: None,
+        frontchannel_logout_session_required: false,
         client_id: "client-1".into(),
         provider_id: "provider-1".into(),
         domain_id: "domain-1".into(),
@@ -224,6 +227,9 @@ pub(in crate::api::v4::oauth2) async fn public_authz_code_client()
     provider_types::OAuth2ClientResource {
         post_logout_redirect_uris: Default::default(),
         backchannel_logout_uri: None,
+        backchannel_logout_session_required: false,
+        frontchannel_logout_uri: None,
+        frontchannel_logout_session_required: false,
         client_id: "client-1".into(),
         provider_id: "provider-1".into(),
         domain_id: "domain-1".into(),

@@ -171,6 +171,24 @@ pub struct OAuth2ClientResource {
     #[serde(default)]
     #[builder(default)]
     pub backchannel_logout_uri: Option<String>,
+
+    /// Whether the RP requires the `sid` claim in logout tokens (OIDC
+    /// Back-Channel Logout 1.0 `backchannel_logout_session_required`).
+    #[serde(default)]
+    #[builder(default)]
+    pub backchannel_logout_session_required: bool,
+
+    /// `https://` endpoint rendered in a hidden iframe at logout (OIDC
+    /// Front-Channel Logout 1.0 `frontchannel_logout_uri`).
+    #[serde(default)]
+    #[builder(default)]
+    pub frontchannel_logout_uri: Option<String>,
+
+    /// Whether the RP requires `iss` and `sid` query parameters on the
+    /// front-channel logout request.
+    #[serde(default)]
+    #[builder(default)]
+    pub frontchannel_logout_session_required: bool,
 }
 
 impl std::fmt::Debug for OAuth2ClientResource {
@@ -207,6 +225,15 @@ impl std::fmt::Debug for OAuth2ClientResource {
             .field("contacts", &self.contacts)
             .field("post_logout_redirect_uris", &self.post_logout_redirect_uris)
             .field("backchannel_logout_uri", &self.backchannel_logout_uri)
+            .field(
+                "backchannel_logout_session_required",
+                &self.backchannel_logout_session_required,
+            )
+            .field("frontchannel_logout_uri", &self.frontchannel_logout_uri)
+            .field(
+                "frontchannel_logout_session_required",
+                &self.frontchannel_logout_session_required,
+            )
             .finish()
     }
 }
@@ -245,6 +272,16 @@ impl OAuth2ClientResource {
                 update.backchannel_logout_uri,
                 self.backchannel_logout_uri,
             ),
+            backchannel_logout_session_required: update
+                .backchannel_logout_session_required
+                .unwrap_or(self.backchannel_logout_session_required),
+            frontchannel_logout_uri: apply_optional(
+                update.frontchannel_logout_uri,
+                self.frontchannel_logout_uri,
+            ),
+            frontchannel_logout_session_required: update
+                .frontchannel_logout_session_required
+                .unwrap_or(self.frontchannel_logout_session_required),
             updated_at: now,
             deleted_at,
             ..self
@@ -353,6 +390,18 @@ pub struct OAuth2ClientResourceCreate {
     /// `https://` Back-Channel Logout endpoint.
     #[builder(default)]
     pub backchannel_logout_uri: Option<String>,
+
+    /// Require the `sid` claim in logout tokens.
+    #[builder(default)]
+    pub backchannel_logout_session_required: bool,
+
+    /// `https://` Front-Channel Logout endpoint.
+    #[builder(default)]
+    pub frontchannel_logout_uri: Option<String>,
+
+    /// Require `iss` and `sid` on front-channel logout requests.
+    #[builder(default)]
+    pub frontchannel_logout_session_required: bool,
 }
 
 impl std::fmt::Debug for OAuth2ClientResourceCreate {
@@ -384,6 +433,15 @@ impl std::fmt::Debug for OAuth2ClientResourceCreate {
             .field("contacts", &self.contacts)
             .field("post_logout_redirect_uris", &self.post_logout_redirect_uris)
             .field("backchannel_logout_uri", &self.backchannel_logout_uri)
+            .field(
+                "backchannel_logout_session_required",
+                &self.backchannel_logout_session_required,
+            )
+            .field("frontchannel_logout_uri", &self.frontchannel_logout_uri)
+            .field(
+                "frontchannel_logout_session_required",
+                &self.frontchannel_logout_session_required,
+            )
             .finish()
     }
 }
@@ -441,6 +499,15 @@ pub struct OAuth2ClientResourceUpdate {
 
     /// `None` = unchanged, empty string = clear.
     pub backchannel_logout_uri: Option<String>,
+
+    /// `None` = unchanged.
+    pub backchannel_logout_session_required: Option<bool>,
+
+    /// `None` = unchanged, empty string = clear.
+    pub frontchannel_logout_uri: Option<String>,
+
+    /// `None` = unchanged.
+    pub frontchannel_logout_session_required: Option<bool>,
 }
 
 /// Filter parameters for `GET /v4/oauth2/{domain_id}/clients`.

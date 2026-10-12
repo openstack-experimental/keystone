@@ -35,7 +35,7 @@ use tokio::task::JoinHandle;
 
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::auth_plugin::resolve_public_addr;
-use openstack_keystone_core::oauth2_session::Oauth2SessionProviderError;
+use openstack_keystone_core::oauth2_session::{Oauth2SessionProviderError, derive_sid};
 use openstack_keystone_core_types::oauth2_client::OAuth2ClientResource;
 
 use openstack_keystone_core::events::ProviderHooks;
@@ -65,6 +65,9 @@ struct LogoutTokenClaims {
     exp: i64,
     jti: String,
     events: serde_json::Value,
+    /// Session identifier; equals the `sid` of the RP's id_token.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sid: Option<String>,
 }
 
 /// How a logout token reaches a relying party.
@@ -134,6 +137,7 @@ async fn logout_token(
     base_url: &str,
     client: &OAuth2ClientResource,
     user_id: &str,
+    sid: Option<String>,
 ) -> Result<String, String> {
     let now = chrono::Utc::now().timestamp();
     let claims = LogoutTokenClaims {
@@ -144,6 +148,7 @@ async fn logout_token(
         exp: now + LOGOUT_TOKEN_LIFETIME_SECS,
         jti: uuid::Uuid::new_v4().to_string(),
         events: serde_json::json!({ LOGOUT_EVENT: {} }),
+        sid,
     };
     sign_jwt_typed(state, &client.domain_id, &claims, Some("logout+jwt"))
         .await
@@ -178,25 +183,44 @@ async fn deliver(
     false
 }
 
+/// What ended: every session of the user, or one SSO session.
+#[derive(Clone, Copy, Debug)]
+pub enum EndedSessions<'a> {
+    /// All sessions of the user (disabled, deleted, password changed).
+    AllOfUser,
+    /// The SSO session with this id (logout, expiry, eviction).
+    Sso(&'a str),
+}
+
 /// Tell every relying party of `user_id` that registered a
-/// `backchannel_logout_uri` that the session ended, forgetting the user's
-/// relying parties as it takes them. `base_url` is the public endpoint (no trailing slash).
+/// `backchannel_logout_uri` that the session ended, forgetting the relying
+/// parties as it takes them. `base_url` is the public endpoint (no trailing
+/// slash).
 ///
 /// Returns the delivery tasks: production callers drop them (fire and
 /// forget); tests await them.
-pub async fn notify_user_logout(
+pub async fn notify_logout(
     state: &ServiceState,
     transport: Arc<dyn LogoutTransport>,
     policy: RetryPolicy,
     base_url: &str,
     user_id: &str,
+    ended: EndedSessions<'_>,
 ) -> Vec<JoinHandle<bool>> {
     let sessions = state.provider.get_oauth2_session_provider();
     // List and clear in one step: the relying parties removed are exactly
     // the ones notified, so one recorded in between is kept for the next
     // logout instead of being dropped unnotified.
-    let client_ids = match sessions.delete_rp_sessions_by_user(state, user_id).await {
-        Ok(ids) => ids,
+    let removed = match ended {
+        EndedSessions::AllOfUser => sessions.delete_rp_sessions_by_user(state, user_id).await,
+        EndedSessions::Sso(sso_id) => {
+            sessions
+                .delete_rp_sessions_by_sso(state, user_id, sso_id)
+                .await
+        }
+    };
+    let rps = match removed {
+        Ok(rps) => rps,
         // No raft storage, no OP sessions, nothing to notify.
         Err(Oauth2SessionProviderError::RaftNotAvailable) => return Vec::new(),
         Err(e) => {
@@ -207,7 +231,8 @@ pub async fn notify_user_logout(
 
     let exec = ExecutionContext::internal(state);
     let mut tasks = Vec::new();
-    for client_id in client_ids {
+    for rp in rps {
+        let client_id = rp.client_id;
         let client = match state
             .provider
             .get_oauth2_client_provider()
@@ -228,7 +253,20 @@ pub async fn notify_user_logout(
         else {
             continue;
         };
-        let token = match logout_token(state, base_url, &client, user_id).await {
+        let sid = rp
+            .sso_id
+            .as_deref()
+            .map(|sso_id| derive_sid(sso_id, &client_id));
+        if client.backchannel_logout_session_required && sid.is_none() {
+            // The RP never received a `sid` (grant without an SSO
+            // session), so it cannot match a token that must carry one.
+            tracing::debug!(
+                client_id,
+                "back-channel logout: no session id for an RP that requires it"
+            );
+            continue;
+        }
+        let token = match logout_token(state, base_url, &client, user_id, sid).await {
             Ok(t) => t,
             Err(e) => {
                 tracing::warn!(client_id, error = %e, "back-channel logout: no token");
@@ -242,6 +280,25 @@ pub async fn notify_user_logout(
         }));
     }
     tasks
+}
+
+/// [`notify_logout`] for every session of the user.
+pub async fn notify_user_logout(
+    state: &ServiceState,
+    transport: Arc<dyn LogoutTransport>,
+    policy: RetryPolicy,
+    base_url: &str,
+    user_id: &str,
+) -> Vec<JoinHandle<bool>> {
+    notify_logout(
+        state,
+        transport,
+        policy,
+        base_url,
+        user_id,
+        EndedSessions::AllOfUser,
+    )
+    .await
 }
 
 /// Hook that sends back-channel logout when a user is deleted, disabled or
@@ -329,6 +386,7 @@ mod tests {
     use crate::oauth2_session::MockOauth2SessionProvider;
     use crate::provider::Provider;
     use openstack_keystone_core_types::oauth2_client::GrantType;
+    use openstack_keystone_core_types::oauth2_session::RpSession;
     use openstack_keystone_key_repository::asymmetric::{
         KeyMaterial, SigningAlgorithm, generate_keypair, to_decoding_key,
     };
@@ -389,6 +447,9 @@ mod tests {
             contacts: vec![],
             post_logout_redirect_uris: vec![],
             backchannel_logout_uri: uri.map(str::to_string),
+            backchannel_logout_session_required: false,
+            frontchannel_logout_uri: None,
+            frontchannel_logout_session_required: false,
         }
     }
 
@@ -403,11 +464,22 @@ mod tests {
         clients: Vec<OAuth2ClientResource>,
         public_key: Arc<Mutex<Option<KeyMaterial>>>,
     ) -> ServiceState {
+        // A relying party called `device` was issued without an SSO session.
+        let rps: Vec<RpSession> = rp_clients
+            .iter()
+            .map(|c| RpSession {
+                client_id: c.to_string(),
+                sso_id: (*c != "device").then(|| "sso-1".to_string()),
+            })
+            .collect();
+        let by_sso = rps.clone();
         let mut sessions = MockOauth2SessionProvider::default();
         sessions
             .expect_delete_rp_sessions_by_user()
-            .times(1)
-            .returning(move |_, _| Ok(rp_clients.iter().map(|c| c.to_string()).collect()));
+            .returning(move |_, _| Ok(rps.clone()));
+        sessions
+            .expect_delete_rp_sessions_by_sso()
+            .returning(move |_, _, _| Ok(by_sso.clone()));
         let mut client_mock = MockOauth2ClientProvider::default();
         client_mock
             .expect_get_by_client_id()
@@ -472,6 +544,72 @@ mod tests {
         assert!(data.claims["events"][LOGOUT_EVENT].is_object());
         assert!(data.claims.get("nonce").is_none());
         assert!(data.claims["jti"].as_str().is_some_and(|j| !j.is_empty()));
+    }
+
+    async fn token_claims(
+        public_key: &Arc<Mutex<Option<KeyMaterial>>>,
+        token: &str,
+        aud: &str,
+    ) -> serde_json::Value {
+        let key = public_key.lock().unwrap().clone().unwrap();
+        let mut validation = Validation::new(Algorithm::ES256);
+        validation.set_audience(&[aud]);
+        decode::<serde_json::Value>(token, &to_decoding_key(&key).unwrap(), &validation)
+            .unwrap()
+            .claims
+    }
+
+    #[tokio::test]
+    async fn test_session_logout_token_carries_the_sid_of_the_id_token() {
+        let public_key = Arc::new(Mutex::new(None));
+        let state = state_with(
+            vec!["c"],
+            vec![client("c", Some("https://rp.example.com/bc"))],
+            public_key.clone(),
+        )
+        .await;
+        let transport = Recorder::new(vec![]);
+        let tasks = notify_logout(
+            &state,
+            transport.clone(),
+            fast(),
+            "https://k",
+            "user-1",
+            EndedSessions::Sso("sso-1"),
+        )
+        .await;
+        for task in tasks {
+            assert!(task.await.unwrap());
+        }
+        let token = transport.calls.lock().unwrap()[0].1.clone();
+        let claims = token_claims(&public_key, &token, "c").await;
+        assert_eq!(claims["sid"], derive_sid("sso-1", "c"));
+    }
+
+    #[tokio::test]
+    async fn test_session_required_rp_without_a_session_is_skipped() {
+        let mut required = client("device", Some("https://rp.example.com/bc"));
+        required.backchannel_logout_session_required = true;
+        let optional = client("other", Some("https://rp.example.com/bc2"));
+        let public_key = Arc::new(Mutex::new(None));
+        let state = state_with(
+            vec!["device", "other"],
+            vec![required, optional],
+            public_key,
+        )
+        .await;
+        let transport = Recorder::new(vec![]);
+        let tasks =
+            notify_user_logout(&state, transport.clone(), fast(), "https://k", "user-1").await;
+        // Only the RP that does not require a `sid` is told.
+        assert_eq!(tasks.len(), 1);
+        for task in tasks {
+            assert!(task.await.unwrap());
+        }
+        assert_eq!(
+            transport.calls.lock().unwrap()[0].0,
+            "https://rp.example.com/bc2"
+        );
     }
 
     #[tokio::test]
