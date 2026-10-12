@@ -845,7 +845,10 @@ escrow mechanism instead of keeping keys live in the operational KMS.
 
 ## 8. gRPC Protocol & Code Definitions
 
-**Protocol Buffers:**
+**Protocol Buffers:** the messages below are the design sketch. In
+`crates/storage/proto/raft.proto` the log entry is `Entry`, the proposal payload
+is `pb.api.CommandRequest` and there is no `RaftResponse` message (the response
+is the in-process `ZeroizingResponse`).
 
 ```protobuf
 message RaftEntry {
@@ -896,19 +899,25 @@ footprint should be preferred where feasible.
    `RaftResponse`, streaming must be evaluated to minimize the peak plaintext
    footprint within gRPC stack buffers.
 
-**OpenRaft Types (Rust):**
+**OpenRaft Types (Rust):** the implementation (`crates/storage/src/lib.rs`)
+declares the type configuration as `TypeConfig`. The application payload is the
+protobuf `pb::api::CommandRequest` (the AES-GCM encryption of the log payload
+happens in the log store, there is no `EncryptedBlob` wrapper) and the node
+record is `pb::raft::Node`:
 
 ```rust
 openraft::declare_raft_types!(
-    pub KeystoneConfig:
-        D = EncryptedBlob,   // [u8] wrapper enforcing 16-byte tag check
+    pub TypeConfig:
+        D = pb::api::CommandRequest,
         R = ZeroizingResponse,
-        NodeId = u64,        // Manually configured; collision detection via
-                              // (node_id, rpc_addr) comparison against existing
-                              // membership at startup and on learner-add
-        Node = SpiffeNode,
+        LeaderId = pb::raft::LeaderId,
+        Vote = pb::raft::Vote,
+        Entry = pb::raft::Entry,
+        Node = pb::raft::Node,  // NodeId = u64, manually configured;
+                                // collision detection via (node_id, rpc_addr)
+                                // comparison against the membership at
+                                // startup and on learner-add
 );
-
 ```
 
 ---
