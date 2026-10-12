@@ -22,6 +22,8 @@ import data.identity.mapping as mapping_common
 # - Domain manager can create rulesets with domain_id matching their scope.
 # - is_system requires admin.
 # - claims_mode_resolution requires admin.
+# - Authorizations granting system scope or scope in another domain require
+#   admin.
 
 default allow := false
 
@@ -30,6 +32,7 @@ allow if {
 	mapping_common.own_ruleset
 	not mapping_common.is_system_ruleset
 	not mapping_common.claims_mode_resolution
+	not mapping_common.out_of_domain_authorization
 	"manager" in input.credentials.roles
 }
 
@@ -53,6 +56,12 @@ violation contains {"field": "is_system", "msg": msg} if {
 	mapping_common.is_system_ruleset
 	not "admin" in input.credentials.roles
 	msg := "creating a system mapping ruleset requires `admin` role."
+}
+
+violation contains {"field": "authorizations", "msg": msg} if {
+	mapping_common.out_of_domain_authorization
+	not "admin" in input.credentials.roles
+	msg := "granting system scope or scope in another domain requires `admin` role."
 }
 
 violation contains {"field": "domain_resolution_mode", "msg": msg} if {

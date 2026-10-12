@@ -35,7 +35,9 @@ use openstack_keystone_core::oauth2_client::token_exchange::{
     TokenExchangeError, build_token_exchange_claims, validate_subject_token,
 };
 use openstack_keystone_core_types::application_credential::*;
-use openstack_keystone_core_types::oauth2_client::{GrantType, OAuth2ClientResourceCreateBuilder};
+use openstack_keystone_core_types::oauth2_client::{
+    Audience, GrantType, OAuth2ClientResourceCreateBuilder,
+};
 use openstack_keystone_core_types::resource::{DomainBuilder, ProjectBuilder};
 use openstack_keystone_core_types::role::*;
 
@@ -186,9 +188,10 @@ async fn test_token_exchange_full_flow_issues_app_cred_delegated_claims() -> Res
         Uuid::new_v4().to_string(),
         chrono::Utc::now().timestamp(),
         chrono::Utc::now().timestamp() + 900,
+        Audience::control_plane(),
     )?;
 
-    assert_eq!(claims.aud, format!("openstack-apis:{}", domain.id));
+    assert_eq!(claims.aud, Audience::control_plane());
     assert!(claims.amr.contains(&"application_credential".to_string()));
 
     Ok(())
@@ -218,6 +221,7 @@ async fn test_token_exchange_rejects_cross_domain_subject_token() -> Result<()> 
         Uuid::new_v4().to_string(),
         chrono::Utc::now().timestamp(),
         chrono::Utc::now().timestamp() + 900,
+        Audience::control_plane(),
     )
     .unwrap_err();
 

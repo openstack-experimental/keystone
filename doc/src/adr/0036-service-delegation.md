@@ -220,9 +220,9 @@ client lives in the operator's infrastructure domain. Therefore:
   other client authentication path at `/v4/oauth2/{domain_id}/token` keeps
   today's same-domain-only rule.
 - The minted token is still signed by the **grantor's** domain key and carries
-  `aud = openstack-apis:{grantor domain_id}` (ADR 0026 §5 domain key isolation).
-  The grantee's own domain never appears in the token; it is a registry fact
-  only.
+  `aud = openstack-apis` with `iss` naming the grantor's domain (ADR 0026 §5
+  domain key isolation: isolation rests on `iss` + the issuer's own JWKS). The
+  grantee's own domain never appears in the token; it is a registry fact only.
 
 ### 4. Service grant resource
 
@@ -405,7 +405,7 @@ above. This is what makes revocation effective (§8).
 {
   "iss": "https://keystone/v4/oauth2/{domain_id}",
   "sub": "<grantor user id>",
-  "aud": "openstack-apis:{domain_id}",
+  "aud": "openstack-apis",
   "client_id": "<service client id>",
   "act": {
     "client_id": "<service client id>",
@@ -565,10 +565,12 @@ not grow two answers to any of them:
   first builds the match; the second extends it rather than adding a parallel
   path.
 - **`verify.rs` needs a validation profile, not a constant** — a shared
-  prerequisite for both. Subject-token verification currently hardcodes
-  `set_audience(&["openstack-apis:{domain_id}"])`. #1018 breaks on it because an
-  external token's `aud` is never that value; this ADR breaks on it because §7.1
-  narrowing mints `openstack-apis:{domain_id}:<service type>` and §6.3
+  prerequisite for both. Subject-token verification used to hardcode a
+  domain-bound audience (#1483 replaced it with the flat `openstack-apis`
+  control-plane value plus an optional own-service-type narrowing, taken as a
+  parameter of `verify_openstack_access_token`). #1018 still breaks on a fixed
+  audience because an external token's `aud` is never `openstack-apis`; this ADR
+  needs §7.1 narrowing (`openstack-apis:<service type>`) accepted when §6.3
   re-exchanges such a token as `subject_token`. One refactor to a
   per-subject-kind validation profile (expected issuers, accepted audiences,
   required claims) serves both; doing it twice guarantees divergence.
@@ -619,18 +621,19 @@ needing their own design pass. This ADR does that pass, minimally:
   is additive.
 - A valid value is an OpenStack **service type** from the catalog
   (`object-store`, `compute`, …). The endpoint validates each value against the
-  catalog of `{domain_id}` and rejects unknown ones with `invalid_target` rather
-  than minting a token nobody accepts.
-- The resulting claim is
-  `aud = ["openstack-apis:{domain_id}:<service type>", …]`, a narrowing of the
-  default `openstack-apis:{domain_id}`. Requesting no `audience` keeps the
-  default.
+  deployment's service catalog (enabled services only) and rejects unknown ones
+  with `invalid_target` rather than minting a token nobody accepts.
+- The resulting claim is `aud = ["openstack-apis:<service type>", …]`, a
+  narrowing of the default `openstack-apis` (the whole control plane; the domain
+  is not part of `aud`, ADR 0026 §5). Requesting no `audience` keeps the
+  default. `audience` may be repeated, is deduplicated, and is bounded.
 - Acceptance side: the ADR 0026 §6 middleware and the back-channel validation
-  path accept a token when `aud` contains either the unnarrowed
-  `openstack-apis:{domain_id}` or
-  `openstack-apis:{domain_id}:<its own service type>`. A service that does not
-  know its own service type accepts only the unnarrowed form, so narrowing is
-  opt-in per deployment and cannot silently break an unupgraded service.
+  path accept a token when `aud` contains either the unnarrowed `openstack-apis`
+  or `openstack-apis:<its own service type>`. Domain isolation is by `iss` (an
+  explicit issuer allowlist) and the per-issuer JWKS, not by `aud`. A service
+  that does not know its own service type accepts only the unnarrowed form, so
+  narrowing is opt-in per deployment and cannot silently break an unupgraded
+  service.
 - Narrowing can only ever remove reach: an `audience` value is honoured only if
   the token would otherwise have been valid there.
 

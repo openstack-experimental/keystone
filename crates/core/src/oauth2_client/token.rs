@@ -28,8 +28,8 @@ use openstack_keystone_core_types::mapping::auth::MappingAuthRequest;
 use openstack_keystone_core_types::mapping::authorization::Authorization;
 use openstack_keystone_core_types::mapping::virtual_user::MatchResult;
 use openstack_keystone_core_types::oauth2_client::{
-    DelegationContext, OAuth2ClientResource, OpenStackAccessTokenClaims, OpenStackContext,
-    OpenStackScope,
+    Audience, DelegationContext, OAuth2ClientResource, OpenStackAccessTokenClaims,
+    OpenStackContext, OpenStackScope,
 };
 use openstack_keystone_core_types::resource::ResourceProviderError;
 
@@ -259,7 +259,7 @@ pub fn build_access_token_claims(
     Ok(OpenStackAccessTokenClaims {
         iss: issuer.to_string(),
         sub: user_id.clone(),
-        aud: format!("openstack-apis:{}", client.domain_id),
+        aud: Audience::control_plane(),
         client_id: client.client_id.clone(),
         exp,
         iat,

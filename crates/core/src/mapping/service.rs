@@ -87,6 +87,56 @@ async fn validate_roles_exist<'a>(
     Ok(())
 }
 
+/// Verify that every project authorization declares the domain the project
+/// really belongs to.
+///
+/// Write-time policy gates grants by the declared `project_domain_id`
+/// (`policy/mapping/ruleset/{create,update}.rego`), while the token path uses
+/// the project's real domain. Without this check a `manager` could declare
+/// their own domain for a foreign project and pass the policy. A project
+/// cannot move between domains, so the check cannot go stale. Claim templates
+/// are skipped: they only occur in admin-only claims modes.
+async fn validate_project_domains<'a>(
+    ctx: &ExecutionContext<'a>,
+    rules: &[MappingRule],
+) -> Result<(), MappingProviderError> {
+    let mut checked: HashSet<&str> = HashSet::new();
+    for rule in rules {
+        for auth in &rule.authorizations {
+            let Authorization::Project {
+                project_id,
+                project_domain_id,
+                ..
+            } = auth
+            else {
+                continue;
+            };
+            if crate::mapping::interpolation::contains_claims_template(project_id)
+                || crate::mapping::interpolation::contains_claims_template(project_domain_id)
+                || !checked.insert(project_id.as_str())
+            {
+                continue;
+            }
+            let project = ctx
+                .state()
+                .provider
+                .get_resource_provider()
+                .get_project(ctx, project_id)
+                .await
+                .map_err(MappingProviderError::driver)?
+                .ok_or_else(|| MappingProviderError::ProjectNotFound(project_id.clone()))?;
+            if &project.domain_id != project_domain_id {
+                return Err(MappingProviderError::ProjectDomainMismatch {
+                    project_id: project_id.clone(),
+                    declared: project_domain_id.clone(),
+                    actual: project.domain_id,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Derive [`AuthzInfo`] from authorization list produced by a matched ruleset
 /// rule.
 ///
@@ -681,6 +731,7 @@ impl MappingApi for MappingService {
         validation::validate_ruleset_create(&ruleset)?;
         validation::validate_api_client_domain_scope(&ruleset.source, &ruleset.rules)?;
         validate_roles_exist(ctx, &ruleset.rules).await?;
+        validate_project_domains(ctx, &ruleset.rules).await?;
         let mapping_id = ruleset
             .mapping_id
             .take()
@@ -977,9 +1028,13 @@ impl MappingApi for MappingService {
 
         // 3. Apply mutations in memory
         let mut new_rules: Vec<MappingRule> = existing.rules.clone();
+        // Rules this call writes; untouched rules are not re-checked against
+        // the live project registry.
+        let mut written_rules: Vec<MappingRule> = Vec::new();
         for mut mutation in mutations.mutations {
             match &mut mutation {
                 RuleMutation::Insert { rule, position } => {
+                    written_rules.push(rule.clone());
                     match position {
                         Some(RulePosition::Before { anchor }) => {
                             let idx = new_rules
@@ -1012,6 +1067,7 @@ impl MappingApi for MappingService {
                     }
                 }
                 RuleMutation::Update { rule_name, rule } => {
+                    written_rules.push(rule.clone());
                     let idx = new_rules
                         .iter()
                         .position(|r| r.name == *rule_name)
@@ -1051,6 +1107,7 @@ impl MappingApi for MappingService {
 
         validation::validate_api_client_domain_scope(&existing.source, &create_payload.rules)?;
         validate_roles_exist(ctx, &create_payload.rules).await?;
+        validate_project_domains(ctx, &written_rules).await?;
 
         // 5. Compute new version
         let new_version = version::compute_ruleset_version(&create_payload);
@@ -1134,6 +1191,9 @@ impl MappingApi for MappingService {
 
         validation::validate_api_client_domain_scope(&existing.source, &merged_rules)?;
         validate_roles_exist(ctx, &merged_rules).await?;
+        if let Some(rules) = &data.rules {
+            validate_project_domains(ctx, rules).await?;
+        }
 
         let new_version = version::compute_ruleset_version_from_parts(
             &existing.mapping_id,
@@ -1417,6 +1477,77 @@ mod tests {
         }
     }
 
+    /// Provider whose resource backend knows `project-1` in `project_domain`.
+    fn project_provider(project_domain: &'static str) -> crate::provider::ProviderBuilder {
+        let mut resource_mock = crate::resource::MockResourceProvider::default();
+        resource_mock.expect_get_project().returning(move |_, id| {
+            Ok((id == "project-1").then(|| Project {
+                id: id.to_string(),
+                domain_id: project_domain.to_string(),
+                enabled: true,
+                ..Default::default()
+            }))
+        });
+        crate::provider::Provider::mocked_builder().mock_resource(resource_mock)
+    }
+
+    #[tokio::test]
+    async fn test_create_ruleset_rejects_project_domain_mismatch() {
+        // The rule declares `domain-1` but the project lives in `domain-2`.
+        let state = get_mocked_state(None, Some(project_provider("domain-2"))).await;
+        let service = MappingService::from_driver(MockMappingBackend::new());
+        let ruleset_create = MappingRuleSetCreate {
+            mapping_id: None,
+            domain_id: Some("domain-1".to_string()),
+            source: IdentitySource::Federation {
+                idp_id: "okta".to_string(),
+            },
+            domain_resolution_mode: DomainResolutionMode::Fixed,
+            enabled: true,
+            rules: vec![project_scope_rule()],
+        };
+
+        let result = service
+            .create_ruleset(&ExecutionContext::internal(&state), ruleset_create)
+            .await;
+
+        assert!(matches!(
+            result.unwrap_err(),
+            MappingProviderError::ProjectDomainMismatch { declared, actual, .. }
+                if declared == "domain-1" && actual == "domain-2"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_create_ruleset_rejects_unknown_project() {
+        let mut resource_mock = crate::resource::MockResourceProvider::default();
+        resource_mock
+            .expect_get_project()
+            .returning(|_, _| Ok(None));
+        let provider = crate::provider::Provider::mocked_builder().mock_resource(resource_mock);
+        let state = get_mocked_state(None, Some(provider)).await;
+        let service = MappingService::from_driver(MockMappingBackend::new());
+        let ruleset_create = MappingRuleSetCreate {
+            mapping_id: None,
+            domain_id: Some("domain-1".to_string()),
+            source: IdentitySource::Federation {
+                idp_id: "okta".to_string(),
+            },
+            domain_resolution_mode: DomainResolutionMode::Fixed,
+            enabled: true,
+            rules: vec![project_scope_rule()],
+        };
+
+        let result = service
+            .create_ruleset(&ExecutionContext::internal(&state), ruleset_create)
+            .await;
+
+        assert!(matches!(
+            result.unwrap_err(),
+            MappingProviderError::ProjectNotFound(id) if id == "project-1"
+        ));
+    }
+
     // ---------------------------------------------------------------------
     // RoleRef existence validation (`validate_roles_exist`)
     // ---------------------------------------------------------------------
@@ -1561,7 +1692,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_ruleset_allows_project_scope_for_federation_source() {
         // Non-ApiClient sources are not subject to domain-scope constraints.
-        let state = get_mocked_state(None, None).await;
+        let state = get_mocked_state(None, Some(project_provider("domain-1"))).await;
         let mut mock_backend = MockMappingBackend::new();
         let ruleset_create = MappingRuleSetCreate {
             mapping_id: None,

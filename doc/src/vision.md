@@ -388,16 +388,16 @@ Keystone is an OAuth2/OIDC provider (ADR 0026). The access token it issues for
 OpenStack APIs carries:
 
 - `iss`, `sub`, `aud`, `exp` of about fifteen minutes, `jti`, `amr`. ADR 0036
-  §7.1 defaults `aud` to the domain-wide `openstack-apis:{domain_id}`, narrowed
-  to specific service types (`openstack-apis:{domain_id}:compute`, …) only when
-  the client requests it — narrowing is opt-in there so an unnarrowed token
-  never breaks a service that doesn't know its own service type. This vision
-  proposes flipping that: make per-service-type audience the issuance
-  **default**, with the domain-wide audience an explicit opt-out for clients
-  that cannot enumerate their callees. That flip is a required amendment to ADR
-  0036 §7.1, and it is what makes the §4.8 forwarding rule meaningful: "forward
-  only tokens whose `aud` includes the callee" is vacuous if every token stays
-  audience-wide;
+  §7.1 defaults `aud` to the control-plane-wide `openstack-apis` (the domain is
+  carried by `iss`, not `aud`), narrowed to specific service types
+  (`openstack-apis:compute`, …) only when the client requests it — narrowing is
+  opt-in there so an unnarrowed token never breaks a service that doesn't know
+  its own service type. This vision proposes flipping that: make
+  per-service-type audience the issuance **default**, with the control-plane
+  audience an explicit opt-out for clients that cannot enumerate their callees.
+  That flip is a required amendment to ADR 0036 §7.1, and it is what makes the
+  §4.8 forwarding rule meaningful: "forward only tokens whose `aud` includes the
+  callee" is vacuous if every token stays audience-wide;
 - `act` when a service acts on behalf of the subject;
 - `delegation_context` when the chain is delegated (service grant, application
   credential, on-behalf-of);
@@ -1386,12 +1386,12 @@ Two shapes stay refused whatever the freshness mechanism. The pushed
 "entitlement snapshot" named above stays refused here too, for the same
 frozen-roles reason. So do source-versioned freshness tokens — sealing the
 counters of every source a decision consulted into an opaque token, so
-revalidation is a comparison rather than a traversal: no single driver owns
-all the inputs, the counter bump becomes
-a correctness invariant in four write paths with nothing in the type system to
-enforce it, it accelerates revocation but not propagation, and the counter table
-becomes the hottest row set in the deployment. A replica gives what that scheme
-wanted, a version and read-your-writes, without minting anything.
+revalidation is a comparison rather than a traversal: no single driver owns all
+the inputs, the counter bump becomes a correctness invariant in four write paths
+with nothing in the type system to enforce it, it accelerates revocation but not
+propagation, and the counter table becomes the hottest row set in the
+deployment. A replica gives what that scheme wanted, a version and
+read-your-writes, without minting anything.
 
 #### Request-scoped deduplication is the only memo
 

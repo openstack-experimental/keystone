@@ -31,8 +31,8 @@ use std::collections::HashSet;
 use thiserror::Error;
 
 use openstack_keystone_core_types::oauth2_client::{
-    DelegationContext, IdTokenClaims, OidcAccessTokenClaims, OpenStackAccessTokenClaims,
-    OpenStackScope,
+    Audience, DelegationContext, IdTokenClaims, OPENSTACK_APIS_AUDIENCE, OidcAccessTokenClaims,
+    OpenStackAccessTokenClaims, OpenStackScope, openstack_service_audience,
 };
 use openstack_keystone_key_repository::asymmetric::{SigningAlgorithm, jwt_algorithm};
 
@@ -171,25 +171,18 @@ fn enforce_delegation_invariants(
     Ok(())
 }
 
-/// Verify an `OpenStackAccessTokenClaims` access token fully offline (ADR
-/// 0026 §6), given an already-fetched [`JwkSet`] and JTI revocation set.
+/// Resolve the decoding key for `token` from `jwks`, after pinning the header
+/// `alg` to the operator-configured algorithm (ADR 0026 §3).
 ///
-/// Mirrors the reference `KeystoneNativeJwtMiddleware`'s checks in order:
-/// signature (against the operator-configured algorithm only, ADR §3),
-/// `aud`/`iss`, structural `token_use`/`openstack_context` presence (via
-/// typed deserialization), JTI revocation, then the I2/I3/I5 delegation
-/// invariants.
-///
-/// # Errors
-/// See [`TokenVerificationError`] for each rejection reason.
-pub fn verify_openstack_access_token(
+/// Domain isolation relies on `jwks` being the key set of the issuer the token
+/// names: callers pass the JWKS of the issuer they are validating against and
+/// never a union of several issuers' keys, so a key of domain A can only
+/// verify tokens that are checked against A's `iss`.
+fn resolve_decoding_key(
     token: &str,
     jwks: &JwkSet,
     expected_algorithm: SigningAlgorithm,
-    expected_issuers: &[String],
-    domain_id: &str,
-    revoked_jtis: &HashSet<String>,
-) -> Result<OpenStackAccessTokenClaims, TokenVerificationError> {
+) -> Result<(Algorithm, DecodingKey), TokenVerificationError> {
     let header = decode_header(token)?;
     let expected_alg = jwt_algorithm(expected_algorithm);
     if header.alg != expected_alg {
@@ -203,20 +196,65 @@ pub fn verify_openstack_access_token(
     let jwk = jwks
         .find(&kid)
         .ok_or_else(|| TokenVerificationError::UnknownKeyId(kid.clone()))?;
-    let decoding_key = DecodingKey::from_jwk(jwk)?;
+    Ok((expected_alg, DecodingKey::from_jwk(jwk)?))
+}
 
-    let expected_audience = format!("openstack-apis:{domain_id}");
+/// Reject an `iss` that is not in the caller's explicit allowlist.
+fn ensure_trusted_issuer(
+    iss: &str,
+    expected_issuers: &[String],
+) -> Result<(), TokenVerificationError> {
+    if expected_issuers.iter().any(|i| i == iss) {
+        Ok(())
+    } else {
+        Err(TokenVerificationError::UntrustedIssuer(iss.to_string()))
+    }
+}
+
+/// Verify an `OpenStackAccessTokenClaims` access token fully offline (ADR
+/// 0026 §6), given an already-fetched [`JwkSet`] and JTI revocation set.
+///
+/// Mirrors the reference `KeystoneNativeJwtMiddleware`'s checks in order:
+/// signature (against the operator-configured algorithm only, ADR §3),
+/// `aud`/`iss`, structural `token_use`/`openstack_context` presence (via typed
+/// deserialization), JTI revocation, then the I2/I3/I5 delegation
+/// invariants.
+///
+/// `jwks` must be the key set of the issuer being validated against, and
+/// `expected_issuers` the verifier's explicit issuer allowlist: with a flat
+/// `aud`, domain isolation rests on `iss` plus that per-issuer key set (ADR
+/// 0026 §5). `service_type` is the verifier's own OpenStack service type; when
+/// set, a token narrowed to `openstack-apis:<service_type>` is accepted in
+/// addition to the un-narrowed `openstack-apis`.
+///
+/// # Errors
+/// See [`TokenVerificationError`] for each rejection reason.
+pub fn verify_openstack_access_token(
+    token: &str,
+    jwks: &JwkSet,
+    expected_algorithm: SigningAlgorithm,
+    expected_issuers: &[String],
+    service_type: Option<&str>,
+    revoked_jtis: &HashSet<String>,
+) -> Result<OpenStackAccessTokenClaims, TokenVerificationError> {
+    let (expected_alg, decoding_key) = resolve_decoding_key(token, jwks, expected_algorithm)?;
+
+    // Accept the control-plane audience, or the audience narrowed to this
+    // service's own type. A verifier that does not know its service type
+    // accepts only the un-narrowed form (ADR 0036 §7.1).
+    let mut accepted_audiences = vec![OPENSTACK_APIS_AUDIENCE.to_string()];
+    if let Some(service_type) = service_type {
+        accepted_audiences.push(openstack_service_audience(service_type));
+    }
     let mut validation = Validation::new(expected_alg);
     validation.set_required_spec_claims(&["exp", "iat", "nbf", "iss", "aud", "sub"]);
-    validation.set_audience(&[expected_audience]);
+    validation.set_audience(&accepted_audiences);
     validation.validate_nbf = true;
 
     let data = decode::<OpenStackAccessTokenClaims>(token, &decoding_key, &validation)?;
     let claims = data.claims;
 
-    if !expected_issuers.iter().any(|iss| iss == &claims.iss) {
-        return Err(TokenVerificationError::UntrustedIssuer(claims.iss));
-    }
+    ensure_trusted_issuer(&claims.iss, expected_issuers)?;
 
     if claims.token_use != "access" {
         return Err(TokenVerificationError::WrongTokenUse(claims.token_use));
@@ -240,7 +278,7 @@ pub fn verify_openstack_access_token(
 /// scope. `aud` is the (unknown to the caller) `client_id`, so it is not
 /// validated here: the caller must resolve `claims.aud` to a registered
 /// client of the domain. OpenStack access tokens (`aud` ==
-/// `openstack-apis:{domain_id}`) carry no `scope` claim and are therefore
+/// `openstack-apis` or a service-type narrowing of it) carry no `scope` claim and are therefore
 /// structurally rejected.
 ///
 /// # Errors
@@ -252,20 +290,7 @@ pub fn verify_oidc_access_token(
     expected_issuers: &[String],
     revoked_jtis: &HashSet<String>,
 ) -> Result<OidcAccessTokenClaims, TokenVerificationError> {
-    let header = decode_header(token)?;
-    let expected_alg = jwt_algorithm(expected_algorithm);
-    if header.alg != expected_alg {
-        return Err(TokenVerificationError::AlgorithmMismatch {
-            actual: header.alg,
-            expected: expected_alg,
-        });
-    }
-
-    let kid = header.kid.ok_or(TokenVerificationError::MissingKeyId)?;
-    let jwk = jwks
-        .find(&kid)
-        .ok_or_else(|| TokenVerificationError::UnknownKeyId(kid.clone()))?;
-    let decoding_key = DecodingKey::from_jwk(jwk)?;
+    let (expected_alg, decoding_key) = resolve_decoding_key(token, jwks, expected_algorithm)?;
 
     let mut validation = Validation::new(expected_alg);
     validation.set_required_spec_claims(&["exp", "iat", "nbf", "iss", "aud", "sub"]);
@@ -274,9 +299,7 @@ pub fn verify_oidc_access_token(
 
     let claims = decode::<OidcAccessTokenClaims>(token, &decoding_key, &validation)?.claims;
 
-    if !expected_issuers.iter().any(|iss| iss == &claims.iss) {
-        return Err(TokenVerificationError::UntrustedIssuer(claims.iss));
-    }
+    ensure_trusted_issuer(&claims.iss, expected_issuers)?;
     if claims.token_use != "access" {
         return Err(TokenVerificationError::WrongTokenUse(claims.token_use));
     }
@@ -309,20 +332,7 @@ pub fn verify_id_token_hint(
     expected_algorithm: SigningAlgorithm,
     expected_issuers: &[String],
 ) -> Result<IdTokenClaims, TokenVerificationError> {
-    let header = decode_header(token)?;
-    let expected_alg = jwt_algorithm(expected_algorithm);
-    if header.alg != expected_alg {
-        return Err(TokenVerificationError::AlgorithmMismatch {
-            actual: header.alg,
-            expected: expected_alg,
-        });
-    }
-
-    let kid = header.kid.ok_or(TokenVerificationError::MissingKeyId)?;
-    let jwk = jwks
-        .find(&kid)
-        .ok_or_else(|| TokenVerificationError::UnknownKeyId(kid.clone()))?;
-    let decoding_key = DecodingKey::from_jwk(jwk)?;
+    let (expected_alg, decoding_key) = resolve_decoding_key(token, jwks, expected_algorithm)?;
 
     let mut validation = Validation::new(expected_alg);
     validation.set_required_spec_claims(&["iss", "aud", "sub"]);
@@ -332,9 +342,7 @@ pub fn verify_id_token_hint(
 
     let claims = decode::<IdTokenClaims>(token, &decoding_key, &validation)?.claims;
 
-    if !expected_issuers.iter().any(|iss| iss == &claims.iss) {
-        return Err(TokenVerificationError::UntrustedIssuer(claims.iss));
-    }
+    ensure_trusted_issuer(&claims.iss, expected_issuers)?;
     if claims.token_use != "id" {
         return Err(TokenVerificationError::WrongTokenUse(claims.token_use));
     }
@@ -356,7 +364,7 @@ pub struct RevocableAccessToken {
 #[derive(serde::Deserialize)]
 struct RevocableClaims {
     iss: String,
-    aud: String,
+    aud: Audience,
     exp: i64,
     #[serde(default)]
     jti: Option<String>,
@@ -373,11 +381,11 @@ struct RevocableClaims {
 ///
 /// Accepts both access-token flavours this OP mints: the OIDC access token
 /// (`aud` == `client_id`) and the OpenStack access token
-/// (`aud` == `openstack-apis:{domain_id}` plus a `client_id` claim). In both
-/// cases the token must belong to `authenticated_client_id`; the signature,
-/// configured algorithm, issuer, `exp`/`nbf` and `token_use == "access"` are
-/// enforced exactly as in [`verify_openstack_access_token`]. Tokens without a
-/// `jti` (e.g. ID tokens) are rejected with
+/// (`aud` == `openstack-apis` or a narrowing of it, plus a `client_id` claim).
+/// In both cases the token must belong to `authenticated_client_id`; the
+/// signature, configured algorithm, issuer, `exp`/`nbf` and
+/// `token_use == "access"` are enforced exactly as in
+/// [`verify_openstack_access_token`]. Tokens without a `jti` (e.g. ID tokens) are rejected with
 /// [`TokenVerificationError::WrongTokenUse`].
 ///
 /// # Errors
@@ -388,35 +396,20 @@ pub fn verify_revocable_access_token(
     jwks: &JwkSet,
     expected_algorithm: SigningAlgorithm,
     expected_issuers: &[String],
-    domain_id: &str,
     authenticated_client_id: &str,
 ) -> Result<RevocableAccessToken, TokenVerificationError> {
-    let header = decode_header(token)?;
-    let expected_alg = jwt_algorithm(expected_algorithm);
-    if header.alg != expected_alg {
-        return Err(TokenVerificationError::AlgorithmMismatch {
-            actual: header.alg,
-            expected: expected_alg,
-        });
-    }
+    let (expected_alg, decoding_key) = resolve_decoding_key(token, jwks, expected_algorithm)?;
 
-    let kid = header.kid.ok_or(TokenVerificationError::MissingKeyId)?;
-    let jwk = jwks
-        .find(&kid)
-        .ok_or_else(|| TokenVerificationError::UnknownKeyId(kid.clone()))?;
-    let decoding_key = DecodingKey::from_jwk(jwk)?;
-
-    let openstack_audience = format!("openstack-apis:{domain_id}");
+    // `aud` is the owning `client_id` (OIDC flavour) or an OpenStack audience;
+    // which one, and whether it belongs to the caller, is decided below.
     let mut validation = Validation::new(expected_alg);
     validation.set_required_spec_claims(&["exp", "iat", "nbf", "iss", "aud", "sub"]);
-    validation.set_audience(&[authenticated_client_id, openstack_audience.as_str()]);
+    validation.validate_aud = false;
     validation.validate_nbf = true;
 
     let claims = decode::<RevocableClaims>(token, &decoding_key, &validation)?.claims;
 
-    if !expected_issuers.iter().any(|iss| iss == &claims.iss) {
-        return Err(TokenVerificationError::UntrustedIssuer(claims.iss));
-    }
+    ensure_trusted_issuer(&claims.iss, expected_issuers)?;
 
     let token_use = claims.token_use.unwrap_or_default();
     if token_use != "access" {
@@ -425,10 +418,13 @@ pub fn verify_revocable_access_token(
 
     // Ownership: the OIDC flavour is bound by `aud`; the OpenStack flavour
     // by its `client_id` claim.
-    let owner = if claims.aud == openstack_audience {
+    let owner = if claims.aud.is_openstack() {
         claims.client_id.as_deref()
     } else {
-        Some(claims.aud.as_str())
+        match claims.aud.values() {
+            [client_id] => Some(client_id.as_str()),
+            _ => None,
+        }
     };
     if owner != Some(authenticated_client_id) {
         return Err(TokenVerificationError::WrongTokenUse(
@@ -453,7 +449,7 @@ pub enum IntrospectedAccessToken {
     /// OIDC access token (`aud` is the owning `client_id`), usable only
     /// against `/userinfo`.
     Oidc(OidcAccessTokenClaims),
-    /// OpenStack access token (`aud` is `openstack-apis:{domain_id}`).
+    /// OpenStack access token (`aud` is `openstack-apis` or a narrowing).
     OpenStack(Box<OpenStackAccessTokenClaims>),
 }
 
@@ -475,36 +471,20 @@ pub fn verify_introspectable_access_token(
     jwks: &JwkSet,
     expected_algorithm: SigningAlgorithm,
     expected_issuers: &[String],
-    domain_id: &str,
     revoked_jtis: &HashSet<String>,
 ) -> Result<IntrospectedAccessToken, TokenVerificationError> {
-    let header = decode_header(token)?;
-    let expected_alg = jwt_algorithm(expected_algorithm);
-    if header.alg != expected_alg {
-        return Err(TokenVerificationError::AlgorithmMismatch {
-            actual: header.alg,
-            expected: expected_alg,
-        });
-    }
+    let (expected_alg, decoding_key) = resolve_decoding_key(token, jwks, expected_algorithm)?;
 
-    let kid = header.kid.ok_or(TokenVerificationError::MissingKeyId)?;
-    let jwk = jwks
-        .find(&kid)
-        .ok_or_else(|| TokenVerificationError::UnknownKeyId(kid.clone()))?;
-    let decoding_key = DecodingKey::from_jwk(jwk)?;
-
-    let openstack_audience = format!("openstack-apis:{domain_id}");
     let mut validation = Validation::new(expected_alg);
     validation.set_required_spec_claims(&["exp", "iat", "nbf", "iss", "aud", "sub"]);
-    // The audience is any client of this domain (OIDC flavour) or the
-    // domain audience; both are covered by signature + issuer below.
+    // The audience is any client of this domain (OIDC flavour) or an OpenStack
+    // audience; both are covered by signature (the issuer's own JWKS) + issuer
+    // below.
     validation.validate_aud = false;
     validation.validate_nbf = true;
 
     let common = decode::<RevocableClaims>(token, &decoding_key, &validation)?.claims;
-    if !expected_issuers.iter().any(|iss| iss == &common.iss) {
-        return Err(TokenVerificationError::UntrustedIssuer(common.iss));
-    }
+    ensure_trusted_issuer(&common.iss, expected_issuers)?;
     let token_use = common.token_use.unwrap_or_default();
     if token_use != "access" {
         return Err(TokenVerificationError::WrongTokenUse(token_use));
@@ -516,7 +496,7 @@ pub fn verify_introspectable_access_token(
         return Err(TokenVerificationError::Revoked(jti));
     }
 
-    if common.aud == openstack_audience {
+    if common.aud.is_openstack() {
         let claims =
             decode::<OpenStackAccessTokenClaims>(token, &decoding_key, &validation)?.claims;
         enforce_delegation_invariants(&claims)?;
@@ -544,7 +524,7 @@ mod tests {
         OpenStackAccessTokenClaims {
             iss: ISSUER.to_string(),
             sub: "shadow-user".to_string(),
-            aud: format!("openstack-apis:{DOMAIN_ID}"),
+            aud: Audience::control_plane(),
             client_id: "client-1".to_string(),
             exp: now + 900,
             iat: now,
@@ -706,7 +686,6 @@ mod tests {
             &jwks,
             SigningAlgorithm::Es256,
             &[ISSUER.to_string()],
-            DOMAIN_ID,
             "client-1",
         )
         .unwrap();
@@ -723,7 +702,6 @@ mod tests {
             &jwks,
             SigningAlgorithm::Es256,
             &[ISSUER.to_string()],
-            DOMAIN_ID,
             "client-2",
         )
         .unwrap_err();
@@ -744,7 +722,6 @@ mod tests {
             &jwks,
             SigningAlgorithm::Es256,
             &[ISSUER.to_string()],
-            DOMAIN_ID,
             "client-1",
         )
         .unwrap();
@@ -765,7 +742,6 @@ mod tests {
             &jwks,
             SigningAlgorithm::Es256,
             &[ISSUER.to_string()],
-            DOMAIN_ID,
             "client-1",
         )
         .unwrap_err();
@@ -781,7 +757,7 @@ mod tests {
             &jwks,
             SigningAlgorithm::Es256,
             &[ISSUER.to_string()],
-            DOMAIN_ID,
+            None,
             &HashSet::new(),
         );
         assert!(result.is_ok(), "{result:?}");
@@ -801,7 +777,7 @@ mod tests {
             &jwks,
             SigningAlgorithm::Es256,
             &[ISSUER.to_string()],
-            DOMAIN_ID,
+            None,
             &HashSet::new(),
         )
         .unwrap_err();
@@ -812,14 +788,14 @@ mod tests {
     fn test_wrong_audience_rejected() {
         let now = chrono::Utc::now().timestamp();
         let mut claims = valid_claims(now);
-        claims.aud = "openstack-apis:other-domain".to_string();
+        claims.aud = Audience::One("some-other-service".to_string());
         let (token, jwks, _kid) = sign(&claims);
         let err = verify_openstack_access_token(
             &token,
             &jwks,
             SigningAlgorithm::Es256,
             &[ISSUER.to_string()],
-            DOMAIN_ID,
+            None,
             &HashSet::new(),
         )
         .unwrap_err();
@@ -836,7 +812,7 @@ mod tests {
             &jwks,
             SigningAlgorithm::Es256,
             &["https://someone-else.example/v4/oauth2/domain-1".to_string()],
-            DOMAIN_ID,
+            None,
             &HashSet::new(),
         )
         .unwrap_err();
@@ -871,7 +847,7 @@ mod tests {
             &jwks,
             SigningAlgorithm::Es256,
             &[ISSUER.to_string()],
-            DOMAIN_ID,
+            None,
             &HashSet::new(),
         )
         .unwrap_err();
@@ -890,7 +866,7 @@ mod tests {
             &jwks,
             SigningAlgorithm::Es256,
             &[ISSUER.to_string()],
-            DOMAIN_ID,
+            None,
             &revoked,
         )
         .unwrap_err();
@@ -917,7 +893,7 @@ mod tests {
             &jwks,
             SigningAlgorithm::Es256,
             &[ISSUER.to_string()],
-            DOMAIN_ID,
+            None,
             &HashSet::new(),
         )
         .unwrap_err();
@@ -947,7 +923,7 @@ mod tests {
             &jwks,
             SigningAlgorithm::Es256,
             &[ISSUER.to_string()],
-            DOMAIN_ID,
+            None,
             &HashSet::new(),
         )
         .unwrap_err();
@@ -970,7 +946,7 @@ mod tests {
             &jwks,
             SigningAlgorithm::Rs256,
             &[ISSUER.to_string()],
-            DOMAIN_ID,
+            None,
             &HashSet::new(),
         )
         .unwrap_err();
@@ -1000,7 +976,7 @@ mod tests {
             &other_jwks,
             SigningAlgorithm::Es256,
             &[ISSUER.to_string()],
-            DOMAIN_ID,
+            None,
             &HashSet::new(),
         )
         .unwrap_err();
@@ -1016,7 +992,6 @@ mod tests {
             &jwks,
             SigningAlgorithm::Es256,
             &[ISSUER.to_string()],
-            DOMAIN_ID,
             &HashSet::new(),
         )
         .unwrap();
@@ -1037,7 +1012,6 @@ mod tests {
             &jwks,
             SigningAlgorithm::Es256,
             &[ISSUER.to_string()],
-            DOMAIN_ID,
             &HashSet::new(),
         )
         .unwrap();
@@ -1053,7 +1027,6 @@ mod tests {
             &jwks,
             SigningAlgorithm::Es256,
             &[ISSUER.to_string()],
-            DOMAIN_ID,
             &HashSet::from(["jti-1".to_string()]),
         )
         .unwrap_err();
@@ -1069,11 +1042,199 @@ mod tests {
             &jwks,
             SigningAlgorithm::Es256,
             &["https://other.example".to_string()],
-            DOMAIN_ID,
             &HashSet::new(),
         )
         .unwrap_err();
         assert!(matches!(err, TokenVerificationError::UntrustedIssuer(_)));
+    }
+
+    fn verify_for(
+        claims: &OpenStackAccessTokenClaims,
+        service_type: Option<&str>,
+    ) -> Result<OpenStackAccessTokenClaims, TokenVerificationError> {
+        let (token, jwks, _kid) = sign(claims);
+        verify_openstack_access_token(
+            &token,
+            &jwks,
+            SigningAlgorithm::Es256,
+            &[ISSUER.to_string()],
+            service_type,
+            &HashSet::new(),
+        )
+    }
+
+    #[test]
+    fn test_retired_domain_bound_audience_rejected() {
+        let mut claims = valid_claims(chrono::Utc::now().timestamp());
+        claims.aud = Audience::One(format!("openstack-apis:{DOMAIN_ID}"));
+        assert!(matches!(
+            verify_for(&claims, None),
+            Err(TokenVerificationError::Malformed(_))
+        ));
+        // Not even a service whose type happens to equal the domain id.
+        assert!(matches!(
+            verify_for(&claims, Some("compute")),
+            Err(TokenVerificationError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn test_unnarrowed_token_accepted_by_every_service() {
+        let claims = valid_claims(chrono::Utc::now().timestamp());
+        assert!(verify_for(&claims, None).is_ok());
+        assert!(verify_for(&claims, Some("compute")).is_ok());
+        assert!(verify_for(&claims, Some("network")).is_ok());
+    }
+
+    #[test]
+    fn test_narrowed_token_accepted_only_by_matching_service() {
+        let mut claims = valid_claims(chrono::Utc::now().timestamp());
+        claims.aud = Audience::narrowed(&["compute", "image"]);
+        assert!(verify_for(&claims, Some("compute")).is_ok());
+        assert!(verify_for(&claims, Some("image")).is_ok());
+        assert!(matches!(
+            verify_for(&claims, Some("network")),
+            Err(TokenVerificationError::Malformed(_))
+        ));
+        // A service that does not know its type accepts only the
+        // un-narrowed form.
+        assert!(matches!(
+            verify_for(&claims, None),
+            Err(TokenVerificationError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn test_multi_issuer_service_validates_against_each_issuers_own_jwks() {
+        // One service trusting two domains' issuers: each token is verified
+        // against the JWKS of the issuer it names, and a domain's key cannot
+        // vouch for the other domain's `iss`.
+        let now = chrono::Utc::now().timestamp();
+        let issuer_a = "https://ks.example/v4/oauth2/domain-a".to_string();
+        let issuer_b = "https://ks.example/v4/oauth2/domain-b".to_string();
+        let allowlist = [issuer_a.clone(), issuer_b.clone()];
+
+        let claims_for = |iss: String, domain: &str| {
+            let mut claims = valid_claims(now);
+            claims.iss = iss;
+            claims.openstack_context.scope = OpenStackScope::Domain {
+                domain_id: domain.to_string(),
+                roles: vec![],
+            };
+            claims
+        };
+        let (token_a, jwks_a, _) = sign(&claims_for(issuer_a, "domain-a"));
+        let (token_b, jwks_b, _) = sign(&claims_for(issuer_b, "domain-b"));
+
+        let verify = |token: &str, jwks: &JwkSet| {
+            verify_openstack_access_token(
+                token,
+                jwks,
+                SigningAlgorithm::Es256,
+                &allowlist,
+                Some("compute"),
+                &HashSet::new(),
+            )
+        };
+        assert!(verify(&token_a, &jwks_a).is_ok());
+        assert!(verify(&token_b, &jwks_b).is_ok());
+        // Domain A's token against domain B's key set: no matching `kid`.
+        assert!(matches!(
+            verify(&token_a, &jwks_b),
+            Err(TokenVerificationError::UnknownKeyId(_))
+        ));
+    }
+
+    #[test]
+    fn test_issuer_outside_allowlist_rejected_despite_valid_signature() {
+        // A (compromised) domain key signs a token naming an issuer the
+        // service does not trust.
+        let mut claims = valid_claims(chrono::Utc::now().timestamp());
+        claims.iss = "https://ks.example/v4/oauth2/domain-evil".to_string();
+        assert!(matches!(
+            verify_for(&claims, Some("compute")),
+            Err(TokenVerificationError::UntrustedIssuer(_))
+        ));
+    }
+
+    #[test]
+    fn test_revocable_narrowed_openstack_token_owned_by_client() {
+        let mut claims = valid_claims(chrono::Utc::now().timestamp());
+        claims.aud = Audience::narrowed(&["compute"]);
+        let (token, jwks, _kid) = sign(&claims);
+        let got = verify_revocable_access_token(
+            &token,
+            &jwks,
+            SigningAlgorithm::Es256,
+            &[ISSUER.to_string()],
+            "client-1",
+        )
+        .unwrap();
+        assert_eq!(got.jti, "jti-1");
+    }
+
+    #[test]
+    fn test_revocable_mixed_audience_rejected() {
+        // `aud` mixing the control-plane value with a client id is neither
+        // flavour; the token cannot be claimed through either path.
+        let mut claims = valid_claims(chrono::Utc::now().timestamp());
+        claims.aud = Audience::Many(vec!["openstack-apis".to_string(), "client-2".to_string()]);
+        let (token, jwks, _kid) = sign(&claims);
+        let err = verify_revocable_access_token(
+            &token,
+            &jwks,
+            SigningAlgorithm::Es256,
+            &[ISSUER.to_string()],
+            "client-2",
+        )
+        .unwrap_err();
+        assert!(matches!(err, TokenVerificationError::WrongTokenUse(_)));
+    }
+
+    #[test]
+    fn test_introspectable_narrowed_openstack_token() {
+        let mut claims = valid_claims(chrono::Utc::now().timestamp());
+        claims.aud = Audience::narrowed(&["compute", "network"]);
+        let (token, jwks, _kid) = sign(&claims);
+        let got = verify_introspectable_access_token(
+            &token,
+            &jwks,
+            SigningAlgorithm::Es256,
+            &[ISSUER.to_string()],
+            &HashSet::new(),
+        )
+        .unwrap();
+        assert!(matches!(got, IntrospectedAccessToken::OpenStack(c) if c.jti == "jti-1"));
+    }
+
+    #[test]
+    fn test_scope_is_independent_of_issuer_domain() {
+        // The token proves who; the domain in `iss` does not constrain the
+        // scope. A cross-domain grant (user of one domain, project of
+        // another) and system scope both verify.
+        let mut claims = valid_claims(chrono::Utc::now().timestamp());
+        if let OpenStackScope::Project {
+            project_domain_id, ..
+        } = &mut claims.openstack_context.scope
+        {
+            *project_domain_id = "domain-b".to_string();
+        }
+        assert!(verify_for(&claims, Some("compute")).is_ok());
+
+        claims.openstack_context.scope = OpenStackScope::Domain {
+            domain_id: "domain-b".to_string(),
+            roles: vec![],
+        };
+        assert!(verify_for(&claims, None).is_ok());
+
+        claims.openstack_context.scope = OpenStackScope::System {
+            system_id: "all".to_string(),
+            roles: vec![],
+        };
+        assert!(verify_for(&claims, None).is_ok());
+
+        claims.openstack_context.scope = OpenStackScope::Unscoped;
+        assert!(verify_for(&claims, None).is_ok());
     }
 
     fn id_claims(now: i64, token_use: &str) -> IdTokenClaims {

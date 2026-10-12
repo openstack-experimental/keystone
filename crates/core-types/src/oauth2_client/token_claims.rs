@@ -71,7 +71,7 @@ pub struct IdTokenClaims {
 /// grants that did NOT request (or were not granted) the `openstack:api`
 /// scope (ADR 0026 §4, "Scope Validation"). Carries no OpenStack
 /// authorization data at all -- no `openstack_context`, no roles, no
-/// `openstack-apis:{domain_id}` audience. Exists purely as the standard
+/// `openstack-apis` audience. Exists purely as the standard
 /// RFC 6749 access token for calling Keystone's own `/userinfo` endpoint
 /// (OIDC Core §5.3). This is what closes ADR 0026 §1 Threat Model item 1: a
 /// compromised RP holding only this token has no `aud` value any downstream
@@ -83,7 +83,7 @@ pub struct OidcAccessTokenClaims {
     /// Keystone `user_id`.
     pub sub: String,
     /// The requesting `OAuth2Client.client_id` itself, NEVER
-    /// `"openstack-apis:{domain_id}"`.
+    /// `"openstack-apis"` (or a narrowing of it).
     pub aud: String,
     /// Expiration, Unix seconds. Mirrors `id_token` lifetime (default 15
     /// minutes).
@@ -108,6 +108,86 @@ pub struct OidcAccessTokenClaims {
     pub sid: Option<String>,
 }
 
+/// Audience of an OpenStack access token: the whole control plane of the
+/// deployment (ADR 0026 §5). Domain isolation is carried by `iss` and the
+/// per-issuer JWKS, not by `aud`.
+pub const OPENSTACK_APIS_AUDIENCE: &str = "openstack-apis";
+
+/// Audience of an OpenStack access token narrowed to one service type
+/// (`openstack-apis:<service type>`, ADR 0036 §7.1).
+pub fn openstack_service_audience(service_type: &str) -> String {
+    format!("{OPENSTACK_APIS_AUDIENCE}:{service_type}")
+}
+
+/// Whether `aud` is one of the audience values minted for OpenStack access
+/// tokens (the control-plane value or a service-type narrowing of it), as
+/// opposed to an OIDC access token whose audience is a `client_id`.
+pub fn is_openstack_audience(aud: &str) -> bool {
+    aud == OPENSTACK_APIS_AUDIENCE
+        || aud
+            .strip_prefix(OPENSTACK_APIS_AUDIENCE)
+            .and_then(|rest| rest.strip_prefix(':'))
+            .is_some_and(|service_type| !service_type.is_empty())
+}
+
+/// The `aud` claim (RFC 7519 §4.1.3): a single string or an array of strings.
+///
+/// Serializes a single value as a plain string and several values as an array,
+/// so the default un-narrowed token stays `"aud": "openstack-apis"`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Audience {
+    /// A single audience value.
+    One(String),
+    /// Several audience values.
+    Many(Vec<String>),
+}
+
+impl Audience {
+    /// The control-plane audience, [`OPENSTACK_APIS_AUDIENCE`].
+    pub fn control_plane() -> Self {
+        Self::One(OPENSTACK_APIS_AUDIENCE.to_string())
+    }
+
+    /// Audience narrowed to the given service types. An empty list yields the
+    /// un-narrowed [`Audience::control_plane`]. Duplicates are dropped.
+    pub fn narrowed<S: AsRef<str>>(service_types: &[S]) -> Self {
+        let mut values: Vec<String> = Vec::new();
+        for service_type in service_types {
+            let value = openstack_service_audience(service_type.as_ref());
+            if !values.contains(&value) {
+                values.push(value);
+            }
+        }
+        match values.len() {
+            0 => Self::control_plane(),
+            1 => Self::One(values.remove(0)),
+            _ => Self::Many(values),
+        }
+    }
+
+    /// The audience values as a slice.
+    pub fn values(&self) -> &[String] {
+        match self {
+            Self::One(value) => std::slice::from_ref(value),
+            Self::Many(values) => values,
+        }
+    }
+
+    /// Whether this is an OpenStack access token audience: non-empty and every
+    /// value is [`OPENSTACK_APIS_AUDIENCE`] or a narrowing of it. A mix with a
+    /// foreign value (e.g. an OIDC `client_id`) is not an OpenStack audience.
+    pub fn is_openstack(&self) -> bool {
+        let values = self.values();
+        !values.is_empty() && values.iter().all(|v| is_openstack_audience(v))
+    }
+
+    /// Whether `value` is one of the audience values.
+    pub fn contains(&self, value: &str) -> bool {
+        self.values().iter().any(|v| v == value)
+    }
+}
+
 /// Authorization claims consumed by downstream OpenStack services (ADR 0026
 /// §4). Issued as the `access_token` on `client_credentials` grants.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,9 +197,10 @@ pub struct OpenStackAccessTokenClaims {
     /// Keystone user_id (the ephemeral shadow `user_id` for
     /// `client_credentials`).
     pub sub: String,
-    /// Domain-bound audience: `"openstack-apis:{domain_id}"` (ADR 0026 §5,
-    /// "Domain Key Isolation and `aud` Binding").
-    pub aud: String,
+    /// Control-plane audience `"openstack-apis"`, or its narrowing to
+    /// `"openstack-apis:<service type>"` values (ADR 0026 §5, ADR 0036 §7.1).
+    /// Domain isolation comes from `iss` plus the issuer's own JWKS.
+    pub aud: Audience,
     /// The registered `OAuth2Client.client_id` that initiated the grant.
     pub client_id: String,
     /// Expiration, Unix seconds.
@@ -270,7 +351,7 @@ mod tests {
         let claims = OpenStackAccessTokenClaims {
             iss: "https://ks.example/v4/oauth2/d1".to_string(),
             sub: "shadow-user".to_string(),
-            aud: "openstack-apis:d1".to_string(),
+            aud: Audience::control_plane(),
             client_id: "client-1".to_string(),
             exp: 1000,
             iat: 900,
@@ -296,6 +377,44 @@ mod tests {
         assert_eq!(value["domain_id"], "d1");
         assert_eq!(value["user_id"], "shadow-user");
         assert!(value.get("openstack_context").is_none());
+    }
+
+    #[test]
+    fn test_audience_control_plane_serializes_as_string() {
+        let value = serde_json::to_value(Audience::control_plane()).unwrap();
+        assert_eq!(value, serde_json::json!("openstack-apis"));
+    }
+
+    #[test]
+    fn test_audience_narrowed_round_trip() {
+        assert_eq!(
+            Audience::narrowed::<&str>(&[]),
+            Audience::control_plane(),
+            "no service types keeps the default"
+        );
+        assert_eq!(
+            Audience::narrowed(&["compute"]),
+            Audience::One("openstack-apis:compute".to_string())
+        );
+        let many = Audience::narrowed(&["compute", "network", "compute"]);
+        let value = serde_json::to_value(&many).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!(["openstack-apis:compute", "openstack-apis:network"])
+        );
+        let back: Audience = serde_json::from_value(value).unwrap();
+        assert_eq!(back, many);
+        assert!(back.contains("openstack-apis:network"));
+        assert!(!back.contains("openstack-apis"));
+    }
+
+    #[test]
+    fn test_is_openstack_audience() {
+        assert!(is_openstack_audience("openstack-apis"));
+        assert!(is_openstack_audience("openstack-apis:compute"));
+        assert!(!is_openstack_audience("openstack-apis:"));
+        assert!(!is_openstack_audience("openstack-apisx"));
+        assert!(!is_openstack_audience("client-1"));
     }
 
     #[test]

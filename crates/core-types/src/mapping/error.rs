@@ -168,6 +168,25 @@ pub enum MappingProviderError {
     /// resolve to a real role -- this is rejected at write time instead.
     #[error("rule references role '{0}' which does not exist")]
     RoleNotFound(String),
+
+    /// A project authorization names a project that does not exist.
+    #[error("rule references project '{0}' which does not exist")]
+    ProjectNotFound(String),
+
+    /// A project authorization declares a `project_domain_id` that is not the
+    /// domain the project actually belongs to. The declared value is what
+    /// write-time policy checks, so it must be the truth.
+    #[error(
+        "rule declares project '{project_id}' in domain '{declared}' but it belongs to '{actual}'"
+    )]
+    ProjectDomainMismatch {
+        /// The project id.
+        project_id: String,
+        /// The `project_domain_id` the rule declares.
+        declared: String,
+        /// The domain the project belongs to.
+        actual: String,
+    },
 }
 
 impl MappingProviderError {

@@ -50,3 +50,34 @@ claims_mode_resolution if {
 	mode := input.target.mapping.domain_resolution_mode
 	mode.type == "claims_only"
 }
+
+# Authorizations the request would put into a ruleset: the rules of a create or
+# update payload, or the rules carried by mutations.
+requested_authorization contains auth if {
+	auth := input.target.mapping.rules[_].authorizations[_]
+}
+
+requested_authorization contains auth if {
+	auth := input.target.mapping.mutations[_].rule.authorizations[_]
+}
+
+# A rule grants scope outside the ruleset's own domain: system scope, or a
+# domain / project that belongs to another domain. The scope a mapping grants
+# is minted into tokens without further checks, so a domain `manager` must not
+# be able to widen it beyond their domain.
+out_of_domain_authorization if {
+	some auth in requested_authorization
+	auth.type == "system"
+}
+
+out_of_domain_authorization if {
+	some auth in requested_authorization
+	auth.type == "domain"
+	auth.domain_id != ruleset_domain_id
+}
+
+out_of_domain_authorization if {
+	some auth in requested_authorization
+	auth.type == "project"
+	auth.project_domain_id != ruleset_domain_id
+}

@@ -34,10 +34,10 @@ pub(super) mod test_fixtures;
 mod token_exchange;
 
 use axum::{
-    Form,
-    extract::{Path, State},
-    http::HeaderMap,
-    response::Response,
+    body::Bytes,
+    extract::{FromRequest, Path, Request, State},
+    http::{HeaderMap, header::CONTENT_TYPE},
+    response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
 
@@ -102,6 +102,56 @@ pub(super) struct TokenForm {
     /// `/device_authorization`.
     #[serde(default)]
     device_code: Option<String>,
+    /// RFC 8693 Token Exchange grant only (§2.1): OpenStack service types the
+    /// minted token is narrowed to (ADR 0036 §7.1). The parameter may repeat,
+    /// which `serde_urlencoded` cannot map onto a field, so [`TokenRequest`]
+    /// fills this in from the raw body.
+    #[serde(skip)]
+    audience: Vec<String>,
+}
+
+/// Extractor for the token endpoint body: an
+/// `application/x-www-form-urlencoded` [`TokenForm`], plus every repeated
+/// `audience` parameter (RFC 8693 §2.1) that `Form` would reject as a
+/// duplicate field.
+pub(super) struct TokenRequest(TokenForm);
+
+impl<S: Send + Sync> FromRequest<S> for TokenRequest {
+    type Rejection = Response;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        let is_form = req
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| {
+                v.split(';').next().is_some_and(|m| {
+                    m.trim()
+                        .eq_ignore_ascii_case("application/x-www-form-urlencoded")
+                })
+            });
+        if !is_form {
+            return Err(Oauth2TokenError::invalid_request(
+                "content type must be application/x-www-form-urlencoded",
+            )
+            .into_response());
+        }
+        let body = Bytes::from_request(req, state)
+            .await
+            .map_err(IntoResponse::into_response)?;
+        let mut form: TokenForm = serde_urlencoded::from_bytes(&body).map_err(|_| {
+            Oauth2TokenError::invalid_request("malformed form body").into_response()
+        })?;
+        let pairs: Vec<(String, String)> = serde_urlencoded::from_bytes(&body).map_err(|_| {
+            Oauth2TokenError::invalid_request("malformed form body").into_response()
+        })?;
+        form.audience = pairs
+            .into_iter()
+            .filter(|(key, _)| key == "audience")
+            .map(|(_, value)| value)
+            .collect();
+        Ok(Self(form))
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -148,7 +198,7 @@ pub(super) async fn token(
     headers: HeaderMap,
     PeerAddr(peer_addr): PeerAddr,
     correlation_id: CorrelationId,
-    Form(form): Form<TokenForm>,
+    TokenRequest(form): TokenRequest,
 ) -> Result<Response, Oauth2TokenError> {
     ensure_trusted_issuer(&state).await?;
 

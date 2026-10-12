@@ -13,6 +13,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! RFC 8693 Token Exchange grant.
 
+use std::collections::HashSet;
+
 use axum::{
     Json,
     http::{HeaderMap, StatusCode},
@@ -21,7 +23,9 @@ use axum::{
 use cadf::Outcome;
 use governor::clock::Clock as _;
 
-use openstack_keystone_core_types::oauth2_client::GrantType;
+use openstack_keystone_core::auth::ExecutionContext;
+use openstack_keystone_core_types::catalog::ServiceListParameters;
+use openstack_keystone_core_types::oauth2_client::{Audience, GrantType};
 
 use crate::audit::{build_initiator_from_vsc, emit_oauth2_session_event};
 use crate::keystone::ServiceState;
@@ -91,6 +95,8 @@ pub(super) async fn handle_token_exchange_grant(
                 )
             })?;
 
+    let audience = requested_audience(state, &form.audience).await?;
+
     let base = base_url(state, headers).await;
     let issuer = format!("{base}/v4/oauth2/{domain_id}");
     let now = chrono::Utc::now().timestamp();
@@ -105,6 +111,7 @@ pub(super) async fn handle_token_exchange_grant(
         jti,
         now,
         now + access_lifetime,
+        audience,
     )
     .map_err(|e| {
         tracing::warn!(error = %e, "oauth2 token exchange claim construction failed");
@@ -138,6 +145,55 @@ pub(super) async fn handle_token_exchange_grant(
         refresh_token: None,
     };
     Ok((StatusCode::OK, Json(response)).into_response())
+}
+
+/// Upper bound on `audience` values per request; there are far fewer service
+/// types than this in any deployment.
+const MAX_AUDIENCE_VALUES: usize = 16;
+
+/// Resolve the RFC 8693 `audience` request values (ADR 0036 §7.1) to the
+/// `aud` claim: the control-plane default when none was requested, otherwise
+/// the narrowing to the requested service types. Each value must be a service
+/// type present in the catalog, so no token is minted that no service accepts.
+async fn requested_audience(
+    state: &ServiceState,
+    requested: &[String],
+) -> Result<Audience, Oauth2TokenError> {
+    if requested.is_empty() {
+        return Ok(Audience::control_plane());
+    }
+    if requested.len() > MAX_AUDIENCE_VALUES {
+        return Err(Oauth2TokenError::invalid_target("too many audience values"));
+    }
+    let exec = ExecutionContext::internal(state);
+    let known: HashSet<String> = state
+        .provider
+        .get_catalog_provider()
+        .list_services(&exec, &ServiceListParameters::default())
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "oauth2 token exchange audience lookup failed");
+            Oauth2TokenError::internal("token issuance failed")
+        })?
+        .into_iter()
+        .filter(|service| service.enabled)
+        .filter_map(|service| service.r#type)
+        .collect();
+    let mut service_types: Vec<&str> = Vec::new();
+    for value in requested {
+        if value.is_empty() {
+            return Err(Oauth2TokenError::invalid_target(
+                "audience must not be empty",
+            ));
+        }
+        if !known.contains(value) {
+            return Err(Oauth2TokenError::invalid_target(format!(
+                "audience `{value}` is not a known service type"
+            )));
+        }
+        service_types.push(value);
+    }
+    Ok(Audience::narrowed(&service_types))
 }
 
 #[cfg(test)]
@@ -343,6 +399,110 @@ mod tests {
         assert_eq!(body["token_type"], "Bearer");
         let access_token = body["access_token"].as_str().unwrap();
         assert_eq!(access_token.split('.').count(), 3);
+    }
+
+    fn jwt_payload(access_token: &str) -> serde_json::Value {
+        use base64::Engine as _;
+        let payload = access_token.split('.').nth(1).unwrap();
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(payload)
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    /// Run a token-exchange request with `extra` appended to the form body and
+    /// a catalog that knows exactly the `compute` and `network` services.
+    async fn exchange_with(extra: &str) -> axum::response::Response {
+        use openstack_keystone_core_types::catalog::Service;
+
+        let client = token_exchange_client().await;
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_get_by_client_id()
+            .returning(move |_, _| Ok(Some(client.clone())));
+        let mut token_mock = crate::token::MockTokenProvider::default();
+        token_mock
+            .expect_validate_to_context()
+            .returning(|_, _, _, _| Ok(app_cred_delegated_vsc()));
+        let mut catalog_mock = crate::catalog::MockCatalogProvider::default();
+        catalog_mock.expect_list_services().returning(|_, _| {
+            Ok(["compute", "network"]
+                .into_iter()
+                .map(|t| Service {
+                    enabled: true,
+                    extra: Default::default(),
+                    id: format!("svc-{t}"),
+                    r#type: Some(t.to_string()),
+                })
+                .collect())
+        });
+
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock)
+            .mock_token(token_mock)
+            .mock_catalog(catalog_mock)
+            .mock_oauth2_key(ok_key_mock());
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+        api.as_service()
+            .oneshot(request(&format!(
+                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=some-existing-token{extra}"
+            )))
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_default_audience_is_control_plane() {
+        let response = exchange_with("").await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        let claims = jwt_payload(body["access_token"].as_str().unwrap());
+        assert_eq!(claims["aud"], "openstack-apis");
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_audience_narrows_to_service_types() {
+        let response = exchange_with("&audience=compute&audience=network").await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        let claims = jwt_payload(body["access_token"].as_str().unwrap());
+        assert_eq!(
+            claims["aud"],
+            serde_json::json!(["openstack-apis:compute", "openstack-apis:network"])
+        );
+
+        let response = exchange_with("&audience=compute").await;
+        let claims = jwt_payload(json_body(response).await["access_token"].as_str().unwrap());
+        assert_eq!(claims["aud"], "openstack-apis:compute");
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_unknown_audience_is_invalid_target() {
+        let response = exchange_with("&audience=compute&audience=nonexistent").await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(response).await["error"], "invalid_target");
+
+        // The retired domain-bound form is not a service type either.
+        let response = exchange_with("&audience=openstack-apis%3Adomain-1").await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(response).await["error"], "invalid_target");
+
+        let response = exchange_with("&audience=").await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(response).await["error"], "invalid_target");
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_audience_count_is_bounded() {
+        let many = (0..=super::MAX_AUDIENCE_VALUES)
+            .map(|i| format!("&audience=svc{i}"))
+            .collect::<String>();
+        let response = exchange_with(&many).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(response).await["error"], "invalid_target");
     }
 
     #[tokio::test]

@@ -35,11 +35,14 @@ use uuid::Uuid;
 
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::oauth2_client::{
-    build_access_token_claims, hydrate_client_credentials_context, verify_openstack_access_token,
+    TokenVerificationError, build_access_token_claims, hydrate_client_credentials_context,
+    verify_openstack_access_token,
 };
 use openstack_keystone_core_types::mapping::authorization::Authorization;
 use openstack_keystone_core_types::mapping::*;
-use openstack_keystone_core_types::oauth2_client::{GrantType, OAuth2ClientResourceCreateBuilder};
+use openstack_keystone_core_types::oauth2_client::{
+    Audience, GrantType, OAuth2ClientResourceCreateBuilder,
+};
 use openstack_keystone_core_types::role::RoleRefBuilder;
 use openstack_keystone_key_repository::asymmetric::{
     SigningAlgorithm as KeySigningAlgorithm, derive_kid, jwt_algorithm, to_encoding_key,
@@ -204,12 +207,12 @@ async fn test_client_credentials_token_verifies_fully_offline() -> Result<()> {
         &jwks,
         to_key_signing_algorithm(oauth2_cfg.signing_algorithm),
         &[issuer],
-        &domain.id,
+        None,
         &HashSet::new(),
     )?;
 
     assert_eq!(claims.token_use, "access");
-    assert_eq!(claims.aud, format!("openstack-apis:{}", domain.id));
+    assert_eq!(claims.aud, Audience::control_plane());
     assert_eq!(claims.openstack_context.roles, vec!["member".to_string()]);
 
     Ok(())
@@ -218,10 +221,11 @@ async fn test_client_credentials_token_verifies_fully_offline() -> Result<()> {
 #[tokio::test]
 #[traced_test]
 async fn test_token_rejected_against_a_different_domains_jwks() -> Result<()> {
-    // ADR 0026 §5 "Domain Key Isolation and `aud` Binding": each domain
-    // owns an independent signing keypair, so a token minted for one
-    // domain must not verify against another domain's published JWKS/aud,
-    // even though both are legitimately provisioned, live domains.
+    // ADR 0026 §5 "Domain Key Isolation": each domain owns an independent
+    // signing keypair and `aud` is the flat control-plane value, so a token
+    // minted for one domain must not verify against another domain's
+    // published JWKS, even though both are legitimately provisioned, live
+    // domains and the verifier trusts both issuers.
     let (state, _tmp) = get_state().await?;
     let domain_a = create_domain!(state)?;
     let domain_b = create_domain!(state)?;
@@ -243,18 +247,87 @@ async fn test_token_rejected_against_a_different_domains_jwks() -> Result<()> {
         .await?;
     let oauth2_cfg = state.config_manager.config.read().await.oauth2.clone();
     let issuer_a = format!("https://ks.example/v4/oauth2/{}", domain_a.id);
+    let issuer_b = format!("https://ks.example/v4/oauth2/{}", domain_b.id);
 
     let result = verify_openstack_access_token(
         &token,
         &jwks_b,
         to_key_signing_algorithm(oauth2_cfg.signing_algorithm),
-        &[issuer_a],
-        &domain_b.id,
+        &[issuer_a, issuer_b],
+        None,
         &HashSet::new(),
     );
     assert!(
-        result.is_err(),
-        "a domain A token must not verify against domain B's JWKS/aud"
+        matches!(result, Err(TokenVerificationError::UnknownKeyId(_))),
+        "a domain A token must not verify against domain B's JWKS: {result:?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_multi_domain_service_verifies_each_token_against_its_issuers_jwks() -> Result<()> {
+    // One service trusting two domains' issuers (ADR 0026 §5): the flat
+    // `aud` lets it accept both, while each token is only ever verified
+    // against the JWKS of the issuer it names.
+    let (state, _tmp) = get_state().await?;
+    let domain_a = create_domain!(state)?;
+    let domain_b = create_domain!(state)?;
+    let client_a = provision_client_credentials_client(&state, &domain_a.id, "provider-a").await?;
+    let client_b = provision_client_credentials_client(&state, &domain_b.id, "provider-b").await?;
+    let token_a = mint_access_token(&state, &client_a).await?;
+    let token_b = mint_access_token(&state, &client_b).await?;
+
+    let key_provider = state.provider.get_oauth2_key_provider();
+    let jwks_a = key_provider.jwks(&state, &domain_a.id).await?;
+    let jwks_b = key_provider.jwks(&state, &domain_b.id).await?;
+    let algorithm = to_key_signing_algorithm(
+        state
+            .config_manager
+            .config
+            .read()
+            .await
+            .oauth2
+            .signing_algorithm,
+    );
+    let allowlist = [
+        format!("https://ks.example/v4/oauth2/{}", domain_a.id),
+        format!("https://ks.example/v4/oauth2/{}", domain_b.id),
+    ];
+
+    let claims_a = verify_openstack_access_token(
+        &token_a,
+        &jwks_a,
+        algorithm,
+        &allowlist,
+        Some("compute"),
+        &HashSet::new(),
+    )?;
+    let claims_b = verify_openstack_access_token(
+        &token_b,
+        &jwks_b,
+        algorithm,
+        &allowlist,
+        Some("compute"),
+        &HashSet::new(),
+    )?;
+    assert_eq!(claims_a.aud, claims_b.aud);
+    assert_eq!(claims_a.aud, Audience::control_plane());
+
+    // A verifier that trusts only domain A's issuer rejects B's token even
+    // with B's own (correct) JWKS.
+    let result = verify_openstack_access_token(
+        &token_b,
+        &jwks_b,
+        algorithm,
+        &allowlist[..1],
+        Some("compute"),
+        &HashSet::new(),
+    );
+    assert!(
+        matches!(result, Err(TokenVerificationError::UntrustedIssuer(_))),
+        "{result:?}"
     );
 
     Ok(())

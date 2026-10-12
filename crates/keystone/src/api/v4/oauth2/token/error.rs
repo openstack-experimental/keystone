@@ -76,6 +76,12 @@ impl Oauth2TokenError {
         Self::new(StatusCode::BAD_REQUEST, "invalid_scope", description)
     }
 
+    /// RFC 8693 §2.2.2: the requested `audience` is not a service type this
+    /// deployment can mint a token for.
+    pub(crate) fn invalid_target(description: impl Into<String>) -> Self {
+        Self::new(StatusCode::BAD_REQUEST, "invalid_target", description)
+    }
+
     pub(crate) fn invalid_grant(description: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, "invalid_grant", description)
     }

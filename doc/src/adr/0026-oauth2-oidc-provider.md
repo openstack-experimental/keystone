@@ -4,25 +4,18 @@
 
 ## Status
 
-Accepted. Implemented in `crates/keystone/src/api/v4/oauth2/` (`authorize`,
-`token`, `device`, `device_authorization`, `jwks`, `jwks_revocation`,
-`well_known`, `revoke`). Status was left at `Proposed` after the feature shipped;
-corrected 2026-09-14 (security review re-evaluation, V8) so a reader
-triaging by ADR status does not under-weight this live surface. The
-implementation was independently audited against OAuth2 client-enumeration
-and timing side-channel classes (security review V8a) — one gap found
-(device-flow rate limiting) and fixed 2026-07-16.
+Accepted.
 
 ## Reference
 
 Extends ADR 0006 (Federation IDP), ADR 0016-v2 (Distributed Secure Storage), ADR
 0017 (SecurityContext Architecture), ADR 0020 (Unified Mapping Engine), ADR 0022
 (Handler Rate Limiting), and ADR 0023 (CADF Auditing Architecture). This
-document completely supersedes and replaces the previous draft of ADR 0026, which
-isolated JSON Web Tokens (JWTs) exclusively to external third-party consumers.
-This record formalizes the structural, cryptographic, and architectural pipeline
-necessary to elevate the signed JWT access token to a primary citizen natively
-ingested across the internal OpenStack control plane.
+document completely supersedes and replaces the previous draft of ADR 0026,
+which isolated JSON Web Tokens (JWTs) exclusively to external third-party
+consumers. This record formalizes the structural, cryptographic, and
+architectural pipeline necessary to elevate the signed JWT access token to a
+primary citizen natively ingested across the internal OpenStack control plane.
 
 ---
 
@@ -37,8 +30,8 @@ cluster. Restricting the outbound OAuth2 capability to third-party integrations
 (e.g., "Login with OpenStack" for Grafana) introduced a severe **Circular Token
 Exchange Trap**. External cloud-native operators or containerized workloads
 authenticating via OIDC had to immediately execute an RFC 8693 Token Exchange
-round trip to trade their JWT for a Fernet token before they could make a
-single call to Nova or Neutron.
+round trip to trade their JWT for a Fernet token before they could make a single
+call to Nova or Neutron.
 
 To scale to the performance requirements of modern public cloud hyperscalers
 (AWS, GCP, Azure), `keystone-rs` must act as an authoritative **OAuth2
@@ -61,13 +54,12 @@ checkbox; it unlocks concrete, high-leverage scenarios that neither Fernet nor
 the Python JWS token provider can serve:
 
 1. **Cloud-native workloads calling OpenStack APIs directly.** Kubernetes
-   operators (Cluster API, Crossplane), CI/CD pipelines (GitHub Actions /
-   GitLab OIDC-style workload federation), and Terraform controllers hold
-   short-lived OIDC credentials natively. Today they must trade them for a
-   Fernet token first (the Circular Token Exchange Trap, above). With the OP in
-   place, a `client_credentials` grant yields a JWT that Nova/Neutron accept
-   directly — no long-lived application credentials embedded in cluster
-   secrets.
+   operators (Cluster API, Crossplane), CI/CD pipelines (GitHub Actions / GitLab
+   OIDC-style workload federation), and Terraform controllers hold short-lived
+   OIDC credentials natively. Today they must trade them for a Fernet token
+   first (the Circular Token Exchange Trap, above). With the OP in place, a
+   `client_credentials` grant yields a JWT that Nova/Neutron accept directly —
+   no long-lived application credentials embedded in cluster secrets.
 2. **Offline, per-request validation at hyperscaler request rates.** Every
    Fernet validation is a back-channel keystonemiddleware round trip to
    Keystone. Signed JWTs are verified in-memory by the downstream middleware
@@ -75,24 +67,23 @@ the Python JWS token provider can serve:
    `RequestAuthentication`) — removing Keystone from the data path of every
    OpenStack API call. This is the single largest scalability win in this ADR.
 3. **"Login with OpenStack" for the surrounding ecosystem.** Grafana, Harbor,
-   ArgoCD, internal developer portals, and any standard OIDC RP can
-   authenticate users against Keystone with stock OIDC libraries — Keystone
-   becomes the identity anchor for the whole cloud's tooling, not just for
-   OpenStack services.
-4. **Replacing long-lived machine secrets with short-lived tokens.**
-   Application credentials and EC2 keys are long-lived bearer secrets stored
-   client-side. OAuth2 clients with 15-minute access tokens plus rotating
-   refresh tokens (with family-tree breach detection, §9) shrink the credential
-   theft window from months to minutes.
+   ArgoCD, internal developer portals, and any standard OIDC RP can authenticate
+   users against Keystone with stock OIDC libraries — Keystone becomes the
+   identity anchor for the whole cloud's tooling, not just for OpenStack
+   services.
+4. **Replacing long-lived machine secrets with short-lived tokens.** Application
+   credentials and EC2 keys are long-lived bearer secrets stored client-side.
+   OAuth2 clients with 15-minute access tokens plus rotating refresh tokens
+   (with family-tree breach detection, §9) shrink the credential theft window
+   from months to minutes.
 5. **Modern CLI login.** The Device Authorization Grant (§7.C) gives
    `openstack`/`osc` CLI users browser-based login with MFA/passkey support on
    headless machines — the flow every major cloud CLI (aws sso, gcloud, az)
    already uses, impossible with password-in-clouds-yaml Fernet flows.
 6. **Standards-based delegation (v2, §12).** Trusts, application credentials,
-   and EC2 delegation re-expressed as RFC 8693 Token Exchange, plus
-   on-behalf-of downscoping for service-to-service hops (Nova → Neutron with a
-   narrowed, short-TTL token instead of forwarding the user's full bearer
-   token).
+   and EC2 delegation re-expressed as RFC 8693 Token Exchange, plus on-behalf-of
+   downscoping for service-to-service hops (Nova → Neutron with a narrowed,
+   short-TTL token instead of forwarding the user's full bearer token).
 
 Use cases 1 and 2 are the strategic drivers: they shed load and unblock
 cloud-native adoption. Use cases 3-5 are adoption accelerators that fall out of
@@ -105,7 +96,7 @@ the same machinery nearly for free.
    leveraging that credential to access native OpenStack core APIs. This is
    achieved by enforcing strict, segregated audience (`aud`) targeting: an
    `authorization_code`/`refresh_token` grant only ever produces an
-   OpenStack-capable access token (`aud: "openstack-apis:{domain_id}"`, carrying
+   OpenStack-capable access token (`aud: "openstack-apis"`, carrying
    `openstack_context`/roles) when the client explicitly requested and was
    granted the `openstack:api` scope (§4, "Scope Validation"). Every other RP -
    including every client that only wants "Login with OpenStack" identity
@@ -126,19 +117,19 @@ the same machinery nearly for free.
 
 ## 2. Decision Summary
 
-| Architectural Axis            | Formal Decision                                                                                                                                                                                                                                                                                                                   |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Cluster Operational Role**  | Authoritative OAuth2 Authorization Server & OpenID Connect Provider (OP).                                                                                                                                                                                                                                                         |
-| **Token Architecture**        | Stateless JWTs for `id_token` and `access_token`, default 15-minute `exp` for both. Stateful rotating refresh tokens with family tracking in Raft + FjallDB (OAuth 2.1 §4.1.4), default 30-day idle lifetime (`[oauth2] refresh_token_lifetime_days`), reset on each successful rotation but capped by an absolute family lifetime fixed at root issuance (default 90 days, `[oauth2] refresh_token_absolute_lifetime_days`). The user (exists, enabled, same domain) and domain (enabled) are re-validated on every rotation; failure revokes the family.                                         |
-| **Cryptographic Track**       | ES256 (default) or RS256 configurable via `[oauth2] signing_algorithm`.                                                                                                                                                                                                                                                           |
-| **Discovery & JWKS**          | Per-domain issuer, per ADR 0006. `GET /v4/oauth2/{domain_id}/jwks` + `/.well-known/openid-configuration`.                                                                                                                                                                                                                         |
-| **Scope Model**               | Standard OIDC scopes (`openid`, `profile`, `email`) for identity display. `openstack:api` is a distinct, explicit resource scope gating whether `authorization_code`/`refresh_token` grants ever receive OpenStack authorization data (§4); role resolution itself runs via the mapping engine/claims template, not OAuth2 scope. |
-| **Key Synchronization**       | Distributed via **Raft + FjallDB** log replication.                                                                                                                                                                                                                                                                               |
-| **Target Audience (`aud`)**   | Domain-bound service identifier (`aud: "openstack-apis:{domain_id}"`) for internal control plane verification; not a single cluster-wide value (see §4 threat note).                                                                                                                                                              |
-| **Downstream Acceptance**     | Executed via a lightweight, custom Python WSGI middleware injected into existing Paste Deploy pipelines.                                                                                                                                                                                                                          |
-| **Machine Workspace Storage** | Typically resolves via `IdentityMode::Ephemeral` shadow registration mappings to bypass SQL table bloating; `identity_mode` is a property of the matched `MappingRule` (ADR 0020 §3), not a fixed property of `OAuth2Client` (§5).                                                                                                |
-| **Rate Limiting Engine**      | Handled natively at the handler layer using the `governor` crate with pre-hash enforcement.                                                                                                                                                                                                                                       |
-| **Audit Verification**        | JCS-canonicalized (RFC 8785) payloads signed using the _same_ per-node KEK-derived HMAC engine.                                                                                                                                                                                                                                   |
+| Architectural Axis            | Formal Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Cluster Operational Role**  | Authoritative OAuth2 Authorization Server & OpenID Connect Provider (OP).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Token Architecture**        | Stateless JWTs for `id_token` and `access_token`, default 15-minute `exp` for both. Stateful rotating refresh tokens with family tracking in Raft + FjallDB (OAuth 2.1 §4.1.4), default 30-day idle lifetime (`[oauth2] refresh_token_lifetime_days`), reset on each successful rotation but capped by an absolute family lifetime fixed at root issuance (default 90 days, `[oauth2] refresh_token_absolute_lifetime_days`). The user (exists, enabled, same domain) and domain (enabled) are re-validated on every rotation; failure revokes the family. |
+| **Cryptographic Track**       | ES256 (default) or RS256 configurable via `[oauth2] signing_algorithm`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **Discovery & JWKS**          | Per-domain issuer, per ADR 0006. `GET /v4/oauth2/{domain_id}/jwks` + `/.well-known/openid-configuration`.                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Scope Model**               | Standard OIDC scopes (`openid`, `profile`, `email`) for identity display. `openstack:api` is a distinct, explicit resource scope gating whether `authorization_code`/`refresh_token` grants ever receive OpenStack authorization data (§4); role resolution itself runs via the mapping engine/claims template, not OAuth2 scope.                                                                                                                                                                                                                          |
+| **Key Synchronization**       | Distributed via **Raft + FjallDB** log replication.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| **Target Audience (`aud`)**   | Control-plane identifier `aud: "openstack-apis"`, optionally narrowed to `openstack-apis:<service type>` values (ADR 0036 §7.1). Domain isolation is carried by `iss`, and the per-issuer JWKS, not by `aud` (see §5, "Domain Key Isolation and `aud`").                                                                                                                                                                                                                                                                  |
+| **Downstream Acceptance**     | Executed via a lightweight, custom Python WSGI middleware injected into existing Paste Deploy pipelines.                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| **Machine Workspace Storage** | Typically resolves via `IdentityMode::Ephemeral` shadow registration mappings to bypass SQL table bloating; `identity_mode` is a property of the matched `MappingRule` (ADR 0020 §3), not a fixed property of `OAuth2Client` (§5).                                                                                                                                                                                                                                                                                                                         |
+| **Rate Limiting Engine**      | Handled natively at the handler layer using the `governor` crate with pre-hash enforcement.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **Audit Verification**        | JCS-canonicalized (RFC 8785) payloads signed using the _same_ per-node KEK-derived HMAC engine.                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 
 ---
 
@@ -299,7 +290,7 @@ pub struct IdTokenClaims {
 /// Minimal `access_token` issued on `authorization_code`/`refresh_token` grants
 /// that did NOT request (or were not granted) the `openstack:api` scope (§4,
 /// "Scope Validation"). Carries no OpenStack authorization data at all - no
-/// `openstack_context`, no roles, no `openstack-apis:{domain_id}` audience.
+/// `openstack_context`, no roles, no `openstack-apis` audience.
 /// Exists purely as the standard RFC 6749 access token for calling Keystone's
 /// own `/userinfo` endpoint (OIDC Core §5.3), the same role a generic OIDC
 /// access token plays for any RP that never intends to touch OpenStack APIs.
@@ -310,7 +301,7 @@ pub struct IdTokenClaims {
 pub struct OidcAccessTokenClaims {
     pub iss: String,            // Issuer URL bound to the domain
     pub sub: String,            // Keystone user_id
-    pub aud: String,            // The requesting OAuth2Client.client_id itself, NEVER "openstack-apis:{domain_id}"
+    pub aud: String,            // The requesting OAuth2Client.client_id itself, NEVER "openstack-apis"
     pub exp: i64,               // Mirrors id_token lifetime (default 15 minutes)
     pub iat: i64,
     pub nbf: i64,
@@ -329,7 +320,7 @@ pub struct OidcAccessTokenClaims {
 pub struct OpenStackAccessTokenClaims {
     pub iss: String,            // Issuer URL bound to the domain
     pub sub: String,            // Keystone user_id
-    pub aud: String,            // Domain-bound identifier: "openstack-apis:{domain_id}" (see §5 threat note; NOT a flat cluster-wide value)
+    pub aud: Audience,          // "openstack-apis" (whole control plane) or narrowed ["openstack-apis:<service type>", ...]; domain isolation is via `iss` + per-issuer JWKS (see §5)
     pub client_id: String,      // Registered OAuth2Client that initiated the grant
     pub exp: i64,               // Short-lived expiration (default 15 minutes)
     pub iat: i64,
@@ -411,19 +402,19 @@ pub enum OpenStackScope {
 ### Amendment: `scope_roles` Wire Rename (Found in Phase 5)
 
 The struct layout above, as originally specified, has `OpenStackContext.roles`
-(`Vec<String>`, the effective role *names* the §6 middleware reads via
-`ctx['roles']`) and each `OpenStackScope` variant's `roles: Vec<RoleRef>`
-both flatten into the same JSON object via nested `#[serde(flatten)]`. Since
-both fields serialize to the identical wire key `"roles"`, the actual JSON
-produced contains a duplicate key -- valid to *write* (`serde_json` silently
-overwrites the earlier entry) but never valid to *read back*: flattened
-deserialization resolves each Rust field by name against the first matching
-key in the source object, not the last, so no `OpenStackAccessTokenClaims`
-with a `Project`/`Domain`/`System` scope could ever be decoded back into this
-type at all. This went unnoticed through Phases 3-4 because the only existing
-tests serialized claims one-way and never round-tripped them. Phase 5's
-offline verifier is the first code to actually decode a signed token, and it
-surfaced the defect immediately.
+(`Vec<String>`, the effective role _names_ the §6 middleware reads via
+`ctx['roles']`) and each `OpenStackScope` variant's `roles: Vec<RoleRef>` both
+flatten into the same JSON object via nested `#[serde(flatten)]`. Since both
+fields serialize to the identical wire key `"roles"`, the actual JSON produced
+contains a duplicate key -- valid to _write_ (`serde_json` silently overwrites
+the earlier entry) but never valid to _read back_: flattened deserialization
+resolves each Rust field by name against the first matching key in the source
+object, not the last, so no `OpenStackAccessTokenClaims` with a
+`Project`/`Domain`/`System` scope could ever be decoded back into this type at
+all. This went unnoticed through Phases 3-4 because the only existing tests
+serialized claims one-way and never round-tripped them. Phase 5's offline
+verifier is the first code to actually decode a signed token, and it surfaced
+the defect immediately.
 
 **Fix:** each `OpenStackScope` variant's `roles: Vec<RoleRef>` field carries
 `#[serde(rename = "scope_roles")]`, keeping the Rust field name (and every
@@ -722,20 +713,99 @@ crossing domain/system boundaries, domain-confined self-service otherwise:
 Every create/update/delete/rotate-secret event triggers a CADF audit event (§9),
 same as mapping ruleset mutations.
 
-### Domain Key Isolation and `aud` Binding
+### Domain Key Isolation and `aud`
 
 Each domain owns an independent signing keypair (§3), synchronized separately
-via Raft + FjallDB. If `aud` were a single flat cluster-wide value (e.g.
-`"openstack-apis"`), compromise of **any one domain's** signing key would let an
-attacker forge tokens accepted by every internal OpenStack service cluster-wide
+via Raft + FjallDB:
 
-- collapsing the per-domain trust isolation this ADR otherwise builds (mirroring
-  ADR 0006's domain segregation). To close this, `aud` is domain-bound
-  (`"openstack-apis:{domain_id}"`), and the downstream middleware (§6) validates
-  both `aud` against its configured domain and `iss` against an explicit
-  per-deployment issuer allowlist, not merely claim presence. A compromised
-  domain key therefore only forges tokens accepted within that domain's own
-  blast radius, not the whole control plane.
+- OpenStack-capable access tokens carry `aud = "openstack-apis"`: the whole
+  control plane of the deployment.
+- A token may be narrowed to specific service types at issuance via the RFC 8693
+  `audience` parameter (ADR 0036 §7.1):
+  `aud = ["openstack-apis:<service type>", ...]`. Narrowing only ever removes
+  reach.
+- A service accepts a token when `aud` contains `openstack-apis` or
+  `openstack-apis:<its own service type>`. A service that does not know its own
+  service type accepts only the un-narrowed form.
+
+Because `aud` does not carry the domain, domain isolation rests on `iss`, the
+per-issuer JWKS. The issuer (`/v4/oauth2/{domain_id}`) names
+the signing domain, and a verifier:
+
+1. **Trusts a Keystone, not a list of domains.** It is configured with the base
+   URL of the Keystone(s) it trusts (`keystone_issuer_base_url`) and accepts any
+   `iss` of the form `{base}/v4/oauth2/{domain_id}`. A public cloud with many,
+   dynamically created domains therefore needs no per-domain configuration on
+   any service. An explicit issuer list (or pattern) remains available for a
+   service that must trust only some domains.
+2. **Derives the endpoints from `iss`.** The JWKS (`{iss}/jwks`) and revocation
+   list are fetched lazily per issuer into a bounded cache, only from under the
+   configured base URL: an attacker-chosen `iss` must never make the service
+   fetch an arbitrary host, and unknown issuers are negatively cached and rate
+   limited so random `iss` values cannot become a fetch storm. A deleted domain
+   serves no JWKS, so its tokens fail closed with no configuration change.
+3. **Verifies a token only against the key set of the issuer it names**, never a
+   union of key sets, so one domain's key cannot vouch for another domain's
+   `iss`.
+
+`iss` names the signing domain and carries no scope authority. The token says
+who the caller is (vision, "a JWT that says who"); the scope it carries today is
+a transitional hint, and a user of one domain holding a role on a project of
+another, or a human holding a system-level grant, is legitimate whichever
+domain's issuer signed the token. Verifiers therefore do not compare the scope
+to `iss`, and System scope is not refused. The authority for a scope is the
+mint side: the exchange validates the subject through the token provider,
+and `client_credentials` scope comes from a mapping whose authorizations are
+gated at write time. A domain `manager` may only create or change rulesets
+whose authorizations stay in the ruleset's own domain; granting system scope
+or scope in another domain requires `admin`
+(`policy/mapping/ruleset/{create,update}.rego`, also for rule mutations).
+The policy sees the declared `project_domain_id`, so the mapping service also
+verifies at write time that it is the domain the project really belongs to
+(`ProjectDomainMismatch`); a project cannot move between domains, so this
+cannot go stale.
+
+Enforcement is at write time only. The token path does not re-check the
+resolved scope against the ruleset's provenance, and a global ruleset (no
+`domain_id`, `admin`-only) is not reachable from an OAuth2 client, because the
+`client_credentials` lookup is keyed on `(client.domain_id, source)`. System
+scope for a workload through OAuth2 is therefore not available yet. The
+intended follow-up is a mint-time check keyed on the ruleset's own domain: a
+domain-bound ruleset may only grant scope inside its domain (to principals of
+any domain), a global ruleset may grant any scope. It needs a global lookup
+path for clients and protection against a `provider_id` collision, since
+`provider_id` is chosen by the client's creator and is unique only within its
+domain: a domain `manager` must not be able to adopt the `provider_id` an
+admin's global ruleset targets. System scope for human administrators is a
+separate question, tied to per-request authorization (vision §4.3).
+
+Residual risk: a leaked domain signing key can sign any scope claim, and every
+verifier that trusts that issuer accepts it. This closes only when the scope
+leaves the token and is decided per request by Keystone (vision §4.3). A domain
+audience in `aud` is deliberately not used: it would not help (the forger
+controls the claims) and would stop one token from working across services and
+domains.
+
+**Trade-off:** the trusted base URL (or explicit issuer list) is the boundary: a
+service accepts every token from any issuer it trusts, for that issuer's own
+domain. A service that should trust only some domains is configured per service,
+not through `aud`. The project stays in the `project_id`/`delegated_project_id`
+claims and is enforced as a target check (the request's target project must
+equal the claim), as for Fernet project-scoped tokens; it is not put in `aud`.
+
+**Revocation at scale:** the JTI revocation list is served per domain
+(`/v4/oauth2/{domain_id}/jwks/revocation`), so a verifier trusting many domains
+would poll once per active issuer every 60 s. Entries only exist after an
+emergency key rotation, client deletion or explicit revocation, so almost every
+list is empty. A cluster-wide revocation feed (one endpoint returning the union
+of all domains' revoked `jti`s, optionally with a `since` cursor or ETag) is the
+recommended extension for large deployments: a `jti` is a UUID, so a flat set is
+safe to share across domains, and a verifier keeps one 60 s poll regardless of
+the number of domains. The per-domain endpoint is the baseline; a verifier that
+trusts many domains polls it once per active issuer.
+
+**Open point:** whether `keystonemiddleware` and the Python service-side
+middleware can hold more than one trusted issuer today has not been verified.
 
 ---
 
@@ -761,16 +831,26 @@ logger = logging.getLogger(__name__)
 class KeystoneNativeJwtMiddleware:
     def __init__(self, app, config):
         self.app = app
-        self.jwks_url = config.get('keystone_jwks_url')
-        self.jwt_jti_revocation_url = config.get('keystone_jwt_jti_revocation_url')
-        # Domain-bound aud (see ADR §5, "Domain Key Isolation and `aud` Binding"):
-        # a flat cluster-wide audience would let a single compromised domain
-        # signing key forge tokens accepted by every service in the cluster.
-        domain_id = config.get('keystone_domain_id')
-        self.expected_audience = f"openstack-apis:{domain_id}"
-        # Explicit issuer allowlist. jwt.decode's `require: ["iss"]` only checks
-        # claim *presence*, not the value, so `iss` is verified separately below.
-        self.expected_issuers = config.get('keystone_expected_issuers', [])
+        # Trust a Keystone, not a list of domains (see ADR §5, "Domain Key
+        # Isolation and `aud`"): any `iss` of the form
+        # `{base}/v4/oauth2/{domain_id}` is accepted, and its JWKS and JTI
+        # revocation list are derived from `iss` and fetched lazily, only from
+        # under this base. A token is verified only against the key set of the
+        # issuer it names. jwt.decode's `require: ["iss"]` only checks claim
+        # *presence*, not the value, so `iss` is matched explicitly below.
+        self.issuer_base = config.get('keystone_issuer_base_url').rstrip('/')
+        self.issuer_prefix = f'{self.issuer_base}/v4/oauth2/'
+        # Optional: restrict to specific domains (domain ids). Empty = all.
+        self.allowed_domains = set(config.get('keystone_allowed_domains', []))
+        # Issuers whose JWKS fetch failed with 404 (unknown/deleted domain):
+        # negatively cached so a forged `iss` cannot force a fetch per request.
+        self.unknown_issuers = TTLCache(maxsize=1024, ttl=60)
+        # `aud` is the flat control-plane value, or narrowed to this service's
+        # own type (ADR 0036 §7.1). Without a service type only the flat value
+        # is accepted.
+        self.accepted_audiences = ['openstack-apis']
+        if service_type := config.get('keystone_service_type'):
+            self.accepted_audiences.append(f'openstack-apis:{service_type}')
         # JWKS cache TTL must not exceed the JWKS endpoint Cache-Control max-age (300s)
         # to ensure prompt validation of tokens after key rotation or emergency
         # revocation. Fail-closed policy (see _get_cached_jwks): on fetch failure
@@ -778,14 +858,12 @@ class KeystoneNativeJwtMiddleware:
         # possibly-revoked stale keyset — a key pulled from JWKS during emergency
         # rotation (§3) must stop validating immediately, not after some grace
         # window an attacker can extend by interfering with connectivity.
-        self.jwks_cache = TTLCache(maxsize=1, ttl=300)
-        self._jwks_cache_key = 'jwks'
+        self.jwks_cache = TTLCache(maxsize=1024, ttl=300)
         # JTI revocation list cache (lightweight, separate from JWKS). Same
         # fail-closed policy: an unreachable revocation list is indistinguishable
         # from an attacker actively suppressing it mid-incident, so fetch failure
         # rejects the request rather than accepting the token (§11).
-        self.revocation_cache = TTLCache(maxsize=1, ttl=60)
-        self._revocation_cache_key = 'revoked'
+        self.revocation_cache = TTLCache(maxsize=1024, ttl=60)
         # Primary signing algorithm. During operator transitions (ES256 <-> RS256),
         # `fallback_signing_algorithm` enables dual verification with warning logs.
         self.algorithms = [config.get('signing_algorithm', 'ES256')]
@@ -818,10 +896,23 @@ class KeystoneNativeJwtMiddleware:
         if auth_header.startswith('Bearer '):
             token = auth_header.split(' ')[1]
             try:
-                # 1. Fetch/update asymmetric public verification keys. Raises
-                # requests.RequestException on failure past the cache TTL,
-                # caught below and treated as fail-closed (§11).
-                public_keys = self._get_cached_jwks()
+                # 1. Pick the issuer from the (still unverified) token. It
+                # must sit under the configured Keystone base (so no arbitrary
+                # host is ever fetched) and name an allowed domain; then
+                # fetch/update ONLY that issuer's asymmetric public
+                # verification keys. Raises requests.RequestException on
+                # failure past the cache TTL, caught below and treated as
+                # fail-closed (§11). Trusting `iss` here only selects which key
+                # set must verify the signature; a forged `iss` just fails
+                # verification.
+                issuer = jwt.decode(
+                    token, options={"verify_signature": False}
+                ).get('iss')
+                issuer_domain = self._issuer_domain(issuer)
+                if issuer_domain is None or issuer in self.unknown_issuers:
+                    logger.warning('Unexpected issuer: %s', issuer)
+                    return self._abort_unauthorized(start_response, 'Untrusted issuer')
+                public_keys = self._get_cached_jwks(issuer)
 
                 # 2. Execute local, CPU-bound cryptographic signature validation.
                 # Supports dual-algorithm for operator transitions (Finding 5.2).
@@ -829,7 +920,7 @@ class KeystoneNativeJwtMiddleware:
                     token,
                     public_keys,
                     algorithms=self.algorithms,
-                    audience=self.expected_audience,
+                    audience=self.accepted_audiences,
                     options={
                         "require": ["exp", "iat", "nbf", "iss", "aud", "sub"],
                         "verify_exp": True,
@@ -847,9 +938,10 @@ class KeystoneNativeJwtMiddleware:
                             header.get('alg'),
                         )
 
-                # 3. Verify iss value against the explicit allowlist (claim
-                # presence alone, enforced by `require` above, is not enough)
-                if decoded_claims['iss'] not in self.expected_issuers:
+                # 3. The verified `iss` must be the issuer whose key set
+                # verified the signature (claim presence alone, enforced by
+                # `require` above, is not enough)
+                if decoded_claims['iss'] != issuer:
                     logger.warning('Unexpected issuer: %s', decoded_claims['iss'])
                     return self._abort_unauthorized(start_response, 'Untrusted issuer')
 
@@ -874,7 +966,7 @@ class KeystoneNativeJwtMiddleware:
                 # requests.RequestException on fetch failure, caught below and
                 # treated as fail-closed (§11) — same policy as JWKS fetch.
                 jti = decoded_claims.get('jti')
-                if jti and self._is_jti_revoked(jti):
+                if jti and self._is_jti_revoked(issuer, jti):
                     logger.warning('Revoked JTI: %s', jti)
                     return self._abort_unauthorized(
                         start_response, 'Token JTI has been revoked'
@@ -1020,8 +1112,19 @@ class KeystoneNativeJwtMiddleware:
         ]:
             environ.pop(header, None)
 
-    def _get_cached_jwks(self):
-        """Fetch JWKS, fail closed on failure (§11).
+    def _issuer_domain(self, issuer):
+        """Domain id of an acceptable issuer, else None."""
+        if not isinstance(issuer, str) or not issuer.startswith(self.issuer_prefix):
+            return None
+        domain_id = issuer[len(self.issuer_prefix):]
+        if not domain_id or '/' in domain_id:
+            return None
+        if self.allowed_domains and domain_id not in self.allowed_domains:
+            return None
+        return domain_id
+
+    def _get_cached_jwks(self, issuer):
+        """Fetch the issuer's JWKS, fail closed on failure (§11).
 
         Serves the cached keyset while within the 300s TTL (matching the JWKS
         endpoint's `Cache-Control: max-age=300`). On expiry, fetches
@@ -1031,20 +1134,22 @@ class KeystoneNativeJwtMiddleware:
         stop validating immediately, not after some grace window an attacker
         can extend by interfering with connectivity to this endpoint.
         """
-        cached = self.jwks_cache.get(self._jwks_cache_key)
+        cached = self.jwks_cache.get(issuer)
         if cached is not None:
             return cached
-        return self._fetch_jwks_from_network()
+        return self._fetch_jwks_from_network(issuer)
 
-    def _fetch_jwks_from_network(self):
-        """Raw JWKS fetch from Keystone. Raises on failure (fail closed)."""
-        resp = requests.get(self.jwks_url, timeout=5)
+    def _fetch_jwks_from_network(self, issuer):
+        """Raw JWKS fetch for one issuer. Raises on failure (fail closed)."""
+        resp = requests.get(f'{issuer}/jwks', timeout=5)
+        if resp.status_code == 404:
+            self.unknown_issuers[issuer] = True
         resp.raise_for_status()
         keys = resp.json()
-        self.jwks_cache[self._jwks_cache_key] = keys
+        self.jwks_cache[issuer] = keys
         return keys
 
-    def _is_jti_revoked(self, jti):
+    def _is_jti_revoked(self, issuer, jti):
         """Check if a JTI appears in the JWKS-published revocation list.
 
         The revocation list is published alongside JWKS at a dedicated endpoint,
@@ -1056,12 +1161,12 @@ class KeystoneNativeJwtMiddleware:
         attacker actively suppressing it, so fetch failure raises
         `requests.RequestException` rather than accepting the token.
         """
-        revoked = self.revocation_cache.get(self._revocation_cache_key)
+        revoked = self.revocation_cache.get(issuer)
         if revoked is None:
-            resp = requests.get(self.jwt_jti_revocation_url, timeout=2)
+            resp = requests.get(f'{issuer}/jwks/revocation', timeout=2)
             resp.raise_for_status()
             revoked = set(resp.json().get('revoked_jtis', []))
-            self.revocation_cache[self._revocation_cache_key] = revoked
+            self.revocation_cache[issuer] = revoked
         return jti in revoked
 
     def _abort_unauthorized(self, start_response, reason):
@@ -1108,20 +1213,19 @@ The Device Authorization Grant introduces a `device_code` redemption path at
 `/token` that is more susceptible to brute-force attacks than credential
 endpoints. To mitigate:
 
-- `device_code` polling at `/token` and `user_code` submission at `/device`
-  are each subject to the per-IP limiter (`[rate_limit_global_ip]`), and
-  `/token` additionally to the per-`client_id` limiter. A per-`user_code`
-  limiter with exponential backoff is **not yet implemented** (tracked in
-  #1433); today the `user_code` keyspace and the per-IP limiter are the only
-  brute-force defenses on `/device`.
-- Invalid or expired `device_code` presented at `/token` triggers a quiet
-  period (`[oauth2] device_code_invalid_quiet_period_seconds`, default 300)
-  keyed on `(client_id, device_code)`. Further polls with that pair are
-  answered `429` + `Retry-After` before any storage lookup. The quiet period
-  is node-local and in-memory. Issuance at `/device_authorization` is not
-  blocked per IP; it is bounded only by the generic per-IP limiter
-  (`[rate_limit_global_ip]`, disabled by default), which operators exposing
-  the device flow should enable.
+- `device_code` polling at `/token` and `user_code` submission at `/device` are
+  each subject to the per-IP limiter (`[rate_limit_global_ip]`), and `/token`
+  additionally to the per-`client_id` limiter. A per-`user_code` limiter with
+  exponential backoff is **not yet implemented** (tracked in #1433); today the
+  `user_code` keyspace and the per-IP limiter are the only brute-force defenses
+  on `/device`.
+- Invalid or expired `device_code` presented at `/token` triggers a quiet period
+  (`[oauth2] device_code_invalid_quiet_period_seconds`, default 300) keyed on
+  `(client_id, device_code)`. Further polls with that pair are answered `429` +
+  `Retry-After` before any storage lookup. The quiet period is node-local and
+  in-memory. Issuance at `/device_authorization` is not blocked per IP; it is
+  bounded only by the generic per-IP limiter (`[rate_limit_global_ip]`, disabled
+  by default), which operators exposing the device flow should enable.
 - When a valid active grant is polled faster than the advertised `interval`, the
   server returns a `slow_down` error response per RFC 8628 §3.5 (not a generic
   penalty error), signaling the client to increase its polling rate.
@@ -1172,11 +1276,11 @@ in-depth security headers:
   and can introduce false positives. Document this rationale to prevent
   enterprise scanners from flagging it.)
 - `Cache-Control: no-store` and `Pragma: no-cache` (login/consent forms carry
-  CSRF tokens, redirects carry authorization codes; also set on every
-  `/token`, `/device_authorization` and `/revoke` response, success and
-  error, per RFC 6749 §5.1)
-- `Referrer-Policy: no-referrer` (the RP's `state` and authorization codes
-  must not leak to third-party resources via the `Referer` header)
+  CSRF tokens, redirects carry authorization codes; also set on every `/token`,
+  `/device_authorization` and `/revoke` response, success and error, per RFC
+  6749 §5.1)
+- `Referrer-Policy: no-referrer` (the RP's `state` and authorization codes must
+  not leak to third-party resources via the `Referer` header)
 
 ### CSRF Token Binding
 
@@ -1211,33 +1315,33 @@ session instead records `pending_user_id`, `pending_factors` and a
 control) and is additionally capped per session by `[oauth2] mfa_max_attempts`
 (counted before the code is checked, not reset by re-entering the password;
 best-effort). A user with `multi_factor_auth_enabled = false` skips the step;
-only admins and domain managers can change user options. A lookup error fails closed. On
-success the session is stamped with `amr = ["pwd", "otp", "mfa"]`, which is
-copied to the id_token and to refresh tokens so rotation preserves it. WebAuthn
-is not part of this amendment.
+only admins and domain managers can change user options. A lookup error fails
+closed. On success the session is stamped with `amr = ["pwd", "otp", "mfa"]`,
+which is copied to the id_token and to refresh tokens so rotation preserves it.
+WebAuthn is not part of this amendment.
 
 ### Amendment: Federated Sign-In on the Login Page
 
 The browser login page can hand the user to an upstream federation IdP of the
 same domain (`POST /authorize/federated`, or `idp_hint` on `GET /authorize`) and
-receives the answer at `GET /authorize/federated/callback`. The upstream
-`state` is the primary key of the stored federation `AuthState` and is also
-written to the pre-auth session (`pending_upstream`); the callback only
-completes when the session cookie's session waits on exactly that IdP and
-`state`, and both the pending value and the `AuthState` are consumed on use.
-(The issue text proposed an HMAC over the session id; a server-side comparison
-against the stored value gives the same binding without a second secret.) The
-redirect target comes only from a registered, enabled IdP of the domain, never
-from a request parameter. Code exchange, ID-token verification and the mapping
-engine are shared with `/v4/federation/oidc/callback`. The session records
+receives the answer at `GET /authorize/federated/callback`. The upstream `state`
+is the primary key of the stored federation `AuthState` and is also written to
+the pre-auth session (`pending_upstream`); the callback only completes when the
+session cookie's session waits on exactly that IdP and `state`, and both the
+pending value and the `AuthState` are consumed on use. (The issue text proposed
+an HMAC over the session id; a server-side comparison against the stored value
+gives the same binding without a second secret.) The redirect target comes only
+from a registered, enabled IdP of the domain, never from a request parameter.
+Code exchange, ID-token verification and the mapping engine are shared with
+`/v4/federation/oidc/callback`. The session records
 `UpstreamLogin { idp_id, sid }`, copied to the authorization code and to every
-refresh token of the family. The endpoints also require the session to belong
-to the path domain. A federated login replaces the local second factor: the
-IdP is the only authenticator, and the `amr` values it reports are attested by
-the IdP, not by this OP. Replay protection comes from consuming
-`pending_upstream` in `complete_upstream_login`, not from the non-atomic
-`AuthState` lookup/delete. Not yet implemented: the device-code page, and
-group-membership expiry re-checks at rotation.
+refresh token of the family. The endpoints also require the session to belong to
+the path domain. A federated login replaces the local second factor: the IdP is
+the only authenticator, and the `amr` values it reports are attested by the IdP,
+not by this OP. Replay protection comes from consuming `pending_upstream` in
+`complete_upstream_login`, not from the non-atomic `AuthState` lookup/delete.
+Not yet implemented: the device-code page, and group-membership expiry re-checks
+at rotation.
 
 ## 9. Cryptographic Auditing & Non-Repudiation
 
@@ -1313,23 +1417,22 @@ Phase 5: Native Control Plane Acceptance ◄──── Phase 4: Auth Code & PK
 
 ### Phase 0: Token Provider Abstraction & Python JWS Parity
 
-This phase exists because of a gap this ADR otherwise ignores: **Python
-Keystone has shipped a second token provider since Stein —
-`[token] provider = jws` (ES256-signed JWS tokens, `keystone-manage
-create_jws_keypair`, filesystem key repositories) — and `keystone-rs` supports
-only Fernet.** `keystone-rs` is deployed in parallel with Python Keystone
-during migration, and both sides must decode each other's v3 tokens. A
-deployment running the JWS provider today cannot put `keystone-rs` behind the
-same VIP at all. Two distinct JWT tracks must therefore not be conflated:
+This phase exists because of a gap this ADR otherwise ignores: **Python Keystone
+has shipped a second token provider since Stein — `[token] provider = jws`
+(ES256-signed JWS tokens, `keystone-manage create_jws_keypair`, filesystem key
+repositories) — and `keystone-rs` supports only Fernet.** `keystone-rs` is
+deployed in parallel with Python Keystone during migration, and both sides must
+decode each other's v3 tokens. A deployment running the JWS provider today
+cannot put `keystone-rs` behind the same VIP at all. Two distinct JWT tracks
+must therefore not be conflated:
 
-- **v3-surface JWS tokens (this phase):** Python-compatible, _reference_
-  tokens — the JWT payload carries only identity/scope anchors (no roles, no
-  catalog) and keystonemiddleware still validates them back-channel via
+- **v3-surface JWS tokens (this phase):** Python-compatible, _reference_ tokens
+  — the JWT payload carries only identity/scope anchors (no roles, no catalog)
+  and keystonemiddleware still validates them back-channel via
   `GET /v3/auth/tokens`. Purely a token _format_, not an authorization model.
 - **OP-issued access tokens (Phases 1-5):** self-contained
-  `OpenStackAccessTokenClaims` (§4) with embedded roles, verified fully
-  offline (§6). A different product, deliberately not wire-compatible with
-  the above.
+  `OpenStackAccessTokenClaims` (§4) with embedded roles, verified fully offline
+  (§6). A different product, deliberately not wire-compatible with the above.
 
 **Deliverables:**
 
@@ -1344,13 +1447,13 @@ same VIP at all. Two distinct JWT tracks must therefore not be conflated:
   layout (`sub`, `exp`, `iat`, `openstack_methods`, `openstack_audit_ids`,
   `openstack_project_id`/`openstack_domain_id`/`openstack_system`,
   `openstack_trust_id`, `openstack_app_cred_id`) and Python-compatible
-  key-repository layout, plugged in via the existing `KeySource` abstraction
-  in `crates/key-repository` so filesystem keys shared with Python nodes work
+  key-repository layout, plugged in via the existing `KeySource` abstraction in
+  `crates/key-repository` so filesystem keys shared with Python nodes work
   unchanged.
 
 **Verification:** Round-trip fixture tests against tokens minted by Python
-Keystone's JWS provider (decode theirs, they validate ours). Config-switch
-tests proving a node can validate both Fernet and JWS tokens during a provider
+Keystone's JWS provider (decode theirs, they validate ours). Config-switch tests
+proving a node can validate both Fernet and JWS tokens during a provider
 transition.
 
 **Strategic payoff beyond parity:** the ES256 signing/verification plumbing,
@@ -1415,12 +1518,11 @@ Nova/Neutron, are out of scope for the `keystone-rs` repository -- that code
 runs in downstream service repos, not here. What this repository delivers for
 Phase 5 is the Rust-side surface the middleware depends on plus a Rust-native
 reference implementation of the exact same §6 verification algorithm
-(`openstack_keystone_core::oauth2_client::verify_openstack_access_token`,
-a pure function over an already-fetched JWKS/JTI-revocation set), and an
-integration test that mints a real token through the same pipeline
-`POST /token` uses and verifies it fully offline. This is the closest in-repo
-proof of the Phase 5 verification bullet available without a second
-repository in the loop.
+(`openstack_keystone_core::oauth2_client::verify_openstack_access_token`, a pure
+function over an already-fetched JWKS/JTI-revocation set), and an integration
+test that mints a real token through the same pipeline `POST /token` uses and
+verifies it fully offline. This is the closest in-repo proof of the Phase 5
+verification bullet available without a second repository in the loop.
 
 ---
 
@@ -1496,22 +1598,22 @@ repository in the loop.
   `domain_id` exists. This is accepted, not mitigated further: every major
   multi-tenant OIDC provider (Auth0 tenant name, Okta org subdomain, Keycloak
   realm name, Google Workspace `hd` domain) treats the tenant identifier in the
-  issuer/JWKS URL as public, not secret — it is embedded in every issued
-  token's `iss` claim and handed to every RP's configuration, so it cannot be
-  kept confidential once a single client is onboarded. Since `domain_id` is a
+  issuer/JWKS URL as public, not secret — it is embedded in every issued token's
+  `iss` claim and handed to every RP's configuration, so it cannot be kept
+  confidential once a single client is onboarded. Since `domain_id` is a
   server-generated 128-bit UUIDv4 (`crates/core/src/resource/service.rs`,
-  `Uuid::new_v4()`), brute-force guessing across the ID space is
-  computationally infeasible and further bounded by the endpoint's per-IP rate
-  limit (ADR-0022). The one exception is the bootstrap domain, whose ID
-  defaults to the literal string `"default"`
-  (`[identity] default_domain_id`, `crates/config/src/identity.rs`) rather than
-  a UUID — its existence is trivially guessable, but this is the same "Default
-  domain exists" fact every OpenStack Keystone deployment has always exposed
-  via other unauthenticated-adjacent surfaces (e.g. `clouds.yaml` conventions,
-  federation metadata), and confirming its existence discloses nothing beyond
-  that fact. No code change is planned; operators who consider even this
-  disclosure unacceptable may override `[identity] default_domain_id` to a
-  random value at bootstrap time.
+  `Uuid::new_v4()`), brute-force guessing across the ID space is computationally
+  infeasible and further bounded by the endpoint's per-IP rate limit (ADR-0022).
+  The one exception is the bootstrap domain, whose ID defaults to the literal
+  string `"default"` (`[identity] default_domain_id`,
+  `crates/config/src/identity.rs`) rather than a UUID — its existence is
+  trivially guessable, but this is the same "Default domain exists" fact every
+  OpenStack Keystone deployment has always exposed via other
+  unauthenticated-adjacent surfaces (e.g. `clouds.yaml` conventions, federation
+  metadata), and confirming its existence discloses nothing beyond that fact. No
+  code change is planned; operators who consider even this disclosure
+  unacceptable may override `[identity] default_domain_id` to a random value at
+  bootstrap time.
 - **Client ID Claim Enumeration:** `OpenStackAccessTokenClaims` carries
   `client_id`, which identifies the registering OAuth2 client
   (`OidcAccessTokenClaims`, §4, does not). If an attacker obtains an
@@ -1592,22 +1694,21 @@ The grant above is now built, as the follow-up amendment this section itself
 anticipated. Concrete choices made during implementation:
 
 - **`AppCred` only, not `Trust` or `Ec2`.** Only `ApplicationCredential`'s
-  immutable project (`ApplicationCredential.project_id`) is carried on the object embedded in
-  `AuthenticationContext::ApplicationCredential` once `subject_token` is
-  validated through the existing `TokenApi::validate_to_context` pipeline - no
-  new provider lookup needed. `AuthenticationContext::Trust` and
-  `AuthenticationContext::Ec2Credential` are rejected outright
-  (`invalid_grant`). While `Trust.project_id` is technically available, trust
-  tokens have special handling characteristics (impersonation, trust-specific
-  constraints) that make them unsuitable for token exchange.
-  `AuthenticationContext::Ec2Credential` carries no
-  such object (by design - see its own doc comment: a plain EC2 credential has no
-  delegation metadata of its own unless it was itself minted through a trust or
-  app-cred, in which case the *outer* `Trust`/`ApplicationCredential` context
-  already applies). Deriving an EC2 credential's own bound project would need a
-  provider lookup this phase does not add; guessing wrong on I2's boundary is
-  not an acceptable risk. A future increment can add them once those concerns
-  are addressed.
+  immutable project (`ApplicationCredential.project_id`) is carried on the
+  object embedded in `AuthenticationContext::ApplicationCredential` once
+  `subject_token` is validated through the existing
+  `TokenApi::validate_to_context` pipeline - no new provider lookup needed.
+  `AuthenticationContext::Trust` and `AuthenticationContext::Ec2Credential` are
+  rejected outright (`invalid_grant`). While `Trust.project_id` is technically
+  available, trust tokens have special handling characteristics (impersonation,
+  trust-specific constraints) that make them unsuitable for token exchange.
+  `AuthenticationContext::Ec2Credential` carries no such object (by design - see
+  its own doc comment: a plain EC2 credential has no delegation metadata of its
+  own unless it was itself minted through a trust or app-cred, in which case the
+  _outer_ `Trust`/`ApplicationCredential` context already applies). Deriving an
+  EC2 credential's own bound project would need a provider lookup this phase
+  does not add; guessing wrong on I2's boundary is not an acceptable risk. A
+  future increment can add them once those concerns are addressed.
 - **Authorization gating:** the exchanging `OAuth2Client` must hold
   `token-exchange` in its own `grant_types`, the same Tier-1/Tier-2-agnostic
   mechanism every other grant uses (`client.grant_types.contains(...)`) -
@@ -1621,13 +1722,13 @@ anticipated. Concrete choices made during implementation:
 - **`keystone_ruleset_version`:** set to `0` (a sentinel, not a real ruleset
   hash) - a token-exchange grant does not go through a `MappingRuleSet` at all
   (the subject is an already-authenticated native Keystone credential, not an
-  external ingress source), so there is no ruleset state to anchor to. The
-  claim remains advisory-only (§11) and this sentinel does not affect
-  downstream enforcement.
+  external ingress source), so there is no ruleset state to anchor to. The claim
+  remains advisory-only (§11) and this sentinel does not affect downstream
+  enforcement.
 - **No audit-log-derived jti backfill dependency:** unlike §3's emergency
   rotation, Token Exchange needed no new audit query capability - the grantor
-  object needed is already embedded in the validated
-  `ValidatedSecurityContext`, no separate lookup or log query required.
+  object needed is already embedded in the validated `ValidatedSecurityContext`,
+  no separate lookup or log query required.
 - **CADF event:** reuses the existing `emit_oauth2_session_event` best-effort
   path (the same one `client_credentials`/`authorization_code` use), keyed on
   `client_id` - no new event type was needed since delegation-specific detail
@@ -1652,16 +1753,16 @@ stage.
 Python Keystone is the issuer of record. `keystone-rs` encodes/decodes
 byte-compatible Fernet tokens from the shared key repository
 (`token-driver-fernet` + `crates/key-repository`). Operational constraint:
-Fernet key rotation must remain coordinated across both implementations
-(same rotation tooling, same `max_active_keys` discipline).
+Fernet key rotation must remain coordinated across both implementations (same
+rotation tooling, same `max_active_keys` discipline).
 
 ### Stage 1 — v3 Token Format Parity (Phase 0)
 
 The provider abstraction and Python-compatible JWS driver (§10, Phase 0) land.
 `keystone-rs` can now stand in for Python Keystone regardless of which
 `[token] provider` the deployment chose, and validates both formats during a
-provider transition. This removes the last v3-surface reason a deployment
-could not shift token _issuance_ traffic to `keystone-rs`.
+provider transition. This removes the last v3-surface reason a deployment could
+not shift token _issuance_ traffic to `keystone-rs`.
 
 ### Stage 2 — OP Goes Live, Additive Only (Phases 1-5)
 
@@ -1679,18 +1780,18 @@ convert first; see the revocation gate below.
 
 Highest-volume, lowest-friction migration: automated API consumers (billing
 collectors, monitoring, orchestrators, K8s operators) move from application
-credentials / stored passwords to registered `OAuth2Client`s. This is where
-the validation-load win (§11, "Complete Database Decoupling") is actually
-realized, since machines dominate request volume. Python Keystone is demoted
-to serving existing human/v3 flows.
+credentials / stored passwords to registered `OAuth2Client`s. This is where the
+validation-load win (§11, "Complete Database Decoupling") is actually realized,
+since machines dominate request volume. Python Keystone is demoted to serving
+existing human/v3 flows.
 
 ### Stage 4 — Human Flow Migration & Python Keystone Retirement
 
-CLI login moves to the Device Authorization Grant; dashboards and portals
-become OIDC RPs. Remaining v3 Fernet issuance is served by `keystone-rs`
-alone (possible since Stage 1), and Python Keystone is removed from the VIP.
-The RFC 8693 Token Exchange grant (§12, v2) eases the long tail: any client
-still holding a valid Fernet token can trade it for a native JWT without
+CLI login moves to the Device Authorization Grant; dashboards and portals become
+OIDC RPs. Remaining v3 Fernet issuance is served by `keystone-rs` alone
+(possible since Stage 1), and Python Keystone is removed from the VIP. The RFC
+8693 Token Exchange grant (§12, v2) eases the long tail: any client still
+holding a valid Fernet token can trade it for a native JWT without
 re-authenticating, inverting the §1 Circular Trap in the direction that helps
 migration.
 
@@ -1705,13 +1806,13 @@ repositories — retiring the "Increased Key Rotation Surface" risk in §11.
 ### Cross-Cutting Gate: Revocation Semantics Parity
 
 Fernet validation consults revocation events on every back-channel check;
-stateless JWTs wait out `exp` (§11, "Revocation Durability Gap"). A service
-may only move from Stage 2's fall-through posture to preferring JWTs once its
+stateless JWTs wait out `exp` (§11, "Revocation Durability Gap"). A service may
+only move from Stage 2's fall-through posture to preferring JWTs once its
 operator explicitly accepts the 15-minute revocation window (or wires
 back-channel introspection for its high-criticality operations, see the admin
 guide's "Introspection for high-criticality services" for the RFC 7662
-`/introspect` endpoint). This
-acceptance is per-service and must be recorded in the deployment's migration
-runbook — it is the one semantic regression Fernet-to-JWT migration cannot
-paper over, and it is the reason Stages 2-4 are ordered by revocation-latency
-tolerance rather than by implementation convenience.
+`/introspect` endpoint). This acceptance is per-service and must be recorded in
+the deployment's migration runbook — it is the one semantic regression
+Fernet-to-JWT migration cannot paper over, and it is the reason Stages 2-4 are
+ordered by revocation-latency tolerance rather than by implementation
+convenience.

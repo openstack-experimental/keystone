@@ -639,6 +639,16 @@ impl From<MappingProviderError> for KeystoneApiError {
             MappingProviderError::RoleNotFound(x) => Self::UnprocessableEntity(format!(
                 "rule references role '{x}' which does not exist"
             )),
+            MappingProviderError::ProjectNotFound(x) => Self::UnprocessableEntity(format!(
+                "rule references project '{x}' which does not exist"
+            )),
+            MappingProviderError::ProjectDomainMismatch {
+                project_id,
+                declared,
+                actual,
+            } => Self::UnprocessableEntity(format!(
+                "rule declares project '{project_id}' in domain '{declared}' but it belongs to '{actual}'"
+            )),
             // Both mean "this identity does not authenticate here" -- a
             // ruleset that exists but doesn't match the presented claims is
             // indistinguishable, from the caller's perspective, from one

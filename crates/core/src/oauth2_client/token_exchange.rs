@@ -23,8 +23,8 @@
 //! the request's current scope).
 use openstack_keystone_core_types::auth::{AuthenticationContext, IdentityInfo, ScopeInfo};
 use openstack_keystone_core_types::oauth2_client::{
-    DelegationContext, OAuth2ClientResource, OpenStackAccessTokenClaims, OpenStackContext,
-    OpenStackScope,
+    Audience, DelegationContext, OAuth2ClientResource, OpenStackAccessTokenClaims,
+    OpenStackContext, OpenStackScope,
 };
 use openstack_keystone_core_types::token::TokenProviderError;
 use thiserror::Error;
@@ -37,13 +37,13 @@ use crate::keystone::ServiceState;
 #[non_exhaustive]
 pub enum TokenExchangeError {
     /// The subject_token's resolved scope belongs to a domain other than
-    /// the one the exchange is being performed against. `aud` is bound to
-    /// the *issuing* domain (ADR 0026 §5 domain key isolation) precisely so
-    /// a minted token can never assert authority outside it; since a
-    /// subject_token may belong to any domain in the deployment, this must
-    /// be checked explicitly here rather than assumed, unlike every other
-    /// grant whose claims are derived from an already domain-scoped client
-    /// or mapping ruleset.
+    /// the one the exchange is being performed against. The minted token is
+    /// signed by, and its `iss` names, the *issuing* domain (ADR 0026 §5
+    /// domain key isolation), so it must never assert authority outside that
+    /// domain; since a subject_token may belong to any domain in the
+    /// deployment, this must be checked explicitly here rather than assumed,
+    /// unlike every other grant whose claims are derived from an already
+    /// domain-scoped client or mapping ruleset.
     #[error("subject_token's scope belongs to a different domain than this token endpoint")]
     CrossDomainSubjectToken,
 
@@ -134,7 +134,8 @@ pub async fn validate_subject_token(
 
 /// Build the [`OpenStackAccessTokenClaims`] for a Token Exchange grant, from
 /// the validated `subject_token` context and its derived
-/// [`DelegationContext`].
+/// [`DelegationContext`]. `aud` is [`Audience::control_plane`] unless the
+/// request narrowed it to service types (ADR 0036 §7.1).
 ///
 /// # Errors
 /// See [`TokenExchangeError`] for each rejection reason.
@@ -147,6 +148,7 @@ pub fn build_token_exchange_claims(
     jti: String,
     iat: i64,
     exp: i64,
+    aud: Audience,
 ) -> Result<OpenStackAccessTokenClaims, TokenExchangeError> {
     let principal = vsc.inner().principal();
     let (user_id, user_name, user_domain_id) = match &principal.identity {
@@ -209,7 +211,7 @@ pub fn build_token_exchange_claims(
     Ok(OpenStackAccessTokenClaims {
         iss: issuer.to_string(),
         sub: user_id.clone(),
-        aud: format!("openstack-apis:{}", client.domain_id),
+        aud,
         client_id: client.client_id.clone(),
         exp,
         iat,
@@ -404,11 +406,12 @@ mod tests {
             "jti-1".to_string(),
             1000,
             1900,
+            Audience::control_plane(),
         )
         .unwrap();
 
         assert_eq!(claims.sub, "user-1");
-        assert_eq!(claims.aud, "openstack-apis:domain-1");
+        assert_eq!(claims.aud, Audience::control_plane());
         assert!(claims.amr.contains(&"application_credential".to_string()));
         assert_eq!(
             claims.delegation_context,
@@ -480,6 +483,7 @@ mod tests {
             "jti-1".to_string(),
             1000,
             1900,
+            Audience::control_plane(),
         )
         .unwrap_err();
         assert!(matches!(err, TokenExchangeError::CrossDomainSubjectToken));
@@ -518,6 +522,7 @@ mod tests {
             "jti-1".to_string(),
             1000,
             1900,
+            Audience::control_plane(),
         )
         .unwrap_err();
         assert!(matches!(err, TokenExchangeError::NotAUserPrincipal));

@@ -961,7 +961,7 @@ spiffe_agent_socket = /tmp/spire-ci-test-harness/agent.sock
 # --- NEW: JWT offline validation (Change 4.2) ---
 keystone_jwks_url = http://keystone:8080/v4/oauth2/default/jwks
 keystone_signing_algorithm = ES256
-keystone_expected_audience = openstack-apis:default
+keystone_expected_audience = openstack-apis
 keystone_expected_issuers = https://keystone:8444/v4/oauth2/default
 ```
 
@@ -975,7 +975,7 @@ pipeline = keystonemiddleware_jwt_offline authtoken keystonecontext oscomputeapp
 paste.filter_factory = keystonemiddleware.jwt_offline:filter_factory
 jwks_url = http://keystone:8080/v4/oauth2/default/jwks
 signing_algorithm = ES256
-expected_audience = openstack-apis:default
+expected_audience = openstack-apis
 ```
 
 **Verification in devstack:**

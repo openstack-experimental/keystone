@@ -318,7 +318,6 @@ impl IntrospectContext<'_> {
             &jwks,
             self.signing_algorithm,
             &[issuer],
-            self.domain_id,
             &revoked_jtis,
         ) {
             Ok(v) => v,
@@ -501,7 +500,7 @@ mod tests {
     fn openstack_claims() -> Value {
         let now = chrono::Utc::now().timestamp();
         json!({
-            "iss": ISSUER, "sub": "shadow", "aud": "openstack-apis:domain-1",
+            "iss": ISSUER, "sub": "shadow", "aud": "openstack-apis",
             "client_id": "client-9", "exp": now + 900, "iat": now, "nbf": now,
             "jti": "jti-os", "keystone_ruleset_version": 1,
             "amr": ["client_credentials"], "token_use": "access",

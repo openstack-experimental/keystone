@@ -526,10 +526,16 @@ per service/region with instant rollback (just remove the filter).
 Required config per service:
 
 ```ini
-keystone_jwks_url = https://keystone.example.com/v4/oauth2/<domain_id>/jwks
-keystone_jwt_jti_revocation_url = https://keystone.example.com/v4/oauth2/<domain_id>/jwks/revocation
-keystone_domain_id = <domain_id>
-keystone_expected_issuers = https://keystone.example.com/v4/oauth2/<domain_id>
+# Trust this Keystone: any issuer https://keystone.example.com/v4/oauth2/<domain_id>
+# is accepted, with its JWKS and revocation list derived from the issuer URL
+# (<issuer>/jwks, <issuer>/jwks/revocation) and fetched lazily. No per-domain
+# configuration is needed when domains are created or deleted.
+keystone_issuer_base_url = https://keystone.example.com
+# Optional: trust only these domains (domain ids). Empty/unset = all domains.
+# keystone_allowed_domains = <domain_id>,<domain_id>
+# Optional: this service's OpenStack service type (e.g. compute). Lets it also
+# accept tokens narrowed to `openstack-apis:<service type>`.
+keystone_service_type = compute
 signing_algorithm = ES256
 ```
 
@@ -544,11 +550,29 @@ Operational notes:
   the whole control plane.
   - JWKS cache TTL: 300s (matches `Cache-Control: max-age=300` on `/jwks`).
   - Revocation list cache TTL: 60s.
-- `aud` is domain-bound (`openstack-apis:{domain_id}`), never a flat
-  cluster-wide value — a compromised domain key only forges tokens accepted
-  within that domain's own blast radius.
-- Set `keystone_expected_issuers` explicitly; claim presence of `iss` alone is
-  not enough, the value is checked against this allowlist.
+- `aud` is the control-plane value `openstack-apis` (or a narrowing to
+  `openstack-apis:<service type>`), so one token works across all services and
+  across every domain a service trusts. Domain isolation does not rely on `aud`:
+  - a token is verified only against the JWKS of the issuer it names, and the
+    service fetches that JWKS only from under `keystone_issuer_base_url` (never
+    from a host named by the token);
+  - the token's scope must lie inside the domain its `iss` names
+    (`project_domain_id` / `domain_id` equal to the issuer's domain). A
+    compromised domain key can therefore only forge tokens acting inside that
+    domain, never in another one. System-scoped tokens are refused by this
+    check, and an issuer that does not name a domain is rejected.
+- A service accepts every token from every domain it trusts. To trust only some
+  domains, set `keystone_allowed_domains`; leave it unset on a public cloud
+  where domains come and go.
+- A deleted domain serves no JWKS, so its tokens stop validating without any
+  change on the services. Unknown issuers are cached negatively (60 s) so a
+  forged `iss` cannot trigger a fetch per request.
+- Without `keystone_service_type` a service accepts only un-narrowed tokens, so
+  enabling `audience` narrowing for clients never breaks services that have not
+  been upgraded.
+- The revocation list is currently fetched per issuer (60 s cache), which is one
+  poll per active domain. A cluster-wide revocation feed is the planned
+  follow-up for very large deployments (ADR 0026 §5, "Revocation at scale").
 
 ## Relying-party token revocation (RFC 7009)
 

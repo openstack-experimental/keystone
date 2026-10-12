@@ -39,7 +39,7 @@ document and it will find `authorization_endpoint`, `token_endpoint`,
 - `openstack:api` — a distinct, explicit scope. Only when this is requested
   **and** granted does the returned `access_token` carry OpenStack authorization
   data (`openstack_context`: scope + effective roles) and an `aud` that
-  OpenStack services will accept (`openstack-apis:{domain_id}`). Without it, you
+  OpenStack services will accept (`openstack-apis`). Without it, you
   get a minimal identity token good only for calling Keystone's own
   [`/userinfo`](#userinfo-endpoint) — not usable against Nova/Neutron/etc.
 - Omitting `scope` entirely defaults to the client's full `allowed_scopes` —
@@ -208,8 +208,13 @@ neither a remembered consent nor a live refresh token for that application.
   added.
 - **`access_token` (`openstack:api` granted, or any `client_credentials`
   grant)** — carries `openstack_context` (scope + effective roles at issuance
-  time) and `aud: "openstack-apis:{domain_id}"`. This is what OpenStack services
-  accept.
+  time) and `aud: "openstack-apis"`, valid against every OpenStack service
+  that trusts the token's issuer (the token's domain). On the token-exchange
+  grant you can narrow it with the RFC 8693 `audience` parameter (repeatable,
+  one OpenStack service type per value, e.g. `audience=compute`), which yields
+  `aud: ["openstack-apis:compute", ...]` accepted only by those service types.
+  An unknown service type is rejected with `invalid_target`. This is what
+  OpenStack services accept.
 - **`access_token` (`openstack:api` not granted)** — minimal, `aud` is your own
   `client_id`, not usable against any OpenStack service. Good only for
   `/userinfo` (and for revocation).

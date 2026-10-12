@@ -299,7 +299,6 @@ impl RevokeContext<'_> {
             &jwks,
             self.signing_algorithm,
             &[issuer],
-            self.domain_id,
             self.client_id,
         ) else {
             return Ok(false);

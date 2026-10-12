@@ -35,6 +35,7 @@ allow if {
 	mapping_common.own_ruleset
 	"manager" in input.credentials.roles
 	not mapping_common.is_system_ruleset
+	not mapping_common.out_of_domain_authorization
 }
 
 violation contains {"field": "is_system", "msg": msg} if {
@@ -42,6 +43,13 @@ violation contains {"field": "is_system", "msg": msg} if {
 	not "admin" in input.credentials.roles
 	not input.credentials.is_admin
 	msg := "updating system mapping ruleset requires `admin` role."
+}
+
+violation contains {"field": "authorizations", "msg": msg} if {
+	mapping_common.out_of_domain_authorization
+	not "admin" in input.credentials.roles
+	not input.credentials.is_admin
+	msg := "granting system scope or scope in another domain requires `admin` role."
 }
 
 violation contains {"field": "domain_id", "msg": msg} if {
