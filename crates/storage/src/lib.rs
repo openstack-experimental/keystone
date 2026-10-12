@@ -54,6 +54,7 @@ pub fn anchor() {}
 pub mod api;
 pub mod app;
 pub mod audit;
+pub mod bootstrap;
 pub mod config;
 mod error;
 pub mod grpc;

@@ -724,3 +724,88 @@ async fn assert_decrypts_locally(
     }
     Ok(())
 }
+
+const AUTO_JOIN_PORT_BASE: u16 = 1900;
+
+/// First-start membership (GitHub #1307): the bootstrap node (`node_id` 0)
+/// initializes itself, a node listing it in `retry_join_nodes` joins it as a
+/// learner on its own, a restart of either is a no-op, and a node with
+/// `auto_bootstrap = false` stays uninitialized.
+#[serial_test::serial]
+#[tracing_test::traced_test]
+#[test]
+fn test_ensure_raft_initialized_bootstraps_and_auto_joins() {
+    TypeConfig::run(test_ensure_raft_initialized_bootstraps_and_auto_joins_inner()).unwrap();
+}
+
+async fn test_ensure_raft_initialized_bootstraps_and_auto_joins_inner() -> Result<()> {
+    use openstack_keystone_distributed_storage::bootstrap::ensure_raft_initialized;
+
+    const PORT: u16 = AUTO_JOIN_PORT_BASE;
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+    let tls = make_certificates()?;
+    let peers = vec![(0, get_addr_with_port(0, PORT).to_string())];
+
+    // --- A node with auto_bootstrap disabled is left alone.
+    let idle = InstanceHolder::new_with_ds_config(2, |path| DistributedStorageConfiguration {
+        auto_bootstrap: false,
+        ..get_ds_config_with_port(2, PORT, path, tls.clone())
+    })
+    .await?;
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    tx.send(true)?;
+    ensure_raft_initialized(idle.storage.clone(), idle.config.clone(), rx).await?;
+    assert!(!idle.storage.is_initialized().await?);
+
+    // --- The bootstrap node initializes itself.
+    let boot = Arc::new(
+        InstanceHolder::new_with_ds_config(0, |path| DistributedStorageConfiguration {
+            retry_join_nodes: peers.clone(),
+            ..get_ds_config_with_port(0, PORT, path, tls.clone())
+        })
+        .await?,
+    );
+    spawn_raft_app(&boot).await;
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    tx.send(true)?;
+    ensure_raft_initialized(boot.storage.clone(), boot.config.clone(), rx).await?;
+    assert!(boot.storage.is_initialized().await?);
+    let tls_client = get_client_tls_config(&boot.config)?;
+    let mut admin = new_admin_client(boot.config.node_cluster_addr.clone(), &tls_client).await?;
+    wait_for_leader(&mut admin, 0).await;
+
+    // --- A node that lists it joins on its own.
+    let joiner = Arc::new(
+        InstanceHolder::new_with_ds_config(1, |path| DistributedStorageConfiguration {
+            retry_join_nodes: peers.clone(),
+            ..get_ds_config_with_port(1, PORT, path, tls.clone())
+        })
+        .await?,
+    );
+    spawn_raft_app(&joiner).await;
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    tx.send(true)?;
+    ensure_raft_initialized(joiner.storage.clone(), joiner.config.clone(), rx).await?;
+    let joined = poll_until(Duration::from_millis(100), 100, || {
+        let m = boot.storage.raft.metrics();
+        let m = m.borrow_watched();
+        m.membership_config.membership().get_node(&1).is_some()
+    })
+    .await;
+    assert!(joined, "node 1 was not registered with the bootstrap node");
+    let applied = poll_until(Duration::from_millis(100), 100, || {
+        joiner.storage.last_log_index() >= boot.storage.last_log_index()
+    })
+    .await;
+    assert!(applied, "the joined node did not catch up");
+
+    // --- Calling it again on an initialized node is a no-op (same handle,
+    // not a reload from disk).
+    for node in [&boot, &joiner] {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        tx.send(true)?;
+        ensure_raft_initialized(node.storage.clone(), node.config.clone(), rx).await?;
+    }
+    Ok(())
+}

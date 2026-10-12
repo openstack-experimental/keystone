@@ -58,7 +58,12 @@ pub async fn start(startup: &Startup, handles: &mut JoinSet<()>) -> Result<(), R
         node_id = raft_storage_init.node_id(),
         "Raft gRPC task spawned, calling ensure_raft_initialized..."
     );
-    raft_grpc::ensure_raft_initialized(raft_storage_init, ds_config.clone(), raft_bound_rx).await?;
+    openstack_keystone_distributed_storage::bootstrap::ensure_raft_initialized(
+        raft_storage_init,
+        ds_config.clone(),
+        raft_bound_rx,
+    )
+    .await?;
     debug!("Raft initialized and ready");
     Ok(())
 }
