@@ -23,7 +23,7 @@
 #[cfg(any(feature = "api", test))]
 use std::net::IpAddr;
 use std::num::NonZeroU32;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
@@ -112,9 +112,16 @@ impl RateLimitSnapshot {
 }
 
 /// Upper bound on tracked [`FailureBackoff`] entries, so an attacker spraying
-/// random keys cannot grow the map without limit. Once full (after sweeping
-/// idle entries) new keys are simply not tracked.
+/// random keys cannot grow the map without limit. At the cap a new key
+/// displaces an entry with no earned penalty history (see
+/// [`FailureBackoff::make_room`]), so flooding the map with throwaway keys
+/// cannot stop a key from being tracked.
 const BACKOFF_MAX_ENTRIES: usize = 100_000;
+
+/// Minimum spacing of the O(n) eviction scan used when every tracked key is
+/// under an active penalty, so a flood of new keys cannot turn each failed
+/// request into a full-map scan.
+const BACKOFF_FULL_SCAN_INTERVAL: Duration = Duration::from_secs(1);
 
 /// First penalty once the free failures are used up; doubles per failure.
 const BACKOFF_BASE: Duration = Duration::from_secs(1);
@@ -137,12 +144,56 @@ struct BackoffEntry {
 /// user-supplied value is retained.
 struct FailureBackoff {
     entries: DashMap<[u8; 32], BackoffEntry>,
+    last_full_scan: Mutex<Instant>,
 }
 
 impl FailureBackoff {
     fn new() -> Self {
+        let now = Instant::now();
         Self {
             entries: DashMap::new(),
+            last_full_scan: Mutex::new(now.checked_sub(BACKOFF_FULL_SCAN_INTERVAL).unwrap_or(now)),
+        }
+    }
+
+    /// Free one slot for a new key while the map is at capacity.
+    ///
+    /// Entries that never earned a penalty (still within their free
+    /// failures) or have gone idle carry no escalation history worth
+    /// keeping, so one of those goes first; the search stops at the first
+    /// hit. Entries that did earn a penalty are kept even after it expires,
+    /// so flooding the map cannot reset an attacker's escalation. Only when
+    /// every entry has earned one is the entry with the fewest failures
+    /// evicted, and that O(n) scan runs at most once per
+    /// `BACKOFF_FULL_SCAN_INTERVAL`. Returns `false` if no slot was freed,
+    /// in which case the new key goes untracked.
+    fn make_room(&self, now: Instant, free_failures: u32) -> bool {
+        let unpenalised = self
+            .entries
+            .iter()
+            .find(|e| {
+                e.failures < free_failures || now.duration_since(e.last_failure) > BACKOFF_MAX
+            })
+            .map(|e| *e.key());
+        if let Some(key) = unpenalised {
+            self.entries.remove(&key);
+            return true;
+        }
+        let Ok(mut last) = self.last_full_scan.try_lock() else {
+            return false;
+        };
+        if now.duration_since(*last) < BACKOFF_FULL_SCAN_INTERVAL {
+            return false;
+        }
+        *last = now;
+        let soonest = self
+            .entries
+            .iter()
+            .min_by_key(|e| (e.failures, e.until))
+            .map(|e| *e.key());
+        match soonest {
+            Some(key) => self.entries.remove(&key).is_some(),
+            None => false,
         }
     }
 
@@ -161,11 +212,11 @@ impl FailureBackoff {
     /// failures are still free).
     fn record_failure(&self, key: [u8; 32], free_failures: u32) -> Duration {
         let now = Instant::now();
-        if self.entries.len() >= BACKOFF_MAX_ENTRIES && !self.entries.contains_key(&key) {
-            self.retain_recent();
-            if self.entries.len() >= BACKOFF_MAX_ENTRIES {
-                return Duration::ZERO;
-            }
+        if self.entries.len() >= BACKOFF_MAX_ENTRIES
+            && !self.entries.contains_key(&key)
+            && !self.make_room(now, free_failures)
+        {
+            return Duration::ZERO;
         }
         let mut entry = self.entries.entry(key).or_insert(BackoffEntry {
             failures: 0,
@@ -377,8 +428,9 @@ impl RateLimitState {
     /// The check and this call are not atomic, so concurrent in-flight
     /// guesses can slip a few extra attempts through before the first
     /// failure lands; the excess is bounded by request concurrency.
-    /// The tracked-key map is capped: once full of recently active keys, new
-    /// keys go untracked (fail-open), as for the `/token` quiet period.
+    /// The tracked-key map is capped: at the cap a new key displaces an
+    /// entry with no earned penalty history; only if every entry is under an active penalty and
+    /// the eviction scan is rate limited does it go untracked (fail-open).
     #[cfg(any(feature = "api", test))]
     pub fn record_device_code_failure(
         &self,
@@ -960,6 +1012,64 @@ mod tests {
             backoff.record_failure(key, 2);
         }
         assert_eq!(backoff.record_failure(key, 2), BACKOFF_MAX);
+    }
+
+    fn fill_backoff(backoff: &FailureBackoff, free_failures: u32) {
+        for i in 0..BACKOFF_MAX_ENTRIES as u32 {
+            let mut key = [0u8; 32];
+            key[..4].copy_from_slice(&i.to_be_bytes());
+            backoff.record_failure(key, free_failures);
+        }
+        assert_eq!(backoff.entries.len(), BACKOFF_MAX_ENTRIES);
+    }
+
+    #[test]
+    fn failure_backoff_tracks_new_key_when_map_is_full_of_fresh_keys() {
+        let backoff = FailureBackoff::new();
+        fill_backoff(&backoff, 2);
+
+        let key = [0xffu8; 32];
+        assert_eq!(backoff.record_failure(key, 2), Duration::ZERO);
+        assert_eq!(backoff.record_failure(key, 2), Duration::from_secs(1));
+        assert!(backoff.check(&key).is_err());
+        assert!(backoff.entries.len() <= BACKOFF_MAX_ENTRIES);
+    }
+
+    #[test]
+    fn failure_backoff_flood_cannot_reset_escalation() {
+        let backoff = FailureBackoff::new();
+        let guesser = [0xaau8; 32];
+        for _ in 0..5 {
+            backoff.record_failure(guesser, 2);
+        }
+        fill_backoff(&backoff, 2);
+        // Fresh keys displace each other, never the escalated key.
+        for i in 0..1000u32 {
+            let mut key = [0xbbu8; 32];
+            key[..4].copy_from_slice(&i.to_be_bytes());
+            backoff.record_failure(key, 2);
+        }
+        assert!(backoff.entries.contains_key(&guesser));
+        assert!(
+            backoff
+                .entries
+                .get(&guesser)
+                .is_some_and(|e| e.failures == 5)
+        );
+    }
+
+    #[test]
+    fn failure_backoff_full_of_penalised_keys_evicts_rate_limited() {
+        let backoff = FailureBackoff::new();
+        fill_backoff(&backoff, 1);
+
+        let first = [0xfeu8; 32];
+        let second = [0xfdu8; 32];
+        assert!(backoff.record_failure(first, 1) > Duration::ZERO);
+        assert!(backoff.check(&first).is_err());
+        // The O(n) scan is throttled: the next new key goes untracked.
+        assert_eq!(backoff.record_failure(second, 1), Duration::ZERO);
+        assert!(backoff.entries.len() <= BACKOFF_MAX_ENTRIES);
     }
 
     #[test]
