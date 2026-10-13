@@ -931,10 +931,15 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                     // derive it before `new_epoch` moves into the swap.
                     let new_version = new_epoch.version;
                     let new_audit_key = new_epoch.derive_audit_key(self.node_id);
-                    let old_epoch = {
-                        let mut guard = self.dek.write().unwrap_or_else(|p| p.into_inner());
-                        std::mem::replace(&mut *guard, new_epoch)
-                    };
+                    // The outgoing epoch must be readable through `old_deks`
+                    // *before* the active DEK is replaced: the Raft log store
+                    // decrypts entries concurrently (replication reads) and
+                    // looks an entry's epoch up first in the active DEK and
+                    // then in `old_deks`. Swapping first leaves a window in
+                    // which an entry under the outgoing version is found in
+                    // neither, which surfaces as a fatal "no DEK epoch for
+                    // version N — log entry unreadable" log read error.
+                    let old_epoch = self.dek.read().unwrap_or_else(|p| p.into_inner()).clone();
                     if is_emergency_rotation {
                         // Emergency: old DEK is revoked, not retired — but it
                         // must still go through the standard re-encryption
@@ -976,6 +981,8 @@ impl RaftStateMachine<TypeConfig> for Arc<FjallStateMachine> {
                         .lock()
                         .unwrap_or_else(|p| p.into_inner())
                         .insert(old_epoch.version, old_epoch.clone());
+                    // Only now make the new epoch the active one.
+                    *self.dek.write().unwrap_or_else(|p| p.into_inner()) = new_epoch;
                     // Signal background re-encryption task (non-fatal on
                     // channel full).
                     let _ = self.reencrypt_tx.try_send(old_epoch);
