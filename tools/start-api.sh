@@ -14,6 +14,15 @@ TMP_DIR=$(mktemp -d -t spire-test-XXXXXX)
 tools/teardown-api.sh || true
 rm -rf "$STATE_DIR"
 
+# OAuth2 UI fixtures must exist: the live UI tests fail (not skip) without them.
+OAUTH2_FIXTURES="$(pwd)/tests/api/fixtures/oauth2"
+for d in templates static; do
+    if [ ! -d "${OAUTH2_FIXTURES}/${d}" ]; then
+        echo "missing OAuth2 UI fixture directory: ${OAUTH2_FIXTURES}/${d}" >&2
+        exit 1
+    fi
+done
+
 mkdir -p "$STATE_DIR"
 mkdir -p "$STATE_DIR/etc/fernet-keys"
 mkdir -p "$CLIENT_HOME"
@@ -95,6 +104,15 @@ log_dir = ${STATE_DIR}
 # pinning [DEFAULT] public_endpoint (OAuth2 OP endpoints 503 without one).
 [oauth2]
 allow_host_header_issuer = true
+# Deterministic reuse detection for live refresh-token tests: a replayed
+# predecessor is a breach at once (no multi-device grace window).
+refresh_token_reuse_grace_minutes = 0
+# Branding / template / static overrides exercised by the live UI tests
+# (tests/api/tests/api_v4/oauth2/ui_branding.rs).
+templates_dir = ${OAUTH2_FIXTURES}/templates
+static_dir = ${OAUTH2_FIXTURES}/static
+ui_product_name = Fixture Cloud
+ui_logo_url = /v4/oauth2/static/logo.svg
 
 [database]
 connection = sqlite::memory:

@@ -1,0 +1,3 @@
+# Test fixture locale: a distinctive translation so tests can tell it
+# was negotiated.
+sign_in = "Anmelden-Fixture"

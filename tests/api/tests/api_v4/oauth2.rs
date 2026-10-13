@@ -13,12 +13,25 @@
 // SPDX-License-Identifier: Apache-2.0
 //! `/v4/oauth2/*` functional tests (ADR 0026).
 
+mod authorize_browser;
+mod authorize_logout;
+mod authorize_mfa;
+mod authorize_sso;
+mod clients;
+mod consent_memory;
+mod cross_domain;
 mod device_authorization;
 mod device_browser;
+mod device_regressions;
 mod discovery;
 mod introspect;
 mod jwks_revocation;
+mod key_rotation;
 mod logout;
 mod revoke;
+mod token_client_credentials;
 mod token_device_grant;
+mod token_exchange;
+mod token_refresh;
+mod ui_branding;
 mod userinfo;

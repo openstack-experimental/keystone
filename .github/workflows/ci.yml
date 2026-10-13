@@ -218,6 +218,14 @@ jobs:
         if: needs.changes.outputs.code == 'true'
         run: cargo nextest run -p test_api --profile ci-api --test scim_v2
 
+      # Real-browser OAuth2 sign-in tests (login/consent/SSO/logout/passkey).
+      # ubuntu-latest ships Chrome and chromedriver ($CHROMEWEBDRIVER).
+      - name: Run browser (WebDriver) OAuth2 tests
+        if: needs.changes.outputs.code == 'true'
+        run: |
+          "$CHROMEWEBDRIVER/chromedriver" --port=4444 > /tmp/chromedriver.log 2>&1 &
+          cargo nextest run -p test_api --profile ci-browser --test integration_api_browser
+
       - name: Run Doc tests
         if: needs.changes.outputs.code == 'true'
         run: cargo test --doc

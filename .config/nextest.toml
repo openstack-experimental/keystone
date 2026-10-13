@@ -106,6 +106,36 @@ path = "junit.xml"
 store-success-output = false
 store-failure-output = true
 
+# --- Real-browser OAuth2 UI tests (thirtyfour) ---
+# Needs a WebDriver on BROWSERDRIVER_URL (default http://localhost:4444),
+# e.g. `chromedriver --port=4444` (Chromium; or BROWSER=firefox + geckodriver).
+# geckodriver serves one session at a time.
+[test-groups.browser-session]
+max-threads = 1
+
+[profile.browser]
+
+[[profile.browser.overrides]]
+filter = "binary(integration_api_browser)"
+test-group = "browser-session"
+
+[[profile.browser.scripts]]
+filter = "binary(integration_api_browser)"
+setup = "start-api"
+
+[profile.ci-browser]
+inherits = "browser"
+[[profile.ci-browser.overrides]]
+filter = "binary(integration_api_browser)"
+test-group = "browser-session"
+[[profile.ci-browser.scripts]]
+filter = "binary(integration_api_browser)"
+setup = "start-api"
+[profile.ci-browser.junit]
+path = "junit.xml"
+store-success-output = false
+store-failure-output = true
+
 # --- LDAP driver functional tests ---
 # Spins up a throwaway local `slapd` (no Docker daemon required; see
 # tools/start-ldap-test.sh), seeds it from

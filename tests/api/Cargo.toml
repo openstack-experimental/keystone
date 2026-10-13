@@ -20,10 +20,12 @@ bytes.workspace = true
 cadf.workspace = true
 chrono = { workspace = true, features = ["serde", "now"] }
 eyre.workspace = true
+data-encoding.workspace = true
 derive_builder.workspace = true
 hmac.workspace = true
 http.workspace = true
 http-body-util.workspace = true
+jsonwebtoken.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
 openstack-keystone-api-types = { workspace = true, features = ["builder"] }
@@ -36,6 +38,7 @@ secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true
+sha1.workspace = true
 sha2.workspace = true
 spiffe = { workspace = true, features = ["x509-source"] }
 spiffe-rustls.workspace = true
@@ -46,10 +49,16 @@ tokio = { workspace = true, features = ["fs", "rt-multi-thread", "macros"] }
 tokio-rustls.workspace = true
 tonic = { workspace = true, features = ["tls-aws-lc"] }
 tracing-test.workspace = true
+thirtyfour = "0.37"
 webauthn-authenticator-rs = { workspace = true, features = ["softtoken"] }
 x509-parser.workspace = true
 url = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
+
+[[test]]
+name = "integration_api_browser"
+path = "tests/api_browser.rs"
+test = false
 
 [[test]]
 name = "integration_api_v3"

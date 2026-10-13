@@ -500,3 +500,27 @@ impl DeviceBrowserSession {
         Ok((status, rsp.text().await?))
     }
 }
+
+impl DeviceBrowserSession {
+    /// `POST /device/mfa`: submit the TOTP passcode + CSRF token scraped
+    /// from the MFA form. Returns the consent form on success, or the MFA
+    /// form again after a wrong code.
+    pub async fn submit_mfa(
+        &self,
+        csrf_token: &str,
+        passcode: &str,
+    ) -> Result<(StatusCode, String)> {
+        let rsp = self
+            .client
+            .post(self.url("device/mfa")?)
+            .form(&[
+                ("csrf_token", csrf_token),
+                ("factor", "totp"),
+                ("passcode", passcode),
+            ])
+            .send()
+            .await?;
+        let status = rsp.status();
+        Ok((status, rsp.text().await?))
+    }
+}
