@@ -1288,6 +1288,19 @@ the issued SVID. It's a claim keystone-rs derives itself by parsing the
 (see Phase 3's extended claim flattening), the same mechanism Fix 1 uses to
 get `spiffe.host` for compute-host ownership verification.
 
+**Note for services with in-guest components.** `compute-vm` is a deliberately
+limited default. Services that run components inside guests with per-object
+credentials today cannot reproduce that authority from this role alone:
+Magnum writes a per-cluster trustee password and trust id into every cluster
+node, and its in-cluster components (CSI, CCM, autoscaler) redeem that trust
+with `impersonation=True` — i.e. as the cluster owner. Their migration
+(`doc/src/adr/0036-service-delegation.md` §10.3) needs wider mapping rules or
+permission sets for those components. The password can leave the guest only
+once this phase works — the SVID is its replacement — but it does not require
+the Keystone trust to be gone: Magnum can stop writing the password while the
+conductor still redeems the trust, and the conductor's half of the trust does
+not depend on this phase.
+
 **Full `local.conf` for end-to-end devstack deployment:**
 
 ```ini

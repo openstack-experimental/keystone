@@ -2,6 +2,8 @@
 
 [Introduction](index.md)
 [Authentication and authorization vision](vision.md)
+[Authentication and authorization roadmap](roadmap.md)
+[IAM data plane and check API design](iam-data-plane.md)
 [Public KMS architecture](kms-vision.md)
 
 ---

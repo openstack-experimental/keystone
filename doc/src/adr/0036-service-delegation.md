@@ -2,6 +2,8 @@
 
 **Date:** 2026-09-10
 
+**Updated:** 2026-10-13
+
 ## Status
 
 Proposed.
@@ -16,7 +18,7 @@ Related:
 - [ADR 0014 — Application Credentials](0014-application-credentials.md): the
   lifecycle rules (frozen role subset, cascade on role loss) reused here.
 - [ADR 0017 — Security Context](0017-security-context.md) and the
-  [security model](../contributor/security-model.md): invariants I1–I5 that
+  [security model](../contributor/security-model.md): invariants I1–I10 that
   every mechanism in this ADR must satisfy.
 - [ADR 0020 — Mapping Engine](0020-mapping-engine.md): how an SVID becomes a
   Keystone principal for plain service-to-service calls.
@@ -41,31 +43,125 @@ OpenStack services use trusts in two distinct situations:
    pattern. This is the only thing trusts do that nothing else in Keystone can
    do today.
 2. **Continuation of a user-initiated operation past token expiry.** Glance
-   image import into Swift (`swift_store_use_trusts`) uses a trust. Nova and
-   Cinder solve the same problem differently, with `X-Service-Token` plus
+   image upload creates a trust for every backend (`TokenRefresher` in
+   `glance/common/trust_auth.py`), so the token survives a long transfer. Nova
+   and Cinder solve the same problem differently, with `X-Service-Token` plus
    `allow_expired`, which `keystone-rs` already supports on
    `GET /v3/auth/tokens`.
 
 ### Why trusts must go
 
-- **The trustee is a user with a secret.** A trust grants authority to a
-  Keystone user account that authenticates with a password or an application
-  credential. Magnum ships that credential into every cluster VM. The authority
-  is only as safe as a long-lived bearer secret in a config file.
-- **Impersonation, redelegation and `remaining_uses`** are three independent
-  feature switches with their own validation rules. Most historical trust
-  advisories and most of the special-casing in `validate_scope_boundaries()` and
-  `calculate_effective_roles()` exist because of them (see the `OSSA-2026-005`
-  and `OSSA-2026-015` notes in ADR 0017).
-- **Trust tokens are a scope, not a chain.** `ScopeInfo::TrustProject` makes the
-  delegation a property of the token's scope, the exact thing the security model
-  says a delegation decision must never key on (I1). The Trust-on-`Project` path
-  exists only to paper over that for EC2 redemption.
-- **The `trust` table is Python-owned.** Every change is constrained by
-  byte-compatibility with Python Keystone.
-- **Users cannot see or reason about them.** Trusts are created by services on
-  the user's behalf and are effectively invisible, so revocation in practice
-  never happens.
+This section is about trusts as OpenStack designs them today, not about any one
+implementation of them. A trust is an OpenStack-specific delegation record: a
+trustor grants a trustee user a subset of its roles on a project, and the
+trustee later authenticates with its own credential and asks for a token with
+the scope `OS-TRUST:trust`.
+
+The decisive reason is the goal of tokens that no longer carry scope. Keystone
+is moving to resolve authorization at request time instead of minting a project
+and roles into every token. A trust cannot move with it. The trust is selected
+by the scope of the authentication request, and the token that results is
+meaningful only through that scope, so removing scope removes the trust. Every
+replacement for trusts must therefore carry its delegation as a fact about how
+the caller authenticated, outside any scope.
+
+Three further properties of the design add to the case. It is defined only by
+OpenStack, so nothing outside OpenStack can interpret it. It rests on a secret
+held by the delegate. And it leaves no reliable record of who acted under whose
+authority.
+
+#### Weaknesses of trusts as designed
+
+| Lens      | Weakness                               | How trusts work today                                                                                                                                                                                                   | Addressed by                                                            |
+| --------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Standards | A home-grown protocol                  | `OS-TRUST` is an OpenStack Identity API extension. No other identity provider, gateway, service mesh or audit tool understands a trust-scoped token, and its flags have no counterpart in any standard.                 | RFC 8693 delegation on a standard token endpoint (§1, §5, §6)           |
+| Security  | The delegate holds a secret            | The trustee is a Keystone user that authenticates with a password. The trust is only as strong as that secret, and the secret is copied to wherever the service runs.                                                   | SVID-bound grantee, no secret (§3, §5)                                  |
+| Security  | Delegation is expressed as token scope | The trust is selected through the scope of an authentication request, so the meaning of the token depends on its scope. This blocks the goal of scope-less tokens, because a model without scope has nowhere to put it. | Delegation is a claim about how the caller authenticated (§5.2, §7, §8) |
+| Security  | A wide feature surface                 | Impersonation on or off, redelegation with a depth limit, and a use counter are independent switches. Each one changes what a trust token means and has to be reviewed separately.                                      | One shape: no redelegation, no counter, chain depth one (§1, §8)        |
+| Security  | No built-in end of life                | `expires_at` is optional, so a trust created without it does not lapse by itself.                                                                                                                                       | Operator ceiling on grant lifetime (§3)                                 |
+| Security  | No operator control over who may hold  | Any user can name any other user as trustee. Nothing records which services are allowed to hold delegated authority, or caps the roles they can receive.                                                                | Delegatable-service registry with ceilings (§3)                         |
+| Audit     | The acting party can be hidden         | With `impersonation` the token's user is the trustor. Downstream policy and logs see only the trustor unless they inspect the trust body.                                                                               | `act` is mandatory on every delegated token (§5.2, §6.2)                |
+| Audit     | The authority used is not identifiable | The trust id sits in the token body, not in the identity fields downstream services consume. Working out which trust, held by whom, was used means inspecting the token and joining it to the trust.                    | `delegation_context` names the grant or root token (§5.2, §6.2)         |
+| Audit     | One identity holds everyone's trusts   | Every trust a service holds is held by the same trustee user, so activity cannot be attributed per trust from the trustee side. Trusts are listable, but a listing carries no purpose or service-meaningful name.       | Per-grant records with description and grantee name (§3, §4)            |
+
+#### What grants and exchange change
+
+The comparison is organised by the three concerns above. Service grants and
+on-behalf-of exchange appear as separate columns because they differ where it
+matters: an exchange has no stored record, and a grant exists for authority that
+must be available when no user token is.
+
+##### Standards
+
+| Aspect                         | Trust                                                   | Service grant (§4, §5)                                                                                                             | On-behalf-of exchange (§6)         |
+| ------------------------------ | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| Defined by                     | OpenStack Identity API extension, `OS-TRUST`            | An OpenStack-defined grant type on a standard OAuth 2.0 token endpoint                                                             | RFC 8693, OAuth 2.0 Token Exchange |
+| How delegation is represented  | A trust object referenced by id in a trust-scoped token | The `act` claim of RFC 8693 §4.1 in a JWT (RFC 7519), plus a `delegation_context` claim                                            | The `act` claim in a JWT           |
+| How the delegate authenticates | Keystone password                                       | mTLS client authentication in the style of RFC 8705 with a SPIFFE X.509 SVID, or a SPIFFE JWT-SVID as an RFC 7523 client assertion | The same                           |
+| Workload identity              | A Keystone user                                         | SPIFFE ID, a CNCF graduated specification                                                                                          | The same                           |
+| Readable outside OpenStack     | No                                                      | Any JWT-aware gateway, mesh or identity tool can verify the token and read `act`; stock OAuth 2.0 libraries can make the request   | The same                           |
+
+The exchange half is fully standard. RFC 8693 does not define stored authority,
+so the grant record and its grant type are OpenStack-defined, but they sit on a
+standard endpoint, use standard client authentication and carry a standard
+claim. The OpenStack-specific surface shrinks from a whole API extension and
+scope type to one grant type. Other platforms solve the same problem the same
+way: AWS STS role assumption, Google service account impersonation and Microsoft
+Entra's on-behalf-of flow are equivalents, and Keycloak implements RFC 8693
+directly.
+
+##### Security
+
+| Aspect                               | Trust                                    | Service grant                                                                          | On-behalf-of exchange                                       |
+| ------------------------------------ | ---------------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Secret held by the delegate          | Yes, a password                          | None                                                                                   | None                                                        |
+| A stolen credential works elsewhere  | Yes, until someone rotates it            | No; the SVID is short-lived, rotated by SPIRE and bound to the workload                | The same                                                    |
+| Where the delegation lives           | In the token's scope                     | In the authentication chain, independent of scope                                      | The same                                                    |
+| Who may be the delegate              | Any user                                 | A registered service client, with operator ceilings on roles and lifetime              | The same                                                    |
+| Lifetime                             | Optional expiry                          | Operator-capped; every redemption re-checks grantor, roles and grant; no refresh token | Bounded by the user's token and a per-service ceiling       |
+| Features to review separately        | Impersonation, redelegation, use counter | None; chain depth is one                                                               | None                                                        |
+| How it ends                          | Delete the trust, or disable the trustee | Delete the grant, role loss or user disable, or disable the client                     | Revoke the root token, remove the role, or disable the user |
+| Works with no user token at run time | Yes                                      | Yes                                                                                    | No, by design                                               |
+| Compatible with tokens without scope | No                                       | Yes                                                                                    | Yes                                                         |
+
+##### Auditability
+
+| Aspect                               | Trust                                                         | Service grant                                                                | On-behalf-of exchange                                   |
+| ------------------------------------ | ------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Acting party on every request        | Hidden under impersonation; the token names the trustor       | Always present in `act`, with the service's SPIFFE ID                        | Always present in `act`                                 |
+| Authority used, per request          | A trust id in the token body                                  | `grant_id` in `delegation_context`, carried into audit records               | `root_jti` ties every hop to the originating user token |
+| Record of each use                   | An ordinary authentication by the trustee, then trust scoping | A dedicated CADF event per redemption with grant, grantor and actor (§8)     | A CADF event per exchange                               |
+| Lifecycle record                     | Create and delete; no reason, no last-use time                | Create, redeem, revoke and disable, with a reason and the last-redeemed time | The chain ends when the root token is revoked           |
+| Inventory for the person who granted | A list of trusts by id                                        | A list with description, expiry, last-redeemed time and the grantee's name   | None; the user's own token is the consent (see below)   |
+| Attribution of a service's activity  | All of a service's trusts share one trustee user              | Per grant and per service                                                    | Per service                                             |
+
+The user sees no per-exchange record of an on-behalf-of hop. Only the auditor
+sees it, through the CADF event (§8). That is deliberate: the user handed the
+service their own token for one operation, and that act is the consent. Standing
+authority, which needs an inventory the user can review and revoke, is what
+service grants are for.
+
+#### What this does not fix
+
+These limits hold after this change, and the rest of the document is written
+around them.
+
+- **Delegated authority is as powerful as before.** A compromised service can
+  still act as every grantor that granted it access, within the granted roles.
+  What changes is that the stolen identity is an SVID that cannot be used from
+  another host, and that the operator can end all redemptions at once by
+  clearing the client's delegation policy. Disabling a trustee user already does
+  the latter for trusts, so that part is not new.
+- **Derived credentials must carry the delegation.** Credentials created from a
+  delegated token, such as EC2 keys, have to be bounded by the same delegation
+  or they widen it. The design requires this (§11 Phase 4), and the risk exists
+  for any delegation scheme.
+- **Offline validation cannot see revocation until `exp`.** Deleting a grant
+  does not shorten tokens already minted from it (§8).
+- **Tokens stay bearer tokens.** SPIRE rotates certificates, so
+  certificate-bound tokens are not available (Consequences).
+- **Services still have to change.** Each swaps one creation call and one
+  authentication plugin (§10).
 
 ### What already exists in `keystone-rs`
 
@@ -102,8 +198,10 @@ OpenStack services use trusts in two distinct situations:
   authentication-chain fact) and treats the project/role projection into
   `openstack_context` as a transitional convenience that can be dropped without
   touching the design (§7).
-- **Python coexistence.** Nothing here writes to Python-owned tables. New state
-  lives in Raft-backed drivers like the OAuth2 resources.
+- **Python coexistence.** Nothing here manages Python-owned tables. New state
+  lives in Raft-backed drivers like the OAuth2 resources. The cost is that only
+  `keystone-rs` can redeem or validate a grant, so mixed deployments must route
+  those requests to it.
 
 ## Decision
 
@@ -151,33 +249,37 @@ pub struct DelegationPolicy {
     pub cross_domain: bool,                 // may hold grants from users of other domains; SystemAdmin-only
     pub max_role_ids: Vec<String>,          // ceiling on delegated role ids; empty = no ceiling beyond the grantor's own
     pub max_grant_lifetime: Option<Duration>,     // ceiling on grant `expires_at`; None = unbounded
-    pub max_operation_lifetime: Duration,   // ceiling on on-behalf-of re-exchange chains (§6.3)
+    pub max_operation_lifetime: Option<Duration>, // required when `on_behalf_of`; ceiling on re-exchange chains (§6.3)
     pub max_grants_per_project: Option<u32>,// per-project grant cap for this grantee; None = no per-project cap (§4.1)
-    pub display_name: String,               // what users see in GET /v4/delegatable-services
 }
 ```
 
-`max_role_ids` holds role **ids**, not names. Role names are not unique once
-domain-specific roles exist (ADR 0034), so a name-based ceiling is ambiguous
-across domains; the API accepts names on write only as a convenience and
-resolves them, in the client's own domain, to ids that are what gets stored.
+`max_role_ids` holds role **ids**, and the API accepts only ids. Role names are
+not unique once domain-specific roles exist (ADR 0034), and the delegated roles
+on a grantor's project can come from any domain. Resolving a name in the
+client's own domain could pick a different role than the one meant and silently
+widen or narrow the ceiling. This is an operator-facing field, so the lost
+convenience is cheap. `max_operation_lifetime` must be set when `on_behalf_of`
+is true and is ignored otherwise.
 
 - Setting or changing `delegation` and `spiffe_ids` is gated by
   `policy/oauth2/client/update.rego` with the same SystemAdmin-only carve-out
-  ADR 0026 uses for `pre_authorized`, and emits a high-severity CADF event.
+  ADR 0026 uses for `pre_authorized`, and emits a CADF event.
 - Control-plane services register once, in the operator's infrastructure domain,
   with `cross_domain: true`. Tenant-local automation registers in the tenant
   domain with `cross_domain: false`.
-- **`GET /v4/delegatable-services`** (public interface, any authenticated user)
-  lists the clients a caller may name as grantee: those in the caller's domain
-  plus every `cross_domain` client. It returns `client_id`, `display_name`, and
-  the `DelegationPolicy` ceilings, nothing else. Users never see or type a
-  SPIFFE ID. This is an accepted disclosure: the existence and delegation
-  ceilings of every `cross_domain` (i.e. control-plane) client are visible to
-  every authenticated user in the cluster. That set is operator-curated, is
-  already inferable from the service catalog, and a `client_id` is not a
-  credential — nothing can be redeemed without an SVID that matches
-  `spiffe_ids`, which is never returned here.
+- **`GET /v4/delegatable-services`** (public interface, any authenticated user,
+  `policy/delegatable_service/list.rego`) lists the enabled clients with
+  `service_grants == true` that a caller may name as grantee: those in the
+  caller's domain plus every `cross_domain` client. Disabled clients and clients
+  that are not service-grant grantees are omitted. It returns `client_id`, the
+  client's existing `name` (ADR 0026 §5), and the `DelegationPolicy` ceilings,
+  nothing else. Users never see or type a SPIFFE ID. This is an accepted
+  disclosure: the existence and delegation ceilings of every `cross_domain`
+  (i.e. control-plane) client are visible to every authenticated user in the
+  cluster. That set is operator-curated, is already inferable from the service
+  catalog, and a `client_id` is not a credential — nothing can be redeemed
+  without an SVID that matches `spiffe_ids`, which is never returned here.
 
 #### 3.1 SVID-to-client matching
 
@@ -209,9 +311,11 @@ So `spiffe://td/service/heat-engine/host/*` matches
 redeemed at the **grantor's** domain token endpoint (§5.1), and a control-plane
 client lives in the operator's infrastructure domain. Therefore:
 
-- `client_id` is unique **cluster-wide**, not per domain. The Raft-backed
-  `oauth2-client-driver-raft` keying already gives a global id space; this ADR
-  makes that a guarantee rather than an accident, enforced at client create.
+- `client_id` is unique **cluster-wide**, not per domain. This is the Client ID
+  Uniqueness Invariant of ADR 0026 §5. The Raft driver already enforces it at
+  create with an atomic `create_if_absent` on the global `client_id_idx` key,
+  while the primary key stays domain-scoped. This ADR relies on that invariant
+  and adds nothing to it.
 - `ServiceGrant.grantee` stores `Client { client_id, client_domain_id }`. The
   token endpoint resolves the client by that pair, so redemption never scans
   domains.
@@ -231,6 +335,7 @@ client lives in the operator's infrastructure domain. Therefore:
 ```rust
 pub struct ServiceGrant {
     pub id: String,
+    pub version: u64,                  // bumped on every change; compared by the resolver (§7)
     pub domain_id: String,             // grantor's domain; the token endpoint the grant is redeemed at
     pub grantor_user_id: String,
     pub grantee: Grantee,              // v1: Client { client_id, client_domain_id } (§3.2); later: User { user_id } (§9)
@@ -256,11 +361,16 @@ Rules applied at creation:
   `DelegationPolicy.max_role_ids`. Omitting `roles` freezes the caller's current
   effective roles, as application credentials do.
 - `expires_at` is capped by `max_grant_lifetime`.
+- The grantee client must exist, be enabled, and have
+  `DelegationPolicy.service_grants == true`. For a grantee in another domain,
+  `cross_domain` must be true. A grant naming anything else is rejected at
+  create with `400`, not stored to fail at redemption.
 - The caller's authentication chain must not itself be delegated: a request
   authenticated via a trust, a restricted application credential, a service
   grant, or an on-behalf-of token is rejected (`403`). An `unrestricted`
-  application credential may create grants, matching the existing trust rule.
-  This is what keeps chain depth at exactly one.
+  application credential may create grants. Python Keystone gates trusts the
+  same way, with a global opt-out instead of a per-credential flag. This is what
+  keeps chain depth at exactly one.
 - One project per grant. A service that needs several projects holds several
   grants. Domain-scoped targets are a possible later extension; system scope is
   never delegatable.
@@ -281,7 +391,9 @@ Rules applied at creation:
 
 #### 4.2 API
 
-Public interface, ordinary user token:
+Users call these on the public interface with an ordinary token. The grantee
+service calls show and delete on the **internal** interface only, identified by
+SVID (see the "Who may act" list below).
 
 | Method   | Path                                                         | Policy                                                                            |
 | -------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------- |
@@ -305,6 +417,12 @@ Who may act:
   `credentials.actor.client_id` to OPA (§8). A service that has both a mapped
   principal identity and a delegatable client registration keeps them separate;
   only the client registration authorizes grant show/delete.
+- SVID presentation exists only on the internal interface (Constraints), so the
+  grantee path is served there. A grantee that reaches only the public interface
+  authenticates with a JWT-SVID at the token endpoint (§5.1) but has no
+  show/delete route. Such a grantee, for example a tenant-VM workload, cannot
+  clean up its own grants. The grantor deletes them, or they expire. Phase 3
+  (§11) may add a JWT-SVID-authenticated route if a pilot needs one.
 
 Grants are immutable except for `enabled` / `disabled_reason`, which only the
 lifecycle hooks (§8) set. Rotation is create-new, switch, delete-old.
@@ -318,6 +436,12 @@ in `crates/core/src/backend.rs` following the CRUD naming convention
 (`create_service_grant`, `get_service_grant`, `list_service_grants`,
 `update_service_grant` for lifecycle flags only, `delete_service_grant`).
 
+Redemption must not turn into a Raft write per request. `last_redeemed_at` is
+best-effort and batched, and a missed update is acceptable because it is an
+inventory hint, not a control. The `RoleLost` transition (§5.1 check 6) is
+written only when `enabled` is still true, so a retry loop against a dead grant
+does not generate writes.
+
 ### 5. Redeeming a service grant
 
 #### 5.1 Request
@@ -328,9 +452,15 @@ in `crates/core/src/backend.rs` following the CRUD naming convention
 ```
 grant_type=urn:openstack:params:oauth:grant-type:service-grant
 grant_id=<id>
-scope=<optional space-separated role names to narrow further>
+roles=<optional space-separated role ids to narrow further>
 audience=<optional; narrows aud, see §7>
 ```
+
+`roles` is a per-grant parameter. It is not the OAuth2 `scope` parameter, which
+keeps its ADR 0026 §4 meaning (a subset of the client's `allowed_scopes`, echoed
+in the response). It takes role ids only, must be a subset of `grant.role_ids`,
+and an id outside that set is rejected with `invalid_request`. A `scope` value
+on this grant type is validated as in ADR 0026 §4 and has no effect on roles.
 
 Client authentication is one of:
 
@@ -347,18 +477,23 @@ Client authentication is one of:
   SPIRE JWT-SVID carries the workload's SPIFFE ID in `sub` and the SPIRE server
   in `iss`, so this is a **deliberate deviation**, spelled out because a
   spec-literal implementation would reject every SVID:
-
   - `sub` MUST be a SPIFFE ID matching `spiffe_ids` per §3.1. That match, not
     `client_id`, identifies the client; a `client_id` form parameter, if sent,
     must agree with the result or the request is rejected.
   - The signature MUST verify against the trust domain's JWKS bundle for the
     trust domain named in `sub`, fetched from the SPIRE bundle endpoint and
     cached, never against Keystone's own domain keys.
-  - `aud` MUST contain the exact token endpoint URL
-    (`https://<host>/v4/oauth2/{domain_id}/token`). An assertion minted for any
-    other audience is rejected, so a JWT-SVID obtained by some other Keystone-
-    adjacent service cannot be replayed here.
-  - `exp - iat` MUST be <= 300s and clock skew tolerance is 60s.
+  - `aud` MUST contain the fixed, deployment-wide Keystone token-endpoint
+    audience (`[oauth2] jwt_svid_audience`, for example `keystone-oauth2`),
+    accepted at any domain's token endpoint. Token endpoints are per domain and
+    domains are created at run time, while SPIRE mints JWT-SVIDs with one
+    configured audience per server, so a per-endpoint URL cannot be implemented.
+    This is the pattern the SPIRE plan already uses for VM attestation
+    (`spiffe-attestation`). An assertion minted for another relying party is
+    still rejected, and the signature check is bound to the deployment's
+    trust-domain bundle.
+  - `exp - iat` MUST be <= 300s and clock skew tolerance is 60s. This needs
+    SPIRE-side configuration (Phase 3 prerequisites, §11).
   - The assertion `jti` MUST be recorded in a replay cache for the remainder of
     its `exp` window, and a repeat is rejected (`invalid_client`). Without this
     a captured assertion is a reusable bearer credential for its whole TTL,
@@ -378,11 +513,13 @@ The endpoint checks, in order:
    `client.delegation.cross_domain` (§3.2).
 5. Grantor is enabled and the grantor's domain is enabled.
 6. Effective roles =
-   `grant.role_ids ∩ grantor's live effective roles on target ∩ scope narrowing`.
-   Empty → `403` and the grant is marked `RoleLost`. **This live intersection,
-   re-run on every single redemption, is the primary role-loss control**; the
-   lifecycle hooks in §8 are an optimisation that usually gets there first, not
-   the thing the security property rests on.
+   `grant.role_ids ∩ grantor's live effective roles on target ∩ roles narrowing`.
+   Empty → `403` and the grant is marked `RoleLost`. This differs from Python
+   Keystone trusts, where losing any one delegated role fails the mint outright.
+   A grant narrows to the intersection and fails only when nothing is left.
+   **This live intersection, re-run on every single redemption, is the primary
+   role-loss control**; the lifecycle hooks in §8 are an optimisation that
+   usually gets there first, not the thing the security property rests on.
 
 Redemption load: with no refresh token and a 15-minute access token, each active
 grant re-redeems roughly four times an hour, and a Heat-sized deployment holds
@@ -390,9 +527,11 @@ one grant per stack. Service clients are therefore given their own `/token`
 rate-limit bucket, sized by the operator from the expected grant count rather
 than sharing the per-client default meant for interactive clients; the §7.A
 pre-hash limiter still applies first so an unauthenticated flood is dropped
-before any grant lookup. Deployments that find this traffic material should
-raise the access-token lifetime for service clients, which trades revocation
-latency (§8) for request volume, in that direction only.
+before any grant lookup. Deployments that find this traffic material can raise
+`access_token_lifetime_minutes`. That value is global today, so the change
+applies to every client and trades revocation latency (§8) for request volume. A
+per-client lifetime for service clients is a possible later knob, not part of
+this ADR.
 
 #### 5.2 Response and claims
 
@@ -532,11 +671,11 @@ hop then re-runs, against `keystone-rs`:
 Without the `root_jti` binding, re-exchange would present a _different_ token
 than the one the user handed over, with a different `jti`, and an explicit
 "revoke my token" would have no effect after the first hop — the chain would be
-a token-lifetime-extension primitive that outlives its own revocation, which is
-precisely the class of behaviour §"Why trusts must go" objects to. Revoking the
-root token now ends the chain at the next hop, and, because the hop tokens carry
-`root_jti` as a claim, a deployment on the back-channel validation path rejects
-already-issued hop tokens immediately as well.
+a token-lifetime-extension primitive that outlives its own revocation, which
+would reproduce the unbounded, unauditable delegation this ADR exists to remove.
+Revoking the root token now ends the chain at the next hop, and, because the hop
+tokens carry `root_jti` as a claim, a deployment on the back-channel validation
+path rejects already-issued hop tokens immediately as well.
 
 No grant record exists for on-behalf-of exchange because the user's original
 token, presented to the service, is the consent, and the user's ordinary
@@ -576,9 +715,10 @@ not grow two answers to any of them:
   required claims) serves both; doing it twice guarantees divergence.
 - **Confused-deputy replay gets one rule.** #1018's concern (an external token
   minted for someone else replayed at Keystone) is the same one §5.1 answers for
-  JWT-SVID client assertions: pin `aud` to the exact token endpoint, bound the
-  assertion lifetime, and cache the assertion `jti` against replay. §5.1's rule
-  is the stricter of the two and generalises to the external-subject case.
+  JWT-SVID client assertions: pin `aud` to the fixed Keystone token-endpoint
+  audience, bound the assertion lifetime, and cache the assertion `jti` against
+  replay. §5.1's rule is the stricter of the two and generalises to the
+  external-subject case.
 
 Separately, if #1018 proceeds, ADR 0026 §1's "Circular Token Exchange Trap"
 needs an amendment note: that section records
@@ -613,8 +753,12 @@ time as a projection of the grant for the benefit of today's
 
 #### 7.1 `audience` narrowing
 
-ADR 0026 §12 left audience-narrowing semantics explicitly unspecified and
-needing their own design pass. This ADR does that pass, minimally:
+The application-credential exchange already implements this
+(`requested_audience()` in
+`crates/keystone/src/api/v4/oauth2/token/token_exchange.rs`, whose doc comment
+cites this section). The rules below ratify that behavior and extend it to the
+grants in this ADR, so Phase 2 reuses the function and adds no new narrowing
+logic.
 
 - The request parameter is RFC 8693 `audience`, one or more values. `resource`
   (URI form) is **not** accepted in v1; it is reserved so that adding it later
@@ -668,7 +812,8 @@ Invariant mapping:
 | Token-from-token | Forbidden for both variants, as for trusts today. Renewal is re-redemption (§5) or re-exchange (§6.3).                          |
 
 `Credentials` gains `actor: Option<ActorInfo { client_id, spiffe_id }>` so
-policies can say, for example, that only `heat-engine` may call `stacks:signal`.
+policies can say, for example, that only the grantee client may delete its
+grants (§4.2).
 
 Lifecycle hooks (event bus, `crates/core/src/events.rs`), mirroring
 application-credential cascade. **These hooks are an optimisation, not the
@@ -721,9 +866,12 @@ back-channel validation path (where a deleted grant fails immediately, since
 0026 §3) for the domain, which is a domain-wide action and priced accordingly.
 This is called out again in the risks below.
 
-CADF events: `service_grant.create`, `.redeem`, `.revoke`, `.disable`,
-`on_behalf_of.exchange`; each carries `grant_id`, `grantor_user_id`,
-`actor.client_id`, `actor.spiffe_id`, `delegated_project_id`.
+CADF events use the pyCADF action taxonomy so pyCADF-based audit tooling can
+consume them: `create` for a new grant, `authenticate` for a redemption or an
+exchange, `revoke` for a delete, and `disable` for a lifecycle disable. The
+target resource type (`service_grant` or `on_behalf_of`) tells them apart. Each
+event carries `grant_id`, `grantor_user_id`, `actor.client_id`,
+`actor.spiffe_id`, `delegated_project_id`.
 
 ### 9. Human-to-human delegation (later phase)
 
@@ -773,9 +921,11 @@ exist. It is not required to retire trusts and is scheduled last.
    `POST /v3/OS-TRUST/trusts` it calls `POST /v4/service-grants` with
    `grantee_client_id` = Heat's cluster-unique client id (§3.2; discovered once
    via `GET /v4/delegatable-services` or configured), `project_id` = the request
-   context project, `roles` = `trusts_delegated_roles`, `description` = stack
-   id. It stores `grant_id` on the stack where `trust_id` / `trustor_user_id`
-   are stored today. `deferred_auth_method = service_grant`.
+   context project, `roles` = `trusts_delegated_roles` resolved from names to
+   ids (the grant API takes ids only; Heat holds the user's token and resolves
+   them through the roles API at this step), `description` = stack id. It stores
+   `grant_id` on the stack where `trust_id` / `trustor_user_id` are stored
+   today. `deferred_auth_method = service_grant`.
 2. **Deferred operation** (autoscaling, convergence, timers, signals).
    `heat-engine` builds a session with `v4servicegrant(grant_id)`. Every request
    to Nova, Neutron, Cinder carries a token with `sub` = stack owner, `act` =
@@ -789,28 +939,68 @@ exist. It is not required to retire trusts and is scheduled last.
 5. **Grant disabled mid-life** (`RoleLost`). Redemption returns `403` with
    `error=grant_disabled`; Heat surfaces it as it surfaces a missing trust today
    and the stack owner creates a new grant via stack update.
-6. Heat's stack-domain users for wait conditions are unchanged. They can later
-   be replaced by the VM's project/instance SVID (SPIRE plan Phase 5/6)
-   presented as a JWT-SVID on the public interface.
+6. **In-guest credential (independent half).** Like Magnum (§10.3), Heat's
+   guest-side half is a workload-identity problem, not a delegation problem.
+   Servers on the CFN transport carry a per-instance EC2 keypair whose
+   `access`/`secret` are delivered in the server's metadata (signal URLs are
+   pre-signed from the same keypair); the heat and zaqar transports deliver the
+   stack-domain user's password instead. In current configurations the keypair
+   is created by the stack-domain admin, never through the trust, so this half
+   is not a gate on Phase 4; it is replaced by the VM's project/instance SVID
+   (SPIRE plan Phases 5/6, ADR 0032) presented as a JWT-SVID on the public
+   interface. Only the legacy no-stack-domain configuration creates the keypair
+   on the request session, where a delegated (trust-scoped) session stamps
+   `trust_id` into the EC2 blob — the EC2 case Phase 4 rejects at
+   `/v3/ec2tokens` and `/v3/s3tokens`.
 
 #### 10.3 Magnum
 
-- `magnum-conductor` uses a service grant per cluster exactly like Heat (§10.2),
-  created at cluster create, deleted at cluster delete.
-- The trustee user, its password, and the trust that Magnum currently writes
-  into cluster nodes are removed. In-cluster components (cloud-controller
-  manager, CSI, autoscaler) obtain a project/instance SVID from SPIRE and
+Magnum's trust use splits across two independent halves, which may migrate at
+different times: the conductor's deferred authority needs the grant (§5); the
+in-guest credential needs only the VM SVID (SPIRE plan Phases 5/6, ADR 0032).
+Either half may land first, but Phase 4 (trusts off) requires both: without the
+SVID path the in-guest components have no non-secret path left, because a grant
+redeems only against the service client bound to the conductor's SVID (§3.1, §5)
+— a guest is not that client.
+
+- **Conductor (deferred authority).** `magnum-conductor` uses a service grant
+  per cluster exactly like Heat (§10.2), created at cluster create, deleted at
+  cluster delete, including the trust's delete path, which uses the trustee when
+  someone other than the creator deletes the cluster. The conductor's SVID is
+  the credential that redeems the grant (§5); it is not a substitute for the
+  delegation, which only the grant record establishes.
+- **Cluster nodes (in-guest credential).** Magnum currently writes the
+  per-cluster trustee user's password and the trust id into every node's
+  cloud-init, and in-cluster components (cloud-controller manager, CSI,
+  autoscaler) redeem the trust from inside the VM with that password. The
+  `cluster_user_trust` config gates only the trust id; the password is written
+  unconditionally. This half is a workload-identity problem, not a delegation
+  problem: the components obtain a project/instance SVID from SPIRE and
   authenticate with a JWT-SVID through the existing JWT federation flow
   (ADR 0008) or `client_credentials` with `private_key_jwt`, mapped to a
-  project-scoped identity by a mapping rule on `spiffe.project_id`. No Keystone
-  credential is ever stored in the cluster.
+  project-scoped identity by a mapping rule on `spiffe.project_id`. This half
+  can land before the trust is gone: the SVID path is the password's
+  replacement, so Magnum can stop writing the password while the conductor still
+  holds a trust. No Keystone credential is ever stored in the cluster
+  afterwards.
+- **Semantic shift.** The trust Magnum writes today is created with
+  `impersonation=True`, so in-cluster components act _as the cluster owner_ with
+  the owner's roles. The SVID path acts _as the VM itself_: an ephemeral
+  principal bound to the project, holding whatever the mapping rule grants (the
+  SPIRE plan's Phase 6 default is the limited `compute-vm` role). That narrowing
+  is deliberate; a component whose work needs more gets a wider mapping rule or
+  permission set, never a secret in the guest. Resources those components
+  create, such as load balancers and volumes, are owned by the VM principal and
+  not by the cluster owner, because services key ownership on `user_id`. Plan
+  for that in the cluster's ownership and quota handling.
 
 #### 10.4 Glance (continuation of a user operation)
 
 - On `image import` / task creation, `glance-api` holds the user's token. It
   performs an on-behalf-of exchange (§6) with `audience` narrowed to the object
   store, and stores the exchanged token in the task context instead of a trust
-  id. `swift_store_use_trusts` becomes `swift_store_on_behalf_of`.
+  id. The trust that `TokenRefresher` creates on every image data upload is
+  replaced by this exchange.
 - The task worker re-exchanges at `exp - margin` (§6.3) for as long as
   `max_operation_lifetime` allows; the operator sets that per the largest image
   they intend to support.
@@ -837,6 +1027,23 @@ Same shape as Heat: a service grant created when the workflow / alarm / cluster
 / instance is created with the user's token, redeemed by the engine or conductor
 when it fires, deleted when the object is deleted.
 
+#### 10.8 What each service changes, and what it gets
+
+| Service                              | Trust use today                                                            | Change                                                           | Gain                                                                   |
+| ------------------------------------ | -------------------------------------------------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Heat                                 | Trust per stack; trustee password in config; EC2 keypair in guest metadata | Grant per stack, `v4servicegrant` session; JWT-SVID in the guest | No stored password, no guest secret, actor in every call, user-visible |
+| Magnum                               | Trust per cluster; trustee password and trust id in every node             | Grant for the conductor, JWT-SVID in the cluster                 | No Keystone credential inside the cluster                              |
+| Glance                               | Trust for store access                                                     | On-behalf-of exchange per task                                   | No stored record, bounded by the root token                            |
+| Mistral, Senlin, Aodh, Sahara, Trove | Trust per workflow or object                                               | Grant per object, as Heat                                        | As Heat                                                                |
+| Nova, Cinder                         | `X-Service-Token` and `allow_expired`                                      | Optional exchange                                                | No expired tokens accepted, actor recorded                             |
+| Octavia and other pure service calls | Mapping-engine identity                                                    | None                                                             | None needed                                                            |
+
+The three parties see different things. **Operators** register each service
+once, cap its roles and lifetimes, and get a single switch per service.
+**Service developers** swap one creation call and one auth plugin. **End users**
+get a list of the services that hold standing authority on their behalf, each
+with a description and an expiry, and can delete any of them.
+
 ### 11. Migration and deprecation of trusts
 
 1. **Phase 1 — registry and grants.** `OAuth2Client` extension (§3) including
@@ -845,6 +1052,7 @@ when it fires, deleted when the object is deleted.
    redemption grant (§5), `AuthenticationContext::ServiceGrant` with the full
    ADR 0017 checklist and negative tests, lifecycle hooks and CADF events (§8),
    `v4servicegrant` plugin. Pilot: Heat.
+
 2. **Phase 2 — on-behalf-of.** Extend `token_exchange.rs` for plain and chained
    subjects (§6), `AuthenticationContext::OnBehalfOf`, `v4onbehalfof` plugin.
    Pilot: Glance import.
@@ -852,22 +1060,33 @@ when it fires, deleted when the object is deleted.
    JWT-SVIDs on the public interface (§5.1), including the RFC 7523 deviation,
    bundle verification, audience pinning and the assertion `jti` replay cache,
    for grantees outside the control plane. Pilot: Magnum in-cluster components.
+   The pilot has no Phase 1 grant in the chain: the workload authenticates as
+   itself.
+
+   SPIRE preconditions, to be met before this phase ships:
+   - JWT-SVIDs for these workloads carry the fixed Keystone token-endpoint
+     audience, configured in SPIRE (§5.1).
+   - SPIRE's `jwt_ttl` is at most 300s. The stock default is an hour, which
+     Keystone rejects at redemption.
+   - Keystone can fetch and cache the trust-domain JWKS bundle.
+
 4. **Phase 4 — trusts off by default.** New config `[trust] enabled` (default
    `true` in this phase, `false` in the next). When disabled:
    `POST /v3/OS-TRUST/trusts` returns `403`, existing trust tokens validate
    until they expire, and EC2 credentials whose blob carries `trust_id` are
-   rejected at `/v3/ec2tokens`.
+   rejected at `/v3/ec2tokens` and `/v3/s3tokens` (Swift's S3 API endpoint,
+   which shares the same blob handling).
 
-   **EC2 under a service grant is the OSSA-2026-005 shape and gets the full
+   **EC2 under a service grant must carry the delegation, and gets the full
    treatment, not just a blob field.** Storing `service_grant_id` is the smaller
    half:
-
    - **Mint.** An EC2 credential created while authenticated under a service
      grant records `service_grant_id` in its blob, server-managed and never
      client-settable, mutually exclusive with `trust_id` / `app_cred_id` /
      `access_token_id`, exactly as ADR 0019 §1 handles `trust_id`. A
      client-supplied `service_grant_id` is discarded on create.
-   - **Redeem.** `/v3/ec2tokens` must reconstruct
+   - **Redeem.** `/v3/ec2tokens` (and `/v3/s3tokens`, which serves the same
+     blobs for Swift's S3 API) must reconstruct
      `AuthenticationContext::ServiceGrant` from `service_grant_id` rather than
      falling through to `AuthenticationContext::Ec2Credential`. This mirrors the
      `Trust` / `ApplicationCredential` passthrough already documented on the
@@ -884,15 +1103,48 @@ when it fires, deleted when the object is deleted.
      (effective roles must be the intersection, never the grantor's live set); a
      client attempting to set `service_grant_id` at create; and I6's
      `sha256(access) == id` guard against a `service_grant_id`-bearing blob of
-     the wrong type. This is the CVE-2026-33551 / OSSA-2026-005 regression set
-     re-run against the new delegation kind.
+     the wrong type. These tests must exist before the grant kind ships.
 
 5. **Phase 5 — human grantees** (§9).
 6. **Phase 6 — removal.** Delete `AuthenticationContext::Trust`,
-   `ScopeInfo::TrustProject`, `TrustPayload`, the Trust-on-`Project` special
-   case, `trust-driver-sql`, `/v3/OS-TRUST`, and the trust arms of the
-   `token-exchange` grant. Only after every deployment that shares a database
-   with Python Keystone has moved trust creation off it.
+   `ScopeInfo::TrustProject`, `TrustPayload`, `trust-driver-sql`,
+   `/v3/OS-TRUST`, the `DelegationContext::Trust` variant, and the rejection arm
+   for trust subjects in `token_exchange.rs` (`UnsupportedDelegation("trust")`).
+   The `Ec2` variant and its rejection arm stay while plain EC2 credentials
+   exist. Only after every deployment that shares a database with Python
+   Keystone has moved trust creation off it.
+
+## Alternatives considered
+
+Each was weighed against the weaknesses above and against the two requirements
+that most constrain the design: SPIFFE is not reachable by API users, and tokens
+will stop carrying scope.
+
+1. **Keep trusts and require an SVID-bound trustee.** This removes the secret
+   and part of the missing operator control, and nothing else. The delegation
+   would remain an OpenStack-only construct expressed as a token scope, with the
+   impersonation, redelegation and use-counter switches intact and no `act` in
+   the token. It also cannot survive scope-less tokens, because the meaning of a
+   trust token is its scope.
+2. **Application credentials for services.** Bound to one user and one project,
+   they carry a secret, record no actor, and cannot express one service acting
+   for many users, which is what Heat does. ADR 0014 positions them as a step
+   toward limited-access credentials, not as delegation to a third party.
+3. **`X-Service-Token` with `allow_expired`.** Fine for continuation and already
+   supported, but it works by accepting expired user tokens, so the replay
+   window of a captured token is set by a window parameter rather than by the
+   token. It records no actor and cannot cover deferred authority. Nova and
+   Cinder keep it until they opt into exchange (§10.5).
+4. **RFC 8693 exchange only, with no stored record.** There is no user token to
+   exchange when Heat autoscales at night. Exchange is correct for continuation
+   (§6) and cannot express deferred authority, so a stored grant is unavoidable
+   for that case.
+5. **OAuth2 refresh tokens held by services.** A refresh token is a long-lived
+   bearer secret per user, which is the shared-secret problem multiplied by the
+   number of users. The rotation and family-breach detection in ADR 0026 §9
+   would also fire whenever two engine replicas raced to refresh the same token.
+6. **Do nothing.** Every weakness above stays, and the goal of scope-less tokens
+   would need a separate answer for delegation anyway.
 
 ## Consequences
 
@@ -901,9 +1153,9 @@ when it fires, deleted when the object is deleted.
 - **No delegated secret exists anywhere.** The grantee proves identity with an
   SVID that SPIRE rotates and that never leaves the workload. A leaked
   `grant_id` is inert.
-- **Three trust feature switches and their vulnerability classes disappear**:
-  impersonation, redelegation, `remaining_uses`. Chain depth is structurally
-  one; the actor is structurally always recorded.
+- **Three trust feature switches disappear**: impersonation, redelegation,
+  `remaining_uses`. Chain depth is structurally one; the actor is structurally
+  always recorded.
 - **Users can see and revoke every standing delegation they hold**, and
   operators can see and cap which services may hold any. Today neither is
   practical.
@@ -927,8 +1179,10 @@ when it fires, deleted when the object is deleted.
   if ADR 0026 v1.5 lands.
 - **A compromised service holds every grant it is grantee of** until the
   operator disables its `delegation` policy, which stops all redemptions at
-  once. This is strictly narrower than today, where a compromised Heat holds a
-  trustee password with the same reach and no single kill switch.
+  once. Disabling a trustee user does the same for trusts today, so the kill
+  switch is not new. What is new is that the stolen identity is an SVID bound to
+  a host and rotated by SPIRE, where a stolen trustee password works from
+  anywhere until someone rotates it.
 - **Offline JWT revocation latency** (ADR 0026 §11) applies to delegated tokens
   in full: deleting a grant does not shorten the life of tokens already minted
   from it, because nothing indexes minted `jti`s by grant (§8). The bound is the
@@ -947,6 +1201,9 @@ when it fires, deleted when the object is deleted.
 - **Upstream service patches** (Heat, Magnum, Glance, keystoneauth1) are
   required before trusts can be turned off; §11 phases are ordered so each
   service can migrate independently.
+- **Only `keystone-rs` honors grants.** Python Keystone cannot validate a token
+  that resolves to a grant, so a mixed deployment has to route those services to
+  `keystone-rs`.
 - **New state and a new driver crate**, plus one more `AuthenticationContext`
   pair to keep in every match arm. The ADR 0017 checklist and compile-time
   exhaustive matches make omissions a build error rather than a runtime hole.

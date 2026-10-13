@@ -1697,7 +1697,8 @@ ADR enables, not the workaround it replaces.
   service boundary. This reduces the blast radius of a token leaked or logged
   mid-hop, given §4 already establishes these tokens as bearer/stateless with no
   replay binding beyond TTL. Audience-narrowing semantics for this case are
-  unspecified here and need their own design pass before implementation.
+  specified in [ADR 0036 §7.1](0036-service-delegation.md) and implemented for
+  the application-credential exchange.
 
 This section intentionally stops at the shape above - full request/response
 schemas, `OAuth2Client` authorization checks for who may request delegation on
