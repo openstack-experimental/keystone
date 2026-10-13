@@ -525,7 +525,7 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
     let local_emergency_config = config_manager.config.read().await.local_emergency.clone();
 
     let storage = Arc::new(Storage {
-        connection_pool: DashMap::new(),
+        forward_channels: ChannelCache::new(tls_client.clone()),
         raft,
         node_id: ds_config.node_id,
         state_machine_store,

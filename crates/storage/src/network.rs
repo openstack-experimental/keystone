@@ -199,14 +199,14 @@ const CHANNEL_MAX_AGE: Duration = Duration::from_secs(300);
 ///
 /// Entries are dropped when the static TLS configuration changes (or its
 /// source goes away) and after [`CHANNEL_MAX_AGE`].
-struct ChannelCache {
+pub(crate) struct ChannelCache {
     tls_client: Mutex<RaftTlsClient>,
     channels: Mutex<HashMap<String, (Channel, Instant)>>,
     max_age: Duration,
 }
 
 impl ChannelCache {
-    fn new(tls_client: RaftTlsClient) -> Self {
+    pub(crate) fn new(tls_client: RaftTlsClient) -> Self {
         Self::with_max_age(tls_client, CHANNEL_MAX_AGE)
     }
 
@@ -243,7 +243,7 @@ impl ChannelCache {
     }
 
     /// Return the channel to `addr`, connecting if there is none yet.
-    async fn channel(&self, addr: &str) -> Result<Channel, RPCError> {
+    pub(crate) async fn channel(&self, addr: &str) -> Result<Channel, RPCError> {
         let key = strip_scheme(addr).to_string();
 
         // No lock is held across an await.

@@ -240,13 +240,10 @@ impl Storage {
         target: u64,
         addr: String,
     ) -> Result<Channel, StoreError> {
-        if let Some(channel) = self.connection_pool.get(&target) {
-            return Ok(channel.clone());
-        }
-
-        let channel = self.tls_client.connect(&addr).await?;
-        self.connection_pool.insert(target, channel.clone());
-        Ok(channel)
+        self.forward_channels
+            .channel(&addr)
+            .await
+            .map_err(|e| StoreError::Other(eyre::eyre!("connect to node {target}: {e}")))
     }
 
     /// Best-effort push of one local-origin emergency candidate to every

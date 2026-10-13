@@ -30,7 +30,6 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use dashmap::DashMap;
 use eyre::eyre;
 use openraft::Config;
 use openraft::async_runtime::WatchReceiver;
@@ -61,7 +60,9 @@ use crate::grpc::cluster_admin_service::ClusterAdminServiceImpl;
 use crate::grpc::raft_service::RaftServiceImpl;
 use crate::grpc::storage_service::StorageServiceImpl;
 use crate::local_emergency::FjallLocalEmergencyStore;
-use crate::network::{CertExpiryWatchdog, NetworkManager, RaftTlsClient, init_tls_watcher};
+use crate::network::{
+    CertExpiryWatchdog, ChannelCache, NetworkManager, RaftTlsClient, init_tls_watcher,
+};
 use crate::pb::raft::cluster_admin_service_server::ClusterAdminServiceServer;
 use crate::pb::raft::raft_service_server::RaftServiceServer;
 use crate::protobuf::api::storage_service_client::StorageServiceClient;
@@ -94,8 +95,10 @@ pub const LEADER_ID_HEADER: &str = "x-openraft-leader-id";
 pub struct Storage {
     /// Audit record forwarder (non-blocking, HMAC-signed).
     pub audit_forwarder: AuditForwarder,
-    /// Raft cluster nodes connection pool.
-    connection_pool: DashMap<u64, Channel>,
+    /// Channels used to forward requests to the leader. Entries expire and
+    /// follow certificate rotation, so a long-lived connection never keeps
+    /// presenting a rotated-out (eventually expired) SVID.
+    forward_channels: ChannelCache,
     /// Shared current DEK epoch, used by rotate_dek to determine the next
     /// version.
     current_dek: Arc<RwLock<Arc<DekEpoch>>>,
