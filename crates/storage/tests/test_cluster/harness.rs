@@ -220,7 +220,19 @@ pub async fn spawn_raft_app(instance: &Arc<InstanceHolder>) {
         let x = rt.block_on(start_raft_app(&inst.config, &inst.storage));
         println!("node {node_id} raft app exit result: {:?}", x);
     });
-    TypeConfig::sleep(Duration::from_millis(200)).await;
+    wait_for_listener(instance.config.node_listener_addr).await;
+}
+
+/// Polls until `addr` accepts TCP connections, so callers never race the
+/// server thread's bind. Panics after 10s.
+pub async fn wait_for_listener(addr: std::net::SocketAddr) {
+    for _ in 0..400 {
+        if tokio::net::TcpStream::connect(addr).await.is_ok() {
+            return;
+        }
+        TypeConfig::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("listener {addr} did not come up within 10s");
 }
 
 /// Starts node 1 as a single-node cluster and waits for it to lead.

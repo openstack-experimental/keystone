@@ -39,7 +39,7 @@ async fn spawn_stoppable_raft_app(
         });
         println!("stoppable raft app exit result: {:?}", result);
     });
-    TypeConfig::sleep(Duration::from_millis(200)).await;
+    wait_for_listener(instance.config.node_listener_addr).await;
     stop_tx
 }
 
@@ -462,6 +462,20 @@ async fn test_disaster_recovery_elects_exactly_one_leader_inner() -> Result<()> 
     admins[1]
         .restore(futures::stream::iter(chunks.clone()))
         .await?;
+    // Installing the snapshot sets `last_applied`, but the metrics report it
+    // asynchronously; take the baseline only once it has caught up so the
+    // install itself is not mistaken for a commit.
+    let installed = poll_until(Duration::from_millis(50), 100, || {
+        dst[1]
+            .storage
+            .raft
+            .metrics()
+            .borrow_watched()
+            .last_applied
+            .is_some()
+    })
+    .await;
+    assert!(installed, "restored snapshot must be reported as applied");
     let applied_before = dst[1].storage.raft.metrics().borrow_watched().last_applied;
     TypeConfig::sleep(Duration::from_secs(2)).await;
     assert_eq!(

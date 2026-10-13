@@ -287,16 +287,26 @@ async fn test_join_adopts_cluster_dek_inner() -> Result<()> {
 
     // `add_learner`'s blocking wait only guarantees the leader has *some*
     // replication state for node 2 within its (generous, absolute)
-    // replication-lag threshold -- not that node 2's log has actually
-    // caught up (that threshold trivially passes for logs this short) --
-    // so poll for real catch-up explicitly.
+    // replication-lag threshold -- not that node 2 has caught up (that
+    // threshold trivially passes for logs this short) -- so poll for real
+    // catch-up explicitly. The assertions below read node 2's state machine,
+    // so wait for the entries to be *applied*, not merely appended to its log.
     let leader_index = instance1
         .storage
         .last_log_index()
         .expect("node 1 must have a non-empty log by now");
+    let applied_index = || {
+        instance2
+            .storage
+            .raft
+            .metrics()
+            .borrow_watched()
+            .last_applied
+            .map(|l| l.index)
+    };
     let mut caught_up = false;
     for _ in 0..100 {
-        if instance2.storage.last_log_index() >= Some(leader_index) {
+        if applied_index() >= Some(leader_index) {
             caught_up = true;
             break;
         }
@@ -304,9 +314,9 @@ async fn test_join_adopts_cluster_dek_inner() -> Result<()> {
     }
     assert!(
         caught_up,
-        "node 2 did not catch up to leader's log index {leader_index} within 10s \
-         (node 2's last_log_index: {:?})",
-        instance2.storage.last_log_index()
+        "node 2 did not apply the leader's log index {leader_index} within 10s \
+         (node 2's last_applied: {:?})",
+        applied_index()
     );
 
     // --- The key assertion: node 2 must decrypt every ciphertext value it
@@ -580,11 +590,14 @@ async fn test_join_after_automatic_compaction_serves_all_keyspaces_inner(
     write_records_concurrently(&instance1.storage, NUM_RECORDS).await?;
 
     // The leader must have compacted on its own: no `trigger().snapshot()`
-    // / `purge_log` anywhere in this test.
+    // / `purge_log` anywhere in this test. The snapshot is built at the
+    // *applied* index, which may trail the log index that tripped the
+    // threshold by a few entries (e.g. 4999), so only require that a
+    // snapshot exists and the log prefix was purged.
     let compacted = poll_until(Duration::from_millis(200), 150, || {
         let m = instance1.storage.raft.metrics();
         let m = m.borrow_watched();
-        m.snapshot.index() >= Some(5000) && m.purged.index() > Some(0)
+        m.snapshot.index() > Some(0) && m.purged.index() > Some(0)
     })
     .await;
     let m = instance1.storage.raft.metrics().borrow_watched().clone();
