@@ -253,6 +253,18 @@ pub(super) async fn device_login_code(
         return Ok(too_many_requests(retry_after.as_secs()));
     }
 
+    // Per-(`user_code`, client IP) and per-client-IP exponential backoff on
+    // failed lookups (ADR 0026 §7.C), answered before any storage read.
+    let client_ip = peer_addr.map(|a| a.ip());
+    let oauth2_cfg = state.config_manager.config.read().await.oauth2.clone();
+    if let Err(retry_after) =
+        state
+            .rate_limiters
+            .check_device_code(&headers, client_ip, &form.user_code)
+    {
+        return Ok(too_many_requests(retry_after.as_secs()));
+    }
+
     // The lookup itself is a single keyed storage read (not a linear scan
     // over every live code), so it does not carry the classic
     // string-comparison timing side channel a naive brute-force defense
@@ -265,6 +277,13 @@ pub(super) async fn device_login_code(
     {
         Ok(Some(g)) => g,
         Ok(None) => {
+            state.rate_limiters.record_device_code_failure(
+                &headers,
+                client_ip,
+                &form.user_code,
+                oauth2_cfg.device_user_code_free_failures,
+                oauth2_cfg.device_ip_free_failures,
+            );
             return Ok(render_entry(
                 &domain_id,
                 Some("invalid or expired code"),
@@ -281,6 +300,13 @@ pub(super) async fn device_login_code(
     };
 
     if grant.domain_id != domain_id {
+        state.rate_limiters.record_device_code_failure(
+            &headers,
+            client_ip,
+            &form.user_code,
+            oauth2_cfg.device_user_code_free_failures,
+            oauth2_cfg.device_ip_free_failures,
+        );
         return Ok(render_entry(
             &domain_id,
             Some("invalid or expired code"),
@@ -799,6 +825,61 @@ mod tests {
         assert_eq!(
             api.as_service().oneshot(req2).await.unwrap().status(),
             StatusCode::TOO_MANY_REQUESTS
+        );
+    }
+
+    /// Per-`user_code` backoff works with the global-IP limiter at its
+    /// default (disabled) setting.
+    #[tokio::test]
+    async fn test_device_submit_code_backoff_after_repeated_failures() {
+        let mut session_mock = MockOauth2SessionProvider::default();
+        // Only the failed submissions reach storage; the 429 must not.
+        session_mock
+            .expect_get_device_code_grant_by_user_code()
+            .times(3)
+            .returning(|_, _| Ok(None));
+        let provider = Provider::mocked_builder().mock_oauth2_session(session_mock);
+        let state = Arc::new(
+            Service::new(
+                ConfigManager::not_watched(Config {
+                    oauth2: openstack_keystone_config::Oauth2Provider {
+                        allow_host_header_issuer: true,
+                        ..Default::default()
+                    },
+                    ..Config::default()
+                }),
+                DatabaseConnection::default(),
+                provider.build().unwrap(),
+                Arc::new(MockPolicy::default()),
+                AuditDispatcher::noop(),
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        let attacker: SocketAddr = "203.0.113.9:1234".parse().unwrap();
+        for _ in 0..3 {
+            let mut req = post_form("/domain-1/device", "user_code=AAAA-AAAA");
+            req.extensions_mut().insert(ConnectInfo(attacker));
+            assert_eq!(
+                api.as_service().oneshot(req).await.unwrap().status(),
+                StatusCode::OK
+            );
+        }
+
+        // Same code from the same IP: refused with Retry-After, no lookup.
+        let mut req = post_form("/domain-1/device", "user_code=aaaa-aaaa");
+        req.extensions_mut().insert(ConnectInfo(attacker));
+        let response = api.as_service().oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(
+            response
+                .headers()
+                .contains_key(axum::http::header::RETRY_AFTER)
         );
     }
 

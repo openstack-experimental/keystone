@@ -168,6 +168,20 @@ pub struct Oauth2Provider {
     #[validate(range(min = 1))]
     pub device_code_invalid_quiet_period_seconds: u32,
 
+    /// Failed `/device` lookups of one `(user_code, client IP)` pair before
+    /// exponential backoff (`429` + `Retry-After`) engages (ADR 0026 §7.C).
+    #[serde(default = "default_device_user_code_free_failures")]
+    #[validate(range(min = 1))]
+    pub device_user_code_free_failures: u32,
+
+    /// Failed `/device` lookups from one client IP, across all codes, before
+    /// exponential backoff engages. `0` disables the IP-wide backoff, which
+    /// is advisable when many users legitimately share one resolved IP (NAT,
+    /// or a reverse proxy not listed in `[rate_limit_trusted_proxies]`):
+    /// otherwise one client can lock the others out of `/device`.
+    #[serde(default = "default_device_ip_free_failures")]
+    pub device_ip_free_failures: u32,
+
     /// Days a revoked (tombstoned) refresh token is retained after its own
     /// `expires_at` before the session janitor purges it. Presenting an
     /// expired token is rejected regardless; retention only keeps the
@@ -375,6 +389,14 @@ fn default_device_code_invalid_quiet_period_seconds() -> u32 {
     300
 }
 
+fn default_device_user_code_free_failures() -> u32 {
+    3
+}
+
+fn default_device_ip_free_failures() -> u32 {
+    10
+}
+
 fn default_revoked_family_retention_days() -> u32 {
     30
 }
@@ -404,6 +426,8 @@ impl Default for Oauth2Provider {
             device_code_poll_interval_seconds: default_device_code_poll_interval_seconds(),
             device_code_invalid_quiet_period_seconds:
                 default_device_code_invalid_quiet_period_seconds(),
+            device_user_code_free_failures: default_device_user_code_free_failures(),
+            device_ip_free_failures: default_device_ip_free_failures(),
             revoked_family_retention_days: default_revoked_family_retention_days(),
             session_janitor_interval_seconds: default_session_janitor_interval_seconds(),
             list_limit: ListLimitConfig::default(),
@@ -522,6 +546,8 @@ mod tests {
         assert_eq!(cfg.device_code_lifetime_minutes, 10);
         assert_eq!(cfg.device_code_poll_interval_seconds, 5);
         assert_eq!(cfg.device_code_invalid_quiet_period_seconds, 300);
+        assert_eq!(cfg.device_user_code_free_failures, 3);
+        assert_eq!(cfg.device_ip_free_failures, 10);
         assert_eq!(cfg.revoked_family_retention_days, 30);
         assert_eq!(cfg.session_janitor_interval_seconds, 300);
         assert!(!cfg.allow_host_header_issuer);

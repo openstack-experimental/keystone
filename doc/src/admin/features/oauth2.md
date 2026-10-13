@@ -48,6 +48,8 @@ code), see the [OAuth2 / OIDC user guide](../../user/features/oauth2.md).
 | `device_code_lifetime_minutes`          | 10      | RFC 8628 `device_code`/`user_code` TTL.                                                                                                          |
 | `device_code_poll_interval_seconds`     | 5       | Minimum interval between `/token` polls for a `device_code`.                                                                                     |
 | `device_code_invalid_quiet_period_seconds` | 300     | Quiet period after an invalid or expired `device_code`: further polls with it get `429` + `Retry-After` before any lookup.                       |
+| `device_user_code_free_failures`        | 3       | Failed `/device` lookups of one `(user_code, client IP)` pair before exponential backoff (`429` + `Retry-After`, 1s doubling to 300s) engages.   |
+| `device_ip_free_failures`               | 10      | Failed `/device` lookups from one client IP, across all codes, before backoff engages. `0` disables it; do so if many users share one resolved IP (NAT, or a proxy missing from `[rate_limit_trusted_proxies]`). |
 | `revoked_family_retention_days`         | 30      | Days a revoked-family refresh token tombstone is kept after its own expiry (forensics only) before the session janitor purges it.            |
 | `session_janitor_interval_seconds`      | 300     | Interval of the leader-only janitor that purges expired pre-auth sessions, authorization codes, device grants and refresh tokens from Raft.      |
 | `token_rate_limit_burst_size`           | 10      | `/token` rate-limit burst, keyed on unverified `client_id`.                                                                                      |

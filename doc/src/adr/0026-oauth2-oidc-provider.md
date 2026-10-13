@@ -125,7 +125,7 @@ the same machinery nearly for free.
 | **Discovery & JWKS**          | Per-domain issuer, per ADR 0006. `GET /v4/oauth2/{domain_id}/jwks` + `/.well-known/openid-configuration`.                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | **Scope Model**               | Standard OIDC scopes (`openid`, `profile`, `email`) for identity display. `openstack:api` is a distinct, explicit resource scope gating whether `authorization_code`/`refresh_token` grants ever receive OpenStack authorization data (§4); role resolution itself runs via the mapping engine/claims template, not OAuth2 scope.                                                                                                                                                                                                                          |
 | **Key Synchronization**       | Distributed via **Raft + FjallDB** log replication.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| **Target Audience (`aud`)**   | Control-plane identifier `aud: "openstack-apis"`, optionally narrowed to `openstack-apis:<service type>` values (ADR 0036 §7.1). Domain isolation is carried by `iss`, and the per-issuer JWKS, not by `aud` (see §5, "Domain Key Isolation and `aud`").                                                                                                                                                                                                                                                                  |
+| **Target Audience (`aud`)**   | Control-plane identifier `aud: "openstack-apis"`, optionally narrowed to `openstack-apis:<service type>` values (ADR 0036 §7.1). Domain isolation is carried by `iss`, and the per-issuer JWKS, not by `aud` (see §5, "Domain Key Isolation and `aud`").                                                                                                                                                                                                                                                                                                   |
 | **Downstream Acceptance**     | Executed via a lightweight, custom Python WSGI middleware injected into existing Paste Deploy pipelines.                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | **Machine Workspace Storage** | Typically resolves via `IdentityMode::Ephemeral` shadow registration mappings to bypass SQL table bloating; `identity_mode` is a property of the matched `MappingRule` (ADR 0020 §3), not a fixed property of `OAuth2Client` (§5).                                                                                                                                                                                                                                                                                                                         |
 | **Rate Limiting Engine**      | Handled natively at the handler layer using the `governor` crate with pre-hash enforcement.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
@@ -729,8 +729,8 @@ via Raft + FjallDB:
   service type accepts only the un-narrowed form.
 
 Because `aud` does not carry the domain, domain isolation rests on `iss`, the
-per-issuer JWKS. The issuer (`/v4/oauth2/{domain_id}`) names
-the signing domain, and a verifier:
+per-issuer JWKS. The issuer (`/v4/oauth2/{domain_id}`) names the signing domain,
+and a verifier:
 
 1. **Trusts a Keystone, not a list of domains.** It is configured with the base
    URL of the Keystone(s) it trusts (`keystone_issuer_base_url`) and accepts any
@@ -753,31 +753,31 @@ who the caller is (vision, "a JWT that says who"); the scope it carries today is
 a transitional hint, and a user of one domain holding a role on a project of
 another, or a human holding a system-level grant, is legitimate whichever
 domain's issuer signed the token. Verifiers therefore do not compare the scope
-to `iss`, and System scope is not refused. The authority for a scope is the
-mint side: the exchange validates the subject through the token provider,
-and `client_credentials` scope comes from a mapping whose authorizations are
-gated at write time. A domain `manager` may only create or change rulesets
-whose authorizations stay in the ruleset's own domain; granting system scope
-or scope in another domain requires `admin`
-(`policy/mapping/ruleset/{create,update}.rego`, also for rule mutations).
-The policy sees the declared `project_domain_id`, so the mapping service also
+to `iss`, and System scope is not refused. The authority for a scope is the mint
+side: the exchange validates the subject through the token provider, and
+`client_credentials` scope comes from a mapping whose authorizations are gated
+at write time. A domain `manager` may only create or change rulesets whose
+authorizations stay in the ruleset's own domain; granting system scope or scope
+in another domain requires `admin`
+(`policy/mapping/ruleset/{create,update}.rego`, also for rule mutations). The
+policy sees the declared `project_domain_id`, so the mapping service also
 verifies at write time that it is the domain the project really belongs to
-(`ProjectDomainMismatch`); a project cannot move between domains, so this
-cannot go stale.
+(`ProjectDomainMismatch`); a project cannot move between domains, so this cannot
+go stale.
 
-Enforcement is at write time only. The token path does not re-check the
-resolved scope against the ruleset's provenance, and a global ruleset (no
-`domain_id`, `admin`-only) is not reachable from an OAuth2 client, because the
+Enforcement is at write time only. The token path does not re-check the resolved
+scope against the ruleset's provenance, and a global ruleset (no `domain_id`,
+`admin`-only) is not reachable from an OAuth2 client, because the
 `client_credentials` lookup is keyed on `(client.domain_id, source)`. System
-scope for a workload through OAuth2 is therefore not available yet. The
-intended follow-up is a mint-time check keyed on the ruleset's own domain: a
-domain-bound ruleset may only grant scope inside its domain (to principals of
-any domain), a global ruleset may grant any scope. It needs a global lookup
-path for clients and protection against a `provider_id` collision, since
-`provider_id` is chosen by the client's creator and is unique only within its
-domain: a domain `manager` must not be able to adopt the `provider_id` an
-admin's global ruleset targets. System scope for human administrators is a
-separate question, tied to per-request authorization (vision §4.3).
+scope for a workload through OAuth2 is therefore not available yet. The intended
+follow-up is a mint-time check keyed on the ruleset's own domain: a domain-bound
+ruleset may only grant scope inside its domain (to principals of any domain), a
+global ruleset may grant any scope. It needs a global lookup path for clients
+and protection against a `provider_id` collision, since `provider_id` is chosen
+by the client's creator and is unique only within its domain: a domain `manager`
+must not be able to adopt the `provider_id` an admin's global ruleset targets.
+System scope for human administrators is a separate question, tied to
+per-request authorization (vision §4.3).
 
 Residual risk: a leaked domain signing key can sign any scope claim, and every
 verifier that trusts that issuer accepts it. This closes only when the scope
@@ -1215,10 +1215,26 @@ endpoints. To mitigate:
 
 - `device_code` polling at `/token` and `user_code` submission at `/device` are
   each subject to the per-IP limiter (`[rate_limit_global_ip]`), and `/token`
-  additionally to the per-`client_id` limiter. A per-`user_code` limiter with
-  exponential backoff is **not yet implemented** (tracked in #1433); today the
-  `user_code` keyspace and the per-IP limiter are the only brute-force defenses
-  on `/device`.
+  additionally to the per-`client_id` limiter.
+- Failed `user_code` lookups at `/device` (unknown, expired, or wrong-domain
+  code) feed an exponential backoff, answered `429` + `Retry-After` before any
+  storage lookup. It is keyed twice: on `(normalized user_code, client IP)` (`[oauth2] device_user_code_free_failures`, default 3, then 1s doubling to a
+  300s cap) and on the client IP alone (`device_ip_free_failures`, default 10,
+  same curve; `0` disables it for deployments where many users share one
+  resolved IP). The `user_code` is trimmed and upper-cased, and keys
+  are SHA-256 digests. The IP is part of the code key so a third party cannot
+  lock a victim's pending code out by hammering it; the IP-only key is what
+  bounds spraying of many different codes, since each guess gets a fresh code
+  key. The client IP is resolved as for the per-IP limiter (trusted-proxy
+  settings apply even with `[rate_limit_global_ip]` disabled, which is the
+  default), and the backoff works with that limiter disabled. Operators behind
+  a reverse proxy must list it in `[rate_limit_trusted_proxies]`; otherwise all
+  users share the proxy's IP and one client can trip the IP-wide key for all
+  (set `device_ip_free_failures = 0` to disable it). State is node-local and
+  in-memory (not reset by config reload) and capped: once full of recently
+  active keys, new keys go untracked. The check and the failure record are not
+  atomic, so concurrent guesses can slip a few extra attempts through. A
+  peerless (internal) request is not throttled.
 - Invalid or expired `device_code` presented at `/token` triggers a quiet period
   (`[oauth2] device_code_invalid_quiet_period_seconds`, default 300) keyed on
   `(client_id, device_code)`. Further polls with that pair are answered `429` +
