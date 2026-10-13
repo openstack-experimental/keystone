@@ -498,21 +498,39 @@ impl RestartableNode {
         let handle = thread::spawn(move || {
             let mut rt = AsyncRuntimeOf::<TypeConfig>::new(1);
             rt.block_on(async {
-                let Ok(tls) = get_server_tls_config(&config) else {
-                    return;
+                let node_id = config.node_id;
+                let addr = config.node_listener_addr;
+                let tls = match get_server_tls_config(&config) {
+                    Ok(tls) => tls,
+                    Err(e) => {
+                        tracing::error!(node_id, %addr, "server TLS config failed: {e}");
+                        return;
+                    }
                 };
-                let Ok(builder) = tonic::transport::Server::builder().tls_config(tls) else {
-                    return;
+                let mut builder = match tonic::transport::Server::builder().tls_config(tls) {
+                    Ok(builder) => builder,
+                    Err(e) => {
+                        tracing::error!(node_id, %addr, "server TLS setup failed: {e}");
+                        return;
+                    }
                 };
-                let mut builder = builder;
-                let Ok(routes) = get_app_server(&storage).await else {
-                    return;
+                let routes = match get_app_server(&storage).await {
+                    Ok(routes) => routes,
+                    Err(e) => {
+                        tracing::error!(node_id, %addr, "building app server failed: {e}");
+                        return;
+                    }
                 };
-                let serve = builder.add_routes(routes).serve(config.node_listener_addr);
+                let serve = builder.add_routes(routes).serve(addr);
                 // Dropping the server future closes its connections at once
                 // (a graceful shutdown would wait for the peers' pooled ones).
                 tokio::select! {
-                    _ = serve => {},
+                    res = serve => {
+                        // A bind failure (port already taken) lands here; a
+                        // silent exit would leave the test talking to
+                        // whatever else owns the port.
+                        tracing::error!(node_id, %addr, "server exited: {res:?}");
+                    },
                     _ = stop_rx => {},
                 }
             });

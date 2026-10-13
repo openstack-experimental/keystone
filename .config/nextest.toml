@@ -133,3 +133,9 @@ setup = "start-ldap-test"
 path = "junit.xml"
 store-success-output = false
 store-failure-output = true
+
+# The cluster tests run 3-node Raft clusters in-process; the slowest takes
+# ~20s. Terminate a livelocked test instead of letting it block the run.
+[[profile.default.overrides]]
+filter = 'binary(test_cluster)'
+slow-timeout = { period = "30s", terminate-after = 4 }
