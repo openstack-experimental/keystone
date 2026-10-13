@@ -22,7 +22,6 @@ use super::*;
 /// 0016-v2 §2.1 / invariant 6. Production deployments select `"pkcs11"` or
 /// `"tpm"` instead (`test_pkcs11_cluster.rs` covers that path end-to-end).
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_kek_gating_production_mode_rejected() {
     TypeConfig::run(test_kek_gating_production_mode_rejected_inner()).unwrap();
@@ -58,7 +57,6 @@ async fn test_kek_gating_production_mode_rejected_inner() -> Result<()> {
 /// `KEYSTONE_ALLOW_ENV_KEK=1` is explicitly set (ADR 0016-v2 §2.1, invariant
 /// 6), even when `KEYSTONE_DEV_KEK` is present.
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_kek_gating_dev_mode_requires_allow_env_kek() {
     TypeConfig::run(test_kek_gating_dev_mode_requires_allow_env_kek_inner()).unwrap();

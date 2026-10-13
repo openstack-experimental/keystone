@@ -22,7 +22,6 @@ use super::*;
 /// ready once it has caught up, and the operational `keystone_raft_*`
 /// series are rendered.
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_readiness_and_metrics() {
     TypeConfig::run(test_readiness_and_metrics_inner()).unwrap();
@@ -162,7 +161,6 @@ const ADMIN_LEADER_REDIRECT_PORT_BASE: u16 = 1450;
 /// instead of an internal error, while `StorageStatus` is served by any node
 /// (issue #1305).
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_admin_rpcs_redirect_to_leader() {
     TypeConfig::run(test_admin_rpcs_redirect_to_leader_inner()).unwrap();
@@ -335,7 +333,6 @@ const TRANSFER_LEADER_PORT_BASE: u16 = 1500;
 /// leader afterwards (what `keystone-manage storage demote` does once it has
 /// handed leadership over) leaves the cluster with a leader throughout.
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_transfer_leader_before_demoting_the_leader() {
     TypeConfig::run(test_transfer_leader_before_demoting_the_leader_inner()).unwrap();
@@ -435,7 +432,6 @@ const FAILOVER_PORT_BASE: u16 = 1600;
 /// writes, and the old leader restarts from its persisted log (crash
 /// recovery), catches up and serves both the old and the new data.
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_leader_failover_and_rejoin() {
     TypeConfig::run(test_leader_failover_and_rejoin_inner()).unwrap();

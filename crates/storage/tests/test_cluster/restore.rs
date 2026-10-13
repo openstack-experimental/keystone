@@ -51,7 +51,6 @@ const BACKUP_RESTORE_SRC_PORT_BASE: u16 = 800;
 const BACKUP_RESTORE_DST_PORT_BASE: u16 = 850;
 
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_backup_restore_round_trip_on_fresh_cluster() {
     TypeConfig::run(async {
@@ -178,7 +177,6 @@ const LIVE_RESTORE_SRC_PORT_BASE: u16 = 950;
 const LIVE_RESTORE_DST_PORT_BASE: u16 = 1000;
 
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_restore_into_running_cluster() {
     TypeConfig::run(async {
@@ -364,7 +362,6 @@ async fn test_restore_into_running_cluster_inner() -> Result<()> {
 const DR_UNIQUE_PORT_BASE: u16 = 1050;
 
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_disaster_recovery_elects_exactly_one_leader() {
     TypeConfig::run(async {
@@ -522,7 +519,6 @@ async fn test_disaster_recovery_elects_exactly_one_leader_inner() -> Result<()> 
 /// different key. After a restart the node must reload the displaced epochs
 /// to read its own log, and keep serving the restored data.
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_restart_after_live_restore_keeps_displaced_deks() {
     TypeConfig::run(async {

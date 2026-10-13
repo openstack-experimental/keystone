@@ -21,7 +21,6 @@ use super::*;
 /// (empty) Raft state has no record of the conflict — exercising
 /// `verify_node_id_uniqueness_live` (ADR 0016-v2 §4.3 / F7).
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_live_uniqueness_check_detects_conflict() {
     TypeConfig::run(test_live_uniqueness_check_detects_conflict_inner()).unwrap();
@@ -132,7 +131,6 @@ async fn test_live_uniqueness_check_detects_conflict_inner() -> Result<()> {
 /// live peer to ask (ADR 0016-v2 §4.3 / F7, deliberate deviation
 /// documented on `verify_node_id_uniqueness_live`).
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_live_uniqueness_check_proceeds_when_no_peer_reachable() {
     TypeConfig::run(test_live_uniqueness_check_proceeds_when_no_peer_reachable_inner()).unwrap();
@@ -374,7 +372,6 @@ async fn test_join_adopts_cluster_dek_inner() -> Result<()> {
 const PURGE_JOIN_PORT_BASE: u16 = 600;
 
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_purge_then_join_learner_catches_up_via_snapshot() {
     TypeConfig::run(async {
@@ -537,7 +534,6 @@ async fn join_node2_through_admin_rpcs(
 const AUTO_SNAPSHOT_JOIN_PORT_BASE: u16 = 700;
 
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_join_after_automatic_compaction_serves_all_keyspaces() {
     TypeConfig::run(async {
@@ -558,7 +554,6 @@ fn test_join_after_automatic_compaction_serves_all_keyspaces() {
 const CLI_JOIN_PORT_BASE: u16 = 1550;
 
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_cli_join_after_compaction_adopts_cluster_dek() {
     TypeConfig::run(async {
@@ -732,7 +727,6 @@ const AUTO_JOIN_PORT_BASE: u16 = 1900;
 /// learner on its own, a restart of either is a no-op, and a node with
 /// `auto_bootstrap = false` stays uninitialized.
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_ensure_raft_initialized_bootstraps_and_auto_joins() {
     TypeConfig::run(test_ensure_raft_initialized_bootstraps_and_auto_joins_inner()).unwrap();

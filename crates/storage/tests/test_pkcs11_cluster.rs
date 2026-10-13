@@ -214,7 +214,6 @@ fn with_provisioned_token<R>(f: impl FnOnce(&PathBuf) -> R) -> Option<R> {
 /// value is itself wrapped/unwrapped by the real `Pkcs11Kek` against a real
 /// SoftHSM2 token, not the dev-mode `EnvKek`.
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_pkcs11_backed_cluster_write_read() {
     if skip_without_softhsm() {
@@ -290,7 +289,6 @@ async fn test_pkcs11_backed_cluster_write_read_inner(module: PathBuf) -> Result<
 /// anything beyond the token itself (no in-memory session state leaking
 /// into what gets persisted).
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_pkcs11_backed_cluster_restart_reopens_token() {
     if skip_without_softhsm() {

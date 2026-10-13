@@ -19,7 +19,6 @@ use super::*;
 /// Set up a cluster of 3 nodes.
 /// Write to it and read from it.
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_cluster() {
     TypeConfig::run(test_cluster_inner()).unwrap();
@@ -34,7 +33,6 @@ fn test_cluster() {
 /// 3. check_node_id_uniqueness should NOT reject the restart — same logical
 ///    address.
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_node_restart_with_address_format_change() {
     TypeConfig::run(test_node_restart_inner()).unwrap();

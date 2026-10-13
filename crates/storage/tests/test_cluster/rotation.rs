@@ -21,7 +21,6 @@ use super::*;
 /// the real apply() path for the confirmation-timeout sweeper (ADR 0016-v2
 /// §6.2 step 1).
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_abort_pending_rotation_via_raft() {
     TypeConfig::run(test_abort_pending_rotation_via_raft_inner()).unwrap();
@@ -114,7 +113,6 @@ async fn test_abort_pending_rotation_via_raft_inner() -> Result<()> {
 /// not leader must report `Ok(false)` instead of forwarding; the leader
 /// commits it and reports `Ok(true)`.
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_propose_abort_pending_rotation_leader_only() {
     TypeConfig::run(test_propose_abort_pending_rotation_leader_only_inner()).unwrap();
@@ -186,7 +184,6 @@ async fn test_propose_abort_pending_rotation_leader_only_inner() -> Result<()> {
 /// revoked key material is eventually discarded once (and only once) the
 /// sweep confirms the epoch is fully migrated.
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_emergency_dek_rotation_preserves_data_across_restart() {
     TypeConfig::run(test_emergency_dek_rotation_preserves_data_across_restart_inner()).unwrap();
@@ -467,7 +464,6 @@ async fn test_emergency_dek_rotation_preserves_data_across_restart_inner() -> Re
 const ROTATION_RACE_PORT_BASE: u16 = 900;
 
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_rotation_under_concurrent_writes_never_reverts_a_write() {
     TypeConfig::run(async {
@@ -621,7 +617,6 @@ async fn test_rotation_under_concurrent_writes_never_reverts_a_write_inner() -> 
 const AUTO_ROTATION_PORT_BASE: u16 = 1250;
 
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_automatic_dek_rotation() {
     TypeConfig::run(async {

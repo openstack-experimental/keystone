@@ -38,7 +38,30 @@ pub fn make_sensitive_env<T: serde::Serialize + ?Sized>(
     })
 }
 
+/// Install a test-writer tracing subscriber honouring `RUST_LOG`.
+///
+/// `#[tracing_test::traced_test]` is deliberately not used for cluster tests:
+/// other workspace crates enable its `no-env-filter` feature, and cargo's
+/// feature unification then makes it capture every target at TRACE
+/// (h2/tonic/openraft), which produces tens of thousands of lines per second
+/// and dumps them all on failure. The default filter keeps INFO and above;
+/// raise it locally with e.g. `RUST_LOG=openraft=debug`.
+pub fn init_test_tracing() {
+    use tracing_subscriber::EnvFilter;
+
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let filter = EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new("info,h2=off,hyper=off,tower=off,tonic=off"));
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_test_writer()
+            .try_init();
+    });
+}
+
 pub fn make_certificates() -> Result<TlsConfiguration> {
+    init_test_tracing();
     let pki = TestPki::new()?;
     let leaf = pki.leaf(None)?;
     pki.tls_configuration(&leaf)

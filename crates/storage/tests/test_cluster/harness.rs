@@ -80,6 +80,7 @@ impl InstanceHolder {
         node_id: u64,
         make_ds_config: impl FnOnce(PathBuf) -> DistributedStorageConfiguration,
     ) -> Result<Self> {
+        common::init_test_tracing();
         let storage_dir = tempfile::TempDir::new().unwrap();
         let config = make_ds_config(storage_dir.path().to_path_buf());
 
@@ -142,15 +143,21 @@ pub async fn wait_for_leader(
     client: &mut ClusterAdminServiceClient<Channel>,
     expected_leader: u64,
 ) {
+    let mut last = String::from("no metrics response");
     for _ in 0..50 {
-        if let Ok(resp) = client.metrics(()).await
-            && resp.into_inner().current_leader == Some(expected_leader)
-        {
-            return;
+        match client.metrics(()).await {
+            Ok(resp) => {
+                let m = resp.into_inner();
+                if m.current_leader == Some(expected_leader) {
+                    return;
+                }
+                last = format!("{m:?}");
+            }
+            Err(e) => last = format!("metrics request failed: {e}"),
         }
         TypeConfig::sleep(Duration::from_millis(100)).await;
     }
-    panic!("leader {expected_leader} not elected within 5 seconds");
+    panic!("leader {expected_leader} not elected within 5 seconds; last state: {last}");
 }
 
 pub async fn start_raft_app(

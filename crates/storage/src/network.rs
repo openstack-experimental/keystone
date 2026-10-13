@@ -18,9 +18,10 @@
 //! gRPC with mutual TLS using SPIFFE SVIDs. The module also holds the TLS
 //! client/server configuration helpers, SVID lifetime checks, and the
 //! [`CertExpiryWatchdog`] that forces certificate renewal before expiry.
+use std::collections::HashMap;
 use std::future::Future;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use futures::Stream;
 use futures::StreamExt;
@@ -165,13 +166,143 @@ impl tower::Service<http::Uri> for SpiffeConnector {
 /// Provides the networking layer for Raft nodes to communicate with each other.
 #[derive(Clone)]
 pub struct NetworkManager {
-    tls_client: RaftTlsClient,
+    channels: Arc<ChannelCache>,
 }
 
 impl NetworkManager {
     /// Create a new `NetworkManager`.
     pub fn new(tls_client: RaftTlsClient) -> Result<Self, StoreError> {
-        Ok(Self { tls_client })
+        Ok(Self {
+            channels: Arc::new(ChannelCache::new(tls_client)),
+        })
+    }
+}
+
+/// Maximum lifetime of a cached channel.
+///
+/// A long-lived connection authenticates with the certificate it was
+/// established with, so rotated or revoked certificates, and changed trust
+/// bundles, only take effect on new handshakes. Rebuilding channels at least
+/// this often bounds how long a stale session can survive in both TLS modes.
+const CHANNEL_MAX_AGE: Duration = Duration::from_secs(300);
+
+/// Per-peer cache of established gRPC channels.
+///
+/// OpenRaft asks the factory for a new client for every replication stream and
+/// for every `ensure_linearizable` leadership confirmation. Building a
+/// [`Channel`] per RPC means a fresh TCP + mTLS handshake each time, which
+/// under a burst of concurrent reads piles up handshakes on the runtime,
+/// delays `AppendEntries` replies past OpenRaft's 500ms heartbeat timeout and
+/// makes the readers retry, creating yet more handshakes. A tonic `Channel`
+/// is a cheaply cloneable handle that multiplexes requests over one HTTP/2
+/// connection and reconnects on its own, so one per peer address is enough.
+///
+/// Entries are dropped when the static TLS configuration changes (or its
+/// source goes away) and after [`CHANNEL_MAX_AGE`].
+struct ChannelCache {
+    tls_client: Mutex<RaftTlsClient>,
+    channels: Mutex<HashMap<String, (Channel, Instant)>>,
+    max_age: Duration,
+}
+
+impl ChannelCache {
+    fn new(tls_client: RaftTlsClient) -> Self {
+        Self::with_max_age(tls_client, CHANNEL_MAX_AGE)
+    }
+
+    fn with_max_age(tls_client: RaftTlsClient, max_age: Duration) -> Self {
+        Self {
+            tls_client: Mutex::new(tls_client),
+            channels: Mutex::new(HashMap::new()),
+            max_age,
+        }
+    }
+
+    /// Drop cached channels that must not be reused and return the TLS mode to
+    /// connect with.
+    ///
+    /// A changed static TLS config (certificate rotation) invalidates every
+    /// channel since each was built with the previous one. A closed config
+    /// watch is treated the same way: the config can no longer be refreshed,
+    /// so no existing session is trusted to outlive its age limit.
+    fn refresh(&self) -> RaftTlsClient {
+        let mut tls = self.tls_client.lock().unwrap_or_else(|e| e.into_inner());
+        let mut channels = self.channels.lock().unwrap_or_else(|e| e.into_inner());
+        if let RaftTlsClient::Static(rx) = &mut *tls {
+            match rx.has_changed() {
+                Ok(true) => {
+                    rx.mark_unchanged();
+                    channels.clear();
+                }
+                Ok(false) => {}
+                Err(_) => channels.clear(),
+            }
+        }
+        channels.retain(|_, (_, created)| created.elapsed() < self.max_age);
+        tls.clone()
+    }
+
+    /// Return the channel to `addr`, connecting if there is none yet.
+    async fn channel(&self, addr: &str) -> Result<Channel, RPCError> {
+        let key = strip_scheme(addr).to_string();
+
+        // No lock is held across an await.
+        let tls_client = self.refresh();
+
+        if let Some((channel, _)) = self
+            .channels
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&key)
+        {
+            return Ok(channel.clone());
+        }
+
+        let channel = Self::connect(&tls_client, &key).await?;
+        // Concurrent first users may each have connected; keep the first.
+        Ok(self
+            .channels
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(key)
+            .or_insert((channel, Instant::now()))
+            .0
+            .clone())
+    }
+
+    async fn connect(tls_client: &RaftTlsClient, addr: &str) -> Result<Channel, RPCError> {
+        match tls_client {
+            RaftTlsClient::Static(rx) => {
+                // Clone the config out of the Ref before any await so the
+                // non-Send `watch::Ref` guard is dropped before the future
+                // needs to cross thread boundaries.
+                let tls_cfg = rx.borrow().clone();
+                Channel::builder(
+                    format!("https://{addr}")
+                        .parse()
+                        .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?,
+                )
+                .tls_config(tls_cfg)
+                .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?
+                .connect()
+                .await
+                .map_err(|e| RPCError::Unreachable(Unreachable::<TypeConfig>::new(&e)))
+            }
+
+            RaftTlsClient::Spiffe(cfg) => {
+                let connector = SpiffeConnector { tls: cfg.clone() };
+                // Use `http://` so tonic forwards the URI directly to our
+                // connector without attempting its own hostname-based TLS.
+                Channel::builder(
+                    format!("http://{addr}")
+                        .parse()
+                        .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?,
+                )
+                .connect_with_connector(connector)
+                .await
+                .map_err(|e| RPCError::Unreachable(Unreachable::<TypeConfig>::new(&e)))
+            }
+        }
     }
 }
 
@@ -183,7 +314,7 @@ impl RaftNetworkFactory<TypeConfig> for Arc<NetworkManager> {
 
     #[tracing::instrument(level = "debug", skip_all)]
     async fn new_client(&mut self, _: NodeId, node: &Node) -> Self::Network {
-        NetworkConnection::new(node.clone(), self.tls_client.clone())
+        NetworkConnection::new(node.clone(), self.channels.clone())
     }
 }
 
@@ -192,56 +323,22 @@ impl RaftNetworkFactory<TypeConfig> for Arc<NetworkManager> {
 pub struct NetworkConnection {
     /// Target node.
     target_node: pb::raft::Node,
-    /// TLS client mode (SPIFFE or static).
-    tls_client: RaftTlsClient,
+    /// Shared per-peer channel cache.
+    channels: Arc<ChannelCache>,
 }
 
 impl NetworkConnection {
-    /// Creates a gRPC client to the target node.
+    /// Creates a gRPC client to the target node, reusing the cached channel.
     pub async fn make_client(&self) -> Result<RaftServiceClient<Channel>, RPCError> {
-        let addr = &self.target_node.rpc_addr;
-
-        let channel = match &self.tls_client {
-            RaftTlsClient::Static(rx) => {
-                // Clone the config out of the Ref before any await so the
-                // non-Send `watch::Ref` guard is dropped before the future
-                // needs to cross thread boundaries.
-                let tls_cfg = rx.borrow().clone();
-                Channel::builder(
-                    format!("https://{}", strip_scheme(addr))
-                        .parse()
-                        .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?,
-                )
-                .tls_config(tls_cfg)
-                .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?
-                .connect()
-                .await
-                .map_err(|e| RPCError::Unreachable(Unreachable::<TypeConfig>::new(&e)))?
-            }
-
-            RaftTlsClient::Spiffe(cfg) => {
-                let connector = SpiffeConnector { tls: cfg.clone() };
-                // Use `http://` so tonic forwards the URI directly to our
-                // connector without attempting its own hostname-based TLS.
-                Channel::builder(
-                    format!("http://{}", strip_scheme(addr))
-                        .parse()
-                        .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?,
-                )
-                .connect_with_connector(connector)
-                .await
-                .map_err(|e| RPCError::Unreachable(Unreachable::<TypeConfig>::new(&e)))?
-            }
-        };
-
+        let channel = self.channels.channel(&self.target_node.rpc_addr).await?;
         Ok(RaftServiceClient::new(channel))
     }
 
-    /// Creates a new `NetworkConnection` with the provided gRPC client.
-    pub fn new(target_node: Node, tls_client: RaftTlsClient) -> Self {
+    /// Creates a new `NetworkConnection` for `target_node`.
+    fn new(target_node: Node, channels: Arc<ChannelCache>) -> Self {
         NetworkConnection {
             target_node,
-            tls_client,
+            channels,
         }
     }
 
@@ -905,5 +1002,68 @@ mod tests {
             ),
             "keystone-rs-0.keystone-rs-internal.default.svc.cluster.local:8300"
         );
+    }
+}
+
+#[cfg(test)]
+mod channel_cache_tests {
+    use super::*;
+
+    fn lazy_channel() -> Channel {
+        tonic::transport::Endpoint::from_static("http://127.0.0.1:1").connect_lazy()
+    }
+
+    fn cache_with(max_age: Duration) -> (ChannelCache, watch::Sender<ClientTlsConfig>) {
+        let (tx, rx) = watch::channel(ClientTlsConfig::new());
+        let cache = ChannelCache::with_max_age(RaftTlsClient::Static(rx), max_age);
+        cache
+            .channels
+            .lock()
+            .unwrap()
+            .insert("peer:1".into(), (lazy_channel(), Instant::now()));
+        (cache, tx)
+    }
+
+    fn cached(cache: &ChannelCache) -> usize {
+        cache.channels.lock().unwrap().len()
+    }
+
+    #[tokio::test]
+    async fn keeps_fresh_channels() {
+        let (cache, _tx) = cache_with(CHANNEL_MAX_AGE);
+        cache.refresh();
+        assert_eq!(cached(&cache), 1);
+    }
+
+    #[tokio::test]
+    async fn static_tls_change_drops_channels_once() {
+        let (cache, tx) = cache_with(CHANNEL_MAX_AGE);
+        tx.send(ClientTlsConfig::new()).unwrap();
+        cache.refresh();
+        assert_eq!(cached(&cache), 0);
+
+        // The change was consumed: channels added afterwards are kept.
+        cache
+            .channels
+            .lock()
+            .unwrap()
+            .insert("peer:1".into(), (lazy_channel(), Instant::now()));
+        cache.refresh();
+        assert_eq!(cached(&cache), 1);
+    }
+
+    #[tokio::test]
+    async fn closed_tls_watch_drops_channels() {
+        let (cache, tx) = cache_with(CHANNEL_MAX_AGE);
+        drop(tx);
+        cache.refresh();
+        assert_eq!(cached(&cache), 0);
+    }
+
+    #[tokio::test]
+    async fn expired_channels_are_dropped() {
+        let (cache, _tx) = cache_with(Duration::ZERO);
+        cache.refresh();
+        assert_eq!(cached(&cache), 0);
     }
 }

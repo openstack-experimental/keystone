@@ -20,7 +20,6 @@ use super::*;
 /// partition, and `ClearQuarantine` restores them — exercising the real
 /// apply() path end-to-end (ADR 0016-v2 §10 invariant 5).
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_quarantine_committed_via_raft() {
     TypeConfig::run(test_quarantine_committed_via_raft_inner()).unwrap();
@@ -115,7 +114,6 @@ const REPORT_QUARANTINE_PORT_BASE: u16 = 1100;
 /// hint headers, the leader validates membership and commits the
 /// quarantine, which then blocks reads on the reporting node.
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_report_quarantine_follower_hint_and_leader_commit() {
     TypeConfig::run(test_report_quarantine_follower_hint_and_leader_commit_inner()).unwrap();
@@ -309,7 +307,6 @@ fn assert_not_denied<T: std::fmt::Debug>(res: &Result<T, tonic::Status>, what: &
 /// admin mutations through `command`; `ReportQuarantine` is rate limited
 /// per reporter identity.
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_rogue_identities_rejected_tls_roles() {
     TypeConfig::run(test_rogue_identities_rejected_tls_roles_inner()).unwrap();
@@ -530,7 +527,6 @@ async fn test_rogue_identities_rejected_tls_roles_inner() -> Result<()> {
 /// `command` RPC, which rejects `Quarantine`), with role-mode TLS
 /// enforcing the node role on the forwarded call (issue #1303).
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_follower_quarantine_forwarded_to_leader() {
     TypeConfig::run(test_follower_quarantine_forwarded_to_leader_inner()).unwrap();
@@ -673,7 +669,6 @@ const QUARANTINE_RESTART_PORT_BASE: u16 = 1650;
 /// the node comes back, and `clear-quarantine` over the admin API unblocks it
 /// (GitHub #1307).
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_quarantine_survives_restart_and_is_cleared() {
     TypeConfig::run(test_quarantine_survives_restart_and_is_cleared_inner()).unwrap();

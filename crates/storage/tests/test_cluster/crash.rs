@@ -160,7 +160,6 @@ async fn wait_converged(nodes: &[RestartableNode], leader: usize) -> Result<()> 
 /// restarted from its persisted log: it replays/catches up, and every node
 /// serves every acknowledged write.
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_follower_crash_during_writes_recovers() {
     TypeConfig::run(test_follower_crash_during_writes_recovers_inner()).unwrap();
@@ -197,7 +196,6 @@ async fn test_follower_crash_during_writes_recovers_inner() -> Result<()> {
 /// The leader is killed mid-stream: no acknowledged write is lost on the
 /// survivors, and the old leader rejoins from its log and serves them too.
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_leader_crash_during_writes_loses_no_acked_write() {
     TypeConfig::run(test_leader_crash_during_writes_loses_no_acked_write_inner()).unwrap();
@@ -235,7 +233,6 @@ async fn test_leader_crash_during_writes_loses_no_acked_write_inner() -> Result<
 /// stale data: each answer is either an error or the last acknowledged
 /// value (GitHub #1302 / #1135).
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_reads_never_stale_across_leader_change() {
     TypeConfig::run(test_reads_never_stale_across_leader_change_inner()).unwrap();
@@ -278,7 +275,6 @@ async fn test_reads_never_stale_across_leader_change_inner() -> Result<()> {
 /// independent across replication and restart; reserved keyspaces are
 /// refused (GitHub #1294).
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_user_keys_never_collide_with_system_keys() {
     TypeConfig::run(test_user_keys_never_collide_with_system_keys_inner()).unwrap();

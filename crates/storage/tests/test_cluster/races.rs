@@ -30,7 +30,6 @@ use super::*;
 /// passing run means the race window has been closed or is too narrow to hit;
 /// a failing run means the mitigation is insufficient.
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_prefix_index_leader_race_concurrent() {
     TypeConfig::run(test_prefix_index_leader_race_concurrent_inner()).unwrap();
@@ -118,7 +117,7 @@ async fn test_prefix_index_leader_race_concurrent_inner() -> Result<()> {
     assert_eq!(
         metrics.current_leader,
         Some(1),
-        "node 1 must be leader for this test"
+        "node 1 must be leader for this test; metrics: {metrics:?}"
     );
 
     // --- Phase 1: Sequential write + immediate prefix_index read on same node.
@@ -173,61 +172,72 @@ async fn test_prefix_index_leader_race_concurrent_inner() -> Result<()> {
     // rulesets.
     // Concurrent writes + reads on leader (phase 2).
     let phase2_iterations = 80;
+    // Bound the number of in-flight operations: every ReadIndex read needs a
+    // leadership round-trip to the followers, and an unbounded burst on a
+    // loaded CI runner turns this into a timeout/retry storm that has nothing
+    // to do with read-your-writes visibility.
+    let phase2_concurrency = 8;
     let leader_storage = instance1.storage.clone();
     let phase2_prefix = "race:idx:conc:";
-    let (phase2_tx, mut phase2_rx) = tokio::sync::mpsc::channel::<bool>(phase2_iterations);
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(phase2_concurrency));
+
+    /// Outcome of one phase 2 task.
+    enum Phase2Outcome {
+        Ok,
+        /// Index key committed but absent from the leader's `prefix_index`.
+        Missing,
+        /// Write or read returned an error (e.g. `Unavailable`).
+        Error,
+    }
 
     let mut handles = Vec::with_capacity(phase2_iterations);
     for i in 0..phase2_iterations {
         let storage = leader_storage.clone();
         let prefix = phase2_prefix.to_string();
-        let tx = phase2_tx.clone();
+        let semaphore = semaphore.clone();
 
-        let handle = tokio::spawn(async move {
+        handles.push(tokio::spawn(async move {
+            let Ok(_permit) = semaphore.acquire_owned().await else {
+                return Phase2Outcome::Error;
+            };
             let idx_key = format!("{}{}", prefix, i);
-            let mut ok = true;
 
             // Write the index key.
             if let Err(e) = storage.set_index_key(idx_key.clone()).await {
                 eprintln!("set_index_key failed for {}: {}", idx_key, e);
-                ok = false;
+                return Phase2Outcome::Error;
             }
 
             // Immediately read via prefix_index on the leader.
             match storage.prefix_index(prefix.as_bytes()).await {
+                Ok(results) if results.iter().any(|k| k == &idx_key) => Phase2Outcome::Ok,
                 Ok(results) => {
-                    if !results.iter().any(|k| k == &idx_key) {
-                        println!(
-                            "PHASE2 TASK {}: prefix_index missing key '{}', found {} entries",
-                            i,
-                            idx_key,
-                            results.len()
-                        );
-                        ok = false;
-                    }
+                    println!(
+                        "PHASE2 TASK {}: prefix_index missing key '{}', found {} entries",
+                        i,
+                        idx_key,
+                        results.len()
+                    );
+                    Phase2Outcome::Missing
                 }
                 Err(e) => {
                     eprintln!("prefix_index failed {}: {}", i, e);
-                    ok = false;
+                    Phase2Outcome::Error
                 }
             }
-
-            let _ = tx.send(ok).await;
-        });
-        handles.push(handle);
+        }));
     }
-    drop(phase2_tx);
 
-    // Await all tasks and count failures.
-    let mut phase2_failures = 0;
+    let mut phase2_missing = 0;
+    let mut phase2_errors = 0;
     for handle in handles {
-        let _ = handle.await;
-    }
-    while let Some(task_ok) = phase2_rx.recv().await {
-        if !task_ok {
-            phase2_failures += 1;
+        match handle.await {
+            Ok(Phase2Outcome::Ok) => {}
+            Ok(Phase2Outcome::Missing) => phase2_missing += 1,
+            Ok(Phase2Outcome::Error) | Err(_) => phase2_errors += 1,
         }
     }
+    let phase2_failures = phase2_missing + phase2_errors;
 
     drop(admin_client1);
     drop(tls_client_config);
@@ -246,10 +256,17 @@ async fn test_prefix_index_leader_race_concurrent_inner() -> Result<()> {
         total_ops
     );
 
+    if phase2_errors > 0 {
+        panic!(
+            "{phase2_errors} phase 2 operations returned an error (not a missed key): \
+             see the `set_index_key failed` / `prefix_index failed` lines above"
+        );
+    }
     if total_failures > 0 {
         panic!(
             "prefix_index false-negative detected: {total_failures} failures out of \
-             {total_ops} total operations (phase1={phase1_failures}, phase2={phase2_failures})"
+             {total_ops} total operations (phase1={phase1_failures}, \
+             phase2={phase2_missing} missing)"
         );
     }
 
@@ -273,7 +290,6 @@ async fn test_prefix_index_leader_race_concurrent_inner() -> Result<()> {
 /// the race window. A passing run means the mitigation is working; a failing
 /// run means the mitigation is insufficient for the given timing.
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_replication_race_get_by_key() {
     TypeConfig::run(test_replication_race_get_by_key_inner()).unwrap();
@@ -447,7 +463,6 @@ async fn test_replication_race_get_by_key_inner() -> Result<()> {
 /// failure: DELETE returns 204 on leader, but subsequent GET on follower
 /// returns 200 with the deleted data instead of 404.
 #[serial_test::serial]
-#[tracing_test::traced_test]
 #[test]
 fn test_replication_race_delete_stale_read() {
     TypeConfig::run(test_replication_race_delete_stale_inner()).unwrap();
