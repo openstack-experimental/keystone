@@ -111,6 +111,10 @@ RUN chmod 755 /usr/local/bin/opa
 
 COPY policy /policy
 
+# OAuth2 UI overrides used by the live ui_branding tests (see the [oauth2]
+# section of tools/k8s/keystone/overlays/skaffold/conf/keystone.conf).
+COPY tests/api/fixtures/oauth2 /usr/share/keystone/oauth2-fixtures
+
 COPY --from=builder /app/test-api-v3 /tests/
 COPY --from=builder /app/test-api-v4 /tests/
 COPY --from=builder /app/test-k8s-auth /tests/
