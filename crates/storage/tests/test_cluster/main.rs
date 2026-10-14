@@ -57,6 +57,7 @@ mod crash;
 mod harness;
 mod join;
 mod kek;
+mod local_read;
 mod quarantine;
 mod races;
 mod restore;

@@ -16,6 +16,218 @@
 
 use super::*;
 
+use openstack_keystone_storage_api::{DataTier, ReadConsistency};
+
+impl Storage {
+    /// Whether a read asking for `consistency` may be tried against the local
+    /// state machine at all (ADR 0016-v2 §3). The per-record tier check
+    /// happens in [`Self::local_get`] / [`Self::local_prefix`].
+    fn local_read_allowed(&self, consistency: ReadConsistency) -> bool {
+        consistency == ReadConsistency::Local
+            && self.local_reads_mode == LocalReadsMode::LocalForPublic
+    }
+
+    /// Reads one record from the local state machine without any
+    /// linearizability check.
+    ///
+    /// Returns `Ok(None)` without decrypting when the record's tier is above
+    /// `max_tier`, so callers can fall back to a linearizable read; a missing
+    /// record is `Ok(Some(None))`.
+    #[allow(clippy::type_complexity)]
+    fn local_get(
+        &self,
+        key: &[u8],
+        keyspace: Option<&str>,
+        max_tier: DataTier,
+    ) -> Result<Option<Option<StoreDataEnvelope<Vec<u8>>>>, ApiStoreError> {
+        let keyspace_name = keyspace.unwrap_or("data");
+        let keyspace_bytes = keyspace_name.as_bytes();
+        if self
+            .state_machine_store
+            .is_ephemeral_keyspace(keyspace_name)
+        {
+            return Ok(self
+                .state_machine_store
+                .ephemeral_get(keyspace_name, key)
+                .map(|(data, metadata)| StoreDataEnvelope { data, metadata })
+                .map_or(Some(None), |env| {
+                    (env.metadata.tier as u8 <= max_tier as u8).then_some(Some(env))
+                }));
+        }
+
+        let metadata: Option<Metadata> = (|| -> Result<_, StoreError> {
+            Ok(self
+                .state_machine_store
+                .meta()
+                .get(crate::store::state_machine::meta_key(keyspace_name, key))?
+                .map(|raw| Metadata::unpack(raw.as_ref()))
+                .transpose()?)
+        })()
+        .map_err(ApiStoreError::from)?;
+
+        let Some(metadata) = metadata else {
+            // Data without metadata has an unknown tier: only the
+            // linearizable path (max_tier == Secret) may serve it.
+            if max_tier != DataTier::Secret {
+                let ks = match keyspace {
+                    None => self.state_machine_store.data().clone(),
+                    Some(name) => self
+                        .state_machine_store
+                        .keyspace(name)
+                        .map_err(ApiStoreError::from)?,
+                };
+                if ks
+                    .get(key)
+                    .map_err(|e| ApiStoreError::from(StoreError::from(e)))?
+                    .is_some()
+                {
+                    return Ok(None);
+                }
+            }
+            return Ok(Some(None));
+        };
+        if metadata.tier as u8 > max_tier as u8 {
+            return Ok(None);
+        }
+
+        let res: Result<Option<StoreDataEnvelope<Vec<u8>>>, StoreError> =
+            (|| -> Result<_, StoreError> {
+                let ks = match keyspace {
+                    None => self.state_machine_store.data().clone(),
+                    Some(name) => self.state_machine_store.keyspace(name)?,
+                };
+                let Some(encrypted) = ks.get(key)? else {
+                    return Ok(None);
+                };
+                let data = self.state_machine_store.decrypt_state(
+                    encrypted.as_ref(),
+                    metadata.tier as u8,
+                    keyspace_bytes,
+                    key,
+                    metadata.dek_version,
+                )?;
+                Ok(Some(StoreDataEnvelope { data, metadata }))
+            })();
+        Ok(Some(res?))
+    }
+
+    /// Prefix scan of the local state machine without any linearizability
+    /// check.
+    ///
+    /// Returns `Ok(None)` when any matching record's tier is above `max_tier`
+    /// (nothing is decrypted in that case), so callers can fall back to a
+    /// linearizable scan.
+    #[allow(clippy::type_complexity)]
+    fn local_prefix(
+        &self,
+        prefix: &[u8],
+        keyspace: Option<&str>,
+        max_tier: DataTier,
+    ) -> Result<Option<Vec<(String, StoreDataEnvelope<Vec<u8>>)>>, ApiStoreError> {
+        let keyspace_bytes = keyspace.unwrap_or("data").as_bytes();
+
+        let ephemeral_ks_name = keyspace.unwrap_or("data");
+        if let Some(entries) = self
+            .state_machine_store
+            .ephemeral_prefix(ephemeral_ks_name, prefix)
+        {
+            if entries
+                .iter()
+                .any(|(_, _, meta)| meta.tier as u8 > max_tier as u8)
+            {
+                return Ok(None);
+            }
+            return entries
+                .into_iter()
+                .map(|(key_bytes, data, metadata)| {
+                    let k = String::from_utf8(key_bytes)
+                        .map_err(|e| StoreError::Other(eyre::eyre!("{e}")))?;
+                    Ok((k, StoreDataEnvelope { data, metadata }))
+                })
+                .collect::<Result<Vec<_>, StoreError>>()
+                .map(Some)
+                .map_err(ApiStoreError::from);
+        }
+
+        // Collect raw encrypted bytes + metadata locally, then decrypt.
+        let raw_items: Result<Vec<(String, Vec<u8>, Option<Metadata>)>, StoreError> = (|| {
+            let ks_owned = keyspace
+                .map(|n| self.state_machine_store.keyspace(n))
+                .transpose()?;
+            let ks = match ks_owned.as_ref() {
+                None => self.state_machine_store.data(),
+                Some(k) => k,
+            };
+            let effective_keyspace = keyspace.unwrap_or("data");
+            ks.prefix(prefix)
+                .map(|item| {
+                    let (key_bytes, val) = item.into_inner()?;
+                    let k = String::from_utf8(key_bytes.to_vec())?;
+                    let meta_key =
+                        crate::store::state_machine::meta_key(effective_keyspace, k.as_bytes());
+                    // A record lacking metadata (legacy/edge case) gets a
+                    // synthesized default *in memory only* — this is a
+                    // read path and must never write. Persisting it here
+                    // was a non-Raft write reachable only on the leader
+                    // (GitHub #1297 item 3): it diverged the leader from
+                    // followers, discarded the legacy-probe fallback a
+                    // real `dek_version` hint would have carried, and gave
+                    // a later CAS write's `revision` starting point a
+                    // value that depended on whether this read happened
+                    // to run first.
+                    let meta = self
+                        .state_machine_store
+                        .meta()
+                        .get(&meta_key)?
+                        .map(|meta| Metadata::unpack(&meta))
+                        .transpose()?;
+                    Ok((k, val.to_vec(), meta))
+                })
+                .collect()
+        })();
+        let raw_items = raw_items.map_err(ApiStoreError::from)?;
+        // A record without metadata has an unknown tier: restricted scans
+        // must not guess, they fall back to the linearizable path.
+        if max_tier != DataTier::Secret && raw_items.iter().any(|(_, _, meta)| meta.is_none()) {
+            return Ok(None);
+        }
+        let raw_items: Vec<(String, Vec<u8>, Metadata)> = raw_items
+            .into_iter()
+            .map(|(k, v, meta)| (k, v, meta.unwrap_or_else(Metadata::new)))
+            .collect();
+        if raw_items
+            .iter()
+            .any(|(_, _, meta)| meta.tier as u8 > max_tier as u8)
+        {
+            return Ok(None);
+        }
+
+        raw_items
+            .into_iter()
+            .map(|(k, val_bytes, meta)| {
+                let data = self
+                    .state_machine_store
+                    .decrypt_state(
+                        &val_bytes,
+                        meta.tier as u8,
+                        keyspace_bytes,
+                        k.as_bytes(),
+                        meta.dek_version,
+                    )
+                    .map_err(ApiStoreError::from)?;
+                Ok((
+                    k,
+                    StoreDataEnvelope {
+                        data,
+                        metadata: meta,
+                    },
+                ))
+            })
+            .collect::<Result<Vec<_>, ApiStoreError>>()
+            .map(Some)
+    }
+}
+
 #[async_trait]
 impl StorageApi for Storage {
     /// Checks whether a given key is present in the keyspace of the distributed
@@ -60,7 +272,28 @@ impl StorageApi for Storage {
         key: &[u8],
         keyspace: Option<&str>,
     ) -> Result<Option<StoreDataEnvelope<Vec<u8>>>, ApiStoreError> {
-        let keyspace_bytes = keyspace.unwrap_or("data").as_bytes().to_vec();
+        self.get_by_key_with_consistency(key, keyspace, ReadConsistency::Linearizable)
+            .await
+    }
+
+    /// Gets a value with an explicit [`ReadConsistency`].
+    ///
+    /// A `Local` request is served from this node's state machine only when
+    /// `local_reads_mode` allows it and the record is Tier 0/1. Anything else
+    /// takes the linearizable path.
+    async fn get_by_key_with_consistency(
+        &self,
+        key: &[u8],
+        keyspace: Option<&str>,
+        consistency: ReadConsistency,
+    ) -> Result<Option<StoreDataEnvelope<Vec<u8>>>, ApiStoreError> {
+        // An error here may be a torn meta/data read racing a concurrent
+        // apply on a live follower; the linearizable path decides instead.
+        if self.local_read_allowed(consistency)
+            && let Ok(Some(res)) = self.local_get(key, keyspace, DataTier::Internal)
+        {
+            return Ok(res);
+        }
 
         // Check ReadIndex first. On the leader we can safely proceed to
         // local reads. On a follower ReadIndex returns ForwardToLeader and
@@ -89,51 +322,10 @@ impl StorageApi for Storage {
             }
         }
 
-        let keyspace_name = keyspace.unwrap_or("data");
-        if self
-            .state_machine_store
-            .is_ephemeral_keyspace(keyspace_name)
-        {
-            return Ok(self
-                .state_machine_store
-                .ephemeral_get(keyspace_name, key)
-                .map(|(data, metadata)| StoreDataEnvelope { data, metadata }));
-        }
-
-        // Leader path: local metadata + data read.
-        let metadata: Option<Metadata> = (|| -> Result<_, StoreError> {
-            Ok(self
-                .state_machine_store
-                .meta()
-                .get(crate::store::state_machine::meta_key(keyspace_name, key))?
-                .map(|raw| Metadata::unpack(raw.as_ref()))
-                .transpose()?)
-        })()
-        .map_err(ApiStoreError::from)?;
-
-        let Some(metadata) = metadata else {
-            return Ok(None);
-        };
-
-        let res: Result<Option<StoreDataEnvelope<Vec<u8>>>, StoreError> =
-            (|| -> Result<_, StoreError> {
-                let ks = match keyspace {
-                    None => self.state_machine_store.data().clone(),
-                    Some(name) => self.state_machine_store.keyspace(name)?,
-                };
-                let Some(encrypted) = ks.get(key)? else {
-                    return Ok(None);
-                };
-                let data = self.state_machine_store.decrypt_state(
-                    encrypted.as_ref(),
-                    metadata.tier as u8,
-                    &keyspace_bytes,
-                    key,
-                    metadata.dek_version,
-                )?;
-                Ok(Some(StoreDataEnvelope { data, metadata }))
-            })();
-        Ok(res?)
+        // Leader path: local metadata + data read of any tier.
+        Ok(self
+            .local_get(key, keyspace, DataTier::Secret)?
+            .unwrap_or_default())
     }
 
     async fn initialize(&self, nodes: HashMap<u64, Node>) -> Result<(), ApiStoreError> {
@@ -187,8 +379,26 @@ impl StorageApi for Storage {
         prefix: &[u8],
         keyspace: Option<&str>,
     ) -> Result<Vec<(String, StoreDataEnvelope<Vec<u8>>)>, ApiStoreError> {
-        let keyspace_name = keyspace.map(String::from);
-        let keyspace_bytes = keyspace.unwrap_or("data").as_bytes().to_vec();
+        self.prefix_with_consistency(prefix, keyspace, ReadConsistency::Linearizable)
+            .await
+    }
+
+    /// Prefix scan with an explicit [`ReadConsistency`].
+    ///
+    /// A `Local` scan is served from this node's state machine only when
+    /// `local_reads_mode` allows it and every matching record is Tier 0/1.
+    /// One Tier 2/3 record sends the whole scan down the linearizable path.
+    async fn prefix_with_consistency(
+        &self,
+        prefix: &[u8],
+        keyspace: Option<&str>,
+        consistency: ReadConsistency,
+    ) -> Result<Vec<(String, StoreDataEnvelope<Vec<u8>>)>, ApiStoreError> {
+        if self.local_read_allowed(consistency)
+            && let Ok(Some(res)) = self.local_prefix(prefix, keyspace, DataTier::Internal)
+        {
+            return Ok(res);
+        }
 
         // On the leader, ReadIndex guarantees linearizable read. On a follower,
         // ReadIndex returns ForwardToLeader, so we forward the prefix scan to
@@ -213,83 +423,15 @@ impl StorageApi for Storage {
             }
         }
 
-        let ephemeral_ks_name = keyspace.unwrap_or("data");
-        if let Some(entries) = self
-            .state_machine_store
-            .ephemeral_prefix(ephemeral_ks_name, prefix)
-        {
-            return entries
-                .into_iter()
-                .map(|(key_bytes, data, metadata)| {
-                    let k = String::from_utf8(key_bytes)
-                        .map_err(|e| StoreError::Other(eyre::eyre!("{e}")))?;
-                    Ok((k, StoreDataEnvelope { data, metadata }))
-                })
-                .collect::<Result<Vec<_>, StoreError>>()
-                .map_err(ApiStoreError::from);
-        }
-
-        // Leader path: collect raw encrypted bytes + metadata locally,
-        // then decrypt.
-        let raw_items: Result<Vec<(String, Vec<u8>, Metadata)>, StoreError> = (|| {
-            let ks_owned = keyspace_name
-                .map(|n| self.state_machine_store.keyspace(n))
-                .transpose()?;
-            let ks = match ks_owned.as_ref() {
-                None => self.state_machine_store.data(),
-                Some(k) => k,
-            };
-            let effective_keyspace = keyspace.unwrap_or("data");
-            ks.prefix(prefix)
-                .map(|item| {
-                    let (key_bytes, val) = item.into_inner()?;
-                    let k = String::from_utf8(key_bytes.to_vec())?;
-                    let meta_key =
-                        crate::store::state_machine::meta_key(effective_keyspace, k.as_bytes());
-                    // A record lacking metadata (legacy/edge case) gets a
-                    // synthesized default *in memory only* — this is a
-                    // read path and must never write. Persisting it here
-                    // was a non-Raft write reachable only on the leader
-                    // (GitHub #1297 item 3): it diverged the leader from
-                    // followers, discarded the legacy-probe fallback a
-                    // real `dek_version` hint would have carried, and gave
-                    // a later CAS write's `revision` starting point a
-                    // value that depended on whether this read happened
-                    // to run first.
-                    let meta = match self.state_machine_store.meta().get(&meta_key)? {
-                        Some(meta) => Metadata::unpack(&meta)?,
-                        None => Metadata::new(),
-                    };
-                    Ok((k, val.to_vec(), meta))
-                })
-                .collect()
-        })();
-        let raw_items = raw_items.map_err(ApiStoreError::from)?;
-
-        raw_items
-            .into_iter()
-            .map(|(k, val_bytes, meta)| {
-                let data = self
-                    .state_machine_store
-                    .decrypt_state(
-                        &val_bytes,
-                        meta.tier as u8,
-                        &keyspace_bytes,
-                        k.as_bytes(),
-                        meta.dek_version,
-                    )
-                    .map_err(ApiStoreError::from)?;
-                Ok((
-                    k,
-                    StoreDataEnvelope {
-                        data,
-                        metadata: meta,
-                    },
-                ))
-            })
-            .collect()
+        Ok(self
+            .local_prefix(prefix, keyspace, DataTier::Secret)?
+            .unwrap_or_default())
     }
 
+    /// List all index entries with keys matching the given prefix.
+    ///
+    /// # Returns
+    ///
     /// A `Result` containing a vector of keys, or an `ApiStoreError`.
     async fn prefix_index(&self, prefix: &[u8]) -> Result<Vec<String>, ApiStoreError> {
         // On the leader, ReadIndex guarantees linearizable read. On a follower,

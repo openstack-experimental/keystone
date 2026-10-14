@@ -93,6 +93,16 @@ pub struct DistributedStorageConfiguration {
     #[serde(default = "default_ensure_linearizable_retry_delay_ms")]
     pub ensure_linearizable_retry_delay_ms: u64,
 
+    /// Whether consumers may ask for a stale local read (ADR 0016-v2 §3).
+    ///
+    /// `disabled` (default) serves every read through `ReadIndex`, whatever
+    /// the consumer asks for. `local_for_public` honors a
+    /// [`ReadConsistency::Local`](openstack_keystone_storage_api::ReadConsistency::Local)
+    /// request for Tier 0/1 (`PUBLIC`/`INTERNAL`) records; Tier 2/3 records
+    /// are always read linearizably.
+    #[serde(default)]
+    pub local_reads_mode: LocalReadsMode,
+
     /// Age in days after which the Raft leader rotates the DEK automatically
     /// (ADR 0016-v2 §6). `0` disables the time-based rotation; the
     /// volume-based rotation, which fires when the log nonce counter of the
@@ -303,6 +313,18 @@ pub enum KekProvider {
     Tpm,
 }
 
+/// Which reads may be served from the local state machine without a
+/// `ReadIndex` round-trip (ADR 0016-v2 §3).
+#[derive(Debug, Default, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalReadsMode {
+    /// Every read is linearizable.
+    #[default]
+    Disabled,
+    /// Tier 0/1 records may be read locally when the consumer asks for it.
+    LocalForPublic,
+}
+
 /// PKCS#11 KEK provider configuration (ADR 0016-v2 §2.5.1).
 #[derive(Debug, Deserialize, Clone, Validate)]
 pub struct Pkcs11KekConfiguration {
@@ -492,6 +514,7 @@ impl Default for DistributedStorageConfiguration {
             path: PathBuf::new(),
             ensure_linearizable_retries: default_ensure_linearizable_retries(),
             ensure_linearizable_retry_delay_ms: default_ensure_linearizable_retry_delay_ms(),
+            local_reads_mode: LocalReadsMode::default(),
             dek_rotation_days: default_dek_rotation_days(),
             write_rate_threshold: default_write_rate_threshold(),
             audit_spool_dir: None,

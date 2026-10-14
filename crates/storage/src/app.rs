@@ -46,7 +46,7 @@ use tracing::debug;
 
 use openstack_keystone_config::ConfigManager;
 
-use crate::config::{DistributedStorageConfiguration, RaftTlsConfiguration};
+use crate::config::{DistributedStorageConfiguration, LocalReadsMode, RaftTlsConfiguration};
 
 use crate::ApiStoreError;
 use crate::StorageApi;
@@ -112,6 +112,9 @@ pub struct Storage {
     /// Delay (ms) between `ensure_linearizable` retry attempts, from
     /// `[distributed_storage] ensure_linearizable_retry_delay_ms`.
     pub(crate) ensure_linearizable_retry_delay_ms: u64,
+    /// `[distributed_storage] local_reads_mode`: whether a consumer's
+    /// `ReadConsistency::Local` request is honored for Tier 0/1 records.
+    pub(crate) local_reads_mode: LocalReadsMode,
     /// Key Encryption Key for wrapping new DEKs during rotation.
     kek: Arc<dyn KekProvider>,
     /// `[local_emergency]` config, snapshotted at storage init. Config

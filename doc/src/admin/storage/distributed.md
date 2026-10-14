@@ -51,29 +51,29 @@ cluster member to contact; it defaults to `node_cluster_addr` from the config
 file when omitted. `init` always targets that local address, and `join` takes
 the member to contact as its positional argument.
 
-| Subcommand                                                                          | Target      | Description                                                 |
-| ----------------------------------------------------------------------------------- | ----------- | ----------------------------------------------------------- |
-| `init`                                                                              | local node  | Bootstrap a new single-node cluster                         |
-| `join <cluster-addr>`                                                               | leader      | Adopt the cluster DEK, then join as a learner               |
-| `promote [--cluster-addr] <node-id>`                                                | leader      | Promote a learner to voting member                          |
-| `demote [--cluster-addr] <node-id>`                                                 | leader      | Demote a voter to non-voting learner                        |
-| `remove-peer [--cluster-addr] <node-id>`                                            | leader      | Remove a voter from the cluster membership                  |
-| `transfer-leader [--cluster-addr] [<node-id>]`                                      | leader      | Hand leadership over to another voter                       |
-| `list-peers [--cluster-addr]`                                                       | any node    | Show cluster peers in a table                               |
-| `metrics [--cluster-addr]`                                                          | any node    | Show raw cluster metrics and leader status                  |
-| `status [--cluster-addr]`                                                           | any node    | Show DEK, rotation, quarantine and nonce state of the node  |
-| `clear-quarantine [--cluster-addr] [--partition <name>]`                            | leader      | Clear a GCM-failure quarantine (default partition `data`)   |
-| `rotate-dek [--cluster-addr] [--emergency]`                                         | leader      | Rotate the Data Encryption Key                              |
-| `rotate-dek [--cluster-addr] --local-quorum-bypass --justification <text>`          | given node  | Stage a node-local emergency DEK candidate (no quorum)      |
-| `confirm-rotate-dek [--cluster-addr] --rotation-id <id>`                            | leader      | Confirm a pending emergency DEK rotation                    |
-| `list-dek-local-emergency-candidates [--cluster-addr]`                              | given node  | List node-local emergency DEK candidates                    |
-| `reconcile-dek-local-emergency [--cluster-addr] --rotation-id <id>`                 | leader only | Install a node-local emergency DEK candidate through Raft   |
-| `backup [--cluster-addr] --output <file>`                                           | leader      | Create an encrypted Fjall snapshot                          |
-| `restore [--cluster-addr] --snapshot <file> [--elect]`                              | leader \*   | Restore an encrypted snapshot to the cluster                |
+| Subcommand                                                                 | Target      | Description                                                |
+| -------------------------------------------------------------------------- | ----------- | ---------------------------------------------------------- |
+| `init`                                                                     | local node  | Bootstrap a new single-node cluster                        |
+| `join <cluster-addr>`                                                      | leader      | Adopt the cluster DEK, then join as a learner              |
+| `promote [--cluster-addr] <node-id>`                                       | leader      | Promote a learner to voting member                         |
+| `demote [--cluster-addr] <node-id>`                                        | leader      | Demote a voter to non-voting learner                       |
+| `remove-peer [--cluster-addr] <node-id>`                                   | leader      | Remove a voter from the cluster membership                 |
+| `transfer-leader [--cluster-addr] [<node-id>]`                             | leader      | Hand leadership over to another voter                      |
+| `list-peers [--cluster-addr]`                                              | any node    | Show cluster peers in a table                              |
+| `metrics [--cluster-addr]`                                                 | any node    | Show raw cluster metrics and leader status                 |
+| `status [--cluster-addr]`                                                  | any node    | Show DEK, rotation, quarantine and nonce state of the node |
+| `clear-quarantine [--cluster-addr] [--partition <name>]`                   | leader      | Clear a GCM-failure quarantine (default partition `data`)  |
+| `rotate-dek [--cluster-addr] [--emergency]`                                | leader      | Rotate the Data Encryption Key                             |
+| `rotate-dek [--cluster-addr] --local-quorum-bypass --justification <text>` | given node  | Stage a node-local emergency DEK candidate (no quorum)     |
+| `confirm-rotate-dek [--cluster-addr] --rotation-id <id>`                   | leader      | Confirm a pending emergency DEK rotation                   |
+| `list-dek-local-emergency-candidates [--cluster-addr]`                     | given node  | List node-local emergency DEK candidates                   |
+| `reconcile-dek-local-emergency [--cluster-addr] --rotation-id <id>`        | leader only | Install a node-local emergency DEK candidate through Raft  |
+| `backup [--cluster-addr] --output <file>`                                  | leader      | Create an encrypted Fjall snapshot                         |
+| `restore [--cluster-addr] --snapshot <file> [--elect]`                     | leader \*   | Restore an encrypted snapshot to the cluster               |
 
 **Leader targeting.** Membership changes, DEK rotations, quarantine clearing,
-backup and restore into a running cluster must be proposed by the Raft leader.
-A follower answers these RPCs with `UNAVAILABLE` plus the leader's id and address
+backup and restore into a running cluster must be proposed by the Raft leader. A
+follower answers these RPCs with `UNAVAILABLE` plus the leader's id and address
 (`x-openraft-leader-id`, `x-openraft-leader-endpoint`), and the subcommands
 marked _leader_ retry against that address, so `--cluster-addr` may name any
 member. The call is not proxied between nodes: the operator's own identity
@@ -85,18 +85,17 @@ uninitialized node runs on the given node.
 
 `demote` and `remove-peer` of the current leader first hand leadership over to
 another voter (the same operation as `transfer-leader`), wait until it leads,
-and then apply the change on the new leader, so writes are not interrupted by
-an election. Run `transfer-leader` before a planned restart of the leader node
-for the same reason. A voter that lags the leader rejects the transfer; the
-command then tries the next voter. The transfer is audited as
-`LEADERSHIP_TRANSFERRED`. Successors are tried in node-id order, not ranked by
-replication lag. The leader cannot tell a target that refuses from one that
-simply does not answer, so each candidate that does not take over within 5
-seconds (lagging, unreachable or not yet upgraded) adds that wait before the
-next one is tried; if none does, the error lists every candidate. If the
-transfer succeeds but the new leader cannot be reached afterwards, the command
-fails with a message saying so; the transfer is not rolled back, so retry the
-command.
+and then apply the change on the new leader, so writes are not interrupted by an
+election. Run `transfer-leader` before a planned restart of the leader node for
+the same reason. A voter that lags the leader rejects the transfer; the command
+then tries the next voter. The transfer is audited as `LEADERSHIP_TRANSFERRED`.
+Successors are tried in node-id order, not ranked by replication lag. The leader
+cannot tell a target that refuses from one that simply does not answer, so each
+candidate that does not take over within 5 seconds (lagging, unreachable or not
+yet upgraded) adds that wait before the next one is tried; if none does, the
+error lists every candidate. If the transfer succeeds but the new leader cannot
+be reached afterwards, the command fails with a message saying so; the transfer
+is not rolled back, so retry the command.
 
 `transfer-leader` relies on a node-to-node `TransferLeader` RPC added in this
 release. During a rolling upgrade a voter that is not yet upgraded answers it
@@ -158,10 +157,10 @@ ciphertext — no plaintext, no key material.
 
 ### Read Path
 
-- **Every tier:** A `ReadIndex` (linearizable read) is issued to OpenRaft
-  first, ensuring no stale follower can return a value that has since been
-  revoked. Tiers are not carried on writes yet, so there is no cheaper local
-  read path for Tier 0 / 1 (planned).
+- **Every tier:** A `ReadIndex` (linearizable read) is issued to OpenRaft first,
+  ensuring no stale follower can return a value that has since been revoked.
+  Tiers are not carried on writes yet, so there is no cheaper local read path
+  for Tier 0 / 1 (planned).
 
 ---
 
@@ -355,8 +354,8 @@ associated data and stored in the record metadata.
 
 | Tier | Label       | Read path                | Examples                                    |
 | ---- | ----------- | ------------------------ | ------------------------------------------- |
-| 0    | `PUBLIC`    | Local read (planned)     | Feature flags, role display names           |
-| 1    | `INTERNAL`  | Local read (planned)     | Display attributes, config markers          |
+| 0    | `PUBLIC`    | Local read (opt-in)      | Feature flags, role display names           |
+| 1    | `INTERNAL`  | Local read (opt-in)      | Display attributes, config markers          |
 | 2    | `SENSITIVE` | Linearizable (ReadIndex) | Group memberships, session tokens, API keys |
 | 3    | `SECRET`    | Linearizable (ReadIndex) | Credential plaintext, TOTP seeds            |
 
@@ -364,9 +363,16 @@ Tier 2 and 3 always issue a `ReadIndex` RPC to the current Raft leader before
 reading from the local state machine, ensuring a revoked credential or removed
 group member can never be observed as still-valid on a lagging follower.
 
-> **Not implemented:** the local read path for Tier 0/1 and the
-> `local_reads_mode` option that would select it do not exist yet. Every read,
-> whatever its tier, goes through `ReadIndex`.
+Local reads are off by default. Setting `local_reads_mode = "local_for_public"`
+lets a consumer ask for a stale local read of a single call; the node then
+serves Tier 0/1 records from its own state machine without contacting the leader
+and may return data older than the latest committed write; the staleness is
+unbounded, since a lagging or partitioned node serves whatever it last applied.
+Records without metadata or with an unknown tier are never served locally, and
+records written without an explicit tier default to Tier 1. Without the option,
+or for Tier 2/3 records (and prefix scans that match one), the request is
+ignored and the read goes through `ReadIndex`. Index key listings are always
+linearizable.
 
 ---
 
@@ -511,10 +517,10 @@ Each node has a manually configured `node_id: u64`. At startup and on every
 `add_learner` gRPC call, the cluster membership is checked for a
 `(node_id, rpc_addr)` collision. A detected collision is fatal — the node or the
 operation is aborted with a clear error message. If membership cannot be queried
-(no quorum), the node logs a prominent warning and starts anyway: failing
-closed there would make recovery impossible when every node of the cluster
-restarts at the same time. The live check against a peer's membership runs only
-when `retry_join_nodes` is configured.
+(no quorum), the node logs a prominent warning and starts anyway: failing closed
+there would make recovery impossible when every node of the cluster restarts at
+the same time. The live check against a peer's membership runs only when
+`retry_join_nodes` is configured.
 
 ---
 
@@ -592,10 +598,10 @@ aborted (stalled or disconnected upload, size overrun or mismatch), rejected by
 the cluster at apply time, or fails during a disaster recovery install. The
 failure record carries the `mode` (`cluster` or `disaster_recovery`, `null` if
 the attempt failed before it was known), `declared_len`, `received_len`, the
-gRPC `code` and the error message in `error`. It never contains backup
-contents or key material. Like the success record it is best effort and does
-not mask the restore error. A restore sent to a follower is redirected to the
-leader without a record: nothing was attempted on that node.
+gRPC `code` and the error message in `error`. It never contains backup contents
+or key material. Like the success record it is best effort and does not mask the
+restore error. A restore sent to a follower is redirected to the leader without
+a record: nothing was attempted on that node.
 
 ---
 
@@ -613,8 +619,8 @@ Quarantine state is **Raft-committed** (stored in
 `_meta:quarantine:<partition>:<node_id>`) and therefore persists across restarts
 and is visible to all cluster members. A marker blocks reads only on the node
 that reported it; `clear-quarantine` clears the partition's markers of all
-nodes. A restarted node reads this key at
-startup and re-enters quarantine if the marker is set.
+nodes. A restarted node reads this key at startup and re-enters quarantine if
+the marker is set.
 
 Clearing quarantine requires a `storage-operator` identity:
 
@@ -685,8 +691,8 @@ rotation is automatically aborted and an audit entry is written. Emergency
 rotations mark the old DEK as `revoked` (not `retired`) — it is never reused for
 any decryption, even for backup archives from that epoch.
 
-**Re-encryption:** Each node re-encrypts its own Fjall records under the new
-DEK in a background task, keyspace by keyspace in key order. A record is read,
+**Re-encryption:** Each node re-encrypts its own Fjall records under the new DEK
+in a background task, keyspace by keyspace in key order. A record is read,
 re-encrypted with `version + 1` and written while `apply()` is excluded from
 that record, so a concurrent Raft write is never reverted. A record that cannot
 be migrated after 3 attempts is skipped and logged at WARN. The sweep runs when
@@ -698,9 +704,9 @@ reading older snapshots and backups.
 
 **Progress:** Every 1000 records the sweep checkpoints its position and counts
 to `_meta:dek:rotation_progress:<node_id>:<version>`. After a restart the next
-pass resumes behind the checkpoint, and records skipped before the restart
-still keep the retired DEK from being marked done. The checkpoint is removed
-when a pass completes and is not carried by snapshots.
+pass resumes behind the checkpoint, and records skipped before the restart still
+keep the retired DEK from being marked done. The checkpoint is removed when a
+pass completes and is not carried by snapshots.
 
 > **Not implemented:** a post-rotation verification report, the CRITICAL alert
 > for records left unmigrated for 24 hours, and blocking DEK retirement until
@@ -757,6 +763,10 @@ node_listener_addr = "0.0.0.0:8310"
 # fail with `Unavailable`.
 # ensure_linearizable_retries = 80
 # ensure_linearizable_retry_delay_ms = 50
+
+# Allow consumers to request stale local reads of Tier 0/1 records
+# (`disabled` (default) or `local_for_public`).
+# local_reads_mode = "disabled"
 
 # Audit spool directory (default: <path>/audit-spool) and its size bound
 # (default: 256 MiB).
@@ -953,11 +963,11 @@ cluster's data encryption keys from the leader and install them, and only then
 registers it as a learner. The node therefore never replicates under the DEK it
 generated at first boot. All nodes must share the same KEK material, otherwise
 the adoption fails and the join is aborted. Re-running `join` on a node that is
-already a member is harmless. If the registration fails after the adoption
-(for example because the id is registered at a different address), the node
-keeps the adopted DEK, which is correct for the cluster; fix the cause and run
-`join` again. The local node must run a version that supports the adoption,
-otherwise `join` stops with an error asking you to upgrade it first.
+already a member is harmless. If the registration fails after the adoption (for
+example because the id is registered at a different address), the node keeps the
+adopted DEK, which is correct for the cluster; fix the cause and run `join`
+again. The local node must run a version that supports the adoption, otherwise
+`join` stops with an error asking you to upgrade it first.
 
 **Step 4 — Promote learners to voting members.**
 
@@ -1007,10 +1017,10 @@ What it sets up, and why:
   both in sync and use an odd number. `podManagementPolicy: Parallel` starts all
   members together; rolling updates still replace one pod at a time and wait for
   it to become ready.
-- **Disruption and placement.** A `PodDisruptionBudget` with
-  `maxUnavailable: 1` keeps a quorum through node drains, required
-  `podAntiAffinity` keeps two members off the same node, and a
-  `topologySpreadConstraints` entry spreads them over zones.
+- **Disruption and placement.** A `PodDisruptionBudget` with `maxUnavailable: 1`
+  keeps a quorum through node drains, required `podAntiAffinity` keeps two
+  members off the same node, and a `topologySpreadConstraints` entry spreads
+  them over zones.
 - **Identities.** The StatefulSet runs under its own `keystone-rs` service
   account. The `ClusterSPIFFEID` entries in `spire/` bind the
   `<spiffe_path_prefix>node` identity to that namespace, label **and** service
@@ -1018,10 +1028,10 @@ What it sets up, and why:
   from the `keystone-storage-operator` Deployment, the only workload holding
   `<spiffe_path_prefix>storage-operator`. It ships with `replicas: 0`; scale it
   up for a maintenance window only.
-- **Trust domain.** The SPIRE registrations in `spire/` use
-  `{{ .TrustDomain }}` and adapt to your cluster, but the keystone-side config
-  hardcodes the `example.org` placeholder. Before applying, replace every
-  `example.org` with your SPIRE trust domain in: the init-container heredoc in
+- **Trust domain.** The SPIRE registrations in `spire/` use `{{ .TrustDomain }}`
+  and adapt to your cluster, but the keystone-side config hardcodes the
+  `example.org` placeholder. Before applying, replace every `example.org` with
+  your SPIRE trust domain in: the init-container heredoc in
   `statefulset-patch.yaml` (`trust_domains`, `allowed_peer_svids`),
   `conf/keystone.conf` (`interface_internal.trust_domains`,
   `interface_admin.trust_domains`, `interface_admin.admin_svid`), and
@@ -1066,8 +1076,8 @@ volume it initializes a new single-node cluster, splitting it off from the
 running one. If its volume is lost, start it with `auto_bootstrap = false` so it
 stays uninitialized, remove the stale member with
 `keystone-manage storage remove-peer 0` from the operator workload, run
-`keystone-manage storage join <address of a live member>` in `keystone-rs-0`
-and promote it again (see [Adding Nodes](#adding-nodes)).
+`keystone-manage storage join <address of a live member>` in `keystone-rs-0` and
+promote it again (see [Adding Nodes](#adding-nodes)).
 
 The readiness probe uses `/ready`, which returns 503 while the storage is not
 initialized or reports a recoverable Raft issue (no known leader, a stale quorum
@@ -1101,13 +1111,12 @@ skaffold run -f skaffold-k3s-test.yaml \
 The PKCS#11 variant uses SoftHSM2. It initialises a token on the StatefulSet
 volume and generates the `keystone-kek` AES-256 key automatically.
 
-The TPM variant runs a `swtpm` sidecar on pod loopback and sends
-`TPM2_Startup` before starting `keystone`. This avoids depending on a host TPM,
-which may lack `TPM2_EncryptDecrypt2` (for example, some ARM/virt
-implementations return `0x000b0143` — “command code not supported” — for it).
-Provision the sidecar state and the KEK context files on the k3s host before
-deploying the TPM module; the Skaffold module creates the `keystone-tpm-kek`
-Secret from those files.
+The TPM variant runs a `swtpm` sidecar on pod loopback and sends `TPM2_Startup`
+before starting `keystone`. This avoids depending on a host TPM, which may lack
+`TPM2_EncryptDecrypt2` (for example, some ARM/virt implementations return
+`0x000b0143` — “command code not supported” — for it). Provision the sidecar
+state and the KEK context files on the k3s host before deploying the TPM module;
+the Skaffold module creates the `keystone-tpm-kek` Secret from those files.
 
 A real host TPM can be used instead by pointing `tpm_tcti` at
 `device:/dev/tpmrm0`, removing the `swtpm` sidecar and the `tpm2_startup` call
@@ -1212,8 +1221,8 @@ keystone-manage storage rotate-dek \
 ```
 
 Monitor the audit log (`event_type = "DEK_ROTATION"`; automatic rotations use
-the actor `system:dek-rotation`) and the node logs for records the
-re-encryption sweep skipped (`record skipped after exhausting CAS retries`).
+the actor `system:dek-rotation`) and the node logs for records the re-encryption
+sweep skipped (`record skipped after exhausting CAS retries`).
 
 ### Emergency DEK Rotation
 
@@ -1293,25 +1302,25 @@ keystone-manage storage restore \
 ```
 
 The backup must reach the **leader**; a follower answers with the leader's
-address and the command retries there. The backup is committed through the
-Raft log, in 256 KiB chunks followed by a single apply entry, so every node
-replaces its data at the same log index. The cluster membership (node list) and
-each node's Raft state are unchanged. Everything else, including all data
-keyspaces and the DEKs, is replaced by the backup's contents, so anything
-written after the backup was taken is gone. The DEKs recorded in the backup's
-DEK manifest replace the cluster's current DEK on every node, so the restored
-data stays readable. The cluster must use the same KEK material as the cluster
-that produced the backup; a backup that cannot be unwrapped is rejected by the
-apply entry and leaves the data untouched. The upload is streamed into the Raft
-log as it arrives, so the receiving node never buffers it; the client's declared
-size (sent with the first chunk) lets an oversized backup be refused before any
-of it is read. A stalled upload is dropped after two minutes. The DEKs the
-restore replaces are kept on every node so that the node's own Raft log and
-older snapshot files stay readable. Backups larger than 1 GiB are refused on
-this path (every node holds the reassembled and decrypted backup in memory while
-applying it); use the disaster recovery procedure for those. That procedure
-buffers the backup on each node (up to 4 GiB) and also needs it to be decrypted
-in full. A restore that fails part-way discards its staged chunks.
+address and the command retries there. The backup is committed through the Raft
+log, in 256 KiB chunks followed by a single apply entry, so every node replaces
+its data at the same log index. The cluster membership (node list) and each
+node's Raft state are unchanged. Everything else, including all data keyspaces
+and the DEKs, is replaced by the backup's contents, so anything written after
+the backup was taken is gone. The DEKs recorded in the backup's DEK manifest
+replace the cluster's current DEK on every node, so the restored data stays
+readable. The cluster must use the same KEK material as the cluster that
+produced the backup; a backup that cannot be unwrapped is rejected by the apply
+entry and leaves the data untouched. The upload is streamed into the Raft log as
+it arrives, so the receiving node never buffers it; the client's declared size
+(sent with the first chunk) lets an oversized backup be refused before any of it
+is read. A stalled upload is dropped after two minutes. The DEKs the restore
+replaces are kept on every node so that the node's own Raft log and older
+snapshot files stay readable. Backups larger than 1 GiB are refused on this path
+(every node holds the reassembled and decrypted backup in memory while applying
+it); use the disaster recovery procedure for those. That procedure buffers the
+backup on each node (up to 4 GiB) and also needs it to be decrypted in full. A
+restore that fails part-way discards its staged chunks.
 
 **Disaster recovery** (the cluster is gone, no leader exists):
 
@@ -1361,8 +1370,8 @@ by the security team.
 2. **No DEK in plaintext outside mlock'd RAM.** The DEK is stored wrapped under
    the KEK on disk. In memory it lives only inside mlock'd `Zeroizing` buffers.
 
-3. **Strict mTLS.** Every inbound connection must present a valid SPIFFE SVID
-   or an operator-managed certificate signed by the cluster Intermediate CA.
+3. **Strict mTLS.** Every inbound connection must present a valid SPIFFE SVID or
+   an operator-managed certificate signed by the cluster Intermediate CA.
    Auto-join through `retry_join_nodes` exists, but the joining node is
    authenticated like every other peer.
 
@@ -1392,8 +1401,8 @@ by the security team.
     the security team before any new encrypted context is added.
 
 11. **Deployment validation.** `tools/check_no_dev_mode.sh` rejects production
-    service definitions containing `--dev-mode` or `KEYSTONE_ALLOW_ENV_KEK`.
-    It is not wired into CI yet; run it as part of the deployment pipeline.
+    service definitions containing `--dev-mode` or `KEYSTONE_ALLOW_ENV_KEK`. It
+    is not wired into CI yet; run it as part of the deployment pipeline.
 
 12. **Startup pre-flight.** Before loading any key material, the node verifies
     `RLIMIT_CORE == 0` and `PR_SET_DUMPABLE == 0`. Failures emit CRITICAL log

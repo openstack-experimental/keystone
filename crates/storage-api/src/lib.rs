@@ -79,9 +79,34 @@ impl From<u8> for DataTier {
             1 => Self::Internal,
             2 => Self::Sensitive,
             3 => Self::Secret,
-            _ => Self::Internal,
+            // Fail closed: an unknown tier is never eligible for local reads.
+            _ => Self::Secret,
         }
     }
+}
+
+/// Read consistency requested by a consumer for a single read.
+///
+/// [`Self::Linearizable`] is the default: the read goes through the Raft
+/// `ReadIndex` protocol and never observes data older than the last committed
+/// write. [`Self::Local`] lets the consumer accept possibly stale data in
+/// return for serving the read from the local state machine without a leader
+/// round-trip.
+///
+/// `Local` is a *request*, not a guarantee. The storage serves it locally only
+/// for [`DataTier::Public`] and [`DataTier::Internal`] records and only when
+/// the operator enabled local reads; everything else silently falls back to
+/// the linearizable path. Staleness is unbounded: a lagging or partitioned
+/// node serves whatever it last applied. Callers must therefore never use it for data that
+/// feeds an authorization decision (ADR 0016-v2 §3).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ReadConsistency {
+    /// Never stale: confirmed through Raft `ReadIndex` before reading.
+    #[default]
+    Linearizable,
+    /// Read the local state machine, accepting data older than the latest
+    /// committed write.
+    Local,
 }
 
 /// Lightweight error type for storage operations.
@@ -500,6 +525,20 @@ pub trait StorageApi: Send + Sync {
         keyspace: Option<&str>,
     ) -> Result<Option<StoreDataEnvelope<Vec<u8>>>, StoreError>;
 
+    /// Get a value by key with an explicit [`ReadConsistency`].
+    ///
+    /// See [`ReadConsistency::Local`] for what a local read does and does not
+    /// guarantee. The default implementation ignores the request and reads
+    /// linearizably, which is always a valid answer to a weaker request.
+    async fn get_by_key_with_consistency(
+        &self,
+        key: &[u8],
+        keyspace: Option<&str>,
+        _consistency: ReadConsistency,
+    ) -> Result<Option<StoreDataEnvelope<Vec<u8>>>, StoreError> {
+        self.get_by_key(key, keyspace).await
+    }
+
     /// Initializes the Raft cluster with the given node configuration.
     async fn initialize(&self, nodes: HashMap<u64, Node>) -> Result<(), StoreError>;
 
@@ -536,6 +575,22 @@ pub trait StorageApi: Send + Sync {
         prefix: &[u8],
         keyspace: Option<&str>,
     ) -> Result<Vec<(String, StoreDataEnvelope<Vec<u8>>)>, StoreError>;
+
+    /// List all entries matching the prefix with an explicit
+    /// [`ReadConsistency`].
+    ///
+    /// A local scan is served locally only when every matching record is
+    /// [`DataTier::Public`] or [`DataTier::Internal`]; otherwise the whole
+    /// scan is read linearizably. The default implementation ignores the
+    /// request and reads linearizably.
+    async fn prefix_with_consistency(
+        &self,
+        prefix: &[u8],
+        keyspace: Option<&str>,
+        _consistency: ReadConsistency,
+    ) -> Result<Vec<(String, StoreDataEnvelope<Vec<u8>>)>, StoreError> {
+        self.prefix(prefix, keyspace).await
+    }
 
     /// List all index entries with keys matching the given prefix.
     async fn prefix_index(&self, prefix: &[u8]) -> Result<Vec<String>, StoreError>;

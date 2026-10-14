@@ -466,11 +466,22 @@ pub struct RestartableNode {
 
 impl RestartableNode {
     /// Creates the node's storage; call [`RestartableNode::start`] to serve.
-    #[allow(unsafe_code)]
     pub async fn new(node_id: u64, port_base: u16, tls: &TlsConfiguration) -> Result<Self> {
+        Self::new_with(node_id, port_base, tls, |_| {}).await
+    }
+
+    /// [`RestartableNode::new`] with `tweak` applied to the configuration.
+    #[allow(unsafe_code)]
+    pub async fn new_with(
+        node_id: u64,
+        port_base: u16,
+        tls: &TlsConfiguration,
+        tweak: impl FnOnce(&mut DistributedStorageConfiguration),
+    ) -> Result<Self> {
         let dir = TempDir::new()?;
-        let config =
+        let mut config =
             get_ds_config_with_port(node_id, port_base, dir.path().to_path_buf(), tls.clone());
+        tweak(&mut config);
         // SAFETY: tests using this harness are `#[serial]`.
         unsafe {
             std::env::set_var("KEYSTONE_DEV_KEK", TEST_KEK_HEX);
@@ -587,4 +598,46 @@ pub async fn set_value_retrying(storage: &Arc<Storage>, key: &str, value: &str) 
         }
     }
     Err(last_err.expect("at least one attempt").into())
+}
+
+/// Starts three restartable nodes on `port`+id and forms a three-voter
+/// cluster led by node 1. `tweak` adjusts every node's configuration before
+/// its storage is created.
+pub async fn start_three_node_cluster_with(
+    port: u16,
+    tweak: impl Fn(&mut DistributedStorageConfiguration),
+) -> Result<Vec<RestartableNode>> {
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+    let tls = make_certificates()?;
+
+    let mut nodes = Vec::new();
+    for id in 1..=3 {
+        let mut node = RestartableNode::new_with(id, port, &tls, &tweak).await?;
+        node.start().await;
+        nodes.push(node);
+    }
+    let mut admin1 = nodes[0].admin().await?;
+    admin1
+        .init(pb::raft::InitRequest {
+            nodes: vec![new_node_with_port(1, port)],
+        })
+        .await?;
+    wait_for_leader(&mut admin1, 1).await;
+    for id in [2u64, 3] {
+        nodes[id as usize - 1]
+            .storage()
+            .join_cluster(
+                &get_addr_with_port(1, port).to_string(),
+                &get_addr_with_port(id, port).to_string(),
+            )
+            .await?;
+    }
+    admin1
+        .change_membership(pb::raft::ChangeMembershipRequest {
+            members: vec![1, 2, 3],
+            retain: false,
+        })
+        .await?;
+    Ok(nodes)
 }

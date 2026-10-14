@@ -539,6 +539,7 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
         local_emergency_config,
         ensure_linearizable_retries: ds_config.ensure_linearizable_retries,
         ensure_linearizable_retry_delay_ms: ds_config.ensure_linearizable_retry_delay_ms,
+        local_reads_mode: ds_config.local_reads_mode,
         log_nonce,
         dek_rotation_days: ds_config.dek_rotation_days,
     });

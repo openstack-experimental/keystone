@@ -25,39 +25,7 @@ const KEYSPACE_COLLISION_PORT_BASE: u16 = 1850;
 /// Starts three restartable nodes on `port`+id and forms a three-voter
 /// cluster led by node 1.
 async fn start_three_node_cluster(port: u16) -> Result<Vec<RestartableNode>> {
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
-    let _ = rustls::crypto::CryptoProvider::install_default(provider);
-    let tls = make_certificates()?;
-
-    let mut nodes = Vec::new();
-    for id in 1..=3 {
-        let mut node = RestartableNode::new(id, port, &tls).await?;
-        node.start().await;
-        nodes.push(node);
-    }
-    let mut admin1 = nodes[0].admin().await?;
-    admin1
-        .init(pb::raft::InitRequest {
-            nodes: vec![new_node_with_port(1, port)],
-        })
-        .await?;
-    wait_for_leader(&mut admin1, 1).await;
-    for id in [2u64, 3] {
-        nodes[id as usize - 1]
-            .storage()
-            .join_cluster(
-                &get_addr_with_port(1, port).to_string(),
-                &get_addr_with_port(id, port).to_string(),
-            )
-            .await?;
-    }
-    admin1
-        .change_membership(pb::raft::ChangeMembershipRequest {
-            members: vec![1, 2, 3],
-            retain: false,
-        })
-        .await?;
-    Ok(nodes)
+    start_three_node_cluster_with(port, |_| {}).await
 }
 
 async fn wait_for_leader_not(node: &RestartableNode, not: u64) -> u64 {

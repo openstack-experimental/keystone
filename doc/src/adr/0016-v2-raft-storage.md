@@ -443,15 +443,16 @@ _Configuration:_ Operators enable local reads via
 ReadIndex protocol, ensuring revoked credentials are never exposed via a stale
 follower.
 
-> **Implementation status (as of #1302):** `local_reads_mode` and the
-> Tier 0/1 local-read fast path described above are not implemented.
-> Every read — regardless of tier — currently goes through the
-> `ensure_linearizable` (ReadIndex) path; the tier byte is stored and
-> cryptographically bound into the AES-GCM AD (so tampering with it is
-> detected), but it does not yet change how a read is served. If the
-> ReadIndex/forwarding path cannot confirm linearizability, the read fails
-> (`Unavailable`) rather than falling back to a non-linearizable local read,
-> for every tier — see invariant 4 below.
+> **Implementation status:** `local_reads_mode` defaults to `disabled`, in
+> which case every read, whatever its tier, goes through the
+> `ensure_linearizable` (ReadIndex) path. With `local_for_public` a consumer
+> can ask for a stale local read per call (`ReadConsistency::Local` through
+> `get_by_key_with_consistency` / `prefix_with_consistency`). The request is
+> honored only for Tier 0/1 records; a Tier 2/3 record, or a prefix scan that
+> matches one, falls back to ReadIndex. `prefix_index` is always linearizable.
+> If the ReadIndex/forwarding path cannot confirm linearizability, the read
+> fails (`Unavailable`) rather than falling back to a non-linearizable local
+> read for every tier that is not served locally — see invariant 4 below.
 
 ### 3.1 Audit Log Architecture
 
