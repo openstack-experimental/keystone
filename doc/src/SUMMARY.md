@@ -115,6 +115,7 @@
     - [Distributed Storage](adr/0016-raft-storage.md)
     - [Distributed Storage v2](adr/0016-v2-raft-storage.md)
     - [Distributed Storage v2: Peer Roles](adr/0016-v2-addendum-peer-roles.md)
+    - [Distributed Storage v2: TPM DEK Rewrap](adr/0016-v2-addendum-tpm-dek-rewrap.md)
     - [Security Context](adr/0017-security-context.md)
     - [Plugin linking](adr/0018-plugin-linking.md)
     - [Credentials API](adr/0019-credentials.md)
