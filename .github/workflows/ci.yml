@@ -59,20 +59,28 @@ jobs:
     name: Test (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
 
-    # Receives the OTLP export of the server that tools/start-api.sh starts for
-    # the REST API tests (tests/api/tests/api_v4/observability.rs).
-    services:
-      jaeger:
-        image: jaegertracing/jaeger:2.9.0
-        ports:
-          - 4318:4318
-          - 16686:16686
-
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
+
+      # Receives the OTLP export of the server that tools/start-api.sh starts
+      # for the REST API tests (tests/api/tests/api_v4/observability.rs).
+      # Started here rather than as a `services:` container: those start
+      # before the first step, and the Harden Runner step above was observed
+      # to stop them (container "Exited (0)" seconds after the service
+      # reported healthy), so the tests found Jaeger gone.
+      - name: Start Jaeger
+        run: |
+          docker run -d --name jaeger -p 4318:4318 -p 16686:16686 \
+            jaegertracing/jaeger:2.9.0
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:16686/ > /dev/null && exit 0
+            sleep 1
+          done
+          docker logs jaeger
+          exit 1
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
