@@ -771,6 +771,16 @@ node_listener_addr = "0.0.0.0:8310"
 # (`disabled` (default) or `local_for_public`).
 # local_reads_mode = "disabled"
 
+# Raft timing and log compaction. Raise the heartbeat and election timeouts for
+# clusters spread across availability zones. `raft_snapshot_logs_since_last = 0`
+# disables automatic snapshots. Defaults shown.
+# raft_heartbeat_interval_ms = 500
+# raft_election_timeout_min_ms = 1500
+# raft_election_timeout_max_ms = 3000
+# raft_snapshot_logs_since_last = 5000
+# raft_max_in_snapshot_log_to_keep = 1000
+# raft_purge_batch_size = 1
+
 # Audit spool directory (default: <path>/audit-spool) and its size bound
 # (default: 256 MiB).
 # audit_spool_dir = "/var/lib/keystone/storage/audit-spool"

@@ -14,6 +14,8 @@
 //! Node start-up: KEK selection, node-ID uniqueness checks, Raft
 //! construction, gRPC routes and DEK adoption for joining nodes.
 
+use openraft::SnapshotPolicy;
+
 use super::*;
 
 /// Strip scheme (e.g. "https://") and trailing slash from an rpc_addr so that
@@ -322,17 +324,6 @@ fn build_tpm_kek(
 /// # Returns
 /// A `Result` containing the `Storage` instance, or a `StoreError`.
 pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Storage>, StoreError> {
-    // Create a configuration for the raft instance.
-    let raft_config = Arc::new(
-        Config {
-            heartbeat_interval: 500,
-            election_timeout_min: 1500,
-            election_timeout_max: 3000,
-            ..Default::default()
-        }
-        .validate()?,
-    );
-
     let ds_config = config_manager
         .config
         .read()
@@ -341,6 +332,24 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
         .section::<DistributedStorageConfiguration>()
         .ok_or(StoreError::ConfigMissing)?
         .clone();
+
+    // Create a configuration for the raft instance.
+    let raft_config = Arc::new(
+        Config {
+            heartbeat_interval: ds_config.raft_heartbeat_interval_ms,
+            election_timeout_min: ds_config.raft_election_timeout_min_ms,
+            election_timeout_max: ds_config.raft_election_timeout_max_ms,
+            snapshot_policy: if ds_config.raft_snapshot_logs_since_last == 0 {
+                SnapshotPolicy::Never
+            } else {
+                SnapshotPolicy::LogsSinceLast(ds_config.raft_snapshot_logs_since_last)
+            },
+            max_in_snapshot_log_to_keep: ds_config.raft_max_in_snapshot_log_to_keep,
+            purge_batch_size: ds_config.raft_purge_batch_size,
+            ..Default::default()
+        }
+        .validate()?,
+    );
 
     // Select and load the Key Encryption Key before any further
     // initialisation (ADR 0016-v2 §2.1).  Loading/erasing it first means core

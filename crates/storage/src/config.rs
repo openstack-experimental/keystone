@@ -83,8 +83,8 @@ pub struct DistributedStorageConfiguration {
     ///
     /// The retry budget (`ensure_linearizable_retries` *
     /// `ensure_linearizable_retry_delay_ms`) should comfortably exceed the
-    /// Raft election timeout (`election_timeout_min`/`_max`, currently
-    /// 1.5-3s) so a leader election in progress does not routinely exhaust
+    /// Raft election timeout (`raft_election_timeout_min_ms`/`_max_ms`,
+    /// default 1.5-3s) so a leader election in progress does not routinely exhaust
     /// the budget.
     #[serde(default = "default_ensure_linearizable_retries")]
     pub ensure_linearizable_retries: u32,
@@ -102,6 +102,41 @@ pub struct DistributedStorageConfiguration {
     /// are always read linearizably.
     #[serde(default)]
     pub local_reads_mode: LocalReadsMode,
+
+    /// Raft leader heartbeat interval in milliseconds. Must be well below
+    /// `raft_election_timeout_min_ms`. Raise it for clusters spanning
+    /// availability zones with high inter-node latency. Defaults to 500.
+    #[serde(default = "default_raft_heartbeat_interval_ms")]
+    #[validate(range(min = 1))]
+    pub raft_heartbeat_interval_ms: u64,
+
+    /// Lower bound in milliseconds of the randomized Raft election timeout.
+    /// Defaults to 1500.
+    #[serde(default = "default_raft_election_timeout_min_ms")]
+    #[validate(range(min = 1))]
+    pub raft_election_timeout_min_ms: u64,
+
+    /// Upper bound in milliseconds of the randomized Raft election timeout.
+    /// Must be greater than `raft_election_timeout_min_ms`. Defaults to 3000.
+    #[serde(default = "default_raft_election_timeout_max_ms")]
+    #[validate(range(min = 1))]
+    pub raft_election_timeout_max_ms: u64,
+
+    /// Number of applied log entries since the last snapshot after which a
+    /// new snapshot is built. `0` disables automatic snapshots. Defaults to
+    /// 5000.
+    #[serde(default = "default_raft_snapshot_logs_since_last")]
+    pub raft_snapshot_logs_since_last: u64,
+
+    /// Number of log entries covered by a snapshot that are kept instead of
+    /// being purged. Defaults to 1000.
+    #[serde(default = "default_raft_max_in_snapshot_log_to_keep")]
+    pub raft_max_in_snapshot_log_to_keep: u64,
+
+    /// Maximum number of log entries purged in one batch. Defaults to 1.
+    #[serde(default = "default_raft_purge_batch_size")]
+    #[validate(range(min = 1))]
+    pub raft_purge_batch_size: u64,
 
     /// Age in days after which the Raft leader rotates the DEK automatically
     /// (ADR 0016-v2 §6). `0` disables the time-based rotation; the
@@ -459,6 +494,30 @@ where
     Ok(out)
 }
 
+fn default_raft_heartbeat_interval_ms() -> u64 {
+    500
+}
+
+fn default_raft_election_timeout_min_ms() -> u64 {
+    1500
+}
+
+fn default_raft_election_timeout_max_ms() -> u64 {
+    3000
+}
+
+fn default_raft_snapshot_logs_since_last() -> u64 {
+    5000
+}
+
+fn default_raft_max_in_snapshot_log_to_keep() -> u64 {
+    1000
+}
+
+fn default_raft_purge_batch_size() -> u64 {
+    1
+}
+
 fn default_dek_rotation_days() -> u32 {
     90
 }
@@ -522,6 +581,12 @@ impl Default for DistributedStorageConfiguration {
             ensure_linearizable_retries: default_ensure_linearizable_retries(),
             ensure_linearizable_retry_delay_ms: default_ensure_linearizable_retry_delay_ms(),
             local_reads_mode: LocalReadsMode::default(),
+            raft_heartbeat_interval_ms: default_raft_heartbeat_interval_ms(),
+            raft_election_timeout_min_ms: default_raft_election_timeout_min_ms(),
+            raft_election_timeout_max_ms: default_raft_election_timeout_max_ms(),
+            raft_snapshot_logs_since_last: default_raft_snapshot_logs_since_last(),
+            raft_max_in_snapshot_log_to_keep: default_raft_max_in_snapshot_log_to_keep(),
+            raft_purge_batch_size: default_raft_purge_batch_size(),
             dek_rotation_days: default_dek_rotation_days(),
             write_rate_threshold: default_write_rate_threshold(),
             audit_spool_dir: None,
