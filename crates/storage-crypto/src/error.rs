@@ -50,6 +50,11 @@ pub enum CryptoError {
     #[error("internal error: fixed-length cryptographic parameter had the wrong size")]
     InvalidArrayLength,
 
+    /// FIPS mode was required but the validated cryptographic module is not
+    /// compiled in (`fips` feature) or is not running in FIPS mode.
+    #[error("FIPS mode required but the validated cryptographic module is not active")]
+    FipsUnavailable,
+
     /// The supplied hex string is not valid hexadecimal.
     #[error("invalid hex encoding for key material")]
     InvalidHex,
@@ -86,6 +91,10 @@ pub enum CryptoError {
     /// this variant is confined to provider construction.
     #[error("PKCS#11 operation failed: {0}")]
     Pkcs11(String),
+
+    /// The random number generator failed.
+    #[error("random number generator failure")]
+    Rng,
 
     /// Ciphertext was encrypted under a revoked DEK epoch (ADR 0016-v2 §6.2).
     /// Emergency rotation revokes the compromised DEK; any attempt to decrypt

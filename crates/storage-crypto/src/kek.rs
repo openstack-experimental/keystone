@@ -29,40 +29,16 @@
 
 use std::env;
 
-use aes_gcm::aead::AeadInOut;
-use aes_gcm::{Aes256Gcm, KeyInit};
-use hybrid_array::Array;
-
-use crate::gcm::{GcmKey, GcmNonce, GcmTag};
-
-/// Convert a 12-byte slice reference to a typed GCM nonce array reference.
-///
-/// `Err(CryptoError::WrappedDekSize)` if `s` is not exactly 12 bytes — never
-/// hit by the call sites in this file (the nonce is always a freshly
-/// generated or length-checked `[u8; 12]`), but propagated rather than
-/// panicked on so a future caller passing an unchecked slice fails cleanly.
-fn nonce_ref(s: &[u8]) -> Result<&GcmNonce, CryptoError> {
-    Array::slice_as_array(s).ok_or(CryptoError::WrappedDekSize)
-}
-
-/// Convert a 16-byte slice reference to a typed GCM tag array reference.
-/// See [`nonce_ref`] for the error-propagation rationale.
-fn tag_ref(s: &[u8]) -> Result<&GcmTag, CryptoError> {
-    Array::slice_as_array(s).ok_or(CryptoError::WrappedDekSize)
-}
-
-/// Convert a 32-byte slice reference to a typed GCM key array reference.
-/// See [`nonce_ref`] for the error-propagation rationale.
-fn key_ref(s: &[u8]) -> Result<&GcmKey, CryptoError> {
-    Array::slice_as_array(s).ok_or(CryptoError::InvalidKeyLength)
-}
-use rand::RngExt;
 use zeroize::{Zeroize, Zeroizing};
 
+use crate::backend::{gcm_open, gcm_seal, hkdf_expand, hmac_sha256};
 use crate::error::CryptoError;
 
 /// Associated data used for DEK wrapping to bind context.
 const DEK_WRAP_AD: &[u8] = b"keystone-dek-wrap-v1";
+
+/// HKDF info for the sub-key used to derive wrap nonces.
+const DEK_WRAP_NONCE_INFO: &[u8] = b"keystone-dek-wrap-nonce-v1";
 
 /// Object-safe trait for Key Encryption Key operations.
 pub trait KekProvider: Send + Sync {
@@ -164,17 +140,14 @@ impl KekProvider for EnvKek {
         let tag_arr: [u8; 16] = wrapped[44..]
             .try_into()
             .map_err(|_| CryptoError::WrappedDekSize)?;
-        let cipher = Aes256Gcm::new(key_ref(&*self.key)?);
-
         let mut buf = wrapped[12..44].to_vec();
-        cipher
-            .decrypt_inout_detached(
-                nonce_ref(&nonce_arr)?,
-                DEK_WRAP_AD,
-                buf.as_mut_slice().into(),
-                tag_ref(&tag_arr)?,
-            )
-            .map_err(|_| CryptoError::AesDecrypt)?;
+        gcm_open(
+            &*self.key,
+            &nonce_arr,
+            DEK_WRAP_AD,
+            buf.as_mut_slice(),
+            &tag_arr,
+        )?;
 
         if buf.len() != 32 {
             return Err(CryptoError::InvalidKeyLength);
@@ -184,15 +157,21 @@ impl KekProvider for EnvKek {
         Ok(out)
     }
 
+    /// The nonce is deterministic: no random material is involved (ADR
+    /// invariant 10, and no RNG dependency on the FIPS path). It is the
+    /// truncated HMAC-SHA256 of the DEK under a nonce sub-key derived from the
+    /// KEK, so it is unique per distinct DEK short of a 96-bit collision.
+    /// Wrapping the same DEK twice yields identical output, which reveals
+    /// nothing beyond equality.
     fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
-        let nonce_bytes: [u8; 12] = rand::rng().random();
-        let cipher = Aes256Gcm::new(key_ref(&*self.key)?);
-        let gcm_nonce = nonce_ref(&nonce_bytes)?;
+        let mut nonce_key = Zeroizing::new([0u8; 32]);
+        hkdf_expand(&*self.key, DEK_WRAP_NONCE_INFO, nonce_key.as_mut())?;
+        let mac = hmac_sha256(nonce_key.as_ref(), dek)?;
+        let mut nonce_bytes = [0u8; 12];
+        nonce_bytes.copy_from_slice(&mac[..12]);
 
         let mut buf = dek.to_vec();
-        let tag = cipher
-            .encrypt_inout_detached(gcm_nonce, DEK_WRAP_AD, buf.as_mut_slice().into())
-            .map_err(|_| CryptoError::AesEncrypt)?;
+        let tag = gcm_seal(&*self.key, &nonce_bytes, DEK_WRAP_AD, buf.as_mut_slice())?;
 
         let mut out = Vec::with_capacity(12 + 32 + 16);
         out.extend_from_slice(&nonce_bytes);
@@ -260,13 +239,15 @@ mod tests {
     }
 
     #[test]
-    fn test_wrap_produces_different_nonces() {
+    fn test_wrap_nonce_is_deterministic_and_dek_specific() {
         let kek = test_kek();
-        let dek = [0xCDu8; 32];
-        let w1 = kek.wrap_dek(&dek).expect("wrap 1");
-        let w2 = kek.wrap_dek(&dek).expect("wrap 2");
-        // Different nonces → different ciphertexts
-        assert_ne!(w1, w2);
+        let w1 = kek.wrap_dek(&[0xCDu8; 32]).expect("wrap 1");
+        let w2 = kek.wrap_dek(&[0xCDu8; 32]).expect("wrap 2");
+        let w3 = kek.wrap_dek(&[0xCEu8; 32]).expect("wrap 3");
+        // Same DEK: identical blob (no RNG involved).
+        assert_eq!(w1, w2);
+        // Different DEK: different nonce.
+        assert_ne!(w1[..12], w3[..12]);
     }
 
     #[test]

@@ -25,7 +25,14 @@ print_stdout = "deny"
 unwrap_used = "deny"
 doc_paragraphs_missing_punctuation = "warn"
 
+[features]
+default = []
+# Route all primitives (AES-GCM, HKDF, HMAC, RNG) through the FIPS 140-3
+# validated AWS-LC module. Takes precedence over the RustCrypto backend.
+fips = ["dep:aws-lc-rs", "aws-lc-rs/fips"]
+
 [dependencies]
+aws-lc-rs = { version = "1.18", optional = true }
 aes-gcm.workspace = true
 hkdf.workspace = true
 hmac.workspace = true

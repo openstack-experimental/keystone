@@ -109,5 +109,7 @@ tonic-prost-build.workspace = true
 default = []
 bench_internals = []
 mock = []
+# Use the FIPS 140-3 validated AWS-LC module for all storage cryptography.
+fips = ["openstack-keystone-storage-crypto/fips"]
 pkcs11 = ["dep:openstack-keystone-storage-crypto-pkcs11"]
 tpm = ["dep:openstack-keystone-storage-crypto-tpm"]

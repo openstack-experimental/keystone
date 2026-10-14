@@ -187,6 +187,18 @@ tags must be 16 bytes.
   `[nonce_12b][ciphertext][tag_16b][version_u32_BE]`. On read, the version is
   extracted from this suffix to determine the next increment value.
 
+- **DEK wrapping (KEK):** `EnvKek` derives the 12-byte wrap nonce as the
+  truncated `HMAC-SHA256(HKDF-Expand(KEK, "keystone-dek-wrap-nonce-v1"), DEK)`,
+  so no RNG is involved and the nonce is unique per distinct DEK.
+
+- **FIPS builds:** the `fips` cargo feature of `storage-crypto` (forwarded by
+  `storage`) routes AES-256-GCM, HKDF, HMAC and random generation through the
+  FIPS 140-3 validated AWS-LC module and `assert_fips()` fails start-up unless
+  that module is active. The HKDF-derived state and backup nonces above are
+  pseudorandom rather than the fixed-field/counter construction of SP 800-38D
+  §8.2.1; a strict audit may require replacing them (a storage format change,
+  tracked separately).
+
 ### 2.3 Associated Data (AD) Bindings
 
 To prevent ciphertext substitution and data tampering, we tightly bind the
@@ -1026,9 +1038,13 @@ Any code change violating the following is rejected at review:
    operator intervention. This prevents adversarial write flooding from
    exhausting the `u32` nonce space within a single DEK epoch.
 10. **Nonce source exclusivity:** Nonce sources for all AES-256-GCM contexts are
-    defined in §2.2. Random nonces are prohibited. Any new encrypted context
-    must define a deterministic, collision-resistant nonce strategy reviewed by
-    the security team.
+    defined in §2.2. Application-generated random nonces are prohibited. Any
+    new encrypted context must define a deterministic, collision-resistant
+    nonce strategy reviewed by the security team. The only random IV allowed is
+    one generated inside an HSM that mandates it (PKCS#11, §2.5.1), which draws
+    it from its approved DRBG. Deterministic IVs are compliant with NIST SP
+    800-38D §8.2.1 and therefore with FIPS 140-3; this invariant is stricter
+    than FIPS requires, not in conflict with it.
 11. **Deployment validation:** A pre-flight CI/CD check or Kubernetes admission
     webhook must reject any production service definition containing
     `--dev-mode` or `KEYSTONE_ALLOW_ENV_KEK`. This prevents silent flag

@@ -25,13 +25,10 @@
 //! Signing:
 //! `HMAC-SHA256(AuditHmacKey, canonical_message_bytes)`.
 
-use hmac::{Hmac, KeyInit, Mac};
-use sha2::Sha256;
 use zeroize::Zeroizing;
 
+use crate::backend::hmac_sha256;
 use crate::error::CryptoError;
-
-type HmacSha256 = Hmac<Sha256>;
 
 /// Per-node HMAC key for signing audit records.
 ///
@@ -46,13 +43,7 @@ impl AuditHmacKey {
 
     /// Compute `HMAC-SHA256(self, message)` and return the 32-byte MAC.
     pub fn sign(&self, message: &[u8]) -> Result<[u8; 32], CryptoError> {
-        let mut mac = HmacSha256::new_from_slice(self.0.as_ref())
-            .map_err(|_| CryptoError::InvalidKeyLength)?;
-        mac.update(message);
-        let result = mac.finalize().into_bytes();
-        let mut out = [0u8; 32];
-        out.copy_from_slice(&result);
-        Ok(out)
+        hmac_sha256(self.0.as_ref(), message)
     }
 }
 

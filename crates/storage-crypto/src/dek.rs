@@ -30,11 +30,9 @@
 //! Extract step adds no security and Extract is omitted as per ADR §2.1.
 
 use crate::audit::AuditHmacKey;
+use crate::backend::{fill_random, hkdf_expand};
 use crate::error::CryptoError;
 use crate::mlock::LockedKey;
-use hkdf::Hkdf;
-use rand::RngExt;
-use sha2::Sha256;
 
 const LOG_DEK_INFO: &[u8] = b"keystone-raft-log-v1";
 const STATE_DEK_INFO: &[u8] = b"keystone-fjall-state-v1";
@@ -124,11 +122,8 @@ impl DekEpoch {
         let mut info = AUDIT_DEK_INFO_PREFIX.to_vec();
         info.extend_from_slice(&self.version.to_be_bytes());
         info.extend_from_slice(&node_id.to_be_bytes());
-        let hkdf = Hkdf::<Sha256>::from_prk(self.root_dek.as_bytes().as_ref())
-            .map_err(|_| CryptoError::InvalidKeyLength)?;
         let mut out = [0u8; 32];
-        hkdf.expand(&info, &mut out)
-            .map_err(|_| CryptoError::InvalidKeyLength)?;
+        hkdf_expand(self.root_dek.as_bytes().as_ref(), &info, &mut out)?;
         Ok(AuditHmacKey::from_raw(out))
     }
 
@@ -138,24 +133,20 @@ impl DekEpoch {
     /// The backup sub-key is version-bound so different rotation epochs produce
     /// different backup encryption keys.
     pub fn from_raw(dek: LockedKey, version: u32) -> Result<Self, CryptoError> {
-        let hkdf = Hkdf::<Sha256>::from_prk(dek.as_bytes().as_ref())
-            .map_err(|_| CryptoError::InvalidKeyLength)?;
+        let prk = dek.as_bytes();
 
         // Derive sub-keys directly into mlock'd allocations (ADR §9): never
         // materialise the key in an unlocked buffer first.
         let mut log_locked = LockedKey::alloc().map_err(|_| CryptoError::InvalidKeyLength)?;
-        hkdf.expand(LOG_DEK_INFO, log_locked.as_mut())
-            .map_err(|_| CryptoError::InvalidKeyLength)?;
+        hkdf_expand(prk.as_ref(), LOG_DEK_INFO, log_locked.as_mut())?;
 
         let mut state_locked = LockedKey::alloc().map_err(|_| CryptoError::InvalidKeyLength)?;
-        hkdf.expand(STATE_DEK_INFO, state_locked.as_mut())
-            .map_err(|_| CryptoError::InvalidKeyLength)?;
+        hkdf_expand(prk.as_ref(), STATE_DEK_INFO, state_locked.as_mut())?;
 
         // BackupDek info is version-bound: prefix ++ version_u32_BE.
         // Derive into a LockedKey so backup key material is mlock'd (ADR §9).
         let mut backup_locked = LockedKey::alloc().map_err(|_| CryptoError::InvalidKeyLength)?;
-        hkdf.expand(&backup_info(version), backup_locked.as_mut())
-            .map_err(|_| CryptoError::InvalidKeyLength)?;
+        hkdf_expand(prk.as_ref(), &backup_info(version), backup_locked.as_mut())?;
 
         Ok(Self {
             version,
@@ -184,8 +175,9 @@ impl DekEpoch {
 #[allow(clippy::expect_used)]
 pub fn generate_dek() -> LockedKey {
     let mut dek = LockedKey::alloc().expect("OOM allocating DEK");
-    // rand::fill is CSPRNG-backed (OsRng on all supported platforms).
-    rand::rng().fill(dek.as_mut());
+    // CSPRNG-backed: OS RNG by default, the validated module's DRBG with the
+    // `fips` feature.
+    fill_random(dek.as_mut()).expect("RNG failure generating DEK");
     dek
 }
 

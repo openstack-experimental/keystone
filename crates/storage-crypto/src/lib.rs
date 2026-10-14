@@ -31,6 +31,10 @@
 //! * **Nonce management:** [`nonce::NonceManager`] maintains a durable,
 //!   crash-safe monotonic counter for log-entry nonces (ADR §2.2, F1).
 //!
+//! * **FIPS:** the `fips` cargo feature swaps the RustCrypto primitives for
+//!   the FIPS 140-3 validated AWS-LC module ([`backend`]); call
+//!   [`assert_fips`] at start-up to require it.
+//!
 //! ## Security properties enforced
 //!
 //! * All tags are 16 bytes (full GCM tag length). Truncated tags are prohibited
@@ -42,15 +46,16 @@
 #![deny(clippy::mem_forget)]
 
 pub mod audit;
+pub mod backend;
 pub mod cipher;
 pub mod dek;
 pub mod error;
-mod gcm;
 pub mod kek;
 pub mod mlock;
 pub mod nonce;
 
 pub use audit::AuditHmacKey;
+pub use backend::{FIPS_BUILD, assert_fips};
 pub use cipher::{
     backup_decrypt, backup_encrypt, log_decrypt, log_encrypt, state_decrypt, state_encrypt,
 };

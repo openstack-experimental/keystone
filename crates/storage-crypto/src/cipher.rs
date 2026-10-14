@@ -34,16 +34,11 @@
 //! All GCM tags are 16 bytes (full-length).  Truncated tags are prohibited
 //! (ADR §2.2).
 
-use aes_gcm::aead::AeadInOut;
-use aes_gcm::{Aes256Gcm, KeyInit};
-use hkdf::Hkdf;
-use hybrid_array::Array;
-use sha2::Sha256;
 use zeroize::Zeroizing;
 
+use crate::backend::{gcm_open, gcm_seal, hkdf_expand};
 use crate::dek::{BackupDek, LogDek, StateDek};
 use crate::error::CryptoError;
-use crate::gcm::{GcmKey, GcmNonce, GcmTag};
 
 // Label for snapshot backup AD (ADR §7).
 const BACKUP_AD_LABEL: &[u8] = b"keystone-backup-v1";
@@ -53,19 +48,10 @@ const STATE_MIN_LEN: usize = 32;
 // Minimum bytes in a stored log value: nonce(12) + tag(16) = 28
 const LOG_MIN_LEN: usize = 28;
 
-/// Convert a slice reference to a typed GCM nonce array reference.
-fn nonce_ref(s: &[u8]) -> Result<&GcmNonce, CryptoError> {
-    Array::slice_as_array(s).ok_or(CryptoError::InvalidArrayLength)
-}
-
-/// Convert a slice reference to a typed GCM tag array reference.
-fn tag_ref(s: &[u8]) -> Result<&GcmTag, CryptoError> {
-    Array::slice_as_array(s).ok_or(CryptoError::InvalidArrayLength)
-}
-
-/// Convert a 32-byte slice to a typed GCM key array reference.
-fn key_ref(s: &[u8]) -> Result<&GcmKey, CryptoError> {
-    Array::slice_as_array(s).ok_or(CryptoError::InvalidArrayLength)
+/// Convert a slice to a fixed-size array, mapping a length mismatch to
+/// [`CryptoError::InvalidArrayLength`].
+fn array_ref<const N: usize>(s: &[u8]) -> Result<[u8; N], CryptoError> {
+    s.try_into().map_err(|_| CryptoError::InvalidArrayLength)
 }
 
 // ---------------------------------------------------------------------------
@@ -90,14 +76,10 @@ pub fn log_encrypt(
     index: u64,
     nonce: &[u8; 12],
 ) -> Result<Vec<u8>, CryptoError> {
-    let cipher = Aes256Gcm::new(key_ref(dek.0.as_bytes())?);
     let aad = log_aad(term, index);
-    let gcm_nonce = nonce_ref(nonce)?;
 
     let mut buf = plaintext.to_vec();
-    let tag = cipher
-        .encrypt_inout_detached(gcm_nonce, &aad, buf.as_mut_slice().into())
-        .map_err(|_| CryptoError::AesEncrypt)?;
+    let tag = gcm_seal(dek.0.as_bytes(), nonce, &aad, &mut buf)?;
 
     let mut out = Vec::with_capacity(12 + plaintext.len() + 16);
     out.extend_from_slice(nonce);
@@ -122,15 +104,12 @@ pub fn log_decrypt(
     }
     let (nonce_bytes, rest) = stored.split_at(12);
     let (ciphertext, tag_bytes) = rest.split_at(rest.len() - 16);
-    let gcm_nonce = nonce_ref(nonce_bytes)?;
-    let tag = tag_ref(tag_bytes)?;
+    let gcm_nonce = array_ref::<12>(nonce_bytes)?;
+    let tag = array_ref::<16>(tag_bytes)?;
     let aad = log_aad(term, index);
-    let cipher = Aes256Gcm::new(key_ref(dek.0.as_bytes())?);
 
     let mut buf = Zeroizing::new(ciphertext.to_vec());
-    cipher
-        .decrypt_inout_detached(gcm_nonce, &aad, buf.as_mut_slice().into(), tag)
-        .map_err(|_| CryptoError::AesDecrypt)?;
+    gcm_open(dek.0.as_bytes(), &gcm_nonce, &aad, &mut buf, &tag)?;
     Ok(buf)
 }
 
@@ -156,13 +135,9 @@ pub fn state_encrypt(
 ) -> Result<Vec<u8>, CryptoError> {
     let nonce_array = state_nonce(dek, pk, version)?;
     let aad = state_aad(tier, domain_id, pk);
-    let cipher = Aes256Gcm::new(key_ref(dek.0.as_bytes())?);
-    let gcm_nonce = nonce_ref(&nonce_array)?;
 
     let mut buf = plaintext.to_vec();
-    let tag = cipher
-        .encrypt_inout_detached(gcm_nonce, &aad, buf.as_mut_slice().into())
-        .map_err(|_| CryptoError::AesEncrypt)?;
+    let tag = gcm_seal(dek.0.as_bytes(), &nonce_array, &aad, &mut buf)?;
 
     let mut out = Vec::with_capacity(12 + plaintext.len() + 16 + 4);
     out.extend_from_slice(&nonce_array);
@@ -207,15 +182,12 @@ pub fn state_decrypt(
         return Err(CryptoError::AesDecrypt);
     }
 
-    let gcm_nonce = nonce_ref(nonce_bytes)?;
-    let tag = tag_ref(tag_bytes)?;
+    let gcm_nonce = array_ref::<12>(nonce_bytes)?;
+    let tag = array_ref::<16>(tag_bytes)?;
     let aad = state_aad(tier, domain_id, pk);
-    let cipher = Aes256Gcm::new(key_ref(dek.0.as_bytes())?);
 
     let mut buf = Zeroizing::new(ciphertext.to_vec());
-    cipher
-        .decrypt_inout_detached(gcm_nonce, &aad, buf.as_mut_slice().into(), tag)
-        .map_err(|_| CryptoError::AesDecrypt)?;
+    gcm_open(dek.0.as_bytes(), &gcm_nonce, &aad, &mut buf, &tag)?;
 
     let next_version = stored_version.saturating_add(1);
     Ok((buf, next_version))
@@ -247,13 +219,9 @@ pub fn backup_encrypt(
 ) -> Result<Vec<u8>, CryptoError> {
     let nonce_bytes = backup_nonce(dek, utc_epoch, counter)?;
     let aad = backup_aad(dek_version, utc_epoch, counter);
-    let cipher = Aes256Gcm::new(key_ref(dek.as_bytes())?);
-    let gcm_nonce = nonce_ref(&nonce_bytes)?;
 
     let mut buf = plaintext.to_vec();
-    let tag = cipher
-        .encrypt_inout_detached(gcm_nonce, &aad, buf.as_mut_slice().into())
-        .map_err(|_| CryptoError::AesEncrypt)?;
+    let tag = gcm_seal(dek.as_bytes(), &nonce_bytes, &aad, &mut buf)?;
 
     let mut out = Vec::with_capacity(12 + plaintext.len() + 16);
     out.extend_from_slice(&nonce_bytes);
@@ -290,14 +258,11 @@ pub fn backup_decrypt(
 
     let (ciphertext, tag_bytes) = rest.split_at(rest.len() - 16);
     let aad = backup_aad(dek_version, utc_epoch, counter);
-    let cipher = Aes256Gcm::new(key_ref(dek.as_bytes())?);
-    let gcm_nonce = nonce_ref(nonce_bytes)?;
-    let tag = tag_ref(tag_bytes)?;
+    let gcm_nonce = array_ref::<12>(nonce_bytes)?;
+    let tag = array_ref::<16>(tag_bytes)?;
 
     let mut buf = Zeroizing::new(ciphertext.to_vec());
-    cipher
-        .decrypt_inout_detached(gcm_nonce, &aad, buf.as_mut_slice().into(), tag)
-        .map_err(|_| CryptoError::AesDecrypt)?;
+    gcm_open(dek.as_bytes(), &gcm_nonce, &aad, &mut buf, &tag)?;
     Ok(buf)
 }
 
@@ -316,16 +281,12 @@ fn log_aad(term: u64, index: u64) -> [u8; 16] {
 ///
 /// `info = pk ++ version_u32_be` as per ADR §2.2.
 fn state_nonce(dek: &StateDek, pk: &[u8], version: u32) -> Result<[u8; 12], CryptoError> {
-    let hkdf =
-        Hkdf::<Sha256>::from_prk(dek.0.as_bytes()).map_err(|_| CryptoError::InvalidKeyLength)?;
-
     let mut info = Vec::with_capacity(pk.len() + 4);
     info.extend_from_slice(pk);
     info.extend_from_slice(&version.to_be_bytes());
 
     let mut nonce = [0u8; 12];
-    hkdf.expand(&info, &mut nonce)
-        .map_err(|_| CryptoError::InvalidKeyLength)?;
+    hkdf_expand(dek.0.as_bytes(), &info, &mut nonce)?;
     Ok(nonce)
 }
 
@@ -353,15 +314,12 @@ fn backup_aad(dek_version: u32, utc_epoch: u64, counter: u64) -> Vec<u8> {
 /// The `counter` parameter ensures uniqueness even when multiple snapshots are
 /// taken within the same second under the same DEK epoch (H4 fix).
 fn backup_nonce(dek: &BackupDek, utc_epoch: u64, counter: u64) -> Result<[u8; 12], CryptoError> {
-    let hkdf =
-        Hkdf::<Sha256>::from_prk(dek.as_bytes()).map_err(|_| CryptoError::InvalidKeyLength)?;
     let mut info = Vec::with_capacity(BACKUP_AD_LABEL.len() + 8 + 8);
     info.extend_from_slice(BACKUP_AD_LABEL);
     info.extend_from_slice(&utc_epoch.to_be_bytes());
     info.extend_from_slice(&counter.to_be_bytes());
     let mut nonce = [0u8; 12];
-    hkdf.expand(&info, &mut nonce)
-        .map_err(|_| CryptoError::InvalidKeyLength)?;
+    hkdf_expand(dek.as_bytes(), &info, &mut nonce)?;
     Ok(nonce)
 }
 
