@@ -9,6 +9,9 @@ data:
   SOAK_HOST: "http://keystone-rs:8080"
   SOAK_METRICS_SERVICE: "keystone-rs-internal"
   SOAK_METRICS_PORT: "8099"
+  # Must match the keystone-rs StatefulSet replicas. The soak test targets a
+  # production-sized cluster: deploy keystone with `-p soak` (3 voters, see
+  # overlays/skaffold-soak). A 2-voter dev cluster needs this set to "2".
   SOAK_EXPECTED_VOTERS: "3"
   SOAK_PHASES: "steady:5m,burst:1m,idle:5m"
   SOAK_STEADY_USERS: "20"
@@ -20,9 +23,9 @@ data:
   OS_AUTH_URL: "http://keystone-rs:8080/v3"
   OS_USERNAME: "admin"
   OS_PASSWORD: "password"
-  OS_USER_DOMAIN_NAME: "default"
+  OS_USER_DOMAIN_ID: "default"
   OS_PROJECT_NAME: "admin"
-  OS_PROJECT_DOMAIN_NAME: "default"
+  OS_PROJECT_DOMAIN_ID: "default"
 ---
 apiVersion: apps/v1
 kind: Deployment

@@ -16,12 +16,16 @@
 //! Phases cycle for the whole run so the profile includes bursts and idle
 //! time, during which compaction and purging can run.
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use tokio::process::Command;
 use tokio::time::Instant;
 use tracing::{info, warn};
+
+use crate::report::{LoadSummary, MAX_PHASES, PhaseRecord};
+use crate::server::Shared;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -67,13 +71,43 @@ pub struct LoadConfig {
     pub steady_users: usize,
     pub burst_users: usize,
     pub phases: Vec<Phase>,
+    /// Start of the soak run, for the phase timestamps.
+    pub start: Instant,
+    /// Where the phase records go (read by `/report` and the error-rate check).
+    pub state: Shared,
+}
+
+fn record(cfg: &LoadConfig, phase: PhaseRecord) {
+    if let Ok(mut g) = cfg.state.write() {
+        if let Some(s) = &phase.summary {
+            g.load_totals.add(s);
+        }
+        g.phases.push(phase);
+        let extra = g.phases.len().saturating_sub(MAX_PHASES);
+        g.phases.drain(..extra);
+    }
+}
+
+/// Read and remove the summary `load_test` wrote for a finished phase.
+async fn read_summary(path: &PathBuf) -> Option<LoadSummary> {
+    let raw = tokio::fs::read(path).await;
+    let _ = tokio::fs::remove_file(path).await;
+    match raw {
+        Ok(raw) => serde_json::from_slice(&raw)
+            .map_err(|e| warn!(error = %e, "cannot parse the load summary"))
+            .ok(),
+        Err(e) => {
+            warn!(error = %e, "load generator left no summary");
+            None
+        }
+    }
 }
 
 /// Run phases in a loop until `deadline` (forever when `None`). Returns an
 /// error as soon as the load generator fails to run, which the caller treats
 /// as a violation.
 pub async fn run(cfg: LoadConfig, deadline: Option<Instant>) -> Result<()> {
-    for phase in cfg.phases.iter().cycle() {
+    for (seq, phase) in (1u64..).zip(cfg.phases.iter().cycle()) {
         let mut length = phase.length;
         if let Some(d) = deadline {
             let left = d.saturating_duration_since(Instant::now());
@@ -82,17 +116,32 @@ pub async fn run(cfg: LoadConfig, deadline: Option<Instant>) -> Result<()> {
             }
             length = length.min(left);
         }
+        let start_secs = cfg.start.elapsed().as_secs();
         let users = match phase.kind {
             Kind::Steady => cfg.steady_users,
             Kind::Burst => cfg.burst_users,
             Kind::Idle => {
                 info!(?length, "load phase: idle");
                 tokio::time::sleep(length).await;
+                record(
+                    &cfg,
+                    PhaseRecord {
+                        seq,
+                        kind: format!("{:?}", phase.kind).to_lowercase(),
+                        users: 0,
+                        start_secs,
+                        length_secs: length.as_secs(),
+                        summary: None,
+                    },
+                );
                 continue;
             }
         };
         info!(kind = ?phase.kind, users, ?length, "load phase");
+        let summary_path = std::env::temp_dir().join(format!("soak-load-{seq}.json"));
+        let _ = tokio::fs::remove_file(&summary_path).await;
         let status = Command::new(&cfg.command)
+            .env("LOADTEST_SUMMARY_FILE", &summary_path)
             .arg("--host")
             .arg(&cfg.host)
             .arg("--users")
@@ -111,6 +160,28 @@ pub async fn run(cfg: LoadConfig, deadline: Option<Instant>) -> Result<()> {
             warn!(%status, "load generator failed");
             bail!("load generator exited with {status}");
         }
+        let summary = read_summary(&summary_path).await;
+        if let Some(s) = &summary {
+            info!(
+                seq,
+                requests = s.requests,
+                failed = s.failed,
+                throttled = s.throttled,
+                p95_ms = s.latency_ms.p95,
+                "load phase finished"
+            );
+        }
+        record(
+            &cfg,
+            PhaseRecord {
+                seq,
+                kind: format!("{:?}", phase.kind).to_lowercase(),
+                users,
+                start_secs,
+                length_secs: length.as_secs(),
+                summary,
+            },
+        );
     }
     Ok(())
 }

@@ -1,0 +1,16 @@
+# The skaffold overlay with a production-sized Raft cluster (3 voters), for
+# the soak test (tests/soak). Selected by the `soak` profile of the
+# `keystone` skaffold module:
+#
+#   skaffold build -m keystone -p local,soak --default-repo localhost:5000 --file-output b.json
+#   skaffold deploy -m keystone -p local,soak -a b.json
+#
+# The module's post-deploy hooks loop over the StatefulSet replicas, so the
+# third node is joined and promoted like the others. Keep the replica count
+# in sync with SOAK_EXPECTED_VOTERS in ../soak/soak.yaml.
+resources:
+  - ../skaffold
+
+replicas:
+  - name: keystone-rs
+    count: 3

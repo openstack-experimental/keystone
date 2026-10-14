@@ -21,26 +21,46 @@
 mod invariants;
 mod load;
 mod prom;
+mod report;
 mod server;
 
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use tokio::task::JoinSet;
 use tokio::time::{Instant, MissedTickBehavior};
 use tracing::{error, info, warn};
 
 use crate::invariants::{Evaluator, NodeObservation, Thresholds, Violation};
+use crate::report::Sample;
 use crate::server::{Shared, Verdict};
 
 /// Maximum number of violations kept in the verdict.
 const MAX_VIOLATIONS: usize = 100;
 
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Print the report of a running controller and exit with 0 when it is
+    /// healthy, 1 when unhealthy, 2 when it cannot be reached. Meant for
+    /// `kubectl exec deploy/keystone-soak -- soak report`.
+    Report {
+        /// Controller address.
+        #[arg(long, env = "SOAK_REPORT_URL", default_value = "http://127.0.0.1:9100")]
+        url: String,
+        /// Print the complete state as JSON instead of Markdown.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 #[derive(Parser, Debug)]
 #[command(version, about)]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Command>,
+
     /// Total run length, e.g. `30m`, `24h`, `7d`. `0` runs until stopped.
     #[arg(long, env = "SOAK_DURATION", default_value = "1h", value_parser = humantime::parse_duration)]
     duration: Duration,
@@ -118,6 +138,59 @@ struct Args {
     /// Allowed max/min disk usage ratio between nodes.
     #[arg(long, env = "SOAK_MAX_DISK_SPREAD", default_value_t = 2.0)]
     max_disk_spread: f64,
+    /// Disk spread is only judged when every node holds at least this many
+    /// bytes (journal preallocation makes small stores differ a lot).
+    #[arg(
+        long,
+        env = "SOAK_MIN_DISK_FOR_SPREAD",
+        default_value_t = 1_073_741_824.0
+    )]
+    min_disk_for_spread: f64,
+    /// Allowed share of failed requests per load phase (0.01 = 1 %). Expected
+    /// negative responses and throttling (429) are not failures.
+    #[arg(long, env = "SOAK_MAX_LOAD_ERROR_RATE", default_value_t = 0.01)]
+    max_load_error_rate: f64,
+    /// Load phases with fewer requests are too small to judge.
+    #[arg(long, env = "SOAK_MIN_LOAD_REQUESTS", default_value_t = 100)]
+    min_load_requests: u64,
+}
+
+/// Write to stdout without `println!` (denied by the lints).
+fn out(text: &str) {
+    use std::io::Write as _;
+    let mut stdout = std::io::stdout().lock();
+    let _ = stdout.write_all(text.as_bytes());
+    let _ = stdout.flush();
+}
+
+/// `soak report`: fetch the report from the local controller.
+async fn print_report(url: &str, json: bool) -> i32 {
+    let format = if json { "json" } else { "md" };
+    let resp = match reqwest::get(format!(
+        "{}/report?format={format}",
+        url.trim_end_matches('/')
+    ))
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            error!(error = %e, "cannot reach the soak controller");
+            return 2;
+        }
+    };
+    let status = resp.status();
+    match resp.text().await {
+        Ok(body) => out(&body),
+        Err(e) => {
+            error!(error = %e, "cannot read the report");
+            return 2;
+        }
+    }
+    match status.as_u16() {
+        200 => 0,
+        503 => 1,
+        _ => 2,
+    }
 }
 
 async fn discover(args: &Args) -> Vec<String> {
@@ -180,6 +253,45 @@ async fn observe_all(client: &reqwest::Client, addrs: Vec<String>) -> Vec<NodeOb
     out
 }
 
+/// Judge the error rate of load phases that finished since the last call.
+fn check_load(state: &Shared, checked: &mut u64, now: Duration, args: &Args) -> Vec<Violation> {
+    let Ok(g) = state.read() else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    let already = *checked;
+    for p in g.phases.iter().filter(|p| p.seq > already) {
+        *checked = p.seq;
+        let Some(s) = &p.summary else { continue };
+        if s.requests < args.min_load_requests {
+            continue;
+        }
+        let rate = s.failed as f64 / s.requests as f64;
+        if rate > args.max_load_error_rate {
+            let worst = s
+                .failing_endpoints
+                .first()
+                .map(|e| format!("; worst: {} ({} failed)", e.name, e.failed))
+                .unwrap_or_default();
+            found.push(Violation {
+                at_secs: now.as_secs(),
+                check: "load_errors",
+                detail: format!(
+                    "{} phase {}: {} of {} requests failed ({:.2} %, limit {:.2} %), {} transport errors{worst}",
+                    p.kind,
+                    p.seq,
+                    s.failed,
+                    s.requests,
+                    rate * 100.0,
+                    args.max_load_error_rate * 100.0,
+                    s.transport_errors,
+                ),
+            });
+        }
+    }
+    found
+}
+
 async fn terminate() {
     #[cfg(unix)]
     {
@@ -200,6 +312,9 @@ async fn main() -> Result<()> {
         )
         .init();
     let args = Args::parse();
+    if let Some(Command::Report { url, json }) = &args.command {
+        std::process::exit(print_report(url, *json).await);
+    }
     if args.interval.is_zero() {
         bail!("SOAK_INTERVAL must be > 0");
     }
@@ -207,6 +322,13 @@ async fn main() -> Result<()> {
     let start = Instant::now();
     let deadline = (!args.duration.is_zero()).then(|| start + args.duration);
     info!(duration = ?args.duration, interval = ?args.interval, "soak test starting");
+    if args.expected_voters < 3 {
+        warn!(
+            voters = args.expected_voters,
+            "fewer than 3 voters is not a production-like cluster, \
+             deploy keystone with the `soak` skaffold profile"
+        );
+    }
 
     let state: Shared = Arc::new(RwLock::new(Verdict {
         healthy: true,
@@ -231,6 +353,8 @@ async fn main() -> Result<()> {
             steady_users: args.steady_users,
             burst_users: args.burst_users,
             phases: load::parse_phases(&args.phases)?,
+            start,
+            state: state.clone(),
         };
         Some(tokio::spawn(load::run(cfg, deadline)))
     };
@@ -249,12 +373,15 @@ async fn main() -> Result<()> {
         growth_window: args.growth_window,
         max_log_growth_ratio: args.max_log_growth,
         max_disk_spread_ratio: args.max_disk_spread,
+        min_disk_for_spread: args.min_disk_for_spread,
     });
 
     let mut ticker = tokio::time::interval(args.interval);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut stop = Box::pin(terminate());
     let mut failed = false;
+    // Highest load phase number already judged for its error rate.
+    let mut checked_phase = 0u64;
 
     loop {
         let mut load_failure: Option<String> = None;
@@ -294,6 +421,7 @@ async fn main() -> Result<()> {
                 detail,
             });
         }
+        found.extend(check_load(&state, &mut checked_phase, now, &args));
         for v in &found {
             error!(check = v.check, detail = %v.detail, "invariant violated");
         }
@@ -305,6 +433,12 @@ async fn main() -> Result<()> {
             g.elapsed_secs = now.as_secs();
             g.cycles += 1;
             g.violations_total += found.len() as u64;
+            g.growth.record(Sample {
+                at_secs: now.as_secs(),
+                disk_bytes: summary.disk_bytes_total,
+                log_bytes: summary.log_disk_bytes_total,
+                snapshot_bytes: summary.snapshot_bytes_total,
+            });
             g.summary = summary;
             let room = MAX_VIOLATIONS.saturating_sub(g.violations.len());
             g.violations.extend(found.into_iter().take(room));
@@ -320,6 +454,11 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Leave the final report in the pod log, it survives a restart.
+    if let Ok(g) = state.read() {
+        out(&format!("\n{}\n", report::render_markdown(&g)));
+    }
+
     if !args.linger.is_zero() {
         info!(linger = ?args.linger, "serving final verdict");
         tokio::time::sleep(args.linger).await;
@@ -329,4 +468,51 @@ async fn main() -> Result<()> {
     }
     info!("soak test passed");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::report::{LoadSummary, PhaseRecord};
+
+    fn state_with(requests: u64, failed: u64) -> Shared {
+        let mut v = Verdict::default();
+        v.phases.push(PhaseRecord {
+            seq: 1,
+            kind: "steady".into(),
+            users: 20,
+            start_secs: 0,
+            length_secs: 300,
+            summary: Some(LoadSummary {
+                requests,
+                failed,
+                ..LoadSummary::default()
+            }),
+        });
+        Arc::new(RwLock::new(v))
+    }
+
+    fn args() -> Args {
+        Args::parse_from(["soak"])
+    }
+
+    #[test]
+    fn flags_phase_over_error_rate_once() {
+        let st = state_with(1000, 50);
+        let mut checked = 0;
+        let found = check_load(&st, &mut checked, Duration::from_secs(1), &args());
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].check, "load_errors");
+        assert!(check_load(&st, &mut checked, Duration::from_secs(2), &args()).is_empty());
+    }
+
+    #[test]
+    fn tolerates_low_rate_and_tiny_phases() {
+        let mut checked = 0;
+        let ok = state_with(1000, 5);
+        assert!(check_load(&ok, &mut checked, Duration::ZERO, &args()).is_empty());
+        let tiny = state_with(10, 10);
+        let mut checked = 0;
+        assert!(check_load(&tiny, &mut checked, Duration::ZERO, &args()).is_empty());
+    }
 }

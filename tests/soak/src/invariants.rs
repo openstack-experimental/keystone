@@ -54,6 +54,8 @@ pub struct Thresholds {
     pub max_log_growth_ratio: f64,
     /// Allowed `max/min` of `disk_space_bytes` across nodes.
     pub max_disk_spread_ratio: f64,
+    /// The spread is only judged once every node holds at least this much.
+    pub min_disk_for_spread: f64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -255,11 +257,13 @@ impl Evaluator {
         }
 
         // A node holding much more data than its peers hints at failed
-        // compaction or divergence. Ignore tiny stores (< 1 MiB).
+        // compaction or divergence. Small stores are ignored: the journal is
+        // preallocated in 64 MiB files and rotated, so `disk_space_bytes` of
+        // healthy nodes differs by tens of MiB at any time.
         if let (Some(max), Some(min)) = (
             disks.iter().copied().reduce(f64::max),
             disks.iter().copied().reduce(f64::min),
-        ) && min >= 1_048_576.0
+        ) && min >= self.th.min_disk_for_spread
         {
             s.disk_spread_ratio = max / min;
         }
@@ -346,6 +350,7 @@ mod tests {
             growth_window: Duration::from_secs(1000),
             max_log_growth_ratio: 0.5,
             max_disk_spread_ratio: 2.0,
+            min_disk_for_spread: 1_048_576.0,
         }
     }
 

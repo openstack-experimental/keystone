@@ -11,12 +11,26 @@ The `soak` controller
 2. every `SOAK_INTERVAL` scrapes `/metrics` and `/ready` of every Raft pod
    (found through the headless `keystone-rs-internal` service),
 3. evaluates the invariants below and publishes the outcome as Prometheus
-   metrics (`:9100/metrics`, `soak_*`) and JSON (`:9100/verdict`, HTTP 503
-   once unhealthy),
+   metrics (`:9100/metrics`, `soak_*`), JSON (`:9100/verdict`, HTTP 503
+   once unhealthy) and an on-demand report (`:9100/report`),
 4. exits `0` when `SOAK_DURATION` elapsed without a violation and non-zero on
    the first one (`SOAK_FAIL_FAST=false` records violations and keeps going).
 
 ## Run
+
+The soak test targets a production-sized cluster of at least 3 voters. With
+skaffold (module `soak` in `skaffold.yaml`), deploy keystone with the `soak`
+profile (overlay `skaffold-soak`: 3 `keystone-rs` replicas) first:
+
+```sh
+skaffold build -m keystone -p local,soak --default-repo localhost:5000 --file-output keystone-build.json
+skaffold deploy -m keystone -p local,soak -a keystone-build.json
+skaffold build -m soak -p local --default-repo localhost:5000 --file-output soak-build.json
+skaffold deploy -m soak -p local -a soak-build.json
+skaffold delete -m soak
+```
+
+Manually:
 
 ```sh
 docker build -f tests/soak/Dockerfile -t keystone-soak .   # import into k3s
@@ -25,8 +39,28 @@ kubectl logs -f deploy/keystone-soak
 kubectl port-forward svc/keystone-soak 9100 && curl localhost:9100/verdict
 ```
 
-For graphs deploy the observability stack (`skaffold run -m observability`);
+For graphs deploy the observability stack (`skaffold deploy -m observability`);
 its Prometheus scrapes both the Raft pods and the `keystone-soak` service.
+
+## Report on demand
+
+For a headless system there is nothing to open in a browser or to port-forward:
+
+```sh
+kubectl exec deploy/keystone-soak -- soak report          # Markdown
+kubectl exec deploy/keystone-soak -- soak report --json   # complete state
+```
+
+The command exits `0` when healthy, `1` when an invariant was violated and `2`
+when the controller cannot be reached, so it can be used from CI or cron. The
+same content is served at `GET :9100/report[?format=json]` and is written to
+the pod log when the run ends (`kubectl logs deploy/keystone-soak`).
+
+The report contains the verdict and violations, the current cluster state,
+the storage series (disk, Raft log, snapshots) with first/min/max/last, the
+load totals, a table of the latest load phases (requests, failures, 429s,
+latency percentiles) and the endpoints that failed most. Phase records are
+capped at 1000 (the totals cover the whole run).
 
 Length and thresholds are environment variables (see the ConfigMap in
 `tools/k8s/keystone/overlays/soak/soak.yaml` and `soak --help`), e.g.
@@ -44,10 +78,16 @@ restarts are tolerated.
 - `last_applied_index` spread, apply lag and replication lag below limits
 - no quarantined partitions; `gcm_failures_total` does not grow
 - disk usage does not differ by more than `SOAK_MAX_DISK_SPREAD` between nodes
+  (judged once every node holds `SOAK_MIN_DISK_FOR_SPREAD`, 1 GiB; journal
+  preallocation makes small stores differ by tens of MiB)
 - the Raft log plateaus: after `SOAK_WARMUP` its total size may not grow more
   than `SOAK_MAX_LOG_GROWTH` between the first and last quarter of
   `SOAK_GROWTH_WINDOW`
-- the load generator keeps running
+- the load generator keeps running, and at most `SOAK_MAX_LOAD_ERROR_RATE`
+  (1 %) of the requests of a load phase fail. Phases with fewer than
+  `SOAK_MIN_LOAD_REQUESTS` requests are not judged. Expected negative
+  responses (wrong password, ...) and throttling (`429`, reported separately)
+  are not failures
 
 `soak_disk_bytes_total`, `soak_log_disk_bytes_total` and
 `soak_snapshot_bytes_total` are exported for judging long-term growth in
@@ -55,5 +95,13 @@ Prometheus.
 
 ## Not implemented yet
 
-Chaos (pod deletion), read-after-write and integrity canaries, a load error
-rate threshold and bytes-per-record tracking are planned follow-ups.
+Chaos (pod deletion), read-after-write and integrity canaries and
+bytes-per-record tracking are planned follow-ups.
+
+## Load generator contract
+
+The controller runs `load_test` once per steady/burst phase with
+`LOADTEST_SUMMARY_FILE=<path>`; on exit `load_test` writes the totals of the
+run there as JSON (`tests/loadtest/src/summary.rs`). Sync traffic honors
+`Retry-After` on `429` instead of retrying immediately, and a concurrent-update
+`409` on the shared SCIM realm counts as expected contention.

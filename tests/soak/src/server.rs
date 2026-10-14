@@ -12,15 +12,23 @@
 //
 
 //! HTTP endpoints of the controller: `/metrics` for Prometheus, `/verdict`
-//! (JSON) and `/healthz`.
+//! (JSON), `/report` (Markdown or JSON) and `/healthz`.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::{Arc, RwLock};
 
-use axum::{Json, Router, extract::State, http::StatusCode, response::IntoResponse, routing::get};
+use axum::{
+    Json, Router,
+    extract::{Query, State},
+    http::{StatusCode, header},
+    response::{IntoResponse, Response},
+    routing::get,
+};
 use serde::Serialize;
 
 use crate::invariants::{Summary, Violation};
+use crate::report::{self, Growth, LoadTotals, PhaseRecord};
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Verdict {
@@ -32,6 +40,10 @@ pub struct Verdict {
     pub summary: Summary,
     /// The first 100 violations, oldest first.
     pub violations: Vec<Violation>,
+    pub growth: Growth,
+    pub load_totals: LoadTotals,
+    /// Executed load phases, oldest first (capped, see `report::MAX_PHASES`).
+    pub phases: Vec<PhaseRecord>,
 }
 
 pub type Shared = Arc<RwLock<Verdict>>;
@@ -40,18 +52,44 @@ pub fn router(state: Shared) -> Router {
     Router::new()
         .route("/metrics", get(metrics))
         .route("/verdict", get(verdict))
+        .route("/report", get(report))
         .route("/healthz", get(|| async { "ok" }))
         .with_state(state)
 }
 
 async fn verdict(State(s): State<Shared>) -> impl IntoResponse {
-    let v = s.read().map(|g| g.clone()).unwrap_or_default();
+    let mut v = s.read().map(|g| g.clone()).unwrap_or_default();
+    // Series and per-phase records belong to `/report`.
+    v.phases.clear();
+    v.growth.points.clear();
     let code = if v.healthy {
         StatusCode::OK
     } else {
         StatusCode::SERVICE_UNAVAILABLE
     };
     (code, Json(v))
+}
+
+/// Full report: Markdown by default, the whole state as JSON with
+/// `?format=json`. Answers 503 once unhealthy, so `curl -f` and `soak report`
+/// can use the status as a pass/fail result.
+async fn report(State(s): State<Shared>, Query(q): Query<HashMap<String, String>>) -> Response {
+    let v = s.read().map(|g| g.clone()).unwrap_or_default();
+    let code = if v.healthy {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    if q.get("format").is_some_and(|f| f == "json") {
+        (code, Json(v)).into_response()
+    } else {
+        (
+            code,
+            [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
+            report::render_markdown(&v),
+        )
+            .into_response()
+    }
 }
 
 async fn metrics(State(s): State<Shared>) -> String {
@@ -152,6 +190,27 @@ pub fn render(v: &Verdict) -> String {
         "soak_disk_spread_ratio",
         "max/min disk_space_bytes across nodes",
         sm.disk_spread_ratio,
+    );
+    let t = &v.load_totals;
+    g(
+        "soak_load_phases_total",
+        "Completed load phases",
+        t.phases as f64,
+    );
+    g(
+        "soak_load_requests_total",
+        "Requests sent by the load generator",
+        t.requests as f64,
+    );
+    g(
+        "soak_load_failed_total",
+        "Failed requests (excluding expected negatives and throttling)",
+        t.failed as f64,
+    );
+    g(
+        "soak_load_throttled_total",
+        "Requests answered with 429",
+        t.throttled as f64,
     );
     out
 }
