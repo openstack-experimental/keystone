@@ -115,6 +115,35 @@ pub async fn provision_api_key(user: &mut GooseUser) -> TransactionResult {
     Ok(())
 }
 
+/// Send a sync request, treating `429 Too Many Requests` as expected
+/// server-side throttling rather than a failure: a real SCIM connector honors
+/// `Retry-After` and backs off, whereas a virtual user that retries
+/// immediately turns the rate limiter into a request flood (tens of thousands
+/// of 429s per minute) that drowns out real errors. The 429s stay visible in
+/// goose's status code table and the soak summary (`throttled`).
+async fn send_tolerating_throttle(
+    user: &mut GooseUser,
+    request: GooseRequest<'_>,
+) -> TransactionResult {
+    let mut goose = user.request(request).await?;
+    let wait = match &goose.response {
+        Ok(r) if r.status() == 429 => Some(
+            r.headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(1)
+                .clamp(1, 30),
+        ),
+        _ => None,
+    };
+    if let Some(secs) = wait {
+        user.set_success(&mut goose.request)?;
+        tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+    }
+    Ok(())
+}
+
 fn bearer_header(user: &GooseUser) -> Option<String> {
     user.get_session_data::<ScimSession>()
         .and_then(|s| s.bearer.clone())
@@ -198,8 +227,7 @@ pub async fn sync_list(user: &mut GooseUser) -> TransactionResult {
         .set_request_builder(req)
         .build();
 
-    user.request(goose_request).await?;
-    Ok(())
+    send_tolerating_throttle(user, goose_request).await
 }
 
 /// `GET /SCIM/v2/{domain_id}/Users/{id}` -- per-record reconciliation read.
@@ -224,8 +252,7 @@ pub async fn sync_show(user: &mut GooseUser) -> TransactionResult {
         .set_request_builder(req)
         .build();
 
-    user.request(goose_request).await?;
-    Ok(())
+    send_tolerating_throttle(user, goose_request).await
 }
 
 /// `PATCH /SCIM/v2/{domain_id}/Users/{id}` -- an IdP-side attribute change
@@ -261,8 +288,7 @@ pub async fn sync_patch(user: &mut GooseUser) -> TransactionResult {
         .set_request_builder(req)
         .build();
 
-    user.request(goose_request).await?;
-    Ok(())
+    send_tolerating_throttle(user, goose_request).await
 }
 
 /// `DELETE /SCIM/v2/{domain_id}/Users/{id}` -- offboarding, the terminal
@@ -288,7 +314,7 @@ pub async fn sync_delete(user: &mut GooseUser) -> TransactionResult {
         .set_request_builder(req)
         .build();
 
-    user.request(goose_request).await?;
+    send_tolerating_throttle(user, goose_request).await?;
 
     let session = user.get_session_data_unchecked_mut::<ScimSession>();
     session.user_id = None;

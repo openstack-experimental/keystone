@@ -22,6 +22,7 @@ use std::env;
 use std::time::Duration;
 
 mod seed;
+mod summary;
 mod v3;
 mod v4;
 
@@ -344,7 +345,19 @@ async fn main() -> Result<(), GooseError> {
                 .register_transaction(transaction!(scim_sync_delete).set_on_stop()),
         );
 
-    attack.execute().await?;
+    let metrics = attack.execute().await?;
+
+    // Hand the run totals to the soak controller (see `summary`).
+    if let Ok(path) = env::var("LOADTEST_SUMMARY_FILE") {
+        match serde_json::to_vec_pretty(&summary::summarize(&metrics)) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(&path, json) {
+                    eprintln!("cannot write summary to {path}: {e}");
+                }
+            }
+            Err(e) => eprintln!("cannot serialize summary: {e}"),
+        }
+    }
 
     seed::cleanup(&host, &admin_token, &seed_state).await;
 

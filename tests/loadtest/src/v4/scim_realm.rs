@@ -98,6 +98,11 @@ pub async fn update(user: &mut GooseUser) -> TransactionResult {
         .set_request_builder(req)
         .build();
 
-    user.request(goose_request).await?;
+    // All virtual users rewrite the same realm, so a concurrent-update
+    // conflict is expected contention, not a failure.
+    let mut goose = user.request(goose_request).await?;
+    if matches!(&goose.response, Ok(r) if r.status() == 409) {
+        return user.set_success(&mut goose.request);
+    }
     Ok(())
 }
