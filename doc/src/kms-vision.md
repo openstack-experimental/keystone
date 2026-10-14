@@ -902,22 +902,28 @@ Three properties that matter:
 
 ### 6.5 Algorithms
 
-| Purpose           | Default                                | Also offered                                            |
-| ----------------- | -------------------------------------- | ------------------------------------------------------- |
-| Symmetric AEAD    | AES-256-GCM                            | ChaCha20-Poly1305, AES-256-GCM-SIV                      |
-| Key wrapping      | AES-256-GCM (KWP for KMIP/HSM interop) | RSA-OAEP-SHA256, ECDH-ES+A256KW                         |
-| Signing           | ECDSA P-256 / P-384                    | Ed25519, RSA-PSS 2048/3072/4096                         |
-| MAC               | HMAC-SHA-256                           | HMAC-SHA-384/512, KMAC                                  |
-| KDF               | HKDF-SHA-256                           | —                                                       |
-| Post-quantum wrap | — (reserved)                           | ML-KEM-768 hybrid, when the custody backends support it |
-| Post-quantum sign | — (reserved)                           | ML-DSA-65                                               |
+| Purpose           | Default                                | Also offered                                            | In FIPS mode (§20.1)                                                     |
+| ----------------- | -------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Symmetric AEAD    | AES-256-GCM                            | ChaCha20-Poly1305, AES-256-GCM-SIV                      | AES-256-GCM only                                                         |
+| Key wrapping      | AES-256-GCM (KWP for KMIP/HSM interop) | RSA-OAEP-SHA256, ECDH-ES+A256KW                         | All                                                                      |
+| Signing           | ECDSA P-256 / P-384                    | Ed25519, RSA-PSS 2048/3072/4096                         | All; Ed25519 only where the module's certificate covers FIPS 186-5 EdDSA |
+| MAC               | HMAC-SHA-256                           | HMAC-SHA-384/512, KMAC                                  | All                                                                      |
+| KDF               | HKDF-SHA-256                           | —                                                       | Each use mapped to SP 800-56C or SP 800-108                              |
+| Post-quantum wrap | — (reserved)                           | ML-KEM-768 hybrid, when the custody backends support it | ML-KEM (FIPS 203) once the module's certificate covers it                |
+| Post-quantum sign | — (reserved)                           | ML-DSA-65                                               | ML-DSA (FIPS 204) once the module's certificate covers it                |
 
 The KMS never invents cryptography. Symmetric and AEAD primitives come from
-vetted crates (`aws-lc-rs` or `ring`, with a FIPS-validated module where the
-deployment needs it), and asymmetric operations run in `kms-crypto` in the same
-way, except for mode-A keys, which OpenBao's transit engine executes, and
-`hsm-resident` keys, which the HSM does. Which of those three performs a given
-operation is a property recorded per key, not a code path the tenant can select.
+`aws-lc-rs`, built against AWS-LC's FIPS-validated module where the deployment
+needs it, and asymmetric operations run in `kms-crypto` in the same way, except
+for mode-A keys, which OpenBao's transit engine executes, and `hsm-resident`
+keys, which the HSM does. Which of those three performs a given operation is a
+property recorded per key, not a code path the tenant can select. `ring` is
+deliberately not on the list: it has no validated module, and key material it
+generated can never be counted as approved (§20.1). A deployment that started on
+it could reach approved mode only by rotating every key it had ever created,
+with its tenants' older ciphertext left under unapproved versions until each
+tenant rewrapped it — a cost better avoided on the first day than paid on the
+last.
 
 ---
 
@@ -2141,7 +2147,7 @@ flight.
 Engineering rules carried over unchanged: no `unwrap`/`expect`/`println!`/
 `unsafe`; `thiserror` error types; async on tokio; Apache-2.0 headers; CRUD
 naming on backend traits; at least three tests per CRUD handler (valid auth plus
-positive and negative policy, invalid auth). Two additions specific to this
+positive and negative policy, invalid auth). Additions specific to this
 project:
 
 - **Every cryptographic format has a test vector file** committed to the
@@ -2149,6 +2155,12 @@ project:
   version. Wire-format compatibility for ciphertext is forever.
 - **The crypto tier is fuzzed and the KMIP codec is fuzzed**, in CI, with a
   corpus that grows from every parsing bug found.
+- **One door for cryptography.** Every cryptographic primitive the KMS's own
+  crates use — cipher, KDF, signature, random-number generator — is called
+  through `kms-crypto`'s algorithm registry, and a direct call anywhere else is
+  a review failure. That is what makes approved mode (§20.1) a property of one
+  crate's build rather than of the whole workspace. The shared storage crate is
+  the one exception, and it is ported on its own terms (§20.1).
 - **The custody seam is proven by a second implementation, in CI.** The
   `KeyCustody` contract suite runs against `kms-bao` and against `kms-pkcs11` on
   SoftHSM (§10.2), from the phase that introduces the trait onward. A seam with
@@ -2237,6 +2249,9 @@ and audit stack, and the client side is already written by someone else.
   `min_decryption_version`, and crypto-shredding by PCK rotation (§8.5). Paired
   backups (§11.5) land with the first PCK rotation, not after it.
 - Grants, with the `billing` attribute of §15.4 decided at grant creation.
+- All cryptography behind `kms-crypto`'s algorithm registry on `aws-lc-rs`
+  (§17), with module-generated GCM IVs from the first wrap, so that approved
+  mode is a build switch in Phase 6 rather than a search for call sites.
 - The `KeyCustody`/`CryptoEngine` split of §17, with the contract suite running
   against both `kms-bao` and SoftHSM in CI. The seam is introduced here, with
   the arrival of the crypto tier as its second consumer, rather than retrofitted
@@ -2283,7 +2298,9 @@ region, and it can slip without blocking Phases 4 and 5.
 - PKCS#11 seal, `hsm-sealed` and `hsm-resident` protection levels.
 - Offload mode D, per-key HSM budgets.
 - `regulated` placement class.
-- FIPS-validated cryptographic module option; conformance evidence collection.
+- FIPS 140-3 approved mode (§20.1): the `fips_mode` switch, HSM-held PCKs as
+  the FIPS custody kind, the shared storage crate on a validated module, the
+  OpenBao decision of open question 13; conformance evidence collection.
 
 ### Phase 7 — Multi-region and the long tail
 
@@ -2320,10 +2337,98 @@ need, so that they are not retrofitted:
 - Key lifecycle states and cryptoperiods aligned with NIST SP 800-57.
 - Complete, tamper-evident audit — the HMAC chain the audit ADR already
   specifies — with tenant-visible export.
-- FIPS 140-3 boundary options: a validated software module, or the HSM.
+- FIPS 140-3: validated modules used in approved mode, with the HSM as the
+  Level 3 boundary where one is required (§20.1).
 - PCI-DSS and eIDAS-adjacent requirements are deployment questions, but they all
   reduce to: where is the boundary, who can cross it, and can you prove what
   crossed it. §12, §13 and §14 are the answers.
+
+### 20.1 FIPS 140-3
+
+FIPS 140-3 validates a _cryptographic module_ — a defined boundary of code or
+hardware, tested by an accredited laboratory and approved by NIST's
+Cryptographic Module Validation Program — not a service. "A FIPS 140-3 KMS"
+therefore means one of two claims, at very different cost:
+
+| Claim                                                             | What it takes                                                                                                                                                                  | Fit                                                                                                                                                                                                                      |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **The KMS uses validated modules in approved mode (recommended)** | Every cryptographic operation runs inside a module that already holds a certificate, configured and called as that module's security policy allows                             | What a requirement for validated cryptography, FedRAMP's included, asks for; reachable by engineering alone                                                                                                              |
+| The KMS's own module is validated                                 | A boundary drawn around KMS code — realistically `kms-crypto`, as a Level 1 software module — documented, tested by a laboratory and submitted, and the certified build frozen | Laboratory fees, a review queue measured in months to years, and a change process for every edit inside the boundary: a poor fit for an open-source release cadence, and better owned by a vendor shipping a fixed build |
+
+Software modules are validated at Level 1 in practice. Level 3 is a property of
+hardware, and in this design it is reached through the HSM.
+
+**Where cryptography runs, and what has to change:**
+
+| Component                                                      | Today                                                              | For approved mode                                                               |
+| -------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| `kms-crypto`: envelope, signing, MAC                           | `aws-lc-rs` (§6.5)                                                 | Its FIPS build, from the first line of code                                     |
+| Key store at rest: `storage-crypto`, shared with `keystone-rs` | RustCrypto `aes-gcm`, `hkdf`, `hmac`, `sha2`, and `rand`           | Ported to `aws-lc-rs`'s FIPS build, with the nonce change below                 |
+| TLS: edge, internal mesh, Raft peers                           | `rustls` over `aws-lc-rs`'s default build                          | The same stack over the FIPS build                                              |
+| Custody cluster                                                | OpenBao, on Go's cryptography                                      | Unresolved: depends on OpenBao running on a validated module (open question 13) |
+| HSM                                                            | Vendor firmware                                                    | Used in approved mode, per the vendor's security policy                         |
+| TPM KEK provider                                               | The TPM, plus a software MAC in process (ADR 0016-v2 invariant 15) | A validated TPM part, and the software half inside the validated module         |
+
+If OpenBao cannot run on a validated module, a FIPS deployment holds every PCK
+in an HSM partition — the custody kind §8.6 already offers `regulated` tenants —
+and takes the key store's KEK through the PKCS#11 provider rather than
+`store-kek` (§8.3). OpenBao is then left with mode-A keys only, and mode A is
+unavailable in FIPS mode. That is a coherent deployment, and it is the reason
+the HSM-held PCK is worth building before a `regulated` customer asks for it.
+
+**What approved mode forces on the design.** Most of the work is not swapping a
+library but obeying the rules for how a validated module may be used:
+
+1. **AES-GCM IVs are generated inside the module.** FIPS 140-3 implementation
+   guidance (IG C.H) accepts a GCM IV only when the module constructs it in one
+   of a few approved ways. `storage-crypto` builds its nonces in application
+   code — `NodeId ‖ counter` for the Raft log, an HKDF-derived value for state
+   records — and passes them in, which does not qualify as it stands. The usual
+   remedy is module-generated random 96-bit IVs, which caps a key at roughly
+   2³² encryptions and turns that cap into a DEK-rotation trigger in place of
+   the counter threshold. That remedy collides head-on with
+   [ADR 0016-v2](adr/0016-v2-raft-storage.md) invariant 10, "Random nonces are
+   prohibited", so it is a decision `keystone-rs` and the KMS take together
+   (open question 14). `kms-crypto`'s own wraps use module-generated IVs from
+   the start and never inherit the problem.
+2. **Only approved algorithms are reachable.** The FIPS column of §6.5 is
+   enforced at key creation, in the same validation that pairs
+   `protection_level` with `offload_mode` (§10.3). An unapproved key spec is a
+   rejection, never a key that quietly falls out of approved mode.
+3. **Key derivation maps onto an approved KDF.** HKDF in its extract-and-expand
+   form is an SP 800-56C construction. HKDF-Expand alone over an already-random
+   key, which the storage ADR uses to derive its sub-keys and its state nonces,
+   has to be argued as an SP 800-108 key-based KDF, and the laboratory has to
+   agree before anything relies on it.
+4. **All randomness comes from the module's DRBG.** Key generation everywhere,
+   and `POST /v1/random` (§5.4), draw from the validated module; no crate calls
+   `rand` or the operating system's generator directly. The entropy source is
+   then the module's, with its own SP 800-90B validation behind it.
+5. **One switch, failing closed.** `fips_mode` is set at start-up and cannot
+   change while the process runs. The process refuses to start unless every
+   component in the table above is on its validated build, and a module that
+   reports a failed self-test takes the process out of readiness (§9.4) rather
+   than leaving it serving.
+6. **Approval is recorded per key.** Key metadata records whether the key was
+   created in approved mode, beside `protection_level` (§10.3). A key created
+   before the switch, or with an algorithm the FIPS column forbids, keeps saying
+   so: approval is a fact about how the material came to exist, and is never
+   granted retroactively.
+7. **Plaintext key output follows the module's level.** A Level 1 software
+   module may return a plaintext data key, which is what `data-key` does. Mode D
+   asks an HSM to release a generated DEK in plaintext, and whether its security
+   policy allows that in approved mode is checked per HSM model, not assumed.
+8. **Operating environments are named.** A certificate lists the platforms it
+   was tested on. A deployment elsewhere relies on the vendor's affirmation, and
+   the deployment documentation says which of the two applies.
+
+**Sequencing.** Two items are cheap now and expensive later, so they are not
+left for Phase 6: every cryptographic call goes through `kms-crypto`'s algorithm
+registry (§17), and `ring` is never a dependency (§6.5). The `storage-crypto`
+port and the nonce decision are joint work with `keystone-rs`, which needs the
+same answer for its own storage as soon as it is asked for validated
+cryptography. The switch, HSM-held PCKs as the FIPS custody kind, and the
+OpenBao decision land in Phase 6 (§19).
 
 ---
 
@@ -2395,6 +2500,18 @@ need, so that they are not retrofitted:
     separate answer: attestation as a Tier-0 root (§9.3) competes with TPM
     sealing on operational cost, not on capability, and principle 6 already
     forbids making it a prerequisite.
+13. **OpenBao and validated cryptography.** Can OpenBao run on a FIPS 140-3
+    validated module — a build on Go's own FIPS module once its certificate
+    status allows, or an equivalent — or does every FIPS deployment hold its
+    PCKs in an HSM (§20.1)? The answer decides whether a FIPS deployment needs
+    an HSM at all, which is principle 6's question asked of one compliance
+    regime, and it should be settled from the CMVP's list, not from a vendor's
+    roadmap.
+14. **Nonces in the shared storage crate.** Module-generated random IVs satisfy
+    FIPS 140-3 guidance and contradict ADR 0016-v2's ban on random nonces;
+    deterministic IVs satisfy the ADR and have to be constructed inside the
+    module. Which does the shared crate adopt, and in FIPS builds only or
+    everywhere? A crate with two nonce disciplines is two crates to review.
 
 ---
 
@@ -2421,6 +2538,8 @@ need, so that they are not retrofitted:
 - SPIRE integration plan (`doc/plans/spire-integration.md`)
 - OASIS KMIP 1.4 and 2.1 specifications and profiles
 - NIST SP 800-57 (key management), SP 800-38D/F (GCM, key wrapping), FIPS 140-3
+  and its Implementation Guidance, SP 800-56C and SP 800-108 (key derivation),
+  SP 800-90A/B (random bit generation), FIPS 186-5, 203 and 204
 - OpenBao documentation: transit secrets engine, seal/unseal,
   integrated storage
 - SPIFFE/SPIRE specifications; RFC 8705 (mTLS-bound tokens), RFC 7523
