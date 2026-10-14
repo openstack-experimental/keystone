@@ -1,7 +1,7 @@
 # ADR 0016-v2: Distributed Encrypted Storage via Raft and Fjall
 
-Date: 2026-06-13
-Last-revised: 2026-07-02 (PKCS#11/TPM KEK provisioning addendum)
+Date: 2026-06-13 Last-revised: 2026-07-02 (PKCS#11/TPM KEK provisioning
+addendum)
 
 ## Status
 
@@ -17,14 +17,23 @@ recover.
 **Supersedes:** ADR-0016 (2026-04-12)
 
 **Security review findings applied (2026-06-24):**
-- F1 HIGH: Raft log nonce NodeId widened from 4 to 8 bytes; counter shrunk to 4 bytes (§2.2)
-- F2 MEDIUM: Audit HMAC key derivation made per-node via `node_id` in HKDF info (§3.1)
-- F3 MEDIUM: Backup manifest AD now includes `dek_version_u32` to prevent same-second swap (§7)
-- F4 MEDIUM: SPIFFE mode expanded with TTL ceiling, fail-closed behaviour, SPIFFE ID pattern (§4.1)
-- F5 MEDIUM: Quarantine state specified as Raft-committed and restart-persistent (§10 invariant 5)
-- F6 LOW: Emergency rotation confirmation timeout now has an explicit abort + audit path (§6.2)
-- F7 LOW: NodeId uniqueness check specified as fail-closed when leader is unreachable (§4.3)
-- F8 LOW: Sub-key derivation notation changed from `HKDF-SHA256` to `HKDF-Expand` (§2.1)
+
+- F1 HIGH: Raft log nonce NodeId widened from 4 to 8 bytes; counter shrunk to 4
+  bytes (§2.2)
+- F2 MEDIUM: Audit HMAC key derivation made per-node via `node_id` in HKDF info
+  (§3.1)
+- F3 MEDIUM: Backup manifest AD now includes `dek_version_u32` to prevent
+  same-second swap (§7)
+- F4 MEDIUM: SPIFFE mode expanded with TTL ceiling, fail-closed behaviour,
+  SPIFFE ID pattern (§4.1)
+- F5 MEDIUM: Quarantine state specified as Raft-committed and restart-persistent
+  (§10 invariant 5)
+- F6 LOW: Emergency rotation confirmation timeout now has an explicit abort +
+  audit path (§6.2)
+- F7 LOW: NodeId uniqueness check specified as fail-closed when leader is
+  unreachable (§4.3)
+- F8 LOW: Sub-key derivation notation changed from `HKDF-SHA256` to
+  `HKDF-Expand` (§2.1)
 
 **Addendum applied (2026-07-02):** §2.5 added, specifying the concrete PKCS#11
 and TPM 2.0 KEK provider mechanisms that §2.1 previously deferred ("HSM /
@@ -91,24 +100,38 @@ a second operator with the `storage-operator` role must confirm within 5 minutes
 via a separate `ConfirmRotateDekRequest` RPC. Dual-control events are recorded
 in the audit log with both operator identities.
 
-**Supply Chain:** Core dependencies (`openraft`, `fjall`) are pinned to exact
-versions in `Cargo.lock`. New releases must pass a manual security review before
-upgrading. A contingency plan (fork, vendor, or replace) is maintained for each
-dependency. `cargo-vet` or equivalent is used in CI for these two crates
-specifically. `cargo deny` rules reject any transitive dependency that stores
-key material without implementing `ZeroizeOnDrop`. `cargo-vet` coverage is
-extended to all crates that directly handle key material or ciphertext: the
-AES-GCM provider, the mlock wrapper, the HKDF implementation, and — per the
-§2.5 PKCS#11/TPM addendum — the two production KEK-provider crates' HSM/TPM
-client libraries: `cryptoki` (pinned `0.12.0`, `storage-crypto-pkcs11`) and
-`tss-esapi` (pinned `7.7.0`, `storage-crypto-tpm`). Both hold the unwrapped DEK
-transiently during `wrap_dek`/`unwrap_dek` and sit directly in the KEK call
-path, so they meet criteria (a) and (b) below. Any new
-dependency falls under extended cargo-vet coverage if it: (a) receives or stores
-a `Zeroizing<T>` value; (b) is in the AES-HKDF-KMS call path; (c) provides
-`mlock` or `VirtualLock` functionality; or (d) processes raw ciphertext before
-decryption. Pull request reviewers must verify new `Cargo.toml` entries against
-this checklist before approval.
+**Supply Chain:** Dependencies are locked to exact versions in `Cargo.lock`
+(`openraft` is additionally pinned with `=` in the workspace `Cargo.toml`). New
+releases of the security-relevant crates must pass a manual security review
+before upgrading. A contingency plan (fork, vendor, or replace) is maintained
+for each core dependency. The controls enforced in CI are `cargo-deny`
+(advisories, licenses and sources) and `cargo-vet` (`supply-chain/`, job
+`cargo-vet` in `.github/workflows/audit.yml`); both fail the build on new
+violations. `cargo-vet` imports the audit sets of the Bytecode Alliance, Google,
+Mozilla, Embark and ISRG and records the remaining crates as exemptions (a
+baseline, not an audit). Crates that handle key material have no first-party
+audit yet; they are exempted and tracked for audit: `openraft`, `fjall`,
+`aes-gcm`, `hkdf`, `cryptoki`, `tss-esapi`. Any new or updated dependency needs
+either an imported/first-party audit or an exemption justified in the pull
+request. `cargo-deny` cannot express a "stores key material without
+`ZeroizeOnDrop`" rule, so that property is verified by manual review. Reviewers
+apply the following checklist to every new or updated `Cargo.toml` entry that:
+(a) receives or stores a `Zeroizing<T>` value; (b) is in the AES-HKDF-KMS call
+path; (c) provides `mlock` or `VirtualLock` functionality; or (d) processes raw
+ciphertext before decryption. This covers `openraft`, `fjall`, the AES-GCM
+provider, the HKDF implementation, the mlock wrapper and, per the §2.5
+PKCS#11/TPM addendum, the HSM/TPM client libraries `cryptoki`
+(`storage-crypto-pkcs11`) and `tss-esapi` (`storage-crypto-tpm`), which hold the
+unwrapped DEK transiently during `wrap_dek`/`unwrap_dek`. Versions are whatever
+`Cargo.lock` resolves; bumps are reviewed, not frozen to the versions named in
+earlier revisions of this ADR.
+
+**Pre-release consensus dependency (accepted risk):** `openraft` is pinned to
+the `0.10.0-alpha` line, whose API is still changing between alphas (for example
+`SnapshotMeta.snapshot_id` was removed). This is accepted explicitly: the pin is
+exact (`=`), upgrades between alphas are manual and reviewed, and the project
+moves to the stable `0.10` release when it ships. `fjall` is covered by the same
+pinning and review policy.
 
 ---
 
@@ -146,16 +169,16 @@ memory protection described in §9.
   `std::env::remove_var` and zero the original string. The variable must not
   persist in the process environment for the lifetime of the process, preventing
   exposure via `/proc/<pid>/environ`.
-- **DEK Derivation:** The DEK is derived into isolated sub-keys via
-  full HKDF (Extract-then-Expand with the fixed salt
-  `keystone-dek-hierarchy-v1` and a non-empty info). The DEK is already
-  uniformly random, so Extract adds no entropy; it is run because
-  Extract-then-Expand is the flow the FIPS module documents as an approved
-  service. This ensures log, state, and backup ciphertexts are never
-  encrypted under the same key context. The backup DEK (BDEK) incorporates the active
-  `dek_version_u32` into its derivation input, binding it to the current DEK
-  epoch. This ensures backups created under different DEK rotations do not share
-  the same BDEK, limiting the blast radius of a BDEK compromise.
+- **DEK Derivation:** The DEK is derived into isolated sub-keys via full HKDF
+  (Extract-then-Expand with the fixed salt `keystone-dek-hierarchy-v1` and a
+  non-empty info). The DEK is already uniformly random, so Extract adds no
+  entropy; it is run because Extract-then-Expand is the flow the FIPS module
+  documents as an approved service. This ensures log, state, and backup
+  ciphertexts are never encrypted under the same key context. The backup DEK
+  (BDEK) incorporates the active `dek_version_u32` into its derivation input,
+  binding it to the current DEK epoch. This ensures backups created under
+  different DEK rotations do not share the same BDEK, limiting the blast radius
+  of a BDEK compromise.
 
 ### 2.2 Nonce Management & GCM Tags
 
@@ -166,19 +189,18 @@ tags must be 16 bytes.
   `[8-byte NodeId BE] ++ [4-byte monotonic counter BE]`. NodeId occupies the
   full 8 bytes (matching the `u64` type in §8) to prevent nonce-space collision
   between nodes that share the same lower 32 bits. The counter is stored durably
-  and increments with a reservation block of 1024 to absorb crashes. The
-  counter is scoped to the DEK epoch it encrypts under, so a DEK rotation starts
-  a fresh counter space. On startup, the persisted counter is validated against
-  a separately-stored high-water mark (kept in a dedicated Fjall metadata key
-  `_meta:nonce:<node_id>:hwm:<epoch>`); if the
-  recovered counter is strictly less than the high-water mark, the node
-  refuses to start and requires operator intervention, preventing nonce reuse
-  from counter corruption. After each reservation block write, the node verifies
-  the write by reading back and comparing; if the read-back does not match, the
-  node treats it as a fatal storage error and halts, preventing silent nonce
-  reuse during a live session. A warning is emitted when remaining counter space
-  drops below 10% of the `2^31` rotation threshold, which is also when the
-  leader rotates the DEK (§6).
+  and increments with a reservation block of 1024 to absorb crashes. The counter
+  is scoped to the DEK epoch it encrypts under, so a DEK rotation starts a fresh
+  counter space. On startup, the persisted counter is validated against a
+  separately-stored high-water mark (kept in a dedicated Fjall metadata key
+  `_meta:nonce:<node_id>:hwm:<epoch>`); if the recovered counter is strictly
+  less than the high-water mark, the node refuses to start and requires operator
+  intervention, preventing nonce reuse from counter corruption. After each
+  reservation block write, the node verifies the write by reading back and
+  comparing; if the read-back does not match, the node treats it as a fatal
+  storage error and halts, preventing silent nonce reuse during a live session.
+  A warning is emitted when remaining counter space drops below 10% of the
+  `2^31` rotation threshold, which is also when the leader rotates the DEK (§6).
 - **Fjall State Machine (State DEK):** Nonce is derived via
   `HKDF-Expand(StateDek, info=PrimaryKey || version_u32, L=12)`. The `version`
   field starts at `0` for new records and increments on each update. This
@@ -196,45 +218,44 @@ tags must be 16 bytes.
 
 - **State nonce and replicated determinism:** the HKDF-derived state nonce is
   deliberately a pure function of `(StateDek, pk, version)`. Every node applies
-  the same Raft entry independently and, as with the post-rotation
-  re-encryption sweep, must arrive at byte-identical ciphertext without a
-  further consensus round. A node-local `fixed ++ counter` nonce would break
-  that property, and a Raft-log-index based one would not cover the local
-  re-encryption sweep. Replacing it needs its own design (and a stored-format
-  change), so it is intentionally left as is.
+  the same Raft entry independently and, as with the post-rotation re-encryption
+  sweep, must arrive at byte-identical ciphertext without a further consensus
+  round. A node-local `fixed ++ counter` nonce would break that property, and a
+  Raft-log-index based one would not cover the local re-encryption sweep.
+  Replacing it needs its own design (and a stored-format change), so it is
+  intentionally left as is.
 
 - **FIPS builds:** the `fips` cargo feature of `storage-crypto` (forwarded by
   `storage`) routes AES-256-GCM, HKDF, HMAC and random generation through the
   FIPS 140-3 validated AWS-LC module and `assert_fips()` fails start-up unless
   that module is active. Building the feature requires cmake, a C compiler,
-  clang and Go; use `--no-default-features --features fips` to keep `ring`
-  out of this crate. The default backend is `ring`; both providers go through
-  one ring-API implementation (`backend/ringlike.rs`), and `backend.rs`
-  documents how to add another. The service's `fips` feature also selects
-  `aws-lc-rs` with rustls' `fips` for TLS (`openstack-keystone-tls-provider`),
-  except SPIFFE mTLS, which `spiffe-rustls` pins to `ring`.
+  clang and Go; use `--no-default-features --features fips` to keep `ring` out
+  of this crate. The default backend is `ring`; both providers go through one
+  ring-API implementation (`backend/ringlike.rs`), and `backend.rs` documents
+  how to add another. The service's `fips` feature also selects `aws-lc-rs` with
+  rustls' `fips` for TLS (`openstack-keystone-tls-provider`), except SPIFFE
+  mTLS, which `spiffe-rustls` pins to `ring`.
 
   The module only reports AES-GCM encryption as an approved service when it
-  generates the IV itself, so in a `fips` build the deterministic nonce
-  schemes above are replaced, for every encrypt path (log, state, backup and
-  the DEK wrap), by a random 96-bit IV from the module's DRBG
-  (SP 800-38D §8.2.2). The IV is still stored in front of the ciphertext, so
-  the on-disk layout is unchanged.
+  generates the IV itself, so in a `fips` build the deterministic nonce schemes
+  above are replaced, for every encrypt path (log, state, backup and the DEK
+  wrap), by a random 96-bit IV from the module's DRBG (SP 800-38D §8.2.2). The
+  IV is still stored in front of the ciphertext, so the on-disk layout is
+  unchanged.
 
-  Random IVs are only safe for fewer than 2^32 encryptions under one key
-  (SP 800-38D §8.3), and every member that applies the writes (voters and
-  learners alike) encrypts under the same DEK, so a shared key would run out
-  after `2^32 / members` writes: days, with a fleet of learners. Log entries
-  and state records are therefore encrypted under a key derived per message:
-  `HKDF(salt = "keystone-gcm-message-key-v1", ikm = Log/StateDek,
-  info = context)` (full Extract-then-Expand with a non-empty salt and info,
-  the flow the validated module documents as approved), with
-  `context` = `term ++ index` for a log entry and `domain ++ pk ++ version`
-  for a state record. A key only ever encrypts one message (once per member
-  applying it), so the limit is never approached, no usage counter or
-  cluster-size accounting is needed, and the DEK rotation schedule stays
-  independent of cluster size. Backup and DEK-wrap encryptions are rare and
-  use their key directly.
+  Random IVs are only safe for fewer than 2^32 encryptions under one key (SP
+  800-38D §8.3), and every member that applies the writes (voters and learners
+  alike) encrypts under the same DEK, so a shared key would run out after
+  `2^32 / members` writes: days, with a fleet of learners. Log entries and state
+  records are therefore encrypted under a key derived per message:
+  `HKDF(salt = "keystone-gcm-message-key-v1", ikm = Log/StateDek, info = context)`
+  (full Extract-then-Expand with a non-empty salt and info, the flow the
+  validated module documents as approved), with `context` = `term ++ index` for
+  a log entry and `domain ++ pk ++ version` for a state record. A key only ever
+  encrypts one message (once per member applying it), so the limit is never
+  approached, no usage counter or cluster-size accounting is needed, and the DEK
+  rotation schedule stays independent of cluster size. Backup and DEK-wrap
+  encryptions are rare and use their key directly.
 
 ### 2.3 Associated Data (AD) Bindings
 
@@ -291,68 +312,67 @@ capabilities:
 
 ### 2.5 PKCS#11 and TPM KEK Provisioning
 
-§2.1 named "HSM / PKCS#11 / Cloud KMS" as the production KEK source but did
-not specify a mechanism. This section specifies the PKCS#11 and TPM 2.0
+§2.1 named "HSM / PKCS#11 / Cloud KMS" as the production KEK source but did not
+specify a mechanism. This section specifies the PKCS#11 and TPM 2.0
 `KekProvider` implementations. Both satisfy invariant 2 (§10): the KEK itself
 never enters process memory in plaintext, only wrapped DEK bytes cross the
 provider boundary.
 
 **Provider selection:** `[distributed_storage] kek_provider` selects between
-`env` (dev-mode only, §2.1), `pkcs11`, and `tpm`. Exactly one provider is
-active per node. Production deployments (`dev_mode = false`) MUST set this to
-`pkcs11` or `tpm`; `kek_provider = "env"` outside `dev_mode` is rejected at
+`env` (dev-mode only, §2.1), `pkcs11`, and `tpm`. Exactly one provider is active
+per node. Production deployments (`dev_mode = false`) MUST set this to `pkcs11`
+or `tpm`; `kek_provider = "env"` outside `dev_mode` is rejected at
 config-validation time, before any KEK material is touched (invariant 6).
 
 #### 2.5.1 PKCS#11
 
-The KEK is an AES-256 key object resident on a PKCS#11 token (a hardware HSM
-or, for development/CI, SoftHSM2), created with `CKA_EXTRACTABLE = false` and
+The KEK is an AES-256 key object resident on a PKCS#11 token (a hardware HSM or,
+for development/CI, SoftHSM2), created with `CKA_EXTRACTABLE = false` and
 `CKA_SENSITIVE = true`. `wrap_dek`/`unwrap_dek` invoke `CKM_AES_GCM` directly
 against that key object (`C_EncryptInit`/`C_Encrypt` and
-`C_DecryptInit`/`C_Decrypt` with a `CK_GCM_PARAMS` structure carrying a
-freshly generated 12-byte nonce, `DEK_WRAP_AD` as additional authenticated
-data, and a 128-bit tag). The resulting wire format is byte-identical to
-`EnvKek`'s: `[12-byte nonce][ciphertext][16-byte tag]` — no downstream code
-(DEK bootstrap, Fjall metadata storage) needs to distinguish which
-`KekProvider` produced a wrapped blob.
+`C_DecryptInit`/`C_Decrypt` with a `CK_GCM_PARAMS` structure carrying a freshly
+generated 12-byte nonce, `DEK_WRAP_AD` as additional authenticated data, and a
+128-bit tag). The resulting wire format is byte-identical to `EnvKek`'s:
+`[12-byte nonce][ciphertext][16-byte tag]` — no downstream code (DEK bootstrap,
+Fjall metadata storage) needs to distinguish which `KekProvider` produced a
+wrapped blob.
 
 With `pkcs11_token_generated_iv = true` the wrap uses the PKCS#11 3.0
 message-based API (`C_MessageEncryptInit`/`C_EncryptMessage` with
 `CKG_GENERATE_RANDOM`) so the token itself generates the IV from its approved
 DRBG, as FIPS 140-3 modules require. The wire format is identical and unwrap is
 unchanged, so blobs from either mode stay readable. The token must support the
-3.0 message API (SoftHSM2 does not) and this mode has not been exercised
-against real hardware yet.
+3.0 message API (SoftHSM2 does not) and this mode has not been exercised against
+real hardware yet.
 
 - **Key provisioning:** creating the AES-256 key object on the token is an
   out-of-band operator step (e.g. `pkcs11-tool --keygen` or
   `softhsm2-util --init-token` for development), documented in the operator
-  guide. The provider MAY auto-generate the key via `CKM_AES_KEY_GEN` on
-  first startup if `pkcs11_key_label` is not found on the configured slot —
-  this is an ergonomic convenience for fresh clusters, not a substitute for
+  guide. The provider MAY auto-generate the key via `CKM_AES_KEY_GEN` on first
+  startup if `pkcs11_key_label` is not found on the configured slot — this is an
+  ergonomic convenience for fresh clusters, not a substitute for
   operator-controlled key ceremony in regulated deployments.
-- **PIN handling:** the token PIN is read once at startup from
-  `pkcs11_pin_file` into a `SecretSlice` (zeroized on `Drop`), used for
-  `C_Login`. It is held for the duration of the `init_storage` call — not
-  scrubbed the instant `C_Login` returns, since the same in-memory config
-  clone is threaded through the rest of node startup — and zeroized once
-  that call completes and the clone is dropped. The PIN is never accepted
-  via environment variable or inline config value — only a file path,
-  consistent with the existing `tls_key_file`/`tls_cert_file` convention
-  (§4.2).
-- **Failure handling:** a login failure, missing key object, or GCM tag
-  mismatch on unwrap is fatal to node startup (or, post-startup, treated the
-  same as any other GCM tag failure under invariant 5's quarantine logic).
+- **PIN handling:** the token PIN is read once at startup from `pkcs11_pin_file`
+  into a `SecretSlice` (zeroized on `Drop`), used for `C_Login`. It is held for
+  the duration of the `init_storage` call — not scrubbed the instant `C_Login`
+  returns, since the same in-memory config clone is threaded through the rest of
+  node startup — and zeroized once that call completes and the clone is dropped.
+  The PIN is never accepted via environment variable or inline config value —
+  only a file path, consistent with the existing `tls_key_file`/`tls_cert_file`
+  convention (§4.2).
+- **Failure handling:** a login failure, missing key object, or GCM tag mismatch
+  on unwrap is fatal to node startup (or, post-startup, treated the same as any
+  other GCM tag failure under invariant 5's quarantine logic).
 
 #### 2.5.2 TPM 2.0
 
 The KEK is a non-duplicable, TPM-resident symmetric-cipher key
-(`fixedTPM | fixedParent | sensitiveDataOrigin`, no duplication attribute).
-As with PKCS#11, the raw key material never leaves the TPM and never enters
-process memory — only the wrapped DEK crosses the boundary.
+(`fixedTPM | fixedParent | sensitiveDataOrigin`, no duplication attribute). As
+with PKCS#11, the raw key material never leaves the TPM and never enters process
+memory — only the wrapped DEK crosses the boundary.
 
-**TPM 2.0 has no native AES-GCM command.** `TPM2_EncryptDecrypt2` supports
-only CFB/CBC/CTR/OFB/ECB symmetric modes; there is no AEAD primitive. The TPM
+**TPM 2.0 has no native AES-GCM command.** `TPM2_EncryptDecrypt2` supports only
+CFB/CBC/CTR/OFB/ECB symmetric modes; there is no AEAD primitive. The TPM
 provider therefore uses Encrypt-then-MAC instead of AES-GCM:
 
 ```text
@@ -370,13 +390,13 @@ unwrap_dek(wrapped):
   dek = TPM2_EncryptDecrypt2(key = tpm_kek, mode = AES-256-CFB, iv, data = ciphertext, decrypt = true)
 ```
 
-This is a deliberate deviation from "AES-256-GCM for all payloads" (§2.2)
-scoped strictly to the TPM KEK-wrap boundary: it does not touch the Log DEK,
-State DEK, or Backup DEK, which remain AES-256-GCM as specified elsewhere in
-this ADR. `tpm_kek` and `tpm_hmac` MAY be the same TPM key object used in two
-different USAGE modes if the provisioning tooling supports it, or two
-separate persistent handles; either is acceptable provided both satisfy the
-non-duplicable, non-extractable attributes above.
+This is a deliberate deviation from "AES-256-GCM for all payloads" (§2.2) scoped
+strictly to the TPM KEK-wrap boundary: it does not touch the Log DEK, State DEK,
+or Backup DEK, which remain AES-256-GCM as specified elsewhere in this ADR.
+`tpm_kek` and `tpm_hmac` MAY be the same TPM key object used in two different
+USAGE modes if the provisioning tooling supports it, or two separate persistent
+handles; either is acceptable provided both satisfy the non-duplicable,
+non-extractable attributes above.
 
 - **Key provisioning:** a persistent handle (`tpm_key_handle`) or a saved key
   context (`tpm_key_context_file`) identifying the pre-provisioned TPM key(s).
@@ -385,34 +405,32 @@ non-duplicable, non-extractable attributes above.
 - **Auth handling:** if the key was provisioned with `userWithAuth`, the auth
   value is read once from `tpm_auth_file` into a `SecretSlice` (zeroized on
   `Drop`) and used to authorize the TPM session. As with the PKCS#11 PIN
-  (§2.5.1), it is held for the duration of the `init_storage` call rather
-  than scrubbed immediately after use, and zeroized once that call
-  completes. Only a file path is accepted, never an environment variable or
-  inline value. A key relying purely on PCR/policy session authorization may
-  omit `tpm_auth_file`.
-- **Sample scope:** the TPM provider ships with a runnable example targeting
-  a software TPM (`swtpm`) for local exploration, and is not part of the
-  required CI gate — real and virtual TPM availability in CI runners is not
-  reliable enough to gate merges on. The PKCS#11 path (§2.5.1), backed by
-  SoftHSM2, is the CI-gated path (§1).
+  (§2.5.1), it is held for the duration of the `init_storage` call rather than
+  scrubbed immediately after use, and zeroized once that call completes. Only a
+  file path is accepted, never an environment variable or inline value. A key
+  relying purely on PCR/policy session authorization may omit `tpm_auth_file`.
+- **Sample scope:** the TPM provider ships with a runnable example targeting a
+  software TPM (`swtpm`) for local exploration, and is not part of the required
+  CI gate — real and virtual TPM availability in CI runners is not reliable
+  enough to gate merges on. The PKCS#11 path (§2.5.1), backed by SoftHSM2, is
+  the CI-gated path (§1).
 
 #### 2.5.3 Cluster-Wide DEK Distribution
 
-**All cluster nodes MUST share identical KEK material.** §2.1-§2.5 describe
-how a single node wraps/unwraps the DEK; nothing above guarantees that two
-nodes' KEKs agree. Without cluster-wide coordination, `bootstrap_dek`
-generates an independent random DEK on every node's first boot, which is
-silently wrong: log replication tolerates it (each node re-encrypts Raft log
-plaintext under its own DEK on apply), but a joining or lagging node that
-must catch up via `InstallSnapshot` receives ciphertext produced under the
-*leader's* State DEK — if its own same-version epoch has different key
-bytes, every value fails GCM tag verification and the partition is
-quarantined (§10 invariant 5) instead of catching up. The same DEK-key-bytes
-mismatch makes restoring a backup onto a freshly bootstrapped cluster fail
-outright (§7).
+**All cluster nodes MUST share identical KEK material.** §2.1-§2.5 describe how
+a single node wraps/unwraps the DEK; nothing above guarantees that two nodes'
+KEKs agree. Without cluster-wide coordination, `bootstrap_dek` generates an
+independent random DEK on every node's first boot, which is silently wrong: log
+replication tolerates it (each node re-encrypts Raft log plaintext under its own
+DEK on apply), but a joining or lagging node that must catch up via
+`InstallSnapshot` receives ciphertext produced under the _leader's_ State DEK —
+if its own same-version epoch has different key bytes, every value fails GCM tag
+verification and the partition is quarantined (§10 invariant 5) instead of
+catching up. The same DEK-key-bytes mismatch makes restoring a backup onto a
+freshly bootstrapped cluster fail outright (§7).
 
-**Distribution protocol.** A node joining the cluster for the first time
-calls `FetchDek` (§8) against the leader *before* calling `AddLearner`:
+**Distribution protocol.** A node joining the cluster for the first time calls
+`FetchDek` (§8) against the leader _before_ calling `AddLearner`:
 
 ```text
 join_cluster(leader_addr):
@@ -424,50 +442,48 @@ join_cluster(leader_addr):
 ```
 
 `FetchDek` returns not just the current epoch but every retired-but-still-
-readable one too: a DEK rotation's background re-encryption sweep
-(§6 step 5) is best-effort and asynchronous, so records under a retired
-epoch can still be live on the leader when a node joins. Without also
-fetching those epochs, a joining node could adopt the current DEK
-correctly yet still fail to decrypt any record a rotation hasn't fully
-migrated off its predecessor — the same GCM-verification failure this
-section otherwise fixes, just for the boundary case around a rotation
-rather than the steady-state case.
+readable one too: a DEK rotation's background re-encryption sweep (§6 step 5) is
+best-effort and asynchronous, so records under a retired epoch can still be live
+on the leader when a node joins. Without also fetching those epochs, a joining
+node could adopt the current DEK correctly yet still fail to decrypt any record
+a rotation hasn't fully migrated off its predecessor — the same GCM-verification
+failure this section otherwise fixes, just for the boundary case around a
+rotation rather than the steady-state case.
 
-`install_fetched_dek`/`install_fetched_retired_dek` unwrap their argument
-with the joining node's own KEK and, only on success, write the
-corresponding `_meta:dek:current` / `_meta:dek:retired:<version>` record
-and update the in-memory epoch handle(s) — before the node is visible to
-the leader as a learner, so the leader cannot yet be replicating to it and
-there is no window where the wrong DEK could be used to (mis)encrypt real
-data. Ordering this before `AddLearner` is what makes the swap safe: the
-node's own `data` keyspace is still empty at this point, so the discarded
-bootstrap-generated placeholder DEK never protected any ciphertext. A node
-that is already an initialized cluster member (a restart, not a first join)
-never calls `join_cluster` again and so never re-runs this swap — see
-`ensure_raft_initialized`'s `is_initialized()` guard.
+`install_fetched_dek`/`install_fetched_retired_dek` unwrap their argument with
+the joining node's own KEK and, only on success, write the corresponding
+`_meta:dek:current` / `_meta:dek:retired:<version>` record and update the
+in-memory epoch handle(s) — before the node is visible to the leader as a
+learner, so the leader cannot yet be replicating to it and there is no window
+where the wrong DEK could be used to (mis)encrypt real data. Ordering this
+before `AddLearner` is what makes the swap safe: the node's own `data` keyspace
+is still empty at this point, so the discarded bootstrap-generated placeholder
+DEK never protected any ciphertext. A node that is already an initialized
+cluster member (a restart, not a first join) never calls `join_cluster` again
+and so never re-runs this swap — see `ensure_raft_initialized`'s
+`is_initialized()` guard.
 
 `FetchDek` is authenticated the same way as `AddLearner` (peer trust-domain
 check, §4) — it is inter-node bootstrap traffic, not an operator action, and
 returns the wrapped bytes exactly as stored under the leader's
 `_meta:dek:current` / `_meta:dek:retired:*`, unmodified — no unwrap/rewrap
-round-trip on the leader side, so the leader's own DEK plaintext never
-leaves TPM/PKCS#11-backed protection to construct the response.
+round-trip on the leader side, so the leader's own DEK plaintext never leaves
+TPM/PKCS#11-backed protection to construct the response.
 
 **Consequence for TPM/PKCS#11:** because `FetchDek`'s caller unwraps the
-response with its *own* KEK, this protocol only succeeds when every node's
-KEK is symmetric and byte-identical — true for `env` (operators configure
-the same key material on every node) and for PKCS#11/TPM only if the
-operator provisions the *same* underlying AES key into every node's
-token/TPM (e.g. importing one externally-generated AES-256 key rather than
-using each token's own `CKM_AES_KEY_GEN`/TPM key-generation, or using a
-TPM's duplication/import path where the platform supports it). A per-node,
-independently generated PKCS#11 or TPM key — which §2.5.1/§2.5.2's
-"MAY auto-generate on first startup" describes — is cluster-incompatible: a
-joining node's `install_fetched_dek` fails closed with a
-KEK-material-mismatch error and the join aborts rather than silently
+response with its _own_ KEK, this protocol only succeeds when every node's KEK
+is symmetric and byte-identical — true for `env` (operators configure the same
+key material on every node) and for PKCS#11/TPM only if the operator provisions
+the _same_ underlying AES key into every node's token/TPM (e.g. importing one
+externally-generated AES-256 key rather than using each token's own
+`CKM_AES_KEY_GEN`/TPM key-generation, or using a TPM's duplication/import path
+where the platform supports it). A per-node, independently generated PKCS#11 or
+TPM key — which §2.5.1/§2.5.2's "MAY auto-generate on first startup" describes —
+is cluster-incompatible: a joining node's `install_fetched_dek` fails closed
+with a KEK-material-mismatch error and the join aborts rather than silently
 leaving the node with its own placeholder DEK. Provisioning identical
-TPM/PKCS#11 key material across nodes is an out-of-band operator step this
-ADR does not yet automate (no leader-side rewrap-for-joining-node's-public-key
+TPM/PKCS#11 key material across nodes is an out-of-band operator step this ADR
+does not yet automate (no leader-side rewrap-for-joining-node's-public-key
 mechanism exists); it is tracked as follow-up work under GitHub issue #1298.
 
 ---
@@ -500,16 +516,16 @@ _Configuration:_ Operators enable local reads via
 ReadIndex protocol, ensuring revoked credentials are never exposed via a stale
 follower.
 
-> **Implementation status:** `local_reads_mode` defaults to `disabled`, in
-> which case every read, whatever its tier, goes through the
-> `ensure_linearizable` (ReadIndex) path. With `local_for_public` a consumer
-> can ask for a stale local read per call (`ReadConsistency::Local` through
-> `get_by_key_with_consistency` / `prefix_with_consistency`). The request is
-> honored only for Tier 0/1 records; a Tier 2/3 record, or a prefix scan that
-> matches one, falls back to ReadIndex. `prefix_index` is always linearizable.
-> If the ReadIndex/forwarding path cannot confirm linearizability, the read
-> fails (`Unavailable`) rather than falling back to a non-linearizable local
-> read for every tier that is not served locally — see invariant 4 below.
+> **Implementation status:** `local_reads_mode` defaults to `disabled`, in which
+> case every read, whatever its tier, goes through the `ensure_linearizable`
+> (ReadIndex) path. With `local_for_public` a consumer can ask for a stale local
+> read per call (`ReadConsistency::Local` through `get_by_key_with_consistency`
+> / `prefix_with_consistency`). The request is honored only for Tier 0/1
+> records; a Tier 2/3 record, or a prefix scan that matches one, falls back to
+> ReadIndex. `prefix_index` is always linearizable. If the ReadIndex/forwarding
+> path cannot confirm linearizability, the read fails (`Unavailable`) rather
+> than falling back to a non-linearizable local read for every tier that is not
+> served locally — see invariant 4 below.
 
 ### 3.1 Audit Log Architecture
 
@@ -530,11 +546,11 @@ the record (timestamp, event type, actor, `node_id`, `dek_version`, details).
 Each spooled line carries `key_version`, the epoch whose key signed it, so a
 verifier selects the key by that field.
 
-_Implementation note (GitHub #1300):_ KEK-based derivation was rejected for
-the current implementation because it needs a KMS-side derive operation for
+_Implementation note (GitHub #1300):_ KEK-based derivation was rejected for the
+current implementation because it needs a KMS-side derive operation for
 PKCS#11/TPM providers and would not rotate with the DEK epoch. DEK-based
-derivation is the standard; export of epoch keys to the verifier is an
-operator step.
+derivation is the standard; export of epoch keys to the verifier is an operator
+step.
 
 **Transport:** Records are appended to a local fsynced JSONL spool; an external
 shipper forwards them to the SIEM, which enforces append-only semantics
@@ -567,9 +583,9 @@ configuration time and refuse to start if unsupported ciphers are negotiated.
 
 Managed automatically by SPIRE.
 
-- **Identity:** Short-lived X.509 SVIDs rotated automatically. SVID TTL MUST
-  NOT exceed 1 hour. Node processes enforce this by refusing to use an SVID
-  with a remaining validity of less than 5 minutes (force-renewal window).
+- **Identity:** Short-lived X.509 SVIDs rotated automatically. SVID TTL MUST NOT
+  exceed 1 hour. Node processes enforce this by refusing to use an SVID with a
+  remaining validity of less than 5 minutes (force-renewal window).
 - **SPIFFE ID Pattern:** All Keystone storage node SVIDs MUST match
   `spiffe://<trust-domain>/keystone/storage/<role>`. The gRPC interceptor
   validates this pattern before any RPC is dispatched; connections from SVIDs
@@ -594,8 +610,8 @@ Operator-managed PKI for environments without SPIRE.
   days remaining, errors at 2 days remaining, and triggers a configurable action
   (warn-only or shutdown) at expiry. This prevents the enforcement gap where a
   node starts with a valid certificate but continues operating after expiry.
-  _(Implementation status as of #1301: the watchdog only logs, never shuts
-  down, and only runs for a certificate given inline as `tls_cert_content`.)_
+  _(Implementation status as of #1301: the watchdog only logs, never shuts down,
+  and only runs for a certificate given inline as `tls_cert_content`.)_
 - **Certificate Revocation:** CRL and OCSP are not implemented for the TLS
   fallback path. The compensating controls are: (1) the 30-day maximum leaf
   certificate validity limits exposure from a stolen or miss-issued certificate;
@@ -751,8 +767,9 @@ for determining which DEK each log entry was encrypted under.
 >   rotation whose version is not above the current one (`STALE_DEK_VERSION`),
 >   so concurrent rotations cannot replace each other's DEK; the per-node
 >   re-encryption checkpoint `_meta:dek:rotation_progress:<node_id>:<version>`,
->   resumed after a restart; and a re-encryption sweep every 5 minutes over every
->   retired epoch not yet fully migrated, which also retries skipped records.
+>   resumed after a restart; and a re-encryption sweep every 5 minutes over
+>   every retired epoch not yet fully migrated, which also retries skipped
+>   records.
 > - Not implemented: `_meta:dek:pending` and the `rotation_index` boundary
 >   (steps 2-4). `InstallDek` swaps the DEK when it is applied, and every log
 >   entry carries the `dek_version` it was encrypted under, which serves as the
@@ -770,16 +787,15 @@ additional containment steps:
    `keystone-manage storage rotate-dek --emergency`, which connects to the
    cluster over gRPC with mTLS enforcement (see §1). Access requires RBAC
    authorization (`storage-operator` role) and dual-control confirmation via
-   `ConfirmRotateDek` from a second operator within 5 minutes.
-   **Confirmation timeout:** If the 5-minute window expires without
-   confirmation, the pending emergency rotation is automatically aborted: the
-   node commits a Raft proposal removing `_meta:dek:pending`. The abort is
-   recorded in the audit log with the initiating operator identity, the
-   expiry timestamp, and the fact that no confirmation was received. The
-   partial-rotation recovery path (end of §6) checks for a `rotation_id`
-   timestamp and ignores `_meta:dek:pending` entries older than 5 minutes
-   that were never confirmed, preventing an aborted emergency rotation from
-   being resumed on restart as a normal rotation.
+   `ConfirmRotateDek` from a second operator within 5 minutes. **Confirmation
+   timeout:** If the 5-minute window expires without confirmation, the pending
+   emergency rotation is automatically aborted: the node commits a Raft proposal
+   removing `_meta:dek:pending`. The abort is recorded in the audit log with the
+   initiating operator identity, the expiry timestamp, and the fact that no
+   confirmation was received. The partial-rotation recovery path (end of §6)
+   checks for a `rotation_id` timestamp and ignores `_meta:dek:pending` entries
+   older than 5 minutes that were never confirmed, preventing an aborted
+   emergency rotation from being resumed on restart as a normal rotation.
 2. **Immediate containment:** A fresh DEK is generated and committed via Raft
    following the standard flow (§6 step 1-2). The compromised DEK is marked
    `revoked` (not `retired`) in `_meta:dek:revoked:<timestamp>`, preventing its
@@ -857,10 +873,10 @@ initialized:
 
 - **Initialized cluster (live restore, OpenBao-style).** The leader validates
   the backup, then commits it through the Raft log as chunked `RestoreChunk`
-  entries and one `RestoreApply` entry. Every node applies `RestoreApply` at
-  the same index: it replaces all replicated state and DEKs with the backup's
-  and keeps its own Raft bookkeeping (applied log, membership, snapshot
-  history). Membership is therefore unchanged. `Raft::install_full_snapshot` is
+  entries and one `RestoreApply` entry. Every node applies `RestoreApply` at the
+  same index: it replaces all replicated state and DEKs with the backup's and
+  keeps its own Raft bookkeeping (applied log, membership, snapshot history).
+  Membership is therefore unchanged. `Raft::install_full_snapshot` is
   deliberately not used here: openraft only accepts it on a follower and panics
   when given a snapshot a leader cannot own.
 - **Uninitialized node (disaster recovery).** Follows OpenRaft's documented
@@ -1051,22 +1067,21 @@ Any code change violating the following is rejected at review:
    interrupted). **Quarantine state is durable:** it is committed via a Raft
    proposal to `_meta:quarantine:<partition>:<node_id>` (partition first, so an
    operator's `ClearQuarantine` can prefix-scan and remove every reporting
-   node's entry for a partition in one pass) so it persists across node
-   restarts and is visible to all cluster members. GCM failures reflect
-   node-local storage corruption, not a cluster-wide data problem, so
-   blocking is node-scoped: only the reporting node re-enters quarantine (and
-   refuses local reads) for that partition on restart; other nodes persist
-   the record for audit visibility only and continue serving reads. Recovery
-   requires the operator to run
-   `keystone-manage storage clear-quarantine` on the affected node, which
-   requires `storage-operator` RBAC authorization, is committed via Raft (so
-   the flag is cleared cluster-wide), and is audit-logged with caller identity
-   and timestamp. A single GCM tag failure emits a `WARN` log and increments a
-   metric; two failures within 60 seconds emit an `ERROR` log and trigger an
-   alert. Per-source-IP and per-identity rate limits apply (see §1): `RotateDek`
-   limited to 2/hour, `ClearQuarantine` to 10/hour. Emergency rotation
-   (`RotateDekRequest{emergency: true}`) requires dual-control approval from a
-   second `storage-operator` via `ConfirmRotateDek` within 5 minutes.
+   node's entry for a partition in one pass) so it persists across node restarts
+   and is visible to all cluster members. GCM failures reflect node-local
+   storage corruption, not a cluster-wide data problem, so blocking is
+   node-scoped: only the reporting node re-enters quarantine (and refuses local
+   reads) for that partition on restart; other nodes persist the record for
+   audit visibility only and continue serving reads. Recovery requires the
+   operator to run `keystone-manage storage clear-quarantine` on the affected
+   node, which requires `storage-operator` RBAC authorization, is committed via
+   Raft (so the flag is cleared cluster-wide), and is audit-logged with caller
+   identity and timestamp. A single GCM tag failure emits a `WARN` log and
+   increments a metric; two failures within 60 seconds emit an `ERROR` log and
+   trigger an alert. Per-source-IP and per-identity rate limits apply (see §1):
+   `RotateDek` limited to 2/hour, `ClearQuarantine` to 10/hour. Emergency
+   rotation (`RotateDekRequest{emergency: true}`) requires dual-control approval
+   from a second `storage-operator` via `ConfirmRotateDek` within 5 minutes.
 6. **No environment-variable KEK in production:** The `--dev-mode` flag and
    `KEYSTONE_ALLOW_ENV_KEK=1` are explicitly required to start with an
    environment-provided KEK.
@@ -1083,13 +1098,13 @@ Any code change violating the following is rejected at review:
    operator intervention. This prevents adversarial write flooding from
    exhausting the `u32` nonce space within a single DEK epoch.
 10. **Nonce source exclusivity:** Nonce sources for all AES-256-GCM contexts are
-    defined in §2.2. Application-generated random nonces are prohibited. Any
-    new encrypted context must define a deterministic, collision-resistant
-    nonce strategy reviewed by the security team. The only random IV allowed is
-    one generated inside an HSM that mandates it (PKCS#11, §2.5.1), which draws
-    it from its approved DRBG. Deterministic IVs are compliant with NIST SP
-    800-38D §8.2.1 and therefore with FIPS 140-3; this invariant is stricter
-    than FIPS requires, not in conflict with it.
+    defined in §2.2. Application-generated random nonces are prohibited. Any new
+    encrypted context must define a deterministic, collision-resistant nonce
+    strategy reviewed by the security team. The only random IV allowed is one
+    generated inside an HSM that mandates it (PKCS#11, §2.5.1), which draws it
+    from its approved DRBG. Deterministic IVs are compliant with NIST SP 800-38D
+    §8.2.1 and therefore with FIPS 140-3; this invariant is stricter than FIPS
+    requires, not in conflict with it.
 11. **Deployment validation:** A pre-flight CI/CD check or Kubernetes admission
     webhook must reject any production service definition containing
     `--dev-mode` or `KEYSTONE_ALLOW_ENV_KEK`. This prevents silent flag
@@ -1097,17 +1112,16 @@ Any code change violating the following is rejected at review:
 12. **Startup pre-flight:** At process startup (before KEK/DEK are loaded), the
     node must verify `RLIMIT_CORE == 0` and `PR_SET_DUMPABLE == 0`. If either
     check fails, the node must refuse to start in production mode.
-13. **Non-extractable KEK key material (§2.5):** PKCS#11 KEK key objects MUST
-    be created with `CKA_EXTRACTABLE = false` / `CKA_SENSITIVE = true`; TPM
-    KEK key objects MUST be created with `fixedTPM | fixedParent` and no
-    duplication attribute. A `KekProvider` implementation that can export raw
-    key bytes from the token/TPM is non-compliant regardless of how it is
-    otherwise used.
-14. **No PKCS#11/TPM credential via environment variable:** The PKCS#11 PIN
-    and TPM auth value are supplied only via `pkcs11_pin_file` /
-    `tpm_auth_file` (a file path in config). Neither may be supplied via an
-    environment variable or inline config value — that channel is reserved
-    exclusively for the dev-mode `KEYSTONE_DEV_KEK` path (invariant 6).
+13. **Non-extractable KEK key material (§2.5):** PKCS#11 KEK key objects MUST be
+    created with `CKA_EXTRACTABLE = false` / `CKA_SENSITIVE = true`; TPM KEK key
+    objects MUST be created with `fixedTPM | fixedParent` and no duplication
+    attribute. A `KekProvider` implementation that can export raw key bytes from
+    the token/TPM is non-compliant regardless of how it is otherwise used.
+14. **No PKCS#11/TPM credential via environment variable:** The PKCS#11 PIN and
+    TPM auth value are supplied only via `pkcs11_pin_file` / `tpm_auth_file` (a
+    file path in config). Neither may be supplied via an environment variable or
+    inline config value — that channel is reserved exclusively for the dev-mode
+    `KEYSTONE_DEV_KEK` path (invariant 6).
 15. **Authenticate-before-decrypt for Encrypt-then-MAC contexts:** Any
     `KekProvider` that does not use an AEAD primitive natively (the TPM
     provider, §2.5.2) MUST verify the MAC over the full ciphertext before

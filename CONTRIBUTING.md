@@ -16,8 +16,8 @@ help this project come to fruition.
 - Rust toolchain (stable)
 - [pre-commit](https://pre-commit.com/) for linting hooks
 - [cargo-nextest](https://nexte.st/) for integration tests
-- `protoc` (for example the `protobuf-compiler` package), required to build
-  the distributed storage crate
+- `protoc` (for example the `protobuf-compiler` package), required to build the
+  distributed storage crate
 - [SPIRE](https://github.com/spiffe/spiffe.io) (`spire-server` and `spire-agent`
   on `$PATH`) for API integration tests
 - (Optional) [skaffold](https://skaffold.dev/) and a local Kubernetes cluster
@@ -140,23 +140,23 @@ redeploying all tracking labels on every change.
 
 **Tempest identity compatibility tests** (advisory, non-blocking): a third
 `tempest` module runs the OpenStack tempest identity v3 suite against
-`keystone-rs` to track v3 API compatibility gaps. Since not every v3
-operation is implemented by keystone-rs yet, this is run and reported
-separately from the main verify suite and never blocks CI:
+`keystone-rs` to track v3 API compatibility gaps. Since not every v3 operation
+is implemented by keystone-rs yet, this is run and reported separately from the
+main verify suite and never blocks CI:
 
 ```console
 skaffold verify -m tempest -a build.artifacts -v debug
 ```
 
 Failing test IDs are printed in each container's log
-(`===== FAILED TESTS (target=...) =====`); in CI these are also collected
-into a job summary, posted as a PR comment, and an uploaded
-`tempest-identity-results` log artifact.
+(`===== FAILED TESTS (target=...) =====`); in CI these are also collected into a
+job summary, posted as a PR comment, and an uploaded `tempest-identity-results`
+log artifact.
 
-`keystone-py` is not run by default (it's the reference implementation the
-suite is written against, so its results add little day-to-day signal).
-Opt in with the `python-identity` profile, e.g. to sanity-check the
-tempest config itself after an upgrade:
+`keystone-py` is not run by default (it's the reference implementation the suite
+is written against, so its results add little day-to-day signal). Opt in with
+the `python-identity` profile, e.g. to sanity-check the tempest config itself
+after an upgrade:
 
 ```console
 skaffold verify -m tempest -a build.artifacts -p python-identity -v debug
@@ -208,25 +208,76 @@ When submitting a PR:
 5. Ensure tests pass (`cargo test` and `cargo nextest run`)
 6. Ensure clippy passes (`cargo clippy -p <crate_name> --fix --allow-dirty`)
 7. Ensure committed pass (`committed`) rewriting message when necessary
+8. If `Cargo.lock` changed, ensure `cargo vet --locked` passes (see
+   [Dependency Supply Chain](#dependency-supply-chain-cargo-vet))
+
+## Dependency Supply Chain (`cargo-vet`)
+
+Dependencies are checked in CI by
+[`cargo-deny`](https://embarkstudios.github.io/cargo-deny/) (advisories,
+licenses, sources) and by [`cargo-vet`](https://mozilla.github.io/cargo-vet/)
+(job `cargo-vet` in `.github/workflows/audit.yml`). `cargo-vet` requires every
+crate version in `Cargo.lock` to be covered by an audit, an imported audit, or
+an explicit exemption recorded in `supply-chain/`.
+
+Install it with `cargo install cargo-vet --locked` (CI uses 0.10.2). Run
+`cargo vet --locked` locally to see what CI will see.
+
+| File                        | Content                                                   |
+| --------------------------- | --------------------------------------------------------- |
+| `supply-chain/config.toml`  | Imported audit sources, policy and `[[exemptions]]`       |
+| `supply-chain/audits.toml`  | Audits performed by this project                          |
+| `supply-chain/imports.lock` | Pinned snapshot of imported audits (generated, commit it) |
+
+### When a PR changes `Cargo.lock`
+
+If the `cargo-vet` job fails after you add or bump a dependency:
+
+1. Run `cargo vet`. It lists the unvetted crates and the suggested action.
+2. Prefer, in this order:
+   1. Pick a version that an imported audit already covers (`cargo vet suggest`
+      shows the cheapest option).
+   2. Review the crate (or the diff from the last audited version) with
+      `cargo vet inspect <crate> <version>` or `cargo vet diff`, then record the
+      result with `cargo vet certify`. This writes to `audits.toml`.
+   3. Only if a review is not feasible:
+      `cargo vet add-exemption <crate> <version>`. State why in the PR
+      description. Exemptions are a baseline to be burned down, not a way to
+      skip review.
+3. Run `cargo vet prune` to drop exemptions made obsolete by the change (for
+   example the old version of a crate you just bumped) and commit
+   `supply-chain/` together with the `Cargo.lock` change.
+
+Never edit `imports.lock` by hand. Refresh it with
+`cargo vet regenerate imports` (maintainers do this periodically so new upstream
+audits are picked up, which often shrinks the exemption list).
+
+### Key-handling crates
+
+Dependencies that touch key material or ciphertext (`openraft`, `fjall`,
+`aes-gcm`, `hkdf`, `cryptoki`, `tss-esapi`, the mlock wrapper; see ADR 0016-v2
+§1) are currently exempted, not audited. A bump of any of them needs a real
+review (`cargo vet diff` plus the checklist in the ADR) and, ideally, a
+`cargo vet certify` entry that replaces the exemption.
 
 ## Workspace Structure
 
-| Path                | Description                                                                                                                                                                                         |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `crates/keystone`   | Main service binary and API implementation. API handlers: `src/api/vX`                                                                                                                              |
-| `crates/core`       | The "Brain" — provider definitions grouped by domain (Identity, Catalog, Role, Assignment, etc.). Contains `provider_api.rs` (inter-provider interface) and `backend.rs` (backend driver interface) |
-| `crates/core-types` | Shared data structures across the workspace                                                                                                                                                         |
-| `crates/api-types`  | API request/response models and conversions from `core-types`                                                                                                                                       |
-| `crates/storage`    | Distributed storage implementation (OpenRaft)                                                                                                                                                       |
-| `crates/storage-crypto` | KEK/DEK primitives shared by the storage engine: `KekProvider` trait, `EnvKek` (dev-mode), AES-GCM cipher/nonce/audit helpers                                                                   |
-| `crates/storage-crypto-pkcs11` | `Pkcs11Kek` — production `KekProvider` backed by a non-extractable AES key on a PKCS#11 token/HSM (e.g. SoftHSM2, vendor HSMs)                                                            |
-| `crates/storage-crypto-tpm` | `TpmKek` — production `KekProvider` backed by a TPM 2.0 resident AES key                                                                                                                     |
-| `crates/*-sql`      | SQL-backed persistence drivers (e.g. `identity-sql`, `catalog-sql`) using Sea-ORM                                                                                                                   |
-| `crates/*-raft`     | Raft-backed persistence drivers for distributed storage                                                                                                                                             |
-| `crates/config`     | Configuration parsing                                                                                                                                                                               |
-| `crates/webauthn`   | WebAuthn/Passkey support extension                                                                                                                                                                  |
-| `policy/`           | OPA Rego policy files                                                                                                                                                                               |
-| `doc/src/adr/`      | Architecture Decision Records                                                                                                                                                                       |
+| Path                           | Description                                                                                                                                                                                         |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `crates/keystone`              | Main service binary and API implementation. API handlers: `src/api/vX`                                                                                                                              |
+| `crates/core`                  | The "Brain" — provider definitions grouped by domain (Identity, Catalog, Role, Assignment, etc.). Contains `provider_api.rs` (inter-provider interface) and `backend.rs` (backend driver interface) |
+| `crates/core-types`            | Shared data structures across the workspace                                                                                                                                                         |
+| `crates/api-types`             | API request/response models and conversions from `core-types`                                                                                                                                       |
+| `crates/storage`               | Distributed storage implementation (OpenRaft)                                                                                                                                                       |
+| `crates/storage-crypto`        | KEK/DEK primitives shared by the storage engine: `KekProvider` trait, `EnvKek` (dev-mode), AES-GCM cipher/nonce/audit helpers                                                                       |
+| `crates/storage-crypto-pkcs11` | `Pkcs11Kek` — production `KekProvider` backed by a non-extractable AES key on a PKCS#11 token/HSM (e.g. SoftHSM2, vendor HSMs)                                                                      |
+| `crates/storage-crypto-tpm`    | `TpmKek` — production `KekProvider` backed by a TPM 2.0 resident AES key                                                                                                                            |
+| `crates/*-sql`                 | SQL-backed persistence drivers (e.g. `identity-sql`, `catalog-sql`) using Sea-ORM                                                                                                                   |
+| `crates/*-raft`                | Raft-backed persistence drivers for distributed storage                                                                                                                                             |
+| `crates/config`                | Configuration parsing                                                                                                                                                                               |
+| `crates/webauthn`              | WebAuthn/Passkey support extension                                                                                                                                                                  |
+| `policy/`                      | OPA Rego policy files                                                                                                                                                                               |
+| `doc/src/adr/`                 | Architecture Decision Records                                                                                                                                                                       |
 
 ## Key Design Patterns
 

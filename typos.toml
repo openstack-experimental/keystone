@@ -1,5 +1,5 @@
 [files]
-extend-exclude = ["loadtest", "doc/**/mermaid.*js", "doc/html/**/*"]
+extend-exclude = ["loadtest", "supply-chain", "doc/**/mermaid.*js", "doc/html/**/*"]
 ignore-hidden = true
 ignore-files = true
 ignore-dot = true

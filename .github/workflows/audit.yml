@@ -13,6 +13,7 @@ on:
       - '.github/workflows/audit.yml'
       - '**/Cargo.toml'
       - '**/Cargo.lock'
+      - 'supply-chain/**'
 
 env:
   RUST_BACKTRACE: 1
@@ -43,3 +44,22 @@ jobs:
         with:
           command: check
           rust-version: stable
+
+  cargo-vet:
+    name: Supply-chain audits (cargo-vet)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install cargo-vet
+        uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # v2.82.10
+        with:
+          tool: cargo-vet@0.10.2
+
+      - name: Run cargo vet
+        run: cargo vet --locked
