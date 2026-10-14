@@ -21,12 +21,14 @@ OpenBao/Vault API) so that existing customer software works unmodified, and a
 clear separation between what a tenant may reach from the internet and what only
 the cloud's own services may reach.
 
-Under the hood the service does not implement its own cryptographic storage
-engine. It operates a **fleet of OpenBao clusters**, shards OpenStack tenants
-across them for failure isolation and scalability, and puts a Rust control and
-data plane in front of that fleet. The fleet is an implementation detail of the
-service, never a contract with the tenant — not even on the surface that speaks
-the OpenBao API, which the KMS implements itself rather than proxying (§5.6).
+Under the hood the service writes neither a barrier nor a new storage engine.
+Key custody sits behind **one OpenBao barrier per region**, holding one custody
+key per project; the key records themselves live in a Raft-replicated,
+encrypted store built from the crate `keystone-rs` already uses for its own
+storage; and a Rust control and data plane sits in front of both. A tenant whose
+contract demands physical separation gets a custody cluster of its own. None of
+this is a contract with the tenant — not even on the surface that speaks the
+OpenBao API, which the KMS implements itself rather than proxying (§5.6).
 
 Every section states its own requirements and limits. Where more than one design
 is defensible the options are presented with a recommendation, because this is a
@@ -42,15 +44,17 @@ is a thin wrapper over a single database. It has to answer four questions
 concretely:
 
 1. **Where does my key material live, and who can reach it?** Answer: inside a
-   region, inside one OpenBao cluster shard dedicated to a small set of tenants,
-   behind a barrier key that is itself sealed by a central seal authority or an
-   HSM. No operator path reads plaintext key material; no tenant network path
+   region, as records wrapped under a custody key that belongs to your project
+   alone and never leaves an OpenBao barrier or an HSM, sealed by a root of
+   trust the cloud holds. Tenants who need it get a custody cluster of their
+   own. No operator path reads plaintext key material; no tenant network path
    reaches the storage layer at all.
-2. **What happens when something breaks?** Answer: the blast radius of a shard
-   failure is the tenants on that shard, not the region. Envelope-encryption
+2. **What happens when something breaks?** Answer: envelope-encryption
    operations — the hot path, and the one that users notice — are served by a
-   stateless crypto tier that keeps working for the lifetime of its cached
-   wrapped keys even when the shard behind it is unavailable.
+   stateless crypto tier that keeps working for the lifetime of its cached keys
+   even when the custody cluster or the key store behind it is unavailable.
+   Blast radius beyond that is chosen per tenant through placement (§8.6), not
+   imposed by the topology.
 3. **How do I integrate what I already run?** Answer: three interfaces. A native
    REST API, KMIP for storage arrays, databases and backup software, and an
    OpenBao/Vault-compatible surface (`transit`, `kv` v2, and the minimum of
@@ -65,13 +69,13 @@ concretely:
 
 The shape that follows from those answers:
 
-| Layer             | What it is                                                                     | Reachable from                     |
-| ----------------- | ------------------------------------------------------------------------------ | ---------------------------------- |
-| **Edge**          | `kms-api`: axum HTTP, native v1 REST, Vault-compatible surface, KMIP front end | Tenant networks, internet          |
-| **Crypto tier**   | `kms-crypto`: stateless envelope encryption, KEK cache, optional PKCS#11       | Edge and internal services only    |
-| **Control plane** | `kms-control`: key metadata, placement, lifecycle, rotation, fleet operations  | Internal control network only      |
-| **Backend fleet** | Sharded OpenBao clusters (`transit`, `kv`), one barrier per shard              | Crypto tier and control plane only |
-| **Root of trust** | Central seal OpenBao ("seal cluster") and/or HSM partitions                    | Fleet unseal path only             |
+| Layer             | What it is                                                                                               | Reachable from                     |
+| ----------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| **Edge**          | `kms-api`: axum HTTP, native v1 REST, Vault-compatible surface, KMIP front end                           | Tenant networks, internet          |
+| **Crypto tier**   | `kms-crypto`: stateless envelope encryption, KEK cache, optional PKCS#11                                 | Edge and internal services only    |
+| **Control plane** | `kms-control`: key metadata, placement, lifecycle, rotation; hosts the Raft key store (§8.3)             | Internal control network only      |
+| **Custody**       | One OpenBao cluster per region holding per-project custody keys; exception clusters for isolated tenants | Crypto tier and control plane only |
+| **Root of trust** | TPM, HSM partitions or Shamir shares sealing the custody cluster                                         | Seal path only                     |
 
 and one rule that runs through the whole design:
 
@@ -129,7 +133,8 @@ blast-radius or network-isolation properties of §1.
 
 The KMS is a separate project with its own repository, release cadence and
 database. It depends on Keystone for identity and authorization decisions, and
-it borrows Keystone's engineering: axum handlers, SeaORM persistence, the OPA
+it borrows Keystone's engineering: axum handlers, the Raft-replicated encrypted
+storage of [ADR 0016-v2](adr/0016-v2-raft-storage.md) (§8.3), the OPA
 integration ([ADR 0002](adr/0002-open-policy-agent.md)), the security context
 ([ADR 0017](adr/0017-security-context.md)), handler-level rate limiting
 ([ADR 0022](adr/0022-rate-limiting.md)), CADF audit
@@ -151,37 +156,50 @@ than a compute API would need.
 
 ### 2.5 Relationship to OpenBao
 
-OpenBao is a premise of this design, and a premise deserves an argument. Three
+OpenBao is a premise of this design, and a premise deserves an argument. Four
 answers to "under whose barrier does key material live" were considered:
 
-| Option                                                                                                                                           | What it gives                                                                                                                                                   | What it costs                                                                                                                                                                                  |
-| ------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **A fleet of OpenBao clusters (recommended)**                                                                                                    | Barrier, integrated Raft replication, namespaces, backup and restore, and a seal protocol with an operational history behind it                                 | Operating _N_ Raft clusters per region is the single largest line item in the service's cost, development and operational alike                                                                |
-| **HSM partitions as the custody backend**                                                                                                        | The strongest custody story there is                                                                                                                            | Fails on arithmetic: a partition holds thousands of key objects, not the 10⁵–10⁶ that a four-digit tenant count implies, at a throughput §10.2 already calls "much lower than software crypto" |
-| **No barrier product at all:** wrapped blobs in the control-plane database, wrapping keys held through PKCS#11, all cryptography in `kms-crypto` | One fewer distributed system; sharding becomes a database concern the `keystone-rs` patterns already handle; restore is an operation the operators already know | The project owns the barrier — wrapping format, rekey, crypto-shredding, the compliance narrative — and, decisively, the HSM stops being optional                                              |
+| Option                                                                                                                                                                                                                                   | What it gives                                                                                                                                                                                                  | What it costs                                                                                                                                                                                                          |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A fleet of OpenBao clusters, every CMK a `transit` key in its tenant's shard                                                                                                                                                             | Physical separation between tenants; blast radius bounded per shard; barrier, Raft replication and a seal protocol with an operational history                                                                 | Operating _N_ Raft clusters per region, which becomes the largest line item in the service's cost; every CMK stored twice; a namespace policy set per tenant; migration as the everyday path rather than the exception |
+| HSM partitions as the custody backend                                                                                                                                                                                                    | The strongest custody story there is                                                                                                                                                                           | Fails on arithmetic: a partition holds thousands of key objects, not the 10⁵–10⁶ that a four-digit tenant count implies, at a throughput §10.2 already calls "much lower than software crypto"                         |
+| No barrier product at all: wrapped blobs in a database, wrapping keys held through PKCS#11, all cryptography in `kms-crypto`                                                                                                             | One fewer distributed system; restore is an operation the operators already know                                                                                                                               | The project owns the barrier — wrapping format, rekey, crypto-shredding, the compliance narrative — and, decisively, the HSM stops being optional                                                                      |
+| **One custody cluster and a key store (recommended):** one OpenBao per region holding a custody key per project, CMK records wrapped under it in a Raft store built from `keystone-rs`'s storage crate, all cryptography in `kms-crypto` | The barrier stays OpenBao, so the HSM stays optional; 10³–10⁴ custody keys, which one cluster holds easily and an HSM partition can hold too; one durable copy of every CMK; storage the team already operates | Region-wide blast radius for tenants on the shared pair, bought back per tenant through placement; the KMS owns key versioning, `rewrap` of tenant ciphertext and the blob envelope                                    |
 
-The decisive argument is that third option's failure, and it is not the one that
-first suggests itself. Writing a barrier is expensive, but the sharper reason is
-this: §10 promises that an HSM "is never required for the service to function",
-and §9's seal cluster — itself an OpenBao with a `fleet-unseal` transit mount —
-is the _software_ root of trust that makes the promise keepable. Remove OpenBao
-and a deployment must either make an HSM mandatory, pricing out every operator
-who does not already have one, or grow its own software seal, which is
-rebuilding the least forgiving part of OpenBao with none of its review history.
-**OpenBao is what lets the HSM stay optional**, and that is a better
-justification than not wanting to write a barrier.
+The fourth row is the recommendation, and the reason it wins is visible in the
+third row's failure. Writing a barrier is expensive, but the sharper reason not
+to is this: §10 promises that an HSM "is never required for the service to
+function", and an OpenBao barrier sealed by a TPM or by Shamir shares is the
+_software_ root of trust that makes the promise keepable. Remove OpenBao and a
+deployment must either make an HSM mandatory, pricing out every operator who
+does not already have one, or grow its own software seal, which is rebuilding
+the least forgiving part of OpenBao with none of its review history. **OpenBao
+is what lets the HSM stay optional.**
+
+But that argument is about the barrier, and only the barrier. It says nothing in
+favour of also using OpenBao as the database of a million small records, which
+is the job that forces a fleet into existence — and that job is one
+`keystone-rs` already does: replicated, linearizable, encrypted-at-rest storage
+of many small records is exactly what
+[ADR 0016-v2](adr/0016-v2-raft-storage.md) built for identity data. The fourth
+row keeps OpenBao for the part where it is irreplaceable and stops asking it to
+be the part where it is merely adequate. The fleet survives in §8.6 as the
+exception for tenants whose contract is physical separation, which is what it
+is actually good at selling.
 
 The secondary argument is the compliance narrative of §20. "The key material is
-inside an OpenBao barrier" is a sentence an auditor already accepts; "the key
-material is inside our barrier" is one the project must prove from first
-principles, every time, for every scheme.
+inside an OpenBao barrier" is a sentence an auditor already accepts. The fourth
+row changes its form to "the key material is wrapped under a key that belongs to
+your project alone and has never left an OpenBao barrier", which is the sentence
+every public cloud KMS already says about itself, and which the project must
+still back with a reviewed blob format (§6.4, §17).
 
-What OpenBao is _not_ asked to be is the region's cryptographic engine. §7 makes
-mode B the default, under which the hot path reaches a shard roughly once per
-key per cache lifetime, and §6.3 is explicit that transit's non-exportability is
-precisely why the offload cannot be built on transit alone. The dependency is
-therefore deliberately narrow, and §8.6 writes down its exact surface so that it
-stays narrow.
+What OpenBao is _not_ asked to be is the region's cryptographic engine, nor its
+database. §7 makes mode B the default, under which the hot path reaches the
+barrier roughly once per key version per cache lifetime, and §6.3 is explicit
+that transit's non-exportability is precisely why the offload cannot be built on
+transit alone. The dependency is therefore deliberately narrow, and §8.9 writes
+down its exact surface so that it stays narrow.
 
 ### 2.6 Relationship to confidential computing
 
@@ -213,8 +231,8 @@ The split that follows:
 | Speaking the attestation handshake to a workload           | A thin edge surface on its own hostname (§5.3), for clients that need one |
 
 **What the service itself needs: nothing.** Attestation is also a candidate
-root of trust for the KMS's own processes — a seal cluster that releases a
-shard's unseal key only to a node that has proved its measurement (§9.3), or a
+root of trust for the KMS's own processes — a custody cluster that unseals only
+on nodes that have proved their measurement (§9.3), or a
 `kms-crypto` running inside a TEE so that the plaintext KEK cache of §7.3 sits
 in memory the host cannot read. Both are attractive and neither may become
 required: principle 6 makes the HSM optional, and a service that could not
@@ -259,17 +277,19 @@ Phase 1–5 concern; §21, question 12 says what would make it one.
 ## 3. Principles
 
 1. **Blast radius is a design parameter, not an outcome.** Every tenant is
-   assigned to a shard; the shard is the unit of failure, upgrade, capacity and
-   incident scope. A shard is sized so that its loss is an incident, not a
-   catastrophe.
+   assigned a placement class, and the class decides what it shares: `standard`
+   tenants share the region's custody cluster and key store, and a tenant whose
+   risk the shared pair is not sized for buys a custody cluster of its own
+   (§8.6). The shared pair is sized so that its loss is an incident the crypto
+   tier's cache can ride through, not a catastrophe.
 2. **Plaintext key material exists in exactly two places:** inside an OpenBao
    barrier (or HSM), and transiently in the memory of a crypto-tier process that
    is currently performing an operation. It is never written to the KMS's own
-   database, never logged, never returned by an API except where the tenant
+   store, never logged, never returned by an API except where the tenant
    explicitly asked for a data key or an authorized export.
 3. **The hot path must not be the fragile path.** Envelope operations are orders
    of magnitude more frequent than key-management operations and are served by a
-   tier that can be scaled and degraded independently of the backend fleet.
+   tier that can be scaled and degraded independently of the custody backend.
 4. **Internal and external are different services that happen to share code.**
    They bind different addresses, on different networks, with different
    authentication, different policy, different rate limits and different audit
@@ -283,15 +303,16 @@ Phase 1–5 concern; §21, question 12 says what would make it one.
    not guarantee. A deployment with an HSM must not have to re-architect.
 7. **No dependency on any external public KMS.** The service is the root of
    trust for the cloud it serves. Everything it needs to bootstrap must be
-   derivable from operator-held material, a local HSM, or its own seal cluster.
+   derivable from operator-held material, a local HSM, or its own custody
+   cluster.
 8. **Region is a hard boundary by default.** Key material does not leave its
    region unless the key was explicitly created as a multi-region key and the
    tenant asked for it.
 9. **Crypto-agility from the first line.** Algorithms, key sizes and wrapping
    formats are versioned in the wire format and in storage, so that post-quantum
    wrapping (ML-KEM) and signing (ML-DSA) are additions, not migrations.
-10. **Everything is recorded.** Every administrative action and every fleet
-    operation emits its own CADF event. Every _key use_ is recorded too, but at
+10. **Everything is recorded.** Every administrative action and every custody
+    or placement operation emits its own CADF event. Every _key use_ is recorded too, but at
     data-plane volumes the unit of record is allowed to be an aggregate (§14):
     what may never be lost is the identity, the key version and the outcome of
     any failed, denied, key-material or management operation. A KMS that cannot
@@ -327,18 +348,18 @@ flowchart TB
 
     subgraph ctl["Control plane (kms-control)"]
         meta["Key metadata, grants,<br/>lifecycle, rotation"]
-        place["Placement and<br/>fleet orchestration"]
+        store[("Key store<br/>Raft, encrypted at rest")]
+        place["Placement and<br/>exception clusters"]
     end
 
-    subgraph fleet["Backend fleet (per region)"]
-        s1["Shard A<br/>OpenBao cluster"]
-        s2["Shard B<br/>OpenBao cluster"]
-        s3["Shard C<br/>OpenBao cluster"]
+    subgraph cust["Custody (per region)"]
+        cc["Custody cluster<br/>OpenBao, one key per project"]
+        ex["Exception clusters<br/>dedicated / regulated"]
     end
 
     subgraph rot["Root of trust"]
-        seal["Seal cluster<br/>central OpenBao"]
-        hsm["HSM partitions<br/>(optional)"]
+        root["TPM, HSM partitions<br/>or Shamir shares"]
+        seal["Seal cluster<br/>(only with exception clusters)"]
     end
 
     ks["Keystone<br/>authn / authz"]
@@ -351,14 +372,16 @@ flowchart TB
     cli --> rest
     edge --> crypto
     edge --> ctl
-    crypto --> fleet
+    crypto -->|"blob reads"| ctl
+    crypto --> cust
     crypto -.-> pkcs
-    pkcs -.-> hsm
-    ctl --> fleet
-    ctl --> place
-    fleet -->|"unseal"| seal
-    fleet -.->|"unseal (alt)"| hsm
-    seal -.->|"unseal"| hsm
+    pkcs -.-> root
+    ctl --> cust
+    meta --> store
+    place --> store
+    cc -->|"sealed by"| root
+    ex -->|"unseal"| seal
+    seal -.->|"sealed by"| root
     edge -->|"check(sub, op, target)"| ks
     edge --> opa
     spire -.->|"SVIDs"| edge
@@ -369,13 +392,13 @@ flowchart TB
 
 ### 4.2 The five processes
 
-| Process       | Role                                                                                                                            | Network         | Scaling                                     |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------- | ------------------------------------------- |
-| `kms-api`     | Terminates tenant TLS, authn/authz, rate limits, translates every protocol into one internal call set                           | Edge + internal | Stateless, horizontal, per-region           |
-| `kms-crypto`  | Performs envelope and transit operations, holds the KEK cache, drives PKCS#11                                                   | Internal only   | Stateless, horizontal, cache-warm affinity  |
-| `kms-control` | Owns key metadata, lifecycle state machine, rotation schedules, grants, placement decisions, custody metering snapshots (§15.2) | Internal only   | Leader-elected for schedulers, HA for reads |
-| `kms-fleet`   | Operates the OpenBao clusters: provisioning, unseal, upgrade, rekey, health, migration                                          | Management only | Singleton per region with standby           |
-| `kms-manage`  | Operator CLI: bootstrap, shard operations, DR drills, key recovery ceremonies                                                   | Management only | Invoked, not served                         |
+| Process       | Role                                                                                                                                                                        | Network         | Scaling                                              |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- | ---------------------------------------------------- |
+| `kms-api`     | Terminates tenant TLS, authn/authz, rate limits, translates every protocol into one internal call set                                                                       | Edge + internal | Stateless, horizontal, per-region                    |
+| `kms-crypto`  | Performs envelope and transit operations, holds the KEK cache, drives PKCS#11                                                                                               | Internal only   | Stateless, horizontal, cache-warm affinity           |
+| `kms-control` | Owns key metadata, lifecycle state machine, rotation schedules, grants, placement decisions, custody metering snapshots (§15.2); hosts the key store as a Raft voter (§8.3) | Internal only   | A Raft group of 3 or 5; schedulers follow the leader |
+| `kms-fleet`   | Operates the OpenBao clusters — the custody cluster and any exception clusters: provisioning, unseal, upgrade, rekey, health, migration                                     | Management only | Singleton per region with standby                    |
+| `kms-manage`  | Operator CLI: bootstrap, cluster operations, DR drills, key recovery ceremonies                                                                                             | Management only | Invoked, not served                                  |
 
 One piece of shared infrastructure is load-bearing enough to name here rather
 than leave implied: the **invalidation bus**, the path by which `kms-control`
@@ -406,11 +429,13 @@ Per **region**:
 - ≥3 `kms-api` replicas behind the public and internal load balancers, in
   distinct availability zones.
 - ≥3 `kms-crypto` replicas, AZ-distributed, no tenant-facing address.
-- ≥2 `kms-control` replicas; schedulers use a lease.
-- _N_ shards; each shard is an OpenBao cluster of 3 or 5 nodes spread across
-  AZs, with integrated (Raft) storage.
-- One **seal cluster**: a small, dedicated OpenBao cluster (3 or 5 nodes) used
-  only as a transit auto-unseal authority for the shards (§9).
+- 3 or 5 `kms-control` replicas, AZ-distributed, which are also the voters of
+  the key store's Raft group (§8.3); schedulers follow the Raft leader.
+- One **custody cluster**: OpenBao, 3 or 5 nodes spread across AZs, integrated
+  (Raft) storage, sealed directly by the root of trust (§8.2, §9).
+- Per `dedicated` or `regulated` tenant, an **exception cluster** of the same
+  shape (§8.6), and — only once the first exists — a small **seal cluster** to
+  unseal them.
 - Optional HSM partitions, at least two, in different failure domains.
 
 Per **cloud** (across regions): the control plane's metadata is regional. There
@@ -457,7 +482,7 @@ streams. "Zone" here is an architectural term; §12 maps it onto networks.
 | **Public**      | `kms-api` :443      | Bearer JWT, or mTLS with a tenant SVID    | Tenant apps, tenant OpenBao, Horizon |
 | **Tenant-KMIP** | `kms-api` :5696     | mTLS only (client certificate)            | Storage arrays, TDE, backup software |
 | **Internal**    | `kms-api` :8443     | SPIFFE mTLS, plus delegated user identity | Cinder, Glance, Nova, Swift, Octavia |
-| **Management**  | `kms-control` :9443 | SPIFFE mTLS, operator role required       | `kms-manage`, fleet automation, CI   |
+| **Management**  | `kms-control` :9443 | SPIFFE mTLS, operator role required       | `kms-manage`, cluster automation, CI |
 
 The same handler is never mounted in more than one zone by accident: the router
 is built per zone from an explicit list, and a test asserts that the public
@@ -466,33 +491,34 @@ is the enforcement mechanism; a code review is not.
 
 ### 5.2 What is public and what is not
 
-| Capability                                        | Public | Tenant-KMIP | Internal | Management |
-| ------------------------------------------------- | :----: | :---------: | :------: | :--------: |
-| Create / list / describe keys                     |   ✓    |      ✓      |    ✓     |     ✓      |
-| Encrypt / decrypt / sign / verify                 |   ✓    |      ✓      |    ✓     |     –      |
-| Generate data key (envelope)                      |   ✓    |      ✓      |    ✓     |     –      |
-| Rotate, enable/disable, schedule deletion         |   ✓    |      –      |    ✓     |     ✓      |
-| Import key material (BYOK)                        |   ✓    |      –      |    –     |     ✓      |
-| Export key material under wrap                    |   ✓¹   |     ✓¹      |    –     |     ✓      |
-| Grants on a key                                   |   ✓    |      –      |    –     |     ✓      |
-| Vault `transit` compatibility                     |   ✓    |      –      |    ✓     |     –      |
-| Vault `kv` v2 compatibility                       |   ✓    |      –      |    –     |     –      |
-| Barbican v1 compatibility                         |   ✓    |      –      |    ✓     |     –      |
-| Auto-unseal for a **tenant's** OpenBao            |   ✓    |      –      |    –     |     –      |
-| Auto-unseal for a **fleet** shard                 |   –    |      –      |    –     |     –²     |
-| Shard placement, migration, rekey, seal rotation  |   –    |      –      |    –     |     ✓      |
-| Cross-tenant listing, fleet health, key inventory |   –    |      –      |    –     |     ✓      |
-| Direct OpenBao access of any kind                 |   –    |      –      |    –     |     ✓³     |
+| Capability                                          | Public | Tenant-KMIP | Internal | Management |
+| --------------------------------------------------- | :----: | :---------: | :------: | :--------: |
+| Create / list / describe keys                       |   ✓    |      ✓      |    ✓     |     ✓      |
+| Encrypt / decrypt / sign / verify                   |   ✓    |      ✓      |    ✓     |     –      |
+| Generate data key (envelope)                        |   ✓    |      ✓      |    ✓     |     –      |
+| Rotate, enable/disable, schedule deletion           |   ✓    |      –      |    ✓     |     ✓      |
+| Import key material (BYOK)                          |   ✓    |      –      |    –     |     ✓      |
+| Export key material under wrap                      |   ✓¹   |     ✓¹      |    –     |     ✓      |
+| Grants on a key                                     |   ✓    |      –      |    –     |     ✓      |
+| Vault `transit` compatibility                       |   ✓    |      –      |    ✓     |     –      |
+| Vault `kv` v2 compatibility                         |   ✓    |      –      |    –     |     –      |
+| Barbican v1 compatibility                           |   ✓    |      –      |    ✓     |     –      |
+| Auto-unseal for a **tenant's** OpenBao              |   ✓    |      –      |    –     |     –      |
+| Auto-unseal for a KMS-operated cluster              |   –    |      –      |    –     |     –²     |
+| Placement, migration, rekey, seal rotation          |   –    |      –      |    –     |     ✓      |
+| Cross-tenant listing, cluster health, key inventory |   –    |      –      |    –     |     ✓      |
+| Direct OpenBao access of any kind                   |   –    |      –      |    –     |     ✓³     |
 
 ¹ Only for keys created with `exportable = true`, only under an approved
 wrapping key, and only when policy allows; the flag is immutable after creation
 and is recorded in every audit event for that key.
 
-² The fleet unseal path is not an API the KMS serves in any zone — it is a shard
-node speaking to the seal cluster over the seal network (§9), and the row exists
-to say so. What the management zone offers is its _configuration_ (which shard
-has which unseal key, and rotating them), which is the "seal rotation" row
-below.
+² The unseal path of the KMS's own clusters is not an API the KMS serves in any
+zone — the custody cluster is sealed by the root of trust directly, and an
+exception cluster's node speaks to the seal cluster over the seal network (§9).
+The row exists to say so. What the management zone offers is its
+_configuration_ (which cluster has which unseal key, and rotating them), which
+is the "seal rotation" row below.
 
 ³ Break-glass only, through `kms-manage`, with quorum approval and an audit
 record, along the lines of
@@ -622,8 +648,8 @@ hostile-input surface reached over the network and deserves that treatment.
 
 A deliberate, bounded subset — presented as an API the KMS implements, not as a
 transparent pass-through to a backend cluster. Requests are parsed, authorized,
-rate-limited, audited, and then executed against the shard. The tenant never
-holds an OpenBao token for a fleet cluster.
+rate-limited, audited, and then executed by the KMS. The tenant never holds an
+OpenBao token for any cluster the KMS operates.
 
 | Vault path                                    | Supported | Notes                                                   |
 | --------------------------------------------- | :-------: | ------------------------------------------------------- |
@@ -634,7 +660,7 @@ holds an OpenBao token for a fleet cluster.
 | `GET /v1/transit/keys/{name}`                 |     ✓     | Metadata only                                           |
 | `POST /v1/transit/keys/{name}/rotate`         |     ✓     |                                                         |
 | `POST /v1/transit/sign\|verify\|hmac`         |     ✓     |                                                         |
-| `GET\|POST\|DELETE /v1/secret/data/{p}`       |     ✓     | `kv` v2, versioned                                      |
+| `GET\|POST\|DELETE /v1/secret/data/{p}`       |     ✓     | `kv` v2, versioned; held in the key store (§8.3)        |
 | `GET /v1/sys/health`, `/sys/seal-status`      |     ✓     | Synthesized; describes the KMS, never a backend cluster |
 | `POST /v1/auth/cert/login`, `/auth/jwt/login` |     ✓     | Issues a KMS-scoped token that looks like a Vault token |
 | `sys/mounts`, `sys/policy`, dynamic engines   |     –     | Not a Vault; use the native API                         |
@@ -679,11 +705,11 @@ the token is advisory. Three ways to close the gap, in preference order:
 The KMS records which of the three was used on every unseal, and an operator can
 require (1) per project so that a fallback cannot be silently adopted.
 
-**Design decision — synthesize, do not proxy.** A transparent reverse proxy to a
-shard would be less code and is tempting. It is rejected: it leaks backend
-identity and version, makes the tenant's blast radius the cluster's blast
-radius, defeats per-request authorization against Keystone, and makes shard
-migration a customer-visible event. The compatibility surface is an
+**Design decision — synthesize, do not proxy.** A transparent reverse proxy to
+the custody cluster would be less code and is tempting. It is rejected: it leaks
+backend identity and version, makes the tenant's blast radius the cluster's
+blast radius, defeats per-request authorization against Keystone, and makes
+placement migration a customer-visible event. The compatibility surface is an
 implementation of the Vault wire contract, and that contract is version-pinned
 and covered by contract tests against a real OpenBao client.
 
@@ -724,26 +750,29 @@ by best effort.
 
 ```mermaid
 flowchart TD
-    hsm["HSM root key<br/>(optional, non-exportable)"]
-    sealkey["Seal-cluster barrier key"]
-    sealtransit["Per-shard unseal key<br/>(transit key in seal cluster)"]
-    barrier["Shard barrier key<br/>(OpenBao master key)"]
-    cmk["Customer master key (CMK)<br/>versioned, per project"]
+    root["Root of trust<br/>(HSM, TPM or Shamir shares)"]
+    barrier["Custody cluster barrier key<br/>(OpenBao master key)"]
+    pck["Project custody key (PCK)<br/>transit, one per project"]
+    cmk["Customer master key (CMK)<br/>versioned; a blob in the key store"]
+    sdek["Key store DEK<br/>(at rest, §8.3)"]
     dek["Data encryption key (DEK)<br/>ephemeral, per object/volume"]
     data["Tenant data"]
 
-    hsm -->|"seals"| sealkey
-    sealkey --> sealtransit
-    sealtransit -->|"wraps"| barrier
-    barrier -->|"protects storage of"| cmk
+    root -->|"seals"| barrier
+    barrier -->|"protects"| pck
+    pck -->|"wraps"| cmk
+    sdek -.->|"encrypts the record holding"| cmk
     cmk -->|"wraps"| dek
     dek -->|"encrypts"| data
 ```
 
-Without an HSM the top edge changes and nothing below it does: the seal cluster
-is sealed by operator-held Shamir shares, or by a TPM-backed key on each seal
-node (the mechanism Keystone's PKCS#11/TPM KEK plan already describes). This is
-the concrete meaning of "the HSM is optional".
+Without an HSM the top node changes and nothing below it does: the custody
+cluster is sealed by a TPM-backed key on each of its nodes (the mechanism
+Keystone's PKCS#11/TPM KEK plan already describes), or by operator-held Shamir
+shares. This is the concrete meaning of "the HSM is optional". The dotted edge
+is the second layer of §8.4: the record holding a CMK blob is also encrypted at
+rest by the key store. An exception tenant's chain is the same, with its own
+cluster in place of the shared one.
 
 ### 6.2 Key states
 
@@ -754,15 +783,15 @@ onto the states its clients expect (`enabled` to _Active_, `disabled` and
 _Compromised_), and that mapping is part of the KMIP conformance suite rather
 than an assumption:
 
-| State              | Encrypt | Decrypt | Sign | Verify | Notes                                                                     |
-| ------------------ | :-----: | :-----: | :--: | :----: | ------------------------------------------------------------------------- |
-| `pending_import`   |    –    |    –    |  –   |   –    | Created, awaiting BYOK material                                           |
-| `enabled`          |    ✓    |    ✓    |  ✓   |   ✓    | Normal                                                                    |
-| `disabled`         |    –    |    –    |  –   |   –    | Tenant-initiated pause; metadata intact                                   |
-| `pending_deletion` |    –    |    –    |  –   |   –    | Waiting period, 7–30 days, tenant-chosen                                  |
-| `deleted`          |    –    |    –    |  –   |   –    | Material destroyed; metadata tombstone kept                               |
-| `unavailable`      |    –    |    –    |  –   |   –    | Shard down, HSM partition unreachable, or a representation missing (§6.3) |
-| `compromised`      |    –    |   ✓¹    |  –   |   ✓¹   | Operator/tenant declared; decrypt for recovery only                       |
+| State              | Encrypt | Decrypt | Sign | Verify | Notes                                                                                                   |
+| ------------------ | :-----: | :-----: | :--: | :----: | ------------------------------------------------------------------------------------------------------- |
+| `pending_import`   |    –    |    –    |  –   |   –    | Created, awaiting BYOK material                                                                         |
+| `enabled`          |    ✓    |    ✓    |  ✓   |   ✓    | Normal                                                                                                  |
+| `disabled`         |    –    |    –    |  –   |   –    | Tenant-initiated pause; metadata intact                                                                 |
+| `pending_deletion` |    –    |    –    |  –   |   –    | Waiting period, 7–30 days, tenant-chosen                                                                |
+| `deleted`          |    –    |    –    |  –   |   –    | Material destroyed; metadata tombstone kept                                                             |
+| `unavailable`      |    –    |    –    |  –   |   –    | Custody cluster or key store unreachable, HSM partition unreachable, or a representation missing (§6.3) |
+| `compromised`      |    –    |   ✓¹    |  –   |   ✓¹   | Operator/tenant declared; decrypt for recovery only                                                     |
 
 ¹ Only under an explicit recovery grant, and every use is a high-severity audit
 event.
@@ -776,49 +805,53 @@ The waiting period on deletion is non-negotiable and non-shortenable by any API.
 Immediate destruction is a `kms-manage` operation with quorum approval, because
 "delete the key" is the one KMS operation that destroys customer data
 irreversibly and is therefore the prime target of a compromised tenant account.
+What `deleted` does to the material — a rotation of the project's custody key,
+not a delete — is §8.5.
 
 ### 6.3 How a CMK is stored, and how it is used
 
 OpenBao's `transit` engine deliberately does not let a key leave the barrier —
 that is its whole value, and it is also why the offload of §7 cannot be built on
-`transit` alone. The design therefore stores a CMK **twice over**, and the
-choice of which representation is authoritative is per key:
+`transit` alone. The design therefore stores almost every CMK as a blob wrapped
+under its project's custody key, and only the opt-out minority as a `transit`
+key:
 
-| Representation                              | Where                                                                                       | Used for                                                                                                                           |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| A `transit` key in the tenant's mount       | Shard, inside the barrier, never exportable                                                 | Offload mode A: every operation executes in OpenBao                                                                                |
-| A **wrapped CMK blob** in the tenant's `kv` | Shard, inside the barrier; the blob is encrypted under a per-shard `transit` _wrapping_ key | Offload modes B and C: `kms-crypto` fetches the blob and calls `transit/decrypt` **once per cache fill**, then serves DEKs locally |
+| Representation                        | Where                                                                 | Used for                                                                                                                         |
+| ------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| A **PCK-wrapped CMK blob**            | A key store record, tier 3 (§8.3); ciphertext under the project's PCK | Offload modes B and C: `kms-crypto` reads the blob and calls `transit/decrypt` **once per cache fill**, then serves DEKs locally |
+| A `transit` key in the `mode-a` mount | Custody cluster, inside the barrier, never exportable                 | Offload mode A: every operation executes in OpenBao                                                                              |
+| An HSM object handle                  | HSM partition                                                         | `hsm-resident` keys in modes A or D (§10)                                                                                        |
 
-A key created in mode A has only the first representation and can never be
-promoted to mode B without a rotation, which is what makes "this key never
-leaves the barrier" a statement the KMS can keep. A key in mode B has both: the
-`transit` key remains the authority for rotation and for the audit trail, and
-the wrapped blob is the artifact the crypto tier consumes. Mode D replaces both
-with an HSM object handle (§10).
+A key has exactly one of these, chosen at creation. Symmetric CMKs in modes B
+and C are generated **inside the barrier** with `transit/datakey/wrapped`, which
+returns only the PCK ciphertext, so their plaintext first exists in a
+`kms-crypto` cache fill. Asymmetric CMKs and imported material are generated or
+received in `kms-crypto` and wrapped under the PCK at once, from a zeroizing
+buffer. A mode-A key cannot be promoted to mode B without a rotation, which is
+what makes "this key never leaves the barrier" a statement the KMS can keep.
 
-Which of the two is _authoritative_ has to be answered explicitly, because both
-obvious answers are wrong. The `transit` key is not the authority: it cannot
-produce the blob, since transit does not export, which is the premise this whole
-subsection rests on. The blob is not the authority either: it knows nothing of
-versions the tenant has retired. **The authority is the key's metadata row in
-the control plane** (§16). The row records which versions exist and which
-representations each version is supposed to have, and a version does not become
-`enabled` until the row says every representation it needs has landed. Creating
-or rotating a mode-B key is therefore one operation staged through that row, not
-two independent writes to the shard.
+A mode-B key has one durable representation, so its record is the authority by
+construction: metadata, versions and blobs are committed together in one Raft
+proposal, and a version can neither be `enabled` with its blob missing nor exist
+with no record naming it. The divergence that storing a CMK twice would invite
+does not arise.
 
-Divergence is then repaired toward the row, and in one direction only:
+It survives in one place, by design: a mode-A key, whose material is a `transit`
+key in the custody cluster and whose metadata is a record in the key store.
+There the record is the authority, and divergence is repaired toward it in one
+direction only:
 
-- A representation the row does not know about is the debris of a failed
-  rotation, and is destroyed.
-- A representation the row expects but cannot find puts the version in
-  `unavailable` (§6.2). That is an incident, not a self-healing condition: a
-  missing blob cannot be regenerated from `transit`, so the only repair is a
-  restore from the shard's backup.
+- A `transit` key the store does not know about is the debris of a failed
+  creation or rotation, and is destroyed.
+- A record whose `transit` key cannot be found puts the version in
+  `unavailable` (§6.2). That is an incident, not a self-healing condition: the
+  key cannot be regenerated, so the only repair is a restore of the custody
+  cluster's backup.
 
-The custody snapshot of §15.2 already walks this inventory every hour, which
-makes it the right place to detect a discrepancy — rather than discovering it on
-the next cache fill, in front of a tenant.
+Each project's PCK falls under the same rule, since it too is a `transit` key
+named by a store record. The custody snapshot of §15.2 walks this inventory
+every hour, which makes it the right place to detect a discrepancy — rather
+than discovering it on the next cache fill, in front of a tenant.
 
 This is the mechanism the rest of the document assumes; it is spelled out here
 because "cache the KEK" is otherwise an instruction that cannot be carried out
@@ -833,7 +866,8 @@ sequenceDiagram
     participant C as Client
     participant A as kms-api
     participant X as kms-crypto
-    participant S as Shard (OpenBao)
+    participant K as Key store (kms-control)
+    participant B as Custody cluster (OpenBao)
 
     C->>A: POST /v1/keys/K/data-key {spec: AES_256, aad}
     A->>A: authn (SVID/JWT), authz (Keystone check, cached), rate limit
@@ -841,10 +875,10 @@ sequenceDiagram
     alt KEK cached and warm
         X->>X: derive DEK from the cached KEK
     else cold
-        X->>S: kv read of the wrapped CMK blob for K@v
-        S-->>X: wrapped CMK
-        X->>S: transit/decrypt with the shard wrapping key
-        S-->>X: plaintext KEK
+        X->>K: linearizable read of the PCK-wrapped blob for K@v
+        K-->>X: wrapped CMK
+        X->>B: transit/decrypt under the project's PCK
+        B-->>X: plaintext KEK
         X->>X: admit to cache (TTL, use count), derive DEK
     end
     X-->>A: {plaintext_dek, wrapped_dek, key_version}
@@ -862,56 +896,58 @@ Three properties that matter:
 - **The ciphertext blob is self-describing and versioned:** a header with format
   version, algorithm, key ID, key version, region, and the wrapping mode.
   Crypto-agility lives here.
-- **Nothing about the shard appears in the blob.** Shard identity is metadata
-  the control plane owns, so that migrating a tenant between shards does not
-  invalidate a single stored ciphertext.
+- **Nothing about custody placement appears in the blob.** Which custody domain
+  holds a project's PCK is a record the key store owns, so that moving a tenant
+  between domains (§8.7) does not invalidate a single stored ciphertext.
 
 ### 6.5 Algorithms
 
-| Purpose           | Default                                | Also offered                                  |
-| ----------------- | -------------------------------------- | --------------------------------------------- |
-| Symmetric AEAD    | AES-256-GCM                            | ChaCha20-Poly1305, AES-256-GCM-SIV            |
-| Key wrapping      | AES-256-GCM (KWP for KMIP/HSM interop) | RSA-OAEP-SHA256, ECDH-ES+A256KW               |
-| Signing           | ECDSA P-256 / P-384                    | Ed25519, RSA-PSS 2048/3072/4096               |
-| MAC               | HMAC-SHA-256                           | HMAC-SHA-384/512, KMAC                        |
-| KDF               | HKDF-SHA-256                           | —                                             |
-| Post-quantum wrap | — (reserved)                           | ML-KEM-768 hybrid, when the fleet supports it |
-| Post-quantum sign | — (reserved)                           | ML-DSA-65                                     |
+| Purpose           | Default                                | Also offered                                            |
+| ----------------- | -------------------------------------- | ------------------------------------------------------- |
+| Symmetric AEAD    | AES-256-GCM                            | ChaCha20-Poly1305, AES-256-GCM-SIV                      |
+| Key wrapping      | AES-256-GCM (KWP for KMIP/HSM interop) | RSA-OAEP-SHA256, ECDH-ES+A256KW                         |
+| Signing           | ECDSA P-256 / P-384                    | Ed25519, RSA-PSS 2048/3072/4096                         |
+| MAC               | HMAC-SHA-256                           | HMAC-SHA-384/512, KMAC                                  |
+| KDF               | HKDF-SHA-256                           | —                                                       |
+| Post-quantum wrap | — (reserved)                           | ML-KEM-768 hybrid, when the custody backends support it |
+| Post-quantum sign | — (reserved)                           | ML-DSA-65                                               |
 
 The KMS never invents cryptography. Symmetric and AEAD primitives come from
 vetted crates (`aws-lc-rs` or `ring`, with a FIPS-validated module where the
-deployment needs it); asymmetric operations are either delegated to OpenBao's
-transit engine or to the HSM. Which of those three performs a given operation is
-a deployment decision recorded per key, not a code path the tenant can select.
+deployment needs it), and asymmetric operations run in `kms-crypto` in the same
+way, except for mode-A keys, which OpenBao's transit engine executes, and
+`hsm-resident` keys, which the HSM does. Which of those three performs a given
+operation is a property recorded per key, not a code path the tenant can select.
 
 ---
 
-## 7. Offloading envelope encryption from the OpenBao fleet
+## 7. Offloading envelope encryption from the custody cluster
 
 This is the part of the design that decides whether the service scales.
 
 ### 7.1 The problem
 
 A naive implementation forwards every `encrypt`/`decrypt`/`data-key` call to the
-tenant's shard. Then:
+custody cluster. Then:
 
 - Every object write in an encrypted Swift container, every Cinder attach, every
   TDE page-key fetch, every customer application call is an OpenBao request.
   OpenBao's transit engine is fast, but it is also the thing that must stay up
-  for key _management_, and it is backed by Raft — read-heavy load and leader
-  elections do not mix well under stress.
-- The shard becomes both the availability bottleneck and the latency floor for
-  the entire region's data path.
-- Scaling means more shards, which is the expensive axis.
+  for key _management_, it serves from one active node, and it is backed by
+  Raft — read-heavy load and leader elections do not mix well under stress.
+- The custody cluster becomes both the availability bottleneck and the latency
+  floor for the entire region's data path.
+- There is one per region, so the problem cannot be scaled away, and a fleet
+  that could scale it away is the cost §8.1 exists to avoid.
 
 ### 7.2 The options
 
-| Option                                                                                                                                                                                                          | Backend load                    | Security posture                                                  | Complexity  |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- | ----------------------------------------------------------------- | ----------- |
-| **A. Pass-through.** Every operation hits the shard.                                                                                                                                                            | 1 backend call per operation    | Best: key material never leaves the barrier                       | Lowest      |
-| **B. KEK cache.** `kms-crypto` fetches the wrapped CMK blob (§6.3), unwraps it with one `transit/decrypt`, and keeps the **plaintext** KEK in memory for a bounded TTL; DEK derivation happens in `kms-crypto`. | ~1 backend call per KEK per TTL | Plaintext KEK exists in `kms-crypto` memory for the TTL           | Medium      |
-| **C. Derived-DEK mode.** The shard issues a per-`(project, purpose, epoch)` _derivation key_; `kms-crypto` derives DEKs with HKDF and never needs the CMK.                                                      | ~1 backend call per epoch       | Compromise of `kms-crypto` exposes one purpose/epoch, not the CMK | Medium-high |
-| **D. HSM-side offload.** DEK generation happens in an HSM partition via PKCS#11.                                                                                                                                | 0 backend calls on the hot path | Strongest; bounded by HSM throughput and cost                     | High        |
+| Option                                                                                                                                                                                                                               | Backend load                    | Security posture                                                  | Complexity  |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------- | ----------------------------------------------------------------- | ----------- |
+| **A. Pass-through.** Every operation hits the custody cluster.                                                                                                                                                                       | 1 backend call per operation    | Best: key material never leaves the barrier                       | Lowest      |
+| **B. KEK cache.** `kms-crypto` reads the PCK-wrapped CMK blob from the key store (§6.3), unwraps it with one `transit/decrypt`, and keeps the **plaintext** KEK in memory for a bounded TTL; DEK derivation happens in `kms-crypto`. | ~1 backend call per KEK per TTL | Plaintext KEK exists in `kms-crypto` memory for the TTL           | Medium      |
+| **C. Derived-DEK mode.** A per-`(project, purpose, epoch)` _derivation key_ is stored and wrapped like a CMK; `kms-crypto` derives DEKs with HKDF and never needs the CMK.                                                           | ~1 backend call per epoch       | Compromise of `kms-crypto` exposes one purpose/epoch, not the CMK | Medium-high |
+| **D. HSM-side offload.** DEK generation happens in an HSM partition via PKCS#11.                                                                                                                                                     | 0 backend calls on the hot path | Strongest; bounded by HSM throughput and cost                     | High        |
 
 **Recommendation: B as the default, C for high-volume service integrations, D
 where an HSM is present and the tenant pays for it, A always available as a
@@ -943,24 +979,28 @@ the design. Its rules are therefore explicit:
 5. **Per-key opt-out is honoured end to end.** A key in mode A is never admitted
    to the cache; the admission check happens in one function, and that function
    is unit-tested against every mode.
-6. **Isolation by shard.** Cache partitions are keyed by shard, so that a
-   compromised or misbehaving shard's entries can be evicted wholesale, and so
-   that cache capacity planning follows the shard model.
+6. **Isolation by custody domain.** Cache partitions are keyed by custody
+   domain and by project, so that a compromised or misbehaving domain's entries
+   — or a single project's, after a panic call — can be evicted wholesale, and
+   so that cache capacity planning follows placement.
 7. **An attestation is never cached by proxy.** The cache holds key _material_,
-   keyed by key and shard, and never an authorization decision. That separation
-   is what lets attestation-bound release (§2.6) cost nothing on the hot path,
-   and it is also what forbids the shortcut: a cached authorization decision may
-   not outlive the attestation result it was based on, and an attestation-bound
-   operation is re-decided when that result expires, whatever the KEK entry's
-   TTL says.
+   keyed by key and custody domain, and never an authorization decision. That
+   separation is what lets attestation-bound release (§2.6) cost nothing on the
+   hot path, and it is also what forbids the shortcut: a cached authorization
+   decision may not outlive the attestation result it was based on, and an
+   attestation-bound operation is re-decided when that result expires, whatever
+   the KEK entry's TTL says.
 
 The degraded-mode consequence is deliberate and is the answer to §1's second
-question: if a shard becomes unavailable, `kms-crypto` keeps serving envelope
-operations for keys whose entries are warm, for the remainder of their TTL,
-while key _management_ fails. A storage system stays readable through a short
-backend incident. This is a considered trade — a longer TTL buys availability
-and costs revocation latency — and it is an operator-tunable number with a
-documented meaning, not a hidden default.
+question: if the custody cluster or the key store becomes unavailable,
+`kms-crypto` keeps serving envelope operations for keys whose entries are warm,
+for the remainder of their TTL, while key _management_ fails. A storage system
+stays readable through a short backend incident. This is a considered trade — a
+longer TTL buys availability and costs revocation latency — and it is an
+operator-tunable number with a documented meaning, not a hidden default. With
+one custody cluster per region it acquires a third meaning: it is the window
+inside which a rolling upgrade of that cluster has to complete without a tenant
+noticing (§8.1, open question 2).
 
 ### 7.4 Reducing load further
 
@@ -972,142 +1012,336 @@ documented meaning, not a hidden default.
   rotation are spread over time rather than stampeding.
 - **Admission control before the backend, not after.** Rate limiting
   ([ADR 0022](adr/0022-rate-limiting.md)) is evaluated in `kms-api` handlers; a
-  rejected request never reaches the crypto tier, let alone the shard.
+  rejected request never reaches the crypto tier, let alone the custody
+  cluster.
 
 ---
 
-## 8. The OpenBao fleet: multitenancy, sharding, placement
+## 8. Custody: one cluster and one key store per region
 
-### 8.1 Why a fleet
+### 8.1 Why not a fleet by default
 
-One cluster per region is simpler and unacceptable: it makes every tenant's
-availability depend on every other tenant's load, makes upgrades a region-wide
-risk, makes a data-corruption incident unbounded, and caps scalability at one
-Raft group's write throughput.
+The design that first suggests itself is a fleet: _N_ OpenBao clusters per
+region, tenants sharded across them, every CMK a `transit` key inside its
+tenant's shard. Its case against a single cluster is four claims — that one
+cluster makes every tenant's availability depend on every other tenant's load,
+makes upgrades a region-wide risk, makes a data-corruption incident unbounded,
+and caps scalability at one Raft group's write throughput.
 
-### 8.2 The shard model
+Three of the four are claims about a cluster that **holds all the key
+material**. Split the two jobs that a fleet shard does — being a barrier, and
+being a database of many small records — and they stop holding:
 
-A **shard** is one OpenBao cluster (3 or 5 nodes, integrated Raft storage, one
-barrier key, one seal configuration) plus its metadata in the control plane. A
-shard hosts _M_ tenants, where _M_ is an operational parameter (initially in the
-low hundreds) chosen so that:
+- **Load.** The barrier is consulted only when the crypto tier's cache fills
+  (§7), never on the hot path, and the records it no longer stores are not read
+  through it at all.
+- **Corruption.** The barrier holds a few thousand keys, and its snapshot is
+  small enough to restore in minutes. The store that holds the many records is a
+  separate system with its own backup and its own integrity checks (§8.3).
+- **Write throughput.** Key-management writes — create, rotate, change state —
+  are a few per second at the busiest, and the data plane writes nothing.
 
-- the shard's Raft state stays comfortably within memory and snapshot budgets;
-- restoring the shard from backup is an operation measured in minutes;
-- the customer-visible blast radius of losing it is acceptable to the cloud's
-  own SLA and communication plan.
+The fourth claim survives: one cluster is one upgrade window for the region.
+The crypto tier's cache is the mitigation (§7.3), and it is a real one, but it
+is a mitigation and the document does not pretend otherwise.
 
-Each tenant gets its own OpenBao **namespace** (or, where namespaces are not
-used, a strictly separated mount and policy set) inside its shard. Within the
-namespace: one `transit` mount for keys, one `kv` v2 mount for secrets. Policy
-inside the shard is generated by the control plane; no human writes it.
+So the recommended shape is two systems per region, each doing the job it is
+good at. The **custody cluster** is one OpenBao: the barrier, and nothing else.
+The **key store** is a Raft-replicated, encrypted store built from the crate
+`keystone-rs` already ships for its own storage, holding every key record as a
+blob that only the custody cluster can unwrap. Tenants whose contract demands
+physical separation get a custody cluster of their own (§8.6) — the fleet
+survives, as the exception it should be rather than the default.
 
-### 8.3 Placement
+### 8.2 The custody cluster
 
-| Option                                    | Description                                                                              | Trade-off                                                                                            |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| **Hash placement**                        | `shard = H(project_id) mod N`                                                            | Trivial, but rebalancing on _N_ change moves everyone                                                |
-| **Consistent hashing with virtual nodes** | Rendezvous or ring hashing                                                               | Rebalances a fraction; still ignores tenant weight                                                   |
-| **Directory placement (recommended)**     | The control plane stores an explicit `project -> shard` mapping and chooses at first use | Any policy: weight, tier, locality, isolation requests; migration is a row change plus data movement |
+One OpenBao cluster per region: 3 or 5 nodes across availability zones,
+integrated Raft storage, one barrier, sealed directly by the root of trust
+(§9). It holds keys in three `transit` mounts, and nothing in `kv`:
 
-Directory placement is recommended because the interesting requirements are not
-expressible as a hash: "this tenant is regulated and gets a dedicated shard",
-"this tenant is large and must not share with another large one", "this tenant
-is in the free tier and goes on the dense shards", "drain shard C for
-decommissioning". The directory is small, changes rarely, and is cached
-aggressively — but it is on the path of every key operation that misses the
-crypto tier's cache, alongside the key's metadata and the authorization
-decision, so it is among the first things to be made highly available and the
-first to be made cheap to read.
+| Mount       | Holds                                                                         | Cardinality                            |
+| ----------- | ----------------------------------------------------------------------------- | -------------------------------------- |
+| `pck`       | One **project custody key** (PCK) per project, non-exportable and versioned   | One per project: 10³–10⁴               |
+| `mode-a`    | One `transit` key per mode-A key (§7.2), for tenants who opt out of the cache | Bounded by quota and by mode A's price |
+| `store-kek` | The key store's KEK, where §8.3's recommended provider is used                | One                                    |
 
-Placement classes, as an initial vocabulary: `standard` (dense, shared),
-`dedicated` (one tenant per shard), `regulated` (dedicated + HSM-backed root +
-restricted operator access), `internal` (the cloud's own services, never shared
-with tenants).
+A PCK wraps every CMK version and every secret of its project, and nothing of
+any other project. That single rule carries most of the isolation the fleet used
+to provide physically: a blob copied into another project's record cannot be
+unwrapped under that project's key, and destroying one project's PCK destroys
+that project's material and nothing else (§8.5).
 
-Placement class also decides the **shard type**, and that is what makes the
-custody backend pluggable without inventing a second mechanism. `standard`,
-`dedicated` and `internal` place a tenant on an OpenBao shard; `regulated` may
-place one on a shard whose custody is an HSM partition plus its control-plane
-metadata (§10.1). The directory already resolves `project -> shard`, so routing
-to a different _kind_ of shard is a property of the row rather than a new
-abstraction, and migration (§8.4) is already the procedure for moving between
-shards. Shard type constrains what may be created on it — an HSM shard holds key
-counts in the thousands and supports only `hsm-resident` keys in modes A or D —
-and `kms-control` rejects an impossible request at creation, in the same
-validation that already enforces the `(protection_level, offload_mode)` pairing
-of §10.3.
+Policy inside the cluster is generated, and it splits the two halves of custody
+between the two components that need them:
 
-### 8.4 Migration between shards
+- `kms-control` may create, rotate, `rewrap`, trim and delete PCKs, and may
+  create keys through `datakey/wrapped`, which returns only ciphertext. It holds
+  no policy that returns plaintext.
+- `kms-crypto` may `decrypt` and `encrypt` under PCKs and use `mode-a` keys. It
+  holds no policy that rotates, trims or destroys anything.
 
-Migration must exist from the start, or the fleet ossifies. The procedure:
+The component that manages keys therefore cannot read them, and the component
+that reads them cannot destroy them — the same separation §17 draws between
+`KeyCustody` and `CryptoEngine`, enforced inside the barrier rather than only in
+code.
 
-1. Control plane marks the tenant `migrating`, freezes key-management operations
-   (data-plane operations continue).
-2. Existing key versions are moved by `kms-crypto`: for a mode-B key it reads
-   the wrapped blob, unwraps it under the source shard's wrapping key and
-   re-wraps it under the destination's, in memory, never writing plaintext
-   anywhere in between. A mode-A key has no exportable representation by
-   construction, so it is migrated by re-creating the `transit` key at the
-   destination from the same wrapped blob held for this purpose, or — where the
-   tenant chose mode A precisely to forbid that — it is **not** migrated, and
-   draining its shard requires the tenant's participation. That asymmetry is the
-   price of mode A and is documented to the tenant at key creation.
-3. Verification pass: every key version is read from the destination and
+**Load.** Mode B consults the cluster once per CMK version per cache fill: at
+10⁵ warm versions and §7.3's 300 s default TTL that is roughly 330
+`transit/decrypt` calls per second, and a full crypto-tier restart asks for all
+10⁵ at once. The planning number is the budget of one OpenBao node — the active
+node serves, with standbys forwarding to it, unless the deployed release can
+answer such reads from standbys — and it must be measured in Phase 1 rather
+than assumed. §7.4's admission control exists to protect it from the restart
+stampede. Mode-A keys spend that budget per operation; that is why mode A is
+priced and quota'd separately (§15.6).
+
+### 8.3 The key store
+
+The key store is the distributed storage of
+[ADR 0016-v2](adr/0016-v2-raft-storage.md) — OpenRaft for consensus, Fjall as
+the state machine and log, SPIFFE mTLS between nodes — consumed as a crate from
+`keystone-rs` with a KMS-specific state machine on top. It is embedded in
+`kms-control`: the 3 or 5 `kms-control` replicas are the voters of the region's
+Raft group, so the store adds no process to operate.
+
+It holds everything the KMS knows durably, mapped onto the ADR's read tiers so
+that anything an authorization decision depends on is read linearizably:
+
+| Record                                                        | Tier          | Why                                                                    |
+| ------------------------------------------------------------- | ------------- | ---------------------------------------------------------------------- |
+| PCK-wrapped CMK versions, secrets and derivation keys         | 3 `SECRET`    | Key material, under two layers (§8.4)                                  |
+| Key state, versions, `min_decryption_version`, grants, quotas | 2 `SENSITIVE` | Direct inputs to authorization; a stale read would serve a revoked key |
+| Placement directory, invalidation epochs, cluster topology    | 2 `SENSITIVE` | A stale placement read would route to the wrong custody domain         |
+| Display metadata: names, tags, descriptions                   | 1 `INTERNAL`  | Never an authorization input                                           |
+
+"Linearizable only" governs reads of the store, not the caches in front of it.
+`kms-api` and `kms-crypto` still serve from cached key metadata and decisions
+(§7.4, §11.4), which is what keeps warm keys working when the store has lost
+quorum (§18). That is safe for the same reason the KEK cache is: a change of
+state is a write, a write cannot commit without quorum, and no committed write
+returns success until it has pushed an invalidation to every replica (§7.3).
+
+The store is chosen over a separate database for four reasons, in decreasing
+order of weight:
+
+- **It is a barrier already.** Every value is AES-256-GCM-encrypted before it
+  touches the log or the disk, bound to its primary key by associated data, and
+  its backups are sealed in an envelope bound to a DEK epoch. A separate
+  database would have to be made into this; the crate is this.
+- **Linearizable reads are the revocation semantics.** "A disabled key is never
+  observable as enabled by any node" is the ADR's consistency requirement for
+  identity, restated, and it is precisely what §7.3's revocation rule needs from
+  the store behind the cache.
+- **One fewer system in the trust boundary.** No database server, no database
+  credentials, no database network path — and a crate whose security review
+  `keystone-rs` has already paid for and whose fixes both projects receive.
+- **It is the engineering the team already operates.** Restore, quarantine, DEK
+  rotation and node replacement have runbooks.
+
+What it costs, plainly:
+
+- **One write leader.** Management writes funnel through one node. At a few
+  writes per second this is not a constraint; it would become one only if
+  metering or audit were ever written to the store, which is why neither is
+  (§15.3, §14).
+- **Index keys are plaintext.** The ADR's known limitation (§2.4 there) applies:
+  a disk thief learns how many keys exist and their identifiers. Key and secret
+  identifiers are therefore UUIDv4, never derived from tenant-chosen names.
+- **The crate's open items are the KMS's open items.** Every read is currently
+  linearizable, because the ADR's local-read fast path is not yet implemented;
+  that costs latency only on a cache miss and is acceptable. Restore needs the
+  same KEK as the source cluster, which the provider choice below makes easy or
+  hard.
+- **Size.** 10⁶ key versions at under a kilobyte each is under a gigabyte of
+  state: comfortably within snapshot and `InstallSnapshot` budgets, but the
+  number to watch.
+- **A new KEK provider.** The crate ships `env`, `pkcs11` and `tpm` providers;
+  the recommended `store-kek` below is a fourth, an OpenBao `transit` provider,
+  to be written once in the shared crate. It fills the slot the ADR names "Cloud
+  KMS", which `keystone-rs` could then use as well — though pointing it at this
+  KMS is the reflexive dependency §9.6 already defers.
+
+The store's **KEK provider** is the one real choice:
+
+| Provider                                             | What it gives                                                                                                                                                                    | What it costs                                                                                                                   |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| **`store-kek` in the custody cluster (recommended)** | Every node unwraps through the same `transit` key, so key material is byte-identical across nodes by construction — which closes the ADR's open provisioning gap for TPM/PKCS#11 | The store cannot start while the custody cluster is down, and an attacker holding the custody cluster holds both layers of §8.4 |
+| TPM or PKCS#11 per node                              | Two independent roots: the store's disk and the custody cluster must both be compromised                                                                                         | Identical key material must be provisioned into every node's token out of band, which the ADR does not yet automate             |
+
+**Recommendation:** `store-kek` for the default deployment, because it removes
+an out-of-band ceremony from every node replacement; the TPM or PKCS#11 provider
+for deployments whose threat model includes the custody cluster's operators.
+Open question 3 records the choice.
+
+### 8.4 Two layers, two attackers
+
+A CMK version in the key store is encrypted twice, and the two layers answer
+different attackers:
+
+| Layer   | Key                               | Defeats                                                                                           |
+| ------- | --------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Custody | The project's PCK, in the barrier | Anyone holding the store — its disks, its backups, a full dump through its API                    |
+| At rest | The store's DEK, via its KEK      | Anyone holding the store's disks or backups: they learn identifiers and counts, not values (§8.3) |
+
+Neither layer alone yields a CMK. A full dump of the store through a
+compromised `kms-control` yields PCK ciphertext, which is noise without the
+custody cluster; the custody cluster alone holds no mode-B CMK at all. With the
+recommended `store-kek` provider an attacker who owns the custody cluster and
+steals the store's disks has both — and the TPM provider of §8.3 is exactly
+what makes those two independent.
+
+### 8.5 Crypto-shredding by rotation
+
+In a fleet, destroying one key is a `transit` delete inside the barrier. Here a
+CMK version is a blob in the store, and deleting the record leaves its
+ciphertext in every store backup taken since, under a PCK that still exists.
+Deletion is therefore performed **through the PCK**, when a version reaches
+`deleted` (§6.2):
+
+1. The version's record is removed from the store, in one Raft commit.
+2. `kms-control` rotates the project's PCK.
+3. Every surviving blob of the project is moved to the new PCK version with
+   `transit/rewrap`, which re-encrypts inside the barrier: no plaintext leaves
+   it, and the project's keys stay usable throughout, because the old PCK
+   version still decrypts until step 4.
+4. The PCK's `min_decryption_version` is raised to the new version and older
+   versions are trimmed.
+
+After step 4 the deleted version's blob is undecryptable wherever it survives,
+including in every store backup. The residual is custody-cluster snapshots taken
+before the trim, which age out on the backup retention schedule (§11.5) — the
+same residual a fleet's `transit` delete leaves in shard snapshots, so per-key
+crypto-shredding is preserved, not weakened.
+
+The cost is one `rewrap` per surviving blob of the project: seconds for a
+project of a thousand keys. Deletions already wait 7–30 days, so they are
+batched per project per day, and the procedure is resumable because each blob
+records the PCK version that wraps it and the trim runs only after every rewrap
+has committed.
+
+Deleting a whole **project** is simpler and stronger: its PCK is destroyed, and
+every blob it ever wrapped is noise from that moment. A mode-A key is deleted as
+it would be in a fleet — its `transit` key is destroyed — and needs none of
+this.
+
+The same procedure without step 1 is scheduled PCK rotation (§9.5).
+
+### 8.6 Placement and exception clusters
+
+Placement classes, as an initial vocabulary: `standard` (shared), `dedicated`
+(one tenant per custody cluster), `regulated` (dedicated, with an HSM-backed
+root and restricted operator access), `internal` (the cloud's own services).
+`standard` and `internal` place a project's PCK in the region's custody cluster.
+`dedicated` and `regulated` place it in an **exception cluster**: an OpenBao
+cluster of the same shape as the custody cluster, serving one tenant.
+
+The key store stays shared by default even for exception tenants: it holds only
+blobs that their own cluster alone can unwrap, so sharing it costs them
+availability isolation, not custody isolation. A tenant who must buy
+availability isolation too gets a dedicated store — a second instance of the
+same crate, as a second Raft group — and that is the most expensive thing the
+placement vocabulary can express.
+
+| Option                                | Description                                                                              | Trade-off                                                                                |
+| ------------------------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Hash placement                        | `cluster = H(project_id) mod N`                                                          | Trivial, but rebalancing on _N_ change moves everyone                                    |
+| **Directory placement (recommended)** | The key store holds an explicit `project -> custody domain` mapping, chosen at first use | Any policy: tier, isolation request, regulation; migration is a row change plus a rewrap |
+
+Directory placement is recommended because every interesting requirement is a
+property of a tenant rather than of a hash, and with one shared domain and a
+handful of exceptions there is nothing for hashing to balance. The directory is
+on the path of every cache miss, alongside the key's record and the
+authorization decision, so it is read from the same linearizable store and
+cached with them.
+
+Placement class also decides the **custody kind**, and that is what makes the
+custody backend pluggable without a second mechanism. A `regulated` tenant's PCK
+may be held in an HSM partition rather than an OpenBao cluster — something the
+fleet could not offer, because a partition holds thousands of objects and a
+fleet needed millions, whereas a few thousand PCKs fit. Custody kind constrains
+what may be created — an HSM-resident key supports only modes A or D — and
+`kms-control` rejects an impossible request at creation, in the same validation
+that enforces the `(protection_level, offload_mode)` pairing of §10.3.
+
+Exception clusters are never unsealed by the custody cluster. They are sealed by
+an HSM directly, or by a small separate seal cluster that exists only once the
+first exception cluster does (§9.2), because the custody cluster is reachable
+from the crypto tier and a seal authority must not be (§12.1).
+
+### 8.7 Migration between custody domains
+
+Migration must exist from the start, or a tenant who outgrows `standard` has
+nowhere to go. Because every blob already lives in the shared key store, nothing
+moves between stores; only the wrapping changes:
+
+1. The key store marks the project `migrating` and freezes key-management
+   operations; data-plane operations continue.
+2. A PCK is created in the destination. `kms-crypto` unwraps each blob under the
+   source PCK and wraps it under the destination's, in memory, never writing
+   plaintext anywhere in between. `transit/rewrap` cannot cross clusters, which
+   is why this step is the crypto tier's rather than the barrier's.
+3. Verification: every version is unwrapped under the destination PCK and
    compared by digest of a deterministic test vector, not by comparing key
    material.
-4. Directory flip, cache invalidation, source namespace sealed and later
+4. Directory flip and cache invalidation in one Raft commit; the source PCK is
    destroyed after a retention period.
 
-Because no ciphertext blob names a shard (§6.4), no tenant data needs to be
-re-encrypted. That property is bought in §6.4 and spent here, and it is the
-reason for the constraint.
+A mode-A key has no exportable representation by construction. It is migrated
+by re-creating the `transit` key at the destination from material held for that
+purpose or — where the tenant chose mode A precisely to forbid that — it is not
+migrated, and moving the tenant requires its participation. That asymmetry is
+the price of mode A and is documented to the tenant at key creation.
 
-### 8.5 The fleet as a control loop
+Because no ciphertext blob names a custody domain (§6.4), no tenant data is
+re-encrypted. That property is bought in §6.4 and spent here.
 
-`kms-fleet` is a reconciler, not a script collection. Desired state — shard
-count, version, seal configuration, tenant assignment — is declarative; the
-reconciler creates clusters, initializes them, configures seals, applies policy,
-runs upgrades one node at a time with quorum checks, takes and verifies backups,
-and reports drift. Every action it takes is an audit event with the same schema
-as an API call, because "what did the fleet do at 3 a.m." is an audit question.
+### 8.8 The clusters as a control loop
 
-### 8.6 The OpenBao contract, deliberately narrow
+`kms-fleet` is a reconciler, not a script collection, even though in the default
+deployment it reconciles one cluster. Desired state — cluster count, version,
+seal configuration, PCK placement — is declarative; the reconciler creates
+clusters, initializes them, configures seals, applies the generated policy of
+§8.2, runs upgrades one node at a time with quorum checks and a TTL-sized window
+(§7.3), takes and verifies paired backups (§11.5), and reports drift. Every
+action is an audit event with the same schema as an API call, because "what did
+the reconciler do at 3 a.m." is an audit question.
+
+### 8.9 The OpenBao contract, deliberately narrow
 
 The service depends on a stated subset of OpenBao and nothing else. This table
 is the contract; anything outside it is a feature the KMS may use but must be
 able to lose:
 
-| Depended on                                                             | Used for                                                  |
-| ----------------------------------------------------------------------- | --------------------------------------------------------- |
-| The barrier and its seal/unseal lifecycle                               | The custody guarantee of §3, principle 2                  |
-| Integrated Raft storage, snapshots, restore                             | Shard durability, backup, the restore-time budget of §8.2 |
-| Namespaces, or strict mount-and-policy separation where they are absent | Per-tenant isolation inside a shard (open question 3)     |
-| `kv` v2                                                                 | Wrapped CMK blobs (§6.3) and, if kept, tenant secrets     |
-| One `transit` **wrapping** key per shard                                | One `decrypt` per KEK per cache fill (§7.2, mode B)       |
-| The transit seal protocol                                               | Shard auto-unseal against the seal cluster (§9.2)         |
-| `sys/health`, `sys/seal-status`                                         | Fleet reconciliation (§8.5) and readiness (§9.4)          |
+| Depended on                                                            | Used for                                                 |
+| ---------------------------------------------------------------------- | -------------------------------------------------------- |
+| The barrier and its seal/unseal lifecycle                              | The custody guarantee of §3, principle 2                 |
+| Integrated Raft storage, snapshots, restore                            | Custody durability and the paired backups of §11.5       |
+| `transit` keys with rotation, `rewrap`, `min_decryption_version`, trim | PCKs, and crypto-shredding by rotation (§8.5)            |
+| `transit/datakey/wrapped`                                              | Symmetric CMKs generated inside the barrier (§6.3)       |
+| The full `transit` engine                                              | Mode-A keys only                                         |
+| The transit seal protocol                                              | Exception clusters only, against the seal cluster (§9.2) |
+| `sys/health`, `sys/seal-status`                                        | Reconciliation (§8.8) and readiness (§9.4)               |
 
-Everything richer in the `transit` engine — per-key rotation and versioning,
-`rewrap`, `datakey`, signing, HMAC — is used by **mode-A keys only**. That is
-deliberate containment rather than an accident of the default: mode A is the
-tenant-visible opt-out that trades throughput for "key material never leaves the
-barrier", and it is also the one place where the design takes a hard dependency
-on transit as a cryptographic engine rather than as a barrier. Losing the
-OpenBao dependency would therefore cost the service mode A and the `kv` surface
-of open question 5; it would not cost the service.
+Two things a fleet needed are absent: `kv` and namespaces. Blobs and secrets
+live in the key store, and isolation between projects is a PCK per project with
+generated policy, not a namespace per tenant — so open question 5's `kv` surface
+is a product decision with no architectural weight left, and the namespace
+question that a fleet would have to settle does not arise.
 
 Two rules keep the contract from eroding by accretion, which is how such
 contracts normally die:
 
 1. **The dependency lives in one crate.** No code outside `kms-bao` (§17)
-   constructs an OpenBao path, parses an OpenBao response, or knows that
-   namespaces exist. A leak of OpenBao vocabulary into `kms-api` or
-   `kms-control` is a review failure, not a shortcut.
-2. **Nothing OpenBao generates is durable state anywhere else.** Shard identity
-   never appears in a ciphertext blob (§6.4), OpenBao token and lease lifetimes
-   are never the basis of an authorization decision (§13), and every mapping
-   that must survive a shard is a row in the control plane's own database (§16).
+   constructs an OpenBao path, parses an OpenBao response, or knows which mount
+   a PCK lives in. A leak of OpenBao vocabulary into `kms-api` or `kms-control`
+   is a review failure, not a shortcut.
+2. **The only durable state OpenBao generates is PCK ciphertext, and it is
+   enveloped.** Each blob carries a KMS-versioned header naming the custody
+   _kind_ and the PCK version, never the cluster — the rule §6.4 already applies
+   to tenant ciphertext — so that an HSM can hold a PCK in OpenBao's place
+   without a format change. OpenBao token and lease lifetimes are never the
+   basis of an authorization decision (§13), and every mapping that must outlive
+   a cluster is a record in the key store (§16).
 
 ---
 
@@ -1115,9 +1349,10 @@ contracts normally die:
 
 ### 9.1 The requirement
 
-Shards must come up unattended — after a node reboot, an AZ failure, a rolling
-upgrade, or a full region cold start — without a human typing unseal keys, and
-without depending on any KMS outside this cloud.
+The custody cluster, every exception cluster and every key-store node must come
+up unattended — after a node reboot, an AZ failure, a rolling upgrade, or a full
+region cold start — without a human typing unseal keys, and without depending on
+any KMS outside this cloud.
 
 ### 9.2 The seal hierarchy
 
@@ -1126,60 +1361,75 @@ flowchart LR
     subgraph tier0["Tier 0 — root"]
         hsm["HSM partitions<br/>(optional)"]
         shamir["Shamir shares<br/>(operator-held, offline)"]
-        tpm["TPM-sealed node keys<br/>(per seal node)"]
+        tpm["TPM-sealed node keys<br/>(per custody node)"]
     end
-    subgraph tier1["Tier 1 — seal cluster"]
-        seal["Central OpenBao<br/>transit mount 'fleet-unseal'"]
+    subgraph tier1["Tier 1 — sealed by the root"]
+        custody["Custody cluster<br/>pck, mode-a, store-kek"]
+        seal["Seal cluster<br/>transit 'cluster-unseal'<br/>(only with exception clusters)"]
     end
-    subgraph tier2["Tier 2 — fleet"]
-        a["Shard A"]
-        b["Shard B"]
-        c["Shard C"]
+    subgraph tier2["Tier 2 — unsealed by Tier 1"]
+        store["Key store nodes<br/>DEK via store-kek"]
+        x1["Exception cluster"]
+        x2["Exception cluster"]
     end
+    hsm -->|"pkcs11 seal"| custody
+    shamir -.->|"or"| custody
+    tpm -.->|"or"| custody
     hsm -->|"pkcs11 seal"| seal
-    shamir -.->|"or"| seal
-    tpm -.->|"or"| seal
-    seal -->|"transit seal,<br/>one key per shard"| a
-    seal --> b
-    seal --> c
-    hsm -.->|"direct pkcs11 seal<br/>(alternative)"| a
+    custody -->|"KEK provider"| store
+    seal -->|"transit seal,<br/>one key per cluster"| x1
+    seal --> x2
+    hsm -.->|"direct pkcs11 seal<br/>(alternative)"| x1
 ```
 
-Tier 1 exists to avoid _N_ HSM client configurations and to give one place where
-"which shard may unseal" is authorized and audited. Each shard has its own
-transit key in the seal cluster, and a shard may unseal only against its own
-key.
+Tier 1 is normally a single cluster. The custody cluster is sealed by the root
+directly: a seal cluster exists in a fleet to save _N_ HSM client configurations
+and to give one place where "which cluster may unseal" is authorized, and with
+one cluster there is nothing to save. The seal cluster returns only with the
+first exception cluster, and it stays separate from the custody cluster for a
+network reason rather than a cryptographic one — the custody cluster is reached
+by the crypto tier (§12), and a seal authority must not be (§12.1, rule 2). Each
+exception cluster has its own transit key in the seal cluster and may unseal
+only against it.
+
+The key-store nodes are not OpenBao and have no seal stanza. Each unwraps its
+DEK through `store-kek` with its own SVID at start-up, exactly as §5.6's
+recommended path authenticates any other KMS-written client, or — under the
+alternative provider of §8.3 — through its own TPM, in which case the store sits
+in Tier 1 beside the custody cluster rather than beneath it.
 
 The same authentication question as §5.6 arises here and has to be answered
 differently, because here the seal _client_ is a stock OpenBao node, not
-something the KMS wrote: a shard node's seal stanza needs a credential for the
-seal cluster at boot, before anything else on that node is running. The options,
+something the KMS wrote: an exception-cluster node's seal stanza needs a
+credential for the seal cluster at boot, before anything else on that node is
+running. The options,
 and why the last one wins:
 
-| How the shard node authenticates to the seal cluster       | Problem                                                                                                                                                                               |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A long-lived seal-cluster token in the node's config       | A durable secret on disk whose theft is a shard compromise; rotation is manual                                                                                                        |
-| The node's X.509 SVID via `auth/cert`                      | The SPIRE agent must be up and attested before OpenBao starts, which inverts the cold-start order of §9.4                                                                             |
-| A short-lived token written by a local agent (recommended) | The node runs a small credential helper that attests to SPIRE, logs into the seal cluster with the resulting SVID, writes a short-lived token, and renews it; OpenBao starts after it |
+| How an exception-cluster node authenticates to the seal cluster | Problem                                                                                                                                                                               |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A long-lived seal-cluster token in the node's config            | A durable secret on disk whose theft is a cluster compromise; rotation is manual                                                                                                      |
+| The node's X.509 SVID via `auth/cert`                           | The SPIRE agent must be up and attested before OpenBao starts, which inverts the cold-start order of §9.4                                                                             |
+| A short-lived token written by a local agent (recommended)      | The node runs a small credential helper that attests to SPIRE, logs into the seal cluster with the resulting SVID, writes a short-lived token, and renews it; OpenBao starts after it |
 
-With the third, the material on a shard node's disk is a SPIRE agent
-configuration rather than a seal credential, so a stolen backup of a shard's
+With the third, the material on an exception-cluster node's disk is a SPIRE
+agent configuration rather than a seal credential, so a stolen backup of its
 storage is useless without an identity the seal cluster accepts — but the
 property is bought by the credential helper, not by the seal stanza, and the
-cold-start order in §9.4 has to place SPIRE before the shards for exactly this
-reason.
+cold-start order in §9.4 has to place SPIRE before the exception clusters for
+exactly this reason. The custody cluster needs none of this, since its seal is
+the root itself.
 
 ### 9.3 Options for the root
 
 | Option                                        | Unattended restart | Root protection               | Cost   | Notes                                                                                  |
 | --------------------------------------------- | :----------------: | ----------------------------- | ------ | -------------------------------------------------------------------------------------- |
-| Shamir shares, operators present              |         No         | Human custody                 | None   | Acceptable only for the seal cluster, and only with a documented ceremony              |
-| TPM-sealed key per seal node                  |        Yes         | Hardware-bound per node       | Low    | Node replacement is a ceremony; quorum of nodes needed                                 |
+| Shamir shares, operators present              |         No         | Human custody                 | None   | Acceptable only for the custody and seal clusters, and only with a documented ceremony |
+| TPM-sealed key per custody node               |        Yes         | Hardware-bound per node       | Low    | Node replacement is a ceremony; quorum of nodes needed                                 |
 | HSM partition (PKCS#11), two+ failure domains |        Yes         | FIPS 140-3 L3 possible        | High   | The compliance answer                                                                  |
 | Attested TEE nodes, evidence appraised        |        Yes         | Hardware-bound, host excluded | Medium | An option and never a prerequisite: the service must start on ordinary hardware (§2.6) |
-| Seal cluster sealed by another seal cluster   |        Yes         | Recursion                     | —      | Rejected: moves the problem, does not solve it                                         |
+| Custody cluster sealed by another cluster     |        Yes         | Recursion                     | —      | Rejected: moves the problem, does not solve it                                         |
 
-**Recommendation:** TPM-sealed seal-cluster nodes as the no-HSM baseline (it
+**Recommendation:** TPM-sealed custody-cluster nodes as the no-HSM baseline (it
 reuses the mechanism Keystone's PKCS#11/TPM plan already builds), with an HSM
 seal as a configuration change for deployments that need it. Shamir shares
 remain as the offline recovery path, held under split custody, exercised in
@@ -1193,32 +1443,39 @@ principle 6 forbids it becoming the only way to start a region.
 Cold start of an entire region has a strict order, and it must be written down
 because it is the procedure nobody practises until they need it:
 
-1. HSM partitions online, or a quorum of seal-cluster nodes with intact TPM
+1. HSM partitions online, or a quorum of custody-cluster nodes with intact TPM
    state, or operators with Shamir shares.
-2. Seal cluster unseals. It depends on no _running_ service — in particular
-   **not** on Keystone, not on a live SPIRE server, and not on the KMS's own
-   database. It does hold a static copy of the SPIRE trust bundle so that it can
-   verify the shard credentials of step 4 once they appear; a static trust
+2. The custody cluster unseals. It depends on no _running_ service — in
+   particular **not** on Keystone, not on a live SPIRE server, and not on the
+   key store. It does hold a static copy of the SPIRE trust bundle so that it
+   can verify the credentials of steps 4 and 6 once they appear; a static trust
    anchor on disk is not a runtime dependency, and keeping it to that is a hard
-   constraint on the seal cluster's configuration.
+   constraint on the custody cluster's configuration.
 3. SPIRE server comes up. Its own CA key may be KMS-held only if the KMS can
    serve it without SPIRE — which it cannot in the general case, so in Phase 1
    SPIRE keeps its own root and the dependency is left uninverted (§9.6).
-4. Shards unseal against the seal cluster using node identities.
-5. `kms-control` connects to its database and to the shards.
+4. Key-store nodes start inside `kms-control`: each unwraps its DEK through
+   `store-kek` with its SVID (or its TPM, §8.3), and the Raft group elects a
+   leader.
+5. Where they exist, the seal cluster unseals from the root and the exception
+   clusters unseal against it.
 6. `kms-crypto` starts with a cold cache; `kms-api` starts last and only reports
    ready when a canary key round-trips end to end.
 
 The readiness probe of `kms-api` performing a real cryptographic round trip
-against a canary key in each reachable shard — rather than returning `200`
+against a canary key in each custody domain — rather than returning `200`
 because the process is alive — is what keeps a half-initialized region out of
-the load balancer.
+the load balancer. Step 4 is the new dependency this design introduces, and it
+is ordered rather than circular: the store depends on the barrier for its KEK,
+and the barrier depends on nothing the store holds.
 
 ### 9.5 Seal rotation and rekey
 
-Rotating a shard's transit unseal key, rotating the seal cluster's root,
-rekeying a shard's barrier (`rekey`), and rotating the HSM's root are four
-distinct operations with four distinct runbooks, all driven by `kms-fleet`, all
+Rotating the custody cluster's root, rekeying its barrier (`rekey`), rotating a
+project's custody key (§8.5), rotating the key store's DEK ([ADR
+0016-v2](adr/0016-v2-raft-storage.md) §6), rotating an exception cluster's
+transit unseal key, and rotating the HSM's root are six distinct operations with
+six distinct runbooks, all driven by `kms-fleet` or `kms-control`, all
 quorum-approved, all rehearsed on a schedule. A KMS that cannot rotate its root
 of trust has no answer to a compromise.
 
@@ -1235,25 +1492,27 @@ needs. Three cases:
   Also circular, since the KMS authorizes against Keystone. Same resolution:
   keep separate initially; revisit once the KMS has a "break-glass, no external
   authorization" internal mode that is itself safe.
-- **The KMS's own database encryption.** Solved without recursion: the metadata
-  database holds no key material (§16), so it needs only transport and at-rest
-  disk encryption, whose key comes from the same TPM/HSM tier as the seal
-  cluster.
+- **The KMS's own storage encryption.** Solved without recursion: the key
+  store's at-rest DEK is wrapped by `store-kek` in the custody cluster or by a
+  TPM — the tier that seals the custody cluster — so the store depends on the
+  barrier and the barrier depends on nothing in the store (§9.4, step 4).
 
 ---
 
 ## 10. HSM integration
 
-HSM support is a capability of a deployment, expressed per key and per shard,
+HSM support is a capability of a deployment, expressed per key and per
+placement class,
 and it is never required for the service to function.
 
 ### 10.1 Three integration points
 
-| Integration point  | What the HSM does                                                | When to use                                 |
-| ------------------ | ---------------------------------------------------------------- | ------------------------------------------- |
-| **Seal**           | Protects the seal cluster's (or a shard's) barrier key           | Any deployment with a compliance story (§9) |
-| **CMK custody**    | The customer master key is generated in and never leaves the HSM | `regulated` placement class; premium tier   |
-| **Crypto offload** | DEK generation, wrapping, signing performed in the HSM           | Very high assurance; the §7 option D        |
+| Integration point   | What the HSM does                                                      | When to use                                                                                      |
+| ------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| **Seal**            | Protects the custody cluster's (or an exception cluster's) barrier key | Any deployment with a compliance story (§9)                                                      |
+| **Project custody** | Holds a project's PCK in place of the custody cluster (§8.6)           | `regulated` tenants for whom the barrier is not enough but `hsm-resident` is more than they need |
+| **CMK custody**     | The customer master key is generated in and never leaves the HSM       | `regulated` placement class; premium tier                                                        |
+| **Crypto offload**  | DEK generation, wrapping, signing performed in the HSM                 | Very high assurance; the §7 option D                                                             |
 
 ### 10.2 Mechanism
 
@@ -1274,11 +1533,11 @@ than an opaque cause of tail latency.
 Whatever the deployment does, the key's metadata states its protection level and
 the API returns it:
 
-| `protection_level` | Meaning                                                            |
-| ------------------ | ------------------------------------------------------------------ |
-| `software`         | Key material protected by the shard barrier; barrier sealed per §9 |
-| `hsm-sealed`       | As above, and the seal chain terminates in an HSM                  |
-| `hsm-resident`     | Key material generated in, and never leaving, an HSM partition     |
+| `protection_level` | Meaning                                                                        |
+| ------------------ | ------------------------------------------------------------------------------ |
+| `software`         | Key material wrapped under a PCK in the custody barrier; barrier sealed per §9 |
+| `hsm-sealed`       | As above, and the seal chain terminates in an HSM                              |
+| `hsm-resident`     | Key material generated in, and never leaving, an HSM partition                 |
 
 `protection_level` and `offload_mode` (§7.2) are not independent: an
 `hsm-resident` key has no representation outside the HSM, so it is restricted to
@@ -1323,11 +1582,11 @@ un-replicate material, and pretending otherwise would be dishonest.
 ### 11.3 In-region HA
 
 - `kms-api`, `kms-crypto`: stateless, N+2 across AZs, drained on deploy.
-- `kms-control`: the metadata database is synchronously replicated across AZs;
-  schedulers are leader-elected.
-- Shards: 3 or 5 nodes across AZs; loss of one AZ leaves quorum. An AZ that
-  cannot reach the seal cluster cannot unseal, so the seal cluster is also
-  AZ-distributed and is the first thing recovered.
+- `kms-control`: 3 or 5 replicas across AZs forming the key store's Raft group;
+  loss of one AZ leaves quorum, and schedulers follow the leader.
+- Custody cluster: 3 or 5 nodes across AZs; loss of one AZ leaves quorum. It is
+  the first thing recovered, because the key store cannot restart a node without
+  it (§9.4) and every cold key in the region waits on it.
 - Load balancing: `kms-crypto` prefers the replica whose cache is warm for the
   requested key (consistent hashing on key ID with bounded load), falling back
   to any replica. Cache warmth is a performance property; correctness never
@@ -1354,13 +1613,21 @@ posture:
 
 ### 11.5 Backup and disaster recovery
 
-- Shard snapshots are taken by `kms-fleet`, encrypted under a **backup key**
-  held in the seal cluster (and in the HSM where present), stored in at least
-  two failure domains, and **restore-tested on a schedule** into an isolated
-  environment. A backup that has never been restored is not a backup.
-- The control-plane database is backed up with the same discipline; it holds no
-  key material, so its exposure is metadata exposure — still serious, still
-  encrypted.
+- Backups are **pairs**: a key-store backup in the envelope of
+  [ADR 0016-v2](adr/0016-v2-raft-storage.md) §7, and a custody-cluster snapshot
+  taken _after_ it, with no PCK trim (§8.5) allowed between the two. The order
+  matters: a store backup restored against an older custody snapshot can hold
+  blobs rewrapped to a PCK version that snapshot has never seen, and those blobs
+  would be lost. A pair is the unit of restore, and custody is restored first.
+- Both halves are encrypted under a **backup key** held outside the custody
+  cluster (in the HSM where present, otherwise under split custody), stored in
+  at least two failure domains, and **restore-tested on a schedule** into an
+  isolated environment. A backup that has never been restored is not a backup.
+- The custody snapshot is small — a few thousand PCKs — so the restore-time
+  budget is dominated by the key store, whose size (§8.3) is the number that
+  open question 4 turns on.
+- Retention is a security parameter as well as a recovery one: it is the time
+  for which a deleted key survives in pre-trim custody snapshots (§8.5).
 - The recovery objectives are stated per component and published to tenants,
   because the recovery time of a KMS is the recovery time of everything
   encrypted with it.
@@ -1388,8 +1655,8 @@ flowchart TB
         ctl["kms-control"]
     end
     subgraph n4["Backend network"]
-        shards["OpenBao shards"]
-        db[("Metadata DB")]
+        custody["Custody cluster<br/>and exception clusters"]
+        db[("Key store<br/>kms-control Raft peers")]
     end
     subgraph n5["Seal network"]
         seal["Seal cluster"]
@@ -1404,43 +1671,49 @@ flowchart TB
     svcs --> lb2
     api --> cry
     api --> ctl
-    cry --> shards
-    ctl --> shards
+    cry --> custody
+    ctl --> custody
     ctl --> db
-    shards --> seal
+    custody --> seal
+    custody --> hsm
     seal --> hsm
     fleet --> ctl
-    fleet --> shards
+    fleet --> custody
     fleet --> seal
 ```
 
 ### 12.1 Rules
 
-1. **No tenant-routable path to the backend network.** The shards have no route
-   to, and no listener reachable from, any tenant network. This is enforced by
+1. **No tenant-routable path to the backend network.** The custody cluster, the
+   exception clusters and the key store's Raft peer listener have no route to,
+   and no listener reachable from, any tenant network. This is enforced by
    routing and by firewall/NetworkPolicy, and verified by an automated
    reachability test that runs in CI against the deployment, not by a diagram.
 2. **The seal network is the most restricted.** It carries exactly two traffic
-   patterns: shard nodes to the seal cluster, and the seal cluster to its HSM
-   partition. `kms-api` has no route to it. Neither does `kms-control`, except
-   through `kms-fleet` on the management network. The HSM used for _crypto
-   offload_ (§7 option D, §10.1) is a **different partition reached over a
-   different path** from the KMS service network, and the two must not be
-   collapsed into one client configuration just because they are the same
-   appliance: the seal partition is reachable only by the seal cluster, and a
-   compromise of `kms-crypto` must not yield a seal credential. Where only one
-   HSM exists, this is enforced by separate partitions with separate
-   credentials, and it is a deployment review item.
+   patterns: exception-cluster nodes to the seal cluster, and the seal and
+   custody clusters to their HSM seal partition. `kms-api` has no route to it.
+   Neither does `kms-control`, except through `kms-fleet` on the management
+   network. The HSM used for _crypto offload_ (§7 option D, §10.1) is a
+   **different partition reached over a different path** from the KMS service
+   network, and the two must not be collapsed into one client configuration just
+   because they are the same appliance: the seal partition is reachable only by
+   the seal and custody clusters, and a compromise of `kms-crypto` must not
+   yield a seal credential. This rule is also why the custody cluster never
+   doubles as the seal cluster (§9.2): `kms-crypto` reaches the custody
+   cluster's API, and must reach no seal authority's. Where only one HSM exists,
+   this is enforced by separate partitions with separate credentials, and it is
+   a deployment review item.
 3. **Each hop is mutually authenticated.** SPIFFE mTLS everywhere inside;
    network controls are defence in depth, not the primary control. A compromise
    of a network boundary should not by itself yield key material.
 4. **Egress is default-deny, and the allowed list is exhaustive.** `kms-crypto`
-   may reach the shards, its HSM crypto partition, the invalidation bus and the
-   audit pipeline. `kms-api` may reach `kms-crypto`, `kms-control`, Keystone,
-   OPA and the audit pipeline. `kms-control` may reach the shards, its database,
-   the invalidation bus and the audit pipeline. Nothing else, in either
-   direction, for any of them. A KMS with unrestricted egress is a KMS with an
-   exfiltration path.
+   may reach the custody and exception clusters, `kms-control`'s blob-read API,
+   its HSM crypto partition, the invalidation bus and the audit pipeline.
+   `kms-api` may reach `kms-crypto`, `kms-control`, Keystone, OPA and the audit
+   pipeline. `kms-control` may reach the custody and exception clusters, its
+   Raft peers, the invalidation bus and the audit pipeline. Nothing else, in
+   either direction, for any of them. A KMS with unrestricted egress is a KMS
+   with an exfiltration path.
 5. **Separate listeners, separate certificates, separate CAs.** The public
    listener uses a public CA; internal listeners use the SPIFFE trust domain. No
    certificate is valid in two zones.
@@ -1574,8 +1847,9 @@ a compromised tenant account driving cost or backend load.
   the question a KMS exists to answer, and a KMS that only answers it to the
   operator is not usable for a regulated customer.
 - **Metrics** ([ADR 0031](adr/0031-prometheus-metrics.md)): operation rate and
-  latency by class and key, cache hit ratio and age distribution, backend call
-  rate per shard, shard health and seal status, HSM session health and
+  latency by class and key, cache hit ratio and age distribution, custody call
+  rate per domain, custody-cluster and key-store health, Raft leadership and
+  seal status, HSM session health and
   saturation, authorization decision latency and cache hit ratio, rate-limit
   rejections. Per-tenant cardinality is bounded deliberately; a tenant label on
   a high-cardinality metric is a monitoring outage waiting to happen.
@@ -1610,13 +1884,13 @@ Three meters, because the service has three genuinely different cost drivers:
 
 | Meter                  | Unit                                           | Emitted by                       | Cost it tracks                                                                                |
 | ---------------------- | ---------------------------------------------- | -------------------------------- | --------------------------------------------------------------------------------------------- |
-| **Custody**            | Active key _version_-hour, by protection level | `kms-control` inventory snapshot | Shard occupancy, backup volume, HSM key slots                                                 |
+| **Custody**            | Active key _version_-hour, by protection level | `kms-control` inventory snapshot | Key-store volume, backup volume, HSM key slots                                                |
 | **Operations**         | One record per operation, by operation class   | `kms-api`                        | Marginal compute; mostly an abuse signal (§15.6)                                              |
-| **Dedicated capacity** | Shard-hour, by placement class                 | `kms-fleet`                      | The `dedicated` and `regulated` classes of §8.3, which cost a full quorum whether used or not |
+| **Dedicated capacity** | Exception-cluster-hour, by placement class     | `kms-fleet`                      | The `dedicated` and `regulated` classes of §8.6, which cost a full quorum whether used or not |
 
 Custody is metered per key **version**, not per key, because a version is what
-occupies a barrier and a backup. Rotation therefore has a visible price, which
-is the honest signal: a tenant rotating hourly is buying something real.
+occupies the key store and a backup. Rotation therefore has a visible price,
+which is the honest signal: a tenant rotating hourly is buying something real.
 
 The three meters are emitted by three different components on purpose. A
 discrepancy between the operation stream and the custody snapshot is the
@@ -1631,8 +1905,8 @@ native, Vault-compatible, Barbican-compatible and KMIP surfaces converge, and �
 more importantly — it is the only point that sees operations served from the
 `kms-crypto` KEK cache. An operation satisfied entirely from cache performs no
 backend work and must still be billed; metering at the crypto tier or at the
-shard would make the §7 offload look like a discount. The KMIP handler is the
-one that needs care: a KMIP session is long-lived and multiplexes many
+custody cluster would make the §7 offload look like a discount. The KMIP handler
+is the one that needs care: a KMIP session is long-lived and multiplexes many
 operations, so records are emitted per operation, never per connection.
 
 Two rules constrain the implementation:
@@ -1684,14 +1958,14 @@ the opposite arrangement is what a service-provider tenant actually wants.
 The state machine of §6.2 needs a billing column, and the answers are not
 self-evident:
 
-| State                                   | Billed for custody | Reasoning                                                                                                      |
-| --------------------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------- |
-| `enabled`                               | Yes                |                                                                                                                |
-| `disabled`                              | Yes                | The material still occupies a barrier and a backup; free storage of disabled keys is an accumulation incentive |
-| `pending_deletion`                      | Yes                | Same, and the waiting period is a service the tenant is receiving                                              |
-| `pending_import`                        | No                 | No material exists yet                                                                                         |
-| `destroyed`                             | No                 |                                                                                                                |
-| Versions below `min_decryption_version` | No                 | Archived versions are not retrievable, so charging for them sells nothing                                      |
+| State                                   | Billed for custody | Reasoning                                                                                                          |
+| --------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `enabled`                               | Yes                |                                                                                                                    |
+| `disabled`                              | Yes                | The material still occupies the key store and a backup; free storage of disabled keys is an accumulation incentive |
+| `pending_deletion`                      | Yes                | Same, and the waiting period is a service the tenant is receiving                                                  |
+| `pending_import`                        | No                 | No material exists yet                                                                                             |
+| `deleted`                               | No                 |                                                                                                                    |
+| Versions below `min_decryption_version` | No                 | Archived versions are not retrievable, so charging for them sells nothing                                          |
 
 Custody is metered hourly and prorated. A key created and destroyed within an
 hour is billed for an hour — a minimum charge that removes any incentive to
@@ -1702,10 +1976,12 @@ churn keys in order to defeat the meter.
 The architecture argues for a specific weighting, and the argument is worth
 recording even though the numbers are not the architecture's to set. §7 exists
 to make a data-plane operation cost approximately nothing at the margin: a cache
-hit performs no backend call and no shard I/O. Meanwhile the cost the fleet
-actually incurs is the one computed in §4.3 — quorum × availability zones ×
-shard — which a tenant incurs by _existing on a shard_, not by issuing requests.
-A tariff weighted toward per-operation charging would therefore tax the one
+hit performs no backend call and no storage I/O. Meanwhile the cost the service
+actually incurs is the one laid out in §4.3: two quorums per region — the
+custody cluster and the key store — which exist whether one tenant uses them or
+a thousand, plus a full quorum for every exception cluster. The shared part is
+close to a fixed cost and the custody records are its only marginal driver. A
+tariff weighted toward per-operation charging would therefore tax the one
 resource the design deliberately made free, and would reward a customer for
 defeating the cache the security model already constrains (§7.3).
 
@@ -1719,18 +1995,23 @@ the public clouds this service is a substitute for, and not a price list:
 | `hsm-sealed` key version            | ~$2–3 / month                                  |
 | `hsm-resident` key version (§10)    | ~$5+ / month                                   |
 | Data-plane operations               | ~$0.03 / 10k                                   |
+| Mode-A operations (§7.2)            | as asymmetric                                  |
 | Asymmetric and HSM-bound operations | ~$0.15 / 10k                                   |
 | Key management operations           | free                                           |
-| `dedicated` / `regulated` shard     | monthly platform fee                           |
+| `dedicated` / `regulated` cluster   | monthly platform fee                           |
 | Free allowance                      | first ~5 key versions, ~20k operations / month |
 
-The free allowance is not marketing; it is the same decision as the free-tier
-placement class of §8.3, and the two should be defined once.
+The free allowance is not marketing; it is the same decision as a free-tier
+placement class would be (§8.6), and the two should be defined once. Mode-A
+operations are priced with the asymmetric ones because each spends the one
+active node's budget of the custody cluster (§8.2).
 
 **The Phase 1 economics do not close on this tariff, and that is worth stating
 plainly.** An auto-unseal customer needs exactly one key and performs on the
 order of ten operations a month. A thousand such customers, priced per key and
-per operation, do not pay for one region's quorum, let alone the engineering.
+per operation, do not pay for one region's two quorums, let alone the
+engineering — though without a fleet the gap is a fixed cost, not one that
+grows with every shard the tenant count forces into existence.
 Phase 1 is therefore priced either as a flat per-project subscription for the
 capability, or — more honestly — is not a profit centre at all, but the
 capability that makes customer-managed encryption for Cinder, Swift and Manila
@@ -1747,7 +2028,7 @@ transactional global view of a tenant's usage. The consequences:
   outside the KMS's trust boundary; late and out-of-order arrival is normal and
   the rating system, not the KMS, closes the billing period.
 - A **replicated key** (§11.2) exists in more than one region and is metered in
-  each, because it occupies a barrier in each. The rating system must
+  each, because it occupies custody in each. The rating system must
   deduplicate on the _logical_ key identifier for display while summing the
   per-region custody records for charge — a tenant reading their bill should see
   one key charged twice with the regions named, not two keys.
@@ -1780,23 +2061,28 @@ for anything that matters.
 
 ## 16. What lives where: storage model
 
-| Data                                             | Stored in                                         | Encrypted by                                 |
-| ------------------------------------------------ | ------------------------------------------------- | -------------------------------------------- |
-| Key material (CMK, all versions)                 | OpenBao shard (`transit`)                         | Shard barrier                                |
-| Tenant secrets / `kv`                            | OpenBao shard (`kv` v2)                           | Shard barrier                                |
-| Key metadata, state, tags, protection level      | Control-plane database                            | Disk/transport encryption                    |
-| Grants, quotas, placement directory              | Control-plane database                            | Disk/transport encryption                    |
-| Audit events                                     | Audit pipeline / SIEM                             | Pipeline's own protection                    |
-| Metering records (custody, operations, capacity) | Durable local queue, drained to the rating system | Queue's own protection; transport encryption |
-| Wrapped CMK blobs (modes B, C)                   | OpenBao shard (`kv`)                              | Per-shard `transit` wrapping key             |
-| KEK cache entries (plaintext)                    | `kms-crypto` memory only                          | Never persisted; `mlock`-ed, zeroized        |
-| Shard topology, seal configuration               | Control-plane database + `kms-fleet` state        | Disk encryption                              |
-| Cache-invalidation epochs                        | Control-plane database, fanned out on the bus     | Disk encryption                              |
+| Data                                                      | Stored in                                                        | Encrypted by                                    |
+| --------------------------------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------- |
+| Project custody keys (PCKs)                               | Custody cluster (`transit`), or an HSM partition for `regulated` | Custody barrier, or the HSM                     |
+| CMK versions and derivation keys (modes B, C)             | Key store, tier 3                                                | The project's PCK, then the store's at-rest DEK |
+| CMK versions (mode A)                                     | Custody cluster (`transit`, `mode-a` mount)                      | Custody barrier                                 |
+| CMK versions (`hsm-resident`)                             | HSM partition                                                    | The HSM                                         |
+| Tenant secrets / `kv`                                     | Key store, tier 3                                                | The project's PCK, then the store's at-rest DEK |
+| Key metadata, state, versions, grants, quotas             | Key store, tier 2                                                | The store's at-rest DEK                         |
+| Placement directory, cluster topology, seal configuration | Key store, tier 2, + `kms-fleet` state                           | The store's at-rest DEK                         |
+| Cache-invalidation epochs                                 | Key store, fanned out on the bus                                 | The store's at-rest DEK                         |
+| Audit events                                              | Audit pipeline / SIEM                                            | Pipeline's own protection                       |
+| Metering records (custody, operations, capacity)          | Durable local queue, drained to the rating system                | Queue's own protection; transport encryption    |
+| KEK cache entries (plaintext)                             | `kms-crypto` memory only                                         | Never persisted; `mlock`-ed, zeroized           |
 
-The invariant worth restating: **the control-plane database contains no key
-material.** A full dump of it discloses what keys exist, who owns them and how
-they are used — serious, and a reason to encrypt and restrict it — but it does
-not disclose a single byte that decrypts customer data.
+The invariant worth restating has changed shape, and it is worth stating in its
+new form rather than the old one. The KMS's own store now **does** hold key
+material, but **only under a key it cannot use by itself**: every CMK in the key
+store is PCK ciphertext, and a PCK never leaves the barrier. A full dump of the
+store — through its API, or of its disks with the at-rest DEK — discloses what
+keys exist, who owns them and how they are used, which is serious and a reason
+to encrypt and restrict it. It does not disclose a single byte that decrypts
+customer data without the custody cluster as well (§8.4).
 
 ---
 
@@ -1815,38 +2101,40 @@ moving between the two projects finds the same structure. The five processes of
 | `kms-core-types` | Shared types: key identifiers, states, algorithms, ciphertext blobs                                               |
 | `kms-api-types`  | Request/response models and conversions for all surfaces                                                          |
 | `kms-crypto`     | Library: envelope engine, cache, zeroizing key handling, algorithm registry                                       |
-| `kms-bao`        | OpenBao client: transit, kv, sys, namespaces, seal operations — the only crate that knows OpenBao exists (§8.6)   |
-| `kms-fleet`      | Binary: shard reconciler, migration, backup orchestration                                                         |
+| `kms-bao`        | OpenBao client: transit, sys, seal operations — the only crate that knows OpenBao exists (§8.9)                   |
+| `kms-fleet`      | Binary: cluster reconciler, migration, paired backup orchestration (§8.8, §11.5)                                  |
 | `kms-kmip`       | TTLV codec and KMIP server state machine (fuzzed)                                                                 |
 | `kms-vault-api`  | Vault/OpenBao-compatible surface                                                                                  |
 | `kms-barbican`   | Barbican v1 compatibility surface                                                                                 |
 | `kms-pkcs11`     | PKCS#11/HSM abstraction (shared with `keystone-rs`); implements `CryptoEngine` and a low-cardinality `KeyCustody` |
 | `kms-attest`     | Attestation-result verification and claim extraction for policy input (§2.6); never on the data path              |
 | `kms-meter`      | Metering record model, durable emit queue, custody snapshot job (§15)                                             |
-| `kms-sql`        | SeaORM persistence for control-plane metadata                                                                     |
+| `kms-store`      | The key store's state machine, records and tier mapping on `keystone-rs`'s distributed storage crate (§8.3)       |
 | `kms-manage`     | Binary: operator CLI                                                                                              |
 | `test_api`       | Live-server API tests against SPIRE + OPA + OpenBao + the service                                                 |
 
 **The backend seam.** Custody and cryptography are two traits, not one backend.
-`KeyCustody` answers "where does this key's material live, and who may destroy
+`KeyCustody` answers "who holds this project's custody key, and who may destroy
 it"; `CryptoEngine` answers "who performs this operation". They are kept apart
-because their implementations differ in both cardinality and failure mode — a
-shard holds millions of key objects at software speed, an HSM partition
-thousands at hardware speed — and one trait spanning both would collapse either
-to their intersection, losing the transit versioning and
-`min_decryption_version` that §6.2 depends on, or to a union with runtime
-capability errors, which is worse than two honest implementations:
+because their implementations differ in throughput and failure mode — the
+custody side is a few thousand PCKs consulted once per cache fill, the engine
+side is every operation in the region — and because they are held by different
+components: §8.2's generated policy gives `kms-control` the custody verbs and
+`kms-crypto` the engine verbs, and one trait spanning both would put the two
+halves back into one process's hands. With PCKs instead of per-key objects, the
+custody side is also small enough for an HSM partition to hold, which is what
+makes the second implementation below a real one rather than a notional one:
 
-| Crate        | `KeyCustody`                   | `CryptoEngine`                                |
-| ------------ | ------------------------------ | --------------------------------------------- |
-| `kms-bao`    | OpenBao shard (barrier, `kv`)  | `transit` — mode A                            |
-| `kms-pkcs11` | HSM partition, low cardinality | PKCS#11 — modes A and D                       |
-| `kms-crypto` | —                              | In-process `aws-lc-rs`/`ring` — modes B and C |
+| Crate        | `KeyCustody`                                                 | `CryptoEngine`                                |
+| ------------ | ------------------------------------------------------------ | --------------------------------------------- |
+| `kms-bao`    | Custody or exception cluster: PCKs in `transit`              | `transit` — mode A                            |
+| `kms-pkcs11` | HSM partition: PCKs for `regulated`, and `hsm-resident` keys | PKCS#11 — modes A and D                       |
+| `kms-crypto` | —                                                            | In-process `aws-lc-rs`/`ring` — modes B and C |
 
 Capability negotiation is **not** done with runtime flags. The permitted
 combinations are exactly the `(protection_level, offload_mode)` matrix of §10.3
-crossed with the shard type of §8.3, validated by `kms-control` when the key is
-created. An unsupported combination is a rejection at creation time, never an
+crossed with the custody kind of §8.6, validated by `kms-control` when the key
+is created. An unsupported combination is a rejection at creation time, never an
 `Unsupported` error surfacing on the data path with a DEK request already in
 flight.
 
@@ -1871,24 +2159,30 @@ project:
 
 ## 18. Failure modes
 
-| Failure                             | Data plane                                                   | Management plane           | Recovery                                  |
-| ----------------------------------- | ------------------------------------------------------------ | -------------------------- | ----------------------------------------- |
-| One `kms-api` replica               | None (LB)                                                    | None                       | Automatic                                 |
-| All `kms-api` in an AZ              | None if N+2                                                  | None                       | Automatic                                 |
-| One `kms-crypto` replica            | Cache miss storm on its keys, brief latency rise             | None                       | Automatic; cache re-warms                 |
-| Shard loses one node                | None                                                         | None                       | Raft heals                                |
-| Shard loses quorum                  | Warm keys keep working for the cache TTL; cold keys fail     | Fails for that shard       | Restore from snapshot; §8/§11.5           |
-| Shard cannot reach the seal cluster | Works while unsealed; a restart does not recover             | Degraded                   | Recover the seal cluster first            |
-| Seal cluster down                   | None while shards stay unsealed                              | No new shards, no restarts | Highest-priority recovery                 |
-| HSM partition down                  | `hsm-resident` keys fail; others unaffected                  | Degraded                   | Failover to the second partition          |
-| Keystone unreachable                | Cached decisions serve; new ones fail closed (§11.4)         | Fails closed               | Region-local read path; incident TTL mode |
-| Control-plane DB down               | Warm keys work; placement lookups fail for cold keys         | Fails                      | Replica promotion                         |
-| Whole region down                   | Multi-region keys serve elsewhere; single-region keys do not | Fails                      | Region cold start (§9.4)                  |
+| Failure                                                   | Data plane                                                                                      | Management plane                       | Recovery                                                                       |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------ |
+| One `kms-api` replica                                     | None (LB)                                                                                       | None                                   | Automatic                                                                      |
+| All `kms-api` in an AZ                                    | None if N+2                                                                                     | None                                   | Automatic                                                                      |
+| One `kms-crypto` replica                                  | Cache miss storm on its keys, brief latency rise                                                | None                                   | Automatic; cache re-warms                                                      |
+| Custody cluster loses one node                            | None                                                                                            | None                                   | Raft heals                                                                     |
+| Custody cluster loses quorum                              | Warm keys keep working for the cache TTL; cold keys fail **region-wide** for `standard` tenants | Fails region-wide                      | Restore the custody half of the latest pair (§11.5); minutes                   |
+| Key store loses one node                                  | None                                                                                            | None                                   | Raft heals                                                                     |
+| Key store loses quorum                                    | Warm keys keep working for the cache TTL; cold keys fail region-wide                            | Fails region-wide                      | Restore the store half of the pair; the restore-time budget of open question 4 |
+| Key-store node restarts while the custody cluster is down | That node cannot unwrap its DEK and stays out of the Raft group                                 | Degraded if quorum is at risk          | Recover the custody cluster first                                              |
+| Exception cluster loses quorum                            | As the custody cluster, for that tenant only                                                    | Fails for that tenant                  | Restore from snapshot                                                          |
+| Seal cluster down (with exception clusters)               | None while exception clusters stay unsealed                                                     | No new exception clusters, no restarts | Recover before any exception-cluster restart                                   |
+| HSM partition down                                        | `hsm-resident` keys fail; others unaffected                                                     | Degraded                               | Failover to the second partition                                               |
+| Keystone unreachable                                      | Cached decisions serve; new ones fail closed (§11.4)                                            | Fails closed                           | Region-local read path; incident TTL mode                                      |
+| Whole region down                                         | Multi-region keys serve elsewhere; single-region keys do not                                    | Fails                                  | Region cold start (§9.4)                                                       |
 
-The row that deserves attention is "shard loses quorum": the difference between
-a short storage incident and a customer-visible data outage is exactly the
-crypto tier's cache, which is why §7.3 treats the TTL as an availability control
-as well as a security control.
+The rows that deserve attention are the two "loses quorum" rows for the shared
+pair, because they are where this design is honestly worse than a fleet: what a
+fleet confines to one shard's tenants reaches every `standard` tenant in the
+region. The difference between a short incident and a customer-visible data
+outage is exactly the crypto tier's cache, which is why §7.3 treats the TTL as
+an availability control as well as a security control, and why the tenants who
+cannot accept a region-wide cold-key outage are the ones §8.6 sells a custody
+cluster to.
 
 ---
 
@@ -1906,17 +2200,20 @@ OpenBao's own native transit seal, with no custom client software.
   `transit/decrypt`, `auth/cert/login`, `auth/jwt/login`, `sys/health`,
   `sys/seal-status`.
 - `kms-crypto` and `kms-control` as separate processes from the start, even
-  though Phase 1 has no cache for them to hold and no fleet for them to place
-  onto. Collapsing them into `kms-api` for one phase would put the network split
-  of §12 — the thing that makes the isolation claims true — on the wrong side of
-  a later refactor, and the isolation is the part a first customer is actually
-  buying.
+  though Phase 1 has no cache for them to hold and no exception clusters for
+  them to place onto. Collapsing them into `kms-api` for one phase would put the
+  network split of §12 — the thing that makes the isolation claims true — on the
+  wrong side of a later refactor, and the isolation is the part a first customer
+  is actually buying.
 - SVID (mTLS) and Keystone-JWT authentication; OPA policy; per-project rate
   limits; CADF audit; Prometheus metrics.
-- A **single shard** per region is acceptable here, but built behind the
-  placement directory from day one, so that Phase 3 is a configuration change
-  rather than a migration of the data model.
-- Seal cluster and shard unseal (§9), with the TPM-sealed baseline.
+- The custody cluster, sealed by the TPM baseline (§9), and the key store inside
+  `kms-control` on `keystone-rs`'s storage crate, with the `store-kek` provider
+  (§8.3). Both are the production shape from the first day; the placement
+  directory exists from day one too, holding one domain, so that Phase 3 is a
+  configuration change rather than a migration of the data model.
+- Phase 1 keys are mode-A `transit` keys, since there is no cache yet. The
+  budget measurement of §8.2 is taken here, before mode B depends on it.
 - Native `POST /v1/keys` (create, list, describe, rotate, disable) so that the
   transit key has a lifecycle in the KMS's own model rather than only in
   OpenBao's.
@@ -1931,12 +2228,14 @@ and audit stack, and the client side is already written by someone else.
 
 - The KEK cache and the invalidation bus (§7.3) in the `kms-crypto` process that
   Phase 1 already deployed.
-- The wrapped-CMK-blob representation of §6.3, alongside the `transit` key.
+- Project custody keys and the PCK-wrapped blob representation of §6.3; mode B
+  keys generated inside the barrier with `transit/datakey/wrapped`.
 - `data-key`, `unwrap`, `rewrap`, batch variants.
 - Offload modes A and B per key; mode A default for any key created before this
   phase.
 - Key state machine complete: scheduled deletion with waiting period, versions,
-  `min_decryption_version`.
+  `min_decryption_version`, and crypto-shredding by PCK rotation (§8.5). Paired
+  backups (§11.5) land with the first PCK rotation, not after it.
 - Grants, with the `billing` attribute of §15.4 decided at grant creation.
 - The `KeyCustody`/`CryptoEngine` split of §17, with the contract suite running
   against both `kms-bao` and SoftHSM in CI. The seam is introduced here, with
@@ -1947,16 +2246,23 @@ and audit stack, and the client side is already written by someone else.
   operation; the hourly custody snapshot in `kms-control`; the reconciliation
   job between the two. The billable-party rule and the per-state billing
   semantics land here because they are properties of the grant and key-state
-  models this phase completes, not of the rating system. Dedicated shard-hours
-  follow in Phase 3 with the fleet that emits them, and `GET /v1/usage` can
+  models this phase completes, not of the rating system. Exception-cluster-hours
+  follow in Phase 3 with the clusters that emit them, and `GET /v1/usage` can
   follow whenever the rating system is ready to answer it.
 
-### Phase 3 — The fleet
+### Phase 3 — Placement and exception clusters
 
-- Multiple shards, placement classes, the directory as the authority.
-- `kms-fleet` reconciler: provisioning, rolling upgrade, backup, health.
-- Shard migration with the re-wrap procedure (§8.4).
-- Per-tenant namespace isolation and generated policy.
+- Placement classes, with `dedicated` and `regulated` tenants on exception
+  clusters (§8.6) and the seal cluster that arrives with the first of them.
+- `kms-fleet` reconciler over the custody cluster and every exception cluster:
+  provisioning, rolling upgrade inside a TTL window, paired backup, health.
+- Migration between custody domains by rewrap (§8.7).
+- A dedicated key store as a second Raft group, for a tenant that buys
+  availability isolation as well as custody isolation.
+
+This phase shrank more than any other when the default stopped being a fleet:
+it now serves the tenants who ask for isolation rather than every tenant in the
+region, and it can slip without blocking Phases 4 and 5.
 
 ### Phase 4 — OpenStack integration
 
@@ -1985,7 +2291,8 @@ and audit stack, and the client side is already written by someone else.
 - BYOK import and authorized export.
 - Asymmetric key types and signing at scale.
 - Tenant-visible audit API.
-- Post-quantum wrapping and signing as the fleet and the ecosystem allow.
+- Post-quantum wrapping and signing as the custody backends and the ecosystem
+  allow.
 - Attestation-bound release for confidential workloads: the grant condition of
   §13.4, `kms-attest`, and — only if clients require it — a key-broker surface
   that speaks the attestation handshake (§2.6).
@@ -2005,9 +2312,10 @@ accommodate it, which is the point of §10.
 Not a compliance plan, but the architectural hooks that a compliance plan will
 need, so that they are not retrofitted:
 
-- Separation of duties: key custody (fleet operators) is separate from key use
-  (tenants) and from policy administration. `kms-manage` operations that touch
-  key material require quorum approval.
+- Separation of duties: key custody (custody-cluster and key-store operators) is
+  separate from key use (tenants) and from policy administration, and inside the
+  KMS the component that manages keys cannot read them (§8.2). `kms-manage`
+  operations that touch key material require quorum approval.
 - Dual control and split knowledge for the Shamir recovery path.
 - Key lifecycle states and cryptoperiods aligned with NIST SP 800-57.
 - Complete, tamper-evident audit — the HMAC chain the audit ADR already
@@ -2025,19 +2333,31 @@ need, so that they are not retrofitted:
    (vision §6.5) from the start, accepting the dependency, or in the KMS with a
    migration later (§13.4)?
 2. **Cache TTL as a product decision.** The KEK cache TTL trades revocation
-   latency against availability during a shard incident. Is the default an
+   latency against availability during a backend incident, and with one custody
+   cluster per region it is also the upgrade window (§7.3). Is the default an
    operator choice, a per-key tenant choice, or a per-tier product choice?
-3. **Tenancy inside a shard.** OpenBao namespaces versus mount-and-policy
-   separation: namespaces are cleaner but tie the design to a namespace
-   implementation; mounts are universal but produce very large policy sets.
-4. **Shard sizing.** What is _M_? The answer determines the fleet's cost and the
-   blast radius simultaneously, and it should be derived from a restore-time
-   measurement rather than from intuition.
+3. **One root or two for the key store.** §8.3 recommends `store-kek` in the
+   custody cluster as the store's KEK provider, which removes an out-of-band
+   provisioning step from every node replacement but means an attacker who owns
+   the custody cluster and steals the store's disks holds both layers of §8.4.
+   A TPM or PKCS#11 provider makes the two roots independent, at the price of
+   provisioning identical key material into every node's token. Is the default
+   right, and is it the same for every placement class?
+4. **When does `standard` need a second pair?** One custody cluster and one key
+   store per region is the recommendation, and the question is what would end
+   it. The answer should be derived from two measurements rather than from
+   intuition: the key store's restore time at the region's real size (§11.5),
+   and the custody cluster's active-node budget against the warm-version count
+   (§8.2). When either stops fitting inside the service's recovery objective,
+   `standard` is split into two domains by the placement directory — the same
+   mechanism exception clusters already use, at a size that no longer needs
+   to be a fleet.
 5. **Vault surface scope.** Is `kv` v2 worth carrying at all, or does the KMS
    restrict itself to `transit` and push secret storage to the customer's own
-   OpenBao — which is, after all, what this service exists to make safe? §8.6
-   keeps `kv` inside the depended-on contract but not load-bearing, so dropping
-   it stays a product decision rather than an architectural one.
+   OpenBao — which is, after all, what this service exists to make safe? §8.9
+   removes `kv` from the OpenBao contract altogether — secrets live in the key
+   store — so dropping the surface is a product decision with no architectural
+   weight left.
 6. **Barbican's future.** Is the compatibility surface a migration bridge with
    an end date, or a permanent OpenStack-facing contract?
 7. **KMIP identity for non-SPIFFE clients.** Tenant-registered CAs put a
@@ -2055,14 +2375,16 @@ need, so that they are not retrofitted:
     document can only frame. The shape influences the API (batching, data-key
     reuse) more than it looks.
 11. **A second custody backend.** §2.5 rejects both the HSM-only and the
-    no-barrier options for the general case, and §8.6 keeps the OpenBao
-    dependency narrow enough that the decision stays reversible. What would
-    justify actually shipping a second one? Two triggers are worth naming in
-    advance, so that the answer is not improvised during an incident: the
-    fleet's operational cost coming to dominate the service's cost structure
-    (§15.6), and a `regulated` customer whose custody requirement the barrier
-    cannot satisfy at any price. Neither is a Phase 1–3 concern; both are far
-    cheaper to answer if the seam of §17 is real rather than notional.
+    no-barrier options for the general case, and §8.9 keeps the OpenBao
+    dependency narrow enough that the decision stays reversible. Per-project
+    custody keys change the arithmetic for the first of those: a few thousand
+    PCKs fit an HSM partition where a million per-key objects never did (§8.6).
+    Should an HSM-held PCK be offered as a protection level of its own, between
+    `hsm-sealed` and `hsm-resident`, and what would justify making it more than
+    a `regulated` option? A `regulated` customer whose custody requirement the
+    barrier cannot satisfy at any price is the trigger worth naming in advance.
+    It is far cheaper to answer if the seam of §17 is real rather than notional,
+    which is why that seam is proven in CI from Phase 2.
 12. **Attestation-bound release.** §2.6 recommends owning the release decision
     and not the appraisal, which keeps the tenant-facing broker a Phase 7
     feature rather than an architectural commitment. Two things would move it
@@ -2081,6 +2403,7 @@ need, so that they are not retrofitted:
 - [Authentication and authorization vision](vision.md)
 - [Security model](contributor/security-model.md)
 - [ADR 0002 — Open Policy Agent](adr/0002-open-policy-agent.md)
+- [ADR 0016-v2 — Distributed encrypted storage via Raft and Fjall](adr/0016-v2-raft-storage.md)
 - [ADR 0004 — v4 API](adr/0004-v4-api.md)
 - [ADR 0008 — Workload federation](adr/0008-federation-workload.md)
 - [ADR 0017 — Security context](adr/0017-security-context.md)
@@ -2098,6 +2421,6 @@ need, so that they are not retrofitted:
 - SPIRE integration plan (`doc/plans/spire-integration.md`)
 - OASIS KMIP 1.4 and 2.1 specifications and profiles
 - NIST SP 800-57 (key management), SP 800-38D/F (GCM, key wrapping), FIPS 140-3
-- OpenBao documentation: transit secrets engine, seal/unseal, namespaces,
+- OpenBao documentation: transit secrets engine, seal/unseal,
   integrated storage
 - SPIFFE/SPIRE specifications; RFC 8705 (mTLS-bound tokens), RFC 7523
