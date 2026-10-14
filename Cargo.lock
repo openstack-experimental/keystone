@@ -5937,7 +5937,6 @@ version = "0.1.0"
 dependencies = [
  "cryptoki",
  "openstack-keystone-storage-crypto",
- "rand 0.10.2",
  "temp-env",
  "tempfile",
  "tracing",

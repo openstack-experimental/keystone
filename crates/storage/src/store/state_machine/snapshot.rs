@@ -83,12 +83,17 @@ impl FjallStateMachine {
             }
         };
         use openstack_keystone_storage_crypto::dek::BackupDek;
+        use openstack_keystone_storage_crypto::random_bytes;
         let bdek = BackupDek::from_raw(backup_dek_ref);
         let utc_epoch = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let nonce_salt: u64 = rand::rng().random();
+        // Drawn through the crypto crate so a `fips` build uses the validated
+        // module's DRBG.
+        let mut salt_bytes = [0u8; 8];
+        random_bytes(&mut salt_bytes).map_err(|e| io::Error::other(e.to_string()))?;
+        let nonce_salt = u64::from_be_bytes(salt_bytes);
         let encrypted = backup_encrypt(&bdek, file_bytes, dek_version, utc_epoch, nonce_salt)
             .map_err(|e| io::Error::other(e.to_string()))?;
         let manifest_bytes =

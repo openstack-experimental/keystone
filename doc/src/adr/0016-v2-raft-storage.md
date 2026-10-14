@@ -191,6 +191,15 @@ tags must be 16 bytes.
   truncated `HMAC-SHA256(HKDF-Expand(KEK, "keystone-dek-wrap-nonce-v1"), DEK)`,
   so no RNG is involved and the nonce is unique per distinct DEK.
 
+- **State nonce and replicated determinism:** the HKDF-derived state nonce is
+  deliberately a pure function of `(StateDek, pk, version)`. Every node applies
+  the same Raft entry independently and, as with the post-rotation
+  re-encryption sweep, must arrive at byte-identical ciphertext without a
+  further consensus round. A node-local `fixed ++ counter` nonce would break
+  that property, and a Raft-log-index based one would not cover the local
+  re-encryption sweep. Replacing it needs its own design (and a stored-format
+  change), so it is intentionally left as is.
+
 - **FIPS builds:** the `fips` cargo feature of `storage-crypto` (forwarded by
   `storage`) routes AES-256-GCM, HKDF, HMAC and random generation through the
   FIPS 140-3 validated AWS-LC module and `assert_fips()` fails start-up unless
@@ -278,6 +287,14 @@ data, and a 128-bit tag). The resulting wire format is byte-identical to
 `EnvKek`'s: `[12-byte nonce][ciphertext][16-byte tag]` — no downstream code
 (DEK bootstrap, Fjall metadata storage) needs to distinguish which
 `KekProvider` produced a wrapped blob.
+
+With `pkcs11_token_generated_iv = true` the wrap uses the PKCS#11 3.0
+message-based API (`C_MessageEncryptInit`/`C_EncryptMessage` with
+`CKG_GENERATE_RANDOM`) so the token itself generates the IV from its approved
+DRBG, as FIPS 140-3 modules require. The wire format is identical and unwrap is
+unchanged, so blobs from either mode stay readable. The token must support the
+3.0 message API (SoftHSM2 does not) and this mode has not been exercised
+against real hardware yet.
 
 - **Key provisioning:** creating the AES-256 key object on the token is an
   out-of-band operator step (e.g. `pkcs11-tool --keygen` or

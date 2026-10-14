@@ -31,15 +31,15 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use cryptoki::context::{CInitializeArgs, CInitializeFlags, Pkcs11};
-use cryptoki::mechanism::Mechanism;
-use cryptoki::mechanism::aead::GcmParams;
+use cryptoki::mechanism::aead::{GcmMessageParams, GcmParams, GeneratorFunction};
+use cryptoki::mechanism::{Mechanism, MessageParam};
 use cryptoki::object::{Attribute, KeyType, ObjectClass, ObjectHandle};
 use cryptoki::session::{Session, UserType};
 use cryptoki::slot::Slot;
 use cryptoki::types::AuthPin;
 use openstack_keystone_storage_crypto::error::CryptoError;
 use openstack_keystone_storage_crypto::kek::KekProvider;
-use rand::RngExt;
+use openstack_keystone_storage_crypto::random_bytes;
 use zeroize::Zeroizing;
 
 /// Associated data used for DEK wrapping, matching [`EnvKek`]'s binding
@@ -90,6 +90,10 @@ pub struct Pkcs11Kek {
     // as required by `KekProvider`.
     key: ObjectHandle,
     session: Mutex<Session>,
+    /// Let the token generate the GCM IV (PKCS#11 3.0 message API,
+    /// `CKG_GENERATE_RANDOM`) instead of supplying one. See
+    /// [`Pkcs11Kek::with_token_generated_iv`].
+    token_generated_iv: bool,
 }
 
 impl Pkcs11Kek {
@@ -128,7 +132,62 @@ impl Pkcs11Kek {
         Ok(Self {
             session: Mutex::new(session),
             key,
+            token_generated_iv: false,
         })
+    }
+
+    /// Have the token generate the GCM IV when wrapping, using the PKCS#11
+    /// 3.0 message-based API with `CKG_GENERATE_RANDOM`, instead of passing
+    /// an IV drawn from the host RNG.
+    ///
+    /// FIPS 140-3 HSMs generally treat caller-supplied GCM IVs as a
+    /// non-approved service (NIST SP 800-38D §8.2.2 requires the IV to come
+    /// from the module's own approved DRBG), so enable this for FIPS
+    /// deployments. The token must implement the PKCS#11 3.0 message API
+    /// (`C_MessageEncryptInit`); SoftHSM2 does not. The wire format is
+    /// unchanged and unwrapping is unaffected, so blobs written in either
+    /// mode stay readable in both.
+    #[must_use]
+    pub fn with_token_generated_iv(mut self, enabled: bool) -> Self {
+        self.token_generated_iv = enabled;
+        self
+    }
+
+    /// Wrap with a token-generated IV. Returns `[iv][ciphertext][tag]`.
+    fn wrap_token_iv(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
+        let mut iv = [0u8; 12];
+        let mut tag = [0u8; 16];
+        let params = GcmMessageParams::new(
+            &mut iv,
+            0.into(),
+            GeneratorFunction::GenerateRandom,
+            &mut tag,
+        )
+        .map_err(|e| CryptoError::Pkcs11(format!("building GCM message parameters: {e}")))?;
+
+        let session = self
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        session
+            .message_encrypt_init(&Mechanism::AesGcmMessage(params), self.key)
+            .map_err(|e| CryptoError::Pkcs11(format!("C_MessageEncryptInit: {e}")))?;
+        let result =
+            session.encrypt_message(&MessageParam::AesGcmMessage(params), DEK_WRAP_AD, dek);
+        // Always release the operation, even when the encrypt failed.
+        let finalized = session.message_encrypt_final();
+        drop(session);
+        let ciphertext = result.map_err(|_| CryptoError::AesEncrypt)?;
+        finalized.map_err(|e| CryptoError::Pkcs11(format!("C_MessageEncryptFinal: {e}")))?;
+
+        if ciphertext.len() != 32 {
+            return Err(CryptoError::AesEncrypt);
+        }
+        let mut out = Vec::with_capacity(12 + 32 + 16);
+        out.extend_from_slice(&iv);
+        out.extend_from_slice(&ciphertext);
+        out.extend_from_slice(&tag);
+        Ok(out)
     }
 }
 
@@ -217,7 +276,12 @@ impl KekProvider for Pkcs11Kek {
     }
 
     fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
-        let mut nonce_bytes: [u8; 12] = rand::rng().random();
+        if self.token_generated_iv {
+            return self.wrap_token_iv(dek);
+        }
+
+        let mut nonce_bytes = [0u8; 12];
+        random_bytes(&mut nonce_bytes)?;
         let gcm_params = GcmParams::new(&mut nonce_bytes, DEK_WRAP_AD, 128.into())
             .map_err(|e| CryptoError::Pkcs11(format!("building GCM parameters: {e}")))?;
 

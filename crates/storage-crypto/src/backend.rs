@@ -38,6 +38,15 @@ pub(crate) use awslc::{fill_random, gcm_open, gcm_seal, hkdf_expand, hmac_sha256
 #[cfg(not(feature = "fips"))]
 pub(crate) use rustcrypto::{fill_random, gcm_open, gcm_seal, hkdf_expand, hmac_sha256};
 
+/// Fill `out` with cryptographically secure random bytes: the OS CSPRNG by
+/// default, the validated module's DRBG with the `fips` feature. Callers
+/// outside this crate that need random material (for example the snapshot
+/// nonce salt) should use this instead of their own RNG so a FIPS build stays
+/// on the validated generator.
+pub fn random_bytes(out: &mut [u8]) -> Result<(), CryptoError> {
+    fill_random(out)
+}
+
 /// Whether the crate was built with the FIPS validated backend.
 pub const FIPS_BUILD: bool = cfg!(feature = "fips");
 

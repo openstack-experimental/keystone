@@ -243,7 +243,8 @@ fn build_pkcs11_kek(
         pin: pin.expose_secret(),
         auto_generate: false,
     })
-    .map_err(|e| StoreError::Other(eyre!("failed to open PKCS#11 KEK: {e}")))?;
+    .map_err(|e| StoreError::Other(eyre!("failed to open PKCS#11 KEK: {e}")))?
+    .with_token_generated_iv(cfg.pkcs11_token_generated_iv);
     Ok(Arc::new(kek))
 }
 

@@ -359,6 +359,13 @@ pub struct Pkcs11KekConfiguration {
     /// given.
     #[serde(default)]
     pub pkcs11_slot_label: Option<String>,
+
+    /// Let the token generate the GCM IV when wrapping the DEK (PKCS#11 3.0
+    /// message API, `CKG_GENERATE_RANDOM`). Required by FIPS 140-3 HSMs that
+    /// reject caller-supplied IVs; the token must implement
+    /// `C_MessageEncryptInit` (SoftHSM2 does not). Defaults to `false`.
+    #[serde(default)]
+    pub pkcs11_token_generated_iv: bool,
 }
 
 impl Pkcs11KekConfiguration {
@@ -983,6 +990,7 @@ allowed_peer_svids = ["spiffe://example.org/ns/default/sa/keystone"]
             pkcs11_slot_label: Some("keystone".to_string()),
             pkcs11_key_label: "keystone-kek".to_string(),
             pkcs11_pin_file: pin_file.path().to_path_buf(),
+            pkcs11_token_generated_iv: false,
             pkcs11_pin_content: None,
         };
         cfg.load_secrets().expect("load_secrets");

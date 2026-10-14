@@ -174,6 +174,7 @@ fn pkcs11_ds_config(
             pkcs11_pin_file: PathBuf::new(),
             pkcs11_slot_id: None,
             pkcs11_slot_label: Some(TOKEN_LABEL.to_string()),
+            pkcs11_token_generated_iv: false,
         }),
         ..Default::default()
     }

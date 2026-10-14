@@ -55,7 +55,7 @@ pub mod mlock;
 pub mod nonce;
 
 pub use audit::AuditHmacKey;
-pub use backend::{FIPS_BUILD, assert_fips};
+pub use backend::{FIPS_BUILD, assert_fips, random_bytes};
 pub use cipher::{
     backup_decrypt, backup_encrypt, log_decrypt, log_encrypt, state_decrypt, state_encrypt,
 };

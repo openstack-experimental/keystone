@@ -16,7 +16,6 @@ workspace = true
 [dependencies]
 cryptoki = "0.12"
 openstack-keystone-storage-crypto.workspace = true
-rand.workspace = true
 tracing.workspace = true
 zeroize = "1"
 

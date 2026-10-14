@@ -859,6 +859,12 @@ pkcs11_slot_label = "keystone-storage"
 # File containing the token PIN. Never accepted inline or via env var
 # (ADR 0016-v2 §10 invariant 14).
 pkcs11_pin_file = "/etc/keystone/storage/pkcs11.pin"
+
+# Let the token generate the GCM IV when wrapping the DEK (PKCS#11 3.0
+# message API, CKG_GENERATE_RANDOM). Needed for FIPS 140-3 HSMs that reject
+# caller-supplied IVs. The token must implement C_MessageEncryptInit
+# (SoftHSM2 does not). Default: false.
+# pkcs11_token_generated_iv = true
 ```
 
 Provisioning the key (a one-time operator ceremony, run once per token before
