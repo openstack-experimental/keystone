@@ -840,7 +840,7 @@ trust_domains = "example.org"
 
 > **Warning:** `KEYSTONE_DEV_KEK` and `KEYSTONE_ALLOW_ENV_KEK` must never appear
 > in production Dockerfiles, Kubernetes manifests, or systemd units.
-> `tools/check_no_dev_mode.sh` checks for this (it is not run in CI yet).
+> `tools/check_no_dev_mode.sh` checks for this and runs in the `Linters` CI workflow.
 
 ### PKCS#11 and TPM KEK Providers
 
@@ -1422,8 +1422,10 @@ by the security team.
     the security team before any new encrypted context is added.
 
 11. **Deployment validation.** `tools/check_no_dev_mode.sh` rejects production
-    service definitions containing `--dev-mode` or `KEYSTONE_ALLOW_ENV_KEK`. It
-    is not wired into CI yet; run it as part of the deployment pipeline.
+    service definitions containing `--dev-mode` or `KEYSTONE_ALLOW_ENV_KEK`.
+    It runs in the `Linters` CI workflow; development artefacts (the skaffold
+    overlay, `tools/k8s/tests/`) are allow-listed in the script. Run it as part
+    of the deployment pipeline as well.
 
 12. **Startup pre-flight.** Before loading any key material, the node verifies
     `RLIMIT_CORE == 0` and `PR_SET_DUMPABLE == 0`. Failures emit CRITICAL log

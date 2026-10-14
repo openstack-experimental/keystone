@@ -88,6 +88,21 @@ jobs:
       with:
         config: typos.toml
 
+  no-dev-mode:
+    name: Check deployment files for dev-mode flags
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Check for dev-mode flags
+        run: tools/check_no_dev_mode.sh
+
   opa:
     name: Check OPA policy formatting
     runs-on: ubuntu-latest

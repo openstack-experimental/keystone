@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # check_no_dev_mode.sh — deployment safety check for ADR 0016-v2 §11
 #
-# Not wired into CI yet; run it from the deployment pipeline.
+# Runs in CI (`linters.yml`, job `no-dev-mode`) and should also be run from the
+# deployment pipeline.
 #
 # Scans Dockerfiles, Kubernetes manifests, and systemd unit files for flags
 # that must never appear in production deployments:
@@ -9,6 +10,10 @@
 #   dev_mode (config key)
 #   KEYSTONE_ALLOW_ENV_KEK
 #   KEYSTONE_DEV_KEK
+#
+# Source trees (`crates/`, where the flags appear in code comments and tests)
+# and explicitly allow-listed development artefacts (see ALLOWED_PATHS) are not
+# scanned.
 #
 # Exit 0 = clean; exit 1 = violations found.
 set -euo pipefail
@@ -31,10 +36,30 @@ FILE_GLOBS=(
     '*.toml'
 )
 
+# Repo-relative path prefixes that are excluded from the scan.
+ALLOWED_PATHS=(
+    'crates/'
+    'doc/'
+    'tools/k8s/keystone/overlays/skaffold/'
+    'tools/k8s/tests/'
+)
+
+is_allowed() {
+    local rel="${1#"${REPO_ROOT}/"}"
+    local prefix
+    for prefix in "${ALLOWED_PATHS[@]}"; do
+        [[ "${rel}" == "${prefix}"* ]] && return 0
+    done
+    return 1
+}
+
 violations=0
 
 for glob in "${FILE_GLOBS[@]}"; do
     while IFS= read -r -d '' file; do
+        if is_allowed "${file}"; then
+            continue
+        fi
         for pattern in "${PATTERNS[@]}"; do
             if grep -q "${pattern}" "${file}" 2>/dev/null; then
                 echo "VIOLATION: '${pattern}' found in ${file}" >&2
