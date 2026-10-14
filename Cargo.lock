@@ -9481,6 +9481,7 @@ dependencies = [
 name = "test_federation"
 version = "0.0.0"
 dependencies = [
+ "base64 0.23.1",
  "bytes",
  "eyre",
  "http-body-util",
@@ -9493,11 +9494,13 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
+ "sha2 0.11.0",
  "thirtyfour",
  "tokio",
  "tokio-util",
  "tracing",
  "tracing-test",
+ "url",
  "uuid",
 ]
 

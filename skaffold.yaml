@@ -341,6 +341,26 @@ verify:
     executionMode:
       kubernetesCluster: {}
 
+  - &oauth2_federated
+    name: "oauth2-federated"
+    container:
+      image: "keystone-rs"
+      name: "oauth2-federated"
+      command: ["/tests/test-oauth2-federated", "--nocapture"]
+      env:
+        - name: "RUST_LOG"
+          value: "info,reqwest=off,h2=off,hyper=off"
+        - name: "BROWSERDRIVER_URL"
+          value: "http://selenium-service:4444"
+        - name: "KEYSTONE_URL"
+          value: "http://keystone-rs:8080"
+        - name: "KEYCLOAK_URL"
+          value: "http://keycloak:8080"
+        - name: "KEYCLOAK_PASSWORD"
+          value: "admin"
+    executionMode:
+      kubernetesCluster: {}
+
   - &dex
     name: "dex"
     container:
@@ -410,6 +430,7 @@ profiles:
       - *api_test_v4
       - *k8s_auth_test
       - *keycloak
+      - *oauth2_federated
       - *dex
       - *spiffe
 

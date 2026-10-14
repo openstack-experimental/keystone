@@ -62,7 +62,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     find target/skaffold/deps -maxdepth 1 -type f -executable \
     \( -name "integration_api_v3-*" -o -name "integration_api_v4-*" \
     -o -name "k8s_auth-*" -o -name "raft_spiffe-*" -o -name "internal_spiffe_rest-*" \
-    -o -name "keycloak-*" -o -name "dex-*" -o -name "github-*" \) -delete 2>/dev/null; \
+    -o -name "keycloak-*" -o -name "oauth2_federated-*" -o -name "dex-*" \
+    -o -name "github-*" \) -delete 2>/dev/null; \
     cargo test --profile skaffold \
     -p test_api \
     -p test_federation \
@@ -72,6 +73,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --test raft_spiffe \
     --test internal_spiffe_rest \
     --test keycloak \
+    --test oauth2_federated \
     --test dex \
     --test github \
     --no-run && \
@@ -81,6 +83,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cp $(find target/skaffold/deps -name "raft_spiffe-*" -type f -executable) /app/test-raft-spiffe && \
     cp $(find target/skaffold/deps -name "internal_spiffe_rest-*" -type f -executable) /app/test-internal-spiffe-rest && \
     cp $(find target/skaffold/deps -name "keycloak-*" -type f -executable) /app/test-keycloak && \
+    cp $(find target/skaffold/deps -name "oauth2_federated-*" -type f -executable) /app/test-oauth2-federated && \
     cp $(find target/skaffold/deps -name "dex-*" -type f -executable) /app/test-dex && \
     cp $(find target/skaffold/deps -name "github-*" -type f -executable) /app/test-github
 
@@ -121,6 +124,7 @@ COPY --from=builder /app/test-k8s-auth /tests/
 COPY --from=builder /app/test-raft-spiffe /tests/
 COPY --from=builder /app/test-internal-spiffe-rest /tests/
 COPY --from=builder /app/test-keycloak /tests/
+COPY --from=builder /app/test-oauth2-federated /tests/
 COPY --from=builder /app/test-dex /tests/
 COPY --from=builder /app/test-github /tests/
 

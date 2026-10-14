@@ -10,6 +10,7 @@ repository.workspace = true
 dist = false
 
 [dependencies]
+base64.workspace = true
 bytes.workspace = true
 http-body-util.workspace = true
 hyper = { workspace = true, features = ["http1", "server"] }
@@ -18,15 +19,17 @@ eyre.workspace = true
 keycloak = { version = "26.7" }
 local-ip-address = { version = "0.6" }
 openstack-keystone-api-types = { workspace = true, features = ["builder" ] }
-reqwest = { workspace = true, features = ["json", "http2", "multipart", "gzip", "deflate"] }
+reqwest = { workspace = true, features = ["json", "http2", "multipart", "gzip", "deflate", "cookies"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true
+sha2.workspace = true
 thirtyfour = "0.37"
 tracing.workspace = true
 tokio = { workspace = true, features = ["signal"] }
 tokio-util.workspace = true
 tracing-test.workspace = true
+url.workspace = true
 uuid = { workspace = true, features = ["v4" ]}
 
 [[test]]
@@ -42,4 +45,9 @@ test = false
 [[test]]
 name = "dex"
 path = "src/dex.rs"
+test = false
+
+[[test]]
+name = "oauth2_federated"
+path = "src/oauth2_federated.rs"
 test = false
