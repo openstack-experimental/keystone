@@ -40,6 +40,19 @@ pub struct SeededUserCred {
     pub password: String,
 }
 
+/// OAuth2 resources the token-minting scenarios run against. They live in a
+/// dedicated domain because `default` is seeded straight into the DB, never
+/// fires the key-provisioning hook, and so can never sign a token.
+#[derive(Clone)]
+pub struct Oauth2Seed {
+    pub domain_id: String,
+    /// `client_id` of a public `device_code` client.
+    pub device_client_id: String,
+    pub device_provider_id: String,
+    /// `reader` role granted by the per-VU rulesets.
+    pub reader_role_id: String,
+}
+
 pub struct SeedState {
     pub user_ids: Vec<String>,
     pub project_ids: Vec<String>,
@@ -60,6 +73,8 @@ pub struct SeedState {
     /// no realm-delete endpoint (only per-resource purge), so this realm is
     /// not torn down -- only the backing IdP is, best-effort, in `cleanup`.
     pub scim_realm_provider_id: Option<String>,
+    /// Domain, clients and mapping ruleset for the OAuth2 token scenarios.
+    pub oauth2: Option<Oauth2Seed>,
 }
 
 /// Create background resources so list endpoints return non-trivial result sets.
@@ -73,6 +88,7 @@ pub async fn seed(host: &str, token: &str) -> SeedState {
         auth_role_id: None,
         scim_idp_id: None,
         scim_realm_provider_id: None,
+        oauth2: None,
     };
 
     for i in 0..SEED_USERS {
@@ -122,6 +138,14 @@ pub async fn seed(host: &str, token: &str) -> SeedState {
             state.scim_realm_provider_id = Some(provider_id);
         }
         None => eprintln!("seed: failed to set up SCIM idp/realm for ScimRealmRead scenario"),
+    }
+
+    match seed_oauth2(&client, host, token).await {
+        Some(seeded) => {
+            eprintln!("seed: created OAuth2 domain {}", seeded.domain_id);
+            state.oauth2 = Some(seeded);
+        }
+        None => eprintln!("seed: failed to set up OAuth2 domain/clients for the token scenarios"),
     }
 
     state
@@ -219,6 +243,109 @@ async fn seed_scim_realm(client: &Client, host: &str, token: &str) -> Option<(St
     let provider_id = val["scim_realm"]["provider_id"].as_str()?.to_owned();
 
     Some((idp_id, provider_id))
+}
+
+/// Create a domain with OAuth2 signing keys and a public `device_code`
+/// client; look up the `reader` role the per-VU rulesets grant.
+async fn seed_oauth2(client: &Client, host: &str, token: &str) -> Option<Oauth2Seed> {
+    let suffix = Uuid::new_v4().as_simple().to_string();
+    let resp = client
+        .post(format!("{host}/v3/domains"))
+        .header("x-auth-token", token)
+        .json(&json!({"domain": {"name": format!("loadtest-oauth2-{suffix}"), "enabled": true}}))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        eprintln!("seed: create oauth2 domain HTTP {}", resp.status());
+        return None;
+    }
+    let val: serde_json::Value = resp.json().await.ok()?;
+    let domain_id = val["domain"]["id"].as_str()?.to_owned();
+
+    // Key provisioning runs asynchronously after domain creation.
+    let mut ready = false;
+    for _ in 0..80 {
+        let resp = client
+            .get(format!(
+                "{host}/v4/oauth2/{domain_id}/.well-known/openid-configuration"
+            ))
+            .send()
+            .await
+            .ok()?;
+        if resp.status().is_success() {
+            ready = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    if !ready {
+        eprintln!("seed: OAuth2 signing keys for domain {domain_id} never appeared");
+        return None;
+    }
+
+    let device_provider_id = format!("loadtest-device-{suffix}");
+    let (device_client_id, _) = create_oauth2_client(
+        client,
+        host,
+        token,
+        &domain_id,
+        json!({
+            "provider_id": device_provider_id,
+            "name": "Load test device",
+            "confidential": false,
+            "grant_types": ["device_code"],
+            "allowed_scopes": ["openid"],
+            "token_endpoint_auth_method": "none",
+            "require_pkce": true,
+        }),
+    )
+    .await?;
+
+    let resp = client
+        .get(format!("{host}/v3/roles?name=reader"))
+        .header("x-auth-token", token)
+        .send()
+        .await
+        .ok()?;
+    let val: serde_json::Value = resp.json().await.ok()?;
+    let role_id = val["roles"][0]["id"].as_str()?.to_owned();
+
+    Some(Oauth2Seed {
+        domain_id,
+        device_client_id,
+        device_provider_id,
+        reader_role_id: role_id,
+    })
+}
+
+/// Register an OAuth2 client; returns `(client_id, client_secret)`, with an
+/// empty secret for public clients.
+async fn create_oauth2_client(
+    client: &Client,
+    host: &str,
+    token: &str,
+    domain_id: &str,
+    body: serde_json::Value,
+) -> Option<(String, String)> {
+    let resp = client
+        .post(format!("{host}/v4/oauth2/{domain_id}/clients"))
+        .header("x-auth-token", token)
+        .json(&json!({ "oauth2_client": body }))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let detail = resp.text().await.unwrap_or_default();
+        eprintln!("seed: create oauth2 client HTTP {status}: {detail}");
+        return None;
+    }
+    let val: serde_json::Value = resp.json().await.ok()?;
+    Some((
+        val["oauth2_client"]["client_id"].as_str()?.to_owned(),
+        val["client_secret"].as_str().unwrap_or_default().to_owned(),
+    ))
 }
 
 /// Create a dedicated project and grant every seeded user a `member` role on
@@ -339,6 +466,31 @@ pub async fn cleanup(host: &str, token: &str, state: &SeedState) {
         .await
     {
         eprintln!("seed cleanup: failed to delete scim idp {idp_id}: {e}");
+    }
+
+    if let Some(oauth2) = &state.oauth2 {
+        let domain = &oauth2.domain_id;
+        for path in [format!(
+            "/v4/oauth2/{domain}/clients/{}",
+            oauth2.device_provider_id
+        )] {
+            if let Err(e) = delete(&client, host, token, &path).await {
+                eprintln!("seed cleanup: failed to delete {path}: {e}");
+            }
+        }
+        // A domain must be disabled before it can be deleted.
+        if let Err(e) = client
+            .patch(format!("{host}/v3/domains/{domain}"))
+            .header("x-auth-token", token)
+            .json(&json!({"domain": {"enabled": false}}))
+            .send()
+            .await
+        {
+            eprintln!("seed cleanup: failed to disable oauth2 domain {domain}: {e}");
+        } else if let Err(e) = delete(&client, host, token, &format!("/v3/domains/{domain}")).await
+        {
+            eprintln!("seed cleanup: failed to delete oauth2 domain {domain}: {e}");
+        }
     }
 
     eprintln!(

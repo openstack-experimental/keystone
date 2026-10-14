@@ -19,6 +19,7 @@ use openstack_sdk::{
     config::{CloudConfig, ConfigFile},
 };
 use std::env;
+use std::time::Duration;
 
 mod seed;
 mod v3;
@@ -56,9 +57,11 @@ use crate::v4::mapping::{
     show as mapping_show,
 };
 use crate::v4::oauth2::{
-    create_client as oauth2_client_create, delete_client as oauth2_client_delete,
-    jwks as oauth2_jwks, list_clients as oauth2_client_list,
-    show_client as oauth2_client_show, well_known as oauth2_well_known,
+    create_cc_client as oauth2_cc_client_create, create_client as oauth2_client_create,
+    delete_cc_client as oauth2_cc_client_delete, delete_client as oauth2_client_delete,
+    device_authorization_start as oauth2_device_authorization_start, jwks as oauth2_jwks,
+    list_clients as oauth2_client_list, show_client as oauth2_client_show,
+    token_client_credentials as oauth2_token_client_credentials, well_known as oauth2_well_known,
 };
 use crate::v4::scim_realm::{
     list as scim_realm_list, show as scim_realm_show, update as scim_realm_update,
@@ -111,6 +114,9 @@ async fn main() -> Result<(), GooseError> {
     }
     if let Some(auth_role_id) = &seed_state.auth_role_id {
         v3::role_assignment::set_auth_role_id(auth_role_id.clone());
+    }
+    if let Some(oauth2_seed) = &seed_state.oauth2 {
+        v4::oauth2::set_oauth2_seed(oauth2_seed.clone());
     }
     if let Some(scim_realm_provider_id) = &seed_state.scim_realm_provider_id {
         v4::scim_realm::set_realm_provider_id(scim_realm_provider_id.clone());
@@ -281,6 +287,25 @@ async fn main() -> Result<(), GooseError> {
                 .register_transaction(transaction!(oauth2_client_show))
                 .register_transaction(transaction!(oauth2_client_list))
                 .register_transaction(transaction!(oauth2_client_delete).set_on_stop()),
+        )
+        // Token minting (ADR 0026 §5): Argon2 secret verification, mapping
+        // ruleset resolution and JWT signing on `/token`. Each VU owns its
+        // client because the limiter is per client; the wait time keeps a VU
+        // under the default 60/min replenish rate.
+        .register_scenario(
+            scenario!("OAuth2ClientCredentials")
+                .set_weight(1)?
+                .set_wait_time(Duration::from_secs(1), Duration::from_secs(2))?
+                .register_transaction(transaction!(openstack_login).set_on_start())
+                .register_transaction(transaction!(oauth2_cc_client_create).set_on_start())
+                .register_transaction(transaction!(oauth2_token_client_credentials))
+                .register_transaction(transaction!(oauth2_cc_client_delete).set_on_stop()),
+        )
+        // Device authorization start: client lookup plus session-state write.
+        .register_scenario(
+            scenario!("OAuth2DeviceAuthorization")
+                .set_weight(1)?
+                .register_transaction(transaction!(oauth2_device_authorization_start)),
         )
         // Read-heavy OAuth2 discovery: jwks + well-known are unauthenticated,
         // linearizable-read-policy paths (ADR 0016-v2 §3) -- the actual
