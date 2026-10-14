@@ -4,7 +4,7 @@ Date: 2026-04-12
 
 ## Status
 
-Accepted
+Superseded by [ADR 0016-v2](0016-v2-raft-storage.md)
 
 ## Context
 
