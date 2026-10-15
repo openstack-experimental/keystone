@@ -19,6 +19,7 @@ pub mod mapping;
 pub mod oauth2_client;
 pub mod oauth2_consent;
 pub mod oauth2_key;
+pub mod oauth2_revocation;
 pub mod scim_realm;
 pub mod token_restriction;
 pub mod user;

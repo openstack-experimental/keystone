@@ -370,6 +370,21 @@ refuses paths that leave the directory, symlinks included). Responses carry
 data:; script-src 'none'; frame-ancestors 'none'`, so stylesheets and images
 must be served from the same origin and inline styles or scripts do not run.
 
+## Revoking sessions
+
+During an incident, revoke refresh token families from the command line (the
+access tokens already issued stay valid until they expire):
+
+```
+keystone-manage oauth2 revoke --domain <domain_id> --user <user_id>
+keystone-manage oauth2 revoke --domain <domain_id> --client <client_id>
+keystone-manage oauth2 revoke --domain <domain_id> --all --reason "incident 42"
+```
+
+This calls `POST /v4/oauth2/{domain_id}/revocations`; a domain `manager` may
+revoke in their own domain, `admin` in any. Clients are managed with
+`keystone-manage oauth2 client ...`.
+
 ## Production checklist
 
 - **Set `[DEFAULT] public_endpoint`** to the externally visible URL of

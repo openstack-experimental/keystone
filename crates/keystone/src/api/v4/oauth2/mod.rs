@@ -45,6 +45,7 @@ mod logout;
 mod mfa;
 pub mod passkey;
 mod renderer;
+mod revocations;
 mod revoke;
 mod rotate_signing_key;
 mod sso;
@@ -90,6 +91,7 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .routes(routes!(device_federated::device_federated))
         .routes(routes!(device_federated::device_federated_callback))
         .routes(routes!(device::device_consent))
+        .routes(routes!(revocations::create))
         .routes(routes!(rotate_signing_key::rotate_signing_key))
         .routes(routes!(
             confirm_rotate_signing_key::confirm_rotate_signing_key

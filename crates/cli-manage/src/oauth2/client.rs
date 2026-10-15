@@ -21,7 +21,6 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use color_eyre::{Report, eyre::WrapErr, eyre::eyre};
-use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -32,23 +31,8 @@ use openstack_keystone_api_types::v4::oauth2_client::{
 };
 use openstack_keystone_config::LoadedConfig;
 
-use super::get_admin_client;
+use super::{domain_url, get_admin_client};
 use crate::PerformAction;
-
-/// Characters escaped inside one URL path segment.
-const PATH_SEGMENT: &AsciiSet = &CONTROLS
-    .add(b' ')
-    .add(b'"')
-    .add(b'#')
-    .add(b'%')
-    .add(b'/')
-    .add(b'<')
-    .add(b'>')
-    .add(b'?')
-    .add(b'`')
-    .add(b'{')
-    .add(b'}')
-    .add(b'\\');
 
 /// Output format of the client commands.
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
@@ -120,18 +104,11 @@ fn parse_claim(s: &str) -> Result<(String, String), String> {
         .ok_or_else(|| format!("expected key=value, got `{s}`"))
 }
 
-/// Build the clients API URL, percent-encoding every path segment so that
-/// operator input cannot alter the request path or query.
+/// Build the clients API URL, percent-encoding every path segment.
 fn client_url(domain: &str, segments: &[&str]) -> String {
-    let mut url = format!(
-        "https://localhost/v4/oauth2/{}/clients",
-        utf8_percent_encode(domain, PATH_SEGMENT)
-    );
-    for segment in segments {
-        url.push('/');
-        url.extend(utf8_percent_encode(segment, PATH_SEGMENT));
-    }
-    url
+    let mut tail = vec!["clients"];
+    tail.extend_from_slice(segments);
+    domain_url(domain, &tail)
 }
 
 /// Send a request to the clients API and return the parsed JSON body

@@ -16,6 +16,7 @@
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
 use color_eyre::{Report, eyre::WrapErr, eyre::eyre};
+use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use reqwest::Client;
 use spiffe_rustls::{authorizer, mtls_client};
 
@@ -26,6 +27,7 @@ mod confirm_rotate_signing_key;
 mod ensure_signing_key;
 mod list_local_emergency_candidates;
 mod reconcile_local_emergency_key;
+mod revoke;
 mod rotate_signing_key;
 
 use crate::PerformAction;
@@ -34,6 +36,7 @@ use crate::oauth2::confirm_rotate_signing_key::ConfirmRotateSigningKeyCommand;
 use crate::oauth2::ensure_signing_key::EnsureSigningKeyCommand;
 use crate::oauth2::list_local_emergency_candidates::ListLocalEmergencyCandidatesCommand;
 use crate::oauth2::reconcile_local_emergency_key::ReconcileLocalEmergencyKeyCommand;
+use crate::oauth2::revoke::RevokeCommand;
 use crate::oauth2::rotate_signing_key::RotateSigningKeyCommand;
 
 /// OAuth2/OIDC provider administration (ADR 0026).
@@ -48,6 +51,7 @@ impl PerformAction for Oauth2Command {
     async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         match self.command {
             Oauth2Commands::Client(e) => e.take_action(config).await,
+            Oauth2Commands::Revoke(e) => e.take_action(config).await,
             Oauth2Commands::RotateSigningKey(e) => e.take_action(config).await,
             Oauth2Commands::ConfirmRotateSigningKey(e) => e.take_action(config).await,
             Oauth2Commands::EnsureSigningKey(e) => e.take_action(config).await,
@@ -61,11 +65,42 @@ impl PerformAction for Oauth2Command {
 #[derive(Subcommand)]
 enum Oauth2Commands {
     Client(ClientCommand),
+    Revoke(RevokeCommand),
     RotateSigningKey(RotateSigningKeyCommand),
     ConfirmRotateSigningKey(ConfirmRotateSigningKeyCommand),
     EnsureSigningKey(EnsureSigningKeyCommand),
     ListLocalEmergencyCandidates(ListLocalEmergencyCandidatesCommand),
     ReconcileLocalEmergencyKey(ReconcileLocalEmergencyKeyCommand),
+}
+
+/// Characters escaped inside one URL path segment.
+const PATH_SEGMENT: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'%')
+    .add(b'/')
+    .add(b'<')
+    .add(b'>')
+    .add(b'?')
+    .add(b'`')
+    .add(b'{')
+    .add(b'}')
+    .add(b'\\');
+
+/// Build `https://localhost/v4/oauth2/{domain}/{segments...}`,
+/// percent-encoding every path segment so that operator input cannot alter
+/// the request path or query.
+fn domain_url(domain: &str, segments: &[&str]) -> String {
+    let mut url = format!(
+        "https://localhost/v4/oauth2/{}",
+        utf8_percent_encode(domain, PATH_SEGMENT)
+    );
+    for segment in segments {
+        url.push('/');
+        url.extend(utf8_percent_encode(segment, PATH_SEGMENT));
+    }
+    url
 }
 
 /// Build a `reqwest::Client` bound to the admin interface's Unix domain
