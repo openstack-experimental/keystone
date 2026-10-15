@@ -43,6 +43,10 @@ data:
   SOAK_PHASES: "steady:5m,burst:1m,idle:5m"
   SOAK_STEADY_USERS: "20"
   SOAK_BURST_USERS: "100"
+  # Canary: write one API key per interval through the service, read it
+  # back from every pod (read-after-write) and re-check the earlier ones
+  # (integrity). `0` disables.
+  SOAK_CANARY_INTERVAL: "30s"
   # Chaos: delete one keystone-rs pod this often (`0` disables). The pods
   # are killed in turn, only while all of them are ready, and each must be
   # ready again within SOAK_CHAOS_RECOVERY or the run fails.

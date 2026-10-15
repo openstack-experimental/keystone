@@ -113,10 +113,31 @@ next one only after the previous victim came back as a new, ready pod.
   `soak_chaos_timed_out_total`, `soak_chaos_last_recovery_seconds`,
   `soak_chaos_max_recovery_seconds`; the report has a "Chaos" section.
 
+## Canaries
+
+With `SOAK_CANARY_INTERVAL` set (`30s` in the soak overlay, `0` disables) the
+controller logs in with the `OS_*` credentials and writes one API key (a
+Raft-backed record) per interval through the cluster service. Once the write
+is acknowledged it reads the key from **every** pod directly
+(`SOAK_API_PORT`, default 8080).
+
+- `read_after_write`: a pod answers 404 for an acknowledged write (stale
+  read).
+- `integrity`: a pod returns a key that differs from what was written, or
+  no longer returns one written earlier. The last 20 keys are re-checked from
+  every pod each cycle, older ones are revoked.
+- Transport errors and 5xx answers (a pod being killed by chaos) are counted
+  as `soak_canary_read_errors_total` but not judged.
+
+## Storage per entry
+
+`soak_applied_index_max` (log entries so far) and `soak_disk_bytes_per_entry`
+(average per-node disk usage divided by it) are exported and shown in the
+report, to see a bytes-per-record regression that the plateau check hides.
+
 ## Not implemented yet
 
-Read-after-write and integrity canaries and bytes-per-record tracking are
-planned follow-ups.
+Nothing is planned beyond this.
 
 ## Load generator contract
 

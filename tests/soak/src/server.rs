@@ -27,6 +27,7 @@ use axum::{
 };
 use serde::Serialize;
 
+use crate::canary::{CanaryFailure, CanaryTotals};
 use crate::chaos::{ChaosEvent, ChaosTotals};
 use crate::invariants::{Summary, Violation};
 use crate::report::{self, Growth, LoadTotals, PhaseRecord};
@@ -46,6 +47,15 @@ pub struct Verdict {
     /// Executed load phases, oldest first (capped, see `report::MAX_PHASES`).
     pub phases: Vec<PhaseRecord>,
     pub chaos: Chaos,
+    pub canary: Canary,
+}
+
+/// Results of the canary task.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct Canary {
+    pub totals: CanaryTotals,
+    /// Recent failures, oldest first (capped, see `canary::MAX_FAILURES`).
+    pub failures: Vec<CanaryFailure>,
 }
 
 /// Pod kills of the chaos task.
@@ -201,6 +211,42 @@ pub fn render(v: &Verdict) -> String {
         "soak_disk_spread_ratio",
         "max/min disk_space_bytes across nodes",
         sm.disk_spread_ratio,
+    );
+    g(
+        "soak_applied_index_max",
+        "Highest applied Raft index (log entries so far)",
+        sm.applied_index_max as f64,
+    );
+    g(
+        "soak_disk_bytes_per_entry",
+        "Average per-node disk usage per applied Raft entry",
+        sm.bytes_per_entry,
+    );
+    let k = &v.canary.totals;
+    g(
+        "soak_canary_writes_total",
+        "Canary records written through the API",
+        k.writes as f64,
+    );
+    g(
+        "soak_canary_reads_total",
+        "Canary reads answered by a node",
+        k.reads as f64,
+    );
+    g(
+        "soak_canary_read_errors_total",
+        "Canary reads that failed at the transport or with 5xx",
+        k.read_errors as f64,
+    );
+    g(
+        "soak_canary_stale_reads_total",
+        "Canary reads that missed an acknowledged write",
+        k.stale_reads as f64,
+    );
+    g(
+        "soak_canary_mismatches_total",
+        "Canary reads that returned altered data",
+        k.mismatches as f64,
     );
     let t = &v.load_totals;
     g(

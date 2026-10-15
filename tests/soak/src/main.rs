@@ -18,6 +18,7 @@
 //! health and storage growth, and publishes the result as Prometheus metrics
 //! and a JSON verdict. See `tests/soak/README.md`.
 
+mod canary;
 mod chaos;
 mod invariants;
 mod load;
@@ -123,6 +124,14 @@ struct Args {
         default_value = "app.kubernetes.io/name=keystone-rs"
     )]
     chaos_selector: String,
+    /// Write and verify a canary record this often (`0` disables). Each
+    /// record is read back from every node (read-after-write) and the
+    /// earlier ones are re-checked (integrity).
+    #[arg(long, env = "SOAK_CANARY_INTERVAL", default_value = "0s", value_parser = humantime::parse_duration)]
+    canary_interval: Duration,
+    /// Port of the keystone API on every pod.
+    #[arg(long, env = "SOAK_API_PORT", default_value_t = 8080)]
+    api_port: u16,
     /// Do not generate load, only watch the cluster.
     #[arg(long, env = "SOAK_NO_LOAD", default_value_t = false, action = clap::ArgAction::Set)]
     no_load: bool,
@@ -336,6 +345,24 @@ fn check_chaos(state: &Shared, checked: &mut u64, now: Duration, args: &Args) ->
     found
 }
 
+/// Report canary failures recorded since the last call.
+fn check_canary(state: &Shared, checked: &mut u64, now: Duration) -> Vec<Violation> {
+    let Ok(g) = state.read() else {
+        return Vec::new();
+    };
+    let already = *checked;
+    let mut found = Vec::new();
+    for f in g.canary.failures.iter().filter(|f| f.seq > already) {
+        *checked = f.seq;
+        found.push(Violation {
+            at_secs: now.as_secs(),
+            check: f.check,
+            detail: f.detail.clone(),
+        });
+    }
+    found
+}
+
 async fn terminate() {
     #[cfg(unix)]
     {
@@ -419,6 +446,22 @@ async fn main() -> Result<()> {
         });
     }
 
+    if !args.canary_interval.is_zero() {
+        let cfg = canary::CanaryConfig {
+            interval: args.canary_interval,
+            host: args.host.clone(),
+            api_port: args.api_port,
+            start,
+            state: state.clone(),
+            service: args.metrics_service.clone(),
+        };
+        tokio::spawn(async move {
+            if let Err(e) = canary::run(cfg, deadline).await {
+                error!(error = %format!("{e:#}"), "canary task stopped");
+            }
+        });
+    }
+
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()?;
@@ -443,6 +486,7 @@ async fn main() -> Result<()> {
     // Highest load phase number already judged for its error rate.
     let mut checked_phase = 0u64;
     let mut checked_chaos = 0u64;
+    let mut checked_canary = 0u64;
 
     loop {
         let mut load_failure: Option<String> = None;
@@ -483,6 +527,7 @@ async fn main() -> Result<()> {
             });
         }
         found.extend(check_load(&state, &mut checked_phase, now, &args));
+        found.extend(check_canary(&state, &mut checked_canary, now));
         found.extend(check_chaos(&state, &mut checked_chaos, now, &args));
         for v in &found {
             error!(check = v.check, detail = %v.detail, "invariant violated");
@@ -592,6 +637,22 @@ mod tests {
         // Kill 3 is still recovering and judged later.
         assert_eq!(checked, 2);
         assert!(check_chaos(&st, &mut checked, Duration::ZERO, &args()).is_empty());
+    }
+
+    #[test]
+    fn reports_canary_failures_once() {
+        let st: Shared = Arc::new(RwLock::new(Verdict::default()));
+        if let Ok(mut g) = st.write() {
+            g.canary.failures.push(canary::CanaryFailure {
+                seq: 1,
+                at_secs: 0,
+                check: "read_after_write",
+                detail: "x".into(),
+            });
+        }
+        let mut checked = 0;
+        assert_eq!(check_canary(&st, &mut checked, Duration::ZERO).len(), 1);
+        assert!(check_canary(&st, &mut checked, Duration::ZERO).is_empty());
     }
 
     #[test]

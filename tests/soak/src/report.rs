@@ -185,7 +185,8 @@ pub fn render_markdown(v: &Verdict) -> String {
         o,
         "- nodes: {} ({} scraped, {} ready), leaders: {}, voters: {}, learners: {}\n\
          - applied index spread: {}, max apply lag: {}, max replication lag: {}\n\
-         - quarantined partitions: {}, disk spread ratio: {:.2}",
+         - quarantined partitions: {}, disk spread ratio: {:.2}\n\
+         - applied entries: {}, disk per entry and node: {:.0} B",
         sm.nodes,
         sm.nodes_scraped,
         sm.nodes_ready,
@@ -196,7 +197,9 @@ pub fn render_markdown(v: &Verdict) -> String {
         sm.max_apply_lag,
         sm.max_replication_lag,
         sm.quarantined_total,
-        sm.disk_spread_ratio
+        sm.disk_spread_ratio,
+        sm.applied_index_max,
+        sm.bytes_per_entry
     );
 
     if !v.violations.is_empty() {
@@ -284,6 +287,23 @@ pub fn render_markdown(v: &Verdict) -> String {
                     s.latency_ms.max
                 );
             }
+        }
+    }
+
+    let k = &v.canary;
+    if k.totals.writes > 0 {
+        let _ = writeln!(o, "\n## Canary\n");
+        let _ = writeln!(
+            o,
+            "{} records written, {} node reads: {} stale, {} altered, {} errors (not judged)",
+            k.totals.writes,
+            k.totals.reads,
+            k.totals.stale_reads,
+            k.totals.mismatches,
+            k.totals.read_errors
+        );
+        for f in k.failures.iter().rev().take(TABLE_ROWS).rev() {
+            let _ = writeln!(o, "- {} `{}`: {}", hms(f.at_secs), f.check, f.detail);
         }
     }
 

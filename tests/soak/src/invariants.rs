@@ -75,6 +75,10 @@ pub struct Summary {
     pub voters: u64,
     pub learners: u64,
     pub applied_spread: u64,
+    /// Highest applied Raft index, the number of log entries so far.
+    pub applied_index_max: u64,
+    /// Average per-node disk usage divided by `applied_index_max`.
+    pub bytes_per_entry: f64,
     pub max_apply_lag: u64,
     pub max_replication_lag: u64,
     pub disk_bytes_total: f64,
@@ -223,6 +227,10 @@ impl Evaluator {
 
         if let (Some(max), Some(min)) = (applied.iter().max(), applied.iter().min()) {
             s.applied_spread = max - min;
+            s.applied_index_max = *max;
+            if *max > 0 && !disks.is_empty() {
+                s.bytes_per_entry = s.disk_bytes_total / disks.len() as f64 / *max as f64;
+            }
         }
         let spread_bad = s.applied_spread > self.th.max_applied_spread;
         if self.persistent("applied_spread", spread_bad, now, grace) {
