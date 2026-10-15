@@ -92,7 +92,7 @@ restarts are tolerated.
   GET), `SOAK_MAX_WRITE_P99` (`2s`) and `SOAK_MAX_AUTH_P99` (`2s`, token
   issuing, dominated by password hashing); `0` disables a limit. A class
   needs `SOAK_MIN_LOAD_REQUESTS` requests to be judged. Phases that overlap a
-  pod kill, a partition or a rolling restart (until recovery plus 30 s) are not
+  pod kill, a partition, a rolling restart or a SPIRE agent restart (until recovery plus 30 s) are not
   judged, they are
   slow on purpose. The defaults are about 3 to 5 times the worst p99 seen on a
   single-node k3s (steady 20 users: 84/260/260 ms, burst 100 users:
@@ -123,6 +123,38 @@ next one only after the previous victim came back as a new, ready pod.
 - Exported: `soak_chaos_kills_total`, `soak_chaos_recovered_total`,
   `soak_chaos_timed_out_total`, `soak_chaos_last_recovery_seconds`,
   `soak_chaos_max_recovery_seconds`; the report has a "Chaos" section.
+
+## SPIRE agent restarts
+
+Keystone gets its SVID from the SPIRE agent's Workload API socket, and the
+agent is a node-level DaemonSet that restarts independently of keystone (node
+reboot, upgrade, crash). A power cycle once left keystone crash-looping
+because the socket came up after it. With `SOAK_SPIRE_INTERVAL` set (off in
+the soak overlay: the agent is shared by everything on the node) the
+controller deletes the agent pod (`SOAK_SPIRE_NAMESPACE`, default `spire`,
+selected by `SOAK_SPIRE_SELECTOR`) while the load and canaries keep running.
+
+- `spire_recovery`: the new agent pod was not ready, or the cluster did not
+  converge afterwards, within `SOAK_SPIRE_RECOVERY` (5 m).
+- `spire_keystone_restart`: a keystone container restarted. Restarts are
+  watched for `SOAK_SPIRE_WATCH` (60 s) after the agent is back, to catch a
+  crash loop that starts late.
+- `spire_write_gap`: writes through the service were unacknowledged for
+  longer than `SOAK_SPIRE_MAX_WRITE_GAP` (30 s).
+- Other fault tasks wait while an agent restart is judged, and load phases
+  overlapping it are not judged for latency.
+- Needs RBAC to `get`/`list`/`delete` pods in the SPIRE namespace
+  (`keystone-soak-spire` in `overlays/soak/soak.yaml`, bound to the service
+  account of the `default` namespace; change the subject namespace for other
+  deployments).
+- Exported: `soak_spire_restarts_total`, `soak_spire_failed_total`,
+  `soak_spire_max_agent_ready_seconds`, `soak_spire_keystone_restarts_total`;
+  the report has a "SPIRE agent restarts" section.
+
+Not covered: clock skew. Skewing one pod's clock needs a time namespace,
+`CAP_SYS_TIME` or libfaketime in the image, none of which the soak
+deployment has. Token and SVID expiry under skew is better tested with unit
+tests against a mock clock.
 
 ## Rolling restarts
 

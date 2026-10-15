@@ -145,10 +145,27 @@ fn fail(cfg: &RolloutConfig, seq: u64, check: &'static str, detail: String) {
     });
 }
 
-/// The cluster is healthy and idle: nothing else is disturbing it.
-async fn settled(cfg: &RolloutConfig, kube: &Kube, http: &reqwest::Client) -> bool {
-    let busy = cfg.state.read().is_ok_and(|g| {
-        g.partition.active
+/// Where the Raft pods are and how many there must be.
+pub struct Cluster<'a> {
+    pub selector: &'a str,
+    pub expected: usize,
+    /// Headless service of the pods.
+    pub service: &'a str,
+    pub metrics_port: u16,
+}
+
+/// The cluster is healthy and idle: no fault task other than `own` holds it
+/// down, no pod kill is recovering, every pod is ready and the Raft group has
+/// converged.
+pub async fn cluster_settled(
+    state: &Shared,
+    kube: &Kube,
+    http: &reqwest::Client,
+    cluster: &Cluster<'_>,
+    own: &str,
+) -> bool {
+    let busy = state.read().is_ok_and(|g| {
+        g.disrupted_except(own)
             || g.chaos
                 .events
                 .last()
@@ -157,17 +174,27 @@ async fn settled(cfg: &RolloutConfig, kube: &Kube, http: &reqwest::Client) -> bo
     if busy {
         return false;
     }
-    let Ok(pods) = kube.pods(&cfg.selector).await else {
+    let Ok(pods) = kube.pods(cluster.selector).await else {
         return false;
     };
-    if !all_ready(&pods, cfg.expected_pods) {
+    if !all_ready(&pods, cluster.expected) {
         return false;
     }
     let names: Vec<String> = pods.iter().map(|p| p.metadata.name.clone()).collect();
     converged(
-        &fetch_views(http, &cfg.service, cfg.metrics_port, &names).await,
-        cfg.expected_pods,
+        &fetch_views(http, cluster.service, cluster.metrics_port, &names).await,
+        cluster.expected,
     )
+}
+
+async fn settled(cfg: &RolloutConfig, kube: &Kube, http: &reqwest::Client) -> bool {
+    let cluster = Cluster {
+        selector: &cfg.selector,
+        expected: cfg.expected_pods,
+        service: &cfg.service,
+        metrics_port: cfg.metrics_port,
+    };
+    cluster_settled(&cfg.state, kube, http, &cluster, "rollout").await
 }
 
 pub async fn run(cfg: RolloutConfig, deadline: Option<Instant>) -> Result<()> {

@@ -33,6 +33,7 @@ use crate::invariants::{Summary, Violation};
 use crate::partition::{PartitionEvent, PartitionTotals};
 use crate::report::{self, Growth, LoadTotals, PhaseRecord};
 use crate::rollout::{RolloutEvent, RolloutTotals};
+use crate::spire::{SpireEvent, SpireTotals};
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Verdict {
@@ -51,6 +52,7 @@ pub struct Verdict {
     pub chaos: Chaos,
     pub partition: Partition,
     pub rollout: Rollout,
+    pub spire: Spire,
     pub canary: Canary,
 }
 
@@ -90,6 +92,31 @@ pub struct Rollout {
     pub events: Vec<RolloutEvent>,
 }
 
+/// SPIRE agent restarts of the spire task.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct Spire {
+    /// An agent restart is being judged; the other fault tasks wait.
+    pub active: bool,
+    pub totals: SpireTotals,
+    /// Recent restarts, oldest first (capped, see `spire::MAX_EVENTS`).
+    pub events: Vec<SpireEvent>,
+}
+
+impl Verdict {
+    /// A fault task holds the cluster in a degraded state; the others wait.
+    pub fn disrupted(&self) -> bool {
+        self.disrupted_except("")
+    }
+
+    /// Like [`Self::disrupted`], ignoring the fault task `own` (`partition`,
+    /// `rollout` or `spire`) that asks.
+    pub fn disrupted_except(&self, own: &str) -> bool {
+        (own != "partition" && self.partition.active)
+            || (own != "rollout" && self.rollout.active)
+            || (own != "spire" && self.spire.active)
+    }
+}
+
 pub type Shared = Arc<RwLock<Verdict>>;
 
 pub fn router(state: Shared) -> Router {
@@ -109,6 +136,7 @@ async fn verdict(State(s): State<Shared>) -> impl IntoResponse {
     v.chaos.events.clear();
     v.partition.events.clear();
     v.rollout.events.clear();
+    v.spire.events.clear();
     let code = if v.healthy {
         StatusCode::OK
     } else {
@@ -332,6 +360,27 @@ pub fn render(v: &Verdict) -> String {
         "soak_chaos_max_recovery_seconds",
         "Longest recovery after a pod deletion",
         c.max_recovery_secs as f64,
+    );
+    let sp = &v.spire.totals;
+    g(
+        "soak_spire_restarts_total",
+        "SPIRE agent pods deleted by the spire task",
+        sp.restarts as f64,
+    );
+    g(
+        "soak_spire_failed_total",
+        "SPIRE agent restarts that broke an invariant",
+        sp.failed as f64,
+    );
+    g(
+        "soak_spire_max_agent_ready_seconds",
+        "Longest time a restarted SPIRE agent needed to become ready",
+        sp.max_agent_ready_secs as f64,
+    );
+    g(
+        "soak_spire_keystone_restarts_total",
+        "Keystone container restarts seen after SPIRE agent restarts",
+        sp.keystone_restarts as f64,
     );
     let r = &v.rollout.totals;
     g(

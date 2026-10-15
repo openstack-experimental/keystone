@@ -33,6 +33,34 @@ subjects:
   - kind: ServiceAccount
     name: keystone-soak
 ---
+# The spire task deletes the SPIRE agent pod. The agent is shared node
+# infrastructure in its own namespace, so the permission is separate and only
+# used when SOAK_SPIRE_INTERVAL is set. The subject namespace must be the
+# namespace of the soak deployment.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: keystone-soak-spire
+  namespace: spire
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: keystone-soak-spire
+  namespace: spire
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: keystone-soak-spire
+subjects:
+  - kind: ServiceAccount
+    name: keystone-soak
+    namespace: default
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -77,6 +105,15 @@ data:
   SOAK_ROLLOUT_INTERVAL: "2h"
   SOAK_ROLLOUT_TIMEOUT: "15m"
   SOAK_ROLLOUT_MAX_WRITE_GAP: "60s"
+  # SPIRE agent restart: delete the agent pod this often (`0` disables, the
+  # default here because the agent is shared by everything on the node).
+  # Keystone must not restart, writes must keep being acknowledged (longest
+  # gap SOAK_SPIRE_MAX_WRITE_GAP) and the agent must be back within
+  # SOAK_SPIRE_RECOVERY. Namespace and selector: SOAK_SPIRE_NAMESPACE and
+  # SOAK_SPIRE_SELECTOR.
+  SOAK_SPIRE_INTERVAL: "0"
+  SOAK_SPIRE_RECOVERY: "5m"
+  SOAK_SPIRE_MAX_WRITE_GAP: "30s"
   # Keep serving `/verdict` and `/metrics` after the run finished.
   SOAK_LINGER: "1h"
   # Credentials of the bootstrap admin in the dev stack. Replace for other

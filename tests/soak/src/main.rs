@@ -27,6 +27,7 @@ mod prom;
 mod report;
 mod rollout;
 mod server;
+mod spire;
 
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -156,6 +157,32 @@ struct Args {
     /// rolling restart.
     #[arg(long, env = "SOAK_ROLLOUT_MAX_WRITE_GAP", default_value = "60s", value_parser = humantime::parse_duration)]
     rollout_max_write_gap: Duration,
+    /// Delete the SPIRE agent pod this often (`0` disables). The agent is
+    /// shared node infrastructure and needs RBAC in its namespace, see
+    /// `overlays/soak/soak.yaml`.
+    #[arg(long, env = "SOAK_SPIRE_INTERVAL", default_value = "0s", value_parser = humantime::parse_duration)]
+    spire_interval: Duration,
+    /// Namespace of the SPIRE agent.
+    #[arg(long, env = "SOAK_SPIRE_NAMESPACE", default_value = "spire")]
+    spire_namespace: String,
+    /// Label selector of the SPIRE agent pods.
+    #[arg(
+        long,
+        env = "SOAK_SPIRE_SELECTOR",
+        default_value = "app.kubernetes.io/name=agent,app.kubernetes.io/instance=spire"
+    )]
+    spire_selector: String,
+    /// The agent must be ready again and the cluster converged within this
+    /// time.
+    #[arg(long, env = "SOAK_SPIRE_RECOVERY", default_value = "5m", value_parser = humantime::parse_duration)]
+    spire_recovery: Duration,
+    /// Longest allowed stretch without an acknowledged write while the agent
+    /// restarts.
+    #[arg(long, env = "SOAK_SPIRE_MAX_WRITE_GAP", default_value = "30s", value_parser = humantime::parse_duration)]
+    spire_max_write_gap: Duration,
+    /// Watch keystone for restarts this long after the agent is back.
+    #[arg(long, env = "SOAK_SPIRE_WATCH", default_value = "60s", value_parser = humantime::parse_duration)]
+    spire_watch: Duration,
     /// Write and verify a canary record this often (`0` disables). Each
     /// record is read back from every node (read-after-write) and the
     /// earlier ones are re-checked (integrity).
@@ -377,11 +404,18 @@ fn disturbed_windows(state: &Shared, now: Duration, args: &Args) -> Vec<(u64, u6
         let heal = e.heal_secs.unwrap_or(now.saturating_sub(e.at_secs));
         (e.at_secs, e.at_secs + hold + heal + MARGIN)
     });
+    let agents = g.spire.events.iter().map(|e| {
+        let took = e.agent_ready_secs.unwrap_or(now.saturating_sub(e.at_secs));
+        (
+            e.at_secs,
+            e.at_secs + took + MARGIN + args.spire_watch.as_secs(),
+        )
+    });
     let rolls = g.rollout.events.iter().map(|e| {
         let took = e.converged_secs.unwrap_or(now.saturating_sub(e.at_secs));
         (e.at_secs, e.at_secs + took + MARGIN)
     });
-    kills.chain(cuts).chain(rolls).collect()
+    kills.chain(cuts).chain(rolls).chain(agents).collect()
 }
 
 /// Judge the p99 latency of load phases that finished since the last call.
@@ -503,6 +537,31 @@ fn check_rollout(state: &Shared, checked: &mut u64, now: Duration) -> Vec<Violat
                 at_secs: now.as_secs(),
                 check: f.check,
                 detail: format!("rollout {}: {}", e.seq, f.detail),
+            });
+        }
+    }
+    found
+}
+
+/// Report the failed checks of SPIRE agent restarts that settled since the
+/// last call.
+fn check_spire(state: &Shared, checked: &mut u64, now: Duration) -> Vec<Violation> {
+    let Ok(g) = state.read() else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    let already = *checked;
+    for e in g.spire.events.iter().filter(|e| e.seq > already) {
+        // A restart that is still being watched is judged when it settles.
+        if !e.done {
+            break;
+        }
+        *checked = e.seq;
+        for f in &e.failures {
+            found.push(Violation {
+                at_secs: now.as_secs(),
+                check: f.check,
+                detail: format!("SPIRE agent restart {} ({}): {}", e.seq, e.pod, f.detail),
             });
         }
     }
@@ -658,6 +717,34 @@ async fn main() -> Result<()> {
         });
     }
 
+    if !args.spire_interval.is_zero() {
+        let cfg = spire::SpireConfig {
+            interval: args.spire_interval,
+            namespace: args.spire_namespace.clone(),
+            agent_selector: args.spire_selector.clone(),
+            recovery_timeout: args.spire_recovery,
+            max_write_gap: args.spire_max_write_gap,
+            watch: args.spire_watch,
+            selector: args.chaos_selector.clone(),
+            expected_pods: usize::try_from(args.expected_voters).unwrap_or(usize::MAX),
+            service: args.metrics_service.clone(),
+            metrics_port: args.metrics_port,
+            write_node: args
+                .host
+                .trim_start_matches("http://")
+                .trim_end_matches('/')
+                .to_string(),
+            host: args.host.clone(),
+            start,
+            state: state.clone(),
+        };
+        tokio::spawn(async move {
+            if let Err(e) = spire::run(cfg, deadline).await {
+                error!(error = %format!("{e:#}"), "spire task stopped");
+            }
+        });
+    }
+
     if !args.canary_interval.is_zero() {
         let cfg = canary::CanaryConfig {
             interval: args.canary_interval,
@@ -701,6 +788,7 @@ async fn main() -> Result<()> {
     let mut checked_latency = 0u64;
     let mut checked_partition = 0u64;
     let mut checked_rollout = 0u64;
+    let mut checked_spire = 0u64;
     let mut checked_canary = 0u64;
 
     loop {
@@ -747,6 +835,7 @@ async fn main() -> Result<()> {
         found.extend(check_latency(&state, &mut checked_latency, now, &args));
         found.extend(check_partition(&state, &mut checked_partition, now));
         found.extend(check_rollout(&state, &mut checked_rollout, now));
+        found.extend(check_spire(&state, &mut checked_spire, now));
         for v in &found {
             error!(check = v.check, detail = %v.detail, "invariant violated");
         }
@@ -974,6 +1063,41 @@ mod tests {
         assert_eq!(found[0].check, "rollout_write_gap");
         assert_eq!(checked, 2);
         assert!(check_rollout(&st, &mut checked, Duration::ZERO).is_empty());
+    }
+
+    #[test]
+    fn reports_spire_failures_once_settled() {
+        let st: Shared = Arc::new(RwLock::new(Verdict::default()));
+        let event = |seq, done, failed: bool| spire::SpireEvent {
+            seq,
+            pod: format!("agent-{seq}"),
+            at_secs: 0,
+            agent_ready_secs: Some(20),
+            keystone_restarts: u64::from(failed),
+            max_write_gap_secs: 5,
+            failures: if failed {
+                vec![spire::SpireFailure {
+                    check: "spire_keystone_restart",
+                    detail: "1 keystone container restarts".into(),
+                }]
+            } else {
+                Vec::new()
+            },
+            done,
+        };
+        if let Ok(mut g) = st.write() {
+            g.spire.events = vec![
+                event(1, true, false),
+                event(2, true, true),
+                event(3, false, true),
+            ];
+        }
+        let mut checked = 0;
+        let found = check_spire(&st, &mut checked, Duration::ZERO);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].check, "spire_keystone_restart");
+        assert_eq!(checked, 2);
+        assert!(check_spire(&st, &mut checked, Duration::ZERO).is_empty());
     }
 
     #[test]

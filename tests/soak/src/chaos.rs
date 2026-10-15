@@ -86,7 +86,7 @@ pub(crate) struct Pod {
 pub(crate) struct Meta {
     pub(crate) name: String,
     #[serde(default)]
-    uid: String,
+    pub(crate) uid: String,
     #[serde(default, rename = "deletionTimestamp")]
     deletion_timestamp: Option<String>,
 }
@@ -95,6 +95,14 @@ pub(crate) struct Meta {
 struct Status {
     #[serde(default)]
     conditions: Vec<Condition>,
+    #[serde(default, rename = "containerStatuses")]
+    container_statuses: Vec<ContainerStatus>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContainerStatus {
+    #[serde(default, rename = "restartCount")]
+    restart_count: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -105,6 +113,15 @@ struct Condition {
 }
 
 impl Pod {
+    /// Container restarts of this pod so far.
+    pub(crate) fn restarts(&self) -> u64 {
+        self.status
+            .container_statuses
+            .iter()
+            .map(|c| c.restart_count)
+            .sum()
+    }
+
     pub(crate) fn ready(&self) -> bool {
         self.metadata.deletion_timestamp.is_none()
             && self
@@ -204,12 +221,14 @@ impl Kube {
     }
 
     pub(crate) async fn pods(&self, selector: &str) -> Result<Vec<Pod>> {
+        self.pods_in(&self.namespace, selector).await
+    }
+
+    /// Pods matching `selector` in another namespace.
+    pub(crate) async fn pods_in(&self, namespace: &str, selector: &str) -> Result<Vec<Pod>> {
         let list: PodList = self
             .http
-            .get(format!(
-                "{}/api/v1/namespaces/{}/pods",
-                self.base, self.namespace
-            ))
+            .get(format!("{}/api/v1/namespaces/{namespace}/pods", self.base))
             .query(&[("labelSelector", selector)])
             .bearer_auth(self.token().await?)
             .send()
@@ -302,10 +321,15 @@ impl Kube {
     }
 
     async fn delete(&self, name: &str) -> Result<()> {
+        self.delete_in(&self.namespace, name).await
+    }
+
+    /// Delete a pod of another namespace.
+    pub(crate) async fn delete_in(&self, namespace: &str, name: &str) -> Result<()> {
         self.http
             .delete(format!(
-                "{}/api/v1/namespaces/{}/pods/{name}",
-                self.base, self.namespace
+                "{}/api/v1/namespaces/{namespace}/pods/{name}",
+                self.base
             ))
             .bearer_auth(self.token().await?)
             .send()
@@ -358,10 +382,7 @@ pub async fn run(cfg: ChaosConfig, deadline: Option<Instant>) -> Result<()> {
         // Only break a healthy cluster, never one that is still recovering
         // or has a node cut off by the partition task.
         let pods = loop {
-            let partitioned = cfg
-                .state
-                .read()
-                .is_ok_and(|g| g.partition.active || g.rollout.active);
+            let partitioned = cfg.state.read().is_ok_and(|g| g.disrupted());
             match kube.pods(&cfg.selector).await {
                 Ok(p) if !partitioned && all_ready(&p, cfg.expected_pods) => break p,
                 Ok(_) => {}
@@ -454,6 +475,7 @@ mod tests {
                     kind: "Ready".into(),
                     status: if ready { "True" } else { "False" }.into(),
                 }],
+                container_statuses: Vec::new(),
             },
         }
     }
@@ -500,8 +522,10 @@ mod tests {
     #[test]
     fn parses_pod_list() {
         let json = r#"{"items":[{"metadata":{"name":"ks-0","uid":"u"},
-            "status":{"conditions":[{"type":"Ready","status":"True"}]}}]}"#;
+            "status":{"conditions":[{"type":"Ready","status":"True"}],
+            "containerStatuses":[{"restartCount":2},{"restartCount":1}]}}]}"#;
         let list: PodList = serde_json::from_str(json).expect("valid json");
         assert!(list.items[0].ready());
+        assert_eq!(list.items[0].restarts(), 3);
     }
 }

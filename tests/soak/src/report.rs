@@ -348,6 +348,45 @@ pub fn render_markdown(v: &Verdict) -> String {
         }
     }
 
+    let sp = &v.spire;
+    if sp.totals.restarts > 0 {
+        let _ = writeln!(o, "\n## SPIRE agent restarts\n");
+        let _ = writeln!(
+            o,
+            "{} agent restarts: {} failed a check; agent ready within {} s at most; {} keystone restarts",
+            sp.totals.restarts,
+            sp.totals.failed,
+            sp.totals.max_agent_ready_secs,
+            sp.totals.keystone_restarts
+        );
+        let _ = writeln!(
+            o,
+            "\n| # | agent | at | agent ready | keystone restarts | write gap | failures |\n|---|---|---|---|---|---|---|"
+        );
+        for e in sp.events.iter().rev().take(TABLE_ROWS).rev() {
+            let ready = match (e.agent_ready_secs, e.done) {
+                (Some(s), _) => format!("{s} s"),
+                (None, true) => "NO".to_string(),
+                (None, false) => "pending".to_string(),
+            };
+            let failures = e
+                .failures
+                .iter()
+                .map(|f| f.check)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let _ = writeln!(
+                o,
+                "| {} | {} | {} | {ready} | {} | {} s | {failures} |",
+                e.seq,
+                e.pod,
+                hms(e.at_secs),
+                e.keystone_restarts,
+                e.max_write_gap_secs
+            );
+        }
+    }
+
     let r = &v.rollout;
     if r.totals.rollouts > 0 {
         let _ = writeln!(o, "\n## Rolling restarts\n");

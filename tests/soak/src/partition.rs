@@ -356,7 +356,10 @@ pub async fn run(cfg: PartitionConfig, deadline: Option<Instant>) -> Result<()> 
         // Only cut a healthy, settled cluster, not one still recovering from
         // a pod kill.
         let (pods, seen) = loop {
-            let rolling = cfg.state.read().is_ok_and(|g| g.rollout.active);
+            let rolling = cfg
+                .state
+                .read()
+                .is_ok_and(|g| g.rollout.active || g.spire.active);
             let killing = rolling
                 || cfg.state.read().is_ok_and(|g| {
                     g.chaos
