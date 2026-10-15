@@ -53,6 +53,24 @@ mod keycloak {
 use crate::keycloak::utils::*;
 use crate::keystone_utils::*;
 
+thread_local! {
+    static CONFIG: &'static TestConfig = Box::leak(Box::new(TestConfig {
+        client: Client::new(),
+        keystone_url: env::var("KEYSTONE_URL").unwrap_or_default(),
+    }));
+}
+
+/// Per-test HTTP client config.
+///
+/// `#[tokio::test]` gives every test its own runtime, while the shared
+/// `keystone_utils::get_config()` client pools connections process-wide. A
+/// pooled connection whose runtime already ended fails the next request with
+/// `DispatchGone`. Each test runs on its own thread, so a thread-local client
+/// is never reused across runtimes.
+fn get_config() -> &'static TestConfig {
+    CONFIG.with(|c| *c)
+}
+
 /// The message the OP login page shows for every failed upstream sign-in.
 const UPSTREAM_FAILED: &str = "sign-in with the identity provider failed";
 const KC_PASSWORD: &str = "pass";
