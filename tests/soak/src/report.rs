@@ -287,6 +287,35 @@ pub fn render_markdown(v: &Verdict) -> String {
         }
     }
 
+    let c = &v.chaos;
+    if c.totals.kills > 0 {
+        let _ = writeln!(o, "\n## Chaos\n");
+        let _ = writeln!(
+            o,
+            "{} pods deleted under load: {} recovered, {} did not; recovery last {} s, max {} s",
+            c.totals.kills,
+            c.totals.recovered,
+            c.totals.timed_out,
+            c.totals.last_recovery_secs,
+            c.totals.max_recovery_secs
+        );
+        let _ = writeln!(o, "\n| # | pod | at | recovery |\n|---|---|---|---|");
+        for e in c.events.iter().rev().take(TABLE_ROWS).rev() {
+            let outcome = match (e.recovery_secs, e.timed_out) {
+                (Some(s), _) => format!("{s} s"),
+                (None, true) => "TIMED OUT".to_string(),
+                (None, false) => "recovering".to_string(),
+            };
+            let _ = writeln!(
+                o,
+                "| {} | {} | {} | {outcome} |",
+                e.seq,
+                e.pod,
+                hms(e.at_secs)
+            );
+        }
+    }
+
     let mut failing: BTreeMap<&str, (u64, u64)> = BTreeMap::new();
     for e in loaded
         .iter()

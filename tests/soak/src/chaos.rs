@@ -1,0 +1,360 @@
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+//! Chaos: periodically delete one Raft pod while the load keeps running.
+//!
+//! The pods are deleted one after another in name order, so every node,
+//! including whichever one currently leads, is hit repeatedly over a long
+//! run. A pod is only killed while all pods are ready, and the next one only
+//! after the previous victim came back (new pod, ready again). A victim that
+//! is not back within the recovery timeout is an invariant violation, see
+//! `check_chaos` in `main.rs`. Request failures caused by the kills are
+//! judged by the load error-rate invariant.
+
+use std::time::Duration;
+
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use tokio::time::Instant;
+use tracing::{info, warn};
+
+use crate::server::Shared;
+
+/// Events kept for the report; older ones are dropped (the totals still
+/// cover them).
+pub const MAX_EVENTS: usize = 500;
+const SERVICE_ACCOUNT: &str = "/var/run/secrets/kubernetes.io/serviceaccount";
+const POLL: Duration = Duration::from_secs(5);
+
+/// One pod kill and what became of it.
+#[derive(Clone, Debug, Serialize)]
+pub struct ChaosEvent {
+    /// Monotonic number, stable when old records are dropped.
+    pub seq: u64,
+    pub pod: String,
+    pub at_secs: u64,
+    /// Seconds until the replacement pod was ready; `None` while waiting or
+    /// when it never came back.
+    pub recovery_secs: Option<u64>,
+    pub timed_out: bool,
+}
+
+/// Counters over the whole run.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct ChaosTotals {
+    pub kills: u64,
+    pub recovered: u64,
+    pub timed_out: u64,
+    pub last_recovery_secs: u64,
+    pub max_recovery_secs: u64,
+}
+
+pub struct ChaosConfig {
+    pub interval: Duration,
+    pub recovery_timeout: Duration,
+    /// Label selector of the Raft pods.
+    pub selector: String,
+    pub expected_pods: usize,
+    pub start: Instant,
+    pub state: Shared,
+}
+
+#[derive(Debug, Deserialize)]
+struct PodList {
+    items: Vec<Pod>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Pod {
+    metadata: Meta,
+    #[serde(default)]
+    status: Status,
+}
+
+#[derive(Debug, Deserialize)]
+struct Meta {
+    name: String,
+    #[serde(default)]
+    uid: String,
+    #[serde(default, rename = "deletionTimestamp")]
+    deletion_timestamp: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct Status {
+    #[serde(default)]
+    conditions: Vec<Condition>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Condition {
+    #[serde(rename = "type")]
+    kind: String,
+    status: String,
+}
+
+impl Pod {
+    fn ready(&self) -> bool {
+        self.metadata.deletion_timestamp.is_none()
+            && self
+                .status
+                .conditions
+                .iter()
+                .any(|c| c.kind == "Ready" && c.status == "True")
+    }
+}
+
+/// Minimal in-cluster Kubernetes client: list and delete pods.
+struct Kube {
+    http: reqwest::Client,
+    base: String,
+    namespace: String,
+}
+
+impl Kube {
+    async fn in_cluster() -> Result<Self> {
+        let host = std::env::var("KUBERNETES_SERVICE_HOST")
+            .context("KUBERNETES_SERVICE_HOST is not set, not running in a cluster")?;
+        let port = std::env::var("KUBERNETES_SERVICE_PORT").unwrap_or_else(|_| "443".into());
+        let ca = tokio::fs::read(format!("{SERVICE_ACCOUNT}/ca.crt"))
+            .await
+            .context("cannot read the cluster CA")?;
+        let namespace = tokio::fs::read_to_string(format!("{SERVICE_ACCOUNT}/namespace"))
+            .await
+            .context("cannot read the namespace")?;
+        let http = reqwest::Client::builder()
+            .add_root_certificate(reqwest::Certificate::from_pem(&ca)?)
+            .timeout(Duration::from_secs(10))
+            .build()?;
+        let host = if host.contains(':') {
+            format!("[{host}]")
+        } else {
+            host
+        };
+        Ok(Self {
+            http,
+            base: format!("https://{host}:{port}"),
+            namespace: namespace.trim().to_string(),
+        })
+    }
+
+    /// The projected token rotates, so read it for every call.
+    async fn token(&self) -> Result<String> {
+        let token = tokio::fs::read_to_string(format!("{SERVICE_ACCOUNT}/token"))
+            .await
+            .context("cannot read the service account token")?;
+        Ok(token.trim().to_string())
+    }
+
+    async fn pods(&self, selector: &str) -> Result<Vec<Pod>> {
+        let list: PodList = self
+            .http
+            .get(format!(
+                "{}/api/v1/namespaces/{}/pods",
+                self.base, self.namespace
+            ))
+            .query(&[("labelSelector", selector)])
+            .bearer_auth(self.token().await?)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let mut pods = list.items;
+        pods.sort_by(|a, b| a.metadata.name.cmp(&b.metadata.name));
+        Ok(pods)
+    }
+
+    async fn delete(&self, name: &str) -> Result<()> {
+        self.http
+            .delete(format!(
+                "{}/api/v1/namespaces/{}/pods/{name}",
+                self.base, self.namespace
+            ))
+            .bearer_auth(self.token().await?)
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
+    }
+}
+
+/// Next victim: the pod after `previous` in name order, wrapping around.
+fn pick_victim<'a>(pods: &'a [Pod], previous: Option<&str>) -> Option<&'a Pod> {
+    let after = previous.and_then(|p| pods.iter().position(|x| x.metadata.name == p));
+    let idx = after.map_or(0, |i| (i + 1) % pods.len().max(1));
+    pods.get(idx)
+}
+
+fn all_ready(pods: &[Pod], expected: usize) -> bool {
+    pods.len() >= expected && pods.iter().all(Pod::ready)
+}
+
+/// Sleep for `d`; `false` when the deadline passes first.
+async fn sleep_until_deadline(d: Duration, deadline: Option<Instant>) -> bool {
+    match deadline {
+        Some(dl) if Instant::now() + d >= dl => false,
+        _ => {
+            tokio::time::sleep(d).await;
+            true
+        }
+    }
+}
+
+fn update_event(cfg: &ChaosConfig, seq: u64, f: impl FnOnce(&mut ChaosEvent)) {
+    if let Ok(mut g) = cfg.state.write()
+        && let Some(e) = g.chaos.events.iter_mut().find(|e| e.seq == seq)
+    {
+        f(e);
+    }
+}
+
+pub async fn run(cfg: ChaosConfig, deadline: Option<Instant>) -> Result<()> {
+    let kube = Kube::in_cluster().await?;
+    info!(interval = ?cfg.interval, recovery = ?cfg.recovery_timeout, "chaos enabled");
+    let mut previous: Option<String> = None;
+    let mut seq = 0u64;
+    loop {
+        if !sleep_until_deadline(cfg.interval, deadline).await {
+            return Ok(());
+        }
+
+        // Only break a healthy cluster, never one that is still recovering.
+        let pods = loop {
+            match kube.pods(&cfg.selector).await {
+                Ok(p) if all_ready(&p, cfg.expected_pods) => break p,
+                Ok(_) => {}
+                Err(e) => warn!(error = %e, "chaos: cannot list pods"),
+            }
+            if !sleep_until_deadline(POLL, deadline).await {
+                return Ok(());
+            }
+        };
+        let Some(victim) = pick_victim(&pods, previous.as_deref()) else {
+            continue;
+        };
+        let (name, old_uid) = (victim.metadata.name.clone(), victim.metadata.uid.clone());
+
+        seq += 1;
+        let killed = Instant::now();
+        if let Err(e) = kube.delete(&name).await {
+            warn!(pod = %name, error = %e, "chaos: cannot delete pod");
+            seq -= 1;
+            continue;
+        }
+        info!(pod = %name, seq, "chaos: pod deleted");
+        previous = Some(name.clone());
+        if let Ok(mut g) = cfg.state.write() {
+            g.chaos.totals.kills += 1;
+            g.chaos.events.push(ChaosEvent {
+                seq,
+                pod: name.clone(),
+                at_secs: cfg.start.elapsed().as_secs(),
+                recovery_secs: None,
+                timed_out: false,
+            });
+            let extra = g.chaos.events.len().saturating_sub(MAX_EVENTS);
+            g.chaos.events.drain(..extra);
+        }
+
+        // Back = a new pod (different uid) of that name that is ready, and
+        // the rest of the cluster ready as well.
+        let back = loop {
+            if killed.elapsed() >= cfg.recovery_timeout {
+                break false;
+            }
+            if let Ok(p) = kube.pods(&cfg.selector).await
+                && all_ready(&p, cfg.expected_pods)
+                && p.iter()
+                    .any(|x| x.metadata.name == name && x.metadata.uid != old_uid)
+            {
+                break true;
+            }
+            if !sleep_until_deadline(POLL, deadline).await {
+                return Ok(());
+            }
+        };
+        let took = killed.elapsed().as_secs();
+        if back {
+            info!(pod = %name, secs = took, "chaos: cluster recovered");
+        } else {
+            warn!(pod = %name, secs = took, "chaos: cluster did not recover in time");
+        }
+        update_event(&cfg, seq, |e| {
+            e.recovery_secs = back.then_some(took);
+            e.timed_out = !back;
+        });
+        if let Ok(mut g) = cfg.state.write() {
+            let t = &mut g.chaos.totals;
+            if back {
+                t.recovered += 1;
+                t.last_recovery_secs = took;
+                t.max_recovery_secs = t.max_recovery_secs.max(took);
+            } else {
+                t.timed_out += 1;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pod(name: &str, ready: bool) -> Pod {
+        Pod {
+            metadata: Meta {
+                name: name.into(),
+                uid: format!("uid-{name}"),
+                deletion_timestamp: None,
+            },
+            status: Status {
+                conditions: vec![Condition {
+                    kind: "Ready".into(),
+                    status: if ready { "True" } else { "False" }.into(),
+                }],
+            },
+        }
+    }
+
+    #[test]
+    fn victims_rotate_in_name_order() {
+        let pods = vec![pod("ks-0", true), pod("ks-1", true), pod("ks-2", true)];
+        let name = |p: Option<&str>| pick_victim(&pods, p).map(|x| x.metadata.name.clone());
+        assert_eq!(name(None).as_deref(), Some("ks-0"));
+        assert_eq!(name(Some("ks-0")).as_deref(), Some("ks-1"));
+        assert_eq!(name(Some("ks-2")).as_deref(), Some("ks-0"));
+        assert_eq!(name(Some("gone")).as_deref(), Some("ks-0"));
+        assert!(pick_victim(&[], None).is_none());
+    }
+
+    #[test]
+    fn needs_all_pods_ready() {
+        let ok = vec![pod("a", true), pod("b", true)];
+        assert!(all_ready(&ok, 2));
+        assert!(!all_ready(&ok, 3));
+        assert!(!all_ready(&[pod("a", true), pod("b", false)], 2));
+        let mut terminating = pod("a", true);
+        terminating.metadata.deletion_timestamp = Some("now".into());
+        assert!(!all_ready(&[terminating], 1));
+    }
+
+    #[test]
+    fn parses_pod_list() {
+        let json = r#"{"items":[{"metadata":{"name":"ks-0","uid":"u"},
+            "status":{"conditions":[{"type":"Ready","status":"True"}]}}]}"#;
+        let list: PodList = serde_json::from_str(json).expect("valid json");
+        assert!(list.items[0].ready());
+    }
+}

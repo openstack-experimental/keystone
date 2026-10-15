@@ -93,10 +93,30 @@ restarts are tolerated.
 `soak_snapshot_bytes_total` are exported for judging long-term growth in
 Prometheus.
 
+## Chaos
+
+With `SOAK_CHAOS_INTERVAL` set (`20m` in the soak overlay, `0` disables) the
+controller deletes one Raft pod at that interval while the load keeps
+running. Pods are hit in name order, so every node, the leader included, is
+killed repeatedly. A pod is only deleted while all pods are ready, and the
+next one only after the previous victim came back as a new, ready pod.
+
+- A victim that is not ready again within `SOAK_CHAOS_RECOVERY` (`5m`)
+  violates `chaos_recovery`.
+- Requests that fail because of the kills count against
+  `SOAK_MAX_LOAD_ERROR_RATE`; the other invariants (leader count, applied
+  spread, lags) apply during recovery after their `SOAK_GRACE`.
+- The controller needs RBAC to `get`/`list`/`delete` pods, which the soak
+  overlay grants through the `keystone-soak` service account (namespace
+  scoped Role). Selector: `SOAK_CHAOS_SELECTOR`.
+- Exported: `soak_chaos_kills_total`, `soak_chaos_recovered_total`,
+  `soak_chaos_timed_out_total`, `soak_chaos_last_recovery_seconds`,
+  `soak_chaos_max_recovery_seconds`; the report has a "Chaos" section.
+
 ## Not implemented yet
 
-Chaos (pod deletion), read-after-write and integrity canaries and
-bytes-per-record tracking are planned follow-ups.
+Read-after-write and integrity canaries and bytes-per-record tracking are
+planned follow-ups.
 
 ## Load generator contract
 

@@ -1,3 +1,30 @@
+# The chaos task deletes keystone-rs pods through the Kubernetes API.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: keystone-soak
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: keystone-soak-chaos
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: keystone-soak-chaos
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: keystone-soak-chaos
+subjects:
+  - kind: ServiceAccount
+    name: keystone-soak
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -16,6 +43,11 @@ data:
   SOAK_PHASES: "steady:5m,burst:1m,idle:5m"
   SOAK_STEADY_USERS: "20"
   SOAK_BURST_USERS: "100"
+  # Chaos: delete one keystone-rs pod this often (`0` disables). The pods
+  # are killed in turn, only while all of them are ready, and each must be
+  # ready again within SOAK_CHAOS_RECOVERY or the run fails.
+  SOAK_CHAOS_INTERVAL: "20m"
+  SOAK_CHAOS_RECOVERY: "5m"
   # Keep serving `/verdict` and `/metrics` after the run finished.
   SOAK_LINGER: "1h"
   # Credentials of the bootstrap admin in the dev stack. Replace for other
@@ -45,6 +77,7 @@ spec:
       labels:
         app.kubernetes.io/name: keystone-soak
     spec:
+      serviceAccountName: keystone-soak
       initContainers:
         # After a node reboot the soak pod can start before cluster DNS and
         # keystone are up, which fails the first cycle and the load

@@ -18,6 +18,7 @@
 //! health and storage growth, and publishes the result as Prometheus metrics
 //! and a JSON verdict. See `tests/soak/README.md`.
 
+mod chaos;
 mod invariants;
 mod load;
 mod prom;
@@ -108,6 +109,20 @@ struct Args {
     steady_users: usize,
     #[arg(long, env = "SOAK_BURST_USERS", default_value_t = 100)]
     burst_users: usize,
+    /// Delete one Raft pod this often while the load runs (`0` disables).
+    /// Needs RBAC to delete pods, see `overlays/soak/soak.yaml`.
+    #[arg(long, env = "SOAK_CHAOS_INTERVAL", default_value = "0s", value_parser = humantime::parse_duration)]
+    chaos_interval: Duration,
+    /// A deleted pod must be ready again within this time.
+    #[arg(long, env = "SOAK_CHAOS_RECOVERY", default_value = "5m", value_parser = humantime::parse_duration)]
+    chaos_recovery: Duration,
+    /// Label selector of the Raft pods chaos may delete.
+    #[arg(
+        long,
+        env = "SOAK_CHAOS_SELECTOR",
+        default_value = "app.kubernetes.io/name=keystone-rs"
+    )]
+    chaos_selector: String,
     /// Do not generate load, only watch the cluster.
     #[arg(long, env = "SOAK_NO_LOAD", default_value_t = false, action = clap::ArgAction::Set)]
     no_load: bool,
@@ -292,6 +307,35 @@ fn check_load(state: &Shared, checked: &mut u64, now: Duration, args: &Args) -> 
     found
 }
 
+/// Judge the recovery of chaos kills that were settled since the last call.
+fn check_chaos(state: &Shared, checked: &mut u64, now: Duration, args: &Args) -> Vec<Violation> {
+    let Ok(g) = state.read() else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    let already = *checked;
+    for e in g.chaos.events.iter().filter(|e| e.seq > already) {
+        // A kill that is still recovering is judged when it settles.
+        if e.recovery_secs.is_none() && !e.timed_out {
+            break;
+        }
+        *checked = e.seq;
+        if e.timed_out {
+            found.push(Violation {
+                at_secs: now.as_secs(),
+                check: "chaos_recovery",
+                detail: format!(
+                    "pod {} (kill {}) was not ready again within {}",
+                    e.pod,
+                    e.seq,
+                    humantime::format_duration(args.chaos_recovery)
+                ),
+            });
+        }
+    }
+    found
+}
+
 async fn terminate() {
     #[cfg(unix)]
     {
@@ -359,6 +403,22 @@ async fn main() -> Result<()> {
         Some(tokio::spawn(load::run(cfg, deadline)))
     };
 
+    if !args.chaos_interval.is_zero() {
+        let cfg = chaos::ChaosConfig {
+            interval: args.chaos_interval,
+            recovery_timeout: args.chaos_recovery,
+            selector: args.chaos_selector.clone(),
+            expected_pods: usize::try_from(args.expected_voters).unwrap_or(usize::MAX),
+            start,
+            state: state.clone(),
+        };
+        tokio::spawn(async move {
+            if let Err(e) = chaos::run(cfg, deadline).await {
+                error!(error = %format!("{e:#}"), "chaos task stopped");
+            }
+        });
+    }
+
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()?;
@@ -382,6 +442,7 @@ async fn main() -> Result<()> {
     let mut failed = false;
     // Highest load phase number already judged for its error rate.
     let mut checked_phase = 0u64;
+    let mut checked_chaos = 0u64;
 
     loop {
         let mut load_failure: Option<String> = None;
@@ -422,6 +483,7 @@ async fn main() -> Result<()> {
             });
         }
         found.extend(check_load(&state, &mut checked_phase, now, &args));
+        found.extend(check_chaos(&state, &mut checked_chaos, now, &args));
         for v in &found {
             error!(check = v.check, detail = %v.detail, "invariant violated");
         }
@@ -504,6 +566,32 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].check, "load_errors");
         assert!(check_load(&st, &mut checked, Duration::from_secs(2), &args()).is_empty());
+    }
+
+    #[test]
+    fn flags_unrecovered_kill_once() {
+        let st: Shared = Arc::new(RwLock::new(Verdict::default()));
+        let event = |seq, recovery_secs, timed_out| chaos::ChaosEvent {
+            seq,
+            pod: format!("ks-{seq}"),
+            at_secs: 0,
+            recovery_secs,
+            timed_out,
+        };
+        if let Ok(mut g) = st.write() {
+            g.chaos.events = vec![
+                event(1, Some(30), false),
+                event(2, None, true),
+                event(3, None, false),
+            ];
+        }
+        let mut checked = 0;
+        let found = check_chaos(&st, &mut checked, Duration::ZERO, &args());
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].check, "chaos_recovery");
+        // Kill 3 is still recovering and judged later.
+        assert_eq!(checked, 2);
+        assert!(check_chaos(&st, &mut checked, Duration::ZERO, &args()).is_empty());
     }
 
     #[test]

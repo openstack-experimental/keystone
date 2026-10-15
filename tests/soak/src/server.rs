@@ -27,6 +27,7 @@ use axum::{
 };
 use serde::Serialize;
 
+use crate::chaos::{ChaosEvent, ChaosTotals};
 use crate::invariants::{Summary, Violation};
 use crate::report::{self, Growth, LoadTotals, PhaseRecord};
 
@@ -44,6 +45,15 @@ pub struct Verdict {
     pub load_totals: LoadTotals,
     /// Executed load phases, oldest first (capped, see `report::MAX_PHASES`).
     pub phases: Vec<PhaseRecord>,
+    pub chaos: Chaos,
+}
+
+/// Pod kills of the chaos task.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct Chaos {
+    pub totals: ChaosTotals,
+    /// Recent kills, oldest first (capped, see `chaos::MAX_EVENTS`).
+    pub events: Vec<ChaosEvent>,
 }
 
 pub type Shared = Arc<RwLock<Verdict>>;
@@ -62,6 +72,7 @@ async fn verdict(State(s): State<Shared>) -> impl IntoResponse {
     // Series and per-phase records belong to `/report`.
     v.phases.clear();
     v.growth.points.clear();
+    v.chaos.events.clear();
     let code = if v.healthy {
         StatusCode::OK
     } else {
@@ -211,6 +222,32 @@ pub fn render(v: &Verdict) -> String {
         "soak_load_throttled_total",
         "Requests answered with 429",
         t.throttled as f64,
+    );
+    let c = &v.chaos.totals;
+    g(
+        "soak_chaos_kills_total",
+        "Raft pods deleted by the chaos task",
+        c.kills as f64,
+    );
+    g(
+        "soak_chaos_recovered_total",
+        "Deleted pods that came back ready in time",
+        c.recovered as f64,
+    );
+    g(
+        "soak_chaos_timed_out_total",
+        "Deleted pods that did not come back in time",
+        c.timed_out as f64,
+    );
+    g(
+        "soak_chaos_last_recovery_seconds",
+        "Time the last deleted pod needed to become ready again",
+        c.last_recovery_secs as f64,
+    );
+    g(
+        "soak_chaos_max_recovery_seconds",
+        "Longest recovery after a pod deletion",
+        c.max_recovery_secs as f64,
     );
     out
 }
