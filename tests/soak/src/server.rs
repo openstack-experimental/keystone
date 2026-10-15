@@ -282,6 +282,18 @@ pub fn render(v: &Verdict) -> String {
         "Requests answered with 429",
         t.throttled as f64,
     );
+    // Latency of the last load phase that left a summary.
+    if let Some(sum) = v.phases.iter().rev().find_map(|p| p.summary.as_ref()) {
+        for (class, help) in [
+            ("read", "p99 of GET requests in the last load phase"),
+            ("write", "p99 of writes in the last load phase"),
+            ("auth", "p99 of token issuing in the last load phase"),
+        ] {
+            if let Some(l) = sum.latency_by_class_ms.get(class) {
+                g(&format!("soak_load_{class}_p99_ms"), help, l.p99 as f64);
+            }
+        }
+    }
     let c = &v.chaos.totals;
     g(
         "soak_chaos_kills_total",

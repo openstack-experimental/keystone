@@ -189,6 +189,16 @@ struct Args {
     /// negative responses and throttling (429) are not failures.
     #[arg(long, env = "SOAK_MAX_LOAD_ERROR_RATE", default_value_t = 0.01)]
     max_load_error_rate: f64,
+    /// Largest allowed p99 of GET requests per load phase (`0` disables).
+    #[arg(long, env = "SOAK_MAX_READ_P99", default_value = "1s", value_parser = humantime::parse_duration)]
+    max_read_p99: Duration,
+    /// Largest allowed p99 of writes per load phase (`0` disables).
+    #[arg(long, env = "SOAK_MAX_WRITE_P99", default_value = "2s", value_parser = humantime::parse_duration)]
+    max_write_p99: Duration,
+    /// Largest allowed p99 of token issuing per load phase (`0` disables).
+    /// Password hashing makes this the slowest class under burst load.
+    #[arg(long, env = "SOAK_MAX_AUTH_P99", default_value = "2s", value_parser = humantime::parse_duration)]
+    max_auth_p99: Duration,
     /// Load phases with fewer requests are too small to judge.
     #[arg(long, env = "SOAK_MIN_LOAD_REQUESTS", default_value_t = 100)]
     min_load_requests: u64,
@@ -326,6 +336,74 @@ fn check_load(state: &Shared, checked: &mut u64, now: Duration, args: &Args) -> 
                     s.transport_errors,
                 ),
             });
+        }
+    }
+    found
+}
+
+/// Time windows (seconds since the start) in which the cluster was
+/// deliberately disturbed: from a pod kill or a partition until it recovered,
+/// plus a margin for the load to settle.
+fn disturbed_windows(state: &Shared, now: Duration, args: &Args) -> Vec<(u64, u64)> {
+    const MARGIN: u64 = 30;
+    let Ok(g) = state.read() else {
+        return Vec::new();
+    };
+    let now = now.as_secs();
+    let kills = g.chaos.events.iter().map(|e| {
+        let took = e.recovery_secs.unwrap_or(now.saturating_sub(e.at_secs));
+        (e.at_secs, e.at_secs + took + MARGIN)
+    });
+    let hold = args.partition_duration.as_secs();
+    let cuts = g.partition.events.iter().map(|e| {
+        let heal = e.heal_secs.unwrap_or(now.saturating_sub(e.at_secs));
+        (e.at_secs, e.at_secs + hold + heal + MARGIN)
+    });
+    kills.chain(cuts).collect()
+}
+
+/// Judge the p99 latency of load phases that finished since the last call.
+/// Phases that overlap a pod kill or a partition are not judged: they are
+/// slow on purpose, and the error rate covers them.
+fn check_latency(state: &Shared, checked: &mut u64, now: Duration, args: &Args) -> Vec<Violation> {
+    let windows = disturbed_windows(state, now, args);
+    let Ok(g) = state.read() else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    let already = *checked;
+    for p in g.phases.iter().filter(|p| p.seq > already) {
+        *checked = p.seq;
+        let Some(s) = &p.summary else { continue };
+        let end = p.start_secs + p.length_secs;
+        if windows.iter().any(|(a, b)| *a < end && p.start_secs < *b) {
+            continue;
+        }
+        for (class, limit) in [
+            ("read", args.max_read_p99),
+            ("write", args.max_write_p99),
+            ("auth", args.max_auth_p99),
+        ] {
+            let Some(l) = s.latency_by_class_ms.get(class) else {
+                continue;
+            };
+            if limit.is_zero() || l.requests < args.min_load_requests {
+                continue;
+            }
+            if u128::from(l.p99) > limit.as_millis() {
+                found.push(Violation {
+                    at_secs: now.as_secs(),
+                    check: "latency_p99",
+                    detail: format!(
+                        "{} phase {}: {class} p99 is {} ms over {} requests (limit {})",
+                        p.kind,
+                        p.seq,
+                        l.p99,
+                        l.requests,
+                        humantime::format_duration(limit)
+                    ),
+                });
+            }
         }
     }
     found
@@ -547,6 +625,7 @@ async fn main() -> Result<()> {
     // Highest load phase number already judged for its error rate.
     let mut checked_phase = 0u64;
     let mut checked_chaos = 0u64;
+    let mut checked_latency = 0u64;
     let mut checked_partition = 0u64;
     let mut checked_canary = 0u64;
 
@@ -591,6 +670,7 @@ async fn main() -> Result<()> {
         found.extend(check_load(&state, &mut checked_phase, now, &args));
         found.extend(check_canary(&state, &mut checked_canary, now));
         found.extend(check_chaos(&state, &mut checked_chaos, now, &args));
+        found.extend(check_latency(&state, &mut checked_latency, now, &args));
         found.extend(check_partition(&state, &mut checked_partition, now));
         for v in &found {
             error!(check = v.check, detail = %v.detail, "invariant violated");
@@ -674,6 +754,54 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].check, "load_errors");
         assert!(check_load(&st, &mut checked, Duration::from_secs(2), &args()).is_empty());
+    }
+
+    fn latency_state(read_p99: u64) -> Shared {
+        let st = state_with(1000, 0);
+        if let Ok(mut g) = st.write()
+            && let Some(sum) = g.phases[0].summary.as_mut()
+        {
+            sum.latency_by_class_ms.insert(
+                "read".into(),
+                report::Latency {
+                    requests: 500,
+                    p99: read_p99,
+                    ..report::Latency::default()
+                },
+            );
+        }
+        st
+    }
+
+    #[test]
+    fn flags_slow_p99_once() {
+        let st = latency_state(4000);
+        let mut checked = 0;
+        let found = check_latency(&st, &mut checked, Duration::from_secs(400), &args());
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].check, "latency_p99");
+        assert!(check_latency(&st, &mut checked, Duration::from_secs(400), &args()).is_empty());
+        // Within the limit, or too few requests, is fine.
+        let mut checked = 0;
+        assert!(
+            check_latency(&latency_state(500), &mut checked, Duration::ZERO, &args()).is_empty()
+        );
+    }
+
+    #[test]
+    fn skips_phases_disturbed_by_chaos() {
+        let st = latency_state(4000);
+        if let Ok(mut g) = st.write() {
+            g.chaos.events = vec![chaos::ChaosEvent {
+                seq: 1,
+                pod: "ks-0".into(),
+                at_secs: 100,
+                recovery_secs: Some(30),
+                timed_out: false,
+            }];
+        }
+        let mut checked = 0;
+        assert!(check_latency(&st, &mut checked, Duration::from_secs(400), &args()).is_empty());
     }
 
     #[test]

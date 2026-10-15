@@ -26,6 +26,7 @@
 
 use std::collections::BTreeMap;
 
+use goose::goose::GooseMethod;
 use goose::metrics::GooseMetrics;
 use serde::Serialize;
 
@@ -41,12 +42,16 @@ pub struct Summary {
     pub transport_errors: usize,
     pub status_codes: BTreeMap<u16, usize>,
     pub latency_ms: Latency,
+    /// Latency per kind of request: `read` (GET/HEAD), `auth` (token
+    /// issuing, dominated by password hashing) and `write` (the rest).
+    pub latency_by_class_ms: BTreeMap<String, Latency>,
     /// Endpoints with at least one failed request, worst first.
     pub failing_endpoints: Vec<Endpoint>,
 }
 
 #[derive(Debug, Default, Serialize)]
 pub struct Latency {
+    pub requests: usize,
     pub p50: usize,
     pub p95: usize,
     pub p99: usize,
@@ -76,6 +81,26 @@ fn percentile(times: &BTreeMap<usize, usize>, total: usize, q: f64) -> usize {
     times.keys().next_back().copied().unwrap_or(0)
 }
 
+/// `read`, `auth` or `write`.
+fn class(method: &GooseMethod, name: &str) -> &'static str {
+    match method {
+        GooseMethod::Get | GooseMethod::Head => "read",
+        GooseMethod::Post if name.contains("/auth/tokens") => "auth",
+        _ => "write",
+    }
+}
+
+fn latency(times: &BTreeMap<usize, usize>, max: usize) -> Latency {
+    let counted: usize = times.values().sum();
+    Latency {
+        requests: counted,
+        p50: percentile(times, counted, 0.50),
+        p95: percentile(times, counted, 0.95),
+        p99: percentile(times, counted, 0.99),
+        max,
+    }
+}
+
 pub fn summarize(metrics: &GooseMetrics) -> Summary {
     let mut s = Summary {
         duration_secs: metrics.duration,
@@ -83,6 +108,7 @@ pub fn summarize(metrics: &GooseMetrics) -> Summary {
         ..Summary::default()
     };
     let mut times: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut by_class: BTreeMap<&'static str, (BTreeMap<usize, usize>, usize)> = BTreeMap::new();
     for (name, agg) in &metrics.requests {
         let total = agg.success_count + agg.fail_count;
         s.requests += total;
@@ -90,8 +116,11 @@ pub fn summarize(metrics: &GooseMetrics) -> Summary {
         for (code, n) in &agg.status_code_counts {
             *s.status_codes.entry(*code).or_default() += n;
         }
+        let (class_times, class_max) = by_class.entry(class(&agg.method, name)).or_default();
+        *class_max = (*class_max).max(agg.raw_data.maximum_time);
         for (ms, n) in &agg.raw_data.times {
             *times.entry(*ms).or_default() += n;
+            *class_times.entry(*ms).or_default() += n;
         }
         s.latency_ms.max = s.latency_ms.max.max(agg.raw_data.maximum_time);
         if agg.fail_count > 0 {
@@ -104,10 +133,12 @@ pub fn summarize(metrics: &GooseMetrics) -> Summary {
     }
     s.throttled = s.status_codes.get(&429).copied().unwrap_or(0);
     s.transport_errors = s.status_codes.get(&0).copied().unwrap_or(0);
-    let counted: usize = times.values().sum();
-    s.latency_ms.p50 = percentile(&times, counted, 0.50);
-    s.latency_ms.p95 = percentile(&times, counted, 0.95);
-    s.latency_ms.p99 = percentile(&times, counted, 0.99);
+    let max = s.latency_ms.max;
+    s.latency_ms = latency(&times, max);
+    s.latency_by_class_ms = by_class
+        .into_iter()
+        .map(|(k, (t, m))| (k.to_string(), latency(&t, m)))
+        .collect();
     s.failing_endpoints.sort_by(|a, b| b.failed.cmp(&a.failed));
     s.failing_endpoints.truncate(10);
     s
@@ -125,5 +156,19 @@ mod tests {
         assert_eq!(percentile(&times, 100, 0.99), 100);
         assert_eq!(percentile(&times, 100, 1.0), 1000);
         assert_eq!(percentile(&BTreeMap::new(), 0, 0.5), 0);
+    }
+
+    #[test]
+    fn classifies_requests() {
+        assert_eq!(class(&GooseMethod::Get, "GET /v3/users"), "read");
+        assert_eq!(class(&GooseMethod::Post, "POST /v3/auth/tokens"), "auth");
+        assert_eq!(class(&GooseMethod::Post, "POST /v3/users"), "write");
+        assert_eq!(class(&GooseMethod::Delete, "DELETE /v3/users/1"), "write");
+    }
+
+    #[test]
+    fn latency_of_histogram() {
+        let l = latency(&BTreeMap::from([(10, 90), (100, 10)]), 120);
+        assert_eq!((l.requests, l.p50, l.p99, l.max), (100, 10, 100, 120));
     }
 }

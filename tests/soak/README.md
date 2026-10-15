@@ -88,6 +88,16 @@ restarts are tolerated.
   `SOAK_MIN_LOAD_REQUESTS` requests are not judged. Expected negative
   responses (wrong password, ...) and throttling (`429`, reported separately)
   are not failures
+- the p99 latency of a load phase stays within `SOAK_MAX_READ_P99` (`1s`,
+  GET), `SOAK_MAX_WRITE_P99` (`2s`) and `SOAK_MAX_AUTH_P99` (`2s`, token
+  issuing, dominated by password hashing); `0` disables a limit. A class
+  needs `SOAK_MIN_LOAD_REQUESTS` requests to be judged. Phases that overlap a
+  pod kill or a partition (until recovery plus 30 s) are not judged, they are
+  slow on purpose. The defaults are about 3 to 5 times the worst p99 seen on a
+  single-node k3s (steady 20 users: 84/260/260 ms, burst 100 users:
+  280/390/420 ms for read/write/auth); tune them to your hardware. `soak_load_read_p99_ms`, `soak_load_write_p99_ms`
+  and `soak_load_auth_p99_ms` show the last phase, the report table has the
+  p99 per class for every phase
 
 `soak_disk_bytes_total`, `soak_log_disk_bytes_total` and
 `soak_snapshot_bytes_total` are exported for judging long-term growth in

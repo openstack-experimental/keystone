@@ -40,12 +40,15 @@ pub struct LoadSummary {
     pub transport_errors: u64,
     pub status_codes: BTreeMap<u16, u64>,
     pub latency_ms: Latency,
+    /// Latency of `read`, `auth` and `write` requests.
+    pub latency_by_class_ms: BTreeMap<String, Latency>,
     pub failing_endpoints: Vec<Endpoint>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Latency {
+    pub requests: u64,
     pub p50: u64,
     pub p95: u64,
     pub p99: u64,
@@ -265,16 +268,21 @@ pub fn render_markdown(v: &Verdict) -> String {
     if !loaded.is_empty() {
         let _ = writeln!(
             o,
-            "\n| # | kind | users | start | requests | failed | 429 | p50 ms | p95 ms | max ms |\n\
-             |---|---|---|---|---|---|---|---|---|---|"
+            "\n| # | kind | users | start | requests | failed | 429 | p50 ms | p95 ms | p99 ms | max ms | p99 read | p99 write | p99 auth |\n\
+             |---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
         );
         // The most recent phases, the interesting ones for a running soak.
         let tail = &loaded[loaded.len().saturating_sub(TABLE_ROWS)..];
         for p in tail {
             if let Some(s) = &p.summary {
+                let class_p99 = |c: &str| {
+                    s.latency_by_class_ms
+                        .get(c)
+                        .map_or("-".to_string(), |l| l.p99.to_string())
+                };
                 let _ = writeln!(
                     o,
-                    "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+                    "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
                     p.seq,
                     p.kind,
                     p.users,
@@ -284,7 +292,11 @@ pub fn render_markdown(v: &Verdict) -> String {
                     s.throttled,
                     s.latency_ms.p50,
                     s.latency_ms.p95,
-                    s.latency_ms.max
+                    s.latency_ms.p99,
+                    s.latency_ms.max,
+                    class_p99("read"),
+                    class_p99("write"),
+                    class_p99("auth"),
                 );
             }
         }

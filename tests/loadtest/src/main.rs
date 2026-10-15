@@ -50,12 +50,10 @@ use crate::v3::user::{
     show_random as user_show_random,
 };
 use crate::v4::api_key::{
-    create as api_key_create, list as api_key_list, revoke as api_key_revoke,
-    show as api_key_show,
+    create as api_key_create, list as api_key_list, revoke as api_key_revoke, show as api_key_show,
 };
 use crate::v4::mapping::{
-    create as mapping_create, delete as mapping_delete, list as mapping_list,
-    show as mapping_show,
+    create as mapping_create, delete as mapping_delete, list as mapping_list, show as mapping_show,
 };
 use crate::v4::oauth2::{
     create_cc_client as oauth2_cc_client_create, create_client as oauth2_client_create,
