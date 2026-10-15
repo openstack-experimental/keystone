@@ -59,10 +59,13 @@ pub enum OpenApiFormat {
 /// Returned as a pair because the router is needed by
 /// [`super::router::build`] while the document is needed both here (for
 /// `--dump-openapi`) and there (for the Swagger UI mount).
-pub fn build_api() -> (Router<ServiceState>, utoipa::openapi::OpenApi) {
+///
+/// `oauth2_enabled` selects whether the OAuth2 provider routes (and their
+/// `OpenAPI` entries) are included.
+pub fn build_api(oauth2_enabled: bool) -> (Router<ServiceState>, utoipa::openapi::OpenApi) {
     let mut openapi = api::ApiDoc::openapi();
     let webauthn_openapi = webauthn::api::openapi_router();
-    let (main_router, main_api) = api::openapi_router().split_for_parts();
+    let (main_router, main_api) = api::openapi_router(oauth2_enabled).split_for_parts();
     openapi.merge(main_api);
     openapi = openapi.nest("/v4", webauthn_openapi.into_openapi());
     (main_router, openapi)

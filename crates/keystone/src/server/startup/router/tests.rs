@@ -24,7 +24,7 @@ use crate::server::startup::test_support::{test_config, test_startup};
 
 async fn build_test_router(cfg: crate::config::Config) -> (Router, Option<Arc<HttpMetrics>>) {
     let startup = test_startup(cfg).await;
-    let (main_router, _main_api) = api::openapi_router().split_for_parts();
+    let (main_router, _main_api) = api::openapi_router(true).split_for_parts();
     let openapi = api::ApiDoc::openapi();
     build(&startup, main_router, openapi)
         .await
@@ -242,4 +242,107 @@ async fn client_supplied_request_id_is_replaced() {
         .unwrap();
     assert_ne!(id, "req-attacker-chosen");
     assert!(id.starts_with("req-"), "unexpected id format: {id}");
+}
+
+// A disabled OAuth2 provider is not mounted: its routes answer 404 and are
+// absent from the OpenAPI document.
+#[tokio::test]
+async fn oauth2_routes_absent_when_disabled() {
+    let (_, enabled_api) = api::openapi_router(true).split_for_parts();
+    let (disabled_router, disabled_api) = api::openapi_router(false).split_for_parts();
+    assert!(
+        enabled_api
+            .paths
+            .paths
+            .keys()
+            .any(|p| p.starts_with("/v4/oauth2/"))
+    );
+    assert!(
+        !disabled_api
+            .paths
+            .paths
+            .keys()
+            .any(|p| p.starts_with("/v4/oauth2/"))
+    );
+
+    let tmp = tempfile::tempdir().unwrap();
+    let startup = test_startup(test_config(tmp.path().to_path_buf())).await;
+    let (app, _) = build(&startup, disabled_router, api::ApiDoc::openapi())
+        .await
+        .expect("router assembly succeeds");
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v4/oauth2/default/jwks")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), http::StatusCode::NOT_FOUND);
+}
+
+// A domain outside `[oauth2] enabled_domains` answers 404 before any handler
+// runs.
+#[tokio::test]
+async fn oauth2_domain_outside_allowlist_is_not_found() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut cfg = test_config(tmp.path().to_path_buf());
+    cfg.oauth2.enabled_domains = Some(vec!["pilot".into()]);
+    let (app, _) = build_test_router(cfg).await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v4/oauth2/other/jwks")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), http::StatusCode::NOT_FOUND);
+}
+
+// The gate matches the raw path segment: a percent-encoded id never equals an
+// allowlist entry, so it fails closed.
+#[tokio::test]
+async fn oauth2_gate_fails_closed_on_encoded_domain_id() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut cfg = test_config(tmp.path().to_path_buf());
+    cfg.oauth2.enabled_domains = Some(vec!["pilot".into()]);
+    let (app, _) = build_test_router(cfg).await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v4/oauth2/%70ilot/jwks")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), http::StatusCode::NOT_FOUND);
+}
+
+// Shared static assets are not per-domain and bypass the allowlist: the gate
+// must not answer for them (an unknown asset is still the handler's 404, but
+// an empty allowlist must not change the outcome vs. no allowlist).
+#[tokio::test]
+async fn oauth2_gate_exempts_static_assets() {
+    let tmp = tempfile::tempdir().unwrap();
+    let uri = "/v4/oauth2/static/missing.css";
+    let (open, _) = build_test_router(test_config(tmp.path().to_path_buf())).await;
+    let open_status = open
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+        .status();
+
+    let mut cfg = test_config(tmp.path().to_path_buf());
+    cfg.oauth2.enabled_domains = Some(vec![]);
+    let (gated, _) = build_test_router(cfg).await;
+    let gated_status = gated
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(open_status, gated_status);
 }

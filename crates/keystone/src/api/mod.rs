@@ -67,10 +67,12 @@ impl Modify for SecurityAddon {
 }
 
 /// Main API router.
-pub fn openapi_router() -> OpenApiRouter<ServiceState> {
+///
+/// `oauth2_enabled` controls whether the `/v4/oauth2` provider is mounted.
+pub fn openapi_router(oauth2_enabled: bool) -> OpenApiRouter<ServiceState> {
     OpenApiRouter::new()
         .nest("/v3", v3::openapi_router())
-        .nest("/v4", v4::openapi_router())
+        .nest("/v4", v4::openapi_router(oauth2_enabled))
         .routes(routes!(version))
         .layer(axum::middleware::map_response(
             json_rejection::normalize_json_rejection,
@@ -439,7 +441,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn trailing_slash_is_normalized() {
         let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
-        let (router, _) = openapi_router().split_for_parts();
+        let (router, _) = openapi_router(true).split_for_parts();
         let app = NormalizePathLayer::trim_trailing_slash().layer(router.with_state(state));
 
         // `/v3` is the canonical version-discovery route (needs no auth/DB).
@@ -476,7 +478,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn v4_role_assignment_routes_are_merged_not_nested() {
         let state = get_mocked_state(Provider::mocked_builder(), false, None).await;
-        let (router, _) = openapi_router().split_for_parts();
+        let (router, _) = openapi_router(true).split_for_parts();
         let app = NormalizePathLayer::trim_trailing_slash().layer(router.with_state(state));
 
         let status_of = async |uri: &'static str| {

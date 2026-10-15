@@ -251,6 +251,20 @@ impl Service {
         })
     }
 
+    /// Whether the OAuth2/OIDC provider is active on this deployment: the
+    /// `[oauth2] enabled` switch resolved against the presence of distributed
+    /// storage. A misconfiguration (explicitly enabled without storage) is
+    /// rejected at startup, so it reads as inactive here.
+    pub async fn oauth2_enabled(&self) -> bool {
+        self.config_manager
+            .config
+            .read()
+            .await
+            .oauth2
+            .resolve_enabled(self.storage.is_some())
+            .unwrap_or(false)
+    }
+
     /// Install the node-local emergency store, once distributed storage has
     /// finished initializing (ADR 0028). A no-op path (`local_emergency_store`
     /// stays `None`) if this is never called, e.g. on a node with no

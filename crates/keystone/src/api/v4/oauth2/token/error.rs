@@ -124,6 +124,19 @@ impl Oauth2TokenError {
         )
     }
 
+    /// `503 temporarily_unavailable` (RFC 6749 §5.2) with a `Retry-After` hint.
+    pub(crate) fn temporarily_unavailable(
+        description: impl Into<String>,
+        retry_after: u64,
+    ) -> Self {
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            retry_after: Some(retry_after),
+            error: "temporarily_unavailable",
+            error_description: description.into(),
+        }
+    }
+
     pub(crate) fn too_many_requests(retry_after: u64) -> Self {
         Self {
             status: StatusCode::TOO_MANY_REQUESTS,

@@ -68,10 +68,7 @@ pub(super) async fn handle_client_credentials_grant(
         .get_oauth2_client_provider()
         .get_by_client_id(&exec, &client_id)
         .await
-        .map_err(|e| {
-            tracing::warn!(error = %e, "oauth2 client lookup failed");
-            Oauth2TokenError::internal("client lookup failed")
-        })?;
+        .map_err(super::common::client_lookup_error)?;
 
     let Some(client) = client.filter(|c| c.domain_id == domain_id) else {
         // Enumeration defense (ADR 0026 §7.A / mirrors ADR 0021 Invariant

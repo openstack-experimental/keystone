@@ -51,6 +51,24 @@ impl std::fmt::Display for SigningAlgorithm {
 /// OAuth2/OIDC provider configuration.
 #[derive(Debug, Deserialize, Clone, Validate)]
 pub struct Oauth2Provider {
+    /// Serve the OAuth2/OIDC provider endpoints.
+    ///
+    /// Unset, the provider is enabled exactly when `[distributed_storage]`
+    /// is configured, because the client, session and signing-key stores are
+    /// Raft-only. Set to `false` the `/v4/oauth2` routes are not mounted
+    /// (they answer 404 and are absent from the OpenAPI document), no
+    /// OAuth2 janitor is spawned and signing keys are not provisioned for new
+    /// domains. Setting `true` without `[distributed_storage]` is a
+    /// configuration error.
+    #[serde(default)]
+    pub enabled: Option<bool>,
+
+    /// Allowlist of domain ids served by the provider. Unset serves every
+    /// domain; any request for another domain answers 404. Lets an operator
+    /// pilot the provider on a single domain of a multi-tenant deployment.
+    #[serde(default)]
+    pub enabled_domains: Option<Vec<String>>,
+
     /// Signing algorithm for per-domain OAuth2 signing keypairs.
     #[serde(default)]
     pub signing_algorithm: SigningAlgorithm,
@@ -408,6 +426,8 @@ fn default_session_janitor_interval_seconds() -> u32 {
 impl Default for Oauth2Provider {
     fn default() -> Self {
         Self {
+            enabled: None,
+            enabled_domains: None,
             signing_algorithm: SigningAlgorithm::default(),
             signing_key_rotation_days: default_signing_key_rotation_days(),
             argon2_memory_kib: default_argon2_memory_kib(),
@@ -451,6 +471,29 @@ impl Default for Oauth2Provider {
 }
 
 impl Oauth2Provider {
+    /// Resolve the `enabled` switch against the deployment: `raft_configured`
+    /// states whether `[distributed_storage]` is configured.
+    ///
+    /// Fails when the provider is explicitly enabled without Raft storage.
+    pub fn resolve_enabled(&self, raft_configured: bool) -> Result<bool, String> {
+        match self.enabled {
+            Some(true) if !raft_configured => Err(
+                "[oauth2] enabled = true requires [distributed_storage]: the OAuth2 client, \
+                 session and signing-key stores are Raft-only"
+                    .to_string(),
+            ),
+            Some(enabled) => Ok(enabled),
+            None => Ok(raft_configured),
+        }
+    }
+
+    /// Whether requests for `domain_id` may be served, per `enabled_domains`.
+    pub fn domain_allowed(&self, domain_id: &str) -> bool {
+        self.enabled_domains
+            .as_ref()
+            .is_none_or(|domains| domains.iter().any(|d| d == domain_id))
+    }
+
     /// Check the page customisation settings: the directories must exist and
     /// the branding URLs must be `https://` URLs or absolute paths.
     ///
@@ -656,5 +699,42 @@ mod tests {
             ..Default::default()
         };
         assert!(cfg.validate_ui().is_err());
+    }
+
+    #[test]
+    fn test_resolve_enabled() {
+        let default = Oauth2Provider::default();
+        assert_eq!(default.resolve_enabled(true), Ok(true));
+        assert_eq!(default.resolve_enabled(false), Ok(false));
+
+        let on = Oauth2Provider {
+            enabled: Some(true),
+            ..Default::default()
+        };
+        assert_eq!(on.resolve_enabled(true), Ok(true));
+        assert!(on.resolve_enabled(false).unwrap_err().contains("Raft-only"));
+
+        let off = Oauth2Provider {
+            enabled: Some(false),
+            ..Default::default()
+        };
+        assert_eq!(off.resolve_enabled(true), Ok(false));
+        assert_eq!(off.resolve_enabled(false), Ok(false));
+    }
+
+    #[test]
+    fn test_domain_allowed() {
+        assert!(Oauth2Provider::default().domain_allowed("any"));
+        let cfg = Oauth2Provider {
+            enabled_domains: Some(vec!["pilot".into()]),
+            ..Default::default()
+        };
+        assert!(cfg.domain_allowed("pilot"));
+        assert!(!cfg.domain_allowed("other"));
+        let none = Oauth2Provider {
+            enabled_domains: Some(vec![]),
+            ..Default::default()
+        };
+        assert!(!none.domain_allowed("pilot"));
     }
 }

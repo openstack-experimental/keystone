@@ -64,14 +64,13 @@ use crate::api::types::*;
 )]
 pub struct ApiDoc;
 
-pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
-    OpenApiRouter::new()
+pub(super) fn openapi_router(oauth2_enabled: bool) -> OpenApiRouter<ServiceState> {
+    let router = OpenApiRouter::new()
         .nest("/api-keys", api_key::openapi_router())
         .nest("/auth", auth::openapi_router())
         .nest("/auth_plugins", auth_plugin::openapi_router())
         .nest("/groups", group::openapi_router())
         .nest("/mappings", mapping::openapi_router())
-        .nest("/oauth2", oauth2::openapi_router())
         .nest("/federation", federation::openapi_router())
         .nest("/k8s_auth", k8s_auth::openapi_router())
         .nest("/roles", role::openapi_router())
@@ -86,7 +85,14 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         // them under `/role_assignments` would prefix those absolute paths
         // and yield `/v4/role_assignments/role_assignments`.
         .merge(role_assignment::openapi_router())
-        .routes(routes!(version))
+        .routes(routes!(version));
+    // The OAuth2 provider is mounted only when enabled, so a disabled
+    // deployment answers 404 and omits the endpoints from the OpenAPI spec.
+    if oauth2_enabled {
+        router.nest("/oauth2", oauth2::openapi_router())
+    } else {
+        router
+    }
 }
 
 /// Version discovery endpoint

@@ -81,8 +81,12 @@ pub async fn spawn_all(startup: &Startup, phase_start: Instant) {
     //  - OAuth2 expired session/code/device/refresh-token purge (ADR 0026 §9)
     api_key_janitor::spawn(state.clone());
     scim_resource_janitor::spawn(state.clone());
-    oauth2_key_janitor::spawn(state.clone());
-    oauth2_session_janitor::spawn(state.clone());
+    if state.oauth2_enabled().await {
+        oauth2_key_janitor::spawn(state.clone());
+        oauth2_session_janitor::spawn(state.clone());
+    } else {
+        debug!("OAuth2 provider is disabled: not spawning the OAuth2 janitors");
+    }
 
     // Report-only sweep of role assignments whose user, group, project or
     // domain no longer exists (safety net for the delete cascades). Read-only

@@ -116,8 +116,8 @@ pub async fn run() -> Result<(), Report> {
 
     // When only dumping the OpenAPI spec we must not touch the config file,
     // so logging is not initialized yet either.
-    let (main_router, openapi) = args::build_api();
     if let Some(dump_format) = &args.dump_openapi {
+        let (_, openapi) = args::build_api(true);
         return args::dump_openapi(dump_format, &openapi);
     }
 
@@ -141,8 +141,22 @@ pub async fn run() -> Result<(), Report> {
     color_eyre::install()?;
     log_telemetry_config(&guards);
 
-    check_oauth2_public_endpoint(&cfg);
-    crate::api::v4::oauth2::init_ui(&cfg.oauth2).map_err(|e| eyre::eyre!(e))?;
+    let raft_configured = cfg
+        .view()
+        .section::<openstack_keystone_distributed_storage::config::DistributedStorageConfiguration>(
+        )
+        .is_some();
+    let oauth2_enabled = cfg
+        .oauth2
+        .resolve_enabled(raft_configured)
+        .map_err(|e| eyre::eyre!(e))?;
+    let (main_router, openapi) = args::build_api(oauth2_enabled);
+    if oauth2_enabled {
+        check_oauth2_public_endpoint(&cfg);
+        crate::api::v4::oauth2::init_ui(&cfg.oauth2).map_err(|e| eyre::eyre!(e))?;
+    } else {
+        info!("OAuth2 provider is disabled: /v4/oauth2 is not served");
+    }
 
     info!("Starting Keystone...");
     let startup_timer = Instant::now();

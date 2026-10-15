@@ -29,6 +29,29 @@ use crate::keystone::ServiceState;
 
 use super::{Oauth2TokenError, TokenForm};
 
+/// `Retry-After` hint (seconds) sent while the Raft store is unavailable.
+const RAFT_UNAVAILABLE_RETRY_AFTER_SECS: u64 = 5;
+
+/// Map an OAuth2 client lookup failure to a token endpoint error: an
+/// unavailable Raft store is `503 temporarily_unavailable` (RFC 6749 §5.2),
+/// anything else a `500`.
+pub(super) fn client_lookup_error(
+    e: openstack_keystone_core_types::oauth2_client::Oauth2ClientProviderError,
+) -> Oauth2TokenError {
+    tracing::warn!(error = %e, "oauth2 client lookup failed");
+    if matches!(
+        e,
+        openstack_keystone_core_types::oauth2_client::Oauth2ClientProviderError::RaftNotAvailable
+    ) {
+        Oauth2TokenError::temporarily_unavailable(
+            "the OAuth2 provider storage is not available",
+            RAFT_UNAVAILABLE_RETRY_AFTER_SECS,
+        )
+    } else {
+        Oauth2TokenError::internal("client lookup failed")
+    }
+}
+
 /// Extract `client_id`/`client_secret` via HTTP Basic (`client_secret_basic`,
 /// RFC 6749 §2.3.1), falling back to the form body if no `Authorization`
 /// header is present. Basic auth takes precedence when both are given, per
@@ -149,10 +172,7 @@ pub(in crate::api::v4::oauth2) async fn authenticate_client(
         .get_oauth2_client_provider()
         .get_by_client_id(&exec, client_id)
         .await
-        .map_err(|e| {
-            tracing::warn!(error = %e, "oauth2 client lookup failed");
-            Oauth2TokenError::internal("client lookup failed")
-        })?;
+        .map_err(client_lookup_error)?;
 
     let Some(client) = client.filter(|c| c.domain_id == domain_id) else {
         let _ = crypto::generate_dummy_hash(oauth2_cfg).await;
@@ -217,10 +237,7 @@ pub(in crate::api::v4::oauth2) async fn validate_device_code_client(
         .get_oauth2_client_provider()
         .get_by_client_id(&exec, client_id)
         .await
-        .map_err(|e| {
-            tracing::warn!(error = %e, "oauth2 client lookup failed");
-            Oauth2TokenError::internal("client lookup failed")
-        })?;
+        .map_err(client_lookup_error)?;
     let Some(client) =
         client.filter(|c| c.domain_id == domain_id && c.enabled && c.deleted_at.is_none())
     else {
@@ -254,5 +271,24 @@ pub(super) async fn discard_refresh_family(state: &ServiceState, family_id: Opti
         .await
     {
         tracing::warn!(error = %e, family_id, "failed to discard undelivered refresh family");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::{http::StatusCode, response::IntoResponse};
+    use openstack_keystone_core_types::oauth2_client::Oauth2ClientProviderError;
+
+    use super::*;
+
+    #[test]
+    fn raft_unavailable_maps_to_503_with_retry_after() {
+        let response =
+            client_lookup_error(Oauth2ClientProviderError::RaftNotAvailable).into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            response.headers().get(axum::http::header::RETRY_AFTER),
+            Some(&axum::http::HeaderValue::from_static("5"))
+        );
     }
 }

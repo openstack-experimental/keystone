@@ -40,6 +40,11 @@ impl ProviderHooks for Oauth2KeyHook {
             return;
         };
 
+        // `[oauth2] enabled = false` turns the provider off entirely.
+        if self.state.config_manager.config.read().await.oauth2.enabled == Some(false) {
+            return;
+        }
+
         // Raft storage may not be available in non-raft mode; keys are
         // only needed when the JWS token provider is active.
         if let Err(e) = self

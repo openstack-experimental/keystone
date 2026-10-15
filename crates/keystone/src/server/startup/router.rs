@@ -89,10 +89,45 @@ pub async fn build(
     let state = &startup.state;
     let mut app = Router::new().merge(main_router.with_state(state.clone()));
     app = mount_extensions(app, startup).await?;
+    app = app.layer(middleware::from_fn_with_state(state.clone(), oauth2_gate));
     let span_options = options_from_config(&*state.config_manager.config.read().await);
     app = apply_middleware(app, state, span_options);
     let (app, http_metrics) = attach_http_metrics(app, state).await;
     Ok((finalize(app, openapi), http_metrics))
+}
+
+/// Gate the OAuth2 provider routes (`/v4/oauth2/{domain_id}/...`).
+///
+/// A domain outside `[oauth2] enabled_domains` answers `404`, as if the
+/// provider did not exist for it.
+async fn oauth2_gate(
+    axum::extract::State(state): axum::extract::State<ServiceState>,
+    req: Request<axum::body::Body>,
+    next: middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    // `static` is the shared asset route (`/v4/oauth2/static/{*path}`), not a
+    // domain; it shadows a domain literally named `static` regardless, so
+    // exempting it here opens nothing. The segment is matched raw (not
+    // percent-decoded): an encoded id never equals an allowlist entry and
+    // fails closed with 404.
+    let mut segments = req.uri().path().trim_start_matches('/').split('/');
+    if let (Some("v4"), Some("oauth2"), Some(domain_id)) =
+        (segments.next(), segments.next(), segments.next())
+        && !domain_id.is_empty()
+        && domain_id != "static"
+        && !state
+            .config_manager
+            .config
+            .read()
+            .await
+            .oauth2
+            .domain_allowed(domain_id)
+    {
+        return http::StatusCode::NOT_FOUND.into_response();
+    }
+    next.run(req).await
 }
 
 /// Nest the config-gated `WebAuthN` extension (`/v4`) and the always-on SCIM

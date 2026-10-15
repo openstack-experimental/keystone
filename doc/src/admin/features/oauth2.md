@@ -10,6 +10,27 @@ and threat model; this page is the operational surface on top of it.
 For end-user/application-developer facing flows (login, token requests, device
 code), see the [OAuth2 / OIDC user guide](../../user/features/oauth2.md).
 
+## Enabling the provider
+
+The provider **requires Raft storage**: the client, session and signing-key
+stores only exist in `[distributed_storage]`. Configure that first.
+
+- `[oauth2] enabled` unset (default): the provider is on exactly when
+  `[distributed_storage]` is configured and off otherwise.
+- `enabled = false`: `/v4/oauth2` is not mounted (404, absent from the OpenAPI
+  document), the OAuth2 janitors do not run and no signing key is provisioned
+  for new domains.
+- `enabled = true` without `[distributed_storage]` is a startup error.
+- `enabled_domains = ["<domain_id>", ...]` restricts the provider to the listed
+  domains; any other domain answers 404. An empty list serves no domain. Use it
+  to pilot the provider on one domain of a multi-tenant deployment.
+- Both settings are read at startup to decide which routes and janitors exist:
+  changing `enabled` requires a restart.
+
+If the Raft store cannot be reached while the provider is enabled, `/token`
+answers `503 temporarily_unavailable` (RFC 6749 §5.2) with a `Retry-After`
+header instead of a 500.
+
 ## Concepts
 
 - Every domain owns its own **independent signing keypair** — there is no
@@ -33,6 +54,8 @@ code), see the [OAuth2 / OIDC user guide](../../user/features/oauth2.md).
 
 | Option                                  | Default | Purpose                                                                                                                                          |
 | --------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `enabled`                               | unset   | Serve the provider. Unset: on when `[distributed_storage]` is configured. `true` without it is a startup error.                                 |
+| `enabled_domains`                       | unset   | Allowlist of domain ids served by the provider; other domains answer 404. Unset serves every domain.                                              |
 | `signing_algorithm`                     | `ES256` | `ES256` or `RS256`. Governs both outbound signing and inbound verification — must match across a deployment.                                     |
 | `signing_key_rotation_days`             | 90      | Automatic rotation cadence. Manual rotation via `keystone-manage oauth2 rotate-signing-key` is always available regardless of this value.        |
 | `argon2_memory_kib`                     | 65536   | Argon2id memory cost for confidential-client secret hashing.                                                                                     |
