@@ -32,6 +32,7 @@ use crate::chaos::{ChaosEvent, ChaosTotals};
 use crate::invariants::{Summary, Violation};
 use crate::partition::{PartitionEvent, PartitionTotals};
 use crate::report::{self, Growth, LoadTotals, PhaseRecord};
+use crate::rollout::{RolloutEvent, RolloutTotals};
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Verdict {
@@ -49,6 +50,7 @@ pub struct Verdict {
     pub phases: Vec<PhaseRecord>,
     pub chaos: Chaos,
     pub partition: Partition,
+    pub rollout: Rollout,
     pub canary: Canary,
 }
 
@@ -78,6 +80,16 @@ pub struct Partition {
     pub events: Vec<PartitionEvent>,
 }
 
+/// Rolling restarts of the rollout task.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct Rollout {
+    /// A rolling restart is running; kills and partitions wait.
+    pub active: bool,
+    pub totals: RolloutTotals,
+    /// Recent rollouts, oldest first (capped, see `rollout::MAX_EVENTS`).
+    pub events: Vec<RolloutEvent>,
+}
+
 pub type Shared = Arc<RwLock<Verdict>>;
 
 pub fn router(state: Shared) -> Router {
@@ -96,6 +108,7 @@ async fn verdict(State(s): State<Shared>) -> impl IntoResponse {
     v.growth.points.clear();
     v.chaos.events.clear();
     v.partition.events.clear();
+    v.rollout.events.clear();
     let code = if v.healthy {
         StatusCode::OK
     } else {
@@ -319,6 +332,27 @@ pub fn render(v: &Verdict) -> String {
         "soak_chaos_max_recovery_seconds",
         "Longest recovery after a pod deletion",
         c.max_recovery_secs as f64,
+    );
+    let r = &v.rollout.totals;
+    g(
+        "soak_rollout_total",
+        "Rolling restarts started by the rollout task",
+        r.rollouts as f64,
+    );
+    g(
+        "soak_rollout_failed_total",
+        "Rolling restarts that broke an invariant",
+        r.failed as f64,
+    );
+    g(
+        "soak_rollout_last_converged_seconds",
+        "Time the last rolling restart needed until the cluster converged",
+        r.last_converged_secs as f64,
+    );
+    g(
+        "soak_rollout_max_write_gap_seconds",
+        "Longest stretch without an acknowledged write during a rolling restart",
+        r.max_write_gap_secs as f64,
     );
     let p = &v.partition.totals;
     g(

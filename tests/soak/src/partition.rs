@@ -137,20 +137,30 @@ pub fn parse_view(pod: &str, text: &str) -> Option<NodeView> {
     })
 }
 
-async fn view(http: &reqwest::Client, cfg: &PartitionConfig, pod: &str) -> Option<NodeView> {
-    let url = format!("http://{pod}.{}:{}/metrics", cfg.service, cfg.metrics_port);
-    let text = http.get(url).send().await.ok()?.text().await.ok()?;
-    parse_view(pod, &text)
-}
-
-async fn views(http: &reqwest::Client, cfg: &PartitionConfig, pods: &[String]) -> Vec<NodeView> {
+/// The Raft view of each of `pods` that answers on `service`.
+pub async fn fetch_views(
+    http: &reqwest::Client,
+    service: &str,
+    port: u16,
+    pods: &[String],
+) -> Vec<NodeView> {
     let mut out = Vec::new();
     for pod in pods {
-        if let Some(v) = view(http, cfg, pod).await {
+        let url = format!("http://{pod}.{service}:{port}/metrics");
+        let Ok(resp) = http.get(url).send().await else {
+            continue;
+        };
+        if let Ok(text) = resp.text().await
+            && let Some(v) = parse_view(pod, &text)
+        {
             out.push(v);
         }
     }
     out
+}
+
+async fn views(http: &reqwest::Client, cfg: &PartitionConfig, pods: &[String]) -> Vec<NodeView> {
+    fetch_views(http, &cfg.service, cfg.metrics_port, pods).await
 }
 
 /// The cluster has settled: every node answers, exactly one claims to lead,
@@ -346,12 +356,14 @@ pub async fn run(cfg: PartitionConfig, deadline: Option<Instant>) -> Result<()> 
         // Only cut a healthy, settled cluster, not one still recovering from
         // a pod kill.
         let (pods, seen) = loop {
-            let killing = cfg.state.read().is_ok_and(|g| {
-                g.chaos
-                    .events
-                    .last()
-                    .is_some_and(|e| e.recovery_secs.is_none() && !e.timed_out)
-            });
+            let rolling = cfg.state.read().is_ok_and(|g| g.rollout.active);
+            let killing = rolling
+                || cfg.state.read().is_ok_and(|g| {
+                    g.chaos
+                        .events
+                        .last()
+                        .is_some_and(|e| e.recovery_secs.is_none() && !e.timed_out)
+                });
             if !killing
                 && let Ok(p) = kube.pods(&cfg.selector).await
                 && all_ready(&p, cfg.expected_pods)

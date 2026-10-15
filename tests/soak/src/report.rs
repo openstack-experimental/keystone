@@ -348,6 +348,49 @@ pub fn render_markdown(v: &Verdict) -> String {
         }
     }
 
+    let r = &v.rollout;
+    if r.totals.rollouts > 0 {
+        let _ = writeln!(o, "\n## Rolling restarts\n");
+        let _ = writeln!(
+            o,
+            "{} rolling restarts: {} failed a check; converged in {} s last, {} s max; \
+             longest stretch without a write {} s",
+            r.totals.rollouts,
+            r.totals.failed,
+            r.totals.last_converged_secs,
+            r.totals.max_converged_secs,
+            r.totals.max_write_gap_secs
+        );
+        let _ = writeln!(
+            o,
+            "\n| # | at | rolled out | converged | write gap | writes failed | failures |\n|---|---|---|---|---|---|---|"
+        );
+        let secs = |v: Option<u64>, done: bool| match (v, done) {
+            (Some(s), _) => format!("{s} s"),
+            (None, true) => "NO".to_string(),
+            (None, false) => "pending".to_string(),
+        };
+        for e in r.events.iter().rev().take(TABLE_ROWS).rev() {
+            let failures = e
+                .failures
+                .iter()
+                .map(|f| f.check)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let _ = writeln!(
+                o,
+                "| {} | {} | {} | {} | {} s | {}/{} | {failures} |",
+                e.seq,
+                hms(e.at_secs),
+                secs(e.rolled_secs, e.done),
+                secs(e.converged_secs, e.done),
+                e.max_write_gap_secs,
+                e.failed_probes,
+                e.probes
+            );
+        }
+    }
+
     let n = &v.partition;
     if n.totals.partitions > 0 {
         let _ = writeln!(o, "\n## Partitions\n");

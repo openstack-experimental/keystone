@@ -115,6 +115,52 @@ impl Pod {
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct StatefulSet {
+    metadata: StatefulSetMeta,
+    #[serde(default)]
+    spec: StatefulSetSpec,
+    #[serde(default)]
+    status: StatefulSetStatus,
+}
+
+#[derive(Debug, Deserialize)]
+struct StatefulSetMeta {
+    #[serde(default)]
+    generation: i64,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct StatefulSetSpec {
+    #[serde(default)]
+    replicas: i64,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct StatefulSetStatus {
+    #[serde(default, rename = "observedGeneration")]
+    observed_generation: i64,
+    #[serde(default, rename = "readyReplicas")]
+    ready_replicas: i64,
+    #[serde(default, rename = "updatedReplicas")]
+    updated_replicas: i64,
+    #[serde(default, rename = "currentRevision")]
+    current_revision: String,
+    #[serde(default, rename = "updateRevision")]
+    update_revision: String,
+}
+
+impl StatefulSet {
+    /// Every pod runs the latest revision and is ready.
+    pub(crate) fn rolled_out(&self) -> bool {
+        let (st, want) = (&self.status, self.spec.replicas);
+        st.observed_generation >= self.metadata.generation
+            && st.updated_replicas == want
+            && st.ready_replicas == want
+            && st.current_revision == st.update_revision
+    }
+}
+
 /// Minimal in-cluster Kubernetes client: list and delete pods.
 pub(crate) struct Kube {
     http: reqwest::Client,
@@ -174,6 +220,41 @@ impl Kube {
         let mut pods = list.items;
         pods.sort_by(|a, b| a.metadata.name.cmp(&b.metadata.name));
         Ok(pods)
+    }
+
+    fn statefulset_url(&self, name: &str) -> String {
+        format!(
+            "{}/apis/apps/v1/namespaces/{}/statefulsets/{name}",
+            self.base, self.namespace
+        )
+    }
+
+    pub(crate) async fn statefulset(&self, name: &str) -> Result<StatefulSet> {
+        Ok(self
+            .http
+            .get(self.statefulset_url(name))
+            .bearer_auth(self.token().await?)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?)
+    }
+
+    /// Roll the pods of a StatefulSet the way `kubectl rollout restart` does.
+    pub(crate) async fn restart_statefulset(&self, name: &str, at: &str) -> Result<()> {
+        let patch = serde_json::json!({"spec": {"template": {"metadata": {"annotations": {
+            "kubectl.kubernetes.io/restartedAt": at,
+        }}}}});
+        self.http
+            .patch(self.statefulset_url(name))
+            .bearer_auth(self.token().await?)
+            .header("content-type", "application/strategic-merge-patch+json")
+            .body(patch.to_string())
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
     }
 
     fn policies_url(&self) -> String {
@@ -277,7 +358,10 @@ pub async fn run(cfg: ChaosConfig, deadline: Option<Instant>) -> Result<()> {
         // Only break a healthy cluster, never one that is still recovering
         // or has a node cut off by the partition task.
         let pods = loop {
-            let partitioned = cfg.state.read().is_ok_and(|g| g.partition.active);
+            let partitioned = cfg
+                .state
+                .read()
+                .is_ok_and(|g| g.partition.active || g.rollout.active);
             match kube.pods(&cfg.selector).await {
                 Ok(p) if !partitioned && all_ready(&p, cfg.expected_pods) => break p,
                 Ok(_) => {}
@@ -394,6 +478,23 @@ mod tests {
         let mut terminating = pod("a", true);
         terminating.metadata.deletion_timestamp = Some("now".into());
         assert!(!all_ready(&[terminating], 1));
+    }
+
+    #[test]
+    fn knows_when_a_statefulset_is_rolled_out() {
+        let json = |obs: i64, updated: i64, ready: i64, current: &str| {
+            format!(
+                r#"{{"metadata":{{"generation":3}},"spec":{{"replicas":3}},
+                "status":{{"observedGeneration":{obs},"updatedReplicas":{updated},
+                "readyReplicas":{ready},"currentRevision":"{current}","updateRevision":"r2"}}}}"#
+            )
+        };
+        let parse = |j: String| serde_json::from_str::<StatefulSet>(&j).expect("valid json");
+        assert!(parse(json(3, 3, 3, "r2")).rolled_out());
+        assert!(!parse(json(2, 3, 3, "r2")).rolled_out());
+        assert!(!parse(json(3, 1, 3, "r2")).rolled_out());
+        assert!(!parse(json(3, 3, 2, "r2")).rolled_out());
+        assert!(!parse(json(3, 3, 3, "r1")).rolled_out());
     }
 
     #[test]

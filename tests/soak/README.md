@@ -92,7 +92,8 @@ restarts are tolerated.
   GET), `SOAK_MAX_WRITE_P99` (`2s`) and `SOAK_MAX_AUTH_P99` (`2s`, token
   issuing, dominated by password hashing); `0` disables a limit. A class
   needs `SOAK_MIN_LOAD_REQUESTS` requests to be judged. Phases that overlap a
-  pod kill or a partition (until recovery plus 30 s) are not judged, they are
+  pod kill, a partition or a rolling restart (until recovery plus 30 s) are not
+  judged, they are
   slow on purpose. The defaults are about 3 to 5 times the worst p99 seen on a
   single-node k3s (steady 20 users: 84/260/260 ms, burst 100 users:
   280/390/420 ms for read/write/auth); tune them to your hardware. `soak_load_read_p99_ms`, `soak_load_write_p99_ms`
@@ -122,6 +123,33 @@ next one only after the previous victim came back as a new, ready pod.
 - Exported: `soak_chaos_kills_total`, `soak_chaos_recovered_total`,
   `soak_chaos_timed_out_total`, `soak_chaos_last_recovery_seconds`,
   `soak_chaos_max_recovery_seconds`; the report has a "Chaos" section.
+
+## Rolling restarts
+
+With `SOAK_ROLLOUT_INTERVAL` set (`2h` in the soak overlay, `0` disables)
+the controller restarts the whole `keystone-rs` StatefulSet
+(`SOAK_ROLLOUT_STATEFULSET`) the way `kubectl rollout restart` does, so every
+pod is replaced in turn while the load and the canaries keep running. That
+is what an image upgrade does to the cluster, and what the other faults do
+not cover: a node that comes back with old state while its peers have moved
+on, repeated leader changes and a voter that has to catch up each time.
+
+- `rollout_timeout`: not every pod ran the new revision and was ready, and
+  the cluster not converged (one leader that every node agrees on, no apply
+  lag, all voters present), within `SOAK_ROLLOUT_TIMEOUT` (15 m).
+- `rollout_write_gap`: while the rollout runs a write is sent through the
+  cluster service every few seconds; the longest stretch without an
+  acknowledged one may not exceed `SOAK_ROLLOUT_MAX_WRITE_GAP` (60 s).
+- Writes that were acknowledged and then lost, or data changed by the
+  restarts, show up as a canary `integrity` failure.
+- Pod kills and partitions wait while a rollout runs, and the rollout waits
+  until the cluster is idle, ready and converged. Load phases that overlap a
+  rollout are not judged for latency.
+- Needs RBAC to `get`/`patch` the StatefulSet (`overlays/soak/soak.yaml`).
+- Exported: `soak_rollout_total`, `soak_rollout_failed_total`,
+  `soak_rollout_last_converged_seconds`,
+  `soak_rollout_max_write_gap_seconds`; the report has a "Rolling restarts"
+  section.
 
 ## Partitions
 

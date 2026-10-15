@@ -25,6 +25,7 @@ mod load;
 mod partition;
 mod prom;
 mod report;
+mod rollout;
 mod server;
 
 use std::sync::{Arc, RwLock};
@@ -139,6 +140,22 @@ struct Args {
     /// The cluster must converge within this time after the cut is lifted.
     #[arg(long, env = "SOAK_PARTITION_RECOVERY", default_value = "3m", value_parser = humantime::parse_duration)]
     partition_recovery: Duration,
+    /// Restart the whole StatefulSet, pod after pod, this often (`0`
+    /// disables). Needs RBAC to patch the StatefulSet, see
+    /// `overlays/soak/soak.yaml`.
+    #[arg(long, env = "SOAK_ROLLOUT_INTERVAL", default_value = "0s", value_parser = humantime::parse_duration)]
+    rollout_interval: Duration,
+    /// Name of the StatefulSet to restart.
+    #[arg(long, env = "SOAK_ROLLOUT_STATEFULSET", default_value = "keystone-rs")]
+    rollout_statefulset: String,
+    /// A rolling restart must finish and the cluster converge within this
+    /// time.
+    #[arg(long, env = "SOAK_ROLLOUT_TIMEOUT", default_value = "15m", value_parser = humantime::parse_duration)]
+    rollout_timeout: Duration,
+    /// Longest allowed stretch without an acknowledged write during a
+    /// rolling restart.
+    #[arg(long, env = "SOAK_ROLLOUT_MAX_WRITE_GAP", default_value = "60s", value_parser = humantime::parse_duration)]
+    rollout_max_write_gap: Duration,
     /// Write and verify a canary record this often (`0` disables). Each
     /// record is read back from every node (read-after-write) and the
     /// earlier ones are re-checked (integrity).
@@ -342,7 +359,8 @@ fn check_load(state: &Shared, checked: &mut u64, now: Duration, args: &Args) -> 
 }
 
 /// Time windows (seconds since the start) in which the cluster was
-/// deliberately disturbed: from a pod kill or a partition until it recovered,
+/// deliberately disturbed: from a pod kill, a partition or a rolling restart
+/// until it recovered,
 /// plus a margin for the load to settle.
 fn disturbed_windows(state: &Shared, now: Duration, args: &Args) -> Vec<(u64, u64)> {
     const MARGIN: u64 = 30;
@@ -359,11 +377,15 @@ fn disturbed_windows(state: &Shared, now: Duration, args: &Args) -> Vec<(u64, u6
         let heal = e.heal_secs.unwrap_or(now.saturating_sub(e.at_secs));
         (e.at_secs, e.at_secs + hold + heal + MARGIN)
     });
-    kills.chain(cuts).collect()
+    let rolls = g.rollout.events.iter().map(|e| {
+        let took = e.converged_secs.unwrap_or(now.saturating_sub(e.at_secs));
+        (e.at_secs, e.at_secs + took + MARGIN)
+    });
+    kills.chain(cuts).chain(rolls).collect()
 }
 
 /// Judge the p99 latency of load phases that finished since the last call.
-/// Phases that overlap a pod kill or a partition are not judged: they are
+/// Phases that overlap a pod kill, a partition or a rolling restart are not judged: they are
 /// slow on purpose, and the error rate covers them.
 fn check_latency(state: &Shared, checked: &mut u64, now: Duration, args: &Args) -> Vec<Violation> {
     let windows = disturbed_windows(state, now, args);
@@ -456,6 +478,31 @@ fn check_partition(state: &Shared, checked: &mut u64, now: Duration) -> Vec<Viol
                 at_secs: now.as_secs(),
                 check: f.check,
                 detail: format!("partition {} of {} {}: {}", e.seq, e.role, e.pod, f.detail),
+            });
+        }
+    }
+    found
+}
+
+/// Report the failed checks of rolling restarts that settled since the last
+/// call.
+fn check_rollout(state: &Shared, checked: &mut u64, now: Duration) -> Vec<Violation> {
+    let Ok(g) = state.read() else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    let already = *checked;
+    for e in g.rollout.events.iter().filter(|e| e.seq > already) {
+        // A rollout that is still running is judged when it settles.
+        if !e.done {
+            break;
+        }
+        *checked = e.seq;
+        for f in &e.failures {
+            found.push(Violation {
+                at_secs: now.as_secs(),
+                check: f.check,
+                detail: format!("rollout {}: {}", e.seq, f.detail),
             });
         }
     }
@@ -585,6 +632,32 @@ async fn main() -> Result<()> {
         });
     }
 
+    if !args.rollout_interval.is_zero() {
+        let cfg = rollout::RolloutConfig {
+            interval: args.rollout_interval,
+            timeout: args.rollout_timeout,
+            max_write_gap: args.rollout_max_write_gap,
+            statefulset: args.rollout_statefulset.clone(),
+            selector: args.chaos_selector.clone(),
+            expected_pods: usize::try_from(args.expected_voters).unwrap_or(usize::MAX),
+            service: args.metrics_service.clone(),
+            metrics_port: args.metrics_port,
+            write_node: args
+                .host
+                .trim_start_matches("http://")
+                .trim_end_matches('/')
+                .to_string(),
+            host: args.host.clone(),
+            start,
+            state: state.clone(),
+        };
+        tokio::spawn(async move {
+            if let Err(e) = rollout::run(cfg, deadline).await {
+                error!(error = %format!("{e:#}"), "rollout task stopped");
+            }
+        });
+    }
+
     if !args.canary_interval.is_zero() {
         let cfg = canary::CanaryConfig {
             interval: args.canary_interval,
@@ -627,6 +700,7 @@ async fn main() -> Result<()> {
     let mut checked_chaos = 0u64;
     let mut checked_latency = 0u64;
     let mut checked_partition = 0u64;
+    let mut checked_rollout = 0u64;
     let mut checked_canary = 0u64;
 
     loop {
@@ -672,6 +746,7 @@ async fn main() -> Result<()> {
         found.extend(check_chaos(&state, &mut checked_chaos, now, &args));
         found.extend(check_latency(&state, &mut checked_latency, now, &args));
         found.extend(check_partition(&state, &mut checked_partition, now));
+        found.extend(check_rollout(&state, &mut checked_rollout, now));
         for v in &found {
             error!(check = v.check, detail = %v.detail, "invariant violated");
         }
@@ -863,6 +938,42 @@ mod tests {
         assert_eq!(found[0].check, "partition_split_brain");
         assert_eq!(checked, 2);
         assert!(check_partition(&st, &mut checked, Duration::ZERO).is_empty());
+    }
+
+    #[test]
+    fn reports_rollout_failures_once_settled() {
+        let st: Shared = Arc::new(RwLock::new(Verdict::default()));
+        let event = |seq, done, failed: bool| rollout::RolloutEvent {
+            seq,
+            at_secs: 0,
+            rolled_secs: Some(60),
+            converged_secs: None,
+            max_write_gap_secs: 90,
+            probes: 10,
+            failed_probes: 4,
+            failures: if failed {
+                vec![rollout::RolloutFailure {
+                    check: "rollout_write_gap",
+                    detail: "no write for 90s".into(),
+                }]
+            } else {
+                Vec::new()
+            },
+            done,
+        };
+        if let Ok(mut g) = st.write() {
+            g.rollout.events = vec![
+                event(1, true, false),
+                event(2, true, true),
+                event(3, false, true),
+            ];
+        }
+        let mut checked = 0;
+        let found = check_rollout(&st, &mut checked, Duration::ZERO);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].check, "rollout_write_gap");
+        assert_eq!(checked, 2);
+        assert!(check_rollout(&st, &mut checked, Duration::ZERO).is_empty());
     }
 
     #[test]

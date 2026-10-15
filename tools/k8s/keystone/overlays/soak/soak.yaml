@@ -1,5 +1,6 @@
-# The chaos task deletes keystone-rs pods and the partition task creates
-# network policies through the Kubernetes API.
+# The chaos task deletes keystone-rs pods, the partition task creates
+# network policies and the rollout task restarts the StatefulSet through the
+# Kubernetes API.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -16,6 +17,9 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
     verbs: ["create", "get", "list", "delete", "deletecollection"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -66,6 +70,13 @@ data:
   SOAK_PARTITION_DURATION: "60s"
   SOAK_PARTITION_ELECTION: "60s"
   SOAK_PARTITION_RECOVERY: "3m"
+  # Rollout: restart the whole keystone-rs StatefulSet (what `kubectl
+  # rollout restart` does) this often (`0` disables). It must finish and the
+  # cluster converge within SOAK_ROLLOUT_TIMEOUT, and no write may be
+  # unacknowledged for longer than SOAK_ROLLOUT_MAX_WRITE_GAP meanwhile.
+  SOAK_ROLLOUT_INTERVAL: "2h"
+  SOAK_ROLLOUT_TIMEOUT: "15m"
+  SOAK_ROLLOUT_MAX_WRITE_GAP: "60s"
   # Keep serving `/verdict` and `/metrics` after the run finished.
   SOAK_LINGER: "1h"
   # Credentials of the bootstrap admin in the dev stack. Replace for other
