@@ -40,7 +40,7 @@ spec:
               trust_domains = "example.org"
               allowed_peer_svids = ["spiffe://example.org/keystone/storage/node"]
               dev_mode = true
-              retry_join_nodes = "0=https://keystone-rs-0.keystone-rs-internal.default.svc.cluster.local:8300,1=https://keystone-rs-1.keystone-rs-internal.default.svc.cluster.local:8300"
+              retry_join_nodes = "0=https://keystone-rs-0.keystone-rs-internal.default.svc.cluster.local:8300,1=https://keystone-rs-1.keystone-rs-internal.default.svc.cluster.local:8300,2=https://keystone-rs-2.keystone-rs-internal.default.svc.cluster.local:8300"
               [auth_plugins]
               plugins = "mapper,router,hacked_appcred_handler"
               [auth_plugin.mapper]
