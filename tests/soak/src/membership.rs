@@ -452,6 +452,17 @@ async fn scale_up(ctx: &Ctx<'_>, writes: &mut Writes) -> Option<()> {
     for id in (cfg.expected_pods..target).rev() {
         let arg = id.to_string();
         match op.run(&["remove-peer", &arg], COMMAND).await {
+            // `remove-peer` answers "not a voter; nothing to do" for a learner.
+            Ok(out) if out.success && out.log.contains("not a voter") => {
+                ctx.fail(
+                    "membership_remove",
+                    format!(
+                        "remove-peer cannot remove learner {id}: {}",
+                        out.log.trim().lines().next().unwrap_or_default()
+                    ),
+                );
+                return Some(());
+            }
             Ok(out) if out.success => info!(node = id, "membership: removed"),
             Ok(out) => {
                 ctx.fail(

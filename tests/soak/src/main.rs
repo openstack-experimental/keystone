@@ -412,6 +412,17 @@ fn check_load(state: &Shared, checked: &mut u64, now: Duration, args: &Args) -> 
     found
 }
 
+/// Invariants a membership scenario violates on purpose while it runs.
+const PLANNED_BY_MEMBERSHIP: &[&str] = &[
+    "scrape",
+    "ready",
+    "voters",
+    "learners",
+    "applied_spread",
+    "apply_lag",
+    "replication_lag",
+];
+
 /// Time windows (seconds since the start) in which the cluster was
 /// deliberately disturbed: from a pod kill, a partition or a rolling restart
 /// until it recovered,
@@ -919,6 +930,11 @@ async fn main() -> Result<()> {
                 check: "load",
                 detail,
             });
+        }
+        // A membership scenario rebuilds, demotes or adds nodes on purpose:
+        // the node is unready, lags and is not a voter for a while.
+        if state.read().is_ok_and(|g| g.membership.active) {
+            found.retain(|v| !PLANNED_BY_MEMBERSHIP.contains(&v.check));
         }
         found.extend(check_load(&state, &mut checked_phase, now, &args));
         found.extend(check_canary(&state, &mut checked_canary, now));

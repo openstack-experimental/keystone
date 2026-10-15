@@ -162,6 +162,17 @@ controller in test clusters only. RBAC: `keystone-soak-membership` in
 delete volumes). Volumes are `<SOAK_CLAIM_PREFIX>-<pod>`, default
 `raft-storage`.
 
+`remove-peer` only removes voters: for a learner it prints "not a voter;
+nothing to do" and exits 0, so a node that joined as a learner and was then
+scaled away stays in the membership as a dead learner. The scale scenario
+reports that as `membership_remove` and `membership_leftover`; it needs a way
+to remove learners in `keystone-manage storage` before it can pass.
+
+A scenario deliberately makes a node unready, lagging and, after a wipe, a
+learner. While one runs, the `scrape`, `ready`, `voters`, `learners`,
+`applied_spread`, `apply_lag` and `replication_lag` invariants are not
+reported; the scenario's own checks judge the outcome.
+
 Other fault tasks wait while a scenario runs, and load phases overlapping it
 are not judged for latency. Exported: `soak_membership_runs_total`,
 `soak_membership_failed_total`, `soak_membership_max_seconds`; the report has
