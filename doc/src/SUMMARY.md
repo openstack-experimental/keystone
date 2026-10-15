@@ -61,6 +61,7 @@
     - [Okta](admin/features/federation/okta.md)
     - [Dex](admin/features/federation/dex.md)
   - [OAuth2 / OIDC Provider](admin/features/oauth2.md)
+  - [Service grants](admin/features/service-grants.md)
   - [SCIM v2 Support](admin/features/scim/index.md)
     - [API-Key Administration](admin/features/scim/api-keys.md)
   - [Kubernetes TokenReview Authentication](admin/features/kubernetes-auth.md)

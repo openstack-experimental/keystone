@@ -337,7 +337,8 @@ used by every `system/{users,groups}/.../roles` handler.
 ## 5. Delegated-auth specifics
 
 Trust, application-credential, and EC2 are authentication _methods_, each with
-its own `AuthenticationContext` variant. All three are permanently bound to a
+its own `AuthenticationContext` variant (service grants, which have no Fernet
+form, are described after them). All three are permanently bound to a
 single project (optionally further narrowed to a role subset) at credential
 creation time; none of them can escape that binding through rescope or reauth —
 the mechanism differs per method (below), but the invariant is uniform.
@@ -394,6 +395,56 @@ A bare `AuthenticationContext::Ec2Credential` (an EC2 credential _not_ minted
 under a trust/app-cred) carries no delegation metadata at all —
 `validate_scope_boundaries` allows it on every scope shape unconditionally,
 since there is no delegation boundary to enforce.
+
+### Service grants (ADR 0036)
+
+`AuthenticationContext::ServiceGrant { grant, actor }`: a delegatable service
+(`actor`: its `client_id` and SPIFFE ID) acting for the grantor under a stored
+grant. Unlike the methods above it never has a Fernet payload:
+`FernetToken::from_security_context` rejects it on every scope, and Keystone
+does not accept its own OAuth2 JWTs as bearer credentials. The context exists
+only inside grant redemption at the token endpoint
+(`crates/core/src/service_grant/redeem.rs`), where `new_for_scope()` applies
+the same checks as for the other delegated methods, and its result is signed
+into a JWT for downstream services.
+
+- `is_delegated == true`, `delegated_project_id == grant.target.project_id`,
+  `service_grant_id == grant.id`, and the actor is projected into the policy
+  input as `credentials.actor`. The JWT carries the same facts in
+  `delegation_context` (`auth_method: service_grant`) and the RFC 8693 `act`
+  claim.
+- Scope: only `ScopeInfo::Project` with the grant's own project
+  (`validate_scope_boundaries`); every other scope, the unscoped one included,
+  is `ScopeNotAllowed`. The I3 tripwire is enforced again when the JWT is
+  verified (`enforce_delegation_invariants`).
+- Roles (I4): `grant.role_ids` (narrowed by the redemption request) intersected
+  with the grantor's live effective roles on the project. There is no admin
+  bypass: the grant, not the grantor's privileges, is the ceiling.
+- Validation re-checks that the grant is enabled and unexpired and that its
+  grantor is the principal. Redemption additionally re-checks the grantee
+  client, its SPIFFE match, and the grantor, project and domain.
+- Creating a grant is refused under any delegated chain except an unrestricted
+  application credential (`ensure_chain_may_delegate`, keyed on
+  `authentication_context()`), so a grant cannot be used to mint further
+  grants.
+- Token exchange refuses a service grant subject (`NotDelegated`); the phase 2
+  on-behalf-of exchange will add its own variant.
+
+### Service clients (ADR 0036)
+
+`AuthenticationContext::ServiceClient { actor }`: a delegatable service
+authenticated by its X.509-SVID on the internal interface, acting as itself to
+read or revoke grants naming it (`GET`/`DELETE /v4/service-grants/{id}`). It is
+built by `service_grant::service_client_context` only after the SVID matched
+one of the client's `spiffe_ids`, and only for the grant being accessed.
+
+- Not delegated: no `delegated_project_id`, no roles anywhere. Only
+  `ScopeInfo::Unscoped` is allowed; every other scope is `ScopeNotAllowed`.
+- Never becomes a Fernet token.
+- Policy recognises it by `auth_type == "service_client"` together with
+  `credentials.actor.client_id == grant.grantee.client_id`
+  (`policy/service_grant/common.rego`, `is_grantee_service`). No other policy
+  grants it anything.
 
 ## 6. Rescope and reauth rules
 

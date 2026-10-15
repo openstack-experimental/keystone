@@ -2,11 +2,13 @@
 
 **Date:** 2026-09-10
 
-**Updated:** 2026-10-13
+**Updated:** 2026-10-15
 
 ## Status
 
-Proposed.
+Proposed. Phase 1 (§11) is implemented; see
+[Service grants](../admin/features/service-grants.md) for operation and the
+phase 1 implementation notes below for where it differs from this text.
 
 Supersedes the trust mechanism (`/v3/OS-TRUST`, `AuthenticationContext::Trust`,
 `ScopeInfo::TrustProject`, `trust-driver-sql`) once the phases in §11 are
@@ -1113,6 +1115,36 @@ with a description and an expiry, and can delete any of them.
    The `Ec2` variant and its rejection arm stay while plain EC2 credentials
    exist. Only after every deployment that shares a database with Python
    Keystone has moved trust creation off it.
+
+### Phase 1 implementation notes
+
+Where the phase 1 implementation refines or departs from the decision above:
+
+- **Target project domain.** A grant's project must be in the grantor's
+  domain, so the token is signed with the key of the domain that owns the
+  project. Cross-project-domain grants are rejected at creation.
+- **`target_disabled` reason.** §8 disables grants when their project is
+  disabled but names no reason; `DisabledReason::TargetDisabled` was added.
+- **Partial role loss.** The lifecycle hook disables a grant as `role_lost`
+  only when the grantor holds none of its roles any more. On partial loss the
+  grant stays enabled and tokens carry the remaining intersection, which
+  redemption computes anyway. Redemption itself marks `role_lost` only when
+  the request did not narrow the roles.
+- **Grantee self-service.** The grantee's own `GET`/`DELETE` runs under a new
+  `AuthenticationContext::ServiceClient` (unscoped, no roles) and reaches
+  policy as `auth_type: service_client`. A missing grant answers `404` to it
+  after the SVID is authenticated.
+- **Client authentication.** Only `tls_client_auth` with an X.509-SVID on the
+  internal interface is implemented; JWT-SVID `private_key_jwt` is phase 3.
+- **Errors and limits.** A disabled grant or lost role answers `403` with
+  error code `invalid_grant`. Redemption shares the token endpoint limiter,
+  keyed on the SVID, rather than a dedicated bucket. A grant quota answers
+  `429` without `Retry-After`.
+- **Registry.** Removing a client's policy is `remove_delegation: true` on
+  update (a JSON `null` cannot be told apart from an absent field).
+  `max_role_ids` entries are not checked against existing roles.
+- **List filter.** `domain_id` on `GET /v4/service-grants` filters on the
+  grantor's domain.
 
 ## Alternatives considered
 
