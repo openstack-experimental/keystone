@@ -269,6 +269,7 @@ pub fn build_access_token_claims(
         amr: vec!["client_credentials".to_string()],
         token_use: "access".to_string(),
         delegation_context: DelegationContext::Plain,
+        act: None,
         openstack_context: OpenStackContext {
             user_id,
             user_name,

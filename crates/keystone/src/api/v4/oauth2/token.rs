@@ -29,17 +29,22 @@ pub(super) use common::sign_jwt_typed;
 mod device_code;
 mod error;
 mod refresh_token;
+mod service_grant;
 #[cfg(test)]
 pub(super) mod test_fixtures;
 mod token_exchange;
 
 use axum::{
+    Extension,
     body::Bytes,
     extract::{FromRequest, Path, Request, State},
     http::{HeaderMap, header::CONTENT_TYPE},
     response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
+
+use openstack_keystone_config::Interface;
+use openstack_keystone_core::common::SpiffeId;
 
 use crate::api::common::PeerAddr;
 use crate::audit::CorrelationId;
@@ -56,6 +61,7 @@ pub(super) use common::{
 use device_code::handle_device_code_grant;
 pub(super) use error::Oauth2TokenError;
 use refresh_token::handle_refresh_token_grant;
+use service_grant::{SERVICE_GRANT_GRANT_TYPE, handle_service_grant_grant};
 use token_exchange::handle_token_exchange_grant;
 
 #[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
@@ -102,6 +108,13 @@ pub(super) struct TokenForm {
     /// `/device_authorization`.
     #[serde(default)]
     device_code: Option<String>,
+    /// Service grant redemption only (ADR 0036 §5.1): the grant to redeem.
+    #[serde(default)]
+    grant_id: Option<String>,
+    /// Service grant redemption only: space-separated role ids narrowing
+    /// the grant's roles.
+    #[serde(default)]
+    roles: Option<String>,
     /// RFC 8693 Token Exchange grant only (§2.1): OpenStack service types the
     /// minted token is narrowed to (ADR 0036 §7.1). The parameter may repeat,
     /// which `serde_urlencoded` cannot map onto a field, so [`TokenRequest`]
@@ -189,15 +202,18 @@ struct TokenResponse {
 #[tracing::instrument(
     name = "api::v4::oauth2::token",
     level = "debug",
-    skip(state, form),
+    skip(state, form, svid),
     err(Debug)
 )]
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn token(
     Path(domain_id): Path<String>,
     State(state): State<ServiceState>,
     headers: HeaderMap,
     PeerAddr(peer_addr): PeerAddr,
     correlation_id: CorrelationId,
+    interface: Option<Extension<Interface>>,
+    svid: Option<Extension<SpiffeId>>,
     TokenRequest(form): TokenRequest,
 ) -> Result<Response, Oauth2TokenError> {
     ensure_trusted_issuer(&state).await?;
@@ -265,6 +281,19 @@ pub(super) async fn token(
                 &form,
                 &oauth2_cfg,
                 &correlation_id.0,
+            )
+            .await
+        }
+        SERVICE_GRANT_GRANT_TYPE => {
+            handle_service_grant_grant(
+                &state,
+                &domain_id,
+                &headers,
+                &form,
+                &oauth2_cfg,
+                &correlation_id.0,
+                interface.map_or(Interface::Public, |Extension(i)| i),
+                svid.as_ref().map(|Extension(s)| s),
             )
             .await
         }

@@ -88,6 +88,16 @@ impl Oauth2TokenError {
 
     /// RFC 8628 §3.5: the device grant is still awaiting the user to
     /// complete the verification page.
+    /// A service grant that is disabled, expired, or whose grantor holds
+    /// none of its roles any more (ADR 0036 §5.1: `403`).
+    pub(crate) fn grant_disabled() -> Self {
+        Self::new(
+            StatusCode::FORBIDDEN,
+            "invalid_grant",
+            "the service grant is disabled, expired, or no longer carries any role",
+        )
+    }
+
     pub(crate) fn authorization_pending() -> Self {
         Self::new(
             StatusCode::BAD_REQUEST,

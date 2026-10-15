@@ -61,6 +61,8 @@ pub(crate) const RESERVED_CLAIM_NAMES: &[&str] = &[
     "delegation_context",
     "auth_method",
     "delegated_project_id",
+    "act",
+    "grant_id",
     "token_use",
     "openstack_context",
     "user_id",

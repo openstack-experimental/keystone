@@ -21,6 +21,7 @@ pub mod actor;
 pub mod backend;
 pub mod error;
 mod provider_api;
+pub mod redeem;
 pub mod service;
 
 #[cfg(any(test, feature = "mock"))]

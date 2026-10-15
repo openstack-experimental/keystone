@@ -227,6 +227,7 @@ pub fn build_token_exchange_claims(
         amr,
         token_use: "access".to_string(),
         delegation_context,
+        act: None,
         openstack_context: OpenStackContext {
             user_id,
             user_name,

@@ -155,7 +155,7 @@ const MAX_AUDIENCE_VALUES: usize = 16;
 /// `aud` claim: the control-plane default when none was requested, otherwise
 /// the narrowing to the requested service types. Each value must be a service
 /// type present in the catalog, so no token is minted that no service accepts.
-async fn requested_audience(
+pub(super) async fn requested_audience(
     state: &ServiceState,
     requested: &[String],
 ) -> Result<Audience, Oauth2TokenError> {
