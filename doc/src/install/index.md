@@ -39,6 +39,28 @@ Depending on the environment it may be a statically linked or dynamically. There
 are signals that that may be not necessary anymore once all dependencies
 transition to the use of rustls.
 
+## Cargo features
+
+The default build keeps the dependency tree small (for example for distribution
+packaging). Optional functionality is enabled with `--features` on the
+`openstack-keystone` crate, e.g.
+`cargo build --release -p openstack-keystone --features wasm_plugins`.
+
+| Feature        | Enables                                                                                                    |
+| -------------- | ---------------------------------------------------------------------------------------------------------- |
+| `wasm_plugins` | [Dynamic WebAssembly auth plugins](../admin/features/auth-plugins.md) (pulls in `extism`/`wasmtime`)       |
+| `openfga`      | OpenFGA based assignment driver                                                                            |
+| `audit-syslog` | RFC 5424 syslog audit sink                                                                                 |
+| `otel`         | OTLP trace and metric export over HTTP (see [OpenTelemetry](../admin/features/opentelemetry.md))           |
+| `otlp-grpc`    | OTLP/gRPC transport; use together with `otel`                                                              |
+| `pkcs11`       | PKCS#11 hardware-backed KEK provider for the distributed storage                                           |
+| `tpm`          | TPM hardware-backed KEK provider for the distributed storage                                               |
+
+None of these are enabled by default. CI runs the test suite with
+`--all-features`, so every feature is built and tested. A build without
+`wasm_plugins` ignores `[auth_plugins]` configuration and logs a warning at
+startup.
+
 ## Using containers
 
 It is possible to run Keystone-ng inside containers. A sample Dockerfile is

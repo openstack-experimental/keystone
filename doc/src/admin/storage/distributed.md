@@ -1045,7 +1045,9 @@ What it sets up, and why:
   this overlay works as-is and a TPM-backed cluster can switch the config to
   `kek_provider = "tpm"` without changing the image. A self-built image must
   pass the same build argument, e.g.
-  `docker build --build-arg KEYSTONE_FEATURES=openstack-keystone/pkcs11,openstack-keystone/tpm .`.
+  `docker build --build-arg KEYSTONE_FEATURES=openstack-keystone/pkcs11,openstack-keystone/tpm .`
+  (add `openstack-keystone/wasm_plugins` as well if the image should keep
+  dynamic auth plugin support, as the published image does).
   The image must also contain the vendor's PKCS#11 module and client
   configuration at `pkcs11_module_path`. For a TPM, set `kek_provider = "tpm"`
   and give the pod access to the TPM device (`/dev/tpmrm0`), typically through a

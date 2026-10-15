@@ -18,18 +18,29 @@
 //! `Service::new` returns and the result is `Arc`-wrapped - not from inside
 //! `Service::new` itself.
 //!
+//! Only available with the `wasm_plugins` feature (off by default, since it
+//! pulls in extism/wasmtime); the load-failure metric below is always present.
+//!
 //! Lives here (not in `openstack-keystone-core`) so `core` never depends on
 //! the extism-backed `openstack-keystone-auth-plugin-runtime` crate in
 //! production code - only this top-level service crate, which actually
 //! constructs the real `WasmPluginRegistry`, does.
-use std::collections::HashMap;
-use std::sync::{Arc, LazyLock};
+use std::sync::LazyLock;
 
+#[cfg(feature = "wasm_plugins")]
+use std::collections::HashMap;
+#[cfg(feature = "wasm_plugins")]
+use std::sync::Arc;
+
+#[cfg(feature = "wasm_plugins")]
 use openstack_keystone_auth_plugin_runtime::WasmPluginRegistry;
+#[cfg(feature = "wasm_plugins")]
 use openstack_keystone_core::auth_plugin::{
     CoreHostFunctions, PluginInvocationLimiter, as_host_functions,
 };
+#[cfg(feature = "wasm_plugins")]
 use openstack_keystone_core::auth_plugin_http::DynamicPluginHttpFetcher;
+#[cfg(feature = "wasm_plugins")]
 use openstack_keystone_core::keystone::ServiceState;
 use openstack_keystone_telemetry::metrics::{self, CounterVec, Label, Meter};
 
@@ -38,6 +49,7 @@ use openstack_keystone_telemetry::metrics::{self, CounterVec, Label, Meter};
 /// the caller - a per-plugin load failure (missing file, checksum
 /// mismatch, compile error) disables only that plugin; every other plugin
 /// and every builtin auth method still start normally (ADR 0025 §5).
+#[cfg(feature = "wasm_plugins")]
 pub async fn load_auth_plugins(
     state: &ServiceState,
     http_fetcher: Arc<dyn DynamicPluginHttpFetcher>,
@@ -109,7 +121,7 @@ impl LoadFailureMetrics {
 pub static LOAD_FAILURE_METRICS: LazyLock<LoadFailureMetrics> =
     LazyLock::new(|| LoadFailureMetrics::new(&metrics::meter()));
 
-#[cfg(test)]
+#[cfg(all(test, feature = "wasm_plugins"))]
 mod tests {
     use super::*;
     use async_trait::async_trait;

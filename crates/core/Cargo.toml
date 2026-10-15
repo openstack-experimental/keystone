@@ -20,6 +20,8 @@ crc32fast.workspace = true
 data-encoding.workspace = true
 derive_builder.workspace = true
 openstack-keystone-auth-plugin-core.workspace = true
+# Only used by the end-to-end wasm plugin tests (`wasm_plugins` feature).
+openstack-keystone-auth-plugin-runtime = { workspace = true, optional = true }
 eyre.workspace = true
 governor.workspace = true
 hmac.workspace = true
@@ -62,7 +64,6 @@ subtle = "2.6.1"
 openstack-keystone-telemetry = { workspace = true, features = ["golden"] }
 axum = { workspace = true, default-features = false, features = ["json", "tokio"] }
 config = { workspace = true }
-openstack-keystone-auth-plugin-runtime.workspace = true
 mockall.workspace = true
 openstack-keystone-api-types = { workspace = true, features = ["builder", "conv"] }
 cadf = { workspace = true, features = ["testing"] }
@@ -80,6 +81,9 @@ url.workspace = true
 default = []
 api = ["openstack-keystone-api-types/builder", "dep:axum", "openstack-keystone-api-types/conv"]
 bench_internals = []
+# Enables the end-to-end tests that load real wasm plugins (pulls in
+# extism/wasmtime).
+wasm_plugins = ["dep:openstack-keystone-auth-plugin-runtime"]
 mock = ["dep:mockall", "openstack-keystone-core-types/mock", "cadf/testing"]
 
 [lints]

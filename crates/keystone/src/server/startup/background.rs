@@ -31,8 +31,10 @@ use super::{Startup, debug_elapsed};
 use crate::api::v4::oauth2::backchannel::BackchannelLogoutHook;
 use crate::application_credential::ApplicationCredentialHook;
 use crate::assignment::AssignmentHook;
+#[cfg(feature = "wasm_plugins")]
 use crate::auth_plugin_http_client::KeystoneDynamicPluginHttpFetcher;
 use crate::auth_plugin_identity::DynamicPluginIdentityHook;
+#[cfg(feature = "wasm_plugins")]
 use crate::auth_plugin_startup::load_auth_plugins;
 use crate::catalog::CatalogHook;
 use crate::db_reload;
@@ -123,7 +125,23 @@ pub async fn spawn_all(startup: &Startup, phase_start: Instant) {
     // Dynamic auth plugins (ADR 0025): loaded post-construction since
     // `CoreHostFunctions` needs a fully-built `ServiceState`. A per-plugin
     // load failure disables only that plugin.
+    #[cfg(feature = "wasm_plugins")]
     load_auth_plugins(state, Arc::new(KeystoneDynamicPluginHttpFetcher::new())).await;
+    #[cfg(not(feature = "wasm_plugins"))]
+    if !state
+        .config_manager
+        .config
+        .read()
+        .await
+        .auth_plugins
+        .plugins
+        .is_empty()
+    {
+        warn!(
+            "dynamic auth plugins are configured but this binary was built without the \
+             `wasm_plugins` feature; they are ignored"
+        );
+    }
     debug_elapsed(phase_start, "load_auth_plugins");
     warn_on_unresolvable_auth_methods(state).await;
 }

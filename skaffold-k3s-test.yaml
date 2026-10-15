@@ -38,7 +38,7 @@ build:
       docker:
         dockerfile: Dockerfile
         buildArgs:
-          KEYSTONE_FEATURES: "openstack-keystone/pkcs11,openstack-keystone/tpm"
+          KEYSTONE_FEATURES: "openstack-keystone/pkcs11,openstack-keystone/tpm,openstack-keystone/wasm_plugins"
           KEYSTONE_TEST_TOOLS: "softhsm2 opensc swtpm tpm2-tools"
     - image: keystone-opa
       context: .

@@ -5,6 +5,12 @@ by `[auth_plugins]`. Each plugin has a corresponding `[auth_plugin.<name>]`
 section containing its path, pinned SHA-256 digest, operating mode,
 capabilities, network allowlist, and resource limits.
 
+Dynamic plugins require a Keystone binary built with the `wasm_plugins` cargo
+feature, which is not part of the default build because it pulls in the
+`extism`/`wasmtime` runtime. The published container image enables it. Without
+the feature `[auth_plugins]` is ignored and a warning is logged at startup. See
+[Cargo features](../../install/index.md#cargo-features).
+
 Before deployment:
 
 1. Build and review the module from a trusted source.

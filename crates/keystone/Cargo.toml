@@ -43,7 +43,7 @@ cadf = { workspace = true, features = ["runtime"] }
 openstack-keystone-appcred-driver-sql.workspace = true
 openstack-keystone-assignment-driver-openfga = { workspace = true, optional = true }
 openstack-keystone-assignment-driver-sql.workspace = true
-openstack-keystone-auth-plugin-runtime.workspace = true
+openstack-keystone-auth-plugin-runtime = { workspace = true, optional = true }
 openstack-keystone-catalog-driver-sql.workspace = true
 openstack-keystone-config.workspace = true
 oslo-config.workspace = true
@@ -134,6 +134,9 @@ url.workspace = true
 
 [features]
 default = []
+# Runtime-loaded WASM (Extism) dynamic auth plugins, ADR 0025. Off by default:
+# it pulls in extism/wasmtime (~75 crates).
+wasm_plugins = ["dep:openstack-keystone-auth-plugin-runtime", "openstack-keystone-core/wasm_plugins"]
 openfga = ["dep:openstack-keystone-assignment-driver-openfga"]
 # RFC 5424 syslog audit sink (`[audit] sink = { type = "syslog", .. }`).
 audit-syslog = ["cadf/syslog"]

@@ -148,6 +148,8 @@ jobs:
 
       - name: Run tests (unit)
         if: needs.changes.outputs.code == 'true'
+        # `--all-features` also enables the optional (non-default) features such
+        # as `wasm_plugins` (extism/wasmtime), so they are built and tested here.
         run: cargo nextest run --all-features --profile ci
 
       - name: Install slapd for LDAP tests

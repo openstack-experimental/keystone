@@ -26,7 +26,7 @@ COPY --from=planner /app/recipe.json recipe.json
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo chef cook \
     -p openstack-keystone -p openstack-keystone-cli-manage -p test_api -p test_federation \
-    --features openstack-keystone/otel \
+    --features openstack-keystone/otel,openstack-keystone/wasm_plugins \
     --recipe-path recipe.json --profile skaffold
 
 COPY crates crates
@@ -47,7 +47,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --profile skaffold \
     -p openstack-keystone \
     -p openstack-keystone-cli-manage \
-    --features openstack-keystone/otel && \
+    --features openstack-keystone/otel,openstack-keystone/wasm_plugins && \
     cp target/skaffold/keystone /app/keystone && \
     cp target/skaffold/keystone-manage /app/keystone-manage
 
