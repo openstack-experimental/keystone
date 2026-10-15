@@ -126,8 +126,17 @@ is acknowledged it reads the key from **every** pod directly
 - `integrity`: a pod returns a key that differs from what was written, or
   no longer returns one written earlier. The last 20 keys are re-checked from
   every pod each cycle, older ones are revoked.
-- Transport errors and 5xx answers (a pod being killed by chaos) are counted
-  as `soak_canary_read_errors_total` but not judged.
+- Transport errors, 429 and 5xx answers (a pod being killed by chaos) are
+  counted as `soak_canary_read_errors_total` but not judged.
+
+Each cycle also writes one SCIM user through `/SCIM/v2/default/Users`. The
+controller creates the `soak-scim-idp` identity provider and the
+`soak-scim-realm` SCIM realm if they are missing, mints an API key bound to
+the realm (renewed every 30 minutes) and uses it as bearer. The user is read
+from every pod with the same bearer and judged like the API key. Here a 401
+counts as a stale read too: the key was just written through the leader, so a
+pod that rejects it has not applied it yet. SCIM users are removed after 20
+cycles. The totals count both record types together.
 
 ## Storage per entry
 
