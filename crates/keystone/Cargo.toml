@@ -61,6 +61,7 @@ openstack-keystone-limit-driver-sql.workspace = true
 openstack-keystone-k8s-auth-driver-raft.workspace = true
 openstack-keystone-mapping-driver-raft.workspace = true
 openstack-keystone-oauth2-client-driver-raft.workspace = true
+openstack-keystone-service-grant-driver-raft.workspace = true
 openstack-keystone-oauth2-key-driver-raft.workspace = true
 openstack-keystone-oauth2-session-driver-raft.workspace = true
 openstack-keystone-key-repository.workspace = true

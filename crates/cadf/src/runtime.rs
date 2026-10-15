@@ -405,9 +405,10 @@ pub async fn init(
     let hmac_key_version = keyring.current_version();
 
     // Per-node signing key:
-    //   HKDF(salt="{service}-audit-hmac-salt-v1", KEK, info="{service}-audit-hmac-v1:{node_id}", L=32)
-    // Per ADR 0023 / ADR 0016-v2 §3.1: per-node derivation ensures a
-    // compromised node cannot forge records attributed to other nodes.
+    //   HKDF(salt="{service}-audit-hmac-salt-v1", KEK,
+    // info="{service}-audit-hmac-v1:{node_id}", L=32) Per ADR 0023 / ADR
+    // 0016-v2 §3.1: per-node derivation ensures a compromised node cannot
+    // forge records attributed to other nodes.
     let audit_hmac_key: Arc<[u8]> = Arc::from(
         keyring
             .current_node_key(&service, node_id.as_str())

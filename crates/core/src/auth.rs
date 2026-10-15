@@ -248,6 +248,19 @@ impl ValidatedSecurityContext {
                     return Err(AuthenticationError::TrustorPrincipalUseNotSupported);
                 }
             }
+            // ADR 0036 §5: the grant must still be redeemable and act for
+            // the principal. Its roles are bounded in
+            // `calculate_effective_roles`, its scope in
+            // `validate_scope_boundaries`.
+            AuthenticationContext::ServiceGrant { grant, .. } => {
+                if grant.grantor_user_id != ctx.principal().get_user_id() {
+                    return Err(AuthenticationError::AuthzPrincipalMismatch);
+                }
+                if !grant.is_redeemable(now) {
+                    return Err(AuthenticationError::ServiceGrantDisabled(grant.id.clone()));
+                }
+            }
+            AuthenticationContext::ServiceClient { .. } => {}
             AuthenticationContext::Token(..) => {}
             AuthenticationContext::WebauthN => {}
             AuthenticationContext::Mapping(mc) => {
@@ -704,6 +717,17 @@ async fn calculate_effective_roles(
         return resolve_trust_roles(state, &tpi).await;
     }
 
+    // A service grant (ADR 0036 §5) only ever reaches its own project
+    // (`validate_scope_boundaries`); its roles are the grant's roles bounded
+    // by the grantor's live roles there. No admin bypass: the grant, not the
+    // grantor's privileges, is the ceiling.
+    if let AuthenticationContext::ServiceGrant { grant, .. } = ctx.authentication_context() {
+        let ScopeInfo::Project { project, .. } = scope else {
+            return Err(AuthenticationError::ScopeNotAllowed);
+        };
+        return resolve_service_grant_roles(state, ctx, grant, &project.id).await;
+    }
+
     let roles = match scope {
         ScopeInfo::Domain(domain) => resolve_domain_roles(state, ctx, &domain.id).await?,
         ScopeInfo::Project { project, .. } => {
@@ -927,6 +951,66 @@ async fn resolve_trust_roles(
     } else {
         assignments_to_roles(trustor_assignments)
     }
+}
+
+// Resolve the effective roles of a service grant on its target project
+// (ADR 0036 §5): the grant's roles, expanded by implication, intersected
+// with the grantor's live effective roles on the project. An empty result
+// means the grantor lost every delegated role.
+async fn resolve_service_grant_roles(
+    state: &ServiceState,
+    ctx: &SecurityContext,
+    grant: &openstack_keystone_core_types::service_grant::ServiceGrant,
+    project_id: &str,
+) -> Result<Vec<RoleRef>, AuthenticationError> {
+    if grant.target.project_id() != project_id {
+        return Err(AuthenticationError::ScopeNotAllowed);
+    }
+    let grantor_assignments = state
+        .provider
+        .get_assignment_provider()
+        .list_role_assignments(
+            &ExecutionContext::internal(state),
+            &RoleAssignmentListParametersBuilder::default()
+                .user_id(ctx.principal().get_user_id())
+                .project_id(project_id)
+                .include_names(true)
+                .effective(true)
+                .resolve_implied_roles(true)
+                .build()
+                .map_err(AssignmentProviderError::from)?,
+        )
+        .await
+        .auth_context("resolving service grant role assignments")?;
+
+    let mut granted: Vec<RoleRef> = grant
+        .role_ids
+        .iter()
+        .map(|id| RoleRef {
+            id: id.clone(),
+            name: None,
+            domain_id: None,
+        })
+        .collect();
+    state
+        .provider
+        .get_role_provider()
+        .expand_implied_roles(&ExecutionContext::internal(state), &mut granted)
+        .await
+        .auth_context("expanding implied roles for service grant")?;
+    let granted: HashSet<String> = granted.into_iter().map(|r| r.id).collect();
+
+    let mut seen = HashSet::new();
+    let roles = assignments_to_roles(
+        grantor_assignments
+            .into_iter()
+            .filter(|a| granted.contains(&a.role_id) && seen.insert(a.role_id.clone()))
+            .collect(),
+    )?;
+    if roles.is_empty() {
+        return Err(AuthenticationError::ActorHasNoRolesOnTarget);
+    }
+    Ok(roles)
 }
 
 // Convert a list of role assignments into [`RoleRef`] values.

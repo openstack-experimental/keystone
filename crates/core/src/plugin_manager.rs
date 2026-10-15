@@ -72,6 +72,8 @@ use crate::scim_realm::backend::ScimRealmBackend;
 use crate::scim_realm::error::ScimRealmProviderError;
 use crate::scim_resource::backend::ScimResourceBackend;
 use crate::scim_resource::error::ScimResourceProviderError;
+use crate::service_grant::ServiceGrantProviderError;
+use crate::service_grant::backend::ServiceGrantBackend;
 use crate::token::TokenProviderError;
 use crate::token::backend::TokenBackend;
 use crate::token::backend::TokenRestrictionBackend;
@@ -127,6 +129,7 @@ declare_backend_registry!(
     dyn MappingBackend,
     dyn Oauth2ClientBackend,
     dyn Oauth2KeyBackend,
+    dyn ServiceGrantBackend,
     dyn Oauth2SessionBackend,
     dyn K8sAuthBackend,
     dyn PolicyStoreBackend,
@@ -458,6 +461,19 @@ pub trait PluginManagerApi {
         name: S,
     ) -> Result<&Arc<dyn Oauth2ClientBackend>, Oauth2ClientProviderError>;
 
+    /// Get registered service grant backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// - `Ok(&Arc<dyn ServiceGrantBackend>)` if found, otherwise
+    ///   `Err(ServiceGrantProviderError)`.
+    fn get_service_grant_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn ServiceGrantBackend>, ServiceGrantProviderError>;
+
     /// Get registered OAuth2 signing key backend.
     ///
     /// # Parameters
@@ -728,6 +744,17 @@ pub trait PluginManagerApi {
         &mut self,
         name: S,
         plugin: Arc<dyn Oauth2ClientBackend>,
+    );
+
+    /// Register service grant backend.
+    ///
+    /// # Parameters
+    /// - `name`: The name to register the backend under.
+    /// - `plugin`: The backend implementation.
+    fn register_service_grant_backend<S: AsRef<str>>(
+        &mut self,
+        name: S,
+        plugin: Arc<dyn ServiceGrantBackend>,
     );
 
     /// Register OAuth2 signing key backend.

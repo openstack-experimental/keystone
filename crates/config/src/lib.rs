@@ -67,6 +67,7 @@ mod common;
 mod credential;
 mod database;
 mod default;
+mod delegation;
 mod domain_config;
 mod ec2;
 mod federation;
@@ -110,6 +111,7 @@ pub use common::*;
 pub use credential::*;
 pub use database::*;
 pub use default::*;
+pub use delegation::*;
 pub use domain_config::*;
 pub use ec2::*;
 pub use federation::*;
@@ -183,6 +185,10 @@ pub struct Config {
     /// Credential provider configuration.
     #[serde(default)]
     pub credential: CredentialProvider,
+
+    /// Service delegation configuration (ADR 0036).
+    #[serde(default)]
+    pub delegation: DelegationProvider,
 
     /// Database configuration.
     //#[serde(default)]
@@ -481,6 +487,7 @@ impl oslo_config::CoreSchema for Config {
             "credential",
             "database",
             "DEFAULT",
+            "delegation",
             "domain_config",
             "auth_plugins",
             "auth_plugin",

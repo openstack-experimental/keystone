@@ -145,9 +145,9 @@ fn provision_token(module: &PathBuf) {
 
 /// Config for a single, unnetworked node backed by the real SoftHSM2 token
 /// at `module`. No gRPC server is started — as in `test_cluster`'s
-/// `quarantine::test_quarantine_committed_via_raft`, the Raft handle is exercised
-/// directly, which is enough to drive the state machine's DEK wrap/unwrap
-/// path without needing a live network listener.
+/// `quarantine::test_quarantine_committed_via_raft`, the Raft handle is
+/// exercised directly, which is enough to drive the state machine's DEK
+/// wrap/unwrap path without needing a live network listener.
 fn pkcs11_ds_config(
     node_id: u64,
     db_path: PathBuf,

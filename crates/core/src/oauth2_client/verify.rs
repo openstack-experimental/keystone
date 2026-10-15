@@ -124,6 +124,7 @@ fn auth_method_str(ctx: &DelegationContext) -> &'static str {
         DelegationContext::Trust { .. } => "trust",
         DelegationContext::AppCred { .. } => "app_cred",
         DelegationContext::Ec2 { .. } => "ec2",
+        DelegationContext::ServiceGrant { .. } => "service_grant",
     }
 }
 
@@ -148,7 +149,8 @@ fn enforce_delegation_invariants(
         DelegationContext::Plain => return Ok(()),
         DelegationContext::Trust { project_id }
         | DelegationContext::AppCred { project_id }
-        | DelegationContext::Ec2 { project_id } => project_id,
+        | DelegationContext::Ec2 { project_id }
+        | DelegationContext::ServiceGrant { project_id, .. } => project_id,
     };
 
     let OpenStackScope::Project {
@@ -279,8 +281,8 @@ pub fn verify_openstack_access_token(
 /// scope. `aud` is the (unknown to the caller) `client_id`, so it is not
 /// validated here: the caller must resolve `claims.aud` to a registered
 /// client of the domain. OpenStack access tokens (`aud` ==
-/// `openstack-apis` or a service-type narrowing of it) carry no `scope` claim and are therefore
-/// structurally rejected.
+/// `openstack-apis` or a service-type narrowing of it) carry no `scope` claim
+/// and are therefore structurally rejected.
 ///
 /// # Errors
 /// See [`TokenVerificationError`] for each rejection reason.
@@ -387,8 +389,8 @@ struct RevocableClaims {
 /// In both cases the token must belong to `authenticated_client_id`; the
 /// signature, configured algorithm, issuer, `exp`/`nbf` and
 /// `token_use == "access"` are enforced exactly as in
-/// [`verify_openstack_access_token`]. Tokens without a `jti` (e.g. ID tokens) are rejected with
-/// [`TokenVerificationError::WrongTokenUse`].
+/// [`verify_openstack_access_token`]. Tokens without a `jti` (e.g. ID tokens)
+/// are rejected with [`TokenVerificationError::WrongTokenUse`].
 ///
 /// # Errors
 /// See [`TokenVerificationError`]. The revocation endpoint maps every error
@@ -536,6 +538,7 @@ mod tests {
             amr: vec!["client_credentials".to_string()],
             token_use: "access".to_string(),
             delegation_context: DelegationContext::Plain,
+            act: None,
             openstack_context: OpenStackContext {
                 user_id: "shadow-user".to_string(),
                 user_name: "client-1".to_string(),
@@ -929,6 +932,58 @@ mod tests {
                 token_project_id,
                 delegated_project_id,
             } if token_project_id == "project-2" && delegated_project_id == "project-1"
+        ));
+    }
+
+    /// A service grant token (ADR 0036 §5.2) verifies with its `act` claim
+    /// and is held to its own project like any delegated token.
+    #[test]
+    fn test_service_grant_token_round_trip_and_tripwire() {
+        let now = chrono::Utc::now().timestamp();
+        let mut claims = valid_claims(now);
+        claims.delegation_context = DelegationContext::ServiceGrant {
+            project_id: "project-1".to_string(),
+            grant_id: "g1".to_string(),
+        };
+        claims.act = Some(openstack_keystone_core_types::oauth2_client::ActClaim {
+            client_id: "heat".to_string(),
+            sub_type: openstack_keystone_core_types::oauth2_client::ActSubType::Spiffe,
+            sub: "spiffe://td/heat".to_string(),
+        });
+        claims.openstack_context.scope = OpenStackScope::Project {
+            project_id: "project-1".to_string(),
+            project_domain_id: DOMAIN_ID.to_string(),
+            roles: vec![],
+        };
+        let (token, jwks, _kid) = sign(&claims);
+        let verified = verify_openstack_access_token(
+            &token,
+            &jwks,
+            SigningAlgorithm::Es256,
+            &[ISSUER.to_string()],
+            None,
+            &HashSet::new(),
+        )
+        .unwrap();
+        assert_eq!(verified.act, claims.act);
+        assert_eq!(verified.delegation_context, claims.delegation_context);
+
+        claims.openstack_context.scope = OpenStackScope::Project {
+            project_id: "project-2".to_string(),
+            project_domain_id: DOMAIN_ID.to_string(),
+            roles: vec![],
+        };
+        let (token, jwks, _kid) = sign(&claims);
+        assert!(matches!(
+            verify_openstack_access_token(
+                &token,
+                &jwks,
+                SigningAlgorithm::Es256,
+                &[ISSUER.to_string()],
+                None,
+                &HashSet::new(),
+            ),
+            Err(TokenVerificationError::ScopeDrift { .. })
         ));
     }
 

@@ -49,6 +49,57 @@ fn apply_optional(update: Option<String>, current: Option<String>) -> Option<Str
     }
 }
 
+/// Delegation capabilities of a registered service client (ADR 0036 §3).
+///
+/// Present only on clients an operator registered as delegatable
+/// services. Such clients authenticate with `tls_client_auth` against one of
+/// the client's `spiffe_ids` patterns.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct DelegationPolicy {
+    /// Users may create service grants naming this client (ADR 0036 §4).
+    #[serde(default)]
+    pub service_grants: bool,
+
+    /// The client may exchange a user token for an operation token (ADR
+    /// 0036 §6). Stored now; consumed by the on-behalf-of exchange.
+    #[serde(default)]
+    pub on_behalf_of: bool,
+
+    /// Users of other domains, or users on projects of other domains, may
+    /// delegate to this client.
+    #[serde(default)]
+    pub cross_domain: bool,
+
+    /// Role ids a delegation to this client may carry. Empty = no ceiling
+    /// beyond the user's own roles.
+    #[serde(default)]
+    pub max_role_ids: Vec<String>,
+
+    /// Upper bound, in seconds, on a service grant's lifetime.
+    #[serde(default)]
+    pub max_grant_lifetime: Option<u64>,
+
+    /// Upper bound, in seconds, on an operation token's lifetime. Required
+    /// when `on_behalf_of` is set.
+    #[serde(default)]
+    pub max_operation_lifetime: Option<u64>,
+
+    /// Upper bound on live grants per (project, client).
+    #[serde(default)]
+    pub max_grants_per_project: Option<u32>,
+}
+
+impl OAuth2ClientResource {
+    /// Delegation policy, when the client is an enabled delegatable service
+    /// accepting service grants.
+    pub fn service_grant_policy(&self) -> Option<&DelegationPolicy> {
+        if !self.enabled || self.deleted_at.is_some() {
+            return None;
+        }
+        self.delegation.as_ref().filter(|d| d.service_grants)
+    }
+}
+
 /// A registered OAuth2/OIDC relying party (ADR 0026 §5, "Amendment to ADR
 /// 0020: OAuth2 Client as a Fourth Provider Resource").
 ///
@@ -189,6 +240,18 @@ pub struct OAuth2ClientResource {
     #[serde(default)]
     #[builder(default)]
     pub frontchannel_logout_session_required: bool,
+
+    /// SPIFFE ID patterns the client authenticates with under
+    /// `tls_client_auth` (ADR 0036 §3.1). Validated at write time.
+    #[serde(default)]
+    #[builder(default)]
+    pub spiffe_ids: Vec<String>,
+
+    /// Delegation capabilities (ADR 0036 §3). `None` for every client that
+    /// is not a delegatable service.
+    #[serde(default)]
+    #[builder(default)]
+    pub delegation: Option<DelegationPolicy>,
 }
 
 impl std::fmt::Debug for OAuth2ClientResource {
@@ -234,6 +297,8 @@ impl std::fmt::Debug for OAuth2ClientResource {
                 "frontchannel_logout_session_required",
                 &self.frontchannel_logout_session_required,
             )
+            .field("spiffe_ids", &self.spiffe_ids)
+            .field("delegation", &self.delegation)
             .finish()
     }
 }
@@ -282,6 +347,12 @@ impl OAuth2ClientResource {
             frontchannel_logout_session_required: update
                 .frontchannel_logout_session_required
                 .unwrap_or(self.frontchannel_logout_session_required),
+            spiffe_ids: update.spiffe_ids.unwrap_or(self.spiffe_ids),
+            delegation: if update.remove_delegation {
+                None
+            } else {
+                update.delegation.or(self.delegation)
+            },
             updated_at: now,
             deleted_at,
             ..self
@@ -402,6 +473,14 @@ pub struct OAuth2ClientResourceCreate {
     /// Require `iss` and `sid` on front-channel logout requests.
     #[builder(default)]
     pub frontchannel_logout_session_required: bool,
+
+    /// SPIFFE ID patterns for `tls_client_auth` (ADR 0036 §3.1).
+    #[builder(default)]
+    pub spiffe_ids: Vec<String>,
+
+    /// Delegation capabilities (ADR 0036 §3).
+    #[builder(default)]
+    pub delegation: Option<DelegationPolicy>,
 }
 
 impl std::fmt::Debug for OAuth2ClientResourceCreate {
@@ -442,6 +521,8 @@ impl std::fmt::Debug for OAuth2ClientResourceCreate {
                 "frontchannel_logout_session_required",
                 &self.frontchannel_logout_session_required,
             )
+            .field("spiffe_ids", &self.spiffe_ids)
+            .field("delegation", &self.delegation)
             .finish()
     }
 }
@@ -508,6 +589,21 @@ pub struct OAuth2ClientResourceUpdate {
 
     /// `None` = unchanged.
     pub frontchannel_logout_session_required: Option<bool>,
+
+    /// `None` = unchanged.
+    #[serde(default)]
+    #[builder(default)]
+    pub spiffe_ids: Option<Vec<String>>,
+
+    /// `None` = unchanged, otherwise replaces the whole policy.
+    #[serde(default)]
+    #[builder(default)]
+    pub delegation: Option<DelegationPolicy>,
+
+    /// Remove the delegation policy. Mutually exclusive with `delegation`.
+    #[serde(default)]
+    #[builder(default)]
+    pub remove_delegation: bool,
 }
 
 /// Filter parameters for `GET /v4/oauth2/{domain_id}/clients`.

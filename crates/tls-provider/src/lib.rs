@@ -11,7 +11,8 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-// Crypto inventory: NET-1, NET-2, STO-9, AUD-4; see doc/src/contributor/crypto-inventory.md
+// Crypto inventory: NET-1, NET-2, STO-9, AUD-4; see
+// doc/src/contributor/crypto-inventory.md
 //! # TLS crypto provider selection
 //!
 //! The one place that decides which cryptographic provider rustls runs on,
@@ -19,8 +20,8 @@
 //!
 //! * `ring` (default): the `ring` crate. Always available in the Debian
 //!   archive, no C toolchain needed.
-//! * `aws-lc`: `aws-lc-rs`. Takes precedence over `ring` when both are
-//!   enabled, because cargo features are additive.
+//! * `aws-lc`: `aws-lc-rs`. Takes precedence over `ring` when both are enabled,
+//!   because cargo features are additive.
 //! * `fips`: `aws-lc` built against the FIPS 140-3 validated module, via
 //!   rustls' own `fips` feature. Use [`is_fips`] to assert it at start-up.
 //!

@@ -32,12 +32,14 @@ use crate::keystone::ServiceState;
 pub mod api_key;
 pub mod auth;
 pub mod auth_plugin;
+pub mod delegatable_service;
 pub mod group;
 pub mod mapping;
 pub mod oauth2;
 pub mod role;
 pub mod role_assignment;
 pub mod scim_realm;
+pub mod service_grant;
 pub mod spiffe;
 pub mod token;
 pub mod user;
@@ -51,11 +53,13 @@ use crate::api::types::*;
     nest(
       (path = "api-keys", api = api_key::ApiDoc),
       (path = "auth_plugins", api = auth_plugin::ApiDoc),
+      (path = "delegatable-services", api = delegatable_service::ApiDoc),
       (path = "federation", api = federation::ApiDoc),
       (path = "k8s_auth", api = k8s_auth::ApiDoc),
       (path = "mappings", api = mapping::ApiDoc),
       (path = "oauth2", api = oauth2::ApiDoc),
       (path = "scim_realms", api = scim_realm::ApiDoc),
+      (path = "service-grants", api = service_grant::ApiDoc),
       (path = "spiffe", api = spiffe::ApiDoc),
       (path = "tokens", api = token::ApiDoc),
       (path = "users", api = user::ApiDoc),
@@ -69,12 +73,17 @@ pub(super) fn openapi_router(oauth2_enabled: bool) -> OpenApiRouter<ServiceState
         .nest("/api-keys", api_key::openapi_router())
         .nest("/auth", auth::openapi_router())
         .nest("/auth_plugins", auth_plugin::openapi_router())
+        .nest(
+            "/delegatable-services",
+            delegatable_service::openapi_router(),
+        )
         .nest("/groups", group::openapi_router())
         .nest("/mappings", mapping::openapi_router())
         .nest("/federation", federation::openapi_router())
         .nest("/k8s_auth", k8s_auth::openapi_router())
         .nest("/roles", role::openapi_router())
         .nest("/scim_realms", scim_realm::openapi_router())
+        .nest("/service-grants", service_grant::openapi_router())
         .nest("/spiffe", spiffe::openapi_router())
         .nest("/tokens", token::openapi_router())
         .nest("/users", user::openapi_router())

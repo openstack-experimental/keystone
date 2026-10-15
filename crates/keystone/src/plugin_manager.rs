@@ -69,6 +69,8 @@ use openstack_keystone_core::scim_realm::ScimRealmProviderError;
 use openstack_keystone_core::scim_realm::backend::ScimRealmBackend;
 use openstack_keystone_core::scim_resource::ScimResourceProviderError;
 use openstack_keystone_core::scim_resource::backend::ScimResourceBackend;
+use openstack_keystone_core::service_grant::ServiceGrantProviderError;
+use openstack_keystone_core::service_grant::backend::ServiceGrantBackend;
 use openstack_keystone_core::token::TokenProviderError;
 use openstack_keystone_core::token::backend::{TokenBackend, TokenRestrictionBackend};
 use openstack_keystone_core::trust::TrustProviderError;
@@ -106,6 +108,8 @@ pub struct PluginManager {
     mapping_backends: HashMap<String, Arc<dyn MappingBackend>>,
     /// OAuth2 client backend plugins.
     oauth2_client_backends: HashMap<String, Arc<dyn Oauth2ClientBackend>>,
+    /// Service grant backend plugins.
+    service_grant_backends: HashMap<String, Arc<dyn ServiceGrantBackend>>,
     /// OAuth2 signing key backend plugins.
     oauth2_key_backends: HashMap<String, Arc<dyn Oauth2KeyBackend>>,
     /// OAuth2 browser session backend plugins.
@@ -379,6 +383,24 @@ impl PluginManagerApi for PluginManager {
     ) -> Result<&Arc<dyn Oauth2ClientBackend>, Oauth2ClientProviderError> {
         self.oauth2_client_backends.get(name.as_ref()).ok_or(
             Oauth2ClientProviderError::UnsupportedDriver(name.as_ref().to_string()),
+        )
+    }
+
+    /// Get registered service grant backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to retrieve.
+    ///
+    /// # Returns
+    /// A `Result` containing a reference to the `ServiceGrantBackend` if
+    /// found, or a `ServiceGrantProviderError`.
+    #[allow(clippy::borrowed_box)]
+    fn get_service_grant_backend<S: AsRef<str>>(
+        &self,
+        name: S,
+    ) -> Result<&Arc<dyn ServiceGrantBackend>, ServiceGrantProviderError> {
+        self.service_grant_backends.get(name.as_ref()).ok_or(
+            ServiceGrantProviderError::UnsupportedDriver(name.as_ref().to_string()),
         )
     }
 
@@ -766,6 +788,20 @@ impl PluginManagerApi for PluginManager {
             .insert(name.as_ref().to_string(), plugin);
     }
 
+    /// Register service grant backend.
+    ///
+    /// # Parameters
+    /// * `name` - The name of the backend to register.
+    /// * `plugin` - The backend implementation to register.
+    fn register_service_grant_backend<S: AsRef<str>>(
+        &mut self,
+        name: S,
+        plugin: Arc<dyn ServiceGrantBackend>,
+    ) {
+        self.service_grant_backends
+            .insert(name.as_ref().to_string(), plugin);
+    }
+
     /// Register OAuth2 signing key backend.
     ///
     /// # Parameters
@@ -949,6 +985,7 @@ impl PluginManager {
             idmapping_backends: HashMap::new(),
             mapping_backends: HashMap::new(),
             oauth2_client_backends: HashMap::new(),
+            service_grant_backends: HashMap::new(),
             oauth2_key_backends: HashMap::new(),
             oauth2_session_backends: HashMap::new(),
             k8s_auth_backends: HashMap::new(),
@@ -975,6 +1012,7 @@ impl PluginManager {
         register_backends(config, &mut slf.idmapping_backends).await?;
         register_backends(config, &mut slf.mapping_backends).await?;
         register_backends(config, &mut slf.oauth2_client_backends).await?;
+        register_backends(config, &mut slf.service_grant_backends).await?;
         register_backends(config, &mut slf.oauth2_key_backends).await?;
         register_backends(config, &mut slf.oauth2_session_backends).await?;
         register_backends(config, &mut slf.k8s_auth_backends).await?;

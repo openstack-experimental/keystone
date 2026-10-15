@@ -25,8 +25,8 @@
 //!   `data`/`meta`/`index` keyspaces, snapshots, restore, quarantine and DEK
 //!   rotation. [`new`] builds both over one shared database.
 //! - [`store_command`]: the command types replicated through Raft.
-//! - [`app`]: node assembly ([`app::init_storage`]) and the
-//!   [`app::Storage`] facade implementing [`StorageApi`].
+//! - [`app`]: node assembly ([`app::init_storage`]) and the [`app::Storage`]
+//!   facade implementing [`StorageApi`].
 //! - [`grpc`] / [`network`]: the gRPC services and the Raft transport, both
 //!   secured with SPIFFE mutual TLS.
 //! - [`config`]: the `[distributed_storage]` configuration section.

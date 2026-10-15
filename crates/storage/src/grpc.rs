@@ -13,8 +13,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! # gRPC services.
 //!
-//! - [`raft_service`]: node-to-node Raft RPCs (votes, replication,
-//!   snapshots). Peers only.
+//! - [`raft_service`]: node-to-node Raft RPCs (votes, replication, snapshots).
+//!   Peers only.
 //! - [`storage_service`]: the client-facing key/value API and quarantine
 //!   reporting.
 //! - [`cluster_admin_service`]: operator-facing cluster administration

@@ -31,9 +31,9 @@
 //! * **Nonce management:** [`nonce::NonceManager`] maintains a durable,
 //!   crash-safe monotonic counter for log-entry nonces (ADR §2.2, F1).
 //!
-//! * **FIPS:** the `fips` cargo feature swaps the RustCrypto primitives for
-//!   the FIPS 140-3 validated AWS-LC module ([`backend`]); call
-//!   [`assert_fips`] at start-up to require it.
+//! * **FIPS:** the `fips` cargo feature swaps the RustCrypto primitives for the
+//!   FIPS 140-3 validated AWS-LC module ([`backend`]); call [`assert_fips`] at
+//!   start-up to require it.
 //!
 //! ## Security properties enforced
 //!

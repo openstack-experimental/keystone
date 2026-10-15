@@ -15,8 +15,10 @@
 
 mod error;
 mod resource;
+mod spiffe_match;
 mod token_claims;
 
 pub use error::*;
 pub use resource::*;
+pub use spiffe_match::*;
 pub use token_claims::*;

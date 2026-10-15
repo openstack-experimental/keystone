@@ -55,6 +55,8 @@ pub struct CadfEventPayload {
     pub(crate) outcome_reason: Option<String>,
     /// OAuth2 `client_id` and `grant_type` of an OP request, if any.
     pub(crate) oauth2: Option<(String, String)>,
+    /// The service grant a delegated request was made under, if any.
+    pub(crate) service_grant: Option<ServiceGrantAudit>,
     /// Per-boot sequence number; filled in at signing.
     pub(crate) seq: u64,
     /// The resource the action was on.
@@ -75,6 +77,44 @@ const CORRELATION_TAG: &str = "correlation_id:";
 const INTEGRITY_ATTACHMENT: &str = "integrity";
 /// Name of the optional attachment carrying the OAuth2 client and grant type.
 const OAUTH2_ATTACHMENT: &str = "oauth2";
+/// Name of the optional attachment carrying the service grant of a
+/// delegated request.
+const SERVICE_GRANT_ATTACHMENT: &str = "service_grant";
+
+/// The delegation facts of an event recorded under a service grant (ADR
+/// 0036 §8). Every value is reduced to the audit-safe character set.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServiceGrantAudit {
+    /// Id of the grant.
+    pub grant_id: String,
+    /// User whose authority is delegated.
+    pub grantor_user_id: String,
+    /// `client_id` of the acting service.
+    pub actor_client_id: String,
+    /// SPIFFE ID the acting service authenticated with.
+    pub actor_spiffe_id: String,
+    /// Project the delegation is bound to.
+    pub delegated_project_id: String,
+}
+
+impl ServiceGrantAudit {
+    /// Build the attachment, sanitizing each value.
+    pub fn new(
+        grant_id: &str,
+        grantor_user_id: &str,
+        actor_client_id: &str,
+        actor_spiffe_id: &str,
+        delegated_project_id: &str,
+    ) -> Self {
+        Self {
+            grant_id: sanitize_audit_value(grant_id),
+            grantor_user_id: sanitize_audit_value(grantor_user_id),
+            actor_client_id: sanitize_audit_value(actor_client_id),
+            actor_spiffe_id: sanitize_audit_value(actor_spiffe_id),
+            delegated_project_id: sanitize_audit_value(delegated_project_id),
+        }
+    }
+}
 
 /// DSP0262 `outcome` of an event: a closed vocabulary, so no other value can
 /// reach a signed record.
@@ -189,6 +229,48 @@ impl CadfEventPayload {
                 }
             }
         };
+        let service_grant = match value
+            .get("attachments")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|a| {
+                a.iter().find(|a| {
+                    a.get("name").and_then(serde_json::Value::as_str)
+                        == Some(SERVICE_GRANT_ATTACHMENT)
+                })
+            }) {
+            None => None,
+            Some(attachment) => {
+                let content = attachment.get("content");
+                let field = |key: &str| {
+                    content
+                        .and_then(|c| c.get(key))
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                };
+                match (
+                    field("grant_id"),
+                    field("grantor_user_id"),
+                    field("actor_client_id"),
+                    field("actor_spiffe_id"),
+                    field("delegated_project_id"),
+                ) {
+                    (
+                        Some(grant_id),
+                        Some(grantor_user_id),
+                        Some(actor_client_id),
+                        Some(actor_spiffe_id),
+                        Some(delegated_project_id),
+                    ) => Some(ServiceGrantAudit {
+                        grant_id,
+                        grantor_user_id,
+                        actor_client_id,
+                        actor_spiffe_id,
+                        delegated_project_id,
+                    }),
+                    _ => return Err(wire_err("malformed `service_grant` attachment")),
+                }
+            }
+        };
         let number = |key: &str| -> Result<u64, WireError> {
             integrity
                 .get(key)
@@ -228,6 +310,7 @@ impl CadfEventPayload {
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_string),
             oauth2,
+            service_grant,
             seq: number("seq")?,
             // In-crate struct literals on purpose: wire values are kept
             // verbatim so a record round-trips byte-exact — its signature
@@ -281,6 +364,22 @@ impl CadfEventPayload {
                 "name": OAUTH2_ATTACHMENT,
                 "contentType": "application/json",
                 "content": {"client_id": client_id, "grant_type": grant_type},
+            }));
+        }
+        if let (Some(sg), Some(attachments)) = (
+            &self.service_grant,
+            event.get_mut("attachments").and_then(Value::as_array_mut),
+        ) {
+            attachments.push(json!({
+                "name": SERVICE_GRANT_ATTACHMENT,
+                "contentType": "application/json",
+                "content": {
+                    "grant_id": sg.grant_id,
+                    "grantor_user_id": sg.grantor_user_id,
+                    "actor_client_id": sg.actor_client_id,
+                    "actor_spiffe_id": sg.actor_spiffe_id,
+                    "delegated_project_id": sg.delegated_project_id,
+                },
             }));
         }
         if let (Some(reason), Value::Object(map)) = (&self.outcome_reason, &mut event) {
@@ -372,6 +471,7 @@ impl CadfEventPayload {
             outcome,
             outcome_reason: outcome_reason.map(OutcomeReason::into_string),
             oauth2: None,
+            service_grant: None,
             seq: 0,
             target,
             version: sanitize_audit_value(&version),
@@ -389,6 +489,18 @@ impl CadfEventPayload {
             sanitize_audit_value(grant_type),
         ));
         self
+    }
+
+    /// Attach the service grant the event was made under (ADR 0036 §8).
+    #[must_use]
+    pub fn with_service_grant(mut self, audit: ServiceGrantAudit) -> Self {
+        self.service_grant = Some(audit);
+        self
+    }
+
+    /// The service grant attached to the event, if any.
+    pub fn service_grant(&self) -> Option<&ServiceGrantAudit> {
+        self.service_grant.as_ref()
     }
 
     /// The OAuth2 `(client_id, grant_type)` attached to the event, if any.
@@ -908,6 +1020,33 @@ mod tests {
         );
         assert!(dispatcher.verify_hmac(&parsed, &key));
         assert_eq!(serde_json::to_value(&parsed).unwrap(), json);
+    }
+
+    #[test]
+    fn service_grant_context_is_signed_and_round_trips() {
+        let key: Arc<[u8]> = Arc::from(b"test-key-32-bytes-0123456789abcd".as_slice());
+        let (dispatcher, _rx) = make_dispatcher("node-a", key.clone());
+        let audit = ServiceGrantAudit::new("g1", "u1", "c1", "spiffe://td/svc/a", "p1");
+        let event = make_payload(&dispatcher)
+            .with_oauth2_context("c1", "service_grant")
+            .with_service_grant(audit.clone())
+            .sign(&dispatcher);
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["attachments"][2]["name"], "service_grant");
+        assert_eq!(json["attachments"][2]["content"]["grant_id"], "g1");
+        let parsed: CadfEvent = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(parsed.payload().service_grant(), Some(&audit));
+        assert!(dispatcher.verify_hmac(&parsed, &key));
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), json);
+
+        let mut tampered = json.clone();
+        tampered["attachments"][2]["content"]["actor_client_id"] = serde_json::json!("c2");
+        let tampered: CadfEvent = serde_json::from_value(tampered).unwrap();
+        assert!(!dispatcher.verify_hmac(&tampered, &key));
+
+        let mut malformed = json;
+        malformed["attachments"][2]["content"]["grant_id"] = serde_json::json!(7);
+        assert!(serde_json::from_value::<CadfEvent>(malformed).is_err());
     }
 
     #[test]

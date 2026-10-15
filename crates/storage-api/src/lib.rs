@@ -97,8 +97,8 @@ impl From<u8> for DataTier {
 /// for [`DataTier::Public`] and [`DataTier::Internal`] records and only when
 /// the operator enabled local reads; everything else silently falls back to
 /// the linearizable path. Staleness is unbounded: a lagging or partitioned
-/// node serves whatever it last applied. Callers must therefore never use it for data that
-/// feeds an authorization decision (ADR 0016-v2 §3).
+/// node serves whatever it last applied. Callers must therefore never use it
+/// for data that feeds an authorization decision (ADR 0016-v2 §3).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ReadConsistency {
     /// Never stale: confirmed through Raft `ReadIndex` before reading.

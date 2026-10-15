@@ -124,6 +124,15 @@ const ALLOW_LIST: &[(&str, &str, &str)] = &[
         "private helper called inside the audited client delete and disable",
     ),
     (
+        "service_grant",
+        "disable_grant",
+        "lifecycle helper of the service grant hooks and of redemption: it \
+         writes through update_service_grant with the internal context, \
+         which is audited only for caller-initiated contexts; the cause is \
+         recorded in the grant's disabled_reason and the triggering change \
+         is audited by its own provider",
+    ),
+    (
         "oauth2_session",
         "revoke_refresh_token_family",
         "audited by the OAuth2 handlers with the revocation reason (refresh \

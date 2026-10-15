@@ -296,6 +296,18 @@ pub struct Credentials {
     #[serde(default)]
     pub delegated_project_id: Option<String>,
 
+    /// The delegatable service acting in the request (ADR 0036): the
+    /// grantee under a service grant, or the service acting as itself.
+    /// `None` for every other authentication.
+    #[builder(default)]
+    #[serde(default)]
+    pub actor: Option<ActorInfo>,
+
+    /// Id of the service grant the request is made under (ADR 0036 §5).
+    #[builder(default)]
+    #[serde(default)]
+    pub service_grant_id: Option<String>,
+
     /// Extra claims a `mode = full_auth` dynamic auth plugin (ADR 0025)
     /// attached to its `authenticate` response, outer-keyed by
     /// `plugin_name` so `.rego` rules index as
@@ -342,6 +354,16 @@ impl TryFrom<&ValidatedSecurityContext> for Credentials {
                     builder.delegated_project_id(project_id.clone());
                 }
                 builder.trust(trust.clone());
+            }
+            // ADR 0036 §5: the grant's project is the delegation boundary,
+            // so the scope-drift tripwire below applies to it too.
+            AuthenticationContext::ServiceGrant { grant, actor } => {
+                builder.delegated_project_id(grant.target.project_id().to_string());
+                builder.service_grant_id(grant.id.clone());
+                builder.actor(actor.clone());
+            }
+            AuthenticationContext::ServiceClient { actor } => {
+                builder.actor(actor.clone());
             }
             AuthenticationContext::WasmPlugin {
                 plugin_name,

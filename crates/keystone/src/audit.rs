@@ -100,6 +100,7 @@ pub fn error_variant_name(error: &KeystoneApiError) -> String {
         KeystoneApiError::NotImplemented(_) => "NotImplemented".to_string(),
         KeystoneApiError::TooManyRequests { .. } => "TooManyRequests".to_string(),
         KeystoneApiError::ServiceUnavailable(_) => "ServiceUnavailable".to_string(),
+        KeystoneApiError::QuotaExceeded(_) => "QuotaExceeded".to_string(),
     }
 }
 
@@ -109,6 +110,7 @@ pub fn sanitize_authentication_error(e: &AuthenticationError) -> &'static str {
         AuthenticationError::DomainDisabled(_) => "DomainDisabled",
         AuthenticationError::ProjectDisabled(_) => "ProjectDisabled",
         AuthenticationError::TrustorUserDisabled(_) => "TrustorUserDisabled",
+        AuthenticationError::ServiceGrantDisabled(_) => "ServiceGrantDisabled",
         AuthenticationError::UserDisabled(_) => "UserDisabled",
         AuthenticationError::UserLocked(_) => "UserLocked",
         AuthenticationError::UserPasswordExpired(_) => "UserPasswordExpired",
@@ -428,6 +430,34 @@ pub fn emit_oauth2_grant_event(
         outcome_reason,
     )
     .with_oauth2_context(grant.client_id, grant.grant_type);
+    dispatcher.dispatch(payload.sign(dispatcher));
+}
+
+/// Like [`emit_oauth2_grant_event`], additionally recording the service
+/// grant the request is made under in a `service_grant` attachment (ADR 0036
+/// §8).
+#[allow(clippy::too_many_arguments)]
+pub fn emit_service_grant_event(
+    dispatcher: &Arc<AuditDispatcher>,
+    correlation_id: &str,
+    action: &str,
+    initiator: Initiator,
+    grant: Oauth2Grant<'_>,
+    service_grant: cadf::ServiceGrantAudit,
+    outcome: Outcome,
+    outcome_reason: Option<OutcomeReason>,
+) {
+    let payload = oauth2_payload(
+        dispatcher,
+        correlation_id,
+        action,
+        initiator,
+        grant.client_id,
+        outcome,
+        outcome_reason,
+    )
+    .with_oauth2_context(grant.client_id, grant.grant_type)
+    .with_service_grant(service_grant);
     dispatcher.dispatch(payload.sign(dispatcher));
 }
 

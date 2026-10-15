@@ -5061,6 +5061,7 @@ dependencies = [
  "openstack-keystone-revoke-driver-sql",
  "openstack-keystone-role-driver-sql",
  "openstack-keystone-scim-driver-raft",
+ "openstack-keystone-service-grant-driver-raft",
  "openstack-keystone-storage-api",
  "openstack-keystone-telemetry",
  "openstack-keystone-tls-provider",
@@ -5851,6 +5852,22 @@ dependencies = [
  "openstack-keystone-core-types",
  "openstack-keystone-distributed-storage",
  "rmp-serde",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "openstack-keystone-service-grant-driver-raft"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "inventory",
+ "openstack-keystone-core",
+ "openstack-keystone-core-types",
+ "openstack-keystone-distributed-storage",
+ "rmp-serde",
+ "serde",
  "tokio",
  "tracing",
 ]

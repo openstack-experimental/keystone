@@ -33,8 +33,8 @@ use openstack_keystone_core::auth::*;
 ///
 /// The challenge is consumed unconditionally once the request is well formed,
 /// so it can never be replayed. Shared by the token endpoint and by the
-/// OAuth2 provider's second-factor step. `ceremony` must be the one the challenge was started
-/// with.
+/// OAuth2 provider's second-factor step. `ceremony` must be the one the
+/// challenge was started with.
 pub async fn verify_assertion(
     state: &CombinedExtensionState,
     user_id: &str,

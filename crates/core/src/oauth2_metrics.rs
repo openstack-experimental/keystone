@@ -20,9 +20,10 @@
 //! **Cardinality guardrail:** `domain_id` is bounded by the domains of the
 //! deployment and `client_id` (only on the refresh-reuse counter) by the
 //! registered clients; `user_id` is never a label. Callers must only pass a
-//! `domain_id` or `client_id` that was resolved server side: the unauthenticated
-//! `/token` path segment is attacker controlled and must not be used as is.
-//! Every other label value comes from a fixed set (see the `*_label` helpers).
+//! `domain_id` or `client_id` that was resolved server side: the
+//! unauthenticated `/token` path segment is attacker controlled and must not be
+//! used as is. Every other label value comes from a fixed set (see the
+//! `*_label` helpers).
 
 use std::sync::LazyLock;
 

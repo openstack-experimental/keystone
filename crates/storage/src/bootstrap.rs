@@ -24,9 +24,9 @@ use crate::config::DistributedStorageConfiguration;
 /// an existing cluster if this node is not the bootstrap node.
 ///
 /// `listener_bound` is a watch channel that the Raft gRPC listener task
-/// signals once the listener is bound.  Non-bootstrap nodes wait for this signal
-/// before calling `add_learner`, ensuring their own listener is ready to accept
-/// replication traffic from the leader.
+/// signals once the listener is bound.  Non-bootstrap nodes wait for this
+/// signal before calling `add_learner`, ensuring their own listener is ready to
+/// accept replication traffic from the leader.
 pub async fn ensure_raft_initialized(
     storage: Arc<Storage>,
     ds: DistributedStorageConfiguration,

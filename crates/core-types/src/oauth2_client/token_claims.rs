@@ -234,6 +234,11 @@ pub struct OpenStackAccessTokenClaims {
     /// 0026 §12) will populate.
     pub delegation_context: DelegationContext,
 
+    /// RFC 8693 `act`: the service acting for `sub`, on tokens a service
+    /// obtained by redeeming a delegation (ADR 0036 §5.2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub act: Option<ActClaim>,
+
     #[serde(flatten)]
     pub openstack_context: OpenStackContext,
 }
@@ -261,6 +266,37 @@ pub enum DelegationContext {
         #[serde(rename = "delegated_project_id")]
         project_id: String,
     },
+    /// A service acting for a user under a service grant (ADR 0036 §5.2).
+    ServiceGrant {
+        #[serde(rename = "delegated_project_id")]
+        project_id: String,
+        /// The redeemed grant.
+        grant_id: String,
+    },
+}
+
+/// Namespace of [`ActClaim::sub`] (ADR 0036 §5.2). Consumers branch on it
+/// rather than on the shape of `sub`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActSubType {
+    /// A SPIFFE ID: the service client's SVID.
+    Spiffe,
+    /// A Keystone user id (human grantee, ADR 0036 §9).
+    UserId,
+}
+
+/// RFC 8693 §4.1 `act` claim: who acts for the token subject (ADR 0036
+/// §5.2). Always present on a delegated service token; there is no way to
+/// mint one that hides the acting service.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActClaim {
+    /// The acting service's client id.
+    pub client_id: String,
+    /// Namespace of `sub`.
+    pub sub_type: ActSubType,
+    /// The actor's identity in that namespace.
+    pub sub: String,
 }
 
 /// OpenStack identity/authorization context embedded in an
@@ -368,6 +404,7 @@ mod tests {
             amr: vec!["client_credentials".to_string()],
             token_use: "access".to_string(),
             delegation_context: DelegationContext::Plain,
+            act: None,
             openstack_context: OpenStackContext {
                 user_id: "shadow-user".to_string(),
                 user_name: "client-1".to_string(),

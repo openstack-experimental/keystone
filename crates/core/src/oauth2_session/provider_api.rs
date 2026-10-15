@@ -414,8 +414,8 @@ pub trait Oauth2SessionApi: Send + Sync {
     /// The upstream IdP vouched for `user_id`: stamp the session like
     /// [`Self::mark_authenticated`] and record the `upstream` login. Fails
     /// with `NotFound` unless the session is waiting on exactly
-    /// `upstream.idp_id` with `completion.upstream_state`; the pending redirect is
-    /// consumed, so a replayed callback cannot complete a second time.
+    /// `upstream.idp_id` with `completion.upstream_state`; the pending redirect
+    /// is consumed, so a replayed callback cannot complete a second time.
     async fn complete_upstream_login(
         &self,
         state: &ServiceState,

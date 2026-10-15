@@ -91,6 +91,12 @@ pub enum KeystoneApiError {
     #[error("service unavailable: {0}")]
     ServiceUnavailable(String),
 
+    /// A storage quota is exhausted (HTTP 429), e.g. the per-project
+    /// service grant backstop (ADR 0036 §4.1). Not a rate limit: retrying
+    /// only helps once resources were released.
+    #[error("quota exceeded: {0}")]
+    QuotaExceeded(String),
+
     /// Rate limit exceeded (HTTP 429 Too Many Requests).
     ///
     /// `retry_after` is the number of seconds the client must wait before

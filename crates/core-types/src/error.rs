@@ -38,6 +38,7 @@ use crate::resource::ResourceProviderError;
 use crate::revoke::RevokeProviderError;
 use crate::role::RoleProviderError;
 use crate::scim::{ScimRealmProviderError, ScimResourceProviderError};
+use crate::service_grant::ServiceGrantProviderError;
 use crate::spiffe_key::SpiffeKeyProviderError;
 use crate::token::TokenProviderError;
 use crate::trust::TrustProviderError;
@@ -182,6 +183,14 @@ pub enum KeystoneError {
         /// The source of the error.
         #[from]
         source: Oauth2ClientProviderError,
+    },
+
+    /// Service grant provider.
+    #[error(transparent)]
+    ServiceGrantProvider {
+        /// The source of the error.
+        #[from]
+        source: ServiceGrantProviderError,
     },
 
     /// OAuth2 signing key provider.

@@ -229,6 +229,12 @@ pub enum EventPayload {
         provider_id: String,
     },
 
+    // Service grants (ADR 0036 §4). IDs only.
+    ServiceGrant {
+        domain_id: String,
+        id: String,
+    },
+
     // An OAuth2 SSO (browser) session that ended: logout, expiry, eviction,
     // domain disable or delete. `sso_ref` is a one-way reference, never the
     // session id (which is the bearer cookie value).
