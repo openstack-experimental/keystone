@@ -1798,3 +1798,148 @@ fn test_trust_project_info_eq_different_project_id_is_false() {
         make_trust_project_info("t1", "p2")
     );
 }
+
+// ---- service delegation contexts (ADR 0036) ----
+
+fn make_service_grant(grantor: &str, project_id: &str) -> crate::service_grant::ServiceGrant {
+    use crate::service_grant::*;
+    ServiceGrant {
+        id: "gid".into(),
+        version: 1,
+        domain_id: "did".into(),
+        grantor_user_id: grantor.into(),
+        grantee: Grantee::Client {
+            client_id: "cid".into(),
+            client_domain_id: "did".into(),
+        },
+        target: GrantTarget::Project {
+            project_id: project_id.into(),
+        },
+        role_ids: vec!["member".into()],
+        expires_at: None,
+        description: None,
+        enabled: true,
+        created_at: Utc::now(),
+        last_redeemed_at: None,
+        disabled_reason: None,
+    }
+}
+
+fn make_actor() -> ActorInfo {
+    ActorInfo {
+        client_id: "cid".into(),
+        spiffe_id: "spiffe://cloud.example/ns/backup/sa/agent".into(),
+    }
+}
+
+fn make_service_grant_ctx(grantor: &str, project_id: &str) -> SecurityContext {
+    SecurityContext::test_build()
+        .authentication_context(AuthenticationContext::ServiceGrant {
+            grant: make_service_grant(grantor, project_id),
+            actor: make_actor(),
+        })
+        .principal(make_principal("uid"))
+        .build()
+}
+
+fn make_workload_principal() -> PrincipalInfo {
+    PrincipalInfo {
+        identity: IdentityInfo::Principal(
+            PrincipalIdentityInfoBuilder::default()
+                .id("spiffe://cloud.example/ns/backup/sa/agent")
+                .issuer("spiffe://cloud.example")
+                .domain(make_domain())
+                .build()
+                .unwrap(),
+        ),
+    }
+}
+
+#[test]
+fn test_service_grant_scope_bound_to_target_project() {
+    let ctx = make_service_grant_ctx("uid", "pid");
+    let project_scope = ScopeInfo::Project {
+        project: make_project(),
+        project_domain: make_domain(),
+    };
+    assert!(ctx.validate_scope_boundaries(&project_scope).is_ok());
+
+    let foreign = make_service_grant_ctx("uid", "other");
+    assert!(matches!(
+        foreign.validate_scope_boundaries(&project_scope),
+        Err(AuthenticationError::ScopeNotAllowed)
+    ));
+    for scope in [
+        ScopeInfo::Domain(make_domain()),
+        ScopeInfo::System("system".into()),
+        ScopeInfo::Unscoped,
+    ] {
+        assert!(matches!(
+            ctx.validate_scope_boundaries(&scope),
+            Err(AuthenticationError::ScopeNotAllowed)
+        ));
+    }
+}
+
+#[test]
+fn test_service_grant_validate_checks_grantor() {
+    assert!(make_service_grant_ctx("uid", "pid").validate().is_ok());
+    assert!(matches!(
+        make_service_grant_ctx("someone-else", "pid").validate(),
+        Err(AuthenticationError::AuthzPrincipalMismatch)
+    ));
+}
+
+#[test]
+fn test_service_client_only_unscoped() {
+    let ctx = SecurityContext::test_build()
+        .authentication_context(AuthenticationContext::ServiceClient {
+            actor: make_actor(),
+        })
+        .principal(make_workload_principal())
+        .build();
+    assert!(ctx.validate_scope_boundaries(&ScopeInfo::Unscoped).is_ok());
+    for scope in [
+        ScopeInfo::Domain(make_domain()),
+        ScopeInfo::Project {
+            project: make_project(),
+            project_domain: make_domain(),
+        },
+        ScopeInfo::System("system".into()),
+    ] {
+        assert!(matches!(
+            ctx.validate_scope_boundaries(&scope),
+            Err(AuthenticationError::ScopeNotAllowed)
+        ));
+    }
+    // A user principal can never be a service acting as itself.
+    let user = SecurityContext::test_build()
+        .authentication_context(AuthenticationContext::ServiceClient {
+            actor: make_actor(),
+        })
+        .principal(make_principal("uid"))
+        .build();
+    assert!(matches!(
+        user.validate(),
+        Err(AuthenticationError::AuthzPrincipalMismatch)
+    ));
+}
+
+#[test]
+fn test_service_delegation_methods_and_delegation_flag() {
+    let grant = AuthenticationContext::ServiceGrant {
+        grant: make_service_grant("uid", "pid"),
+        actor: make_actor(),
+    };
+    assert!(grant.is_delegated());
+    assert_eq!(grant.auth_type(), "service_grant");
+    assert!(grant.methods().contains("service_grant"));
+    // A re-scoped token carrying the method stays delegated.
+    assert!(make_token_with_methods(vec!["service_grant"]).is_delegated());
+
+    let client = AuthenticationContext::ServiceClient {
+        actor: make_actor(),
+    };
+    assert!(!client.is_delegated());
+    assert_eq!(client.auth_type(), "service_client");
+}

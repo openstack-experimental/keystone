@@ -99,6 +99,16 @@ impl FernetToken {
         ctx: &SecurityContext,
         expires_at: DateTime<Utc>,
     ) -> Result<Self, error::TokenProviderError> {
+        // Service delegation contexts (ADR 0036) never become Fernet
+        // tokens, whatever the scope (the per-scope arms below repeat it for
+        // exhaustiveness).
+        if matches!(
+            ctx.authentication_context(),
+            AuthenticationContext::ServiceGrant { .. }
+                | AuthenticationContext::ServiceClient { .. }
+        ) {
+            return Err(AuthenticationError::ScopeNotAllowed.into());
+        }
         if let Some(token_restriction) = ctx.token_restriction() {
             return Ok(Self::Restricted(RestrictedPayload::from_security_context(
                 ctx,
@@ -158,6 +168,14 @@ impl FernetToken {
                 AuthenticationContext::WasmPlugin { .. } => Ok(Self::DomainScope(
                     DomainScopePayload::from_security_context(ctx, domain, expires_at)?,
                 )),
+                // Service delegation contexts (ADR 0036) never become
+                // Fernet tokens: the grant is redeemed for a short-lived
+                // JWT at the token endpoint, and a token minted here would
+                // carry no reference back to the grant.
+                AuthenticationContext::ServiceGrant { .. }
+                | AuthenticationContext::ServiceClient { .. } => {
+                    Err(AuthenticationError::ScopeNotAllowed.into())
+                }
             },
             ScopeInfo::Project { project, .. } => match ctx.authentication_context() {
                 AuthenticationContext::ApplicationCredential {
@@ -213,6 +231,12 @@ impl FernetToken {
                 | AuthenticationContext::WasmPlugin { .. } => Ok(Self::ProjectScope(
                     ProjectScopePayload::from_security_context(ctx, project, expires_at)?,
                 )),
+                // A plain project payload would drop the grant bound on
+                // every reuse (see the Trust arm above). Never minted.
+                AuthenticationContext::ServiceGrant { .. }
+                | AuthenticationContext::ServiceClient { .. } => {
+                    Err(AuthenticationError::ScopeNotAllowed.into())
+                }
             },
             ScopeInfo::TrustProject(tpi) => Ok(Self::Trust(TrustPayload::from_security_context(
                 ctx,
@@ -246,6 +270,10 @@ impl FernetToken {
                 | AuthenticationContext::WasmPlugin { .. } => Ok(Self::Unscoped(
                     UnscopedPayload::from_security_context(ctx, expires_at)?,
                 )),
+                AuthenticationContext::ServiceGrant { .. }
+                | AuthenticationContext::ServiceClient { .. } => {
+                    Err(AuthenticationError::ScopeNotAllowed.into())
+                }
             },
         }
     }
@@ -477,6 +505,60 @@ mod tests {
             }
             other => panic!("expected FernetToken::Trust, got {other:?}"),
         }
+    }
+
+    /// A service grant context is never encoded as a Fernet token (ADR 0036
+    /// §5): a plain project payload would drop the grant bound.
+    #[test]
+    fn test_from_security_context_rejects_service_grant() {
+        use crate::service_grant::*;
+        let grant = ServiceGrant {
+            id: "gid".into(),
+            version: 1,
+            domain_id: "did".into(),
+            grantor_user_id: "grantor".into(),
+            grantee: Grantee::Client {
+                client_id: "cid".into(),
+                client_domain_id: "did".into(),
+            },
+            target: GrantTarget::Project {
+                project_id: "pid".into(),
+            },
+            role_ids: vec!["member".into()],
+            expires_at: None,
+            description: None,
+            enabled: true,
+            created_at: Utc::now(),
+            last_redeemed_at: None,
+            disabled_reason: None,
+        };
+        let mut ctx = SecurityContext::test_build()
+            .authentication_context(AuthenticationContext::ServiceGrant {
+                grant,
+                actor: ActorInfo {
+                    client_id: "cid".into(),
+                    spiffe_id: "spiffe://td/x".into(),
+                },
+            })
+            .principal(PrincipalInfo {
+                identity: IdentityInfo::User(
+                    UserIdentityInfoBuilder::default()
+                        .user_id("grantor")
+                        .build()
+                        .unwrap(),
+                ),
+            })
+            .build();
+        ctx.set_authorization(
+            AuthzInfoBuilder::default()
+                .scope(ScopeInfo::Project {
+                    project: make_project("pid"),
+                    project_domain: make_domain(),
+                })
+                .build()
+                .unwrap(),
+        );
+        assert!(FernetToken::from_security_context(&ctx, Utc::now(), Utc::now()).is_err());
     }
 
     /// A freshly minted token must carry the `issued_at` the caller passed,

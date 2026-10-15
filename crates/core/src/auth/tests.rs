@@ -2881,7 +2881,11 @@ fn is_delegating_auth_context(ctx: &AuthenticationContext) -> bool {
     match ctx {
         AuthenticationContext::ApplicationCredential { .. } => true,
         AuthenticationContext::Trust { .. } => true,
-        AuthenticationContext::Oidc { .. }
+        AuthenticationContext::ServiceGrant { .. } => true,
+        // The service acting as itself delegates nothing and holds no
+        // roles (unscoped only).
+        AuthenticationContext::ServiceClient { .. }
+        | AuthenticationContext::Oidc { .. }
         | AuthenticationContext::K8s(_)
         | AuthenticationContext::Password
         | AuthenticationContext::Admin
@@ -3053,6 +3057,18 @@ async fn test_delegation_scope_kind_matrix_roles_never_exceed_delegation() {
                     application_credential: ac.clone(),
                     token: None,
                 }
+            }),
+        ),
+        (
+            "service_grant",
+            "grantor",
+            vec![allowed_rid],
+            Box::new(|| AuthenticationContext::ServiceGrant {
+                grant: make_service_grant("grantor", "pid", &["reader"]),
+                actor: openstack_keystone_core_types::auth::ActorInfo {
+                    client_id: "cid".into(),
+                    spiffe_id: "spiffe://cloud.example/ns/backup/sa/agent".into(),
+                },
             }),
         ),
     ];
@@ -3824,4 +3840,171 @@ mod delegation_monotonicity_property {
             assert_trust_bounded(after_result, &delegation_ids, &after_ids)?;
         }
     }
+}
+
+// --- Service grant (ADR 0036 §5): roles bounded by the grant and the
+// grantor's live roles, scope bounded to the grant's project ---
+
+fn make_service_grant(
+    grantor: &str,
+    project_id: &str,
+    role_ids: &[&str],
+) -> openstack_keystone_core_types::service_grant::ServiceGrant {
+    use openstack_keystone_core_types::service_grant::*;
+    ServiceGrant {
+        id: "gid".into(),
+        version: 1,
+        domain_id: "d1".into(),
+        grantor_user_id: grantor.into(),
+        grantee: Grantee::Client {
+            client_id: "cid".into(),
+            client_domain_id: "d1".into(),
+        },
+        target: GrantTarget::Project {
+            project_id: project_id.into(),
+        },
+        role_ids: role_ids.iter().map(|r| r.to_string()).collect(),
+        expires_at: None,
+        description: None,
+        enabled: true,
+        created_at: chrono::Utc::now(),
+        last_redeemed_at: None,
+        disabled_reason: None,
+    }
+}
+
+fn make_service_grant_ctx(
+    grant: openstack_keystone_core_types::service_grant::ServiceGrant,
+) -> openstack_keystone_core_types::auth::SecurityContext {
+    SecurityContextTestingBuilder::default()
+        .authentication_context(AuthenticationContext::ServiceGrant {
+            grant,
+            actor: openstack_keystone_core_types::auth::ActorInfo {
+                client_id: "cid".into(),
+                spiffe_id: "spiffe://cloud.example/ns/backup/sa/agent".into(),
+            },
+        })
+        .principal(make_user_identity("uid"))
+        .build()
+}
+
+/// A state where `uid` holds `grantor_roles` on `pid` and no role implies
+/// another.
+async fn service_grant_state(grantor_roles: &'static [&'static str]) -> ServiceState {
+    let mut assignment_mock = MockAssignmentProvider::default();
+    assignment_mock
+        .expect_list_role_assignments()
+        .withf(|_, q: &RoleAssignmentListParameters| {
+            q.user_id.as_deref() == Some("uid")
+                && q.project_id.as_deref() == Some("pid")
+                && q.effective == Some(true)
+        })
+        .returning(move |_e, _q| {
+            // Group membership can yield the same role twice.
+            Ok(grantor_roles
+                .iter()
+                .chain(grantor_roles.iter())
+                .map(|r| assignment_with_role(*r))
+                .collect())
+        });
+    let mut role_mock = MockRoleProvider::default();
+    role_mock
+        .expect_expand_implied_roles()
+        .returning(|_e, _roles| Ok(()));
+    get_mocked_state(
+        None,
+        Some(
+            Provider::mocked_builder()
+                .mock_assignment(assignment_mock)
+                .mock_role(role_mock),
+        ),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn test_service_grant_roles_are_grant_intersect_grantor() {
+    let state = service_grant_state(&["member", "admin"]).await;
+    let ctx = make_service_grant_ctx(make_service_grant("uid", "pid", &["member", "reader"]));
+    let roles = calculate_effective_roles(&state, &ctx, &make_project_scope("pid"))
+        .await
+        .unwrap();
+    // `admin` is the grantor's but not delegated; `reader` is delegated but
+    // no longer the grantor's.
+    assert_eq!(
+        roles.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+        ["member"]
+    );
+}
+
+#[tokio::test]
+async fn test_service_grant_grantor_lost_all_roles() {
+    let state = service_grant_state(&["admin"]).await;
+    let ctx = make_service_grant_ctx(make_service_grant("uid", "pid", &["member"]));
+    assert!(matches!(
+        calculate_effective_roles(&state, &ctx, &make_project_scope("pid")).await,
+        Err(AuthenticationError::ActorHasNoRolesOnTarget)
+    ));
+}
+
+#[tokio::test]
+async fn test_service_grant_other_scopes_rejected() {
+    let state = service_grant_state(&["member"]).await;
+    let ctx = make_service_grant_ctx(make_service_grant("uid", "pid", &["member"]));
+    for scope in [
+        make_project_scope("other"),
+        make_domain_scope("d1"),
+        ScopeInfo::Unscoped,
+    ] {
+        assert!(matches!(
+            ValidatedSecurityContext::new_for_scope(ctx.clone(), scope, &state).await,
+            Err(AuthenticationError::ScopeNotAllowed)
+        ));
+    }
+}
+
+#[tokio::test]
+async fn test_service_grant_new_for_scope() {
+    let state = service_grant_state(&["member"]).await;
+    let ctx = make_service_grant_ctx(make_service_grant("uid", "pid", &["member"]));
+    let vsc = ValidatedSecurityContext::new_for_scope(ctx, make_project_scope("pid"), &state)
+        .await
+        .unwrap();
+    let creds = crate::policy::Credentials::try_from(&vsc).unwrap();
+    assert!(creds.is_delegated);
+    assert_eq!(creds.auth_type, "service_grant");
+    assert_eq!(creds.delegated_project_id.as_deref(), Some("pid"));
+    assert_eq!(creds.project_id.as_deref(), Some("pid"));
+    assert_eq!(creds.service_grant_id.as_deref(), Some("gid"));
+    assert_eq!(creds.actor.map(|a| a.client_id).as_deref(), Some("cid"));
+}
+
+#[tokio::test]
+async fn test_service_grant_disabled_or_expired_rejected() {
+    let state = service_grant_state(&["member"]).await;
+    let mut disabled = make_service_grant("uid", "pid", &["member"]);
+    disabled.enabled = false;
+    let mut expired = make_service_grant("uid", "pid", &["member"]);
+    expired.expires_at = Some(chrono::Utc::now() - chrono::Duration::seconds(1));
+    for grant in [disabled, expired] {
+        assert!(matches!(
+            ValidatedSecurityContext::new_for_scope(
+                make_service_grant_ctx(grant),
+                make_project_scope("pid"),
+                &state
+            )
+            .await,
+            Err(AuthenticationError::ServiceGrantDisabled(_))
+        ));
+    }
+}
+
+#[tokio::test]
+async fn test_service_grant_grantor_mismatch_rejected() {
+    let state = service_grant_state(&["member"]).await;
+    let ctx = make_service_grant_ctx(make_service_grant("someone-else", "pid", &["member"]));
+    assert!(matches!(
+        ValidatedSecurityContext::new_for_scope(ctx, make_project_scope("pid"), &state).await,
+        Err(AuthenticationError::AuthzPrincipalMismatch)
+    ));
 }
