@@ -26,6 +26,7 @@ use crate::audit::{CorrelationId, build_initiator_from_vsc, emit_oauth2_client_r
 use crate::keystone::ServiceState;
 use openstack_keystone_api_types::v4::oauth2_client::OAuth2Client;
 use openstack_keystone_core::auth::ExecutionContext;
+use openstack_keystone_core::oauth2_metrics::OAUTH2_METRICS;
 
 /// Revoke (soft-delete) an OAuth2 client.
 #[utoipa::path(
@@ -82,6 +83,7 @@ pub(super) async fn delete(
         .delete(&exec, &domain_id, &provider_id)
         .await?;
 
+    OAUTH2_METRICS.record_revocations("client_revoked", revoked_families as u64);
     emit_oauth2_client_revoked_event(
         &state.audit_dispatcher,
         &correlation_id,

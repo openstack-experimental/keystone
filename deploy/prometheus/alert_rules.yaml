@@ -182,3 +182,52 @@ groups:
           description: >
             The last background re-encryption pass skipped records; the
             retired DEK cannot be dropped until they are migrated.
+
+  - name: keystone_oauth2
+    rules:
+      # A refresh token was replayed outside the grace window: the token
+      # family was revoked and a breach is likely (ADR 0026 §9).
+      - alert: KeystoneOauth2RefreshReuseDetected
+        # `or ... unless ... offset` also catches the first reuse of a
+        # client, whose series appears at 1 and has no `increase` yet.
+        expr: >
+          increase(keystone_oauth2_refresh_reuse_detected_total[5m]) > 0
+          or
+          (keystone_oauth2_refresh_reuse_detected_total
+            unless keystone_oauth2_refresh_reuse_detected_total offset 5m)
+        labels:
+          severity: critical
+        annotations:
+          summary: "OAuth2 refresh token reuse detected"
+          description: >
+            A spent refresh token was presented again. Check the CADF critical
+            event and consider revoking the client's sessions.
+
+      # Adjust the threshold to `signing_key_rotation_days` + 7 days
+      # (default 90 + 7 days = 8380800 s).
+      - alert: KeystoneOauth2SigningKeyStale
+        expr: keystone_oauth2_signing_key_age_seconds > 8380800
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "OAuth2 signing key of domain {{ $labels.domain_id }} is overdue for rotation"
+          description: >
+            Automatic rotation did not run; check the leader and the key
+            janitor logs, or rotate manually.
+
+      # The key janitor sweeps hourly, the session janitor every
+      # `session_janitor_interval_seconds`. Only the Raft leader stamps the
+      # gauge, so take the newest value across instances: a former leader
+      # keeps a stale series after a failover.
+      - alert: KeystoneOauth2JanitorStale
+        expr: >
+          time() - max by (janitor)
+          (keystone_oauth2_janitor_last_run_timestamp_seconds) > 10800
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "OAuth2 {{ $labels.janitor }} janitor has not run for over 3 hours"
+          description: >
+            No Raft leader, or the janitor task is not running.

@@ -52,6 +52,7 @@ use cadf::{
 };
 
 use crate::keystone::ServiceState;
+use crate::oauth2_metrics::OAUTH2_METRICS;
 use crate::oauth2_session::Oauth2SessionProviderError;
 
 /// Seconds a session, code or device grant must have been expired before it
@@ -125,6 +126,11 @@ pub async fn run_once(state: &ServiceState) -> Result<JanitorReport, Oauth2Sessi
     if report.total_purged() > 0 || report.errors > 0 {
         emit_maintenance_event(&state.audit_dispatcher, &report);
     }
+    for (kind, count) in &report.purged_by_kind {
+        OAUTH2_METRICS.record_janitor_purged(kind, *count as u64);
+    }
+    OAUTH2_METRICS.record_janitor_errors(report.errors as u64);
+    OAUTH2_METRICS.set_janitor_last_run("session", now);
     Ok(report)
 }
 

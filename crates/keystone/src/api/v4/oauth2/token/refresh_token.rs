@@ -33,6 +33,7 @@ use crate::audit::{
     emit_oauth2_session_event,
 };
 use crate::keystone::ServiceState;
+use openstack_keystone_core::oauth2_metrics::OAUTH2_METRICS;
 
 use super::common::*;
 use super::{Oauth2TokenError, TokenForm, TokenResponse};
@@ -163,6 +164,7 @@ pub(super) async fn handle_refresh_token_grant(
             ));
         }
         RefreshTokenRedemption::ReuseDetected { family_id, reason } => {
+            OAUTH2_METRICS.record_refresh_reuse(domain_id, &client_id);
             emit_oauth2_refresh_reuse_critical_event(
                 &state.audit_dispatcher,
                 correlation_id,

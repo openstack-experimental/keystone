@@ -32,6 +32,7 @@ use cadf::{AuditDispatcher, CadfEventPayload, Initiator, Observer, Outcome, Targ
 use crate::auth::ExecutionContext;
 use crate::keystone::ServiceState;
 use crate::oauth2_key::Oauth2KeyProviderError;
+use crate::oauth2_metrics::OAUTH2_METRICS;
 
 /// Interval between sweep passes. Retention is measured in whole access-token
 /// lifetimes (minutes to hours), so this is deliberately coarse.
@@ -76,13 +77,22 @@ pub async fn run_once(state: &ServiceState) -> Result<JanitorReport, Oauth2KeyPr
     let now = Utc::now();
 
     let mut report = JanitorReport::default();
-    let all = state
+    let all = match state
         .provider
         .get_oauth2_key_provider()
         .list_all_active_keys(state)
-        .await?;
+        .await
+    {
+        Ok(all) => all,
+        Err(e) => {
+            OAUTH2_METRICS.record_janitor_errors(1);
+            return Err(e);
+        }
+    };
 
     for (domain_id, active) in all {
+        OAUTH2_METRICS
+            .set_signing_key_age(&domain_id, (now - active.primary.created_at).num_seconds());
         match state
             .provider
             .get_oauth2_key_provider()
@@ -123,6 +133,7 @@ pub async fn run_once(state: &ServiceState) -> Result<JanitorReport, Oauth2KeyPr
                         &domain_id,
                     );
                     report.retired += 1;
+                    OAUTH2_METRICS.record_janitor_purged("retired_key", 1);
                 }
                 Ok(false) => {}
                 Err(e) => {
@@ -147,6 +158,7 @@ pub async fn run_once(state: &ServiceState) -> Result<JanitorReport, Oauth2KeyPr
                         &domain_id,
                     );
                     report.rotated += 1;
+                    OAUTH2_METRICS.record_key_rotation(&domain_id, "automatic");
                 }
                 Ok(false) => {}
                 Err(e) => {
@@ -161,6 +173,8 @@ pub async fn run_once(state: &ServiceState) -> Result<JanitorReport, Oauth2KeyPr
         }
     }
 
+    OAUTH2_METRICS.record_janitor_errors(report.errors as u64);
+    OAUTH2_METRICS.set_janitor_last_run("key", now.timestamp());
     Ok(report)
 }
 

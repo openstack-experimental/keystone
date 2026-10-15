@@ -31,6 +31,7 @@ use openstack_keystone_core_types::oauth2_session::RefreshTokenRevocationReason;
 use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::oauth2_metrics::OAUTH2_METRICS;
 
 /// Longest accepted `reason`.
 const MAX_REASON_LEN: usize = 256;
@@ -122,6 +123,7 @@ pub(super) async fn create(
             .len()
     };
 
+    OAUTH2_METRICS.record_revocations("operator", revoked_families as u64);
     tracing::warn!(
         actor = %user_auth.inner().principal().get_user_id(),
         domain_id,

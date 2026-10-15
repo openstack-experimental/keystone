@@ -385,6 +385,15 @@ This calls `POST /v4/oauth2/{domain_id}/revocations`; a domain `manager` may
 revoke in their own domain, `admin` in any. Clients are managed with
 `keystone-manage oauth2 client ...`.
 
+## Monitoring
+
+The provider exports `keystone_oauth2_*` Prometheus series (token requests and
+latency, refresh reuse, device polls, key rotations and age, janitor activity,
+operator revocations); see the OAuth2 table in
+[ADR 0031](../../adr/0031-prometheus-metrics.md). The shipped alert rules
+(`deploy/prometheus/alert_rules.yaml`, group `keystone_oauth2`) page on refresh
+token reuse and warn about stale signing keys and janitors.
+
 ## Production checklist
 
 - **Set `[DEFAULT] public_endpoint`** to the externally visible URL of

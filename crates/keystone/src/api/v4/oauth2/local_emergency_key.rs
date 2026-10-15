@@ -43,6 +43,7 @@ use crate::audit::{
     CorrelationId, build_initiator_from_vsc, emit_oauth2_local_emergency_key_reconciled_event,
 };
 use crate::keystone::ServiceState;
+use openstack_keystone_core::oauth2_metrics::OAUTH2_METRICS;
 
 #[utoipa::path(
     get,
@@ -152,6 +153,7 @@ pub(super) async fn reconcile_local_emergency_key(
         )
         .await?;
 
+    OAUTH2_METRICS.record_key_rotation(&domain_id, "local_emergency");
     let event_id = emit_oauth2_local_emergency_key_reconciled_event(
         &state.audit_dispatcher,
         &correlation_id,

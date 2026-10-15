@@ -44,6 +44,7 @@ use serde::{Deserialize, Serialize};
 use crate::api::common::PeerAddr;
 use crate::audit::CorrelationId;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::oauth2_metrics::{OAUTH2_METRICS, grant_type_label};
 
 use super::html::no_store;
 use super::well_known::ensure_trusted_issuer;
@@ -200,12 +201,16 @@ pub(super) async fn token(
     correlation_id: CorrelationId,
     TokenRequest(form): TokenRequest,
 ) -> Result<Response, Oauth2TokenError> {
-    ensure_trusted_issuer(&state).await?;
+    let started = std::time::Instant::now();
+    if let Err(e) = ensure_trusted_issuer(&state).await {
+        record_token_metrics(&domain_id, "", started, Some(&e));
+        return Err(e);
+    }
 
     let Some(grant_type) = form.grant_type.as_deref() else {
-        return Err(Oauth2TokenError::invalid_request(
-            "missing required parameter: grant_type",
-        ));
+        let e = Oauth2TokenError::invalid_request("missing required parameter: grant_type");
+        record_token_metrics(&domain_id, "", started, Some(&e));
+        return Err(e);
     };
 
     let oauth2_cfg = state.config_manager.config.read().await.oauth2.clone();
@@ -272,7 +277,61 @@ pub(super) async fn token(
             "grant_type `{other}` is not supported"
         ))),
     };
+    record_token_metrics(&domain_id, grant_type, started, result.as_ref().err());
     result.map(no_store)
+}
+
+/// Record the `/token` outcome and latency series (and, for the device code
+/// grant, the poll outcome).
+fn record_token_metrics(
+    domain_id: &str,
+    grant_type: &str,
+    started: std::time::Instant,
+    err: Option<&Oauth2TokenError>,
+) {
+    // `/token` is unauthenticated and `domain_id` is an arbitrary path
+    // segment: only a successful grant proves the domain exists, so only
+    // then it may become a label value.
+    let domain_label = if err.is_none() {
+        domain_id
+    } else {
+        UNKNOWN_DOMAIN_LABEL
+    };
+    OAUTH2_METRICS.record_token_request(domain_label, grant_type, token_outcome(err));
+    OAUTH2_METRICS.record_token_duration(grant_type, started.elapsed().as_secs_f64());
+    if grant_type_label(grant_type) == "device_code" {
+        OAUTH2_METRICS.record_device_poll(device_poll_outcome(err));
+    }
+}
+
+/// `domain_id` label value used for `/token` requests that did not succeed.
+const UNKNOWN_DOMAIN_LABEL: &str = "unknown";
+
+/// Map a `/token` result to a fixed `outcome` label value.
+fn token_outcome(err: Option<&Oauth2TokenError>) -> &'static str {
+    match err {
+        None => "success",
+        Some(e) if e.status() == axum::http::StatusCode::TOO_MANY_REQUESTS => "rate_limited",
+        Some(e) => match e.error_code() {
+            "invalid_client" => "invalid_client",
+            "invalid_grant" => "invalid_grant",
+            "invalid_scope" => "invalid_scope",
+            _ => "error",
+        },
+    }
+}
+
+/// Map a device code grant result to a fixed device poll `outcome` label
+/// value.
+fn device_poll_outcome(err: Option<&Oauth2TokenError>) -> &'static str {
+    match err.map(Oauth2TokenError::error_code) {
+        None => "authorized",
+        Some("authorization_pending") => "pending",
+        Some("slow_down") => "slow_down",
+        Some("access_denied") => "denied",
+        Some("expired_token") => "expired",
+        Some(_) => "invalid",
+    }
 }
 
 #[cfg(test)]
@@ -348,5 +407,59 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_eq!(json_body(response).await["error"], "unsupported_grant_type");
+    }
+
+    #[test]
+    fn test_token_outcome() {
+        use super::{Oauth2TokenError, token_outcome};
+
+        assert_eq!(token_outcome(None), "success");
+        assert_eq!(
+            token_outcome(Some(&Oauth2TokenError::too_many_requests(1))),
+            "rate_limited"
+        );
+        assert_eq!(
+            token_outcome(Some(&Oauth2TokenError::invalid_client("x"))),
+            "invalid_client"
+        );
+        assert_eq!(
+            token_outcome(Some(&Oauth2TokenError::invalid_grant("x"))),
+            "invalid_grant"
+        );
+        assert_eq!(
+            token_outcome(Some(&Oauth2TokenError::invalid_scope("x"))),
+            "invalid_scope"
+        );
+        assert_eq!(
+            token_outcome(Some(&Oauth2TokenError::invalid_request("x"))),
+            "error"
+        );
+    }
+
+    #[test]
+    fn test_device_poll_outcome() {
+        use super::{Oauth2TokenError, device_poll_outcome};
+
+        assert_eq!(device_poll_outcome(None), "authorized");
+        assert_eq!(
+            device_poll_outcome(Some(&Oauth2TokenError::authorization_pending())),
+            "pending"
+        );
+        assert_eq!(
+            device_poll_outcome(Some(&Oauth2TokenError::slow_down())),
+            "slow_down"
+        );
+        assert_eq!(
+            device_poll_outcome(Some(&Oauth2TokenError::access_denied())),
+            "denied"
+        );
+        assert_eq!(
+            device_poll_outcome(Some(&Oauth2TokenError::expired_token())),
+            "expired"
+        );
+        assert_eq!(
+            device_poll_outcome(Some(&Oauth2TokenError::invalid_grant("x"))),
+            "invalid"
+        );
     }
 }

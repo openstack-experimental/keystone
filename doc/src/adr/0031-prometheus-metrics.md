@@ -165,6 +165,26 @@ every token validation, see [ADR 9](0009-auth-token-revoke.md)) and therefore
 does not increment the counter.
 | `keystone_token_revocation_list_size` | gauge | — | In-memory/DB revocation-event backlog |
 
+#### OAuth2 provider
+
+| Metric | Type | Labels | Purpose |
+|---|---|---|---|
+| `keystone_oauth2_token_requests_total` | counter | `domain_id`, `grant_type`, `outcome` (success/invalid_client/invalid_grant/invalid_scope/rate_limited/error) | `/token` volume and outcome; `domain_id` is `unknown` unless the request succeeded, since the path segment is unauthenticated |
+| `keystone_oauth2_token_issue_duration_seconds` | histogram | `grant_type` | `/token` latency |
+| `keystone_oauth2_refresh_reuse_detected_total` | counter | `domain_id`, `client_id` | Refresh token reuse (breach signal) |
+| `keystone_oauth2_device_polls_total` | counter | `outcome` (pending/slow_down/authorized/denied/expired/invalid) | Device code polls |
+| `keystone_oauth2_device_grants_started_total` | counter | — | Device grants started |
+| `keystone_oauth2_signing_key_rotations_total` | counter | `domain_id`, `kind` (normal/emergency/local_emergency/automatic) | Key rotations |
+| `keystone_oauth2_signing_key_age_seconds` | gauge | `domain_id` | Age of the primary signing key |
+| `keystone_oauth2_janitor_purged_total` | counter | `kind` | Records purged or keys retired |
+| `keystone_oauth2_janitor_errors_total` | counter | — | Janitor errors |
+| `keystone_oauth2_janitor_last_run_timestamp_seconds` | gauge | `janitor` | Last janitor sweep (`key`, `session`) |
+| `keystone_oauth2_revocations_total` | counter | `reason` | Refresh token families revoked by operators (`operator`) and client revocation (`client_revoked`) |
+
+`keystone_oauth2_authorize_requests_total` and
+`keystone_oauth2_login_attempts_total` are registered but not yet incremented.
+`user_id` is never a label.
+
 #### Policy (OPA)
 
 | Metric | Type | Labels | Purpose |

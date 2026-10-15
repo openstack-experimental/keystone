@@ -35,6 +35,7 @@ use super::token::{Oauth2TokenError, validate_device_code_client};
 use super::well_known::{base_url, ensure_trusted_issuer};
 use crate::api::common::PeerAddr;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::oauth2_metrics::OAUTH2_METRICS;
 
 #[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
 pub(super) struct DeviceAuthorizationForm {
@@ -164,6 +165,7 @@ pub(super) async fn device_authorization(
         expires_in: (start.expires_at - now).max(0),
         interval: start.interval,
     };
+    OAUTH2_METRICS.record_device_grant_started();
     Ok(no_store(
         (StatusCode::OK, axum::Json(response)).into_response(),
     ))

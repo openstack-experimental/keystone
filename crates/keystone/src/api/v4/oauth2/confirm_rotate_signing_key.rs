@@ -38,6 +38,7 @@ use crate::audit::{
     CorrelationId, build_initiator_from_vsc, emit_oauth2_emergency_key_rotation_critical_event,
 };
 use crate::keystone::ServiceState;
+use openstack_keystone_core::oauth2_metrics::OAUTH2_METRICS;
 
 #[utoipa::path(
     post,
@@ -91,6 +92,7 @@ pub(super) async fn confirm_rotate_signing_key(
         )
         .await?;
 
+    OAUTH2_METRICS.record_key_rotation(&domain_id, "emergency");
     emit_oauth2_emergency_key_rotation_critical_event(
         &state.audit_dispatcher,
         &correlation_id,

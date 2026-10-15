@@ -52,6 +52,11 @@ impl Oauth2TokenError {
         self.error
     }
 
+    /// The HTTP status of the response.
+    pub(crate) fn status(&self) -> StatusCode {
+        self.status
+    }
+
     pub(crate) fn invalid_request(description: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, "invalid_request", description)
     }

@@ -50,6 +50,7 @@ use crate::api::auth::Auth;
 use crate::api::error::KeystoneApiError;
 use crate::audit::CorrelationId;
 use crate::keystone::ServiceState;
+use openstack_keystone_core::oauth2_metrics::OAUTH2_METRICS;
 
 #[utoipa::path(
     post,
@@ -134,6 +135,7 @@ pub(super) async fn rotate_signing_key(
             .get_oauth2_key_provider()
             .rotate_signing_key(&ExecutionContext::from_auth(&state, &user_auth), &domain_id)
             .await?;
+        OAUTH2_METRICS.record_key_rotation(&domain_id, "normal");
         RotateSigningKeyResponse {
             kid: Some(key.kid),
             pending_rotation_id: None,

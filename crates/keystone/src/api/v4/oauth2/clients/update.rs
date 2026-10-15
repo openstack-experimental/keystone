@@ -30,6 +30,7 @@ use crate::api::error::KeystoneApiError;
 use crate::audit::{CorrelationId, build_initiator_from_vsc, emit_oauth2_client_revoked_event};
 use crate::keystone::ServiceState;
 use openstack_keystone_core::auth::ExecutionContext;
+use openstack_keystone_core::oauth2_metrics::OAUTH2_METRICS;
 
 /// Update an OAuth2 client's mutable configuration.
 #[utoipa::path(
@@ -92,6 +93,7 @@ pub(super) async fn update(
         .await?;
 
     if !res.enabled && disabling {
+        OAUTH2_METRICS.record_revocations("client_revoked", revoked_families as u64);
         emit_oauth2_client_revoked_event(
             &state.audit_dispatcher,
             &correlation_id,
