@@ -22,6 +22,7 @@ mod canary;
 mod chaos;
 mod invariants;
 mod load;
+mod partition;
 mod prom;
 mod report;
 mod server;
@@ -124,6 +125,20 @@ struct Args {
         default_value = "app.kubernetes.io/name=keystone-rs"
     )]
     chaos_selector: String,
+    /// Cut one Raft node off from its peers this often (`0` disables).
+    /// Needs RBAC for network policies, see `overlays/soak/soak.yaml`, and a
+    /// CNI that enforces them (k3s does).
+    #[arg(long, env = "SOAK_PARTITION_INTERVAL", default_value = "0s", value_parser = humantime::parse_duration)]
+    partition_interval: Duration,
+    /// How long the node stays cut off.
+    #[arg(long, env = "SOAK_PARTITION_DURATION", default_value = "60s", value_parser = humantime::parse_duration)]
+    partition_duration: Duration,
+    /// The other nodes must lead and accept writes within this time.
+    #[arg(long, env = "SOAK_PARTITION_ELECTION", default_value = "60s", value_parser = humantime::parse_duration)]
+    partition_election: Duration,
+    /// The cluster must converge within this time after the cut is lifted.
+    #[arg(long, env = "SOAK_PARTITION_RECOVERY", default_value = "3m", value_parser = humantime::parse_duration)]
+    partition_recovery: Duration,
     /// Write and verify a canary record this often (`0` disables). Each
     /// record is read back from every node (read-after-write) and the
     /// earlier ones are re-checked (integrity).
@@ -345,6 +360,30 @@ fn check_chaos(state: &Shared, checked: &mut u64, now: Duration, args: &Args) ->
     found
 }
 
+/// Report the failed checks of partitions that settled since the last call.
+fn check_partition(state: &Shared, checked: &mut u64, now: Duration) -> Vec<Violation> {
+    let Ok(g) = state.read() else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    let already = *checked;
+    for e in g.partition.events.iter().filter(|e| e.seq > already) {
+        // A partition that is still healing is judged when it settles.
+        if !e.done {
+            break;
+        }
+        *checked = e.seq;
+        for f in &e.failures {
+            found.push(Violation {
+                at_secs: now.as_secs(),
+                check: f.check,
+                detail: format!("partition {} of {} {}: {}", e.seq, e.role, e.pod, f.detail),
+            });
+        }
+    }
+    found
+}
+
 /// Report canary failures recorded since the last call.
 fn check_canary(state: &Shared, checked: &mut u64, now: Duration) -> Vec<Violation> {
     let Ok(g) = state.read() else {
@@ -446,6 +485,28 @@ async fn main() -> Result<()> {
         });
     }
 
+    if !args.partition_interval.is_zero() {
+        let cfg = partition::PartitionConfig {
+            interval: args.partition_interval,
+            duration: args.partition_duration,
+            election_timeout: args.partition_election,
+            recovery_timeout: args.partition_recovery,
+            selector: args.chaos_selector.clone(),
+            expected_pods: usize::try_from(args.expected_voters).unwrap_or(usize::MAX),
+            service: args.metrics_service.clone(),
+            metrics_port: args.metrics_port,
+            api_port: args.api_port,
+            host: args.host.clone(),
+            start,
+            state: state.clone(),
+        };
+        tokio::spawn(async move {
+            if let Err(e) = partition::run(cfg, deadline).await {
+                error!(error = %format!("{e:#}"), "partition task stopped");
+            }
+        });
+    }
+
     if !args.canary_interval.is_zero() {
         let cfg = canary::CanaryConfig {
             interval: args.canary_interval,
@@ -486,6 +547,7 @@ async fn main() -> Result<()> {
     // Highest load phase number already judged for its error rate.
     let mut checked_phase = 0u64;
     let mut checked_chaos = 0u64;
+    let mut checked_partition = 0u64;
     let mut checked_canary = 0u64;
 
     loop {
@@ -529,6 +591,7 @@ async fn main() -> Result<()> {
         found.extend(check_load(&state, &mut checked_phase, now, &args));
         found.extend(check_canary(&state, &mut checked_canary, now));
         found.extend(check_chaos(&state, &mut checked_chaos, now, &args));
+        found.extend(check_partition(&state, &mut checked_partition, now));
         for v in &found {
             error!(check = v.check, detail = %v.detail, "invariant violated");
         }
@@ -637,6 +700,41 @@ mod tests {
         // Kill 3 is still recovering and judged later.
         assert_eq!(checked, 2);
         assert!(check_chaos(&st, &mut checked, Duration::ZERO, &args()).is_empty());
+    }
+
+    #[test]
+    fn reports_partition_failures_once_settled() {
+        let st: Shared = Arc::new(RwLock::new(Verdict::default()));
+        let event = |seq, done, failed: bool| partition::PartitionEvent {
+            seq,
+            pod: format!("ks-{seq}"),
+            role: "leader",
+            at_secs: 0,
+            effective: true,
+            heal_secs: Some(10),
+            failures: if failed {
+                vec![partition::PartitionFailure {
+                    check: "partition_split_brain",
+                    detail: "acknowledged a write".into(),
+                }]
+            } else {
+                Vec::new()
+            },
+            done,
+        };
+        if let Ok(mut g) = st.write() {
+            g.partition.events = vec![
+                event(1, true, false),
+                event(2, true, true),
+                event(3, false, true),
+            ];
+        }
+        let mut checked = 0;
+        let found = check_partition(&st, &mut checked, Duration::ZERO);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].check, "partition_split_brain");
+        assert_eq!(checked, 2);
+        assert!(check_partition(&st, &mut checked, Duration::ZERO).is_empty());
     }
 
     #[test]

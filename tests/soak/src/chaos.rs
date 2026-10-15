@@ -35,7 +35,7 @@ use crate::server::Shared;
 /// cover them).
 pub const MAX_EVENTS: usize = 500;
 const SERVICE_ACCOUNT: &str = "/var/run/secrets/kubernetes.io/serviceaccount";
-const POLL: Duration = Duration::from_secs(5);
+pub(crate) const POLL: Duration = Duration::from_secs(5);
 
 /// One pod kill and what became of it.
 #[derive(Clone, Debug, Serialize)]
@@ -76,15 +76,15 @@ struct PodList {
 }
 
 #[derive(Debug, Deserialize)]
-struct Pod {
-    metadata: Meta,
+pub(crate) struct Pod {
+    pub(crate) metadata: Meta,
     #[serde(default)]
     status: Status,
 }
 
 #[derive(Debug, Deserialize)]
-struct Meta {
-    name: String,
+pub(crate) struct Meta {
+    pub(crate) name: String,
     #[serde(default)]
     uid: String,
     #[serde(default, rename = "deletionTimestamp")]
@@ -105,7 +105,7 @@ struct Condition {
 }
 
 impl Pod {
-    fn ready(&self) -> bool {
+    pub(crate) fn ready(&self) -> bool {
         self.metadata.deletion_timestamp.is_none()
             && self
                 .status
@@ -116,14 +116,14 @@ impl Pod {
 }
 
 /// Minimal in-cluster Kubernetes client: list and delete pods.
-struct Kube {
+pub(crate) struct Kube {
     http: reqwest::Client,
     base: String,
     namespace: String,
 }
 
 impl Kube {
-    async fn in_cluster() -> Result<Self> {
+    pub(crate) async fn in_cluster() -> Result<Self> {
         let host = std::env::var("KUBERNETES_SERVICE_HOST")
             .context("KUBERNETES_SERVICE_HOST is not set, not running in a cluster")?;
         let port = std::env::var("KUBERNETES_SERVICE_PORT").unwrap_or_else(|_| "443".into());
@@ -157,7 +157,7 @@ impl Kube {
         Ok(token.trim().to_string())
     }
 
-    async fn pods(&self, selector: &str) -> Result<Vec<Pod>> {
+    pub(crate) async fn pods(&self, selector: &str) -> Result<Vec<Pod>> {
         let list: PodList = self
             .http
             .get(format!(
@@ -174,6 +174,50 @@ impl Kube {
         let mut pods = list.items;
         pods.sort_by(|a, b| a.metadata.name.cmp(&b.metadata.name));
         Ok(pods)
+    }
+
+    fn policies_url(&self) -> String {
+        format!(
+            "{}/apis/networking.k8s.io/v1/namespaces/{}/networkpolicies",
+            self.base, self.namespace
+        )
+    }
+
+    pub(crate) async fn create_policy(&self, policy: &serde_json::Value) -> Result<()> {
+        self.http
+            .post(self.policies_url())
+            .bearer_auth(self.token().await?)
+            .json(policy)
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
+    }
+
+    pub(crate) async fn delete_policy(&self, name: &str) -> Result<()> {
+        let resp = self
+            .http
+            .delete(format!("{}/{name}", self.policies_url()))
+            .bearer_auth(self.token().await?)
+            .send()
+            .await?;
+        // Already gone is fine.
+        if resp.status() != reqwest::StatusCode::NOT_FOUND {
+            resp.error_for_status()?;
+        }
+        Ok(())
+    }
+
+    /// Delete every policy carrying `selector`, e.g. left by a crashed run.
+    pub(crate) async fn delete_policies(&self, selector: &str) -> Result<()> {
+        self.http
+            .delete(self.policies_url())
+            .query(&[("labelSelector", selector)])
+            .bearer_auth(self.token().await?)
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
     }
 
     async fn delete(&self, name: &str) -> Result<()> {
@@ -197,12 +241,12 @@ fn pick_victim<'a>(pods: &'a [Pod], previous: Option<&str>) -> Option<&'a Pod> {
     pods.get(idx)
 }
 
-fn all_ready(pods: &[Pod], expected: usize) -> bool {
+pub(crate) fn all_ready(pods: &[Pod], expected: usize) -> bool {
     pods.len() >= expected && pods.iter().all(Pod::ready)
 }
 
 /// Sleep for `d`; `false` when the deadline passes first.
-async fn sleep_until_deadline(d: Duration, deadline: Option<Instant>) -> bool {
+pub(crate) async fn sleep_until_deadline(d: Duration, deadline: Option<Instant>) -> bool {
     match deadline {
         Some(dl) if Instant::now() + d >= dl => false,
         _ => {
@@ -230,10 +274,12 @@ pub async fn run(cfg: ChaosConfig, deadline: Option<Instant>) -> Result<()> {
             return Ok(());
         }
 
-        // Only break a healthy cluster, never one that is still recovering.
+        // Only break a healthy cluster, never one that is still recovering
+        // or has a node cut off by the partition task.
         let pods = loop {
+            let partitioned = cfg.state.read().is_ok_and(|g| g.partition.active);
             match kube.pods(&cfg.selector).await {
-                Ok(p) if all_ready(&p, cfg.expected_pods) => break p,
+                Ok(p) if !partitioned && all_ready(&p, cfg.expected_pods) => break p,
                 Ok(_) => {}
                 Err(e) => warn!(error = %e, "chaos: cannot list pods"),
             }

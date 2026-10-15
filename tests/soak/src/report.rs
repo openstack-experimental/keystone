@@ -336,6 +336,47 @@ pub fn render_markdown(v: &Verdict) -> String {
         }
     }
 
+    let n = &v.partition;
+    if n.totals.partitions > 0 {
+        let _ = writeln!(o, "\n## Partitions\n");
+        let _ = writeln!(
+            o,
+            "{} nodes isolated: {} failed a check, {} were not noticed by the nodes; \
+             convergence last {} s, max {} s",
+            n.totals.partitions,
+            n.totals.failed,
+            n.totals.ineffective,
+            n.totals.last_heal_secs,
+            n.totals.max_heal_secs
+        );
+        let _ = writeln!(
+            o,
+            "\n| # | node | role | at | cut took effect | converged | failures |\n|---|---|---|---|---|---|---|"
+        );
+        for e in n.events.iter().rev().take(TABLE_ROWS).rev() {
+            let healed = match (e.heal_secs, e.done) {
+                (Some(s), _) => format!("{s} s"),
+                (None, true) => "NO".to_string(),
+                (None, false) => "pending".to_string(),
+            };
+            let failures = e
+                .failures
+                .iter()
+                .map(|f| f.check)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let _ = writeln!(
+                o,
+                "| {} | {} | {} | {} | {} | {healed} | {failures} |",
+                e.seq,
+                e.pod,
+                e.role,
+                hms(e.at_secs),
+                if e.effective { "yes" } else { "no" }
+            );
+        }
+    }
+
     let mut failing: BTreeMap<&str, (u64, u64)> = BTreeMap::new();
     for e in loaded
         .iter()

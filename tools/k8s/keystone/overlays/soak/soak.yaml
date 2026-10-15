@@ -1,4 +1,5 @@
-# The chaos task deletes keystone-rs pods through the Kubernetes API.
+# The chaos task deletes keystone-rs pods and the partition task creates
+# network policies through the Kubernetes API.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -12,6 +13,9 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["create", "get", "list", "delete", "deletecollection"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -52,6 +56,16 @@ data:
   # ready again within SOAK_CHAOS_RECOVERY or the run fails.
   SOAK_CHAOS_INTERVAL: "20m"
   SOAK_CHAOS_RECOVERY: "5m"
+  # Partition: cut one node (alternately the leader and a follower) off
+  # from its peers this often by blocking the Raft port with a network
+  # policy (`0` disables). The other nodes must lead and accept writes
+  # within SOAK_PARTITION_ELECTION, the cut node must not acknowledge
+  # writes, and the cluster must converge within SOAK_PARTITION_RECOVERY
+  # after the cut is lifted. Needs a CNI that enforces network policies.
+  SOAK_PARTITION_INTERVAL: "30m"
+  SOAK_PARTITION_DURATION: "60s"
+  SOAK_PARTITION_ELECTION: "60s"
+  SOAK_PARTITION_RECOVERY: "3m"
   # Keep serving `/verdict` and `/metrics` after the run finished.
   SOAK_LINGER: "1h"
   # Credentials of the bootstrap admin in the dev stack. Replace for other

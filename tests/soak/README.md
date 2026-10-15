@@ -113,6 +113,36 @@ next one only after the previous victim came back as a new, ready pod.
   `soak_chaos_timed_out_total`, `soak_chaos_last_recovery_seconds`,
   `soak_chaos_max_recovery_seconds`; the report has a "Chaos" section.
 
+## Partitions
+
+With `SOAK_PARTITION_INTERVAL` set (`30m` in the soak overlay, `0` disables)
+the controller isolates one node for `SOAK_PARTITION_DURATION` (60 s) while
+the load and the canaries keep running. A `NetworkPolicy` on the pod blocks
+TCP port 8300 (Raft and write forwarding) in both directions and leaves
+every other port open, so the pod stays alive and reachable for probes. The
+victim alternates between the current leader and a follower, and the policy
+is removed afterwards (leftovers of a crashed run are removed at start).
+Needs RBAC for network policies (`overlays/soak/soak.yaml`) and a CNI that
+enforces them; k3s does. A pod kill is never started during a partition.
+
+- `partition_availability`: the other two nodes did not accept a write
+  within `SOAK_PARTITION_ELECTION` (60 s). Writes are sent straight to each
+  of them.
+- `partition_split_brain`: the isolated node acknowledged a write. Only
+  judged once the nodes' own view confirms the cut (a leader victim: another
+  node leads; a follower victim: it lost sight of the leader). A cut the
+  nodes did not notice, for example because the CNI keeps established
+  connections alive, is shown as "cut took effect: no" in the report and
+  counted in `soak_partition_ineffective_total`, not judged.
+- `partition_recovery`: within `SOAK_PARTITION_RECOVERY` (3 m) of lifting the
+  cut the cluster must have exactly one leader that every node agrees on, no
+  apply lag, and all pods ready.
+- Data lost or diverged by a partition shows up as a canary `integrity`
+  failure.
+- Exported: `soak_partition_total`, `soak_partition_ineffective_total`,
+  `soak_partition_failed_total`, `soak_partition_last_heal_seconds`,
+  `soak_partition_max_heal_seconds`; the report has a "Partitions" section.
+
 ## Canaries
 
 With `SOAK_CANARY_INTERVAL` set (`30s` in the soak overlay, `0` disables) the

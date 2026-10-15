@@ -30,6 +30,7 @@ use serde::Serialize;
 use crate::canary::{CanaryFailure, CanaryTotals};
 use crate::chaos::{ChaosEvent, ChaosTotals};
 use crate::invariants::{Summary, Violation};
+use crate::partition::{PartitionEvent, PartitionTotals};
 use crate::report::{self, Growth, LoadTotals, PhaseRecord};
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -47,6 +48,7 @@ pub struct Verdict {
     /// Executed load phases, oldest first (capped, see `report::MAX_PHASES`).
     pub phases: Vec<PhaseRecord>,
     pub chaos: Chaos,
+    pub partition: Partition,
     pub canary: Canary,
 }
 
@@ -66,6 +68,16 @@ pub struct Chaos {
     pub events: Vec<ChaosEvent>,
 }
 
+/// Network partitions of the partition task.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct Partition {
+    /// A node is cut off right now; chaos kills wait.
+    pub active: bool,
+    pub totals: PartitionTotals,
+    /// Recent partitions, oldest first (capped, see `partition::MAX_EVENTS`).
+    pub events: Vec<PartitionEvent>,
+}
+
 pub type Shared = Arc<RwLock<Verdict>>;
 
 pub fn router(state: Shared) -> Router {
@@ -83,6 +95,7 @@ async fn verdict(State(s): State<Shared>) -> impl IntoResponse {
     v.phases.clear();
     v.growth.points.clear();
     v.chaos.events.clear();
+    v.partition.events.clear();
     let code = if v.healthy {
         StatusCode::OK
     } else {
@@ -294,6 +307,32 @@ pub fn render(v: &Verdict) -> String {
         "soak_chaos_max_recovery_seconds",
         "Longest recovery after a pod deletion",
         c.max_recovery_secs as f64,
+    );
+    let p = &v.partition.totals;
+    g(
+        "soak_partition_total",
+        "Nodes isolated by the partition task",
+        p.partitions as f64,
+    );
+    g(
+        "soak_partition_ineffective_total",
+        "Partitions the nodes did not notice, so they were not judged",
+        p.ineffective as f64,
+    );
+    g(
+        "soak_partition_failed_total",
+        "Partitions that broke an invariant",
+        p.failed as f64,
+    );
+    g(
+        "soak_partition_last_heal_seconds",
+        "Time the cluster needed to converge after the last partition",
+        p.last_heal_secs as f64,
+    );
+    g(
+        "soak_partition_max_heal_seconds",
+        "Longest convergence after a partition",
+        p.max_heal_secs as f64,
     );
     out
 }

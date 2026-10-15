@@ -399,6 +399,90 @@ impl Api {
     }
 }
 
+/// Result of a write sent straight to one node.
+#[derive(Debug, PartialEq)]
+pub enum ProbeWrite {
+    /// The node acknowledged the write.
+    Accepted,
+    /// The node refused, failed or did not answer in time.
+    Rejected(String),
+    /// The node could not authenticate the request, nothing is known.
+    Inconclusive,
+}
+
+/// Classify the answer to a probe write.
+fn classify_probe(status: Option<StatusCode>, error: &str) -> ProbeWrite {
+    match status {
+        Some(s) if s.is_success() => ProbeWrite::Accepted,
+        Some(StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) => ProbeWrite::Inconclusive,
+        Some(s) => ProbeWrite::Rejected(format!("answered {s}")),
+        None => ProbeWrite::Rejected(error.to_string()),
+    }
+}
+
+/// Logs in through the cluster service and writes one API key to a given
+/// node, to see whether that node can commit.
+pub struct Prober {
+    api: Api,
+    n: u64,
+}
+
+impl Prober {
+    pub fn new(host: &str) -> Result<Self> {
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(15))
+            .build()?;
+        Ok(Self {
+            api: Api {
+                http,
+                host: host.trim_end_matches('/').to_string(),
+                token: None,
+                scim_key: None,
+            },
+            n: 0,
+        })
+    }
+
+    /// Get a token now so it exists when a node is cut off.
+    pub async fn login(&mut self) -> Result<()> {
+        self.api.token().await.map(|_| ())
+    }
+
+    /// Write one API key through `node` (`host:port`).
+    pub async fn write_via(&mut self, node: &str) -> ProbeWrite {
+        self.n += 1;
+        let provider_id = format!("soak-probe-{}-{}", std::process::id(), self.n);
+        let token = match self.api.token().await {
+            Ok(t) => t,
+            Err(e) => return ProbeWrite::Rejected(format!("login failed: {e:#}")),
+        };
+        let body = json!({"api_key": {
+            "domain_id": DOMAIN,
+            "provider_id": provider_id,
+            "expires_at": (chrono::Utc::now() + chrono::Duration::minutes(5)).to_rfc3339(),
+            "description": "soak partition probe",
+        }});
+        let sent = self
+            .api
+            .http
+            .post(format!("http://{node}/v4/api-keys"))
+            .header("x-auth-token", token)
+            .json(&body)
+            .send()
+            .await;
+        match sent {
+            Ok(r) => {
+                let status = r.status();
+                if status == StatusCode::UNAUTHORIZED {
+                    self.api.token = None;
+                }
+                classify_probe(Some(status), "")
+            }
+            Err(e) => classify_probe(None, &e.to_string()),
+        }
+    }
+}
+
 /// Pod IPs behind the headless service.
 async fn node_ips(service: &str) -> Vec<String> {
     match tokio::net::lookup_host((service, 0)).await {
@@ -648,6 +732,26 @@ mod tests {
         assert!(matches!(
             judge(Some(StatusCode::OK), &Value::Null, &r),
             Read::Altered(_)
+        ));
+    }
+
+    #[test]
+    fn classifies_probe_writes() {
+        assert_eq!(
+            classify_probe(Some(StatusCode::CREATED), ""),
+            ProbeWrite::Accepted
+        );
+        assert_eq!(
+            classify_probe(Some(StatusCode::UNAUTHORIZED), ""),
+            ProbeWrite::Inconclusive
+        );
+        assert!(matches!(
+            classify_probe(Some(StatusCode::SERVICE_UNAVAILABLE), ""),
+            ProbeWrite::Rejected(_)
+        ));
+        assert!(matches!(
+            classify_probe(None, "timed out"),
+            ProbeWrite::Rejected(_)
         ));
     }
 
