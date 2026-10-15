@@ -28,7 +28,7 @@ This document says what the model is and why. The order in which it is adopted
 is in the [roadmap](roadmap.md). The design detail of the check API and the data
 plane is in [IAM data plane and check API](iam-data-plane.md).
 
-## TL;DR
+## TL;DR {#tldr}
 
 The problem: scope and roles are bound into the token at issuance, so one
 artifact proves who the caller is, where it may act and what it may do. The
@@ -50,7 +50,7 @@ proposal separates the three.
 - **Keystone decides what.** The service's policy asks Keystone
   (`/v4/authz/check`) on every request, against a replica of live state, with no
   cross-request cache. An outage of the write path degrades the cloud rather
-  than stopping it, to a bound the document states (§8.5).
+  than stopping it, to a bound the document states ([§8.5](#outage-cost)).
 - **The control plane authenticates with SPIFFE mTLS.** Services are identified
   by their SVIDs, not by passwords. Service users, service passwords and
   `X-Service-Token` go away. Each service is still a principal in Keystone,
@@ -84,7 +84,7 @@ proposal separates the three.
 
 The order of adoption is in the [roadmap](roadmap.md).
 
-## 1. The vision in one page
+## 1. The vision in one page {#one-page}
 
 OpenStack authentication and authorization today is built around one artifact:
 the scoped bearer token. A token proves who the caller is _and_ carries the
@@ -127,16 +127,17 @@ Five further changes follow from this split:
 - **Humans authenticate with phishing-resistant methods.** WebAuthn passkeys and
   OIDC federation are first-class; the design intent is for a CLI to
   authenticate with WebAuthn directly, with the device authorization grant
-  covering headless machines and CI (§4.7).
+  covering headless machines and CI ([§4.7](#human-authentication)).
 - **Keystone's read path can be replicated, and an outage of its write path
   degrades the cloud rather than stopping it.** Authorization decisions and
   credential validation are served from replicas of Keystone's state — an
-  optional data plane an operator deploys per failure domain (§4.4, §8) — while
-  writes and authentication stay on the **IAM control plane**. Existing
-  credentials keep being validated and authorized throughout an outage of it;
-  what stops is the issuing of new ones, which the access-token lifetime turns
-  into a stated bound (§8.5). A deployment that can live with the availability
-  of the control-plane nodes queries them directly and deploys nothing more; the
+  optional data plane an operator deploys per failure domain
+  ([§4.4](#authz-policy-asks-keystone), [§8](#availability)) — while writes and
+  authentication stay on the **IAM control plane**. Existing credentials keep
+  being validated and authorized throughout an outage of it; what stops is the
+  issuing of new ones, which the access-token lifetime turns into a stated bound
+  ([§8.5](#outage-cost)). A deployment that can live with the availability of
+  the control-plane nodes queries them directly and deploys nothing more; the
   API is the same either way.
 
 The payoff is a model in which a policy rule, an individual operation, or a set
@@ -146,9 +147,9 @@ Azure role assignments work. That is what finally makes "system scope", "global
 reader", "domain manager" and "service role" expressible without every service
 re-implementing the semantics.
 
-## 2. Where OpenStack is today and what hurts
+## 2. Where OpenStack is today and what hurts {#today}
 
-### 2.1 Tokens carry scope
+### 2.1 Tokens carry scope {#tokens-carry-scope}
 
 A Keystone token is `(user, scope, roles, expiry)` sealed together.
 Consequences:
@@ -167,7 +168,7 @@ Consequences:
   [security model](contributor/security-model.md)) are instances of a decision
   keyed on token scope instead of on the immutable authentication chain.
 
-### 2.2 Every request is a Keystone round trip
+### 2.2 Every request is a Keystone round trip {#keystone-round-trip}
 
 `keystonemiddleware` validates the token on each request, with a cache in front.
 Keystone is on the data path of every OpenStack API call and its availability
@@ -186,17 +187,19 @@ Authentication is verified offline from a signed credential, so no round trip is
 needed to establish who is calling. Authorization is decided per request by a
 component that can be replicated independently of the nodes that accept writes —
 an optional data plane an operator deploys where the availability of the IAM
-control plane is not enough (§4.4, §8). And the cost of an outage of it is
-stated exactly in §8.5.
+control plane is not enough ([§4.4](#authz-policy-asks-keystone),
+[§8](#availability)). And the cost of an outage of it is stated exactly in
+[§8.5](#outage-cost).
 
 The round trip itself moves from token validation to an authorization decision,
 and by default no cross-request cache stands in front of it. Python Keystone's
 caching layer has produced the most bugs in its design; this proposal replaces
-it with a replica of the grant state instead, not a smarter cache (§6.3). A
-caller that touches many projects therefore holds one credential and asks one
-question per request, batched, against something in its own failure domain.
+it with a replica of the grant state instead, not a smarter cache
+([§6.3](#authz-api)). A caller that touches many projects therefore holds one
+credential and asks one question per request, batched, against something in its
+own failure domain.
 
-### 2.3 System scope and the Secure RBAC goal
+### 2.3 System scope and the Secure RBAC goal {#system-scope-srbac}
 
 The community goal "Consistent and Secure Default RBAC" introduced three
 personas (`reader`, `member`, `admin`), later `manager` and `service`, on three
@@ -218,7 +221,7 @@ the credential. An operator holding a system-level grant names a project target
 on the calls that need one and the system target on the calls that do not,
 without re-authenticating between them.
 
-### 2.4 Global reader and "admin is global"
+### 2.4 Global reader and "admin is global" {#global-reader-admin-global}
 
 Two of the oldest open problems in OpenStack authorization are the same problem
 seen from both ends:
@@ -237,7 +240,7 @@ and the _resource's_ target, and a single authority that knows how a grant on
 the system or on a domain projects onto a project. That authority is Keystone;
 today it is not consulted at decision time.
 
-### 2.5 Roles are the only unit of grant
+### 2.5 Roles are the only unit of grant {#roles-only-unit-of-grant}
 
 The only thing Keystone can grant is a role on a target. To let one workload
 call one operation (rotate a secret, signal a Heat wait condition, read one
@@ -260,7 +263,7 @@ roles, Azure actions and role definitions. OpenStack already has a cloud-wide
 operation vocabulary (the `oslo.policy` rule names such as
 `os_compute_api:servers:create`); it has never been usable as a grant.
 
-### 2.6 Secrets everywhere
+### 2.6 Secrets everywhere {#secrets-everywhere}
 
 - Every service has a service user with a password in a config file and the
   `admin` (or `service`) role.
@@ -274,7 +277,7 @@ operation vocabulary (the `oslo.policy` rule names such as
 Each of these is a long-lived bearer secret whose theft is indistinguishable
 from legitimate use.
 
-### 2.7 How the rest of the industry does it
+### 2.7 How the rest of the industry does it {#industry-comparison}
 
 | Platform   | Credential                                      | Where the scope lives                                          | Unit of grant                         | Workload identity                        |
 | ---------- | ----------------------------------------------- | -------------------------------------------------------------- | ------------------------------------- | ---------------------------------------- |
@@ -288,7 +291,7 @@ OpenStack is the outlier on every column. The proposal below moves each column
 to the industry pattern while keeping the v3 API and Python services working
 during the transition.
 
-## 3. Principles
+## 3. Principles {#principles}
 
 1. **Authentication proves identity, nothing else.** A credential says who the
    caller is and how strongly that was established (`amr`). It does not say what
@@ -310,20 +313,23 @@ during the transition.
    (SPIFFE SVID, attested VM, passkey), not to a secret in a file.
 6. **Short-lived, sender-constrained, audience-bound.** Whatever bearer
    artifacts remain live for minutes, are bound to the presenting workload where
-   the transport allows it, and name the services that may accept them.
+   the transport allows it, and can be narrowed to the services that may accept
+   them.
 7. **Every acting party is recorded.** Delegated calls carry `act`; audit never
    loses who did what on whose behalf.
 8. **Compatibility is a design input, not an afterthought.** v3 tokens, Python
    services and existing SDKs keep working through every phase.
 9. **Grants are roles and permissions; a relation store is an implementation
    choice.** The model works on the SQL assignment driver alone. Roles,
-   inheritance and permission sets answer every problem in §7; an OpenFGA-backed
-   driver (ADR 0033) is valuable for deployments that already run a relation
-   store and for resource-level grants (§6.5), and it is a per-domain backend
-   decision (ADR 0034), never a prerequisite for adopting anything here. The
-   choice also decides where the data plane's replica comes from: on the SQL and
-   Raft drivers the data plane holds its own copy; on an externally owned store
-   it is a client of the store's replication (§6.3, §8.1).
+   inheritance and permission sets answer every problem in
+   [§7](#what-this-solves); an OpenFGA-backed driver (ADR 0033) is valuable for
+   deployments that already run a relation store and for resource-level grants
+   ([§6.5](#resource-level-targets)), and it is a per-domain backend decision
+   (ADR 0034), never a prerequisite for adopting anything here. The choice also
+   decides where the data plane's replica comes from: on the SQL and Raft
+   drivers the data plane holds its own copy; on an externally owned store it is
+   a client of the store's replication ([§6.3](#authz-api),
+   [§8.1](#control-data-plane-split)).
 10. **Copies of authorization state are replicas, never caches.** A replica's
     freshness is maintained by the replication protocol, which observes every
     write, and is reported as a version with every answer. A cache's freshness
@@ -333,9 +339,9 @@ during the transition.
     database standby, or a store's own replica. The only memo the architecture
     itself contains is scoped to one request and dies with it; a client-side
     cache is an opt-in a deployment takes on with its constraints, never part of
-    the path specified here (§6.3).
+    the path specified here ([§6.3](#authz-api)).
 
-## 4. Target architecture
+## 4. Target architecture {#target-architecture}
 
 ```mermaid
 flowchart LR
@@ -375,7 +381,7 @@ flowchart LR
     spire -.->|"SVIDs"| vm
 ```
 
-### 4.1 Identity tracks
+### 4.1 Identity tracks {#identity-tracks}
 
 | Caller                                  | Authentication                                                                         | What the service sees                                                      |
 | --------------------------------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
@@ -387,7 +393,10 @@ flowchart LR
 | Control-plane service acting for a user | The user's JWT forwarded, or an on-behalf-of token with `act` (ADR 0036 §6)            | User JWT plus service SVID at the transport                                |
 | Deferred automation (Heat, Magnum)      | Service grant redeemed with the service SVID (ADR 0036 §5)                             | JWT with `sub` = grantor, `act` = service                                  |
 
-### 4.2 The OpenStack control plane: mTLS, no dedicated authentication
+### 4.2 The OpenStack control plane: mTLS, no dedicated authentication {#control-plane-mtls}
+
+> **Audience:** deployers and service maintainers. **Skip if** you only need the
+> operator-level picture; the [TL;DR](#tldr) and [§1](#one-page) cover it.
 
 Every OpenStack control-plane process holds a SPIFFE identity from a local SPIRE
 agent (SPIRE plan Phase 1). Keystone's internal interface, and the internal
@@ -408,14 +417,14 @@ This removes:
 It does not remove the service as a subject of authorization. Every service
 still corresponds to a principal in Keystone — mapped from its SPIFFE ID through
 the mapping engine rather than carrying a password — and still holds a grant,
-namely the `service` permission set on the system target (§7.4). "No dedicated
-authentication in the control plane" means the transport authenticates the
-service; it does not mean the service is unauthorized, and it does not mean the
-service inherits the user's authority. mTLS identifies the _service_, never the
-user it serves: a user-initiated call still carries the user's JWT, and a policy
-that needs the user must read `credentials`, not `service_credentials`. Read the
-other way, this would reintroduce the service-user-with-`admin` pattern under a
-new name.
+namely the `service` permission set on the system target
+([§7.4](#solves-service-admin)). "No dedicated authentication in the control
+plane" means the transport authenticates the service; it does not mean the
+service is unauthorized, and it does not mean the service inherits the user's
+authority. mTLS identifies the _service_, never the user it serves: a
+user-initiated call still carries the user's JWT, and a policy that needs the
+user must read `credentials`, not `service_credentials`. Read the other way,
+this would reintroduce the service-user-with-`admin` pattern under a new name.
 
 Per-host identities (`.../nova-compute/host/{hostname}`) let Keystone bind an
 attestation request to the compute host that actually runs the instance (ADR
@@ -443,7 +452,7 @@ flowchart LR
     ss -.->|"SVIDs"| ag
 ```
 
-### 4.3 Public API: a JWT that says who, and a request that says where
+### 4.3 Public API: a JWT that says who, and a request that says where {#public-api-jwt}
 
 Keystone is an OAuth2/OIDC provider (ADR 0026). The access token it issues for
 OpenStack APIs carries:
@@ -451,19 +460,18 @@ OpenStack APIs carries:
 - `iss`, `sub`, `aud`, `exp` of about fifteen minutes, `jti`, `amr`. ADR 0036
   §7.1 defaults `aud` to the control-plane-wide `openstack-apis` (the domain is
   carried by `iss`, not `aud`), narrowed to specific service types
-  (`openstack-apis:compute`, …) only when the client requests it — narrowing is
-  opt-in there so an unnarrowed token never breaks a service that doesn't know
-  its own service type. This vision proposes flipping that: make
-  per-service-type audience the issuance **default**, with the control-plane
-  audience an explicit opt-out for clients that cannot enumerate their callees.
-  That flip is a required amendment to ADR 0036 §7.1, and it is what makes the
-  §4.8 forwarding rule meaningful: "forward only tokens whose `aud` includes the
-  callee" is vacuous if every token stays audience-wide;
+  (`openstack-apis:compute`, …) only when the client requests it. When no
+  audience is requested every service may accept the token; narrowing is a way
+  for a client to restrict a token to the services it names, never a
+  precondition for getting one. This vision keeps that rule unchanged. It means
+  a default token is only as confined as its sender constraint
+  ([§5.4](#threat-model)), and that the [§4.8](#cross-service-calls) forwarding
+  rule confines a token only when the client narrowed it;
 - `act` when a service acts on behalf of the subject;
 - `delegation_context` when the chain is delegated (service grant, application
   credential, on-behalf-of);
 - `restrictions` when the holder asked for a narrower token than its full
-  authority (a self-imposed ceiling, see §5.4);
+  authority (a self-imposed ceiling, see [§5.4](#threat-model));
 - **no** project, domain or system scope, and **no** roles.
 
 The caller names the target on each request. The proposal generalizes the idea
@@ -477,14 +485,15 @@ Authorization: Bearer <JWT>
 OpenStack-Target: project="8e3f..."
 ```
 
-Section 5 specifies the contract. Section 5.3 shows how `keystonemiddleware` can
-turn it into the `X-Project-Id` / `X-Roles` context today's services expect, and
-why that compatibility mode is a per-service opt-in rather than a free ride: a
+[Section 5](#scopeless-tokens) specifies the contract.
+[Section 5.3](#compatibility) shows how `keystonemiddleware` can turn it into
+the `X-Project-Id` / `X-Roles` context today's services expect, and why that
+compatibility mode is a per-service opt-in rather than a free ride: a
 client-supplied target is not a Keystone-attested one, and a service that treats
-it as attested is exactly the bug class §5.4 and the
+it as attested is exactly the bug class [§5.4](#threat-model) and the
 [security model](contributor/security-model.md) exist to prevent.
 
-### 4.4 Authorization: the policy engine asks Keystone
+### 4.4 Authorization: the policy engine asks Keystone {#authz-policy-asks-keystone}
 
 Each service evaluates policy per request with an input of three parts:
 
@@ -539,16 +548,17 @@ with the delegation boundary and with any self-imposed restriction, and returns
 a decision plus the classic role list for policies that still key on roles. The
 boundary and the restriction are derived from the credential the request
 carries, not from fields the calling service filled in — they are chain facts;
-§6.3 sets out why a data plane that takes the caller's word for them would
-reproduce the §2.1 defect class.
+[§6.3](#authz-api) sets out why a data plane that takes the caller's word for
+them would reproduce the [§2.1](#tokens-carry-scope) defect class.
 
 Every answer carries the `version` of the state it was decided against and how
 far that state was behind the write path when the answer was produced. There is
 no lifetime in the response and no cache in front of it: an enforcement point
-uses the answer for the request that asked and discards it. §6.3 sets out the
-freshness contract — the version, the `min_version` a caller may demand, and the
-`max_staleness` an operator sets — and why it is the same on every driver that
-lets Keystone hold a replica, and different on one that does not.
+uses the answer for the request that asked and discards it. [§6.3](#authz-api)
+sets out the freshness contract — the version, the `min_version` a caller may
+demand, and the `max_staleness` an operator sets — and why it is the same on
+every driver that lets Keystone hold a replica, and different on one that does
+not.
 
 **There is no cross-request decision cache, and that is the architecture rather
 than a posture.** The live call happens on every request, batched per request,
@@ -557,8 +567,8 @@ nodes themselves, where no data plane is deployed). What that costs is one round
 trip per inbound request — the round trip today's deployments already pay to
 memcached for a validation-cache hit, against a component whose answer is
 microseconds of in-memory work — and a hard dependency on that replica set being
-reachable, which §8 turns into a replica-count requirement rather than a grace
-window.
+reachable, which [§8](#availability) turns into a replica-count requirement
+rather than a grace window.
 
 This is the Kubernetes `SubjectAccessReview` pattern, and the shape
 `oslo.policy` already supports through its `http` check type, which gives Python
@@ -590,9 +600,13 @@ may run as a sidecar beside each service or as an in-process `oslo.policy`
 library; a per-service OPA sidecar calling the check API over SVID mTLS is a
 shape an earlier proof of concept exercised (the commented `http.send` stanza in
 `policy/identity/user/list.rego`). What the proposal does rule out is on the
-other axis: replicating the grant graph itself to every evaluation point (§6.3).
+other axis: replicating the grant graph itself to every evaluation point
+([§6.3](#authz-api)).
 
-#### The check API is served by the IAM data plane, and the data plane is optional
+#### The check API is served by the IAM data plane, and the data plane is optional {#data-plane-check-api}
+
+> **Audience:** implementers and operators sizing availability. **Skip if** you
+> only want the outage consequences; see [§8.5](#outage-cost).
 
 `/v4/authz/check` carries at least one decision per API call across the whole
 cloud, while grant writes and token issuance carry a load orders of magnitude
@@ -601,8 +615,9 @@ scaling unit, and above a certain size they must not share a failure domain
 either. The check API is therefore served by a component in its own right: the
 **IAM data plane**, a second binary built from the same crates as `keystone`
 (`keystone-dataplane` in the Rust implementation), every driver of which is
-pointed at a replica and whose write handlers are not built in. §8 specifies it,
-down to the storage work it needs first (§8.3).
+pointed at a replica and whose write handlers are not built in.
+[§8](#availability) specifies it, down to the storage work it needs first
+([§8.3](#data-plane-components)).
 
 It is optional. The same `/v4/authz/check`, JWKS and validation endpoints are
 served by the IAM control plane itself — the Raft voters, over the primary
@@ -619,19 +634,20 @@ to.
 What the data plane is _not_ matters as much: it never authenticates. Token
 issuance, refresh, login, service-grant redemption, on-behalf-of exchange and
 attestation are all writes, or need a signing key a replica must not hold
-(§8.2), and they stay on the IAM control plane. The data plane decides
-authorization from state it already holds and validates presented JWTs against
-that same state; §8.5 prices the outage case.
+([§8.2](#data-plane-components)), and they stay on the IAM control plane. The
+data plane decides authorization from state it already holds and validates
+presented JWTs against that same state; [§8.5](#outage-cost) prices the outage
+case.
 
 This is the structural lesson from Zanzibar. Google did not add a check API to
 its identity service; it built a separately scaled system, because deciding
 every request is a different engineering problem from authenticating callers.
-The split is also the containment boundary for everything §6.3 makes
-driver-dependent — batch expansion, the per-item short-circuit, the version each
-driver reports, the limits an externally owned store imposes — so `oslo.policy`
-and the services see one uniform contract whatever the assignment driver
-underneath is. Without that boundary the per-driver differences leak into every
-enforcement point in the cloud.
+The split is also the containment boundary for everything [§6.3](#authz-api)
+makes driver-dependent — batch expansion, the per-item short-circuit, the
+version each driver reports, the limits an externally owned store imposes — so
+`oslo.policy` and the services see one uniform contract whatever the assignment
+driver underneath is. Without that boundary the per-driver differences leak into
+every enforcement point in the cloud.
 
 One data plane does not mean one cluster. The serving layer is federated — a
 replica set per region or availability zone, each independently scalable and
@@ -643,12 +659,13 @@ tens rather than thousands — which is why replicas are per failure domain and
 not per host. It is not uniform across drivers: a learner or a database standby
 follows the SQL and Raft drivers anywhere, while a region serving a domain whose
 assignments live in a relation store needs a replica of that store in the region
-too, or pays a WAN round trip on every check (§6.3).
+too, or pays a WAN round trip on every check ([§6.3](#authz-api)).
 
 A partition then has a stated bound: a cut-off region keeps serving decisions
 from local state and stops receiving revocations, and it knows by how much —
 past the operator's `max_staleness` it refuses to allow rather than serve an
-answer nobody can vouch for (§6.3, §8.1).
+answer nobody can vouch for ([§6.3](#authz-api),
+[§8.1](#control-data-plane-split)).
 
 Three properties are requirements on the data plane rather than inherited
 assumptions:
@@ -660,13 +677,15 @@ assumptions:
   suites the IAM control plane runs.
 - It serves from state it holds locally for as long as the write path is
   unreachable, including cold-booting a replacement replica while the write path
-  is down — the statically stable posture §8.1 states as a requirement, §8.3
-  lists the storage work for, and §8.6 names a test for.
-- Keystone's own authorization stays in-process (§6.3). The data plane is how
-  other services ask; it is not in the path of Keystone authorizing a call to
-  itself, and it must not become a startup dependency of the IAM control plane.
+  is down — the statically stable posture [§8.1](#control-data-plane-split)
+  states as a requirement, [§8.3](#data-plane-components) lists the storage work
+  for, and [§8.6](#other-platforms) names a test for.
+- Keystone's own authorization stays in-process ([§6.3](#authz-api)). The data
+  plane is how other services ask; it is not in the path of Keystone authorizing
+  a call to itself, and it must not become a startup dependency of the IAM
+  control plane.
 
-### 4.5 Delegation without secrets
+### 4.5 Delegation without secrets {#delegation-without-secrets}
 
 [ADR 0036](adr/0036-service-delegation.md) replaces trusts with two mechanisms
 on the OAuth2 token endpoint:
@@ -685,12 +704,13 @@ password in a cluster. Both mechanisms already place every delegation fact in
 `delegation_context`, so they survive scope-less tokens unchanged (ADR 0036 §7).
 
 A service and the guests it provisions are different identity tracks. The
-conductor of a Magnum cluster holds a grant here; the cluster's nodes are §4.6
-workloads with their own SVIDs. The two halves migrate independently of each
-other, and each has its own precondition: the trustee password can leave a guest
-only once the §4.6 SVID path works — the SVID is its replacement — but it does
-not require the grant to exist, and replacing the conductor's trust does not
-require the guest to be SPIRE-attested.
+conductor of a Magnum cluster holds a grant here; the cluster's nodes are
+[§4.6](#tenant-workload-identity) workloads with their own SVIDs. The two halves
+migrate independently of each other, and each has its own precondition: the
+trustee password can leave a guest only once the
+[§4.6](#tenant-workload-identity) SVID path works — the SVID is its replacement
+— but it does not require the grant to exist, and replacing the conductor's
+trust does not require the guest to be SPIRE-attested.
 
 ```mermaid
 sequenceDiagram
@@ -712,7 +732,7 @@ sequenceDiagram
     K-->>N: allowed
 ```
 
-### 4.6 Tenant workload identity
+### 4.6 Tenant workload identity {#tenant-workload-identity}
 
 The SPIRE plan gives every VM a platform identity without a secret in the guest:
 
@@ -724,7 +744,8 @@ The SPIRE plan gives every VM a platform identity without a secret in the guest:
 3. The workload calls Keystone's token endpoint with the JWT-SVID
    (`private_key_jwt`) or the OpenStack APIs directly with a JWT-SVID mapped by
    a rule on `spiffe.project_id`, and receives whatever the mapping rule grants:
-   a role, or, with §6, a specific set of operations on its own project.
+   a role, or, with [§6](#authorization-model), a specific set of operations on
+   its own project.
 
 The same path serves Magnum cluster nodes, Trove database guests and any tenant
 automation that runs on the cloud; Octavia amphorae are a candidate once their
@@ -759,7 +780,7 @@ sequenceDiagram
     API->>K: authz check (principal mapped from spiffe.project_id, P, op)
 ```
 
-### 4.7 Human authentication
+### 4.7 Human authentication {#human-authentication}
 
 - **Passkeys** (ADR 0005) are the default strong method. Keystone acts as the
   WebAuthn relying party; the OIDC provider records `amr: ["webauthn"]`, so a
@@ -778,25 +799,31 @@ sequenceDiagram
 - **Step-up** is expressed as `amr` requirements in policy rather than as
   separate credentials.
 
-### 4.8 Cross-service calls on behalf of a user
+### 4.8 Cross-service calls on behalf of a user {#cross-service-calls}
 
 When Nova calls Neutron for a user it either forwards the user's JWT or performs
-an on-behalf-of exchange (§4.5). Forwarding is simpler and works with today's
-code, but a forwarded token is accepted by whatever its audience allows, so a
-compromised service can act as the user everywhere the token is accepted. The
-rule is therefore:
+an on-behalf-of exchange ([§4.5](#delegation-without-secrets)). Forwarding is
+simpler and works with today's code, but a forwarded token is accepted by
+whatever its audience allows, so a compromised service can act as the user
+everywhere the token is accepted. The rule is therefore:
 
 > **Forward only a token whose `aud` includes the callee; otherwise exchange.**
 
-With service-type audiences as the default (§4.3), forwarding is naturally
-confined to the services the client already intended to call, and the exchange
-path covers the rest. Both paths carry the caller's SVID as
-`service_credentials`, which is the control-plane identity that replaces
-`X-Service-Token`.
+A token with the default audience includes every callee, so the rule confines
+forwarding only for clients that requested a narrower audience
+([§4.3](#public-api-jwt)) — which is what a client holding broad authority
+should do. For unnarrowed tokens the exchange path is the confinement: a service
+that does not want to hand its callee the user's full token exchanges it
+instead. Both paths carry the caller's SVID as `service_credentials`, which is
+the control-plane identity that replaces `X-Service-Token`.
 
-## 5. Scope-less tokens and per-request target scope
+## 5. Scope-less tokens and per-request target scope {#scopeless-tokens}
 
-### 5.1 Request contract
+> **Audience:** service maintainers, `keystonemiddleware` and SDK authors.
+> **Skip if** you only need the effect on callers; the [TL;DR](#tldr) covers it,
+> and [§5.4](#threat-model) is the part reviewers should read.
+
+### 5.1 Request contract {#request-contract}
 
 A request to an OpenStack service names its target in one of three ways, in this
 order of precedence:
@@ -841,7 +868,8 @@ order of precedence:
    ```
 
    The header may also carry the addressed resource, in the same
-   `<service-type>:<resource>:<id>` form the operation vocabulary uses (§6.1):
+   `<service-type>:<resource>:<id>` form the operation vocabulary uses
+   ([§6.1](#roles-and-permissions)):
 
    ```http
    OpenStack-Target: project="8e3f...", resource="compute:server:550e..."
@@ -850,8 +878,9 @@ order of precedence:
    For an existing resource the `resource` member never overrides rule 1: it
    lets the middleware and the policy engine pre-check and audit the request
    before the service loads the resource, and it is the hook for resource-level
-   grants (§6.5). A `resource` member that disagrees with the URL, or a
-   `project` that disagrees with the loaded resource's owner, fails closed.
+   grants ([§6.5](#resource-level-targets)). A `resource` member that disagrees
+   with the URL, or a `project` that disagrees with the loaded resource's owner,
+   fails closed.
 
 3. **Default.** If neither is present, `keystonemiddleware` rejects the request
    unless the operator has enabled fallback to the subject's default project (an
@@ -878,10 +907,10 @@ participates must therefore compare the requested target to the loaded
 resource's owner and fail closed on a mismatch, with the same scope-drift
 tripwire discipline the [security model](contributor/security-model.md) applies
 to delegation (I2/I3). A service that has not implemented this comparison is not
-ready to accept per-request targets, which is why §5.3 makes the compatibility
-mode an opt-in.
+ready to accept per-request targets, which is why [§5.3](#compatibility) makes
+the compatibility mode an opt-in.
 
-### 5.2 What `keystonemiddleware` does
+### 5.2 What `keystonemiddleware` does {#middleware-behavior}
 
 1. Verifies the JWT offline (signature, `iss`, `aud`, `exp`, `nbf`), or
    validates a legacy Fernet token through the mTLS back-channel.
@@ -894,36 +923,37 @@ mode an opt-in.
    requested target: `X-User-Id`, `X-Requested-Target`, `X-Actor-*` for `act`,
    the delegation context and the restrictions.
 4. Leaves the decision to the service's policy, which resolves the target of
-   §5.1 (resource owner first) and asks `/v4/authz/check` for the concrete
-   operation on the resolved target. This is the model: the policy asks Keystone
-   whether the actor holds the required role or permission on the target,
-   instead of reading a role list out of the credential.
+   [§5.1](#request-contract) (resource owner first) and asks `/v4/authz/check`
+   for the concrete operation on the resolved target. This is the model: the
+   policy asks Keystone whether the actor holds the required role or permission
+   on the target, instead of reading a role list out of the credential.
 
 The middleware never fills `X-Project-Id` / `X-Roles` from the requested target
 on its own initiative, because a role list computed for a client-asserted scope,
 placed in the variable legacy policy treats as attested, is precisely the
-confusion of §2.1. It fills them only in the §5.3 compatibility mode.
+confusion of [§2.1](#tokens-carry-scope). It fills them only in the
+[§5.3](#compatibility) compatibility mode.
 
-### 5.3 Compatibility
+### 5.3 Compatibility {#compatibility}
 
 - A v3 scoped token keeps working: the middleware treats its embedded scope as
   the requested scope and rejects a conflicting `OpenStack-Target` header. A
   scoped token's scope _is_ Keystone-attested, so nothing below applies to it.
 - A client that never sends the header and holds a JWT gets the default
-  behaviour of §5.1 item 3, which an operator can set to "subject's default
-  project" to keep unmodified tooling working.
+  behaviour of [§5.1](#request-contract) item 3, which an operator can set to
+  "subject's default project" to keep unmodified tooling working.
 - Keystone continues to issue scoped tokens on request; `audience` narrowing
-  (ADR 0036 §7.1) and the `restrictions` claim (§5.4) let a client voluntarily
-  pre-bind a token where a deployment wants that.
+  (ADR 0036 §7.1) and the `restrictions` claim ([§5.4](#threat-model)) let a
+  client voluntarily pre-bind a token where a deployment wants that.
 - **Compatibility mode is a per-service opt-in.** A service can ask the
   middleware to keep populating `X-Project-Id`, `X-Domain-Id`, `X-Roles` and
   `OpenStack-System-Scope` from the requested target plus a role-list lookup, so
   that unmodified `oslo.policy` rules keep evaluating. Enabling it is a
-  declaration by that service that it enforces the §5.1 invariant: every
-  operation on an existing resource compares the requested target to the
-  resource's own owner and fails closed on a mismatch. Until that declaration
-  the middleware refuses the mode, and the service sees only the §5.2
-  environment.
+  declaration by that service that it enforces the [§5.1](#request-contract)
+  invariant: every operation on an existing resource compares the requested
+  target to the resource's own owner and fails closed on a mismatch. Until that
+  declaration the middleware refuses the mode, and the service sees only the
+  [§5.2](#middleware-behavior) environment.
 
   The declaration is the whole point of the opt-in. The environment variables
   are byte-identical to today's, but their provenance is not: under a scoped
@@ -935,13 +965,14 @@ confusion of §2.1. It fills them only in the §5.3 compatibility mode.
   change in each service, and the roadmap budgets for it.
 
   The mode exists so a service can accept per-request targets before moving its
-  policy to the check API, and is time-boxed on the same footing as the §5.1
-  item 3 fallback: a per-service configuration flag Keystone can report as a
-  capability, switched off service by service (roadmap, policy-engine path).
+  policy to the check API, and is time-boxed on the same footing as the
+  [§5.1](#request-contract) item 3 fallback: a per-service configuration flag
+  Keystone can report as a capability, switched off service by service (roadmap,
+  policy-engine path).
 
 - SDKs add one header and drop per-project re-authentication.
 
-### 5.4 Threat model changes
+### 5.4 Threat model changes {#threat-model}
 
 A scope-less token represents the subject's full authority, as an AWS access key
 or an Azure token does. The mitigations are the ones those platforms use, and
@@ -950,44 +981,50 @@ scope-less tokens at all**, not later refinements. (Without them a scope-less
 bearer token is a cloud-wide master key, weaker than the scoped Fernet token it
 replaces.) The roadmap splits the migration at exactly this line.
 
-- **Sender constraint (gate).** JWTs issued to SVID holders are presented over
-  mTLS and bound to the SPIFFE identity by verifying the TLS peer, not by the
-  `sub` claim (which is the mapped principal, not the SPIFFE ID); JWTs issued to
-  public clients use DPoP (ADR 0026 v1.5) so a stolen token is unusable without
-  the client's key. ADR 0036 rules out RFC 8705 because SPIRE rotates
-  certificates, which is correct for a thumbprint binding — the workable
-  substitute is to bind to the **SPIFFE ID** rather than to the certificate,
-  verified at the internal interface where the SVID is the TLS peer, and that
-  binding needs specifying before scope-less tokens ship.
-- **Audience narrowing (gate).** Per service type by default (§4.3), so a token
-  captured at one service cannot be replayed at another (ADR 0036 §7.1).
-- **Self-imposed restrictions (gate).** A client may request a token whose
-  `restrictions` claim limits it to named targets and operations (the AWS STS
-  session-policy shape). Restrictions only ever narrow, are chain facts, and are
-  intersected by `/v4/authz/check`. Token restrictions already exist in the Rust
-  implementation (`TokenRestriction`, designed into ADR 0015's role-mapping
-  schema for the Kubernetes authentication method, though the k8s-auth drivers
-  don't wire it in yet); this generalizes them. They are also the feature
-  application-credential access rules only ever promised for one credential type
-  (§2.5): a CI job or a script can hold a token that can do exactly one thing.
-  Scope-less must be the default, never the only option; without restrictions
-  the proposal trades one problem (too many tokens) for another (every token is
-  a master key).
+- <span id="gate-sender"></span>**Sender constraint (gate).** JWTs issued to
+  SVID holders are presented over mTLS and bound to the SPIFFE identity by
+  verifying the TLS peer, not by the `sub` claim (which is the mapped principal,
+  not the SPIFFE ID); JWTs issued to public clients use DPoP (ADR 0026 v1.5) so
+  a stolen token is unusable without the client's key. ADR 0036 rules out RFC
+  8705 because SPIRE rotates certificates, which is correct for a thumbprint
+  binding — the workable substitute is to bind to the **SPIFFE ID** rather than
+  to the certificate, verified at the internal interface where the SVID is the
+  TLS peer, and that binding needs specifying before scope-less tokens ship.
+- <span id="gate-audience"></span>**Audience narrowing (gate).** Available end
+  to end, not the default ([§4.3](#public-api-jwt)): a client may request a
+  per-service-type audience (ADR 0036 §7.1), and services know their own type
+  and accept it, so a token captured at one service cannot be replayed at
+  another. A client that omits the audience gets a token every service accepts;
+  holders of broad authority (CI, automation) are expected to narrow, and sender
+  constraint is what protects the default token.
+- <span id="gate-restrictions"></span>**Self-imposed restrictions (gate).** A
+  client may request a token whose `restrictions` claim limits it to named
+  targets and operations (the AWS STS session-policy shape). Restrictions only
+  ever narrow, are chain facts, and are intersected by `/v4/authz/check`. Token
+  restrictions already exist in the Rust implementation (`TokenRestriction`,
+  designed into ADR 0015's role-mapping schema for the Kubernetes authentication
+  method, though the k8s-auth drivers don't wire it in yet); this generalizes
+  them. They are also the feature application-credential access rules only ever
+  promised for one credential type ([§2.5](#roles-only-unit-of-grant)): a CI job
+  or a script can hold a token that can do exactly one thing. Scope-less must be
+  the default, never the only option; without restrictions the proposal trades
+  one problem (too many tokens) for another (every token is a master key).
 - **Short lifetime** (fifteen minutes) with refresh-token rotation and family
   breach detection (ADR 0026 §9).
 - **Fail-closed scope agreement.** The resource-derived target always wins over
-  the header; a mismatch is an error, never a silent widening (§5.1).
+  the header; a mismatch is an error, never a silent widening
+  ([§5.1](#request-contract)).
 - **Audit.** Every decision logs subject, `act`, requested scope, resolved
   target, operation, outcome and the state `version` it was decided against (ADR
   0023), which is what makes anomaly detection on a stolen token possible at
   all. Because no decision is answered from a cache, every one reaches the data
   plane (or the Keystone node serving in its place), whose decision log is
   therefore complete; the enforcement point records the same facts for
-  correlation with the request it served (§6.3).
+  correlation with the request it served ([§6.3](#authz-api)).
 
-## 6. Authorization model
+## 6. Authorization model {#authorization-model}
 
-### 6.1 Roles stay; permissions are added
+### 6.1 Roles stay; permissions are added {#roles-and-permissions}
 
 Keystone keeps roles, role assignments, implied roles and inheritance. It adds
 **permissions**: operation identifiers drawn from the cloud-wide policy
@@ -1013,7 +1050,7 @@ Which operations belong to `member` rather than `manager` in each service stays
 a per-project decision, and it is the same decision the SRBAC goal already
 requires; this proposal changes how the answer is stored, not what it is.
 
-#### The operation vocabulary is a prerequisite
+#### The operation vocabulary is a prerequisite {#operation-vocabulary}
 
 Per-operation grants need stable, cloud-wide operation identifiers. The
 `oslo.policy` rule names are close but inconsistent across projects
@@ -1024,15 +1061,15 @@ largest cross-project ask in this document; authoring it is documentation and a
 generator rather than code.
 
 Operating it needs more. Because `/v4/authz/check` expands roles and permission
-sets into operations at decision time (§6.3), Keystone holds a live catalog
-spanning every deployed service, out-of-tree ones included, that changes on
-every service upgrade. Four rules make that tractable:
+sets into operations at decision time ([§6.3](#authz-api)), Keystone holds a
+live catalog spanning every deployed service, out-of-tree ones included, that
+changes on every service upgrade. Four rules make that tractable:
 
 - **The catalog is deployment state with a version.** Services register their
   operations (or an operator imports the generated registry). A vocabulary
   change is a change to a decision input like any other, so a replica evaluates
   against a stale vocabulary for no longer than its replication lag, and the
-  registry version is part of the `version` it reports (§6.3).
+  registry version is part of the `version` it reports ([§6.3](#authz-api)).
 - **Unknown operations fail closed.** A check for an operation the catalog does
   not know is denied, never allowed. A service that ships a new operation before
   the registry knows it is therefore broken loudly for that operation only,
@@ -1051,10 +1088,11 @@ every service upgrade. Four rules make that tractable:
   registry needs what a policy rollout needs — a named owner, an audited write
   path, and review that the verb matches what the operation does. A service that
   registers a mutating or secret-disclosing operation as `*:show` has granted it
-  to every auditor in the deployment. §10, question 2 asks where the registry
-  lives; who may write to it is the other half of that question.
+  to every auditor in the deployment. [§10](#open-questions), question 2 asks
+  where the registry lives; who may write to it is the other half of that
+  question.
 
-### 6.2 The authorization input contract
+### 6.2 The authorization input contract {#authz-input-contract}
 
 The community-facing deliverable is a schema, not a tool. Any policy engine (OPA
 is the reference; `oslo.policy` with an `http` check is the bridge) must
@@ -1063,7 +1101,7 @@ receive:
 - `credentials`: the authentication facts from the JWT or SVID, exactly as
   projected by `Credentials` in the Rust implementation, without roles;
 - `service_credentials`: the mTLS peer, when a service is calling;
-- `target.scope`: the resolved target of §5.1;
+- `target.scope`: the resolved target of [§5.1](#request-contract);
 - `target.<resource>` and `existing.<resource>` per ADR 0002;
 - `operation`: the permission identifier;
 - `context`: extra resource facts the calling service attaches for a single
@@ -1077,13 +1115,16 @@ receive:
   stay bound to the authentication chain (I1/I2) and are not caller-supplied.
 
 Rules that today read `input.credentials.roles` keep working in the
-compatibility mode of §5.3, where the middleware pre-fetches the role list for
-the requested target; that mode carries the §5.1 obligation with it. Rules that
-need finer control, and every rule in a service that has moved off the
-compatibility mode, call the check API for the specific operation on the
-resolved target.
+compatibility mode of [§5.3](#compatibility), where the middleware pre-fetches
+the role list for the requested target; that mode carries the
+[§5.1](#request-contract) obligation with it. Rules that need finer control, and
+every rule in a service that has moved off the compatibility mode, call the
+check API for the specific operation on the resolved target.
 
-### 6.3 The Keystone authorization API
+### 6.3 The Keystone authorization API {#authz-api}
+
+> **Audience:** core maintainers and implementers (the API contract). **Skip
+> if** you only need what it solves; see [§7](#what-this-solves).
 
 `POST /v4/authz/check` (batchable) answers, for a subject and a target, which of
 the listed operations are allowed and through which grant. It applies:
@@ -1097,13 +1138,14 @@ the listed operations are allowed and through which grant. It applies:
 4. `restrictions` from the token;
 5. implied-role expansion and role-to-permission expansion.
 
-It is served by the IAM data plane of §4.4 where one is deployed, and by the IAM
-control plane itself where one is not; no caller holds a cross-request copy of
-the answer. The OpenFGA assignment driver (ADR 0033) and per-domain drivers
-(ADR 0034) mean a deployment can back this API with a Zanzibar-style relation
-store for tenants that already run one, with relation sync (ADR 0035) keeping
-group membership consistent, at the cost of a freshness guarantee the store
-defines rather than Keystone, which the rest of this section works through.
+It is served by the IAM data plane of [§4.4](#authz-policy-asks-keystone) where
+one is deployed, and by the IAM control plane itself where one is not; no caller
+holds a cross-request copy of the answer. The OpenFGA assignment driver
+(ADR 0033) and per-domain drivers (ADR 0034) mean a deployment can back this API
+with a Zanzibar-style relation store for tenants that already run one, with
+relation sync (ADR 0035) keeping group membership consistent, at the cost of a
+freshness guarantee the store defines rather than Keystone, which the rest of
+this section works through.
 
 The design detail of this API is in
 [IAM data plane and check API: design detail](iam-data-plane.md). Its
@@ -1126,16 +1168,20 @@ conclusions are these:
 - **Capacity is per caller class,** and the only memo in the architecture is
   scoped to one request.
 
-### 6.4 Binding operations to workload identities
+### 6.4 Binding operations to workload identities {#workload-bindings}
+
+> **Audience:** mapping-engine implementers and operators writing rules. **Skip
+> if** you do not write mapping rules; [§4.6](#tenant-workload-identity) covers
+> the flow.
 
 With permissions as a unit of grant, a mapping rule (ADR 0020) can bind an
 identity to exactly what it needs. ADR 0020's normative rule shape is
-`match.all_of` / `{type, claim, value}` and an `authorizations` list, not the
-`matches`/`binding`/`identity_mode` shape the SPIRE integration plan sketches
-for ephemeral identities — the two documents currently disagree on the ruleset
-schema, which is worth reconciling in one of them. This example follows ADR
-0020's shape, extended with a `permissions` authorization type for the
-permission-set future of §6.1:
+`match.all_of` / `{type, claim, value}`, an `identity` block (with
+`identity_mode`) and an `authorizations` list; the SPIRE integration plan uses
+the same shape. This example follows it, with two extensions the mapping engine
+does not have yet: a `permissions` authorization type for the permission-set
+future of [§6.1](#roles-and-permissions), and `${claims.*}` interpolation in a
+project authorization, which the engine copies verbatim today:
 
 ```json
 {
@@ -1150,11 +1196,13 @@ permission-set future of §6.1:
     ]
   },
   "identity": {
-    "project_id": "${claims.spiffe.project_id}"
+    "identity_mode": "ephemeral",
+    "user_name": "${claims.spiffe.id}"
   },
   "authorizations": [
     {
       "type": "permissions",
+      "project_id": "${claims.spiffe.project_id}",
       "permissions": [
         "compute:servers:create",
         "compute:servers:delete",
@@ -1169,15 +1217,16 @@ No role is created, no policy file is edited in Nova, and the grant is visible
 and revocable in Keystone. This is the AWS STS pattern, with one difference: the
 permission set assumed at authentication time is an upper _bound_ on what the
 call may do, not the decision itself. The decision also needs the target, which
-this proposal binds per request (§5.1), and the grants the subject holds on that
-target, which stay in Keystone. There is deliberately no mint-time document that
-answers the question by itself — which is why the check API exists, and why
-attaching a small precomputed policy to the credential is not an alternative to
-it. Human users get the same through service grants with a role-id ceiling (ADR
-0036 §4, `ServiceGrant.role_ids`) — extended to carry permission sets once
-permission sets exist — or through self-imposed `restrictions`.
+this proposal binds per request ([§5.1](#request-contract)), and the grants the
+subject holds on that target, which stay in Keystone. There is deliberately no
+mint-time document that answers the question by itself — which is why the check
+API exists, and why attaching a small precomputed policy to the credential is
+not an alternative to it. Human users get the same through service grants with a
+role-id ceiling (ADR 0036 §4, `ServiceGrant.role_ids`) — extended to carry
+permission sets once permission sets exist — or through self-imposed
+`restrictions`.
 
-### 6.5 Resource-level targets
+### 6.5 Resource-level targets {#resource-level-targets}
 
 Once services pass `target.<resource>` with a stable id, a grant can name a
 resource (`server:<id>`) rather than a project. This is how sharing a single
@@ -1195,58 +1244,62 @@ proposal requires a relation store to be deployed.
 Sharing rules that a service computes today from its own tables — Neutron's
 `rbac_policy` entries being the largest example — do not have to become Keystone
 grants to move under the check API. A service can keep owning that data and pass
-it per call as `context` (§6.2): the engine evaluates the sharing condition, the
-service keeps no enforcement branch. Turning those rows into first-class
-resource-level grants is then an optional later step, taken if and when the
-service wants them managed and audited centrally.
+it per call as `context` ([§6.2](#authz-input-contract)): the engine evaluates
+the sharing condition, the service keeps no enforcement branch. Turning those
+rows into first-class resource-level grants is then an optional later step,
+taken if and when the service wants them managed and audited centrally.
 
-### 6.6 Quota and unified limits
+### 6.6 Quota and unified limits {#quota-and-limits}
 
 Quota is the one place outside policy where services read the token's scope as
 an authoritative project id: it decides which project a new resource is charged
 to, and which project's limit is enforced. Moving the scope into the request
 does not change what quota means, but it changes where the project id may come
-from. The rule follows §5.1: quota is charged to the **resolved** target, which
-for a create is the requested target after the service has accepted it, and
-never to a value read out of the credential. Two consequences deserve stating in
-the unified-limits work rather than being left to each service:
+from. The rule follows [§5.1](#request-contract): quota is charged to the
+**resolved** target, which for a create is the requested target after the
+service has accepted it, and never to a value read out of the credential. Two
+consequences deserve stating in the unified-limits work rather than being left
+to each service:
 
 - A create under `system-scope="all"` has no project to charge and must be
   rejected; a cloud administrator creating a resource for a tenant names that
-  tenant's project as the target (§7.1), and quota is charged there, to the
-  tenant — which is also what makes the operation auditable.
+  tenant's project as the target ([§7.1](#solves-srbac-personas)), and quota is
+  charged there, to the tenant — which is also what makes the operation
+  auditable.
 - A delegated call is charged to the delegated project, the same project the
   delegation boundary pins the decision to (I2), so a service grant cannot be
   used to charge one tenant's resources to another's quota.
 
-## 7. What this solves
+## 7. What this solves {#what-this-solves}
 
-### 7.1 System scope and the SRBAC personas
+### 7.1 System scope and the SRBAC personas {#solves-srbac-personas}
 
 The personas survive, system scope survives, and the scope moves out of the
 credential. An operator who holds `admin` on `system` sends
 `OpenStack-Target: project="P"` when creating a server for a tenant, and Nova
 asks Keystone whether that subject may `compute:servers:create` on P. Keystone
 says yes because the system grant is inherited. The created server has an owner
-(P), quota is charged to P (§6.6), and listing works with `project="P"`.
+(P), quota is charged to P ([§6.6](#quota-and-limits)), and listing works with
+`project="P"`.
 
-Per-request targets remove the §2.3 situation — a system-scoped _token_ arriving
-at a service with no project in it — so "create a server as the system" now has
-an owner: Nova needs no new semantics for system-scoped creates, because a
-create always names a project. Every service gets consistent persona semantics
-from one authority instead of implementing them in its own policy file.
+Per-request targets remove the [§2.3](#system-scope-srbac) situation — a
+system-scoped _token_ arriving at a service with no project in it — so "create a
+server as the system" now has an owner: Nova needs no new semantics for
+system-scoped creates, because a create always names a project. Every service
+gets consistent persona semantics from one authority instead of implementing
+them in its own policy file.
 
-### 7.2 Global reader
+### 7.2 Global reader {#solves-global-reader}
 
 A `reader` grant on `system`, inherited, allows every `*:list`/`*:show`
 operation on every project. An auditor lists servers with
 `OpenStack-Target: system-scope="all"`; Nova checks `compute:servers:list` on
 the system target, receives allow, and runs its all-projects query — the same
 all-projects query it already runs for a system-scoped token today. No token per
-project, no `admin`, no new role, no new scope type (§5.1). The per-item
-obligations of I8 apply as in §6.3.
+project, no `admin`, no new role, no new scope type ([§5.1](#request-contract)).
+The per-item obligations of I8 apply as in [§6.3](#authz-api).
 
-### 7.3 Admin is global
+### 7.3 Admin is global {#solves-admin-is-global}
 
 `admin` on project A now yields `allowed: false` for any target other than A,
 because the check is always against the resource's own target. A cloud
@@ -1255,7 +1308,7 @@ administrator is an explicit `admin` grant on `system`. There is no
 distinction between project administrator and cloud administrator is a Keystone
 fact rather than a per-service convention.
 
-### 7.4 Service users with `admin`
+### 7.4 Service users with `admin` {#solves-service-admin}
 
 A control-plane service acting as itself is identified by its SVID, is mapped to
 a principal, and holds the `service` permission set on `system`; nothing else,
@@ -1265,13 +1318,13 @@ sees both the user (`credentials`) and the service (`service_credentials`), so
 "only `nova-api` may call `create_port` with `device_owner=compute:*`" is a
 plain rule.
 
-### 7.5 Trusts
+### 7.5 Trusts {#solves-trusts}
 
-Replaced as described in §4.5. The remaining trust-shaped use cases in Heat,
-Magnum, Mistral, Glance, Nova and Cinder each have a documented migration in ADR
-0036 §10.
+Replaced as described in [§4.5](#delegation-without-secrets). The remaining
+trust-shaped use cases in Heat, Magnum, Mistral, Glance, Nova and Cinder each
+have a documented migration in ADR 0036 §10.
 
-### 7.6 Cross-project operations
+### 7.6 Cross-project operations {#solves-cross-project}
 
 Live migration, image sharing, network RBAC, volume transfer and quota
 management all involve a caller acting across targets. With per-request targets,
@@ -1279,7 +1332,7 @@ a single token and a single check per touched target express them without
 rescope. Services that today keep a `service_token` fallback to bypass scope can
 drop it.
 
-### 7.7 Domain manager
+### 7.7 Domain manager {#solves-domain-manager}
 
 `manager` on `domain:D` is a grant like any other; Keystone resolves it for
 `OpenStack-Target: domain="D"` and, when inherited, for every project in D. The
@@ -1287,7 +1340,12 @@ domain-manager persona that has taken several cycles to plumb through Keystone
 policies is a permission set plus inheritance, and other services get it for
 free.
 
-## 8. Revocation, availability and the IAM data plane
+## 8. Revocation, availability and the IAM data plane {#availability}
+
+> **Audience:** operators (outage cost, [§8.5](#outage-cost)) and implementers
+> (storage and replication, [§8.1](#control-data-plane-split) to
+> [§8.4](#data-plane-components)). **Skip if** you only need the adoption order;
+> see the [roadmap](roadmap.md).
 
 Offline JWT validation removes Keystone from the data path but freezes
 authorization for the token lifetime (ADR 0026 §11, SPIRE plan "Mode C"). The
@@ -1303,45 +1361,46 @@ changes the trade-off:
   delegation takes effect when the replica applies the write, which is
   replication lag — milliseconds inside a failure domain, seconds across a WAN —
   and never a lifetime an operator configured. The replica reports the lag, and
-  past `max_staleness` it refuses rather than allows (§6.3).
+  past `max_staleness` it refuses rather than allows ([§6.3](#authz-api)).
 - An optional signed revocation feed (`/v4/oauth2/{domain}/revocations`, SPIRE
   plan "Mode C") bounds credential revocation for offline validators without a
   per-request round trip. Where credential validation is served from the data
   plane, the revocation events are part of the replicated state and need no
   separate feed.
 
-Keystone therefore remains a runtime dependency, as §2.2 states: this proposal
-makes IAM more resistant in a stated way rather than pretending to remove the
-dependency. Which component the request path depends on is the operator's
-choice, between the IAM control plane serving everything (§4.4) and a data plane
-per failure domain.
+Keystone therefore remains a runtime dependency, as [§2.2](#keystone-round-trip)
+states: this proposal makes IAM more resistant in a stated way rather than
+pretending to remove the dependency. Which component the request path depends on
+is the operator's choice, between the IAM control plane serving everything
+([§4.4](#authz-policy-asks-keystone)) and a data plane per failure domain.
 
 In either case a check that cannot reach any serving replica fails closed:
 denied, with no grace window, because there is no cached allow to replay.
 Availability is bought with replica count and a client that tries them all,
 never with a stale window — a simpler posture than `keystonemiddleware`'s token
 cache and a stricter one than the Kubernetes webhook authorizer's, and what
-makes the audit record complete (§6.3). A deployment wanting stale-if-error for
-read-only integrations enables the client-side cache opt-in of §6.3 for those
-services and accepts its constraints; it is not the default.
+makes the audit record complete ([§6.3](#authz-api)). A deployment wanting
+stale-if-error for read-only integrations enables the client-side cache opt-in
+of [§6.3](#authz-api) for those services and accepts its constraints; it is not
+the default.
 
 That posture is an operational requirement, so it belongs in deployment guides:
 fail-closed behaviour stated explicitly; at least three replicas per failure
 domain on separate hosts, each holding its own copy of the state; a replica set
 per region, because a cross-region round trip on every check puts a WAN in the
 middle of every API call; and capacity stated in decisions per second and
-per-caller-class terms (§6.3), with lag and refusal rate as alerting signals
-rather than dashboards.
+per-caller-class terms ([§6.3](#authz-api)), with lag and refusal rate as
+alerting signals rather than dashboards.
 
-### 8.1 Splitting the IAM control plane from the data plane
+### 8.1 Splitting the IAM control plane from the data plane {#control-data-plane-split}
 
-The split of §4.4 — an IAM control plane that mutates state and authenticates,
-replicas that evaluate — is the industry's answer to this section's problem. On
-its own it buys nothing on availability — one replica is the same single point
-of failure with a different process name — but it buys independent scaling, an
-independent release cadence and a containment boundary. Availability comes from
-three further properties, each of which has to be a requirement rather than a
-deployment habit.
+The split of [§4.4](#authz-policy-asks-keystone) — an IAM control plane that
+mutates state and authenticates, replicas that evaluate — is the industry's
+answer to this section's problem. On its own it buys nothing on availability —
+one replica is the same single point of failure with a different process name —
+but it buys independent scaling, an independent release cadence and a
+containment boundary. Availability comes from three further properties, each of
+which has to be a requirement rather than a deployment habit.
 
 **Static stability.** Every replica holds a durable local copy of the inputs it
 serves and keeps serving from that copy while the write path is unreachable —
@@ -1363,17 +1422,18 @@ freshness ceiling of principle 9, and a data plane serving both kinds of domain
 is statically stable for part of its traffic and not for the rest — a
 deployment-guide fact, not a footnote.
 
-**One failure domain per replica set.** The federated serving layer of §4.4 is
-the definition of a supported high-availability topology, not one option among
-several: a replica set per region, no cross-domain call on the read path, and a
-partitioned region degrades alone, to the bound it declared.
+**One failure domain per replica set.** The federated serving layer of
+[§4.4](#authz-policy-asks-keystone) is the definition of a supported
+high-availability topology, not one option among several: a replica set per
+region, no cross-domain call on the read path, and a partitioned region degrades
+alone, to the bound it declared.
 
 **One lag, operator-visible.** With no lifetime at the enforcement point, the
 only staleness term is replication lag, and every replica measures and exports
 it. What an operator can promise is that number, and `max_staleness` is what
 they promise it will never exceed while an allow is served.
 
-### 8.2 to 8.4 What the data plane is made of
+### 8.2 to 8.4 What the data plane is made of {#data-plane-components}
 
 The data plane is a second binary built from the same crates,
 `keystone-dataplane`. It is read-only by construction, serves the check API,
@@ -1385,40 +1445,42 @@ tier-keyed encryption and, for replicas outside the control-plane trust zone, a
 second Raft group. The detail is in
 [IAM data plane and check API: design detail](iam-data-plane.md).
 
-### 8.5 What an outage of the IAM control plane costs
+### 8.5 What an outage of the IAM control plane costs {#outage-cost}
 
 This is the actual answer to "Keystone must not be a single point of failure".
 With a data plane deployed, a total outage of the IAM control plane costs
 exactly this:
 
 - no new or changed grants, role definitions or implied-role edits;
-- no operation-vocabulary changes (§6.1);
+- no operation-vocabulary changes ([§6.1](#roles-and-permissions));
 - no authentication of any kind: no login, no token issuance, no refresh, no
   JWT-SVID exchange, no service-grant redemption, no on-behalf-of exchange
-  (§4.5, ADR 0036), no attestation for new instances (§4.6);
+  ([§4.5](#delegation-without-secrets), ADR 0036), no attestation for new
+  instances ([§4.6](#tenant-workload-identity));
 - no project, domain or user lifecycle operations.
 
 Existing credentials keep validating and keep being authorized throughout, from
 the replicas, until they expire — and that last clause is the cost the token
-lifetime sets. With fifteen-minute access tokens (§4.3), a client whose token
-expires during the outage cannot obtain another until the IAM control plane
-returns, and a workload whose refresh rotation fails is in the same position.
-The data plane does not change this, by design: authentication includes writes,
-and a replica that issued tokens would be a signing oracle in every failure
-domain. What an operator can tune is the access-token and refresh-token
-lifetimes, which are availability parameters as well — a longer access-token
-lifetime buys tolerance of a longer outage at the price §5.4 states. The list
-above belongs in the deployment guide beside the replica-count numbers: it is
-what an operator is buying. Read against §2.2, where a Keystone outage stops
-every request the moment the validation cache expires, it is still the largest
-availability change in this proposal.
+lifetime sets. With fifteen-minute access tokens ([§4.3](#public-api-jwt)), a
+client whose token expires during the outage cannot obtain another until the IAM
+control plane returns, and a workload whose refresh rotation fails is in the
+same position. The data plane does not change this, by design: authentication
+includes writes, and a replica that issued tokens would be a signing oracle in
+every failure domain. What an operator can tune is the access-token and
+refresh-token lifetimes, which are availability parameters as well — a longer
+access-token lifetime buys tolerance of a longer outage at the price
+[§5.4](#threat-model) states. The list above belongs in the deployment guide
+beside the replica-count numbers: it is what an operator is buying. Read against
+[§2.2](#keystone-round-trip), where a Keystone outage stops every request the
+moment the validation cache expires, it is still the largest availability change
+in this proposal.
 
 One further lever is already in the repository and unremarked: per-domain
 drivers (ADR 0034) make the write path shardable by domain, so a cloud-wide
 control-plane failure domain is a deployment default rather than something this
 architecture requires.
 
-### 8.6 How other platforms answer the same problem
+### 8.6 How other platforms answer the same problem {#other-platforms}
 
 Every large platform that decides authorization centrally has converged on the
 same two answers:
@@ -1435,35 +1497,38 @@ replicating the evaluator rather than the enforcement point. None answers the
 availability problem by handing the enforcement point the grants: where
 entitlements do ride in a token, as Entra's directory- and app-role claims do,
 they cover a narrow, slow-moving class of authority and carry the frozen-scope
-problem §2.1 exists to remove; nothing on the resource path uses that shape.
-Kubernetes is the one place the evaluator and the enforcement point coincide,
-and its in-process RBAC is therefore the grant-graph replication §6.3 refuses;
-the reasons it works there do not transfer, because the graph is small, a
-cluster is a scope boundary, and there is one enforcement point rather than one
-per service.
+problem [§2.1](#tokens-carry-scope) exists to remove; nothing on the resource
+path uses that shape. Kubernetes is the one place the evaluator and the
+enforcement point coincide, and its in-process RBAC is therefore the grant-graph
+replication [§6.3](#authz-api) refuses; the reasons it works there do not
+transfer, because the graph is small, a cluster is a scope boundary, and there
+is one enforcement point rather than one per service.
 
 Four shapes could reduce the coupling further — two taken up, two refused:
 
 - **Replica sets per failure domain, statically stable, with lag published.**
-  The three requirements above: no new protocol, a hardening of §4.4 plus the
-  storage work of §8.3.
+  The three requirements above: no new protocol, a hardening of
+  [§4.4](#authz-policy-asks-keystone) plus the storage work of
+  [§8.3](#data-plane-components).
 - **A materialized closure index inside the replica.** Group and hierarchy
   expansion precomputed and incrementally maintained from the replication stream
-  (§6.3). A scaling lever rather than an availability one, invisible to
-  services, available where Keystone owns the inputs and unnecessary on a store
-  that maintains its own. Worth reaching for when fan-out shows up in a profile.
+  ([§6.3](#authz-api)). A scaling lever rather than an availability one,
+  invisible to services, available where Keystone owns the inputs and
+  unnecessary on a store that maintains its own. Worth reaching for when fan-out
+  shows up in a profile.
 - **A node-local decision agent.** Refused: a per-host daemon holding decisions
-  is a cache in the sense of §6.3, and a replica per host puts the whole grant
-  graph on every compute node and makes the leader replicate to thousands of
-  learners. Replicas are per failure domain, not per host (§10, question 11).
+  is a cache in the sense of [§6.3](#authz-api), and a replica per host puts the
+  whole grant graph on every compute node and makes the leader replicate to
+  thousands of learners. Replicas are per failure domain, not per host
+  ([§10](#open-questions), question 11).
 - **Entitlements carried in the token.** Refused, though it has the best
   availability properties on this list — no runtime dependency on anything — for
-  the reason §2.1 gives: this proposal knowingly trades the strongest
-  availability story available for per-request authorization.
+  the reason [§2.1](#tokens-carry-scope) gives: this proposal knowingly trades
+  the strongest availability story available for per-request authorization.
 
-Local evaluation in every enforcement point is not on that list: §6.3 refuses
-it, and on an externally owned store it is unavailable at any price (§10,
-question 8).
+Local evaluation in every enforcement point is not on that list:
+[§6.3](#authz-api) refuses it, and on an externally owned store it is
+unavailable at any price ([§10](#open-questions), question 8).
 
 Static stability decays silently when it is not exercised, so it ships with a
 test rather than a paragraph. The deployment guide names three game-day
@@ -1473,7 +1538,7 @@ on every dashboard; partition one region's replica set and verify that only that
 region degrades, and that it refuses at `max_staleness`; and cold-boot a
 replacement replica with the IAM control plane still down.
 
-### 8.7 What a central authority costs
+### 8.7 What a central authority costs {#central-authority-cost}
 
 None of the above removes the trade this architecture makes. A single authority
 for mutually independent trust domains means its outage is everyone's outage at
@@ -1500,7 +1565,7 @@ verifies its own signature in CI, while the consuming side still pulls a mutable
 `:latest` tag with no verification wired into the load path). And the bet
 belongs in front of operators at adoption time.
 
-## 9. Adoption and coexistence
+## 9. Adoption and coexistence {#adoption}
 
 How this is adopted, in which order, and what each project has to change is in
 the [roadmap](roadmap.md). This section states only what must hold however the
@@ -1510,7 +1575,8 @@ Every step is additive. Python Keystone, Fernet tokens and unmodified services
 keep working throughout, and four rules are what "additive" means:
 
 - v3 scoped tokens and `OpenStack-Target` coexist. A scoped token's own scope is
-  the requested scope, and a conflicting header is rejected (§5.3).
+  the requested scope, and a conflicting header is rejected
+  ([§5.3](#compatibility)).
 - Python Keystone keeps validating the tokens Rust Keystone issues (ADR 0026)
   until it is retired.
 - No Python-owned table changes; new state lives in Raft-backed drivers.
@@ -1519,12 +1585,12 @@ keep working throughout, and four rules are what "additive" means:
 
 Two properties are not negotiable, because without them the proposal is weaker
 than the status quo. Scope-less tokens do not ship without `restrictions`,
-audience narrowing and sender constraint (§5.4). Per-request targets are not
-accepted by a service until it enforces the resource-owner-wins invariant
-(§5.1). Everything else may be adopted per service, on the service's own
-schedule, or not at all. A deployment may stop at role resolution (the roadmap's
-Mode 1) indefinitely: it loses resource-level decisions and central policy
-change, and keeps everything it enforced before.
+audience narrowing and sender constraint ([§5.4](#threat-model)). Per-request
+targets are not accepted by a service until it enforces the resource-owner-wins
+invariant ([§5.1](#request-contract)). Everything else may be adopted per
+service, on the service's own schedule, or not at all. A deployment may stop at
+role resolution (the roadmap's Mode 1) indefinitely: it loses resource-level
+decisions and central policy change, and keeps everything it enforced before.
 
 Held to those rules, every step delivers a system strictly stronger than the
 status quo. It removes long-lived secrets from the control plane and from
@@ -1533,7 +1599,7 @@ same persona semantics from one authority, and makes the scope and role
 decisions behind the last decade of authorization advisories impossible to key
 on the wrong input.
 
-## 10. What the community still decides
+## 10. What the community still decides {#open-questions}
 
 1. **Header grammar details.** `OpenStack-Target` as an RFC 8941 dictionary is
    proposed; open are the exact member names, whether `resource` is mandatory
@@ -1543,11 +1609,11 @@ on the wrong input.
 2. **Where does the operation registry live, and who may write to it?** In
    `oslo.policy` as generated documentation, in Keystone as a resource services
    register at startup, or in a separate governance-owned document? The second
-   half is the sharper one: a registration is a grant change (§6.1), so an open
-   self-registration endpoint lets any deployed service widen what every reader
-   may do. Whether the write is operator-curated, governance-reviewed, or
-   service-supplied with an audit trail is a decision about who holds a
-   privilege, not where a file lives.
+   half is the sharper one: a registration is a grant change
+   ([§6.1](#roles-and-permissions)), so an open self-registration endpoint lets
+   any deployed service widen what every reader may do. Whether the write is
+   operator-curated, governance-reviewed, or service-supplied with an audit
+   trail is a decision about who holds a privilege, not where a file lives.
 3. **Cross-project listing for non-admins.** `system-scope="all"` reuses the
    existing system scope and therefore keys on a system-level grant, exactly as
    today. It leaves untouched the case of a user with roles on many projects who
@@ -1572,56 +1638,58 @@ on the wrong input.
    externally stored input is the row that reports no version at all.
 8. **Is anything owed to deployments that want local evaluation?** This proposal
    leaves a live check against a replica as the only shape, rejecting both
-   pushed entitlement snapshots and grant-graph replication (§6.3) — and on a
-   domain backed by an external store, no other shape is available in any case.
-   For a SQL-only deployment willing to accept that every enforcement point
-   holds every tenant's grants, local evaluation is technically reachable, so
-   the question is whether that is documented as a supported option or named and
-   refused. This proposal names and refuses it; a single-tenant deployment may
-   reasonably disagree, and should say so here rather than build it quietly.
-   What is _not_ open is whether the coupling exists: §8.7 states it as an
-   accepted cost.
+   pushed entitlement snapshots and grant-graph replication ([§6.3](#authz-api))
+   — and on a domain backed by an external store, no other shape is available in
+   any case. For a SQL-only deployment willing to accept that every enforcement
+   point holds every tenant's grants, local evaluation is technically reachable,
+   so the question is whether that is documented as a supported option or named
+   and refused. This proposal names and refuses it; a single-tenant deployment
+   may reasonably disagree, and should say so here rather than build it quietly.
+   What is _not_ open is whether the coupling exists:
+   [§8.7](#central-authority-cost) states it as an accepted cost.
 9. **Should the client-side cache opt-in exist at all, and who administers it?**
-   §6.3 admits it for deployments that accept a stale window and §8 keeps it out
-   of the architecture. Whether it ships in `oslo.policy`, whether an operator
-   sets it per service or a domain administrator may set it for integrations in
-   their own domain, and what maximum lifetime a cloud can impose over that
-   choice are governance questions with an API surface, and they should be
-   answered before anything ships that can serve a stale allow.
+   [§6.3](#authz-api) admits it for deployments that accept a stale window and
+   [§8](#availability) keeps it out of the architecture. Whether it ships in
+   `oslo.policy`, whether an operator sets it per service or a domain
+   administrator may set it for integrations in their own domain, and what
+   maximum lifetime a cloud can impose over that choice are governance questions
+   with an API surface, and they should be answered before anything ships that
+   can serve a stale allow.
 10. **Does the check API receive the credential, or a signed chain assertion?**
-    §6.3 requires the data plane to verify the chain facts itself and recommends
-    the direct route, forwarding the credential as presented: simpler, strictly
-    stronger, and disclosing nothing the callee does not already hold. It also
-    means every enforcement point hands the user's credential to a second
-    component, which some deployments will read as widening its reach even
-    though the data plane is internal-only. A Keystone-minted chain assertion
-    avoids that and gives up liveness. Which is the default, and whether the
-    trusted-asserter posture is offered at all, should be settled before the
-    check API request schema freezes.
-11. **Is the node-local decision agent part of the target architecture?** §8.6
-    answers no; the question is recorded so a deployment measuring a case for
-    one argues here.
-12. **When does a domain move its assignments to the Raft driver?** §6.3
-    compares the two Keystone-owned drivers. Whether a greenfield deployment
-    starts on Raft, whether a domain migrates at Python Keystone's retirement or
-    earlier under ADR 0034, and whether group membership and hierarchy are
-    mirrored into the driver or joined across providers, are decisions for that
-    driver's ADR.
-13. **Which mechanism keeps secrets away from replicas, and which secrets?** §8
-    names tier-keyed encryption and a second Raft group and orders them. The
-    tier of each keyspace — which of sessions, API keys, signing keys and
-    credentials a learner may hold as ciphertext it cannot open, and which it
-    may not hold at all — is the storage ADR's to decide before the first
-    replica runs outside the control-plane trust zone.
+    [§6.3](#authz-api) requires the data plane to verify the chain facts itself
+    and recommends the direct route, forwarding the credential as presented:
+    simpler, strictly stronger, and disclosing nothing the callee does not
+    already hold. It also means every enforcement point hands the user's
+    credential to a second component, which some deployments will read as
+    widening its reach even though the data plane is internal-only. A
+    Keystone-minted chain assertion avoids that and gives up liveness. Which is
+    the default, and whether the trusted-asserter posture is offered at all,
+    should be settled before the check API request schema freezes.
+11. **Is the node-local decision agent part of the target architecture?**
+    [§8.6](#other-platforms) answers no; the question is recorded so a
+    deployment measuring a case for one argues here.
+12. **When does a domain move its assignments to the Raft driver?**
+    [§6.3](#authz-api) compares the two Keystone-owned drivers. Whether a
+    greenfield deployment starts on Raft, whether a domain migrates at Python
+    Keystone's retirement or earlier under ADR 0034, and whether group
+    membership and hierarchy are mirrored into the driver or joined across
+    providers, are decisions for that driver's ADR.
+13. **Which mechanism keeps secrets away from replicas, and which secrets?**
+    [§8](#availability) names tier-keyed encryption and a second Raft group and
+    orders them. The tier of each keyspace — which of sessions, API keys,
+    signing keys and credentials a learner may hold as ciphertext it cannot
+    open, and which it may not hold at all — is the storage ADR's to decide
+    before the first replica runs outside the control-plane trust zone.
 
-## 11. References
+## 11. References {#references}
 
 Most ADRs below are **Accepted** and describe the system as it stands. ADRs
 0024, 0030, 0031, 0032, 0034, 0035 and 0036 are still **Proposed**; this vision
 describes them in the same present tense as the rest for readability. ADR 0024's
 SCIM endpoints and ADR 0032's vendordata endpoint already ship; the rest are not
-implemented yet. ADR 0036 carries the most weight here — §4.5 and §7.5 build
-directly on it — so its proposed status is the one to track.
+implemented yet. ADR 0036 carries the most weight here —
+[§4.5](#delegation-without-secrets) and [§7.5](#solves-trusts) build directly on
+it — so its proposed status is the one to track.
 
 - [ADR 0002 — Open Policy Agent](adr/0002-open-policy-agent.md)
 - [ADR 0005 — Passkey authentication](adr/0005-auth-passkey.md)

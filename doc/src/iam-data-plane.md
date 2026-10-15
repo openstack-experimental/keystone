@@ -3,20 +3,24 @@
 **Status:** Draft for community discussion
 
 This document holds the design detail that the
-[authentication and authorization vision](vision.md) summarizes in §6.3 and §8.2
-to §8.4: how the check API stays honest about the caller's chain, how it is
+[authentication and authorization vision](vision.md) summarizes in [§6.3](vision.md#authz-api) and [§8.2 to §8.4](vision.md#data-plane-components): how the check API stays honest about the caller's chain, how it is
 protected, how replicas stay fresh, and what the data plane is built from. It
 was moved out of the vision so that the vision can stay a statement of what the
-proposal is and why. Section numbers written as §N refer to the vision. The
+proposal is and why. Section numbers written as §N refer to the vision, and link to it. The
 order in which this is built is in the [roadmap](roadmap.md). The review that
 led to the data plane split is in `doc/plans/iam-control-data-plane-split.md`.
 
-## Part 1. The check API (vision §6.3)
+## Part 1. The check API (vision [§6.3](vision.md#authz-api)) {#check-api-part}
 
-### The chain facts are not the caller's to assert
+> **Audience:** check-API implementers and security reviewers. **Skip if** you
+> only need the effect on callers; see [vision §4.4](vision.md#authz-policy-asks-keystone).
+> Operators sizing a deployment can go straight to the
+> [freshness contract](#freshness-contract) and [capacity](#capacity-isolation).
+
+### The chain facts are not the caller's to assert {#chain-facts}
 
 Items 3 and 4 are chain facts in the sense of I1: properties of how the caller
-authenticated, never of what the caller says. The request shape of §4.4 does not
+authenticated, never of what the caller says. The request shape of [§4.4](vision.md#authz-policy-asks-keystone) does not
 preserve that on its own. An enforcement point parses `act`,
 `delegation_context` and `restrictions` out of the presented credential, so a
 data plane that applies items 3 and 4 to the fields it was handed is applying
@@ -24,10 +28,10 @@ them to data an enforcement point wrote, and a request with `delegation_context`
 omitted asks to be decided as though the chain were not delegated. That is the
 defect class behind OSSA-2026-005 and OSSA-2026-015, relocated from token scope
 into the check request, where it is harder to see because the field names are
-the right ones. SVID authentication does not close it: §4.2 is explicit that
+the right ones. SVID authentication does not close it: [§4.2](vision.md#control-plane-mtls) is explicit that
 mTLS identifies the service and never the user it serves, and a compromised
 service that may assert its own account of a user's chain can widen every
-delegation passing through it (§4.8).
+delegation passing through it ([§4.8](vision.md#cross-service-calls)).
 
 So the chain must reach the data plane in a form the data plane verifies for
 itself, and the proposal takes the direct route: the check request carries the
@@ -46,7 +50,7 @@ Two consequences follow.
   context was dropped, and the safe reading of that ambiguity denies everything.
   A deployment that cannot forward credentials — a legacy Fernet path, or a
   service in the middle that will not pass one on — therefore runs a declared
-  posture on the same footing as §5.3's compatibility mode: set per caller,
+  posture on the same footing as [§5.3](vision.md#compatibility)'s compatibility mode: set per caller,
   reported as a capability, and understood as a statement that those enforcement
   points are trusted to assert chain facts. It must not be the default, and a
   deployment carrying delegated chains should refuse it outright.
@@ -55,7 +59,7 @@ Two consequences follow.
   `(sub, act, delegation_context, restrictions, jti)` that an enforcement point
   relays without being able to alter it. It costs a claim and a key, and it says
   nothing about whether the credential is still live — so it is a fallback, not
-  a preference (§10, question 10).
+  a preference ([§10](vision.md#open-questions), question 10).
 
 The request-scoped memo below is keyed by the same argument. Keyed on
 `(subject, target)` alone, an answer produced for a subject's full authority
@@ -69,14 +73,14 @@ for the opt-in client-side cache described later.
 One input deliberately stays outside the evaluation. The data plane knows which
 service is calling, and uses that for traffic classes and admission control
 (below), but it does not fold it into the grant decision. A rule such as "only
-`nova-api` may call `create_port` with `device_owner=compute:*`" (§7.4) is local
+`nova-api` may call `create_port` with `device_owner=compute:*`" ([§7.4](vision.md#solves-service-admin)) is local
 policy at the callee, where `service_credentials` is already in the input
-(§6.2). Making the acting service a dimension of a grant multiplies the grant
-space by the service catalog, and belongs with resource-level targets (§6.5) if
+([§6.2](vision.md#authz-input-contract)). Making the acting service a dimension of a grant multiplies the grant
+space by the service catalog, and belongs with resource-level targets ([§6.5](vision.md#resource-level-targets)) if
 it is taken up at all. The data plane answers "may this subject do this here",
 never "may this service ask".
 
-### Answering enough questions discloses the graph
+### Answering enough questions discloses the graph {#graph-disclosure}
 
 A caller that may ask about any subject, any target and any operation can
 reconstruct the grant graph a batch at a time. Refusing to ship the graph in
@@ -104,7 +108,7 @@ what an administrator asks while debugging a permission. Answering it is a
 privileged read of the grant graph, audited as one and granted to tooling rather
 than to anything on the data path.
 
-### This is the new hot path; design it like one
+### This is the new hot path; design it like one {#hot-path}
 
 `/v4/authz/check` replaces token validation on the data path, so its
 non-functional requirements are not negotiable: batchable, answered from state
@@ -113,14 +117,14 @@ versioned on terms the response states explicitly, admission-controlled per
 calling SVID, accounted in decisions rather than requests, and exposed on the
 internal interface only. Its latency budget is today's `keystonemiddleware`
 cache _hit_ budget, not the miss budget, because it is called on every request
-(§4.4). The existing assignment-layer caches stay as they are and are not
+([§4.4](vision.md#authz-policy-asks-keystone)). The existing assignment-layer caches stay as they are and are not
 building blocks: ADR 0034 §8 caches the domain-to-driver binding rather than
 resolved assignments, and ADR 0033 §9 declines to cache OpenFGA results at all.
 The new work is the in-memory grant index below, which is a replica, not a
 cache.
 
 Two shapes are explicitly _not_ the answer. A pushed "entitlement snapshot" per
-subject would recreate the §2.1 frozen-roles problem. Replicating the grant
+subject would recreate the [§2.1](vision.md#tokens-carry-scope) frozen-roles problem. Replicating the grant
 graph to every evaluation point — a bundle each service's policy engine pulls
 and evaluates locally — fails for two independent reasons: there is no partition
 boundary to bound a bundle to, because Nova, Neutron, Cinder and Glance each
@@ -129,9 +133,9 @@ grant graph spans mutually distrusting tenants, so "every compute node holds
 every tenant's grants" is a disclosure decision, not a caching decision. Both
 constrain where grant _facts_ come from and say nothing about where policy is
 _evaluated_ — a per-service OPA sidecar asking this API live is unaffected
-(§4.4).
+([§4.4](vision.md#authz-policy-asks-keystone)).
 
-### Freshness: replicas, not caches
+### Freshness: replicas, not caches {#replicas-not-caches}
 
 A copy of authorization state has to answer one question: how does it know when
 it is wrong? There are exactly two answers.
@@ -179,7 +183,7 @@ invalidated by the same replication stream. A client-side cache remains possible
 as an explicit opt-in for deployments that accept a stale window, and it is
 described last, with the constraints it carries.
 
-### Where the replica comes from, per driver
+### Where the replica comes from, per driver {#replica-sources}
 
 The data plane binary is driver-agnostic in the sense that the same code path
 handles every store below without a per-driver fork — not in the sense that a
@@ -187,8 +191,8 @@ keyspace's driver can differ between the two planes.
 
 | Store                                                                                                                                        | Replica                                                                        | Version reported                                              | Cold boot with the write path down                                               | Driver change                                                                                                                                                           |
 | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Raft keyspaces: mapping, OAuth2 clients and public keys, permissions, operation registry, service grants, and assignments on the Raft driver | Permanent Raft learner: added with `add_learner`, never promoted               | Applied log index, measured against the leader's commit index | Snapshot from a peer replica, or `keystone-manage storage restore` then catch-up | Storage crate: local reads on learners with version reporting (§8.3)                                                                                                    |
-| SQL: assignments, roles, hierarchy, identity, catalog, revocation events                                                                     | PostgreSQL hot standby per replica or per failure domain, read-only connection | Replay LSN, measured against the primary                      | `pg_basebackup` from another standby (cascading replication)                     | No new component — `database.connection` points at the standby — but the driver reports the replay position and its lag, and the write path returns a commit LSN (§8.3) |
+| Raft keyspaces: mapping, OAuth2 clients and public keys, permissions, operation registry, service grants, and assignments on the Raft driver | Permanent Raft learner: added with `add_learner`, never promoted               | Applied log index, measured against the leader's commit index | Snapshot from a peer replica, or `keystone-manage storage restore` then catch-up | Storage crate: local reads on learners with version reporting ([§8.3](#storage-prerequisites))                                                                                                    |
+| SQL: assignments, roles, hierarchy, identity, catalog, revocation events                                                                     | PostgreSQL hot standby per replica or per failure domain, read-only connection | Replay LSN, measured against the primary                      | `pg_basebackup` from another standby (cascading replication)                     | No new component — `database.connection` points at the standby — but the driver reports the replay position and its lag, and the write path returns a commit LSN ([§8.3](#storage-prerequisites)) |
 | OpenFGA                                                                                                                                      | An OpenFGA instance per failure domain over a standby of its database          | The store's changelog position, where exposed                 | The store's own base backup                                                      | Pass the consistency preference through; disable the store's own query cache                                                                                            |
 | LDAP identity                                                                                                                                | The directory's own replica                                                    | None — see the freshness contract                             | The directory's                                                                  | None                                                                                                                                                                    |
 
@@ -199,8 +203,8 @@ Two consequences of that table matter more than its rows.
   primary down, and no driver has to know it is reading one to answer a check.
   That is what makes the first data-plane deliverable small — but not free:
   reporting `version` and honouring `min_version` is driver work on the SQL path
-  as much as on the Raft one, and §8.3 lists it.
-- **New authorization state arrives in Raft.** §9's rule that no Python-owned
+  as much as on the Raft one, and [§8.3](#storage-prerequisites) lists it.
+- **New authorization state arrives in Raft.** [§9](vision.md#adoption)'s rule that no Python-owned
   table changes and new state lives in Raft-backed drivers means permissions,
   permission sets, the operation registry and service grants are in the
   replicated log from the start, and a learner holds them for free. Assignments
@@ -219,7 +223,7 @@ straddle two stores — SQL assignments beside Raft permissions, an LDAP group
 beside either — is a decision a join across two versions, and the response says
 so by reporting both.
 
-### A Raft assignment driver, compared with SQL
+### A Raft assignment driver, compared with SQL {#raft-assignment-driver}
 
 The existing assignment drivers are SQL (`assignment-driver-sql`, over the
 Python-compatible tables) and OpenFGA. A third, Raft-backed driver is the
@@ -278,7 +282,7 @@ learner-only data plane and total-order versioning. The two coexist per domain,
 which is what ADR 0034 was built for, and the data plane serves both from one
 process.
 
-### The freshness contract
+### The freshness contract {#freshness-contract}
 
 The contract is deliberately small, and the same wherever Keystone holds a
 replica:
@@ -287,13 +291,13 @@ replica:
   index; for a SQL-backed domain the replay position; for a relation store its
   changelog position. A decision whose inputs straddle stores reports each
   component. Enforcement points log it with the decision, which gives the audit
-  trail "allowed against grant state N" (§5.4).
+  trail "allowed against grant state N" ([§5.4](vision.md#threat-model)).
 - **An input whose store reports no position is named, not hidden.** An LDAP
   directory's replica is the standing example: it contributes no version
   component, `max_staleness` cannot be enforced over it, and the response
   therefore marks the decision as resting on an input with an unbounded
   staleness term. An operator who needs a bound cannot get one from that driver,
-  which is half of the capability question §10 asks (question 7).
+  which is half of the capability question [§10](vision.md#open-questions) asks (question 7).
 - **A request may carry `min_version`.** A replica behind it waits, up to a
   bounded time, for its state to reach it; then forwards to a replica that has;
   then refuses — not denies. The IAM control plane returns the commit version of
@@ -312,7 +316,7 @@ replica:
 - **There is no lifetime, no per-result TTL, no mint stamp and no generation
   number.** The response is a fact about state version N. The caller uses it for
   the request that asked and discards it.
-- **The data plane's decision log is complete** (§5.4). Every decision reaches a
+- **The data plane's decision log is complete** ([§5.4](vision.md#threat-model)). Every decision reaches a
   replica, so what the cloud decided is what the replicas logged, with the
   version each decision was made against.
 
@@ -323,7 +327,7 @@ whether a version exists at all:
 | ------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------- |
 | Freshness bound    | Measured replication lag, bounded by `max_staleness` | The store's own replication; measurable only where the store exposes a position |
 | Read-your-writes   | `min_version`                                        | Only where the store offers a consistency token to pass through                 |
-| Static stability   | The replica's own, tested by Keystone (§8.1)         | The store's, established there                                                  |
+| Static stability   | The replica's own, tested by Keystone ([§8.1](vision.md#control-data-plane-split))         | The store's, established there                                                  |
 | Revocation latency | The lag                                              | The lag, plus relation-sync lag for memberships Keystone syncs (ADR 0035)       |
 | Operator's dial    | `max_staleness`                                      | The same where a position is available; otherwise none                          |
 
@@ -332,7 +336,7 @@ payoff of not building cache invalidation: one operator-visible freshness model
 across every driver, instead of a SQL feature beside an external-store
 limitation.
 
-### The in-memory grant index inside the replica
+### The in-memory grant index inside the replica {#grant-index}
 
 The first data-plane deliverable answers a check by running the same queries the
 IAM control plane runs, against the local replica, with the request-scoped memo
@@ -349,12 +353,12 @@ built to, the memo is still the only memo, and a replica can disable the index
 and fall back to queries at any time — so the index is an optimization over the
 replica, never a second source of truth.
 
-### A client-side cache is an opt-in, and it carries its constraints
+### A client-side cache is an opt-in, and it carries its constraints {#client-side-cache}
 
 A deployment may still decide a stale window at the enforcement point is worth a
 round trip saved — a Python service at the far end of a WAN, or an integration
 that would rather act on a stale-but-correct decision than fail. That is a
-client-library option (§9), off by default, and not part of the architecture.
+client-library option ([§9](vision.md#adoption)), off by default, and not part of the architecture.
 Where it is enabled, everything a cache needs applies and none of it is
 optional: the key includes the chain digest (above); allows are held for a short
 lifetime and denies may be held longer, because a stale deny is an inconvenience
@@ -378,7 +382,7 @@ propagation, and the counter table becomes the hottest row set in the
 deployment. A replica gives what that scheme wanted, a version and
 read-your-writes, without minting anything.
 
-### Request-scoped deduplication is the only memo
+### Request-scoped deduplication is the only memo {#request-memo}
 
 One inbound API call can evaluate policy many times — the collection-level
 decision plus one per item, per the re-check requirement below — and those
@@ -392,9 +396,9 @@ against one version too.
 
 This is the caller-side counterpart of ADR 0030, which solves the same problem
 inside Keystone. Nothing in `oslo.policy` provides it today, so it is part of
-the check-type work in §9.
+the check-type work in [§9](vision.md#adoption).
 
-### Capacity is isolated per caller class, not merely rate-limited
+### Capacity is isolated per caller class, not merely rate-limited {#capacity-isolation}
 
 Rate limiting caps what one caller can do to itself. It does nothing about the
 problem this API creates at scale: an unrelated integration's traffic degrading
@@ -420,7 +424,7 @@ Two things about the cost model:
   mechanism to configure.
 - **The number to size is decisions per second**, not replica count. The
   per-item re-check below amplifies one user action into a page's worth of
-  decisions, so a deployment guide that documents only replica placement (§8)
+  decisions, so a deployment guide that documents only replica placement ([§8](vision.md#availability))
   has documented the smaller half of the capacity question.
 
 Both depend on being able to see the traffic, which makes per-trust-domain
@@ -429,7 +433,7 @@ lag, refusal rate, denial rate and shed count broken down by caller class belong
 in the metrics (ADR 0031) that ship with the data plane. Quotas that cannot be
 measured cannot be set.
 
-### Collection reads and the per-item re-check
+### Collection reads and the per-item re-check {#per-item-recheck}
 
 The security model requires list endpoints to re-enforce the per-item read
 policy against each record's own identifiers (I8), and forbids replacing that
@@ -454,7 +458,7 @@ The consequence is that cross-project listing is more expensive under this model
 than a system-scoped token that services interpreted themselves, and deployments
 must size the check API for it.
 
-### Bootstrapping and Keystone's own authorization
+### Bootstrapping and Keystone's own authorization {#bootstrapping}
 
 Keystone is itself a service with authorized APIs. It evaluates its own policies
 against its own assignment data in-process — it does not call `/v4/authz/check`
@@ -467,9 +471,13 @@ carries the full API, is reachable only from the host, and authenticates the
 caller by SVID, so a high-security perimeter can drive administrative calls
 without a bearer token and with the same policy checks the network API applies.
 
-## Part 2. The data plane (vision §8.2 to §8.4)
+## Part 2. The data plane (vision [§8.2 to §8.4](vision.md#data-plane-components)) {#data-plane-part}
 
-### 8.2 What the data plane is, concretely
+> **Audience:** storage and Raft maintainers, and implementers of
+> `keystone-dataplane`. **Skip if** you only need the outage cost; see
+> [vision §8.5](vision.md#outage-cost).
+
+### Vision [§8.2](#data-plane-binary): What the data plane is, concretely {#data-plane-binary}
 
 In the Rust implementation the data plane is a second binary target in the
 `keystone` crate, `keystone-dataplane`, built from the same library. The two
@@ -484,10 +492,10 @@ reviewer checks in the build rather than a flag they trust at runtime:
   (`GET /v3/auth/tokens`, Mode B) stays on the IAM control plane deliberately:
   Fernet keys are a symmetric repository, so a replica able to validate a Fernet
   token is a replica able to mint one, and putting that repository in every
-  failure domain would undo §8.4 before it starts. The legacy path therefore
+  failure domain would undo [§8.4](#replica-secrets) before it starts. The legacy path therefore
   keeps the legacy availability, which is one more reason for a deployment
   adopting the data plane to finish the move to JWT.
-- **Drivers.** The same drivers as `keystone`, each pointed at a replica (§6.3
+- **Drivers.** The same drivers as `keystone`, each pointed at a replica ([§6.3](vision.md#authz-api)
   table). The SQL connection is to a standby, which the database makes
   read-only, and the database user has `SELECT` only, so a misconfiguration
   pointing at the primary still cannot write. Mutating provider methods are not
@@ -531,13 +539,13 @@ flowchart TB
     cp -.->|"Raft log to learners,<br/>WAL streaming to standbys"| r1
 ```
 
-### 8.3 What the storage and SQL layers have to gain first
+### Vision [§8.3](#storage-prerequisites): What the storage and SQL layers have to gain first {#storage-prerequisites}
 
 The Raft storage exists, and the data plane leans on it, but five things are
 missing between "a learner" and "a replica that serves", and they are the
 concrete content of the static-stability requirement:
 
-1. **Local reads on learners, with the version.** Today every read on a
+1. <span id="learner-local-reads"></span>**Local reads on learners, with the version.** Today every read on a
    non-leader node forwards to the leader after a ReadIndex round trip, and
    reads locally only as a fallback when the leader is unreachable. A node in
    the learner role serves reads from its own state machine without ReadIndex
@@ -569,7 +577,7 @@ concrete content of the static-stability requirement:
    write so that `min_version` means anything on a SQL-backed domain. Small
    work, but the freshness contract is not met without it.
 
-### 8.4 Keeping secrets away from replicas
+### Vision [§8.4](#replica-secrets): Keeping secrets away from replicas {#replica-secrets}
 
 A learner applies every log entry, and applying an encrypted entry needs the
 data encryption key, so a learner today decrypts everything the log holds:
@@ -600,4 +608,4 @@ rather than narrowing it. Two designs close it, adoptable in order.
 Tier-keyed encryption is enough for replicas inside the control-plane trust
 zone; a replica in a remote region, or on a host shared with other services, is
 the case for the second group. Which secrets belong in which tier is the storage
-ADR's decision, not this document's (§10, question 13).
+ADR's decision, not this document's ([§10](vision.md#open-questions), question 13).

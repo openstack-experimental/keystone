@@ -777,11 +777,11 @@ and protection against a `provider_id` collision, since `provider_id` is chosen
 by the client's creator and is unique only within its domain: a domain `manager`
 must not be able to adopt the `provider_id` an admin's global ruleset targets.
 System scope for human administrators is a separate question, tied to
-per-request authorization (vision §4.3).
+per-request authorization ([vision §4.3](../vision.md#public-api-jwt)).
 
 Residual risk: a leaked domain signing key can sign any scope claim, and every
 verifier that trusts that issuer accepts it. This closes only when the scope
-leaves the token and is decided per request by Keystone (vision §4.3). A domain
+leaves the token and is decided per request by Keystone ([vision §4.3](../vision.md#public-api-jwt)). A domain
 audience in `aud` is deliberately not used: it would not help (the forger
 controls the claims) and would stop one token from working across services and
 domains.

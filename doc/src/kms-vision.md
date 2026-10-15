@@ -143,7 +143,7 @@ work (`doc/plans/0016-v2-pkcs11-tpm-kek.md`) is the direct ancestor of the HSM
 integration in §10.
 
 The dependency on Keystone is a runtime dependency with the same posture as the
-one in [vision §8](vision.md): authentication is validated offline,
+one in [vision §8](vision.md#availability): authentication is validated offline,
 authorization is a cached live decision, and the KMS fails closed when no cached
 decision applies. Because a KMS outage is a data-availability outage for
 everything encrypted with it, §11.4 imposes tighter requirements on that cache
@@ -1343,7 +1343,7 @@ posture:
   60 s for management operations, configurable up to a few minutes for data
   operations).
 - The check API is served from a region-local Keystone read path (Raft learners
-  or read replicas, per [vision §8](vision.md)).
+  or read replicas, per [vision §8](vision.md#availability)).
 - **Fail closed by default.** When no cached decision applies and Keystone is
   unreachable, the request is denied.
 - A narrowly scoped, explicitly enabled, time-boxed and loudly audited "extended
@@ -1468,7 +1468,7 @@ flowchart TB
 
 ### 13.1 External callers
 
-Exactly as in [vision §4.3 and §5](vision.md): a scope-less JWT (or an SVID at
+Exactly as in [vision §4.3 and §5](vision.md#public-api-jwt): a scope-less JWT (or an SVID at
 the TLS layer) says _who_, the addressed key says _where_, and the operation
 says _what_. Ownership is never read out of the credential: the key's owning
 project comes from the KMS's own metadata, which is the authoritative statement,
@@ -1518,8 +1518,7 @@ Rules that follow directly from the security model:
 A grant is the KMS's unit of delegation: "principal P may perform operations O
 on key K, optionally constrained by encryption context, optionally expiring". It
 is deliberately the same shape as the permission grants of
-[vision §6](vision.md), and where Keystone gains resource-level targets (vision
-§6.5) the KMS is the first consumer: a grant on a key _is_ a resource-level
+[vision §6](vision.md#authorization-model), and where Keystone gains resource-level targets ([vision §6.5](vision.md#resource-level-targets)) the KMS is the first consumer: a grant on a key _is_ a resource-level
 grant, and modelling it in Keystone rather than in the KMS's own database is the
 preferred end state.
 
@@ -1538,10 +1537,10 @@ Two implementation options:
 | Option                                   | Pros                                                 | Cons                                                      |
 | ---------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------- |
 | Grants stored in the KMS                 | Ships now; no Keystone change; fast local evaluation | A second authorization store to audit and keep consistent |
-| Grants as Keystone resource-level grants | One authority, one audit trail, one revocation path  | Requires vision §6.5 to land; adds a hot dependency       |
+| Grants as Keystone resource-level grants | One authority, one audit trail, one revocation path  | Requires [vision §6.5](vision.md#resource-level-targets) to land; adds a hot dependency       |
 
 **Recommendation:** store grants in the KMS initially with a schema that maps
-one-to-one onto the Keystone model, and migrate when vision §6.5 lands. The
+one-to-one onto the Keystone model, and migrate when [vision §6.5](vision.md#resource-level-targets) lands. The
 migration is a data move, not a redesign, precisely because the schema was
 chosen for it.
 
@@ -2022,7 +2021,7 @@ need, so that they are not retrofitted:
 ## 21. Open questions
 
 1. **Grant authority.** Do key grants live in Keystone as resource-level grants
-   (vision §6.5) from the start, accepting the dependency, or in the KMS with a
+   ([vision §6.5](vision.md#resource-level-targets)) from the start, accepting the dependency, or in the KMS with a
    migration later (§13.4)?
 2. **Cache TTL as a product decision.** The KEK cache TTL trades revocation
    latency against availability during a shard incident. Is the default an

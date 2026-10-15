@@ -1199,49 +1199,45 @@ API lookup needed.
 
 A mapping ruleset that handles the two categories of incoming SPIFFE identities:
 
-**Service accounts (static mapping):**
+**Service accounts (static mapping):** one rule per service, in the ADR 0020
+shape that `POST /v4/mappings/rulesets` accepts (see the CI ruleset in the
+devstack section above for a rule exercised end to end):
 
 ```json
-POST /v4/rbac/mapping/rulesets
+POST /v4/mappings/rulesets
 {
-  "ruleset": {
-    "name": "openstack-service-accounts",
-    "priority": 100,
+  "mapping": {
+    "mapping_id": "openstack-service-accounts",
+    "domain_id": null,
+    "source": {"type": "spiffe", "trust_domain": "cloud.trust.domain"},
+    "domain_resolution_mode": {"type": "fixed"},
+    "enabled": true,
     "rules": [
       {
         "name": "nova-api",
-        "matches": {
-          "all": [
-            {"claim": "spiffe.id", "match": "exact",
-             "value": "spiffe://cloud.trust.domain/service/nova-api"}
-          ]
-        },
-        "binding": {
+        "match": {"all_of": [{"type": "condition", "equals": {
+          "claim": "spiffe.id",
+          "value": "spiffe://cloud.trust.domain/service/nova-api"
+        }}]},
+        "identity": {
           "identity_mode": "local",
-          "user_id": "svc-nova-api",
-          "user_name": "nova-api",
-          "roles": ["service"]
-        }
-      },
-      {
-        "name": "neutron",
-        "matches": {
-          "all": [
-            {"claim": "spiffe.id", "match": "exact",
-             "value": "spiffe://cloud.trust.domain/service/neutron"}
-          ]
+          "user_name": "svc-nova-api",
+          "is_system": true
         },
-        "binding": {
-          "identity_mode": "local",
-          "user_id": "svc-neutron",
-          "user_name": "neutron",
-          "roles": ["service"]
-        }
+        "authorizations": [{
+          "type": "system", "system_id": "all",
+          "roles": [{"type": "system_role", "name": "service"}]
+        }],
+        "groups": []
       }
     ]
   }
 }
 ```
+
+The `neutron` entry and the other services repeat the rule with their own
+SPIFFE ID and `user_name`. A system authorization requires `is_system: true`
+on the rule (ADR 0020, `SystemScopeRequiresIsSystem`).
 
 **VM instance accounts (dynamic/ephemeral mapping):**
 
@@ -1251,36 +1247,46 @@ and instance scope, so the mapping engine can extract these from the URI.
 
 ```json
 {
-  "ruleset": {
-    "name": "nova-vm-instances",
-    "priority": 200,
+  "mapping": {
+    "mapping_id": "nova-vm-instances",
+    "domain_id": null,
+    "source": {"type": "spiffe", "trust_domain": "cloud.trust.domain"},
+    "domain_resolution_mode": {"type": "fixed"},
+    "enabled": true,
     "rules": [
       {
         "name": "vm-instance",
-        "matches": {
-          "all": [
-            {
-              "claim": "spiffe.id",
-              "match": "prefix",
-              "value": "spiffe://cloud.trust.domain/project/"
-            }
-          ]
-        },
-        "binding": {
+        "match": {"all_of": [{"type": "prefix", "claim": "spiffe.id",
+                              "value": "spiffe://cloud.trust.domain/project/"}]},
+        "identity": {
           "identity_mode": "ephemeral",
-          "user_name": "${claims.spiffe.id}",
+          "user_name": "${claims.spiffe.id}"
+        },
+        "authorizations": [{
+          "type": "project",
           "project_id": "${claims.spiffe.project_id}",
-          "roles": ["compute-vm"]
-        }
+          "roles": [{"type": "system_role", "name": "compute-vm"}]
+        }],
+        "groups": []
       }
     ]
   }
 }
 ```
 
-The `roles`: `[\"compute-vm\"]` assignment grants VMs a default
-limited-privilege role scoped to their project. The `spiffe.id` claim in the
-binding resolves to the full SPIFFE URI, which is extracted into user_name.
+**Open gap in ADR 0020.** The engine interpolates `${claims.*}` in `identity`
+fields and group names, but copies `authorizations` verbatim
+(`crates/core/src/mapping/engine.rs` clones `rule.authorizations`), so the
+`project_id` template above is not honoured today. A per-project VM binding
+needs ADR 0020 extended to interpolate the project authorization, to resolve
+the `project_domain_id` that `Authorization::Project` also requires (it is not
+a SPIFFE claim) from the project itself, and to validate the interpolated
+project against the one the SVID was attested for. Until then a VM rule can
+only name a literal project.
+`identity_mode` defaults to `ephemeral`, and is stated here for clarity.
+
+The `roles` entry grants VMs a default limited-privilege role scoped to their
+project. The `spiffe.id` claim in `user_name` resolves to the full SPIFFE URI.
 `spiffe.project_id` is **not** a SPIRE selector reaching the mapping engine —
 selectors live only in SPIRE's registration entries and are never present on
 the issued SVID. It's a claim keystone-rs derives itself by parsing the
