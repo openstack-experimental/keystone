@@ -816,3 +816,138 @@ async fn test_ensure_raft_initialized_bootstraps_and_auto_joins_inner() -> Resul
     }
     Ok(())
 }
+
+/// A bootstrap node (`node_id` 0) that starts with empty storage while its
+/// peers already run a cluster, as after its pod was recreated, must join
+/// that cluster instead of bootstrapping a second one.
+#[serial_test::serial]
+#[test]
+fn test_bootstrap_node_joins_existing_cluster() {
+    TypeConfig::run(test_bootstrap_node_joins_existing_cluster_inner()).unwrap();
+}
+
+async fn test_bootstrap_node_joins_existing_cluster_inner() -> Result<()> {
+    use openstack_keystone_distributed_storage::bootstrap::ensure_raft_initialized;
+
+    const PORT: u16 = AUTO_JOIN_PORT_BASE + 10;
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+    let tls = make_certificates()?;
+
+    // --- An established cluster whose only member is node 1.
+    let existing = Arc::new(
+        InstanceHolder::new_with_ds_config(1, |path| {
+            get_ds_config_with_port(1, PORT, path, tls.clone())
+        })
+        .await?,
+    );
+    spawn_raft_app(&existing).await;
+    existing
+        .storage
+        .initialize(
+            [(
+                1,
+                openstack_keystone_storage_api::Node {
+                    node_id: 1,
+                    rpc_addr: existing.config.node_cluster_addr.to_string(),
+                },
+            )]
+            .into_iter()
+            .collect(),
+        )
+        .await?;
+    let tls_client = get_client_tls_config(&existing.config)?;
+    let mut admin =
+        new_admin_client(existing.config.node_cluster_addr.clone(), &tls_client).await?;
+    wait_for_leader(&mut admin, 1).await;
+
+    // --- Node 0 starts empty and lists node 1 as a peer.
+    let peers = vec![(1, get_addr_with_port(1, PORT).to_string())];
+    let boot = Arc::new(
+        InstanceHolder::new_with_ds_config(0, |path| DistributedStorageConfiguration {
+            retry_join_nodes: peers.clone(),
+            ..get_ds_config_with_port(0, PORT, path, tls.clone())
+        })
+        .await?,
+    );
+    spawn_raft_app(&boot).await;
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    tx.send(true)?;
+    ensure_raft_initialized(boot.storage.clone(), boot.config.clone(), rx).await?;
+
+    let joined = poll_until(Duration::from_millis(100), 100, || {
+        let m = existing.storage.raft.metrics();
+        let m = m.borrow_watched();
+        m.membership_config.membership().get_node(&0).is_some()
+    })
+    .await;
+    assert!(joined, "node 0 did not join the existing cluster");
+    let caught_up = poll_until(Duration::from_millis(100), 100, || {
+        boot.storage.last_log_index() >= existing.storage.last_log_index()
+    })
+    .await;
+    assert!(
+        caught_up,
+        "node 0 did not catch up with the existing cluster"
+    );
+    // It followed node 1 rather than leading a cluster of its own.
+    let m = boot.storage.raft.metrics();
+    assert_eq!(m.borrow_watched().current_leader, Some(1));
+    Ok(())
+}
+
+/// A voter that asks to join again lost its storage (a node with state skips
+/// the join). It must not keep voting with an empty log: the leader demotes
+/// it to a learner, which an operator promotes again once it caught up.
+const REJOIN_PORT_BASE: u16 = 1950;
+
+#[serial_test::serial]
+#[test]
+fn test_rejoining_voter_is_demoted_to_learner() {
+    TypeConfig::run(test_rejoining_voter_is_demoted_to_learner_inner()).unwrap();
+}
+
+async fn test_rejoining_voter_is_demoted_to_learner_inner() -> Result<()> {
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let _ = rustls::crypto::CryptoProvider::install_default(provider);
+    let tls = make_certificates()?;
+
+    let (instance1, mut admin1) = start_single_node_cluster(REJOIN_PORT_BASE, &tls).await?;
+    let instance2 = join_node2_as_voter(REJOIN_PORT_BASE, &tls, &mut admin1).await?;
+    let voters = |holder: &Arc<InstanceHolder>| {
+        let m = holder.storage.raft.metrics();
+        let m = m.borrow_watched();
+        m.membership_config
+            .membership()
+            .voter_ids()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(voters(&instance1), vec![1, 2]);
+
+    // Node 2 asks to join again, as it does after losing its storage.
+    instance2
+        .storage
+        .join_cluster(
+            &get_addr_with_port(1, REJOIN_PORT_BASE).to_string(),
+            &get_addr_with_port(2, REJOIN_PORT_BASE).to_string(),
+        )
+        .await?;
+
+    assert_eq!(voters(&instance1), vec![1], "node 2 must not vote any more");
+    let still_member = {
+        let m = instance1.storage.raft.metrics();
+        let m = m.borrow_watched();
+        m.membership_config.membership().get_node(&2).is_some()
+    };
+    assert!(still_member, "node 2 must stay in the cluster as learner");
+
+    // The operator promotes it again after it caught up.
+    admin1
+        .change_membership(pb::raft::ChangeMembershipRequest {
+            members: vec![1, 2],
+            retain: false,
+        })
+        .await?;
+    assert_eq!(voters(&instance1), vec![1, 2]);
+    Ok(())
+}

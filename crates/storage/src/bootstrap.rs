@@ -46,7 +46,31 @@ pub async fn ensure_raft_initialized(
     // Known peers join later via [add_learner] (non-bootstrap path below).
     // Skipped with `auto_bootstrap = false` so a disaster-recovery restore
     // can still install the backup's Raft state into this node.
+    //
+    // Empty storage does not imply a new cluster: a recreated pod, or a
+    // volume that was lost, comes back with empty storage while its peers
+    // keep serving the existing cluster. Self-bootstrapping then splits
+    // the cluster in two, so first look for a cluster to join and only
+    // bootstrap when no peer answers.
     if ds.auto_bootstrap && !storage.is_initialized().await? && node_id == 0 {
+        let peers = peer_addrs(ds, node_id);
+        if !peers.is_empty() {
+            wait_for_listener(&mut listener_bound).await?;
+            tracing::info!(
+                node_id,
+                peers = peers.len(),
+                "Raft storage is empty: looking for an existing cluster to join \
+                 before bootstrapping a new one"
+            );
+            if try_join(&storage, &peers, &my_cluster_addr, BOOTSTRAP_PROBE_ATTEMPTS).await {
+                return Ok(());
+            }
+            tracing::info!(
+                node_id,
+                "No existing cluster found among the peers: bootstrapping a new one"
+            );
+        }
+
         let self_node = openstack_keystone_storage_api::Node {
             node_id,
             rpc_addr: my_cluster_addr.clone(),
@@ -93,12 +117,7 @@ pub async fn ensure_raft_initialized(
         return Ok(());
     }
 
-    let join_addrs: Vec<&str> = ds
-        .retry_join_nodes
-        .iter()
-        .filter(|(pid, _)| *pid != node_id)
-        .map(|(_, addr)| addr.as_str())
-        .collect();
+    let join_addrs = peer_addrs(ds, node_id);
 
     if join_addrs.is_empty() {
         return Err(eyre::Report::msg(
@@ -109,14 +128,7 @@ pub async fn ensure_raft_initialized(
     // Wait for our own Raft gRPC listener to be bound before calling
     // add_learner.  Without this, the leader may try to replicate back to us
     // before the port is accepting connections, causing join timeouts.
-    tracing::debug!("Waiting up to 30s for the Raft gRPC listener to bind...");
-    tokio::time::timeout(std::time::Duration::from_secs(30), async {
-        let _ = listener_bound.changed().await;
-    })
-    .await
-    .map_err(|_| {
-        eyre::Report::msg("Raft listener did not bind within 30s — aborting cluster join")
-    })?;
+    wait_for_listener(&mut listener_bound).await?;
 
     // With publishNotReadyAddresses: true on the headless service, DNS records
     // are available for non-ready pods.  The FQDN from config will resolve
@@ -126,12 +138,57 @@ pub async fn ensure_raft_initialized(
         join_count = join_addrs.len(),
         "Waiting for Raft cluster to be available before joining..."
     );
-    for attempt in 0..60 {
-        for join_addr in &join_addrs {
-            match storage.join_cluster(join_addr, &my_cluster_addr).await {
+    if try_join(&storage, &join_addrs, &my_cluster_addr, JOIN_ATTEMPTS).await {
+        return Ok(());
+    }
+    Err(eyre::Report::msg(
+        "timed out joining Raft cluster - none of the retry_join_nodes responded",
+    ))
+}
+
+/// Rounds of join attempts (2s apart) the bootstrap node spends looking for
+/// an existing cluster before it creates a new one.
+const BOOTSTRAP_PROBE_ATTEMPTS: u32 = 8;
+
+/// Rounds of join attempts (2s apart) before a joining node gives up.
+const JOIN_ATTEMPTS: u32 = 60;
+
+/// Addresses of the configured peers, this node excluded.
+fn peer_addrs(ds: &DistributedStorageConfiguration, node_id: u64) -> Vec<String> {
+    ds.retry_join_nodes
+        .iter()
+        .filter(|(pid, _)| *pid != node_id)
+        .map(|(_, addr)| addr.to_string())
+        .collect()
+}
+
+/// Wait up to 30s for the local Raft gRPC listener to be bound.
+async fn wait_for_listener(
+    listener_bound: &mut tokio::sync::watch::Receiver<bool>,
+) -> Result<(), eyre::Report> {
+    tracing::debug!("Waiting up to 30s for the Raft gRPC listener to bind...");
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        let _ = listener_bound.changed().await;
+    })
+    .await
+    .map_err(|_| eyre::Report::msg("Raft listener did not bind within 30s — aborting cluster join"))
+}
+
+/// Ask the peers, round-robin, to add this node as learner. Only the leader
+/// accepts, so the others failing is expected. Returns whether a peer did.
+async fn try_join(
+    storage: &Arc<Storage>,
+    join_addrs: &[String],
+    my_cluster_addr: &str,
+    attempts: u32,
+) -> bool {
+    let node_id = storage.node_id();
+    for attempt in 0..attempts {
+        for join_addr in join_addrs {
+            match storage.join_cluster(join_addr, my_cluster_addr).await {
                 Ok(()) => {
                     tracing::info!(node_id, join_addr, "Successfully joined Raft cluster.");
-                    return Ok(());
+                    return true;
                 }
                 Err(e) => {
                     tracing::debug!(
@@ -153,7 +210,5 @@ pub async fn ensure_raft_initialized(
         }
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
-    Err(eyre::Report::msg(
-        "timed out joining Raft cluster - none of the retry_join_nodes responded",
-    ))
+    false
 }

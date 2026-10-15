@@ -255,7 +255,7 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
         &self,
         request: Request<pb::raft::AddLearnerRequest>,
     ) -> Result<Response<pb::raft::AdminResponse>, Status> {
-        require_peer(&request, &self.authz, &[PeerRole::Node, PeerRole::Operator])?;
+        let actor = require_peer(&request, &self.authz, &[PeerRole::Node, PeerRole::Operator])?;
         // Membership changes are leader-only; the conflict check below must
         // also see the leader's committed membership.
         self.ensure_leader()?;
@@ -293,6 +293,52 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
                  cannot re-add with address {}",
                 node.node_id, node.rpc_addr
             )));
+        }
+
+        // A node that still has its state never joins: it skips `add_learner`
+        // on restart. So a join request for a node that is already a voter
+        // means the node lost its storage. It would vote with an empty log
+        // and could help elect a leader that lacks entries it acknowledged,
+        // so demote it to learner first. It replicates from scratch and an
+        // operator promotes it again (`storage promote`) once it caught up.
+        if node.node_id != self.node_id
+            && metrics
+                .membership_config
+                .membership()
+                .voter_ids()
+                .any(|id| id == node.node_id)
+        {
+            let remaining: std::collections::BTreeSet<u64> = metrics
+                .membership_config
+                .membership()
+                .voter_ids()
+                .filter(|id| *id != node.node_id)
+                .collect();
+            tracing::warn!(
+                node_id = node.node_id,
+                remaining_voters = remaining.len(),
+                "voter is re-joining, which means it lost its storage: demoting it to \
+                 learner until it caught up; promote it again with `storage promote`"
+            );
+            let result = self
+                .raft_node
+                .change_membership(remaining, true)
+                .await
+                .map(|_| ())
+                .map_err(|e| raft_write_status("Failed to demote re-joining voter", e));
+            let dek_version = self
+                .current_dek
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .version;
+            self.audit_outcome(
+                "VOTER_DEMOTED_ON_REJOIN",
+                &actor,
+                dek_version,
+                serde_json::json!({"node_id": node.node_id}),
+                &result,
+            );
+            result?;
         }
 
         // Store the canonical `host:port` form so `init`, `join` and the
