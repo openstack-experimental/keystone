@@ -21,6 +21,7 @@ use spiffe_rustls::{authorizer, mtls_client};
 
 use openstack_keystone_config::{Config, LoadedConfig};
 
+mod client;
 mod confirm_rotate_signing_key;
 mod ensure_signing_key;
 mod list_local_emergency_candidates;
@@ -28,6 +29,7 @@ mod reconcile_local_emergency_key;
 mod rotate_signing_key;
 
 use crate::PerformAction;
+use crate::oauth2::client::ClientCommand;
 use crate::oauth2::confirm_rotate_signing_key::ConfirmRotateSigningKeyCommand;
 use crate::oauth2::ensure_signing_key::EnsureSigningKeyCommand;
 use crate::oauth2::list_local_emergency_candidates::ListLocalEmergencyCandidatesCommand;
@@ -45,6 +47,7 @@ pub struct Oauth2Command {
 impl PerformAction for Oauth2Command {
     async fn take_action(self, config: &LoadedConfig) -> Result<(), Report> {
         match self.command {
+            Oauth2Commands::Client(e) => e.take_action(config).await,
             Oauth2Commands::RotateSigningKey(e) => e.take_action(config).await,
             Oauth2Commands::ConfirmRotateSigningKey(e) => e.take_action(config).await,
             Oauth2Commands::EnsureSigningKey(e) => e.take_action(config).await,
@@ -57,6 +60,7 @@ impl PerformAction for Oauth2Command {
 #[allow(clippy::enum_variant_names)]
 #[derive(Subcommand)]
 enum Oauth2Commands {
+    Client(ClientCommand),
     RotateSigningKey(RotateSigningKeyCommand),
     ConfirmRotateSigningKey(ConfirmRotateSigningKeyCommand),
     EnsureSigningKey(EnsureSigningKeyCommand),

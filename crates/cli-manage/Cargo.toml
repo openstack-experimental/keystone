@@ -35,9 +35,10 @@ openstack-keystone-token-driver-fernet.workspace = true
 openstack-keystone-token-restriction-driver-sql.workspace = true
 openstack-keystone-webauthn.workspace = true
 oslo-config.workspace = true
+percent-encoding.workspace = true
 sea-orm = { workspace = true, features = ["sqlx-mysql", "sqlx-postgres", "sqlx-sqlite", "runtime-tokio", "runtime-tokio-native-tls"] }
 sea-orm-migration = { workspace = true, features = ["sqlx-mysql", "sqlx-postgres", "sqlx-sqlite", "runtime-tokio", "runtime-tokio-native-tls"] }
-reqwest = { workspace = true, features = ["json", "rustls"] }
+reqwest = { workspace = true, features = ["json", "query", "rustls"] }
 rustls = { workspace = true, features = ["aws-lc-rs"] }
 secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true

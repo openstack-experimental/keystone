@@ -5339,6 +5339,7 @@ dependencies = [
  "openstack-keystone-token-restriction-driver-sql",
  "openstack-keystone-webauthn",
  "oslo-config",
+ "percent-encoding",
  "reqwest 0.13.5",
  "rustls",
  "sea-orm",

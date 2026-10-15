@@ -14,6 +14,7 @@ keystone-manage --config /etc/keystone/keystone.conf <command>
 | `catalog endpoint` | Create, list, show, update, or delete catalog endpoints. |
 | `credential setup|migrate|rotate` | Manage credential-encryption keys and re-encryption. |
 | `db sync|up|down|status|fresh|refresh|reset` | Manage SQL schema and migrations. Destructive database commands require an explicit operational review. |
+| `oauth2 client create|list|show|update|delete|rotate-secret` | Manage OAuth2 clients through the admin socket (`--domain`, `--format text|json`). `create` prints the one-time secret of confidential clients. |
 | `oauth2 ensure-signing-key` | Provision a missing domain signing key. |
 | `oauth2 rotate-signing-key|confirm-rotate-signing-key` | Perform normal signing-key rotation. |
 | `oauth2 list-local-emergency-candidates|reconcile-local-emergency-key` | Inspect and reconcile quorum-loss candidates. |
