@@ -1814,6 +1814,7 @@ fn make_service_grant(grantor: &str, project_id: &str) -> crate::service_grant::
         },
         target: GrantTarget::Project {
             project_id: project_id.into(),
+            project_domain_id: "pdid".into(),
         },
         role_ids: vec!["member".into()],
         expires_at: None,

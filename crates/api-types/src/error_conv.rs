@@ -44,6 +44,7 @@ use openstack_keystone_core_types::resource::ResourceProviderError;
 use openstack_keystone_core_types::revoke::RevokeProviderError;
 use openstack_keystone_core_types::role::RoleProviderError;
 use openstack_keystone_core_types::scim::{ScimRealmProviderError, ScimResourceProviderError};
+use openstack_keystone_core_types::service_grant::ServiceGrantProviderError;
 use openstack_keystone_core_types::spiffe_key::SpiffeKeyProviderError;
 use openstack_keystone_core_types::token::TokenProviderError;
 use openstack_keystone_core_types::vendordata::VendordataProviderError;
@@ -86,6 +87,7 @@ impl IntoResponse for KeystoneApiError {
             KeystoneApiError::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
             KeystoneApiError::UnprocessableEntity(_) => StatusCode::UNPROCESSABLE_ENTITY,
             KeystoneApiError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            KeystoneApiError::QuotaExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
             _ => StatusCode::BAD_REQUEST,
         };
 
@@ -498,6 +500,27 @@ impl From<Oauth2ClientProviderError> for KeystoneApiError {
             Oauth2ClientProviderError::Validation(x) => Self::UnprocessableEntity(x),
             Oauth2ClientProviderError::RaftNotAvailable => Self::NotImplemented(
                 "OAuth2 client storage requires distributed storage (raft)".to_string(),
+            ),
+            other => Self::InternalError(other.to_string()),
+        }
+    }
+}
+
+impl From<ServiceGrantProviderError> for KeystoneApiError {
+    fn from(value: ServiceGrantProviderError) -> Self {
+        match value {
+            ServiceGrantProviderError::NotFound(x) => Self::NotFound {
+                resource: "service_grant".into(),
+                identifier: x,
+            },
+            ServiceGrantProviderError::Conflict(x) => Self::Conflict(x),
+            // ADR 0036 §4.1: a grant naming an unusable grantee, project or
+            // role set is rejected with 400.
+            ServiceGrantProviderError::Validation(x) => Self::BadRequest(x),
+            err @ ServiceGrantProviderError::Forbidden(_) => Self::forbidden(err),
+            ServiceGrantProviderError::QuotaExceeded(x) => Self::QuotaExceeded(x),
+            ServiceGrantProviderError::RaftNotAvailable => Self::NotImplemented(
+                "service grant storage requires distributed storage (raft)".to_string(),
             ),
             other => Self::InternalError(other.to_string()),
         }
@@ -1186,6 +1209,30 @@ mod tests {
             .get(header::RETRY_AFTER)
             .expect("Retry-After header must be present");
         assert_eq!(retry_after.to_str().unwrap(), "42");
+    }
+
+    #[test]
+    fn service_grant_errors_map_to_adr_statuses() {
+        let status = |e: ServiceGrantProviderError| {
+            <KeystoneApiError as IntoResponse>::into_response(KeystoneApiError::from(e)).status()
+        };
+        assert_eq!(
+            status(ServiceGrantProviderError::NotFound("g".into())),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            status(ServiceGrantProviderError::Validation("bad".into())),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status(ServiceGrantProviderError::Forbidden("delegated".into())),
+            StatusCode::FORBIDDEN
+        );
+        let quota = <KeystoneApiError as IntoResponse>::into_response(KeystoneApiError::from(
+            ServiceGrantProviderError::QuotaExceeded("full".into()),
+        ));
+        assert_eq!(quota.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(quota.headers().get(header::RETRY_AFTER).is_none());
     }
 
     #[test]

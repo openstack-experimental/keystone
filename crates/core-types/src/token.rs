@@ -523,6 +523,7 @@ mod tests {
             },
             target: GrantTarget::Project {
                 project_id: "pid".into(),
+                project_domain_id: "pdid".into(),
             },
             role_ids: vec!["member".into()],
             expires_at: None,

@@ -534,6 +534,18 @@ impl Oauth2ClientApi for Oauth2ClientService {
         self.backend_driver.list(ctx.state(), params).await
     }
 
+    #[tracing::instrument(
+        name = "provider.oauth2_client.list_delegatable",
+        level = "debug",
+        skip_all
+    )]
+    async fn list_delegatable<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+    ) -> Result<Vec<OAuth2ClientResource>, Oauth2ClientProviderError> {
+        self.backend_driver.list_delegatable(ctx.state()).await
+    }
+
     #[tracing::instrument(name = "provider.oauth2_client.rotate_secret", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id))]
     async fn rotate_secret<'a>(
         &self,

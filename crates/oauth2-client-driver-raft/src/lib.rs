@@ -307,6 +307,23 @@ impl RaftOauth2ClientBackend {
         Ok(res)
     }
 
+    async fn list_delegatable_impl(
+        &self,
+        storage: &dyn StorageApi,
+    ) -> Result<Vec<OAuth2ClientResource>, StoreError> {
+        // A full scan of the client keyspace (ADR 0036 §3). Client counts
+        // are small; an index can replace it if that changes.
+        let mut res: Vec<OAuth2ClientResource> = Vec::new();
+        for (_, envelope) in storage.prefix(b"oauth2:client:v1:", None).await? {
+            let candidate = envelope.try_deserialize::<OAuth2ClientResource>()?.data;
+            if candidate.service_grant_policy().is_some() {
+                res.push(candidate);
+            }
+        }
+        res.sort_by(|a, b| a.client_id.cmp(&b.client_id));
+        Ok(res)
+    }
+
     async fn rotate_secret_impl(
         &self,
         storage: &dyn StorageApi,
@@ -466,6 +483,24 @@ impl Oauth2ClientBackend for RaftOauth2ClientBackend {
             .as_deref()
             .ok_or(Oauth2ClientProviderError::RaftNotAvailable)?;
         self.list_impl(raft, params)
+            .await
+            .map_err(Oauth2ClientProviderError::raft)
+    }
+
+    #[tracing::instrument(
+        name = "driver.raft.oauth2_client.list_delegatable",
+        level = "debug",
+        skip_all
+    )]
+    async fn list_delegatable(
+        &self,
+        state: &ServiceState,
+    ) -> Result<Vec<OAuth2ClientResource>, Oauth2ClientProviderError> {
+        let raft = state
+            .storage
+            .as_deref()
+            .ok_or(Oauth2ClientProviderError::RaftNotAvailable)?;
+        self.list_delegatable_impl(raft)
             .await
             .map_err(Oauth2ClientProviderError::raft)
     }
@@ -654,6 +689,47 @@ mod tests {
         };
         let listed = backend.list_impl(&storage, &params).await.unwrap();
         assert_eq!(listed.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_list_delegatable_across_domains() {
+        let backend = RaftOauth2ClientBackend::default();
+        let storage = MockStorage::default();
+        let delegation = DelegationPolicy {
+            service_grants: true,
+            ..Default::default()
+        };
+
+        let mut heat = make_create("heat", "infra", "client-b");
+        heat.delegation = Some(delegation.clone());
+        backend.create_impl(&storage, heat).await.unwrap();
+        let mut local = make_create("local", "tenant", "client-a");
+        local.delegation = Some(delegation.clone());
+        backend.create_impl(&storage, local).await.unwrap();
+        // Not a grantee: no delegation, or delegation without grants.
+        backend
+            .create_impl(&storage, make_create("plain", "infra", "client-c"))
+            .await
+            .unwrap();
+        let mut obo = make_create("obo", "infra", "client-d");
+        obo.delegation = Some(DelegationPolicy {
+            on_behalf_of: true,
+            max_operation_lifetime: Some(60),
+            ..Default::default()
+        });
+        backend.create_impl(&storage, obo).await.unwrap();
+        // Deleted grantee.
+        let mut gone = make_create("gone", "infra", "client-e");
+        gone.delegation = Some(delegation);
+        backend.create_impl(&storage, gone).await.unwrap();
+        backend
+            .delete_impl(&storage, "infra", "gone")
+            .await
+            .unwrap();
+
+        let listed = backend.list_delegatable_impl(&storage).await.unwrap();
+        let ids: Vec<&str> = listed.iter().map(|c| c.client_id.as_str()).collect();
+        assert_eq!(ids, vec!["client-a", "client-b"]);
     }
 
     #[tokio::test]

@@ -64,6 +64,13 @@ pub trait Oauth2ClientBackend: Send + Sync {
         params: &OAuth2ClientResourceListParameters,
     ) -> Result<Vec<OAuth2ClientResource>, Oauth2ClientProviderError>;
 
+    /// List every live, enabled client of any domain that may be a service
+    /// grant grantee (ADR 0036 §3), ordered by `client_id`.
+    async fn list_delegatable(
+        &self,
+        state: &ServiceState,
+    ) -> Result<Vec<OAuth2ClientResource>, Oauth2ClientProviderError>;
+
     /// Replace the stored `client_secret_hash` for a client.
     async fn rotate_secret<'a>(
         &self,

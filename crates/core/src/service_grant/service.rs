@@ -243,6 +243,17 @@ impl ServiceGrantApi for ServiceGrantService {
                 ))
             })?;
 
+        // The redeemed token is signed by, and names as `iss`, the grantor's
+        // domain (ADR 0036 §3.2), which must not assert authority over a
+        // project of another domain (ADR 0026 §5 domain key isolation; the
+        // token exchange grant applies the same rule).
+        if project.domain_id != domain_id {
+            return Err(ServiceGrantProviderError::Validation(format!(
+                "project {} is not in the grantor's domain",
+                project.id
+            )));
+        }
+
         let effective = effective_role_ids(state, sc, &grantor_user_id, &project.id).await?;
         let role_ids = resolve_role_ids(data.role_ids, &effective, &policy.max_role_ids)?;
 
@@ -307,6 +318,7 @@ impl ServiceGrantApi for ServiceGrantService {
             },
             target: GrantTarget::Project {
                 project_id: project.id.clone(),
+                project_domain_id: project.domain_id.clone(),
             },
             role_ids,
             expires_at,
@@ -511,15 +523,24 @@ mod tests {
     /// A state whose client lookup returns `client`, whose project `p1` is
     /// enabled, and where the caller holds `roles` on it.
     async fn state(client: Option<OAuth2ClientResource>, roles: &[&str]) -> ServiceState {
+        state_in(client, roles, "d1").await
+    }
+
+    /// Like [`state`], with project `p1` in `project_domain`.
+    async fn state_in(
+        client: Option<OAuth2ClientResource>,
+        roles: &[&str],
+        project_domain: &'static str,
+    ) -> ServiceState {
         let mut oauth2 = MockOauth2ClientProvider::default();
         oauth2
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(client.clone()));
         let mut resource = MockResourceProvider::default();
-        resource.expect_get_project().returning(|_, id| {
+        resource.expect_get_project().returning(move |_, id| {
             Ok(Some(Project {
                 id: id.to_string(),
-                domain_id: "d1".into(),
+                domain_id: project_domain.into(),
                 enabled: true,
                 name: "p".into(),
                 ..Default::default()
@@ -591,6 +612,19 @@ mod tests {
         assert!(grant.enabled);
         // The lifetime ceiling becomes the default expiry.
         assert!(grant.expires_at.is_some());
+    }
+
+    /// The grant's token is signed by the grantor's domain, so the project
+    /// must be in that domain.
+    #[tokio::test]
+    async fn test_create_rejects_project_of_other_domain() {
+        let state = state_in(Some(client("d1", grants_policy())), &["member"], "d2").await;
+        let auth = vsc(AuthenticationContext::Password);
+        let ctx = ExecutionContext::from_auth(&state, &auth);
+        assert!(matches!(
+            service(0).create_service_grant(&ctx, create(None)).await,
+            Err(ServiceGrantProviderError::Validation(_))
+        ));
     }
 
     #[tokio::test]

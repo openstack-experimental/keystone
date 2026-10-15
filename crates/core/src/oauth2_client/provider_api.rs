@@ -71,6 +71,13 @@ pub trait Oauth2ClientApi: Send + Sync {
         params: &OAuth2ClientResourceListParameters,
     ) -> Result<Vec<OAuth2ClientResource>, Oauth2ClientProviderError>;
 
+    /// List every live, enabled client of any domain that may be a service
+    /// grant grantee (ADR 0036 §3), ordered by `client_id`.
+    async fn list_delegatable<'a>(
+        &self,
+        ctx: &ExecutionContext<'a>,
+    ) -> Result<Vec<OAuth2ClientResource>, Oauth2ClientProviderError>;
+
     /// Generate and persist a fresh client secret, returning the updated
     /// resource alongside the one-time plaintext secret.
     async fn rotate_secret<'a>(

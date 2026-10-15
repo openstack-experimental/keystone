@@ -3862,6 +3862,7 @@ fn make_service_grant(
         },
         target: GrantTarget::Project {
             project_id: project_id.into(),
+            project_domain_id: "pdid".into(),
         },
         role_ids: role_ids.iter().map(|r| r.to_string()).collect(),
         expires_at: None,

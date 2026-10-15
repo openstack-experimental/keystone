@@ -151,6 +151,11 @@ mod oauth2_client {
                 params: &OAuth2ClientResourceListParameters,
             ) -> Result<Vec<OAuth2ClientResource>, Oauth2ClientProviderError>;
 
+            async fn list_delegatable<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+            ) -> Result<Vec<OAuth2ClientResource>, Oauth2ClientProviderError>;
+
             async fn update<'a>(
                 &self,
                 ctx: &ExecutionContext<'a>,

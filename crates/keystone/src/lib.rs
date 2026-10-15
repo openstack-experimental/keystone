@@ -119,6 +119,7 @@ pub mod scim;
 pub mod scim_realm;
 pub mod scim_resource;
 pub mod server;
+pub mod service_grant;
 pub mod spiffe_key;
 pub mod token;
 pub mod trust;

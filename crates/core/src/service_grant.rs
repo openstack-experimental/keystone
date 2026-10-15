@@ -17,6 +17,7 @@
 //! project to one registered delegatable service (an OAuth2 client with
 //! `delegation.service_grants`, ADR 0036 §3).
 
+pub mod actor;
 pub mod backend;
 pub mod error;
 mod provider_api;
@@ -24,6 +25,7 @@ pub mod service;
 
 #[cfg(any(test, feature = "mock"))]
 pub use crate::mocks::MockServiceGrantProvider;
+pub use actor::service_client_context;
 pub use error::ServiceGrantProviderError;
 pub use provider_api::ServiceGrantApi;
 pub use service::ServiceGrantService;

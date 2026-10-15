@@ -14,6 +14,8 @@
 //! # Service delegation configuration (ADR 0036)
 use serde::Deserialize;
 
+use crate::pagination::ListLimitConfig;
+
 /// `[delegation]`: service grants (ADR 0036 §4, §5, §8).
 #[derive(Debug, Deserialize, Clone)]
 pub struct DelegationProvider {
@@ -35,6 +37,10 @@ pub struct DelegationProvider {
     /// Seconds between two runs of the grant janitor.
     #[serde(default = "default_janitor_interval")]
     pub janitor_interval: u64,
+
+    /// `GET /v4/service-grants` pagination limits.
+    #[serde(default)]
+    pub list_limit: ListLimitConfig,
 }
 
 fn default_max_grants_per_project() -> u64 {
@@ -60,6 +66,7 @@ impl Default for DelegationProvider {
             last_redeemed_update_interval: default_last_redeemed_update_interval(),
             expired_grant_retention: default_expired_grant_retention(),
             janitor_interval: default_janitor_interval(),
+            list_limit: ListLimitConfig::default(),
         }
     }
 }

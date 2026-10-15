@@ -49,6 +49,11 @@ pub enum GrantTarget {
     Project {
         /// Target project id.
         project_id: String,
+        /// Domain of the target project, resolved at creation so domain
+        /// managers can be authorized without a project lookup. A
+        /// project never changes domain.
+        #[serde(default)]
+        project_domain_id: String,
     },
 }
 
@@ -56,7 +61,16 @@ impl GrantTarget {
     /// Target project id.
     pub fn project_id(&self) -> &str {
         match self {
-            Self::Project { project_id } => project_id,
+            Self::Project { project_id, .. } => project_id,
+        }
+    }
+
+    /// Domain of the target project.
+    pub fn project_domain_id(&self) -> &str {
+        match self {
+            Self::Project {
+                project_domain_id, ..
+            } => project_domain_id,
         }
     }
 }
@@ -212,6 +226,7 @@ mod tests {
             },
             target: GrantTarget::Project {
                 project_id: "p".into(),
+                project_domain_id: "pd".into(),
             },
             role_ids: vec!["r".into()],
             expires_at: None,

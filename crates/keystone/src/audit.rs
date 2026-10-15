@@ -100,6 +100,7 @@ pub fn error_variant_name(error: &KeystoneApiError) -> String {
         KeystoneApiError::NotImplemented(_) => "NotImplemented".to_string(),
         KeystoneApiError::TooManyRequests { .. } => "TooManyRequests".to_string(),
         KeystoneApiError::ServiceUnavailable(_) => "ServiceUnavailable".to_string(),
+        KeystoneApiError::QuotaExceeded(_) => "QuotaExceeded".to_string(),
     }
 }
 
