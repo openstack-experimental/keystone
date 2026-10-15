@@ -177,6 +177,64 @@ mod oauth2_client {
 }
 pub use oauth2_client::MockOauth2ClientProvider;
 
+mod service_grant {
+    use super::*;
+
+    use openstack_keystone_core_types::service_grant::*;
+
+    use crate::auth::ExecutionContext;
+    use crate::service_grant::{ServiceGrantApi, ServiceGrantProviderError};
+
+    mock! {
+        pub ServiceGrantProvider {}
+
+        #[async_trait]
+        impl ServiceGrantApi for ServiceGrantProvider {
+            async fn create_service_grant<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                data: ServiceGrantCreate,
+            ) -> Result<ServiceGrant, ServiceGrantProviderError>;
+
+            async fn delete_service_grant<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+                id: &'a str,
+            ) -> Result<(), ServiceGrantProviderError>;
+
+            async fn get_service_grant<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+                id: &'a str,
+            ) -> Result<Option<ServiceGrant>, ServiceGrantProviderError>;
+
+            async fn get_service_grant_by_id<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                id: &'a str,
+            ) -> Result<Option<ServiceGrant>, ServiceGrantProviderError>;
+
+            async fn list_service_grants<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                params: &ServiceGrantListParameters,
+            ) -> Result<Vec<ServiceGrant>, ServiceGrantProviderError>;
+
+            async fn update_service_grant<'a>(
+                &self,
+                ctx: &ExecutionContext<'a>,
+                domain_id: &'a str,
+                id: &'a str,
+                update: ServiceGrantUpdate,
+                expected_version: u64,
+            ) -> Result<ServiceGrant, ServiceGrantProviderError>;
+        }
+    }
+}
+pub use service_grant::MockServiceGrantProvider;
+
 mod oauth2_key {
     use super::*;
 

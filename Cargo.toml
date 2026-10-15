@@ -37,6 +37,7 @@ members = [
   "crates/role-driver-sql",
   "crates/revoke-driver-sql",
   "crates/scim-driver-raft",
+  "crates/service-grant-driver-raft",
   "crates/storage",
   "crates/storage-api",
   "crates/storage-crypto",
@@ -173,6 +174,7 @@ openstack-keystone-resource-driver-sql = { version = "0.1", path = "crates/resou
 openstack-keystone-revoke-driver-sql = { version = "0.1", path = "crates/revoke-driver-sql/" }
 openstack-keystone-role-driver-sql = { version = "0.1", path = "crates/role-driver-sql/" }
 openstack-keystone-scim-driver-raft = { version = "0.1", path = "crates/scim-driver-raft/" }
+openstack-keystone-service-grant-driver-raft = { version = "0.1", path = "crates/service-grant-driver-raft/" }
 openstack-keystone-token-driver-fernet = { version = "0.1.0", path = "crates/token-driver-fernet" }
 openstack-keystone-token-driver-jws = { version = "0.1.0", path = "crates/token-driver-jws" }
 openstack-keystone-token-restriction-driver-sql = { version = "0.1", path = "crates/token-restriction-driver-sql/" }
