@@ -241,6 +241,58 @@ impl Kube {
         Ok(pods)
     }
 
+    pub(crate) fn namespace(&self) -> &str {
+        &self.namespace
+    }
+
+    /// Call the Kubernetes API with a JSON body and return the JSON answer
+    /// (`null` when there is none). `PATCH` sends a merge patch.
+    pub(crate) async fn json(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let patch = method == reqwest::Method::PATCH;
+        let mut req = self
+            .http
+            .request(method, format!("{}{path}", self.base))
+            .bearer_auth(self.token().await?);
+        if let Some(b) = body {
+            req = req
+                .header(
+                    "content-type",
+                    if patch {
+                        "application/merge-patch+json"
+                    } else {
+                        "application/json"
+                    },
+                )
+                .body(b.to_string());
+        }
+        let resp = req.send().await?;
+        let status = resp.status();
+        let text = resp.text().await?;
+        if !status.is_success() {
+            let short: String = text.chars().take(200).collect();
+            anyhow::bail!("{path} answered {status}: {short}");
+        }
+        Ok(serde_json::from_str(&text).unwrap_or(serde_json::Value::Null))
+    }
+
+    /// GET a plain-text answer such as a pod log.
+    pub(crate) async fn text(&self, path: &str) -> Result<String> {
+        Ok(self
+            .http
+            .get(format!("{}{path}", self.base))
+            .bearer_auth(self.token().await?)
+            .send()
+            .await?
+            .error_for_status()?
+            .text()
+            .await?)
+    }
+
     fn statefulset_url(&self, name: &str) -> String {
         format!(
             "{}/apis/apps/v1/namespaces/{}/statefulsets/{name}",
@@ -320,7 +372,7 @@ impl Kube {
         Ok(())
     }
 
-    async fn delete(&self, name: &str) -> Result<()> {
+    pub(crate) async fn delete(&self, name: &str) -> Result<()> {
         self.delete_in(&self.namespace, name).await
     }
 

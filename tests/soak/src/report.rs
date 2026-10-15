@@ -348,6 +348,41 @@ pub fn render_markdown(v: &Verdict) -> String {
         }
     }
 
+    let m = &v.membership;
+    if m.totals.runs > 0 {
+        let _ = writeln!(o, "\n## Membership churn\n");
+        let _ = writeln!(
+            o,
+            "{} scenarios ({} wipes, {} scales): {} failed a check; longest {} s",
+            m.totals.runs, m.totals.wipes, m.totals.scales, m.totals.failed, m.totals.max_took_secs
+        );
+        let _ = writeln!(
+            o,
+            "\n| # | scenario | node | at | took | write gap | failures |\n|---|---|---|---|---|---|---|"
+        );
+        for e in m.events.iter().rev().take(TABLE_ROWS).rev() {
+            let took = match (e.took_secs, e.done) {
+                (Some(s), _) => format!("{s} s"),
+                (None, _) => "running".to_string(),
+            };
+            let failures = e
+                .failures
+                .iter()
+                .map(|f| f.check)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let _ = writeln!(
+                o,
+                "| {} | {} | {} | {} | {took} | {} s | {failures} |",
+                e.seq,
+                e.kind,
+                if e.node.is_empty() { "-" } else { &e.node },
+                hms(e.at_secs),
+                e.max_write_gap_secs
+            );
+        }
+    }
+
     let sp = &v.spire;
     if sp.totals.restarts > 0 {
         let _ = writeln!(o, "\n## SPIRE agent restarts\n");

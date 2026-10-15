@@ -22,6 +22,8 @@ mod canary;
 mod chaos;
 mod invariants;
 mod load;
+mod membership;
+mod operator;
 mod partition;
 mod prom;
 mod report;
@@ -183,6 +185,31 @@ struct Args {
     /// Watch keystone for restarts this long after the agent is back.
     #[arg(long, env = "SOAK_SPIRE_WATCH", default_value = "60s", value_parser = humantime::parse_duration)]
     spire_watch: Duration,
+    /// Replace a wiped node and grow and shrink the cluster this often (`0`
+    /// disables). Needs the storage operator Deployment and RBAC to run jobs
+    /// from its template, see `overlays/soak/soak.yaml`.
+    #[arg(long, env = "SOAK_MEMBERSHIP_INTERVAL", default_value = "0s", value_parser = humantime::parse_duration)]
+    membership_interval: Duration,
+    /// Every step of a membership scenario must finish within this time.
+    #[arg(long, env = "SOAK_MEMBERSHIP_TIMEOUT", default_value = "10m", value_parser = humantime::parse_duration)]
+    membership_timeout: Duration,
+    /// Longest allowed stretch without an acknowledged write during a
+    /// membership scenario.
+    #[arg(long, env = "SOAK_MEMBERSHIP_MAX_WRITE_GAP", default_value = "30s", value_parser = humantime::parse_duration)]
+    membership_max_write_gap: Duration,
+    /// Replicas the scale scenario grows the StatefulSet to.
+    #[arg(long, env = "SOAK_MEMBERSHIP_SCALE_TO", default_value_t = 5)]
+    membership_scale_to: usize,
+    /// Name of the storage operator Deployment.
+    #[arg(
+        long,
+        env = "SOAK_OPERATOR_DEPLOYMENT",
+        default_value = "keystone-storage-operator"
+    )]
+    operator_deployment: String,
+    /// Prefix of the volume claims of the StatefulSet.
+    #[arg(long, env = "SOAK_CLAIM_PREFIX", default_value = "raft-storage")]
+    claim_prefix: String,
     /// Write and verify a canary record this often (`0` disables). Each
     /// record is read back from every node (read-after-write) and the
     /// earlier ones are re-checked (integrity).
@@ -411,11 +438,20 @@ fn disturbed_windows(state: &Shared, now: Duration, args: &Args) -> Vec<(u64, u6
             e.at_secs + took + MARGIN + args.spire_watch.as_secs(),
         )
     });
+    let churn = g.membership.events.iter().map(|e| {
+        let took = e.took_secs.unwrap_or(now.saturating_sub(e.at_secs));
+        (e.at_secs, e.at_secs + took + MARGIN)
+    });
     let rolls = g.rollout.events.iter().map(|e| {
         let took = e.converged_secs.unwrap_or(now.saturating_sub(e.at_secs));
         (e.at_secs, e.at_secs + took + MARGIN)
     });
-    kills.chain(cuts).chain(rolls).chain(agents).collect()
+    kills
+        .chain(cuts)
+        .chain(rolls)
+        .chain(agents)
+        .chain(churn)
+        .collect()
 }
 
 /// Judge the p99 latency of load phases that finished since the last call.
@@ -562,6 +598,31 @@ fn check_spire(state: &Shared, checked: &mut u64, now: Duration) -> Vec<Violatio
                 at_secs: now.as_secs(),
                 check: f.check,
                 detail: format!("SPIRE agent restart {} ({}): {}", e.seq, e.pod, f.detail),
+            });
+        }
+    }
+    found
+}
+
+/// Report the failed checks of membership scenarios that settled since the
+/// last call.
+fn check_membership(state: &Shared, checked: &mut u64, now: Duration) -> Vec<Violation> {
+    let Ok(g) = state.read() else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    let already = *checked;
+    for e in g.membership.events.iter().filter(|e| e.seq > already) {
+        // A scenario that is still running is judged when it settles.
+        if !e.done {
+            break;
+        }
+        *checked = e.seq;
+        for f in &e.failures {
+            found.push(Violation {
+                at_secs: now.as_secs(),
+                check: f.check,
+                detail: format!("membership {} {}: {}", e.seq, e.kind, f.detail),
             });
         }
     }
@@ -745,6 +806,35 @@ async fn main() -> Result<()> {
         });
     }
 
+    if !args.membership_interval.is_zero() {
+        let cfg = membership::MembershipConfig {
+            interval: args.membership_interval,
+            step_timeout: args.membership_timeout,
+            max_write_gap: args.membership_max_write_gap,
+            statefulset: args.rollout_statefulset.clone(),
+            operator_deployment: args.operator_deployment.clone(),
+            claim_prefix: args.claim_prefix.clone(),
+            scale_to: args.membership_scale_to,
+            selector: args.chaos_selector.clone(),
+            expected_pods: usize::try_from(args.expected_voters).unwrap_or(usize::MAX),
+            service: args.metrics_service.clone(),
+            metrics_port: args.metrics_port,
+            write_node: args
+                .host
+                .trim_start_matches("http://")
+                .trim_end_matches('/')
+                .to_string(),
+            host: args.host.clone(),
+            start,
+            state: state.clone(),
+        };
+        tokio::spawn(async move {
+            if let Err(e) = membership::run(cfg, deadline).await {
+                error!(error = %format!("{e:#}"), "membership task stopped");
+            }
+        });
+    }
+
     if !args.canary_interval.is_zero() {
         let cfg = canary::CanaryConfig {
             interval: args.canary_interval,
@@ -789,6 +879,7 @@ async fn main() -> Result<()> {
     let mut checked_partition = 0u64;
     let mut checked_rollout = 0u64;
     let mut checked_spire = 0u64;
+    let mut checked_membership = 0u64;
     let mut checked_canary = 0u64;
 
     loop {
@@ -836,6 +927,7 @@ async fn main() -> Result<()> {
         found.extend(check_partition(&state, &mut checked_partition, now));
         found.extend(check_rollout(&state, &mut checked_rollout, now));
         found.extend(check_spire(&state, &mut checked_spire, now));
+        found.extend(check_membership(&state, &mut checked_membership, now));
         for v in &found {
             error!(check = v.check, detail = %v.detail, "invariant violated");
         }
@@ -1098,6 +1190,41 @@ mod tests {
         assert_eq!(found[0].check, "spire_keystone_restart");
         assert_eq!(checked, 2);
         assert!(check_spire(&st, &mut checked, Duration::ZERO).is_empty());
+    }
+
+    #[test]
+    fn reports_membership_failures_once_settled() {
+        let st: Shared = Arc::new(RwLock::new(Verdict::default()));
+        let event = |seq, done, failed: bool| membership::MembershipEvent {
+            seq,
+            kind: "wipe",
+            node: format!("ks-{seq}"),
+            at_secs: 0,
+            took_secs: Some(100),
+            max_write_gap_secs: 2,
+            failures: if failed {
+                vec![membership::MembershipFailure {
+                    check: "membership_wiped_voter",
+                    detail: "voter again".into(),
+                }]
+            } else {
+                Vec::new()
+            },
+            done,
+        };
+        if let Ok(mut g) = st.write() {
+            g.membership.events = vec![
+                event(1, true, false),
+                event(2, true, true),
+                event(3, false, true),
+            ];
+        }
+        let mut checked = 0;
+        let found = check_membership(&st, &mut checked, Duration::ZERO);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].check, "membership_wiped_voter");
+        assert_eq!(checked, 2);
+        assert!(check_membership(&st, &mut checked, Duration::ZERO).is_empty());
     }
 
     #[test]

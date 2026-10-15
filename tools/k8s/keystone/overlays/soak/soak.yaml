@@ -33,6 +33,42 @@ subjects:
   - kind: ServiceAccount
     name: keystone-soak
 ---
+# The membership task runs `keystone-manage storage promote|remove-peer|
+# list-peers` as the storage operator by creating Jobs from the pod template
+# of the keystone-storage-operator Deployment (the pod label grants the
+# operator SPIFFE identity), and deletes the volumes of wiped and surplus
+# nodes. This is the power of the operator role: only bind it in test
+# clusters, and leave SOAK_MEMBERSHIP_INTERVAL at 0 where it is not wanted.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: keystone-soak-membership
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: keystone-soak-membership
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: keystone-soak-membership
+subjects:
+  - kind: ServiceAccount
+    name: keystone-soak
+---
 # The spire task deletes the SPIRE agent pod. The agent is shared node
 # infrastructure in its own namespace, so the permission is separate and only
 # used when SOAK_SPIRE_INTERVAL is set. The subject namespace must be the
@@ -114,6 +150,15 @@ data:
   SOAK_SPIRE_INTERVAL: "0"
   SOAK_SPIRE_RECOVERY: "5m"
   SOAK_SPIRE_MAX_WRITE_GAP: "30s"
+  # Membership churn: alternately wipe a follower (volume and pod) and scale
+  # the StatefulSet from 3 to 5 and back, using the storage operator. `0`
+  # disables, the default here because it needs the operator role (see the
+  # keystone-soak-membership Role). The wiped node must rejoin as a learner
+  # and be promoted, the new nodes must join as learners and be removable,
+  # and every step must finish within SOAK_MEMBERSHIP_TIMEOUT.
+  SOAK_MEMBERSHIP_INTERVAL: "0"
+  SOAK_MEMBERSHIP_TIMEOUT: "10m"
+  SOAK_MEMBERSHIP_MAX_WRITE_GAP: "30s"
   # Keep serving `/verdict` and `/metrics` after the run finished.
   SOAK_LINGER: "1h"
   # Credentials of the bootstrap admin in the dev stack. Replace for other

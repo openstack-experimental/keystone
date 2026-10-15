@@ -30,6 +30,7 @@ use serde::Serialize;
 use crate::canary::{CanaryFailure, CanaryTotals};
 use crate::chaos::{ChaosEvent, ChaosTotals};
 use crate::invariants::{Summary, Violation};
+use crate::membership::{MembershipEvent, MembershipTotals};
 use crate::partition::{PartitionEvent, PartitionTotals};
 use crate::report::{self, Growth, LoadTotals, PhaseRecord};
 use crate::rollout::{RolloutEvent, RolloutTotals};
@@ -53,6 +54,7 @@ pub struct Verdict {
     pub partition: Partition,
     pub rollout: Rollout,
     pub spire: Spire,
+    pub membership: Membership,
     pub canary: Canary,
 }
 
@@ -102,6 +104,16 @@ pub struct Spire {
     pub events: Vec<SpireEvent>,
 }
 
+/// Membership churn of the membership task.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct Membership {
+    /// A scenario is running; the other fault tasks wait.
+    pub active: bool,
+    pub totals: MembershipTotals,
+    /// Recent scenarios, oldest first (capped, see `membership::MAX_EVENTS`).
+    pub events: Vec<MembershipEvent>,
+}
+
 impl Verdict {
     /// A fault task holds the cluster in a degraded state; the others wait.
     pub fn disrupted(&self) -> bool {
@@ -109,11 +121,12 @@ impl Verdict {
     }
 
     /// Like [`Self::disrupted`], ignoring the fault task `own` (`partition`,
-    /// `rollout` or `spire`) that asks.
+    /// `rollout`, `spire` or `membership`) that asks.
     pub fn disrupted_except(&self, own: &str) -> bool {
         (own != "partition" && self.partition.active)
             || (own != "rollout" && self.rollout.active)
             || (own != "spire" && self.spire.active)
+            || (own != "membership" && self.membership.active)
     }
 }
 
@@ -137,6 +150,7 @@ async fn verdict(State(s): State<Shared>) -> impl IntoResponse {
     v.partition.events.clear();
     v.rollout.events.clear();
     v.spire.events.clear();
+    v.membership.events.clear();
     let code = if v.healthy {
         StatusCode::OK
     } else {
@@ -360,6 +374,22 @@ pub fn render(v: &Verdict) -> String {
         "soak_chaos_max_recovery_seconds",
         "Longest recovery after a pod deletion",
         c.max_recovery_secs as f64,
+    );
+    let m = &v.membership.totals;
+    g(
+        "soak_membership_runs_total",
+        "Membership churn scenarios started",
+        m.runs as f64,
+    );
+    g(
+        "soak_membership_failed_total",
+        "Membership churn scenarios that broke an invariant",
+        m.failed as f64,
+    );
+    g(
+        "soak_membership_max_seconds",
+        "Longest membership churn scenario",
+        m.max_took_secs as f64,
     );
     let sp = &v.spire.totals;
     g(

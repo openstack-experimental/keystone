@@ -92,7 +92,7 @@ restarts are tolerated.
   GET), `SOAK_MAX_WRITE_P99` (`2s`) and `SOAK_MAX_AUTH_P99` (`2s`, token
   issuing, dominated by password hashing); `0` disables a limit. A class
   needs `SOAK_MIN_LOAD_REQUESTS` requests to be judged. Phases that overlap a
-  pod kill, a partition, a rolling restart or a SPIRE agent restart (until recovery plus 30 s) are not
+  pod kill, a partition, a rolling restart, a SPIRE agent restart or a membership scenario (until recovery plus 30 s) are not
   judged, they are
   slow on purpose. The defaults are about 3 to 5 times the worst p99 seen on a
   single-node k3s (steady 20 users: 84/260/260 ms, burst 100 users:
@@ -123,6 +123,49 @@ next one only after the previous victim came back as a new, ready pod.
 - Exported: `soak_chaos_kills_total`, `soak_chaos_recovered_total`,
   `soak_chaos_timed_out_total`, `soak_chaos_last_recovery_seconds`,
   `soak_chaos_max_recovery_seconds`; the report has a "Chaos" section.
+
+## Membership churn
+
+With `SOAK_MEMBERSHIP_INTERVAL` set (off in the soak overlay: it needs the
+storage operator role) the controller runs one of two scenarios, alternating,
+while the load and the canaries keep running.
+
+- **wipe**: delete the volume and the pod of a follower voter. It comes back
+  with empty storage and must rejoin as a learner, never as a voter: a voter
+  with an empty log could help elect a leader that lacks acknowledged
+  entries. When it caught up, the operator promotes it and the cluster must
+  converge with all voters again.
+- **scale**: scale the StatefulSet from 3 to `SOAK_MEMBERSHIP_SCALE_TO` (5).
+  The new nodes must join as learners, catch up and be removable with
+  `remove-peer`. Then the StatefulSet is scaled back and the volumes of the
+  extra pods are deleted (a node that keeps its state never joins again), and
+  exactly the original voters must be left. The scale-back also runs after a
+  failed scale-up.
+
+Checks: `membership_wiped_voter` (came back as a voter), `membership_rejoin`
+(not a member), `membership_promote`, `membership_scale_voters` (new nodes
+joined as voters), `membership_remove`, `membership_leftover` (members left
+after scaling back), `membership_timeout` (a step took longer than
+`SOAK_MEMBERSHIP_TIMEOUT`, 10 m), `membership_operator` (the operator command
+or the Kubernetes call failed) and `membership_write_gap` (no acknowledged
+write for longer than `SOAK_MEMBERSHIP_MAX_WRITE_GAP`, 30 s). Data that a
+rebuilt or new node lacks shows up as a canary `integrity` or
+`read_after_write` failure.
+
+The operator commands run as Jobs created from the pod template of the
+`keystone-storage-operator` Deployment (`SOAK_OPERATOR_DEPLOYMENT`): the pod
+label grants the operator SPIFFE identity, which the keystone pods and the
+controller do not have. That is the power of the operator role (promote,
+demote, remove members, rotate the DEK, restore), so grant it to the
+controller in test clusters only. RBAC: `keystone-soak-membership` in
+`overlays/soak/soak.yaml` (create Jobs, read the Deployment and pod logs,
+delete volumes). Volumes are `<SOAK_CLAIM_PREFIX>-<pod>`, default
+`raft-storage`.
+
+Other fault tasks wait while a scenario runs, and load phases overlapping it
+are not judged for latency. Exported: `soak_membership_runs_total`,
+`soak_membership_failed_total`, `soak_membership_max_seconds`; the report has
+a "Membership churn" section.
 
 ## SPIRE agent restarts
 
