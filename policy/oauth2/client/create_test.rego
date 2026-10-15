@@ -22,3 +22,12 @@ test_pre_authorized_by_manager_denied if {
 test_pre_authorized_by_admin_allowed if {
 	create.allow with input as {"credentials": {"roles": ["admin"]}, "target": {"domain_id": "foo", "oauth2_client": {"pre_authorized": true}}}
 }
+
+test_delegation_by_manager_denied if {
+	not create.allow with input as {"credentials": {"roles": ["manager"], "domain_id": "foo"}, "target": {"domain_id": "foo", "oauth2_client": {"delegation": {"service_grants": true}}}}
+	not create.allow with input as {"credentials": {"roles": ["manager"], "domain_id": "foo"}, "target": {"domain_id": "foo", "oauth2_client": {"spiffe_ids": ["spiffe://td/x"]}}}
+}
+
+test_delegation_by_admin_allowed if {
+	create.allow with input as {"credentials": {"roles": ["admin"]}, "target": {"domain_id": "foo", "oauth2_client": {"spiffe_ids": ["spiffe://td/x"], "delegation": {"service_grants": true}}}}
+}

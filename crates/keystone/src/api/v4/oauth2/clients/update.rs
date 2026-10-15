@@ -138,6 +138,8 @@ mod tests {
             backchannel_logout_session_required: false,
             frontchannel_logout_uri: None,
             frontchannel_logout_session_required: false,
+            spiffe_ids: vec![],
+            delegation: None,
             client_id: "client-1".into(),
             provider_id: "provider-1".into(),
             domain_id: "domain_id".into(),

@@ -26,3 +26,18 @@ foreign_client if {
 	client_domain_id != null
 	client_domain_id != input.credentials.domain_id
 }
+
+# The object (a create payload, an update patch or a stored client) touches
+# the delegatable service registration (ADR 0036 §3): SPIFFE ID patterns or
+# a delegation policy. Registering a delegatable service is admin-only.
+delegation_fields(obj) if {
+	obj.delegation != null
+}
+
+delegation_fields(obj) if {
+	count(obj.spiffe_ids) > 0
+}
+
+delegation_fields(obj) if {
+	obj.remove_delegation == true
+}

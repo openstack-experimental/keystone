@@ -711,6 +711,8 @@ mod tests {
             backchannel_logout_session_required: false,
             frontchannel_logout_uri: None,
             frontchannel_logout_session_required: false,
+            spiffe_ids: vec![],
+            delegation: None,
             client_id: "cid".into(),
             provider_id: "prov".into(),
             domain_id: "d".into(),

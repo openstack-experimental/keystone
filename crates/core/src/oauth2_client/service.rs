@@ -288,12 +288,98 @@ fn validate_require_pkce(
     Ok(())
 }
 
+/// Token endpoint authentication method of delegatable service clients:
+/// mutual TLS with a SPIFFE X.509-SVID (ADR 0036 §3.1).
+pub const TLS_CLIENT_AUTH: &str = "tls_client_auth";
+
+/// Validate the delegation registration of a client (ADR 0036 §3, §3.1) on
+/// its effective state.
+///
+/// A client with `spiffe_ids` or a `delegation` policy must authenticate
+/// with `tls_client_auth`; a delegation policy needs at least one SPIFFE ID
+/// pattern; every pattern must be well formed and name one of
+/// `trust_domains` (the internal interface's trust domains, i.e. the
+/// deployment's own); `on_behalf_of` needs `max_operation_lifetime`.
+fn validate_delegation(
+    token_endpoint_auth_method: &str,
+    spiffe_ids: &[String],
+    delegation: Option<&DelegationPolicy>,
+    trust_domains: &[String],
+) -> Result<(), Oauth2ClientProviderError> {
+    let validation = |msg: String| Oauth2ClientProviderError::Validation(msg);
+    if (delegation.is_some() || !spiffe_ids.is_empty())
+        && token_endpoint_auth_method != TLS_CLIENT_AUTH
+    {
+        return Err(validation(format!(
+            "spiffe_ids and delegation require token_endpoint_auth_method `{TLS_CLIENT_AUTH}`"
+        )));
+    }
+    if token_endpoint_auth_method == TLS_CLIENT_AUTH && spiffe_ids.is_empty() {
+        return Err(validation(format!(
+            "token_endpoint_auth_method `{TLS_CLIENT_AUTH}` requires spiffe_ids"
+        )));
+    }
+    for pattern in spiffe_ids {
+        validate_spiffe_id_pattern(pattern, trust_domains).map_err(validation)?;
+    }
+    if let Some(delegation) = delegation {
+        if delegation.on_behalf_of && delegation.max_operation_lifetime.is_none() {
+            return Err(validation(
+                "delegation.on_behalf_of requires delegation.max_operation_lifetime".to_string(),
+            ));
+        }
+        if delegation.max_grant_lifetime == Some(0)
+            || delegation.max_operation_lifetime == Some(0)
+            || delegation.max_grants_per_project == Some(0)
+        {
+            return Err(validation(
+                "delegation lifetimes and limits must be positive".to_string(),
+            ));
+        }
+        if delegation.max_role_ids.iter().any(|r| r.trim().is_empty()) {
+            return Err(validation(
+                "delegation.max_role_ids must not contain empty ids".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A `tls_client_auth` client has no secret and is exempt from the PKCE
+/// rule, so it must not use the browser and device grants, which rely on
+/// one of the two to bind the code to the client.
+fn validate_mtls_grant_types(grant_types: &[GrantType]) -> Result<(), Oauth2ClientProviderError> {
+    if grant_types
+        .iter()
+        .any(|g| matches!(g, GrantType::AuthorizationCode | GrantType::DeviceCode))
+    {
+        return Err(Oauth2ClientProviderError::Validation(format!(
+            "a `{TLS_CLIENT_AUTH}` client cannot use the authorization_code or device_code grant"
+        )));
+    }
+    Ok(())
+}
+
+/// SPIFFE trust domains of the internal interface, the only interface a
+/// delegatable service authenticates on. Empty when the interface is not
+/// configured with a SPIFFE listener.
+fn internal_trust_domains(config: &Config) -> Vec<String> {
+    match config.interface_internal.as_ref().map(|i| &i.listener) {
+        Some(openstack_keystone_config::ListenerConfig::Spiffe(spiffe)) => {
+            spiffe.trust_domains.clone()
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// OAuth2 client Provider.
 pub struct Oauth2ClientService {
     /// Backend driver.
     backend_driver: Arc<dyn Oauth2ClientBackend>,
     /// `[oauth2]` config, for client secret Argon2id parameters.
     oauth2_config: openstack_keystone_config::Oauth2Provider,
+    /// Trust domains SPIFFE ID patterns may name (ADR 0036 §3.1).
+    internal_trust_domains: Vec<String>,
 }
 
 impl Oauth2ClientService {
@@ -308,6 +394,7 @@ impl Oauth2ClientService {
         Ok(Self {
             backend_driver,
             oauth2_config: config.oauth2.clone(),
+            internal_trust_domains: internal_trust_domains(config),
         })
     }
 }
@@ -321,8 +408,24 @@ impl Oauth2ClientApi for Oauth2ClientService {
         data: OAuth2ClientResourceCreate,
         confidential: bool,
     ) -> Result<(OAuth2ClientResource, Option<String>), Oauth2ClientProviderError> {
+        validate_delegation(
+            &data.token_endpoint_auth_method,
+            &data.spiffe_ids,
+            data.delegation.as_ref(),
+            &self.internal_trust_domains,
+        )?;
+        // A `tls_client_auth` client authenticates with its SVID: it never
+        // gets a secret, and it is not a public client the PKCE rule is
+        // about (it cannot use `authorization_code` without a secret-less
+        // redirect flow, which delegation does not involve).
+        let mtls = data.token_endpoint_auth_method == TLS_CLIENT_AUTH;
+        let confidential = confidential && !mtls;
         validate_redirect_uris(&data.redirect_uris, confidential)?;
-        validate_require_pkce(data.require_pkce, confidential)?;
+        if mtls {
+            validate_mtls_grant_types(&data.grant_types)?;
+        } else {
+            validate_require_pkce(data.require_pkce, confidential)?;
+        }
         validate_post_logout_redirect_uris(&data.post_logout_redirect_uris, confidential)?;
         validate_logout_endpoint(
             "backchannel_logout_uri",
@@ -496,6 +599,22 @@ impl Oauth2ClientApi for Oauth2ClientService {
             ));
         }
         let confidential = current.client_secret_hash.is_some();
+        let mtls = current.token_endpoint_auth_method == TLS_CLIENT_AUTH;
+        if data.remove_delegation && data.delegation.is_some() {
+            return Err(Oauth2ClientProviderError::Validation(
+                "delegation and remove_delegation are mutually exclusive".to_string(),
+            ));
+        }
+        validate_delegation(
+            &current.token_endpoint_auth_method,
+            data.spiffe_ids.as_deref().unwrap_or(&current.spiffe_ids),
+            if data.remove_delegation {
+                None
+            } else {
+                data.delegation.as_ref().or(current.delegation.as_ref())
+            },
+            &self.internal_trust_domains,
+        )?;
 
         if let Some(redirect_uris) = &data.redirect_uris {
             validate_redirect_uris(redirect_uris, confidential)?;
@@ -522,7 +641,11 @@ impl Oauth2ClientApi for Oauth2ClientService {
             validate_post_logout_redirect_uris(uris, confidential)?;
         }
         let effective_pkce = data.require_pkce.unwrap_or(current.require_pkce);
-        validate_require_pkce(effective_pkce, confidential)?;
+        if mtls {
+            validate_mtls_grant_types(data.grant_types.as_deref().unwrap_or(&current.grant_types))?;
+        } else {
+            validate_require_pkce(effective_pkce, confidential)?;
+        }
         if let Some(claims_template) = &data.claims_template {
             validate_claims_template(claims_template)?;
         }
@@ -603,6 +726,8 @@ mod tests {
             backchannel_logout_session_required: false,
             frontchannel_logout_uri: None,
             frontchannel_logout_session_required: false,
+            spiffe_ids: vec![],
+            delegation: None,
             client_id: String::new(),
             provider_id: "provider-1".into(),
             domain_id: "domain-1".into(),
@@ -632,7 +757,157 @@ mod tests {
                 argon2_parallelism: 1,
                 ..Default::default()
             },
+            internal_trust_domains: vec!["cloud.example".into()],
         }
+    }
+
+    fn sample_service_create() -> OAuth2ClientResourceCreate {
+        let mut req = sample_create();
+        req.token_endpoint_auth_method = TLS_CLIENT_AUTH.into();
+        req.redirect_uris = vec![];
+        req.grant_types = vec![];
+        req.require_pkce = false;
+        req.spiffe_ids = vec!["spiffe://cloud.example/ns/nova/sa/*".into()];
+        req.delegation = Some(DelegationPolicy {
+            service_grants: true,
+            ..Default::default()
+        });
+        req
+    }
+
+    #[tokio::test]
+    async fn test_create_delegatable_service_has_no_secret() {
+        let mut mock = MockOauth2ClientBackend::new();
+        mock.expect_create()
+            .returning(|_, data| Ok(sample_resource_from(data)));
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+        let ctx = ExecutionContext::internal(&state);
+
+        // Even when the caller asks for a confidential client, an mTLS
+        // client never gets a secret, and PKCE is not required.
+        let (created, secret) = service
+            .create(&ctx, sample_service_create(), true)
+            .await
+            .unwrap();
+        assert!(secret.is_none());
+        assert!(created.client_secret_hash.is_none());
+        assert!(created.service_grant_policy().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_create_rejects_invalid_delegation() {
+        let service = service_with(MockOauth2ClientBackend::new());
+        let state = get_mocked_state(None, None).await;
+        let ctx = ExecutionContext::internal(&state);
+
+        let cases: Vec<fn(&mut OAuth2ClientResourceCreate)> = vec![
+            // Delegation needs tls_client_auth.
+            (|r| r.token_endpoint_auth_method = "client_secret_basic".into()),
+            // ... and SPIFFE ID patterns.
+            (|r| r.spiffe_ids = vec![]),
+            // Foreign trust domain.
+            (|r| r.spiffe_ids = vec!["spiffe://evil.example/ns/nova".into()]),
+            // Wildcard not in the final segment.
+            (|r| r.spiffe_ids = vec!["spiffe://cloud.example/ns/*/sa".into()]),
+            // on_behalf_of without an operation lifetime.
+            (|r| {
+                r.delegation = Some(DelegationPolicy {
+                    on_behalf_of: true,
+                    ..Default::default()
+                })
+            }),
+            // Browser grant without a secret or PKCE.
+            (|r| r.grant_types = vec![GrantType::AuthorizationCode]),
+            // Zero limits.
+            (|r| {
+                r.delegation = Some(DelegationPolicy {
+                    service_grants: true,
+                    max_grant_lifetime: Some(0),
+                    ..Default::default()
+                })
+            }),
+        ];
+        for (idx, mutate) in cases.iter().enumerate() {
+            let mut req = sample_service_create();
+            mutate(&mut req);
+            assert!(
+                matches!(
+                    service.create(&ctx, req, false).await,
+                    Err(Oauth2ClientProviderError::Validation(_))
+                ),
+                "case {idx}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_rejects_spiffe_ids_without_internal_interface() {
+        let mut service = service_with(MockOauth2ClientBackend::new());
+        service.internal_trust_domains = vec![];
+        let state = get_mocked_state(None, None).await;
+        let ctx = ExecutionContext::internal(&state);
+        assert!(matches!(
+            service.create(&ctx, sample_service_create(), false).await,
+            Err(Oauth2ClientProviderError::Validation(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_update_validates_effective_delegation() {
+        let mut mock = MockOauth2ClientBackend::new();
+        mock.expect_get().returning(|_, _, _| {
+            Ok(Some(sample_resource_from(OAuth2ClientResourceCreate {
+                spiffe_ids: vec![],
+                delegation: None,
+                ..sample_create()
+            })))
+        });
+        let service = service_with(mock);
+        let state = get_mocked_state(None, None).await;
+        let ctx = ExecutionContext::internal(&state);
+
+        // A client_secret_basic client cannot become a delegatable service.
+        let update = OAuth2ClientResourceUpdate {
+            delegation: Some(DelegationPolicy {
+                service_grants: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(matches!(
+            service.update(&ctx, "domain-1", "provider-1", update).await,
+            Err(Oauth2ClientProviderError::Validation(_))
+        ));
+
+        // Setting and removing in one patch is rejected.
+        let update = OAuth2ClientResourceUpdate {
+            delegation: Some(DelegationPolicy::default()),
+            remove_delegation: true,
+            ..Default::default()
+        };
+        assert!(matches!(
+            service.update(&ctx, "domain-1", "provider-1", update).await,
+            Err(Oauth2ClientProviderError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn test_with_update_sets_and_removes_delegation() {
+        let current = sample_resource_from(sample_service_create());
+        let removed = current.clone().with_update(
+            OAuth2ClientResourceUpdate {
+                remove_delegation: true,
+                ..Default::default()
+            },
+            1,
+        );
+        assert!(removed.delegation.is_none());
+        assert_eq!(removed.spiffe_ids, current.spiffe_ids);
+        let kept = current
+            .clone()
+            .with_update(OAuth2ClientResourceUpdate::default(), 1);
+        assert_eq!(kept.delegation, current.delegation);
     }
 
     #[tokio::test]
@@ -1109,6 +1384,8 @@ mod tests {
             backchannel_logout_session_required: data.backchannel_logout_session_required,
             frontchannel_logout_uri: data.frontchannel_logout_uri,
             frontchannel_logout_session_required: data.frontchannel_logout_session_required,
+            spiffe_ids: data.spiffe_ids,
+            delegation: data.delegation,
         }
     }
 
