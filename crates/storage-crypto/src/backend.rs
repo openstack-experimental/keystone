@@ -23,10 +23,20 @@
 //!   cargo features are additive and a workspace-wide build must not silently
 //!   fall back to non-validated primitives.
 //!
+//! Caveat: the validated module only treats AES-GCM encryption as an approved
+//! service when it generates the IV itself, whereas this crate supplies
+//! deterministic IVs (ADR 0016-v2 §2.2 and invariant 10) through
+//! `LessSafeKey`. [`assert_fips`] therefore proves the module is the
+//! validated one, not that every GCM encrypt is an approved service. See the
+//! "FIPS builds" paragraph of the ADR.
+//!
 //! A deployment that claims FIPS operation must call [`assert_fips`] during
 //! start-up; it fails unless the validated module is compiled in and active.
 
 use crate::error::CryptoError;
+
+#[cfg(not(any(feature = "fips", feature = "rustcrypto")))]
+compile_error!("enable either the `rustcrypto` (default) or the `fips` feature");
 
 #[cfg(feature = "fips")]
 mod awslc;

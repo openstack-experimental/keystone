@@ -207,6 +207,13 @@ tags must be 16 bytes.
   pseudorandom rather than the fixed-field/counter construction of SP 800-38D
   §8.2.1; a strict audit may require replacing them (a storage format change,
   tracked separately).
+  Likewise the module only counts AES-GCM encryption as an approved service
+  when it generates the IV itself; this crate passes deterministic IVs through
+  `LessSafeKey`, so `assert_fips()` proves the validated module is in use, not
+  that each GCM encrypt is an approved service. Closing that gap needs the
+  same storage format change. Building the feature requires cmake, a C
+  compiler, clang and Go; use `--no-default-features --features fips` to
+  keep the RustCrypto crates out of the dependency tree.
 
 ### 2.3 Associated Data (AD) Bindings
 

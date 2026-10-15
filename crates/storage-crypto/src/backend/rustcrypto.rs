@@ -24,7 +24,7 @@ use sha2::Sha256;
 use crate::error::CryptoError;
 
 fn cipher(key: &[u8]) -> Result<Aes256Gcm, CryptoError> {
-    let key = Array::slice_as_array(key).ok_or(CryptoError::InvalidArrayLength)?;
+    let key = Array::slice_as_array(key).ok_or(CryptoError::InvalidKeyLength)?;
     Ok(Aes256Gcm::new(key))
 }
 

@@ -251,6 +251,22 @@ mod tests {
     }
 
     #[test]
+    fn test_unwrap_blob_with_foreign_nonce() {
+        // Blobs wrapped before the nonce became deterministic (random 96-bit
+        // nonce) must still unwrap: the nonce is read from the blob.
+        let kek = test_kek();
+        let dek = [0x5Au8; 32];
+        let nonce = [0x11u8; 12];
+        let mut buf = dek.to_vec();
+        let tag = gcm_seal(&*kek.key, &nonce, DEK_WRAP_AD, &mut buf).expect("seal");
+        let mut blob = nonce.to_vec();
+        blob.extend_from_slice(&buf);
+        blob.extend_from_slice(&tag);
+        let out = kek.unwrap_dek(&blob).expect("unwrap legacy blob");
+        assert_eq!(*out, dek);
+    }
+
+    #[test]
     fn test_unwrap_wrong_tag_fails() {
         let kek = test_kek();
         let dek = [0x11u8; 32];
