@@ -50,6 +50,43 @@ template; the production reference is `tools/k8s/keystone/overlays/production`,
 described in the distributed storage
 [Kubernetes reference deployment](../admin/storage/distributed.md#kubernetes-reference-deployment).
 
+### Host inotify limit
+
+Every `opa` sidecar watches the certificate directory with inotify, and all
+pods of a k3s node share the host's per-user `fs.inotify.max_user_instances`
+budget (128 by default). When it is exhausted OPA exits right after start with
+`Unable to open watch: too many open files`, the `/ready` probe of the Keystone
+pod keeps returning 503 and the container restarts in a loop. Raise the limit
+on the k3s host:
+
+```console
+sudo sysctl -w fs.inotify.max_user_instances=1024
+echo 'fs.inotify.max_user_instances = 1024' | sudo tee /etc/sysctl.d/99-inotify.conf
+```
+
+### Rolling updates of the dev Raft cluster
+
+The development StatefulSet keeps the Raft storage on a persistent volume
+claim (`raft-storage`, 2Gi), so a recreated pod keeps its state and only
+replays what it missed. The claims outlive `skaffold delete`; remove them for a
+clean Raft state:
+
+```console
+kubectl delete pvc -l app.kubernetes.io/name=keystone-rs
+```
+
+A node that comes back with empty storage (a lost volume) has to catch up from
+the leader; the pod log reports `Syncing with the cluster` every 10 seconds
+until it is done, and `/ready` returns 503 meanwhile. Node 0 looks for an
+existing cluster among its `retry_join_nodes` before it bootstraps a new one,
+and a voter that asks to join again is demoted to learner by the leader. Once
+it caught up, promote it again with `keystone-manage storage promote <id>`; the
+Skaffold post-deploy hook does this for the dev cluster.
+
+Changing the claim template of an existing StatefulSet is not possible. When
+upgrading an older dev deployment that used an `emptyDir`, delete the
+StatefulSet first: `kubectl delete sts keystone-rs`.
+
 ## Raft KEK overlays on k3s
 
 `tools/k8s/keystone/overlays/k3s-test` contains throwaway, single-voter overlays

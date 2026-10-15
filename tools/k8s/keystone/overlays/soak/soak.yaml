@@ -45,6 +45,14 @@ spec:
       labels:
         app.kubernetes.io/name: keystone-soak
     spec:
+      initContainers:
+        # After a node reboot the soak pod can start before cluster DNS and
+        # keystone are up, which fails the first cycle and the load
+        # generator. Wait until the API answers before starting the run.
+        - name: keystone-waiter
+          image: busybox
+          imagePullPolicy: IfNotPresent
+          command: ['sh', '-c', 'echo "Waiting for keystone-rs..."; while ! nc -z -w 2 keystone-rs 8080; do echo "Still waiting for keystone-rs..."; sleep 3; done; echo "keystone-rs is available."']
       containers:
         - name: soak
           image: keystone-soak

@@ -30,6 +30,17 @@ spec:
           image: busybox
           imagePullPolicy: IfNotPresent
           command: ['sh', '-c', 'echo "Waiting for PostgreSQL to be available..."; while ! nc -z -w 1 keystone-db-rw 5432; do echo "Still waiting for postgres-service..."; sleep 2; done; echo "PostgreSQL is available! Starting application."']
+        # After a node reboot the SPIRE agent can come up later than this
+        # pod. Without the Workload API socket keystone times out waiting
+        # for its SVID and crash-loops, so wait for the socket first.
+        - name: spire-waiter
+          image: busybox
+          imagePullPolicy: IfNotPresent
+          command: ['sh', '-c', 'echo "Waiting for the SPIFFE Workload API socket..."; while ! test -S /run/spire/sockets/spire-agent.sock; do echo "Still waiting for spire-agent.sock..."; sleep 2; done; echo "SPIFFE Workload API socket is available."']
+          volumeMounts:
+            - mountPath: /run/spire/sockets
+              name: spiffe-workload-api
+              readOnly: true
 
       containers:
         - env:

@@ -78,3 +78,20 @@ spec:
             - name: KEYSTONE_ALLOW_ENV_KEK
               value: "1"
           command: ["keystone", "-v"]
+      volumes:
+        # Replaced by the volumeClaimTemplate below.
+        - name: raft-storage
+          $patch: delete
+  # Keep the Raft state across pod recreation (rolling updates, node
+  # reboots). With an `emptyDir` a recreated pod has to resync everything
+  # from the leader. The claim template cannot change on an existing
+  # StatefulSet: `kubectl delete sts keystone-rs --cascade=orphan` before
+  # the first deploy with it.
+  volumeClaimTemplates:
+    - metadata:
+        name: raft-storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi
