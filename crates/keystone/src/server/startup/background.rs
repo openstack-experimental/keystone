@@ -48,6 +48,7 @@ use crate::oauth2_session::Oauth2SessionHook;
 use crate::resource::ResourceHook;
 use crate::revoke::RevokeHook;
 use crate::role::RoleHook;
+use crate::service_grant::ServiceGrantHook;
 use crate::token::TokenHook;
 use crate::trust::TrustHook;
 use openstack_keystone_core::api_key::janitor as api_key_janitor;
@@ -58,6 +59,7 @@ use openstack_keystone_core::oauth2_key::janitor as oauth2_key_janitor;
 use openstack_keystone_core::oauth2_session::janitor as oauth2_session_janitor;
 use openstack_keystone_core::orphan_sweep;
 use openstack_keystone_core::scim_resource::janitor as scim_resource_janitor;
+use openstack_keystone_core::service_grant::janitor as service_grant_janitor;
 
 /// Spawn every background task and perform the post-construction hook/plugin
 /// wiring. `phase_start` is only used for the phase-timing traces (measured
@@ -79,10 +81,12 @@ pub async fn spawn_all(startup: &Startup, phase_start: Instant) {
     //  - OAuth2 signing-key `Previous` retirement + JTI list pruning (ADR 0026
     //    §3)
     //  - OAuth2 expired session/code/device/refresh-token purge (ADR 0026 §9)
+    //  - Service grant expiry disablement + retention purge (ADR 0036 §8)
     api_key_janitor::spawn(state.clone());
     scim_resource_janitor::spawn(state.clone());
     oauth2_key_janitor::spawn(state.clone());
     oauth2_session_janitor::spawn(state.clone());
+    service_grant_janitor::spawn(state.clone());
 
     // Report-only sweep of role assignments whose user, group, project or
     // domain no longer exists (safety net for the delete cascades). Read-only
@@ -173,6 +177,7 @@ async fn subscribe_event_hooks(state: &ServiceState) {
         ResourceHook,
         RevokeHook,
         RoleHook,
+        ServiceGrantHook,
         TokenHook,
         TrustHook,
     );

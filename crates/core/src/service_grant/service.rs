@@ -76,13 +76,12 @@ fn ensure_chain_may_delegate(sc: &SecurityContext) -> Result<(), ServiceGrantPro
     }
 }
 
-/// Effective role ids of `user_id` on `project_id`, from role
-/// assignments (group membership and implied roles included), never from
-/// the token's scoped roles. An application credential caller is further
-/// bounded by the credential's own roles.
-async fn effective_role_ids(
+/// Role ids `user_id` holds on `project_id` from role assignments (group
+/// membership and implied roles included), never from a token's scoped
+/// roles. Also used by the lifecycle hook to re-check grants after an
+/// assignment or membership change.
+pub(crate) async fn assigned_role_ids(
     state: &ServiceState,
-    sc: &SecurityContext,
     user_id: &str,
     project_id: &str,
 ) -> Result<BTreeSet<String>, ServiceGrantProviderError> {
@@ -93,7 +92,7 @@ async fn effective_role_ids(
         .resolve_implied_roles(true)
         .build()
         .map_err(ServiceGrantProviderError::provider)?;
-    let mut roles: BTreeSet<String> = state
+    Ok(state
         .provider
         .get_assignment_provider()
         .list_role_assignments(&ExecutionContext::internal(state), &params)
@@ -101,7 +100,19 @@ async fn effective_role_ids(
         .map_err(ServiceGrantProviderError::provider)?
         .into_iter()
         .map(|a| a.role_id)
-        .collect();
+        .collect())
+}
+
+/// Effective role ids of `user_id` on `project_id` ([`assigned_role_ids`]).
+/// An application credential caller is further bounded by the
+/// credential's own roles.
+async fn effective_role_ids(
+    state: &ServiceState,
+    sc: &SecurityContext,
+    user_id: &str,
+    project_id: &str,
+) -> Result<BTreeSet<String>, ServiceGrantProviderError> {
+    let mut roles = assigned_role_ids(state, user_id, project_id).await?;
     if let AuthenticationContext::ApplicationCredential {
         application_credential,
         ..

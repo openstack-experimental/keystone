@@ -20,6 +20,8 @@
 pub mod actor;
 pub mod backend;
 pub mod error;
+pub mod hook;
+pub mod janitor;
 mod provider_api;
 pub mod redeem;
 pub mod service;
@@ -28,5 +30,6 @@ pub mod service;
 pub use crate::mocks::MockServiceGrantProvider;
 pub use actor::service_client_context;
 pub use error::ServiceGrantProviderError;
+pub use hook::ServiceGrantHook;
 pub use provider_api::ServiceGrantApi;
 pub use service::ServiceGrantService;

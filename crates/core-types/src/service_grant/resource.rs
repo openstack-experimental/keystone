@@ -39,6 +39,15 @@ impl Grantee {
             Self::Client { client_id, .. } => client_id,
         }
     }
+
+    /// Domain a client grantee is registered in.
+    pub fn client_domain_id(&self) -> &str {
+        match self {
+            Self::Client {
+                client_domain_id, ..
+            } => client_domain_id,
+        }
+    }
 }
 
 /// What a grant lets the grantee act on.
