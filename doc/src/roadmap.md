@@ -12,14 +12,14 @@ referenced by number.
 
 The order is driven by dependencies, not by a single line of phases. Some work
 is a hard prerequisite of other work, and a lot of it is independent. The graph
-in [§2](#workstreams) shows which is which, so that teams can start in parallel and so that a
-slow item does not hold back work that never needed it.
+in [§2](#workstreams) shows which is which, so that teams can start in parallel
+and so that a slow item does not hold back work that never needed it.
 
 > **Decisions that gate milestones.** Three decisions sit outside the work
 > itself, and a milestone that depends on one cannot start until it is made:
 >
-> - Amend ADR 0016-v2 §3 so learners may serve local reads, before
->   [E1](#e1) ([detail](iam-data-plane.md#learner-local-reads)).
+> - Amend [ADR 0016-v2] §3 so learners may serve local reads, before [E1](#e1)
+>   ([detail](iam-data-plane.md#learner-local-reads)).
 > - Settle whether the check API receives the credential or a signed chain
 >   assertion, before the request schema freezes in [C1](#c1-check-api)
 >   ([open question 10](vision.md#open-questions)).
@@ -28,9 +28,10 @@ slow item does not hold back work that never needed it.
 
 ## 1. Rules that hold throughout {#rules}
 
-Every step below must respect the additive rules of the vision ([§9](vision.md#adoption)), and this
-plan's rule that each release cycle carries one large, user-visible change (the
-token-format change, stream B, is the largest and gets a cycle of its own).
+Every step below must respect the additive rules of the vision
+([§9](vision.md#adoption)), and this plan's rule that each release cycle carries
+one large, user-visible change (the token-format change, stream B, is the
+largest and gets a cycle of its own).
 
 - Python Keystone, Fernet tokens and unmodified services keep working.
 - v3 scoped tokens and `OpenStack-Target` coexist. A conflicting header is
@@ -101,17 +102,17 @@ places on the other without blocking its start.
 
 ### 2.1 What the arrows mean {#dependencies}
 
-| Dependency | Why                                                                                                                                                                                                                                                                                        |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [A0](#a0-spire) to [A1](#a1-secretless-control-plane)   | A service can drop its password only once it has a SPIFFE identity to authenticate with.                                                                                                                                                                                                   |
-| [A0](#a0-spire) to [A2](#a2-workload-identity)   | Tenant workload identity uses the same SPIRE deployment. It does not need A1.                                                                                                                                                                                                              |
-| [B1](#b1) to [D1](#d1)   | Grants and exchange mint JWTs. Services must be able to validate them first. The flip of the default issuance (B2) is not required.                                                                                                                                                        |
-| [A1](#a1-secretless-control-plane) to [D1](#d1)   | Redeeming a grant needs an SVID-authenticated service client (ADR 0036 §3, §5).                                                                                                                                                                                                            |
-| [B1](#b1) to [C2](#c2-scopeless-jwt)   | Scope-less tokens are JWTs.                                                                                                                                                                                                                                                                |
-| [A1](#a1-secretless-control-plane) to [C2](#c2-scopeless-jwt)   | The sender constraint for control-plane callers binds a token to a SPIFFE ID, verified where the SVID is the TLS peer ([§5.4](vision.md#threat-model)).                                                                                                                                                              |
-| [C1](#c1-check-api) to [D1](#d1)   | Not a start dependency, because ADR 0036 keeps a transitional project and role projection in the token. When C1 lands, its resolver must be delegation-aware (see below).                                                                                                                  |
-| [A2](#a2-workload-identity) to [D3](#d3)   | Trusts cannot be turned off while Magnum still writes a trustee password into guests. The guest side needs workload identity (ADR 0036 §10.3). Heat's in-guest EC2 keypairs do not gate D3 — in current configurations they do not depend on the trust — and retire on this same A2 track. |
-| [C1](#c1-check-api) to [E2](#e2)   | The data plane serves the check API.                                                                                                                                                                                                                                                       |
+| Dependency                                                    | Why                                                                                                                                                                                                                                                                                          |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [A0](#a0-spire) to [A1](#a1-secretless-control-plane)         | A service can drop its password only once it has a SPIFFE identity to authenticate with.                                                                                                                                                                                                     |
+| [A0](#a0-spire) to [A2](#a2-workload-identity)                | Tenant workload identity uses the same SPIRE deployment. It does not need A1.                                                                                                                                                                                                                |
+| [B1](#b1) to [D1](#d1)                                        | Grants and exchange mint JWTs. Services must be able to validate them first. The flip of the default issuance (B2) is not required.                                                                                                                                                          |
+| [A1](#a1-secretless-control-plane) to [D1](#d1)               | Redeeming a grant needs an SVID-authenticated service client ([ADR 0036] §3, §5).                                                                                                                                                                                                            |
+| [B1](#b1) to [C2](#c2-scopeless-jwt)                          | Scope-less tokens are JWTs.                                                                                                                                                                                                                                                                  |
+| [A1](#a1-secretless-control-plane) to [C2](#c2-scopeless-jwt) | The sender constraint for control-plane callers binds a token to a SPIFFE ID, verified where the SVID is the TLS peer ([§5.4](vision.md#threat-model)).                                                                                                                                      |
+| [C1](#c1-check-api) to [D1](#d1)                              | Not a start dependency, because [ADR 0036] keeps a transitional project and role projection in the token. When C1 lands, its resolver must be delegation-aware (see below).                                                                                                                  |
+| [A2](#a2-workload-identity) to [D3](#d3)                      | Trusts cannot be turned off while Magnum still writes a trustee password into guests. The guest side needs workload identity ([ADR 0036] §10.3). Heat's in-guest EC2 keypairs do not gate D3 — in current configurations they do not depend on the trust — and retire on this same A2 track. |
+| [C1](#c1-check-api) to [E2](#e2)                              | The data plane serves the check API.                                                                                                                                                                                                                                                         |
 
 Two corrections to the intuitive ordering are worth stating.
 
@@ -119,11 +120,11 @@ Two corrections to the intuitive ordering are worth stating.
   tokens. The reverse constraint is the one that matters: when the check API
   resolves roles at request time, it must compute live roles of the subject on
   the target, intersected with the grant's role ids, and require the target to
-  equal the delegated project (ADR 0036 §7). A resolver that ignores the
+  equal the delegated project ([ADR 0036] §7). A resolver that ignores the
   delegation would let the target a delegated caller names widen the delegation.
-- **Workload identity does not wait for scope-less tokens.** The SPIRE plan maps
-  an attested VM to a project-bound principal through the mapping engine, which
-  needs no change to token scope.
+- **Workload identity does not wait for scope-less tokens.** The [SPIRE plan]
+  maps an attested VM to a project-bound principal through the mapping engine,
+  which needs no change to token scope.
 
 ### 2.2 Global view by release cycle {#release-cycles}
 
@@ -132,8 +133,9 @@ relative to the first planned one: x.1 is the first development cycle (released
 in April), x.2 the one after it (October), then x+1.1, x+1.2 and so on. x-1.2 is
 already released. The dates are indicative: they show order and size, not a
 commitment by any project. A stream can slip without moving the others, except
-along the arrows in [§2](#workstreams). In the chart, a bar that ends at an April tick finishes
-in a .1 release and one that ends at an October tick in a .2 release.
+along the arrows in [§2](#workstreams). In the chart, a bar that ends at an
+April tick finishes in a .1 release and one that ends at an October tick in a .2
+release.
 
 ```mermaid
 gantt
@@ -177,7 +179,7 @@ gantt
 
 | Cycle (release month) | Stream A                                    | Stream B                                                    | Stream C                                         | Stream D                                         | Stream E                |
 | --------------------- | ------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------ | ----------------------- |
-| x-1.2 (Oct)           | ADR 0036 accepted; A0 design                | Design only                                                 | Design only; settle check API request schema     | Design only                                      | ADR 0016-v2 amendment   |
+| x-1.2 (Oct)           | [ADR 0036] accepted; A0 design              | Design only                                                 | Design only; settle check API request schema     | Design only                                      | [ADR 0016-v2] amendment |
 | x.1 (Apr)             | A0 SPIRE delivered; A1 middleware transport | B1 library support, opt-in                                  | C1 check API, header, `oslo.policy` check type   | D1 grants and exchange in Keystone, keystoneauth | E1 begins               |
 | x.2 (Oct)             | A1 tooling adoption; A2 devstack pilot      | B1 adopted by services                                      | C1 first services on Mode 1; C2 gate work begins | D1 pilots: Heat grants, Glance exchange          | E1 done                 |
 | x+1.1 (Apr)           | A2 pilot continues                          | **B2 JWT by default (the cycle's one user-visible change)** | C1 adoption continues; C2 gate work done         | D2 migrations begin                              | E2 `keystone-dataplane` |
@@ -188,8 +190,8 @@ gantt
 
 #### What each release delivers {#release-deliverables}
 
-> **Audience:** operators and release managers. **Skip if** you only need
-> the order of work; the [dependency graph](#workstreams) covers it.
+> **Audience:** operators and release managers. **Skip if** you only need the
+> order of work; the [dependency graph](#workstreams) covers it.
 
 - **x-1.2 (Oct).** No change for operators or users; the design is agreed.
 - **x.1 (Apr).** Operators can grant a service standing, bounded rights to act
@@ -239,16 +241,15 @@ gantt
   available throughout, so a service that is late blocks only D3, not the
   services that finished.
 - **C2 waits for its gate, not for the calendar.** Restrictions, audience
-  narrowing and sender constraint are all built in the two cycles
-  before it. If any of them slips, C2 slips with it, and nothing else in the
-  plan has to.
+  narrowing and sender constraint are all built in the two cycles before it. If
+  any of them slips, C2 slips with it, and nothing else in the plan has to.
 - **A2 depends on a decision, not just work.** The SPIRE node attestor is a Go
   plugin that needs a home in the community. If that is not settled by x.2, A2
   and with it D3 move.
 - **Python Keystone.** Dates assume Rust Keystone as the reference
   implementation. A deployment that stays on Python Keystone can adopt the
   library and service changes but cannot redeem grants or serve the check API
-  until Python Keystone gains them or is retired (ADR 0036).
+  until Python Keystone gains them or is retired ([ADR 0036]).
 
 ## 3. Stream A: identity foundation {#stream-a}
 
@@ -256,17 +257,18 @@ gantt
 
 SPIRE is the cornerstone. It is deployed for the OpenStack control plane only,
 not for end users, and is configured to issue an identity to every control-plane
-process and every compute host (SPIRE plan Phases 1 and 2).
+process and every compute host ([SPIRE plan] Phases 1 and 2).
 
 Status: delivered in x.1, in devstack and in the deployment tools together. This
 is the earliest an operator can run it.
 
 ### A1. A control plane without Keystone credentials {#a1-secretless-control-plane}
 
-- `keystonemiddleware` gets a SPIFFE mTLS transport for validation (SPIRE plan
+- `keystonemiddleware` gets a SPIFFE mTLS transport for validation ([SPIRE plan]
   Phase 4.1).
 - Service-to-service calls authenticate at the TLS layer. Service users, service
-  passwords and `X-Service-Token` stop being needed ([§4.2](vision.md#control-plane-mtls)).
+  passwords and `X-Service-Token` stop being needed
+  ([§4.2](vision.md#control-plane-mtls)).
 - Legacy services that still ask Keystone for a token keep working.
 - Secrets that services hardcode into provisioned VMs, such as Magnum's and
   Heat's, stay until A2 (and D3 for the trust-based ones).
@@ -282,48 +284,48 @@ mTLS alone.
 
 Depends on A0. It does not depend on scope-less tokens.
 
-1. Nova asks Keystone for vendor metadata (ADR 0032). The metadata contains a
+1. Nova asks Keystone for vendor metadata ([ADR 0032]). The metadata contains a
    short-lived attestation token that Nova injects into the VM.
 2. The SPIRE agent in the VM presents it to the SPIRE server, which issues a
    project-bound SVID. This happens on new VMs only.
 3. The workload presents the JWT-SVID to Keystone, which maps it to a principal
-   bound to `spiffe.project_id` (ADR 0020).
+   bound to `spiffe.project_id` ([ADR 0020]).
 
 Open items:
 
 - **How the mapping gets its authority.** Authority must come from what Nova
   attests on the server side. Metadata that the guest or user supplies must
   never decide roles. Narrow authority by default (the `compute-vm` role of the
-  SPIRE plan) and wider authority by explicit mapping rules or permission sets
+  [SPIRE plan]) and wider authority by explicit mapping rules or permission sets
   ([§6.4](vision.md#workload-bindings)).
 - **The SPIRE node attestor** is a Go plugin, and it lives outside OpenStack
   governance and release practice. Mirroring the repository solves hosting, not
   review, CI or releases. Ownership has to be decided before this milestone.
-- **Magnum** is a separate migration with its own plan and the Magnum team (ADR
-  0036 §10.3).
+- **Magnum** is a separate migration with its own plan and the Magnum team (
+  [ADR 0036] §10.3).
 - **Heat's** in-guest CFN credentials — a per-server EC2 keypair delivered in
   the server's metadata, plus the stack-domain user's password for the heat and
   zaqar transports — retire on this track too, once the in-guest CFN client can
-  present the JWT-SVID (ADR 0036 §10.2). They do not gate D3.
+  present the JWT-SVID ([ADR 0036] §10.2). They do not gate D3.
 
 ## 4. Stream B: token format {#stream-b}
 
 This is the longest stream and the most visible to end users. It runs in a
 release cycle of its own.
 
-- <span id="b1"></span>**B1. JWT validation in the shared libraries.** `keystonemiddleware` and
-  `keystoneauth1` can validate Keystone JWTs: signature against the JWKS, the
-  audience, the issuer allowlist. This is the only part of the stream that other
-  work depends on.
-- <span id="b2"></span>**B2. JWT issued by default.** Keystone becomes a full OAuth2 provider. Fernet
-  and JWT are accepted side by side, and at some point the default issuance
-  flips to JWT.
-- <span id="b3"></span>**B3. Fernet validate-only, then off.** Last, after the deployments that need
-  Fernet have moved.
+- <span id="b1"></span>**B1. JWT validation in the shared libraries.**
+  `keystonemiddleware` and `keystoneauth1` can validate Keystone JWTs: signature
+  against the JWKS, the audience, the issuer allowlist. This is the only part of
+  the stream that other work depends on.
+- <span id="b2"></span>**B2. JWT issued by default.** Keystone becomes a full
+  OAuth2 provider. Fernet and JWT are accepted side by side, and at some point
+  the default issuance flips to JWT.
+- <span id="b3"></span>**B3. Fernet validate-only, then off.** Last, after the
+  deployments that need Fernet have moved.
 
 Offline validation (A1 and B1 together) accepts that revocation takes effect at
-token expiry unless the validator checks live ([§8](vision.md#availability)). The 15-minute access token
-is the stated bound.
+token expiry unless the validator checks live ([§8](vision.md#availability)).
+The 15-minute access token is the stated bound.
 
 ## 5. Stream C: authorization {#stream-c}
 
@@ -337,17 +339,19 @@ Five deliverables. None changes a credential, and tokens stay scoped.
   with `version` on every response ([§6.3](vision.md#authz-api)).
 - The `oslo.policy` `keystone` check type: request-scoped memo, replica list,
   fail-closed breaker, no cross-request cache.
-- Per-service adoption of the resource-owner-wins invariant ([§5.1](vision.md#request-contract)), with opt-in
-  to the compatibility mode ([§5.3](vision.md#compatibility)) and SDK header support.
+- Per-service adoption of the resource-owner-wins invariant
+  ([§5.1](vision.md#request-contract)), with opt-in to the compatibility mode
+  ([§5.3](vision.md#compatibility)) and SDK header support.
 - A delegation-aware resolver (see [§2.1](#dependencies)).
 
 The operation vocabulary arrives with C3, and unknown operations fail closed
-from the start ([§6.1](vision.md#roles-and-permissions)). What the check API answers in C1 is role resolution on a
-target, plus any operations a deployment has registered.
+from the start ([§6.1](vision.md#roles-and-permissions)). What the check API
+answers in C1 is role resolution on a target, plus any operations a deployment
+has registered.
 
 The request schema of the check API freezes here, so the open question on
-whether the API receives the credential or a signed chain assertion ([§10](vision.md#open-questions),
-question 10) has to be settled first.
+whether the API receives the credential or a signed chain assertion
+([§10](vision.md#open-questions), question 10) has to be settled first.
 
 ### C2. Scope-less JWT (gated) {#c2-scopeless-jwt}
 
@@ -355,11 +359,12 @@ C2 may not start until all of these are shipped:
 
 - the `restrictions` claim ([gate](vision.md#gate-restrictions));
 - service-type audience narrowing available end to end: clients can request it
-  (ADR 0036 §7.1) and services accept their own type
+  ([ADR 0036] §7.1) and services accept their own type
   ([§4.3](vision.md#public-api-jwt); [gate](vision.md#gate-audience)). It is not
   the default, and an unnarrowed token stays valid at every service;
 - sender-constrained presentation: DPoP for public clients, SPIFFE-ID binding
-  for SVID holders ([§5.4](vision.md#threat-model); [gate](vision.md#gate-sender)).
+  for SVID holders ([§5.4](vision.md#threat-model);
+  [gate](vision.md#gate-sender)).
 
 Then: scope-less access tokens, the JWT offline filter, and scoped tokens
 demoted to a compatibility option. The gate is the load-bearing part. Scope-less
@@ -369,21 +374,23 @@ replace.
 ### C3. Operation vocabulary and permissions {#c3-vocabulary-permissions}
 
 The operation registry, with versioning and fail-closed unknown operations
-([§6.1](vision.md#roles-and-permissions)). Roles become permission sets. Mapping bindings carry permissions. The
-batch check API serves collection reads ([§6.3](vision.md#authz-api)).
+([§6.1](vision.md#roles-and-permissions)). Roles become permission sets. Mapping
+bindings carry permissions. The batch check API serves collection reads
+([§6.3](vision.md#authz-api)).
 
 This is a separate program from C1 and C2, and the one with the most open
 governance questions: where the registry lives, who may write to it, and whether
-services push their policies or a central plane distributes them ([§10](vision.md#open-questions), question
-2). It should not hold C1 and C2 back.
+services push their policies or a central plane distributes them
+([§10](vision.md#open-questions), question 2). It should not hold C1 and C2
+back.
 
 ### C4. Policy-engine path {#c4-policy-engine}
 
 Services that want central authorization move from `oslo.policy` `http` checks
 against `/v4/authz/check` to a full policy-engine input. The compatibility mode
-of [§5.3](vision.md#compatibility) is switched off for those services one at a time. Service passwords and
-service `admin` grants are removed where no longer used. `X-Service-Token` is
-retired once nothing depends on it.
+of [§5.3](vision.md#compatibility) is switched off for those services one at a
+time. Service passwords and service `admin` grants are removed where no longer
+used. `X-Service-Token` is retired once nothing depends on it.
 
 ### 5.1 Two ways to consume the check API {#check-api-modes}
 
@@ -396,57 +403,59 @@ valid place to stop.
   as it does today with a scoped token. The swap happens inside
   `keystonemiddleware` and `oslo.policy`, not in the service. The service makes
   a one-time, reviewable compatibility-mode declaration that its policy checks
-  compare the requested target to each resource's own owner ([§5.3](vision.md#compatibility)). A service
-  whose `policy.yaml` tests only scope-level facts typically needs no code
-  change to satisfy it. This is the drop-in state when tokens go scope-less in
-  C2.
+  compare the requested target to each resource's own owner
+  ([§5.3](vision.md#compatibility)). A service whose `policy.yaml` tests only
+  scope-level facts typically needs no code change to satisfy it. This is the
+  drop-in state when tokens go scope-less in C2.
 - **Mode 2, full delegation.** The service sends the actor, the operation and
   the resource and receives allow or deny. This is the end state of C4.
 
 A deployment may stay on Mode 1 indefinitely. It gives up resource-level
-decisions ([§6.5](vision.md#resource-level-targets)), permission-set personas beyond what local rules encode, and
-central policy change without redeploying a service. Everything each service
-enforced before keeps working.
+decisions ([§6.5](vision.md#resource-level-targets)), permission-set personas
+beyond what local rules encode, and central policy change without redeploying a
+service. Everything each service enforced before keeps working.
 
 ## 6. Stream D: delegation {#stream-d}
 
 Design: [ADR 0036](adr/0036-service-delegation.md).
 
-- <span id="d1"></span>**D1. Service grants and on-behalf-of exchange.** The registry of delegatable
-  services, the grant resource and API, the redemption grant, the exchange,
-  lifecycle hooks and audit events. Pilots: Heat for grants, Glance for
-  exchange. JWT-SVID client authentication on the public interface comes with
-  its SPIRE preconditions (ADR 0036 §11, Phase 3).
-- <span id="d2"></span>**D2. Service migrations.** Every service that uses trusts swaps one creation
-  call and one authentication plugin: Heat, Mistral, Senlin, Aodh, Sahara,
-  Trove, Magnum's conductor, Glance. This is not a large change per service. It
-  is a multi-cycle effort across all of them, and it is the long pole of this
-  stream.
-- <span id="d3"></span>**D3. Trusts off, then removed.** A configuration switch turns trusts off by
-  default, with EC2 credentials under a grant handled first. Removal follows
-  once every deployment that shares a database with Python Keystone has moved
-  trust creation off it.
+- <span id="d1"></span>**D1. Service grants and on-behalf-of exchange.** The
+  registry of delegatable services, the grant resource and API, the redemption
+  grant, the exchange, lifecycle hooks and audit events. Pilots: Heat for
+  grants, Glance for exchange. JWT-SVID client authentication on the public
+  interface comes with its SPIRE preconditions ([ADR 0036] §11, Phase 3).
+- <span id="d2"></span>**D2. Service migrations.** Every service that uses
+  trusts swaps one creation call and one authentication plugin: Heat, Mistral,
+  Senlin, Aodh, Sahara, Trove, Magnum's conductor, Glance. This is not a large
+  change per service. It is a multi-cycle effort across all of them, and it is
+  the long pole of this stream.
+- <span id="d3"></span>**D3. Trusts off, then removed.** A configuration switch
+  turns trusts off by default, with EC2 credentials under a grant handled first.
+  Removal follows once every deployment that shares a database with Python
+  Keystone has moved trust creation off it.
 
 Trusts can be turned off only when D2 is complete for every service in use and
-A2 has removed the trustee password from Magnum guests (the dependency in [§2.1](#dependencies)).
-Neither C2 nor C3 is required.
+A2 has removed the trustee password from Magnum guests (the dependency in
+[§2.1](#dependencies)). Neither C2 nor C3 is required.
 
 ## 7. Stream E: the IAM data plane (optional) {#stream-e}
 
-Design: [IAM data plane and check API](iam-data-plane.md) and
-`doc/plans/iam-control-data-plane-split.md`. A small cloud that tolerates the
+Design: [IAM data plane and check API](iam-data-plane.md) and the [control plane
+and data plane split proposal][split-plan]. A small cloud that tolerates the
 availability of the Keystone nodes deploys none of this, and the API is the same
 either way.
 
-- <span id="e1"></span>**E1. Real learners.** Local reads with a version, lag metrics, a learner
-  SPIFFE role, and restore-based seeding.
-- <span id="e2"></span>**E2. `keystone-dataplane`.** The read-only binary over a database standby and
-  a Raft learner, serving the check API from C1 and credential validation.
-- <span id="e3"></span>**E3. Grant index and secrets isolation.** The in-memory grant index, batch
-  checks at lookup cost, and tier-keyed encryption or a second Raft group so
-  that replicas outside the control-plane trust zone become supportable.
+- <span id="e1"></span>**E1. Real learners.** Local reads with a version, lag
+  metrics, a learner SPIFFE role, and restore-based seeding.
+- <span id="e2"></span>**E2. `keystone-dataplane`.** The read-only binary over a
+  database standby and a Raft learner, serving the check API from C1 and
+  credential validation.
+- <span id="e3"></span>**E3. Grant index and secrets isolation.** The in-memory
+  grant index, batch checks at lookup cost, and tier-keyed encryption or a
+  second Raft group so that replicas outside the control-plane trust zone become
+  supportable.
 
-The amendment to ADR 0016-v2 §3 for learner reads must be made before E1.
+The amendment to [ADR 0016-v2] §3 for learner reads must be made before E1.
 
 ## 8. Changes per project {#per-project}
 
@@ -455,13 +464,13 @@ The amendment to ADR 0016-v2 §3 for learner reads must be made before E1.
 
 | Project                                                    | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `python-keystonemiddleware`                                | SPIFFE transport (A1); JWT offline filter (B1); `OpenStack-Target` parsing; `/v4/authz/check` client; `X-Requested-Target` and `X-Actor-*` environment; per-service gate for the [§5.3](vision.md#compatibility) compatibility mode (C1)                                                                                                                                                                                                                                           |
+| `python-keystonemiddleware`                                | SPIFFE transport (A1); JWT offline filter (B1); `OpenStack-Target` parsing; `/v4/authz/check` client; `X-Requested-Target` and `X-Actor-*` environment; per-service gate for the [§5.3](vision.md#compatibility) compatibility mode (C1)                                                                                                                                                                                                                |
 | `keystoneauth1`                                            | Device-flow, `v4servicegrant` and `v4onbehalfof` plugins (D1); per-request scope instead of per-session scope (C1)                                                                                                                                                                                                                                                                                                                                      |
 | `oslo.policy`                                              | A failure-aware `keystone` check type wrapping `/v4/authz/check` (C1): no cross-request decision cache by default, a request-scoped memo keyed on `(subject, chain, target, operation)`, batch checks for the per-item re-check, a list of replicas tried in order with a fail-closed breaker per replica, and `version` logged with every decision. The existing `http` check is a stopgap that provides none of these. Operation registry export (C3) |
 | `openstacksdk`, CLI, Terraform                             | Send `OpenStack-Target`; stop re-authenticating per project (C1)                                                                                                                                                                                                                                                                                                                                                                                        |
-| Nova, Neutron, Cinder, Glance                              | Enforce resource-owner-wins ([§5.1](vision.md#request-contract)) on every resource operation before accepting per-request targets; pass the resource owner as `target.scope`; charge quota to the resolved target ([§6.6](vision.md#quota-and-limits)); drop `is_admin` shortcuts and service-token fallbacks (C1)                                                                                                                                                                                                  |
-| Heat, Mistral, Senlin, Aodh, Sahara, Trove, Magnum, Glance | Service grants and on-behalf-of exchange instead of trusts (D2, ADR 0036 §10)                                                                                                                                                                                                                                                                                                                                                                           |
-| Nova (compute)                                             | `vendor_data_url` to Keystone; per-host SVID (A2, SPIRE plan Phases 1 and 2)                                                                                                                                                                                                                                                                                                                                                                            |
+| Nova, Neutron, Cinder, Glance                              | Enforce resource-owner-wins ([§5.1](vision.md#request-contract)) on every resource operation before accepting per-request targets; pass the resource owner as `target.scope`; charge quota to the resolved target ([§6.6](vision.md#quota-and-limits)); drop `is_admin` shortcuts and service-token fallbacks (C1)                                                                                                                                      |
+| Heat, Mistral, Senlin, Aodh, Sahara, Trove, Magnum, Glance | Service grants and on-behalf-of exchange instead of trusts (D2, [ADR 0036] §10)                                                                                                                                                                                                                                                                                                                                                                         |
+| Nova (compute)                                             | `vendor_data_url` to Keystone; per-host SVID (A2, [SPIRE plan] Phases 1 and 2)                                                                                                                                                                                                                                                                                                                                                                          |
 | Deployment tooling                                         | SPIRE server and agents (A0); OPA or the `oslo.policy` bridge; internal endpoints on SPIFFE mTLS (A1); optionally the data plane per failure domain with its database standby and learner state (E)                                                                                                                                                                                                                                                     |
 
 ## 9. Retirement {#retirement}
@@ -489,7 +498,7 @@ against it use these numbers.
 | Phase 4, delegation               | D1, D2, D3 (no longer behind C2 and C3)      |
 | Phase 5, tenant workload identity | A2 (no longer behind C2)                     |
 | Phase 6, policy-engine path       | C4                                           |
-| Phase 7, sunset                   | Retirement ([§9](#retirement))                              |
+| Phase 7, sunset                   | Retirement ([§9](#retirement))               |
 
 ## 11. Open ordering questions {#open-ordering}
 
@@ -500,3 +509,12 @@ against it use these numbers.
   service-supplied (C3)? It decides who holds the privilege to widen what every
   reader may do.
 - Which release cycle carries stream B, given that it should carry nothing else?
+
+[ADR 0016-v2]: adr/0016-v2-raft-storage.md
+[ADR 0020]: adr/0020-mapping-engine.md
+[ADR 0032]: adr/0032-vendor-data-jwt.md
+[ADR 0036]: adr/0036-service-delegation.md
+[SPIRE plan]:
+  https://github.com/openstack-experimental/keystone/blob/main/doc/plans/spire-integration.md
+[split-plan]:
+  https://github.com/openstack-experimental/keystone/blob/main/doc/plans/iam-control-data-plane-split.md

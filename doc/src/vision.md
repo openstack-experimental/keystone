@@ -6,13 +6,12 @@
 
 This document proposes a target model for authentication and authorization
 across OpenStack. It is derived from the architecture decisions already taken in
-the Rust Keystone implementation (the ADRs under `adr/`) and from the SPIRE
-integration plan (`doc/plans/spire-integration.md`), and it extends them into
-one coherent picture that other OpenStack projects can react to. It is
-deliberately written for a wide audience: operators, service maintainers, SDK
-authors, and the Technical Committee. It is not an ADR and it does not commit
-any project to anything; its purpose is to give the community a concrete
-proposal to argue about.
+the Rust Keystone implementation (the ADRs under `adr/`) and from the
+[SPIRE integration plan], and it extends them into one coherent picture that other
+OpenStack projects can react to. It is deliberately written for a wide audience:
+operators, service maintainers, SDK authors, and the Technical Committee. It is
+not an ADR and it does not commit any project to anything; its purpose is to
+give the community a concrete proposal to argue about.
 
 The model is described independently of any implementation. The Rust Keystone is
 the reference implementation and the place where the building blocks already
@@ -23,6 +22,9 @@ concern them.
 Each part states its own requirements and limits where it is described, and the
 last section lists the questions the community, not this document, has to
 answer.
+
+A one-page version for decision-makers is the
+[executive summary](vision-executive-summary.md).
 
 This document says what the model is and why. The order in which it is adopted
 is in the [roadmap](roadmap.md). The design detail of the check API and the data
@@ -35,8 +37,8 @@ artifact proves who the caller is, where it may act and what it may do. The
 proposal separates the three.
 
 - **Tokens say who, and nothing else.** Short-lived, scope-less JWTs from an
-  OAuth2/OIDC provider. Public clients use DPoP (RFC 9449) and SVID holders use
-  JWT-SVID client authentication (RFC 7523). Authentication is validated
+  OAuth2/OIDC provider. Public clients use DPoP ([RFC 9449]) and SVID holders
+  use JWT-SVID client authentication ([RFC 7523]). Authentication is validated
   offline. Authorization is not: it is decided per request. During the
   transition scoped tokens remain available. A token still carries
   authentication facts such as `amr`, `act`, `delegation_context` and optional
@@ -59,9 +61,9 @@ proposal separates the three.
   a user still carries the user's JWT, forwarded or exchanged. A callee can also
   key a rule on the calling service's identity without reading roles.
 - **Trusts are replaced.** Service grants are server-side, revocable records for
-  authority that must work with no user present. RFC 8693 on-behalf-of exchange
-  continues a user's operation. No secret is delegated, and the `act` and
-  `delegation_context` claims record the chain
+  authority that must work with no user present. [RFC 8693] on-behalf-of
+  exchange continues a user's operation. No secret is delegated, and the `act`
+  and `delegation_context` claims record the chain
   ([ADR 0036](adr/0036-service-delegation.md)).
 - **Tenant workloads get identity without credentials.** A VM or cluster node
   attests with a Keystone-signed proof of its placement and receives an SVID
@@ -164,7 +166,7 @@ Consequences:
   cross-project operations, cloud-wide read, and services acting on behalf of
   users.
 - Scope is attacker-influenceable through rescope. Two 2026 advisories
-  (OSSA-2026-005, OSSA-2026-015; see the
+  ([OSSA-2026-005], [OSSA-2026-015]; see the
   [security model](contributor/security-model.md)) are instances of a decision
   keyed on token scope instead of on the immutable authentication chain.
 
@@ -322,13 +324,13 @@ during the transition.
 9. **Grants are roles and permissions; a relation store is an implementation
    choice.** The model works on the SQL assignment driver alone. Roles,
    inheritance and permission sets answer every problem in
-   [§7](#what-this-solves); an OpenFGA-backed driver (ADR 0033) is valuable for
-   deployments that already run a relation store and for resource-level grants
-   ([§6.5](#resource-level-targets)), and it is a per-domain backend decision
-   (ADR 0034), never a prerequisite for adopting anything here. The choice also
-   decides where the data plane's replica comes from: on the SQL and Raft
-   drivers the data plane holds its own copy; on an externally owned store it is
-   a client of the store's replication ([§6.3](#authz-api),
+   [§7](#what-this-solves); an OpenFGA-backed driver ([ADR 0033]) is valuable
+   for deployments that already run a relation store and for resource-level
+   grants ([§6.5](#resource-level-targets)), and it is a per-domain backend
+   decision ([ADR 0034]), never a prerequisite for adopting anything here. The
+   choice also decides where the data plane's replica comes from: on the SQL and
+   Raft drivers the data plane holds its own copy; on an externally owned store
+   it is a client of the store's replication ([§6.3](#authz-api),
    [§8.1](#control-data-plane-split)).
 10. **Copies of authorization state are replicas, never caches.** A replica's
     freshness is maintained by the replication protocol, which observes every
@@ -383,15 +385,15 @@ flowchart LR
 
 ### 4.1 Identity tracks {#identity-tracks}
 
-| Caller                                  | Authentication                                                                         | What the service sees                                                      |
-| --------------------------------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Human at a browser                      | OIDC authorization code + PKCE at Keystone; passkey or federated IdP behind it         | Bearer JWT, `sub` = user, `amr` = `["webauthn"]` etc.                      |
-| Human at a CLI                          | Device authorization grant (browser login with passkey/MFA on a headless machine)      | Same JWT                                                                   |
-| External CI / operator                  | Workload federation: platform JWT exchanged through the mapping engine (ADR 0008/0020) | Bearer JWT, `sub` = mapped principal                                       |
-| Tenant VM / cluster node                | SPIRE-issued project/instance SVID, presented as JWT-SVID `private_key_jwt`            | Bearer JWT, `sub` = ephemeral principal bound to `spiffe.project_id`       |
-| Control-plane service acting as itself  | X.509 SVID at the TLS layer of the internal interface                                  | No token at all; peer identity from the TLS session, mapped to a principal |
-| Control-plane service acting for a user | The user's JWT forwarded, or an on-behalf-of token with `act` (ADR 0036 §6)            | User JWT plus service SVID at the transport                                |
-| Deferred automation (Heat, Magnum)      | Service grant redeemed with the service SVID (ADR 0036 §5)                             | JWT with `sub` = grantor, `act` = service                                  |
+| Caller                                  | Authentication                                                                           | What the service sees                                                      |
+| --------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Human at a browser                      | OIDC authorization code + PKCE at Keystone; passkey or federated IdP behind it           | Bearer JWT, `sub` = user, `amr` = `["webauthn"]` etc.                      |
+| Human at a CLI                          | Device authorization grant (browser login with passkey/MFA on a headless machine)        | Same JWT                                                                   |
+| External CI / operator                  | Workload federation: platform JWT exchanged through the mapping engine ([ADR 0008]/0020) | Bearer JWT, `sub` = mapped principal                                       |
+| Tenant VM / cluster node                | SPIRE-issued project/instance SVID, presented as JWT-SVID `private_key_jwt`              | Bearer JWT, `sub` = ephemeral principal bound to `spiffe.project_id`       |
+| Control-plane service acting as itself  | X.509 SVID at the TLS layer of the internal interface                                    | No token at all; peer identity from the TLS session, mapped to a principal |
+| Control-plane service acting for a user | The user's JWT forwarded, or an on-behalf-of token with `act` ([ADR 0036] §6)            | User JWT plus service SVID at the transport                                |
+| Deferred automation (Heat, Magnum)      | Service grant redeemed with the service SVID ([ADR 0036] §5)                             | JWT with `sub` = grantor, `act` = service                                  |
 
 ### 4.2 The OpenStack control plane: mTLS, no dedicated authentication {#control-plane-mtls}
 
@@ -399,7 +401,7 @@ flowchart LR
 > operator-level picture; the [TL;DR](#tldr) and [§1](#one-page) cover it.
 
 Every OpenStack control-plane process holds a SPIFFE identity from a local SPIRE
-agent (SPIRE plan Phase 1). Keystone's internal interface, and the internal
+agent ([SPIRE plan] Phase 1). Keystone's internal interface, and the internal
 endpoints of every other service, terminate SPIFFE mTLS and identify the peer
 from the SVID URI. A request from `spiffe://td/service/nova-api` to Neutron is
 authenticated by the handshake; Neutron's policy input carries the peer as
@@ -411,7 +413,7 @@ This removes:
   services hold today;
 - `X-Service-Token` and `service_token_roles_required`, which exist only because
   the transport carried no service identity;
-- the plaintext back-channel from `keystonemiddleware` to Keystone (SPIRE plan
+- the plaintext back-channel from `keystonemiddleware` to Keystone ([SPIRE plan]
   Phase 4.1, the middleware SPIFFE mTLS transport change).
 
 It does not remove the service as a subject of authorization. Every service
@@ -427,8 +429,8 @@ user must read `credentials`, not `service_credentials`. Read the other way,
 this would reintroduce the service-user-with-`admin` pattern under a new name.
 
 Per-host identities (`.../nova-compute/host/{hostname}`) let Keystone bind an
-attestation request to the compute host that actually runs the instance (ADR
-0032), which a flat service identity cannot do.
+attestation request to the compute host that actually runs the instance
+([ADR 0032]), which a flat service identity cannot do.
 
 ```mermaid
 flowchart LR
@@ -454,10 +456,10 @@ flowchart LR
 
 ### 4.3 Public API: a JWT that says who, and a request that says where {#public-api-jwt}
 
-Keystone is an OAuth2/OIDC provider (ADR 0026). The access token it issues for
+Keystone is an OAuth2/OIDC provider ([ADR 0026]). The access token it issues for
 OpenStack APIs carries:
 
-- `iss`, `sub`, `aud`, `exp` of about fifteen minutes, `jti`, `amr`. ADR 0036
+- `iss`, `sub`, `aud`, `exp` of about fifteen minutes, `jti`, `amr`. [ADR 0036]
   §7.1 defaults `aud` to the control-plane-wide `openstack-apis` (the domain is
   carried by `iss`, not `aud`), narrowed to specific service types
   (`openstack-apis:compute`, …) only when the client requests it. When no
@@ -694,14 +696,15 @@ on the OAuth2 token endpoint:
   Mistral workflows): a user-visible, revocable record naming a registered
   service client as grantee; redeemed with the service's SVID; token `sub` is
   the grantor and `act` is the service.
-- **On-behalf-of exchange** (RFC 8693) for continuing a user-initiated operation
-  past token expiry (Glance import, long migrations): the service exchanges the
-  user's token for one that carries `act`, bound to the root token's `jti` so
-  revoking the user's token ends the chain.
+- **On-behalf-of exchange** ([RFC 8693]) for continuing a user-initiated
+  operation past token expiry (Glance import, long migrations): the service
+  exchanges the user's token for one that carries `act`, bound to the root
+  token's `jti` so revoking the user's token ends the chain.
 
 No impersonation flag, no redelegation, no use counter, no trustee user, no
 password in a cluster. Both mechanisms already place every delegation fact in
-`delegation_context`, so they survive scope-less tokens unchanged (ADR 0036 §7).
+`delegation_context`, so they survive scope-less tokens unchanged
+([ADR 0036] §7).
 
 A service and the guests it provisions are different identity tracks. The
 conductor of a Magnum cluster holds a grant here; the cluster's nodes are
@@ -734,11 +737,12 @@ sequenceDiagram
 
 ### 4.6 Tenant workload identity {#tenant-workload-identity}
 
-The SPIRE plan gives every VM a platform identity without a secret in the guest:
+The [SPIRE plan] gives every VM a platform identity without a secret in the
+guest:
 
 1. Nova asks Keystone (over mTLS, with its per-host SVID) for a short-lived
    attestation JWT for `(project, instance)`; Keystone verifies placement with
-   Nova before signing (ADR 0032).
+   Nova before signing ([ADR 0032]).
 2. The JWT is delivered through vendor data; the guest's SPIRE agent presents it
    to the SPIRE server, which mints `spiffe://td/project/{p}/instance/{i}`.
 3. The workload calls Keystone's token endpoint with the JWT-SVID
@@ -749,7 +753,7 @@ The SPIRE plan gives every VM a platform identity without a secret in the guest:
 
 The same path serves Magnum cluster nodes, Trove database guests and any tenant
 automation that runs on the cloud; Octavia amphorae are a candidate once their
-certificate bootstrap is reconsidered (out of scope in ADR 0036). Where a
+certificate bootstrap is reconsidered (out of scope in [ADR 0036]). Where a
 service provisions guests today with an impersonating trust — Magnum writes a
 per-cluster trustee password and trust id into every node, and the components
 inside redeem the trust _as the cluster owner_ — this path changes the actor:
@@ -782,12 +786,12 @@ sequenceDiagram
 
 ### 4.7 Human authentication {#human-authentication}
 
-- **Passkeys** (ADR 0005) are the default strong method. Keystone acts as the
+- **Passkeys** ([ADR 0005]) are the default strong method. Keystone acts as the
   WebAuthn relying party; the OIDC provider records `amr: ["webauthn"]`, so a
   policy can require phishing-resistant authentication for sensitive operations
   (key rotation, role assignment, grant creation).
-- **External IdPs** federate through the mapping engine (ADR 0020), including
-  expiring group membership (ADR 0013) and SCIM provisioning (ADR 0024).
+- **External IdPs** federate through the mapping engine ([ADR 0020]), including
+  expiring group membership ([ADR 0013]) and SCIM provisioning ([ADR 0024]).
 - **CLI login** is meant to reach passkeys: a CLI authenticating with WebAuthn
   directly, with the device authorization grant covering headless machines and
   CI by delegating to a passkey-capable browser login, is the target design — no
@@ -834,7 +838,7 @@ order of precedence:
    scope that disagrees with it is a policy violation and the request fails
    closed (404 or 403 per the service's existing disclosure rules).
 2. **Header.** For operations that have no existing resource (create, list,
-   actions on collections), the client sends a structured header (RFC 8941
+   actions on collections), the client sends a structured header ([RFC 8941]
    dictionary syntax) naming the target:
 
    ```http
@@ -943,7 +947,7 @@ confusion of [§2.1](#tokens-carry-scope). It fills them only in the
   behaviour of [§5.1](#request-contract) item 3, which an operator can set to
   "subject's default project" to keep unmodified tooling working.
 - Keystone continues to issue scoped tokens on request; `audience` narrowing
-  (ADR 0036 §7.1) and the `restrictions` claim ([§5.4](#threat-model)) let a
+  ([ADR 0036] §7.1) and the `restrictions` claim ([§5.4](#threat-model)) let a
   client voluntarily pre-bind a token where a deployment wants that.
 - **Compatibility mode is a per-service opt-in.** A service can ask the
   middleware to keep populating `X-Project-Id`, `X-Domain-Id`, `X-Roles` and
@@ -961,8 +965,8 @@ confusion of [§2.1](#tokens-carry-scope). It fills them only in the
   is chosen by the caller. A rule that reads `project_id` without comparing it
   to the resource — or code that stamps ownership, charges quota or shortcuts on
   `is_admin` from it — becomes caller-influenceable, which is the defect class
-  of OSSA-2026-015. Adopting per-request targets is therefore a real, reviewable
-  change in each service, and the roadmap budgets for it.
+  of [OSSA-2026-015]. Adopting per-request targets is therefore a real,
+  reviewable change in each service, and the roadmap budgets for it.
 
   The mode exists so a service can accept per-request targets before moving its
   policy to the check API, and is time-boxed on the same footing as the
@@ -984,15 +988,16 @@ replaces.) The roadmap splits the migration at exactly this line.
 - <span id="gate-sender"></span>**Sender constraint (gate).** JWTs issued to
   SVID holders are presented over mTLS and bound to the SPIFFE identity by
   verifying the TLS peer, not by the `sub` claim (which is the mapped principal,
-  not the SPIFFE ID); JWTs issued to public clients use DPoP (ADR 0026 v1.5) so
-  a stolen token is unusable without the client's key. ADR 0036 rules out RFC
-  8705 because SPIRE rotates certificates, which is correct for a thumbprint
-  binding — the workable substitute is to bind to the **SPIFFE ID** rather than
-  to the certificate, verified at the internal interface where the SVID is the
-  TLS peer, and that binding needs specifying before scope-less tokens ship.
+  not the SPIFFE ID); JWTs issued to public clients use DPoP ([ADR 0026] v1.5)
+  so a stolen token is unusable without the client's key. [ADR 0036] rules out
+  [RFC 8705] because SPIRE rotates certificates, which is correct for a
+  thumbprint binding — the workable substitute is to bind to the **SPIFFE ID**
+  rather than to the certificate, verified at the internal interface where the
+  SVID is the TLS peer, and that binding needs specifying before scope-less
+  tokens ship.
 - <span id="gate-audience"></span>**Audience narrowing (gate).** Available end
   to end, not the default ([§4.3](#public-api-jwt)): a client may request a
-  per-service-type audience (ADR 0036 §7.1), and services know their own type
+  per-service-type audience ([ADR 0036] §7.1), and services know their own type
   and accept it, so a token captured at one service cannot be replayed at
   another. A client that omits the audience gets a token every service accepts;
   holders of broad authority (CI, automation) are expected to narrow, and sender
@@ -1002,23 +1007,24 @@ replaces.) The roadmap splits the migration at exactly this line.
   targets and operations (the AWS STS session-policy shape). Restrictions only
   ever narrow, are chain facts, and are intersected by `/v4/authz/check`. Token
   restrictions already exist in the Rust implementation (`TokenRestriction`,
-  designed into ADR 0015's role-mapping schema for the Kubernetes authentication
-  method, though the k8s-auth drivers don't wire it in yet); this generalizes
-  them. They are also the feature application-credential access rules only ever
-  promised for one credential type ([§2.5](#roles-only-unit-of-grant)): a CI job
-  or a script can hold a token that can do exactly one thing. Scope-less must be
-  the default, never the only option; without restrictions the proposal trades
-  one problem (too many tokens) for another (every token is a master key).
+  designed into [ADR 0015]'s role-mapping schema for the Kubernetes
+  authentication method, though the k8s-auth drivers don't wire it in yet); this
+  generalizes them. They are also the feature application-credential access
+  rules only ever promised for one credential type
+  ([§2.5](#roles-only-unit-of-grant)): a CI job or a script can hold a token
+  that can do exactly one thing. Scope-less must be the default, never the only
+  option; without restrictions the proposal trades one problem (too many tokens)
+  for another (every token is a master key).
 - **Short lifetime** (fifteen minutes) with refresh-token rotation and family
-  breach detection (ADR 0026 §9).
+  breach detection ([ADR 0026] §9).
 - **Fail-closed scope agreement.** The resource-derived target always wins over
   the header; a mismatch is an error, never a silent widening
   ([§5.1](#request-contract)).
 - **Audit.** Every decision logs subject, `act`, requested scope, resolved
-  target, operation, outcome and the state `version` it was decided against (ADR
-  0023), which is what makes anomaly detection on a stolen token possible at
-  all. Because no decision is answered from a cache, every one reaches the data
-  plane (or the Keystone node serving in its place), whose decision log is
+  target, operation, outcome and the state `version` it was decided against (
+  [ADR 0023]), which is what makes anomaly detection on a stolen token possible
+  at all. Because no decision is answered from a cache, every one reaches the
+  data plane (or the Keystone node serving in its place), whose decision log is
   therefore complete; the enforcement point records the same facts for
   correlation with the request it served ([§6.3](#authz-api)).
 
@@ -1102,7 +1108,7 @@ receive:
   projected by `Credentials` in the Rust implementation, without roles;
 - `service_credentials`: the mTLS peer, when a service is calling;
 - `target.scope`: the resolved target of [§5.1](#request-contract);
-- `target.<resource>` and `existing.<resource>` per ADR 0002;
+- `target.<resource>` and `existing.<resource>` per [ADR 0002];
 - `operation`: the permission identifier;
 - `context`: extra resource facts the calling service attaches for a single
   decision — Neutron's `rbac_policy` sharing rows, an image's member list, a
@@ -1140,10 +1146,10 @@ the listed operations are allowed and through which grant. It applies:
 
 It is served by the IAM data plane of [§4.4](#authz-policy-asks-keystone) where
 one is deployed, and by the IAM control plane itself where one is not; no caller
-holds a cross-request copy of the answer. The OpenFGA assignment driver
-(ADR 0033) and per-domain drivers (ADR 0034) mean a deployment can back this API
+holds a cross-request copy of the answer. The OpenFGA assignment driver (
+[ADR 0033]) and per-domain drivers ([ADR 0034]) mean a deployment can back this API
 with a Zanzibar-style relation store for tenants that already run one, with
-relation sync (ADR 0035) keeping group membership consistent, at the cost of a
+relation sync ([ADR 0035]) keeping group membership consistent, at the cost of a
 freshness guarantee the store defines rather than Keystone, which the rest of
 this section works through.
 
@@ -1174,10 +1180,10 @@ conclusions are these:
 > if** you do not write mapping rules; [§4.6](#tenant-workload-identity) covers
 > the flow.
 
-With permissions as a unit of grant, a mapping rule (ADR 0020) can bind an
-identity to exactly what it needs. ADR 0020's normative rule shape is
+With permissions as a unit of grant, a mapping rule ([ADR 0020]) can bind an
+identity to exactly what it needs. [ADR 0020]'s normative rule shape is
 `match.all_of` / `{type, claim, value}`, an `identity` block (with
-`identity_mode`) and an `authorizations` list; the SPIRE integration plan uses
+`identity_mode`) and an `authorizations` list; the [SPIRE integration plan] uses
 the same shape. This example follows it, with two extensions the mapping engine
 does not have yet: a `permissions` authorization type for the permission-set
 future of [§6.1](#roles-and-permissions), and `${claims.*}` interpolation in a
@@ -1222,7 +1228,7 @@ subject holds on that target, which stay in Keystone. There is deliberately no
 mint-time document that answers the question by itself — which is why the check
 API exists, and why attaching a small precomputed policy to the credential is
 not an alternative to it. Human users get the same through service grants with a
-role-id ceiling (ADR 0036 §4, `ServiceGrant.role_ids`) — extended to carry
+role-id ceiling ([ADR 0036] §4, `ServiceGrant.role_ids`) — extended to carry
 permission sets once permission sets exist — or through self-imposed
 `restrictions`.
 
@@ -1236,7 +1242,7 @@ sets and depends on services registering their resource types, but the check API
 shape does not change.
 
 This is where a relation store earns its keep: resource-level grants are the
-shape OpenFGA (ADR 0033) models well, and a deployment that runs one can back
+shape OpenFGA ([ADR 0033]) models well, and a deployment that runs one can back
 this phase with it. Per principle 9 that stays a backend choice — the same
 grants are expressible on the SQL assignment driver, and no part of this
 proposal requires a relation store to be deployed.
@@ -1322,7 +1328,7 @@ plain rule.
 
 Replaced as described in [§4.5](#delegation-without-secrets). The remaining
 trust-shaped use cases in Heat, Magnum, Mistral, Glance, Nova and Cinder each
-have a documented migration in ADR 0036 §10.
+have a documented migration in [ADR 0036] §10.
 
 ### 7.6 Cross-project operations {#solves-cross-project}
 
@@ -1348,8 +1354,8 @@ free.
 > see the [roadmap](roadmap.md).
 
 Offline JWT validation removes Keystone from the data path but freezes
-authorization for the token lifetime (ADR 0026 §11, SPIRE plan "Mode C"). The
-SPIRE plan names three `keystonemiddleware` postures: **Mode A** legacy
+authorization for the token lifetime ([ADR 0026] §11, [SPIRE plan] "Mode C").
+The [SPIRE plan] names three `keystonemiddleware` postures: **Mode A** legacy
 (plaintext back-channel), **Mode B** SPIFFE mTLS with a per-request back-channel
 call (keeps instant revocation), and **Mode C** JWT offline validation (no
 back-channel, trades instant revocation for zero round trips). The proposal
@@ -1362,11 +1368,11 @@ changes the trade-off:
   replication lag — milliseconds inside a failure domain, seconds across a WAN —
   and never a lifetime an operator configured. The replica reports the lag, and
   past `max_staleness` it refuses rather than allows ([§6.3](#authz-api)).
-- An optional signed revocation feed (`/v4/oauth2/{domain}/revocations`, SPIRE
-  plan "Mode C") bounds credential revocation for offline validators without a
-  per-request round trip. Where credential validation is served from the data
-  plane, the revocation events are part of the replicated state and need no
-  separate feed.
+- An optional signed revocation feed (`/v4/oauth2/{domain}/revocations`,
+  [SPIRE plan] "Mode C") bounds credential revocation for offline validators
+  without a per-request round trip. Where credential validation is served from
+  the data plane, the revocation events are part of the replicated state and
+  need no separate feed.
 
 Keystone therefore remains a runtime dependency, as [§2.2](#keystone-round-trip)
 states: this proposal makes IAM more resistant in a stated way rather than
@@ -1413,7 +1419,7 @@ exists to survive is coupled to it, whatever the deployment diagram says.
 The requirement binds whoever owns the inputs, which is not always the replica.
 Where Keystone owns them — the SQL and Raft drivers — the local copy is the
 replica's own, and static stability is Keystone's to hold and to test. Where a
-domain's assignments live in an externally owned store (ADR 0033), the replica
+domain's assignments live in an externally owned store ([ADR 0033]), the replica
 is a client rather than a holder: it has no copy to cold-boot from, and static
 stability becomes a property of that store's own replication (an OpenFGA
 instance per failure domain over a standby of its database gives the same
@@ -1455,7 +1461,7 @@ exactly this:
 - no operation-vocabulary changes ([§6.1](#roles-and-permissions));
 - no authentication of any kind: no login, no token issuance, no refresh, no
   JWT-SVID exchange, no service-grant redemption, no on-behalf-of exchange
-  ([§4.5](#delegation-without-secrets), ADR 0036), no attestation for new
+  ([§4.5](#delegation-without-secrets), [ADR 0036]), no attestation for new
   instances ([§4.6](#tenant-workload-identity));
 - no project, domain or user lifecycle operations.
 
@@ -1476,7 +1482,7 @@ moment the validation cache expires, it is still the largest availability change
 in this proposal.
 
 One further lever is already in the repository and unremarked: per-domain
-drivers (ADR 0034) make the write path shardable by domain, so a cloud-wide
+drivers ([ADR 0034]) make the write path shardable by domain, so a cloud-wide
 control-plane failure domain is a deployment default rather than something this
 architecture requires.
 
@@ -1577,7 +1583,7 @@ keep working throughout, and four rules are what "additive" means:
 - v3 scoped tokens and `OpenStack-Target` coexist. A scoped token's own scope is
   the requested scope, and a conflicting header is rejected
   ([§5.3](#compatibility)).
-- Python Keystone keeps validating the tokens Rust Keystone issues (ADR 0026)
+- Python Keystone keeps validating the tokens Rust Keystone issues ([ADR 0026])
   until it is retired.
 - No Python-owned table changes; new state lives in Raft-backed drivers.
 - Every capability has an off switch that restores the previous behaviour for
@@ -1601,7 +1607,7 @@ on the wrong input.
 
 ## 10. What the community still decides {#open-questions}
 
-1. **Header grammar details.** `OpenStack-Target` as an RFC 8941 dictionary is
+1. **Header grammar details.** `OpenStack-Target` as an [RFC 8941] dictionary is
    proposed; open are the exact member names, whether `resource` is mandatory
    for single-resource operations once services support it, and how multi-target
    operations (server migration between projects, image sharing) name a second
@@ -1633,7 +1639,7 @@ on the wrong input.
    matrix?** Whether each assignment driver declares what it reports as
    `version`, whether it honours `min_version`, and what revocation latency it
    can be held to — a contract operators can hold the project to — or whether
-   that stays an implementation note in ADR 0034, is a governance question as
+   that stays an implementation note in [ADR 0034], is a governance question as
    much as a technical one. Operators pick drivers on it, and an LDAP-backed or
    externally stored input is the row that reports no version at all.
 8. **Is anything owed to deployments that want local evaluation?** This proposal
@@ -1671,7 +1677,7 @@ on the wrong input.
 12. **When does a domain move its assignments to the Raft driver?**
     [§6.3](#authz-api) compares the two Keystone-owned drivers. Whether a
     greenfield deployment starts on Raft, whether a domain migrates at Python
-    Keystone's retirement or earlier under ADR 0034, and whether group
+    Keystone's retirement or earlier under [ADR 0034], and whether group
     membership and hierarchy are mirrored into the driver or joined across
     providers, are decisions for that driver's ADR.
 13. **Which mechanism keeps secrets away from replicas, and which secrets?**
@@ -1685,9 +1691,9 @@ on the wrong input.
 
 Most ADRs below are **Accepted** and describe the system as it stands. ADRs
 0024, 0030, 0031, 0032, 0034, 0035 and 0036 are still **Proposed**; this vision
-describes them in the same present tense as the rest for readability. ADR 0024's
-SCIM endpoints and ADR 0032's vendordata endpoint already ship; the rest are not
-implemented yet. ADR 0036 carries the most weight here —
+describes them in the same present tense as the rest for readability. [ADR 0024]'s
+SCIM endpoints and [ADR 0032]'s vendordata endpoint already ship; the
+rest are not implemented yet. [ADR 0036] carries the most weight here —
 [§4.5](#delegation-without-secrets) and [§7.5](#solves-trusts) build directly on
 it — so its proposed status is the one to track.
 
@@ -1715,12 +1721,41 @@ it — so its proposed status is the one to track.
 - [Security model](contributor/security-model.md)
 - [Roadmap](roadmap.md)
 - [IAM data plane and check API: design detail](iam-data-plane.md)
-- SPIRE integration plan (`doc/plans/spire-integration.md`)
-- Control plane and data plane split, review and proposal
-  (`doc/plans/iam-control-data-plane-split.md`)
+- [SPIRE integration plan]
+- [Control plane and data plane split, review and proposal][split-plan]
 - OpenStack community goal: Consistent and Secure Default RBAC
 - Keystone X.509 tokenless authorization (Python Keystone feature, not present
   in this repo — see the
   [OpenStack Keystone tokenless authentication docs](https://docs.openstack.org/keystone/latest/admin/configure_tokenless_x509.html))
-- RFC 8693 (token exchange), RFC 9449 (DPoP), RFC 8705 (mTLS-bound tokens), RFC
-  7523 (JWT client authentication), SPIFFE/SPIRE specifications
+- [RFC 8693] (token exchange), [RFC 9449] (DPoP), [RFC 8705] (mTLS-bound
+  tokens), [RFC 7523] (JWT client authentication), [RFC 8941] (structured field
+  values), [SPIFFE and SPIRE specifications][spiffe]
+
+[ADR 0002]: adr/0002-open-policy-agent.md
+[ADR 0005]: adr/0005-auth-passkey.md
+[ADR 0008]: adr/0008-federation-workload.md
+[ADR 0013]: adr/0013-federation-oidc-expiring-group-membership.md
+[ADR 0015]: adr/0015-kubernetes-auth.md
+[ADR 0020]: adr/0020-mapping-engine.md
+[ADR 0023]: adr/0023-audit.md
+[ADR 0024]: adr/0024-scim-v2-provisioning.md
+[ADR 0026]: adr/0026-oauth2-oidc-provider.md
+[ADR 0032]: adr/0032-vendor-data-jwt.md
+[ADR 0033]: adr/0033-openfga-assignment-driver.md
+[ADR 0034]: adr/0034-per-domain-assignment-drivers.md
+[ADR 0035]: adr/0035-relation-sync-provider.md
+[ADR 0036]: adr/0036-service-delegation.md
+[OSSA-2026-005]: https://security.openstack.org/ossa/OSSA-2026-005.html
+[OSSA-2026-015]: https://security.openstack.org/ossa/OSSA-2026-015.html
+[RFC 7523]: https://www.rfc-editor.org/info/rfc7523
+[RFC 8693]: https://www.rfc-editor.org/info/rfc8693
+[RFC 8705]: https://www.rfc-editor.org/info/rfc8705
+[RFC 8941]: https://www.rfc-editor.org/info/rfc8941
+[RFC 9449]: https://www.rfc-editor.org/info/rfc9449
+[SPIRE integration plan]:
+  https://github.com/openstack-experimental/keystone/blob/main/doc/plans/spire-integration.md
+[SPIRE plan]:
+  https://github.com/openstack-experimental/keystone/blob/main/doc/plans/spire-integration.md
+[split-plan]:
+  https://github.com/openstack-experimental/keystone/blob/main/doc/plans/iam-control-data-plane-split.md
+[spiffe]: https://spiffe.io/docs/latest/spiffe-about/overview/

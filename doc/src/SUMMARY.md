@@ -1,6 +1,7 @@
 # OpenStack Keystone
 
 [Introduction](index.md)
+[Executive summary of the vision](vision-executive-summary.md)
 [Authentication and authorization vision](vision.md)
 [Authentication and authorization roadmap](roadmap.md)
 [IAM data plane and check API design](iam-data-plane.md)
