@@ -70,6 +70,7 @@ mod response;
 pub mod spiffe_wait;
 pub mod store;
 pub mod store_command;
+pub(crate) mod sync_progress;
 mod types;
 #[cfg(test)]
 mod wire_format_tests;

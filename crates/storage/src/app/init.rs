@@ -454,6 +454,11 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
     {
         let meter = openstack_keystone_telemetry::metrics::meter();
         let metrics_rx = raft.metrics();
+        let progress_rx = metrics_rx.clone();
+        tokio::spawn(crate::sync_progress::report_sync_progress(
+            move || progress_rx.borrow_watched().clone(),
+            ds_config.node_id,
+        ));
         crate::prometheus_metrics::register_gauges(&meter, ds_config.node_id, move || {
             metrics_rx.borrow_watched().clone()
         });
