@@ -1118,7 +1118,7 @@ that anything an authorization decision depends on is read linearizably:
 | PCK-wrapped CMK versions, secrets and derivation keys         | 3 `SECRET`    | Key material, under two layers (§8.4)                                  |
 | Key state, versions, `min_decryption_version`, grants, quotas | 2 `SENSITIVE` | Direct inputs to authorization; a stale read would serve a revoked key |
 | Placement directory, invalidation epochs, cluster topology    | 2 `SENSITIVE` | A stale placement read would route to the wrong custody domain         |
-| Display metadata: names, tags, descriptions                   | 1 `INTERNAL`  | Never an authorization input                                           |
+| Display metadata: names, tags, descriptions                   | 1 `INTERNAL`  | Never an authorization input, so it may be read locally (below)        |
 
 "Linearizable only" governs reads of the store, not the caches in front of it.
 `kms-api` and `kms-crypto` still serve from cached key metadata and decisions
@@ -1153,11 +1153,17 @@ What it costs, plainly:
 - **Index keys are plaintext.** The ADR's known limitation (§2.4 there) applies:
   a disk thief learns how many keys exist and their identifiers. Key and secret
   identifiers are therefore UUIDv4, never derived from tenant-chosen names.
-- **The crate's open items are the KMS's open items.** Every read is currently
-  linearizable, because the ADR's local-read fast path is not yet implemented;
-  that costs latency only on a cache miss and is acceptable. Restore needs the
-  same KEK as the source cluster, which the provider choice below makes easy or
-  hard.
+- **Local reads help only off the hot path.** The crate serves a stale local
+  read only when the operator sets `local_reads_mode = "local_for_public"` and
+  the caller asks for `ReadConsistency::Local`, and even then only for tier 0/1
+  records: a tier 2/3 record falls back to `ReadIndex`, and `prefix_index` is
+  always linearizable. Everything on the KMS's authorization and cache-fill
+  path is tier 2 or 3, so a cache miss always pays a linearizable read. Local
+  reads are worth taking for display metadata — listing names and tags — and
+  nowhere a decision depends on the answer.
+- **Restore needs the source cluster's KEK.** The ADR's restore path re-wraps
+  under the new cluster's KEK only after unwrapping with the old one, which the
+  provider choice below makes easy or hard.
 - **Size.** 10⁶ key versions at under a kilobyte each is under a gigabyte of
   state: comfortably within snapshot and `InstallSnapshot` budgets, but the
   number to watch.
@@ -2160,7 +2166,8 @@ project:
   through `kms-crypto`'s algorithm registry, and a direct call anywhere else is
   a review failure. That is what makes approved mode (§20.1) a property of one
   crate's build rather than of the whole workspace. The shared storage crate is
-  the one exception, and it is ported on its own terms (§20.1).
+  the one exception: it routes its own primitives through its own FIPS backend
+  (§20.1).
 - **The custody seam is proven by a second implementation, in CI.** The
   `KeyCustody` contract suite runs against `kms-bao` and against `kms-pkcs11` on
   SoftHSM (§10.2), from the phase that introduces the trait onward. A seam with
@@ -2299,8 +2306,9 @@ region, and it can slip without blocking Phases 4 and 5.
 - Offload mode D, per-key HSM budgets.
 - `regulated` placement class.
 - FIPS 140-3 approved mode (§20.1): the `fips_mode` switch, HSM-held PCKs as
-  the FIPS custody kind, the shared storage crate on a validated module, the
-  OpenBao decision of open question 13; conformance evidence collection.
+  the FIPS custody kind, the shared storage crate built with its `fips` feature
+  and its nonce gap closed (open question 14), the OpenBao decision of open
+  question 13; conformance evidence collection.
 
 ### Phase 7 — Multi-region and the long tail
 
@@ -2360,14 +2368,14 @@ hardware, and in this design it is reached through the HSM.
 
 **Where cryptography runs, and what has to change:**
 
-| Component                                                      | Today                                                              | For approved mode                                                               |
-| -------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
-| `kms-crypto`: envelope, signing, MAC                           | `aws-lc-rs` (§6.5)                                                 | Its FIPS build, from the first line of code                                     |
-| Key store at rest: `storage-crypto`, shared with `keystone-rs` | RustCrypto `aes-gcm`, `hkdf`, `hmac`, `sha2`, and `rand`           | Ported to `aws-lc-rs`'s FIPS build, with the nonce change below                 |
-| TLS: edge, internal mesh, Raft peers                           | `rustls` over `aws-lc-rs`'s default build                          | The same stack over the FIPS build                                              |
-| Custody cluster                                                | OpenBao, on Go's cryptography                                      | Unresolved: depends on OpenBao running on a validated module (open question 13) |
-| HSM                                                            | Vendor firmware                                                    | Used in approved mode, per the vendor's security policy                         |
-| TPM KEK provider                                               | The TPM, plus a software MAC in process (ADR 0016-v2 invariant 15) | A validated TPM part, and the software half inside the validated module         |
+| Component                                                      | Today                                                                                                                                                                                             | For approved mode                                                                                                                                                                                                                      |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `kms-crypto`: envelope, signing, MAC                           | `aws-lc-rs` (§6.5)                                                                                                                                                                                | Its FIPS build, from the first line of code                                                                                                                                                                                            |
+| Key store at rest: `storage-crypto`, shared with `keystone-rs` | A backend module: RustCrypto by default; the `fips` feature routes AES-256-GCM, HKDF, HMAC and random generation through AWS-LC's validated module, and `assert_fips()` fails start-up without it | Built with `--no-default-features --features fips`; the nonce gap of rule 1 remains                                                                                                                                                    |
+| TLS: edge, internal mesh, Raft peers                           | `rustls` over `aws-lc-rs`'s default build                                                                                                                                                         | The same stack over the FIPS build                                                                                                                                                                                                     |
+| Custody cluster                                                | OpenBao, on Go's cryptography                                                                                                                                                                     | Unresolved: depends on OpenBao running on a validated module (open question 13)                                                                                                                                                        |
+| HSM                                                            | Vendor firmware                                                                                                                                                                                   | Used in approved mode, per the vendor's security policy. The storage crate's `pkcs11_token_generated_iv` lets the token generate the KEK-wrap IV, as FIPS 140-3 HSMs require; it is opt-in and not yet exercised against real hardware |
+| TPM KEK provider                                               | The TPM, plus a software MAC in process (ADR 0016-v2 invariant 15)                                                                                                                                | A validated TPM part, and the software half inside the validated module                                                                                                                                                                |
 
 If OpenBao cannot run on a validated module, a FIPS deployment holds every PCK
 in an HSM partition — the custody kind §8.6 already offers `regulated` tenants —
@@ -2379,18 +2387,27 @@ the HSM-held PCK is worth building before a `regulated` customer asks for it.
 **What approved mode forces on the design.** Most of the work is not swapping a
 library but obeying the rules for how a validated module may be used:
 
-1. **AES-GCM IVs are generated inside the module.** FIPS 140-3 implementation
-   guidance (IG C.H) accepts a GCM IV only when the module constructs it in one
-   of a few approved ways. `storage-crypto` builds its nonces in application
-   code — `NodeId ‖ counter` for the Raft log, an HKDF-derived value for state
-   records — and passes them in, which does not qualify as it stands. The usual
-   remedy is module-generated random 96-bit IVs, which caps a key at roughly
-   2³² encryptions and turns that cap into a DEK-rotation trigger in place of
-   the counter threshold. That remedy collides head-on with
-   [ADR 0016-v2](adr/0016-v2-raft-storage.md) invariant 10, "Random nonces are
-   prohibited", so it is a decision `keystone-rs` and the KMS take together
-   (open question 14). `kms-crypto`'s own wraps use module-generated IVs from
-   the start and never inherit the problem.
+1. **AES-GCM IVs.** A validated module counts AES-GCM encryption as an
+   approved service only when it generates the IV itself (implementation
+   guidance IG C.H). The storage crate's `fips` build runs on the validated
+   module but passes its IVs in, and
+   [ADR 0016-v2](adr/0016-v2-raft-storage.md) §2.2 states the consequence
+   exactly: `assert_fips()` proves the module is in use, not that every
+   encryption is an approved service. The ADR's invariant 10 now prohibits
+   _application-generated_ random nonces, allows an IV generated inside an HSM
+   that mandates one, and holds that deterministic IVs are compliant with
+   SP 800-38D §8.2.1 — stricter than FIPS rather than in conflict with it. The
+   KEK wrap already fits: its nonce is a deterministic HMAC of the DEK, or is
+   generated by the token under PKCS#11. The gap that remains is the state and
+   backup nonces. They are HKDF-derived — pseudorandom rather than the
+   fixed-field-and-counter construction §8.2.1 describes — and they must stay a
+   pure function of `(StateDek, pk, version)`, because every node applies each
+   Raft entry independently and has to produce byte-identical ciphertext. That
+   replicated determinism is what makes the gap hard, since a module-generated
+   IV, random or counted, differs from node to node by construction. Closing it
+   is a storage format change the ADR tracks separately (open question 14).
+   `kms-crypto` has no such constraint — a DEK wrap is made once, by one
+   process — so its wraps use module-generated IVs from the start.
 2. **Only approved algorithms are reachable.** The FIPS column of §6.5 is
    enforced at key creation, in the same validation that pairs
    `protection_level` with `offload_mode` (§10.3). An unapproved key spec is a
@@ -2403,7 +2420,9 @@ library but obeying the rules for how a validated module may be used:
 4. **All randomness comes from the module's DRBG.** Key generation everywhere,
    and `POST /v1/random` (§5.4), draw from the validated module; no crate calls
    `rand` or the operating system's generator directly. The entropy source is
-   then the module's, with its own SP 800-90B validation behind it.
+   then the module's, with its own SP 800-90B validation behind it. The storage
+   crate already draws its randomness through its backend (`random_bytes`), so
+   its `fips` build uses the validated DRBG.
 5. **One switch, failing closed.** `fips_mode` is set at start-up and cannot
    change while the process runs. The process refuses to start unless every
    component in the table above is on its validated build, and a module that
@@ -2424,11 +2443,12 @@ library but obeying the rules for how a validated module may be used:
 
 **Sequencing.** Two items are cheap now and expensive later, so they are not
 left for Phase 6: every cryptographic call goes through `kms-crypto`'s algorithm
-registry (§17), and `ring` is never a dependency (§6.5). The `storage-crypto`
-port and the nonce decision are joint work with `keystone-rs`, which needs the
-same answer for its own storage as soon as it is asked for validated
-cryptography. The switch, HSM-held PCKs as the FIPS custody kind, and the
-OpenBao decision land in Phase 6 (§19).
+registry (§17), and `ring` is never a dependency (§6.5). The storage side has
+started in `keystone-rs`: the `fips` backend, `assert_fips()`, module-drawn
+randomness and token-generated PKCS#11 IVs have landed (ADR 0016-v2 §2.2),
+which leaves the state and backup nonces as the one decision the two projects
+take together (open question 14). The switch, HSM-held PCKs as the FIPS
+custody kind, and the OpenBao decision land in Phase 6 (§19).
 
 ---
 
@@ -2507,11 +2527,17 @@ OpenBao decision land in Phase 6 (§19).
     an HSM at all, which is principle 6's question asked of one compliance
     regime, and it should be settled from the CMVP's list, not from a vendor's
     roadmap.
-14. **Nonces in the shared storage crate.** Module-generated random IVs satisfy
-    FIPS 140-3 guidance and contradict ADR 0016-v2's ban on random nonces;
-    deterministic IVs satisfy the ADR and have to be constructed inside the
-    module. Which does the shared crate adopt, and in FIPS builds only or
-    everywhere? A crate with two nonce disciplines is two crates to review.
+14. **State and backup nonces in the shared storage crate.** Its `fips` build
+    runs on the validated module, but its state and backup nonces are
+    HKDF-derived so that every node produces byte-identical ciphertext, and the
+    module counts only IVs it generates itself as approved (§20.1, rule 1). One
+    candidate, offered to the joint design rather than as a decision: encrypt
+    each value once, on the leader, with a module-generated IV, and replicate
+    the ciphertext, turning the post-rotation re-encryption sweep into
+    leader-proposed writes, so that no node ever has to reproduce another's IV.
+    It costs log volume during a sweep and a 2³²-encryption cap per DEK that
+    becomes a rotation trigger. Does the shared crate adopt that, a §8.2.1
+    fixed-field construction both sides accept, or a documented residual?
 
 ---
 
