@@ -98,7 +98,7 @@ OPA policy is enabled by default. See [API policy enforcement](../admin/policy.m
 | `[federation]` | `driver`, `default_authorization_ttl` |
 | `[mapping]` | `driver`, `cluster_salt` |
 | `[k8s_auth]` | `driver` |
-| `[oauth2]` | enable switch and domain allowlist, signing algorithm and rotation, Argon2 cost, access/ID/refresh/code/device lifetimes, polling interval, session janitor, token rate-limit, and login page template/static asset options |
+| `[oauth2]` | enable switch and domain allowlist, signing algorithm and rotation, Argon2 cost, access/ID/refresh/code/device lifetimes, polling interval, session janitor, token rate-limit, and login page template/static asset options. Full option table: [OAuth2 administrator guide](../admin/features/oauth2.md#configuration-oauth2-in-keystoneconf) |
 | `[api_key]` | `driver`, Argon2 cost, janitor retention, trusted proxy/header, and rate-limit options |
 | `[scim_realm]` | `driver` |
 | `[scim_resource]` | `driver`, `janitor_deprovisioned_retention_days` |

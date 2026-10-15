@@ -6,6 +6,20 @@
 
 Accepted.
 
+## Implementation status
+
+Verified against the code on 2026-10-15.
+
+| Section | Claim | Status | Notes |
+| --- | --- | --- | --- |
+| §3 Automatic signing-key rotation | Primary key rotated every `signing_key_rotation_days` | Built | Key janitor rotates and reports `rotated`; tracked in #1282. |
+| §4 Claims template | Per-client `claims_template` shapes `id_token` | Built | `crates/core/src/oauth2_client/id_token.rs`. |
+| §4 `openstack:api` on human grants | Access token usable against OpenStack APIs | Partial | Supported for `client_credentials` and token exchange; rejected on `authorization_code` and `device_code`. |
+| §6 Downstream middleware | `KeystoneNativeJwtMiddleware` for Nova/Neutron | Not built | Python filter lives outside this repository; only the Rust reference verifier ships. |
+| §7.C Device code rate limiting | Poll interval, quiet period, user-code backoff | Built | `device_code.rs`, `[oauth2] device_*` options. |
+| §8 `max_age` | Forces re-authentication on `/authorize` | Built | `authorize.rs` compares `max_age` with the SSO `auth_time`. |
+| §12 Token exchange (RFC 8693) | Exchange for a Keystone-scoped token | Built | `token/token_exchange.rs`. |
+
 ## Reference
 
 Extends ADR 0006 (Federation IDP), ADR 0016-v2 (Distributed Secure Storage), ADR
@@ -98,7 +112,9 @@ the same machinery nearly for free.
    `authorization_code`/`refresh_token` grant only ever produces an
    OpenStack-capable access token (`aud: "openstack-apis"`, carrying
    `openstack_context`/roles) when the client explicitly requested and was
-   granted the `openstack:api` scope (§4, "Scope Validation"). Every other RP -
+   granted the `openstack:api` scope (§4, "Scope Validation"; not yet
+   supported on `authorization_code`/`device_code`, see the status table). Every
+   other RP -
    including every client that only wants "Login with OpenStack" identity
    display - receives a minimal `OidcAccessTokenClaims` (§4) whose `aud` is its
    own `client_id`, structurally incapable of passing downstream `aud`

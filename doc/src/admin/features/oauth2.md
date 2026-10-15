@@ -502,8 +502,8 @@ keystone-manage oauth2 rotate-signing-key --domain <domain_id>
 Generates a fresh keypair, commits it via Raft, promotes it to `Primary/Active`,
 and demotes the prior `Primary` to `Previous`. The `Previous` key stays
 published on JWKS for one full token max-lifetime after demotion so in-flight
-tokens keep verifying, then a background janitor removes it. Also runs
-automatically every `signing_key_rotation_days`.
+tokens keep verifying, then a background janitor removes it. The janitor also
+rotates the key automatically once it is older than `signing_key_rotation_days`.
 
 ### Emergency rotation (suspected/confirmed key compromise)
 
@@ -607,7 +607,35 @@ Emits `oauth2/local_emergency_key_reconciled` (CADF) with a
 store back to the event — staging itself is **not** audited (consistent with the
 ordinary emergency path's stage/confirm asymmetry); only reconciliation is.
 
+## Production checklist
+
+- Raft storage is configured and `[oauth2] enabled` resolves to on (see
+  [Enabling the provider](#enabling-the-provider)).
+- `[DEFAULT] public_endpoint` is set to the external **https** URL. Without it
+  the issuer cannot be pinned and the endpoints answer `503 server_error`.
+- TLS is terminated in front of Keystone and `[oslo_middleware]
+  enable_proxy_headers_parsing` is on, so the client IP and scheme are correct.
+- `[rate_limit_global_ip]` and `token_rate_limit_burst_size` /
+  `token_rate_limit_replenish_per_minute` are sized for the expected traffic.
+- A signing-key rotation cadence is chosen (`signing_key_rotation_days`) and
+  the manual rotation runbook has been rehearsed.
+- The emergency (dual-control) rotation has been drilled at least once.
+- The JWKS and revocation endpoints are monitored and kept highly available:
+  downstream verifiers depend on them.
+- Raft quorum is monitored. While it is lost `/token` answers `503
+  temporarily_unavailable`.
+- The metrics endpoint is scraped and the alert rules in
+  `deploy/prometheus/alert_rules.yaml` (group `keystone_oauth2`) are loaded,
+  see [ADR 0031](../../adr/0031-prometheus-metrics.md).
+
 ## Downstream control-plane enforcement (Nova/Neutron/etc.)
+
+> **Design only.** The Python middleware described here is **not** part of this
+> repository and is not yet published (repository link: _to be added_). What
+> ships here is the Rust reference verifier
+> (`openstack_keystone_core::oauth2_client::verify_openstack_access_token`) and
+> an integration test that mints a token through `POST /token` and verifies it
+> fully offline. The configuration below is the intended interface.
 
 A thin Python WSGI middleware (`KeystoneNativeJwtMiddleware`) drops into
 existing Paste Deploy pipelines (e.g. `/etc/nova/api-paste.ini`) **in front of**
