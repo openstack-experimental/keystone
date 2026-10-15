@@ -97,6 +97,10 @@ impl RaftTlsClient {
             Self::Spiffe(cfg) => {
                 let connector = SpiffeConnector { tls: cfg.clone() };
                 Channel::builder(format!("http://{}", strip_scheme(addr)).parse()?)
+                    .connect_timeout(CONNECT_TIMEOUT)
+                    .http2_keep_alive_interval(KEEPALIVE_INTERVAL)
+                    .keep_alive_timeout(KEEPALIVE_TIMEOUT)
+                    .keep_alive_while_idle(true)
                     .connect_with_connector(connector)
                     .await
                     .map_err(|e| StoreError::Other(eyre::eyre!("SPIFFE gRPC connect failed: {e}")))
@@ -136,7 +140,14 @@ impl tower::Service<http::Uri> for SpiffeConnector {
                 })?
                 .to_owned();
             let port = uri.port_u16().unwrap_or(443);
-            let tcp = tokio::net::TcpStream::connect(format!("{host}:{port}")).await?;
+            let tcp = tokio::time::timeout(
+                CONNECT_TIMEOUT,
+                tokio::net::TcpStream::connect(format!("{host}:{port}")),
+            )
+            .await
+            .map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::TimedOut, "connect timed out")
+            })??;
             let connector = tokio_rustls::TlsConnector::from(tls);
             // `SpiffeServerCertVerifier` validates the peer's SPIFFE URI SAN
             // and ignores the DNS server name, so any valid
@@ -186,6 +197,23 @@ impl NetworkManager {
 /// bundles, only take effect on new handshakes. Rebuilding channels at least
 /// this often bounds how long a stale session can survive in both TLS modes.
 const CHANNEL_MAX_AGE: Duration = Duration::from_secs(300);
+
+/// Time allowed to establish a TCP (and, in SPIFFE mode, TLS) connection.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// HTTP/2 PING interval on Raft channels, also while no request is in flight.
+///
+/// OpenRaft replicates over one long-lived `StreamAppend` stream per peer. If
+/// the peer disappears without closing the connection (pod replaced under a
+/// new IP, node power loss), nothing on the stream fails until the kernel
+/// gives up retransmitting, which takes many minutes: the leader silently
+/// stops replicating to that peer and never reconnects. Keepalive pings turn
+/// that into a failed stream within [`KEEPALIVE_INTERVAL`] +
+/// [`KEEPALIVE_TIMEOUT`], so OpenRaft re-establishes it.
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Time to wait for a PING acknowledgement before the connection is dropped.
+const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Per-peer cache of established gRPC channels.
 ///
@@ -285,6 +313,11 @@ impl ChannelCache {
                 )
                 .tls_config(tls_cfg)
                 .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?
+                .connect_timeout(CONNECT_TIMEOUT)
+                .tcp_keepalive(Some(KEEPALIVE_INTERVAL))
+                .http2_keep_alive_interval(KEEPALIVE_INTERVAL)
+                .keep_alive_timeout(KEEPALIVE_TIMEOUT)
+                .keep_alive_while_idle(true)
                 .connect()
                 .await
                 .map_err(|e| RPCError::Unreachable(Unreachable::<TypeConfig>::new(&e)))

@@ -32,6 +32,12 @@ use openstack_keystone_distributed_storage::{
 
 use crate::server::listener::spiffe_common;
 
+/// HTTP/2 keepalive PING interval and acknowledgement timeout for peer
+/// connections. A peer that vanished without closing its connection (pod
+/// replaced, node power loss) would otherwise keep its replication stream
+/// open here until the kernel gives up on the socket.
+const PEER_KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Validate the SPIFFE ID of the peer certificate and resolve its storage role.
 ///
 /// The identity is resolved through [`PeerAuthz::role_of_identity`]: only
@@ -158,8 +164,10 @@ pub async fn start_raft_app(
                 )),
             };
 
-            let mut server =
-                tonic::transport::Server::builder().layer(InterceptorLayer::new(interceptor));
+            let mut server = tonic::transport::Server::builder()
+                .http2_keepalive_interval(Some(PEER_KEEPALIVE))
+                .http2_keepalive_timeout(Some(PEER_KEEPALIVE))
+                .layer(InterceptorLayer::new(interceptor));
             let tonic_router = server.add_routes(storage_app);
 
             tracing::info!(
@@ -209,8 +217,10 @@ pub async fn start_raft_app(
         }
 
         RaftTlsConfiguration::Tls(_) => {
-            let mut server =
-                tonic::transport::Server::builder().tls_config(get_server_tls_config(ds)?)?;
+            let mut server = tonic::transport::Server::builder()
+                .http2_keepalive_interval(Some(PEER_KEEPALIVE))
+                .http2_keepalive_timeout(Some(PEER_KEEPALIVE))
+                .tls_config(get_server_tls_config(ds)?)?;
             let tonic_router = server.add_routes(storage_app);
 
             tracing::info!("Starting distributed storage at {:?}", grpc_addr);
