@@ -963,7 +963,8 @@ pub async fn route_via_wasm_plugin(
 /// friends end to end. `openstack-keystone-auth-plugin-runtime` is a
 /// dev-dependency of this crate for exactly this purpose - it never appears
 /// in a non-test build.
-#[cfg(all(test, feature = "wasm_plugins"))]
+#[cfg(test)]
+#[cfg(feature = "wasm_plugins")]
 async fn load_plugins_for_test(
     state: &ServiceState,
     http_fetcher: std::sync::Arc<dyn crate::auth_plugin_http::DynamicPluginHttpFetcher>,
@@ -1001,7 +1002,8 @@ async fn load_plugins_for_test(
     *state.auth_plugin_limiters.write().await = limiters;
 }
 
-#[cfg(all(test, feature = "wasm_plugins"))]
+#[cfg(test)]
+#[cfg(feature = "wasm_plugins")]
 mod acceptance_tests {
     use std::path::{Path, PathBuf};
     use std::process::Command;
@@ -1541,7 +1543,8 @@ mod flatten_plugin_claims_tests {
 /// extraction, and building the exact `MappingAuthRequest` the engine
 /// expects (`IdentitySource::WasmPlugin`, flattened claims, `domain_id:
 /// None`).
-#[cfg(all(test, feature = "wasm_plugins"))]
+#[cfg(test)]
+#[cfg(feature = "wasm_plugins")]
 mod mapping_acceptance_tests {
     use std::path::{Path, PathBuf};
     use std::process::Command;
@@ -1794,7 +1797,8 @@ mod mapping_acceptance_tests {
 /// response-bounds decoding, and the host-side `route_targets` allowlist
 /// check that the guest contract's own decoder can't perform (it has no
 /// visibility into config state).
-#[cfg(all(test, feature = "wasm_plugins"))]
+#[cfg(test)]
+#[cfg(feature = "wasm_plugins")]
 mod route_acceptance_tests {
     use std::path::{Path, PathBuf};
     use std::process::Command;

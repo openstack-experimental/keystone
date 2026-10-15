@@ -121,7 +121,8 @@ impl LoadFailureMetrics {
 pub static LOAD_FAILURE_METRICS: LazyLock<LoadFailureMetrics> =
     LazyLock::new(|| LoadFailureMetrics::new(&metrics::meter()));
 
-#[cfg(all(test, feature = "wasm_plugins"))]
+#[cfg(test)]
+#[cfg(feature = "wasm_plugins")]
 mod tests {
     use super::*;
     use async_trait::async_trait;
