@@ -141,6 +141,8 @@ pub fn init(
     settings: &TelemetrySettings,
     service_version: &str,
 ) -> Result<TelemetryGuard, TelemetryInitError> {
+    // The HTTP exporter's reqwest client needs a process-wide rustls provider.
+    openstack_keystone_tls_provider::install_default();
     let resource = resource(settings, service_version);
 
     let tracer_provider = settings

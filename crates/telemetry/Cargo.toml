@@ -23,12 +23,11 @@ otlp-http = [
   "sdk",
   "opentelemetry-otlp/http-proto",
   "opentelemetry-otlp/reqwest-blocking-client",
-  "opentelemetry-otlp/reqwest-rustls",
 ]
 otlp-grpc = [
   "sdk",
   "opentelemetry-otlp/grpc-tonic",
-  "opentelemetry-otlp/tls-aws-lc",
+  "opentelemetry-otlp/tls-provider-agnostic",
   "opentelemetry-otlp/tls-webpki-roots",
 ]
 # Internal: the OTLP exporters, the tracing bridge and the trace signal. The
@@ -36,6 +35,7 @@ otlp-grpc = [
 # build (ADR 0040).
 sdk = [
   "dep:http",
+  "dep:openstack-keystone-tls-provider",
   "dep:opentelemetry-otlp",
   "dep:tracing",
   "dep:tracing-opentelemetry",
@@ -49,6 +49,7 @@ sdk = [
 [dependencies]
 http = { workspace = true, optional = true }
 inventory.workspace = true
+openstack-keystone-tls-provider = { workspace = true, optional = true }
 opentelemetry = { workspace = true, features = ["metrics"] }
 opentelemetry-otlp = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, features = ["metrics"] }

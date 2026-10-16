@@ -96,7 +96,6 @@ impl PerformAction for ListCommand {
 #[cfg(test)]
 mod tests {
     use httpmock::{Method, MockServer};
-    use reqwest::Client;
 
     use super::*;
 
@@ -116,7 +115,7 @@ mod tests {
                 }));
         });
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = ListCommand {
             name: None,
             r#type: None,
@@ -141,7 +140,7 @@ mod tests {
                 .json_body_obj(&serde_json::json!({ "services": [] }));
         });
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = ListCommand {
             name: Some("keystone-rs".to_string()),
             r#type: Some("identity-rs".to_string()),
@@ -161,7 +160,7 @@ mod tests {
             then.status(500).body("internal error");
         });
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = ListCommand {
             name: None,
             r#type: None,

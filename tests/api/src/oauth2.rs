@@ -228,7 +228,7 @@ pub async fn start_device_authorization(
         form.push(("scope", scope.to_string()));
     }
 
-    let rsp = Client::new()
+    let rsp = crate::common::http_client()
         .post(base_url.join(&format!("v4/oauth2/{domain_id}/device_authorization"))?)
         .form(&form)
         .send()
@@ -253,7 +253,7 @@ pub struct JwksRevocationResponse {
 
 pub async fn get_jwks_revocation(domain_id: &str) -> Result<(StatusCode, JwksRevocationResponse)> {
     let base_url: url::Url = env::var("KEYSTONE_URL")?.parse()?;
-    let rsp = Client::new()
+    let rsp = crate::common::http_client()
         .get(base_url.join(&format!("v4/oauth2/{domain_id}/jwks/revocation"))?)
         .send()
         .await?;
@@ -266,7 +266,7 @@ pub async fn get_jwks_revocation(domain_id: &str) -> Result<(StatusCode, JwksRev
 /// Unauthenticated by design.
 pub async fn get_well_known(domain_id: &str) -> Result<(StatusCode, serde_json::Value)> {
     let base_url: url::Url = env::var("KEYSTONE_URL")?.parse()?;
-    let rsp = Client::new()
+    let rsp = crate::common::http_client()
         .get(base_url.join(&format!(
             "v4/oauth2/{domain_id}/.well-known/openid-configuration"
         ))?)
@@ -286,7 +286,7 @@ pub async fn post_token_form(
     form: &[(&str, &str)],
 ) -> Result<(StatusCode, serde_json::Value)> {
     let base_url: url::Url = env::var("KEYSTONE_URL")?.parse()?;
-    let rsp = Client::new()
+    let rsp = crate::common::http_client()
         .post(base_url.join(&format!("v4/oauth2/{domain_id}/token"))?)
         .form(form)
         .send()
@@ -316,7 +316,7 @@ pub async fn post_revoke_form(
     form: &[(&str, &str)],
 ) -> Result<(StatusCode, String)> {
     let base_url: url::Url = env::var("KEYSTONE_URL")?.parse()?;
-    let rsp = Client::new()
+    let rsp = crate::common::http_client()
         .post(base_url.join(&format!("v4/oauth2/{domain_id}/revoke"))?)
         .form(form)
         .send()
@@ -334,7 +334,7 @@ pub async fn post_introspect_form(
     form: &[(&str, &str)],
 ) -> Result<(StatusCode, serde_json::Value)> {
     let base_url: url::Url = env::var("KEYSTONE_URL")?.parse()?;
-    let rsp = Client::new()
+    let rsp = crate::common::http_client()
         .post(base_url.join(&format!("v4/oauth2/{domain_id}/introspect"))?)
         .basic_auth(client_id, Some(client_secret))
         .form(form)
@@ -356,7 +356,7 @@ pub async fn call_userinfo(
 ) -> Result<(StatusCode, Option<String>, serde_json::Value)> {
     let base_url: url::Url = env::var("KEYSTONE_URL")?.parse()?;
     let url = base_url.join(&format!("v4/oauth2/{domain_id}/userinfo"))?;
-    let client = Client::new();
+    let client = crate::common::http_client();
     let mut req = if post {
         client.post(url)
     } else {
@@ -428,7 +428,9 @@ pub struct DeviceBrowserSession {
 impl DeviceBrowserSession {
     pub fn new(domain_id: &str) -> Result<Self> {
         Ok(Self {
-            client: Client::builder().cookie_store(true).build()?,
+            client: crate::common::http_client_builder()
+                .cookie_store(true)
+                .build()?,
             base_url: env::var("KEYSTONE_URL")?.parse()?,
             domain_id: domain_id.to_string(),
         })

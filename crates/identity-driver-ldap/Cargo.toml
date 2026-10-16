@@ -10,6 +10,11 @@ repository.workspace = true
 homepage.workspace = true
 exclude.workspace = true
 
+[features]
+default = ["rustls-ring"]
+rustls-ring = ["ldap3/tls-rustls-ring"]
+rustls-aws-lc = ["ldap3/tls-rustls-aws-lc-rs"]
+
 [dependencies]
 async-trait.workspace = true
 chrono = { workspace = true, features = ["now"] }

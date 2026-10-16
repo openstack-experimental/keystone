@@ -24,6 +24,19 @@ use std::env;
 use std::sync::Arc;
 use url::Url;
 
+/// `reqwest` has no built-in rustls provider; install one before any client
+/// is built.
+pub fn http_client_builder() -> ClientBuilder {
+    openstack_keystone_tls_provider::install_default();
+    ClientBuilder::new()
+}
+
+/// Plain `reqwest` client with the rustls provider installed.
+pub fn http_client() -> Client {
+    openstack_keystone_tls_provider::install_default();
+    Client::new()
+}
+
 use openstack_keystone_api_types::scope::{
     DomainBuilder, Scope, ScopeProjectBuilder, System as ScopeSystem,
 };
@@ -62,7 +75,7 @@ pub struct TestClient {
 impl TestClient {
     pub fn new() -> Result<Self> {
         Ok(Self {
-            client: Client::new(),
+            client: http_client(),
             base_url: env::var("KEYSTONE_URL")
                 .wrap_err("KEYSTONE_URL must be set")?
                 .parse()?,
@@ -111,7 +124,7 @@ impl TestClient {
         new.auth = Some(rsp.json().await?);
         let mut token = HeaderValue::from_str(&token)?;
         token.set_sensitive(true);
-        new.client = ClientBuilder::new()
+        new.client = http_client_builder()
             .default_headers(HeaderMap::from_iter([(
                 HeaderName::from_static("x-auth-token"),
                 token,
@@ -260,7 +273,7 @@ pub async fn auth_user_by_password<U: AsRef<str>, D: AsRef<str>, P: AsRef<str>>(
         .wrap_err("KEYSTONE_URL must be set")?
         .parse()?;
 
-    let rsp = Client::new()
+    let rsp = http_client()
         .post(base_url.join("v3/auth/tokens")?)
         .json(&serde_json::to_value(auth_request)?)
         .send()
@@ -461,7 +474,7 @@ pub async fn raw_request(
     let base_url: Url = env::var("KEYSTONE_URL")
         .wrap_err("KEYSTONE_URL must be set")?
         .parse()?;
-    let mut request = Client::new().request(method, base_url.join(path)?);
+    let mut request = http_client().request(method, base_url.join(path)?);
     if let Some(token) = token {
         let mut header = HeaderValue::from_str(token)?;
         header.set_sensitive(true);

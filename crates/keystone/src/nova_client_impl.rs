@@ -49,6 +49,7 @@ impl KeystoneNovaHttpClient {
         base_url: Option<String>,
         request_timeout: Duration,
     ) -> Result<Self, VendordataProviderError> {
+        openstack_keystone_tls_provider::install_default();
         let client = Client::builder()
             .timeout(request_timeout)
             .pool_max_idle_per_host(10)

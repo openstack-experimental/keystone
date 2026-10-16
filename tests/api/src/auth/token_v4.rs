@@ -25,7 +25,7 @@
 use std::env;
 
 use eyre::{Result, WrapErr, eyre};
-use reqwest::{Client, Response};
+use reqwest::Response;
 use secrecy::{ExposeSecret, SecretString};
 use url::Url;
 
@@ -46,7 +46,7 @@ pub async fn authenticate_v4_raw(identity: Identity, scope: Option<Scope>) -> Re
     let body = AuthRequest {
         auth: AuthRequestInner { identity, scope },
     };
-    Ok(Client::new()
+    Ok(crate::common::http_client()
         .post(base_url()?.join("v4/auth/tokens")?)
         .json(&serde_json::to_value(body)?)
         .send()
@@ -77,7 +77,7 @@ pub async fn authenticate_v4(
 /// `GET /v4/auth/tokens`: `caller` presents `x-auth-token`, `subject` is the
 /// token being validated.
 pub async fn validate_token_v4(caller: &SecretString, subject: &SecretString) -> Result<Response> {
-    Ok(Client::new()
+    Ok(crate::common::http_client()
         .get(base_url()?.join("v4/auth/tokens")?)
         .header("x-auth-token", caller.expose_secret())
         .header("x-subject-token", subject.expose_secret())
@@ -87,7 +87,7 @@ pub async fn validate_token_v4(caller: &SecretString, subject: &SecretString) ->
 
 /// `DELETE /v4/auth/tokens`, same header split as [`validate_token_v4`].
 pub async fn revoke_token_v4(caller: &SecretString, subject: &SecretString) -> Result<Response> {
-    Ok(Client::new()
+    Ok(crate::common::http_client()
         .delete(base_url()?.join("v4/auth/tokens")?)
         .header("x-auth-token", caller.expose_secret())
         .header("x-subject-token", subject.expose_secret())

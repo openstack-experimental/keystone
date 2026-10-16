@@ -10,6 +10,7 @@ homepage.workspace = true
 exclude.workspace = true
 
 [dependencies]
+openstack-keystone-tls-provider.workspace = true
 async-trait.workspace = true
 futures.workspace = true
 inventory.workspace = true

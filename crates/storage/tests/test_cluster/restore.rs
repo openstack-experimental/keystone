@@ -61,7 +61,7 @@ fn test_backup_restore_round_trip_on_fresh_cluster() {
 }
 
 async fn test_backup_restore_round_trip_on_fresh_cluster_inner() -> Result<()> {
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
     let tls_configuration = make_certificates()?;
 
@@ -185,7 +185,7 @@ fn test_restore_into_running_cluster() {
 }
 
 async fn test_restore_into_running_cluster_inner() -> Result<()> {
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
     let tls_configuration = make_certificates()?;
 
@@ -374,7 +374,7 @@ fn test_disaster_recovery_elects_exactly_one_leader() {
 async fn test_disaster_recovery_elects_exactly_one_leader_inner() -> Result<()> {
     use openraft::ServerState;
 
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
     let tls_configuration = make_certificates()?;
 
@@ -544,7 +544,7 @@ fn test_restart_after_live_restore_keeps_displaced_deks() {
 
 #[allow(unsafe_code)]
 async fn test_restart_after_live_restore_keeps_displaced_deks_inner() -> Result<()> {
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
     let tls_configuration = make_certificates()?;
 

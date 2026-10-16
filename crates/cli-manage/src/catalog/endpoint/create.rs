@@ -207,7 +207,6 @@ impl PerformAction for CreateCommand {
 #[cfg(test)]
 mod tests {
     use httpmock::{Method, MockServer};
-    use reqwest::Client;
 
     use super::*;
 
@@ -263,7 +262,7 @@ mod tests {
                 }));
         });
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = command_by_id("svc-1");
         let created = cmd.create_with_client(&client, &base).await;
         assert!(created.is_ok());
@@ -298,7 +297,7 @@ mod tests {
                 }));
         });
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = command_by_name("identity-rs");
         let created = cmd.create_with_client(&client, &base).await;
         assert!(created.is_ok());
@@ -327,7 +326,7 @@ mod tests {
         // No POST mock registered: httpmock fails the test if an
         // unmatched request (e.g. an unexpected POST) is made.
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = command_by_id("svc-1");
         let created = cmd.create_with_client(&client, &base).await;
         assert!(created.is_ok());
@@ -357,7 +356,7 @@ mod tests {
             then.status(409).body("conflict");
         });
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = command_by_id("svc-1");
         let result = cmd.create_with_client(&client, &base).await;
         assert!(result.is_err());
@@ -384,7 +383,7 @@ mod tests {
                 .json_body_obj(&serde_json::json!({ "services": [] }));
         });
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = command_by_name("missing");
         let result = cmd.create_with_client(&client, &base).await;
         assert!(result.is_err());
@@ -410,7 +409,7 @@ mod tests {
                 }));
         });
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = command_by_name("dup");
         let result = cmd.create_with_client(&client, &base).await;
         assert!(result.is_err());
@@ -427,7 +426,7 @@ mod tests {
             then.status(500).body("internal error");
         });
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = command_by_id("svc-1");
         let result = cmd.create_with_client(&client, &base).await;
         assert!(result.is_err());

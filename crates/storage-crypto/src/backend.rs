@@ -17,11 +17,21 @@
 //! this crate goes through the handful of functions below, so the primitive
 //! provider can be swapped without touching the call sites:
 //!
-//! * default: the pure-Rust RustCrypto crates ([`rustcrypto`]);
+//! * default (`ring` feature): the `ring` crate ([`ringlike`]);
 //! * `fips` feature: `aws-lc-rs` built against the FIPS 140-3 validated
-//!   AWS-LC module ([`awslc`]). When both are enabled `fips` wins, because
-//!   cargo features are additive and a workspace-wide build must not silently
-//!   fall back to non-validated primitives.
+//!   AWS-LC module, through the same [`ringlike`] code. When both features are
+//!   enabled `fips` wins, because cargo features are additive and a
+//!   workspace-wide build must not silently fall back to non-validated
+//!   primitives.
+//!
+//! ## Adding a backend
+//!
+//! A backend is a module exporting `gcm_seal`, `gcm_open`, `hkdf_expand`,
+//! `hmac_sha256` and `fill_random` with the signatures of [`ringlike`]. To add
+//! one (for example the RustCrypto crates), add a cargo feature with optional
+//! dependencies, a module, and one arm to each `cfg` chain below; `fips`
+//! stays first so it keeps precedence. Both [`ringlike`] and the new module
+//! must pass `test_gcm_known_answer`.
 //!
 //! Caveat: the validated module only treats AES-GCM encryption as an approved
 //! service when it generates the IV itself, whereas this crate supplies
@@ -35,21 +45,17 @@
 
 use crate::error::CryptoError;
 
-#[cfg(not(any(feature = "fips", feature = "rustcrypto")))]
-compile_error!("enable either the `rustcrypto` (default) or the `fips` feature");
+#[cfg(not(any(feature = "fips", feature = "ring")))]
+compile_error!("enable either the `ring` (default) or the `fips` feature");
 
-#[cfg(feature = "fips")]
-mod awslc;
-#[cfg(not(feature = "fips"))]
-mod rustcrypto;
+#[cfg(any(feature = "fips", feature = "ring"))]
+mod ringlike;
 
-#[cfg(feature = "fips")]
-pub(crate) use awslc::{fill_random, gcm_open, gcm_seal, hkdf_expand, hmac_sha256};
-#[cfg(not(feature = "fips"))]
-pub(crate) use rustcrypto::{fill_random, gcm_open, gcm_seal, hkdf_expand, hmac_sha256};
+#[cfg(any(feature = "fips", feature = "ring"))]
+pub(crate) use ringlike::{fill_random, gcm_open, gcm_seal, hkdf_expand, hmac_sha256};
 
-/// Fill `out` with cryptographically secure random bytes: the OS CSPRNG by
-/// default, the validated module's DRBG with the `fips` feature. Callers
+/// Fill `out` with cryptographically secure random bytes: the provider's
+/// CSPRNG by default, the validated module's DRBG with the `fips` feature. Callers
 /// outside this crate that need random material (for example the snapshot
 /// nonce salt) should use this instead of their own RNG so a FIPS build stays
 /// on the validated generator.
@@ -69,7 +75,7 @@ pub const FIPS_BUILD: bool = cfg!(feature = "fips");
 pub fn assert_fips() -> Result<(), CryptoError> {
     #[cfg(feature = "fips")]
     {
-        awslc::fips_active()
+        aws_lc_rs::try_fips_mode().map_err(|_| CryptoError::FipsUnavailable)
     }
     #[cfg(not(feature = "fips"))]
     {

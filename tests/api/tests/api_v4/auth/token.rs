@@ -213,7 +213,7 @@ async fn test_v4_auth_token_matches_v3_semantics() -> Result<()> {
     let (v4_body, _) = authenticate_v4(identity.clone(), Some(scope.clone())).await?;
 
     let base_url: url::Url = env::var("KEYSTONE_URL")?.parse()?;
-    let v3_rsp = reqwest::Client::new()
+    let v3_rsp = test_api::common::http_client()
         .post(base_url.join("v3/auth/tokens")?)
         .json(&serde_json::json!({
             "auth": { "identity": identity, "scope": scope }

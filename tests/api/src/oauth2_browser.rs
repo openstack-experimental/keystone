@@ -271,7 +271,7 @@ impl AuthorizeBrowser {
     pub fn new(domain_id: &str) -> Result<Self> {
         let jar = std::sync::Arc::new(reqwest::cookie::Jar::default());
         Ok(Self {
-            client: Client::builder()
+            client: crate::common::http_client_builder()
                 .cookie_provider(jar.clone())
                 .redirect(Policy::none())
                 .build()?,
@@ -490,7 +490,7 @@ pub async fn client_credentials_token(
     if let Some(s) = scope {
         form.push(("scope", s));
     }
-    let rsp = Client::new()
+    let rsp = crate::common::http_client()
         .post(base_url()?.join(&format!("v4/oauth2/{domain_id}/token"))?)
         .basic_auth(client_id, Some(secret))
         .form(&form)
@@ -696,7 +696,7 @@ pub async fn user_token(
     if let Some(d) = scope_domain {
         body["auth"]["scope"] = json!({"domain": {"id": d}});
     }
-    let rsp = Client::new()
+    let rsp = crate::common::http_client()
         .post(base_url()?.join("v3/auth/tokens")?)
         .json(&body)
         .send()
@@ -775,7 +775,7 @@ pub async fn project_role_user(
 
 /// Password-authenticate `username` scoped to `project_id`.
 pub async fn project_token(domain_id: &str, username: &str, project_id: &str) -> Result<String> {
-    let rsp = Client::new()
+    let rsp = crate::common::http_client()
         .post(base_url()?.join("v3/auth/tokens")?)
         .json(&json!({"auth": {
             "identity": {"methods": ["password"], "password": {"user": {
@@ -852,7 +852,7 @@ pub async fn patch_domain(domain_id: &str, domain: Value) -> Result<()> {
 
 /// Self-service password change (`POST /v3/users/{id}/password`).
 pub async fn change_password(user_id: &str, old: &str, new: &str) -> Result<()> {
-    let rsp = Client::new()
+    let rsp = crate::common::http_client()
         .post(base_url()?.join(&format!("v3/users/{user_id}/password"))?)
         .json(&json!({"user": {"original_password": old, "password": new}}))
         .send()
@@ -895,7 +895,7 @@ pub async fn consents_call(
         Some(c) => format!("v4/users/{user_id}/oauth2/consents/{c}"),
         None => format!("v4/users/{user_id}/oauth2/consents"),
     };
-    let mut rb = Client::new().request(method, base_url()?.join(&path)?);
+    let mut rb = crate::common::http_client().request(method, base_url()?.join(&path)?);
     if let Some(t) = token {
         rb = rb.header("x-auth-token", t);
     }
@@ -910,7 +910,7 @@ pub async fn consents_call(
 /// delegated token).
 pub async fn app_cred_token(user_id: &str, token: &str) -> Result<String> {
     let secret = Uuid::new_v4().simple().to_string();
-    let rsp = Client::new()
+    let rsp = crate::common::http_client()
         .post(base_url()?.join(&format!("v3/users/{user_id}/application_credentials"))?)
         .header("x-auth-token", token)
         .json(&json!({"application_credential": {
@@ -929,7 +929,7 @@ pub async fn app_cred_token(user_id: &str, token: &str) -> Result<String> {
     let id = body["application_credential"]["id"]
         .as_str()
         .ok_or_else(|| eyre!("no application credential id in {body}"))?;
-    let rsp = Client::new()
+    let rsp = crate::common::http_client()
         .post(base_url()?.join("v3/auth/tokens")?)
         .json(&json!({"auth": {"identity": {
             "methods": ["application_credential"],

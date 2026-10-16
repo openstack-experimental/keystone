@@ -248,7 +248,7 @@ impl ScimTestClient {
             .wrap_err("KEYSTONE_URL must be set")?
             .parse()?;
         Ok(Self {
-            client: Client::new(),
+            client: crate::common::http_client(),
             base_url,
             domain_id: domain_id.into(),
             token,

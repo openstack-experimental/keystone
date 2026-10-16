@@ -70,6 +70,7 @@ impl KeystoneK8sHttpClient {
             return Ok(Arc::clone(client.value()));
         }
 
+        openstack_keystone_tls_provider::install_default();
         let mut builder = reqwest::Client::builder()
             .gzip(true)
             .pool_idle_timeout(std::time::Duration::from_secs(90));

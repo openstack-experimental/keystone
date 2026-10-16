@@ -98,6 +98,7 @@ impl LogoutTransport for ReqwestLogoutTransport {
         // Re-resolved on every attempt, then pinned: a name that later points
         // at an internal address (DNS rebinding) is refused.
         let addr = resolve_public_addr(&host, port).await?;
+        openstack_keystone_tls_provider::install_default();
         let client = reqwest::Client::builder()
             .resolve(&host, addr)
             .redirect(reqwest::redirect::Policy::none())

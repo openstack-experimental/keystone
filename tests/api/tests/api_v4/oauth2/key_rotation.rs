@@ -73,7 +73,7 @@ async fn key_call(
     token: Option<&str>,
     body: Value,
 ) -> Result<(StatusCode, Value)> {
-    let mut rb = Client::new()
+    let mut rb = test_api::common::http_client()
         .post(base_url()?.join(&format!("v4/oauth2/{domain_id}/{action}"))?)
         .json(&body);
     if let Some(t) = token {

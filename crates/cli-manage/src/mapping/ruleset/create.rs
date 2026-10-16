@@ -91,7 +91,6 @@ impl PerformAction for CreateCommand {
 #[cfg(test)]
 mod tests {
     use httpmock::{Method, MockServer};
-    use reqwest::Client;
     use tempfile::NamedTempFile;
 
     use super::*;
@@ -142,7 +141,7 @@ mod tests {
         });
 
         let file = write_payload(&sample_payload());
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = CreateCommand {
             file: file.path().to_path_buf(),
             mapping_id: None,
@@ -175,7 +174,7 @@ mod tests {
         });
 
         let file = write_payload(&sample_payload());
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = CreateCommand {
             file: file.path().to_path_buf(),
             mapping_id: Some("explicit-id".to_string()),
@@ -187,7 +186,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_ruleset_bad_file() {
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = CreateCommand {
             file: PathBuf::from("/nonexistent/path.json"),
             mapping_id: None,
@@ -207,7 +206,7 @@ mod tests {
         });
 
         let file = write_payload(&sample_payload());
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = CreateCommand {
             file: file.path().to_path_buf(),
             mapping_id: None,

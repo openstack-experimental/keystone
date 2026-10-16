@@ -111,12 +111,12 @@ pub async fn start_raft_app(
 
     let storage_app = get_app_server(&storage).await?;
 
-    // Install aws-lc-rs as the default rustls provider (idempotent).
-    if rustls::crypto::CryptoProvider::get_default().is_none() {
-        let provider = rustls::crypto::aws_lc_rs::default_provider();
-        if rustls::crypto::CryptoProvider::install_default(provider).is_err() {
-            tracing::warn!("Failed to install aws-lc-rs crypto provider");
-        }
+    // Install the build-selected rustls provider (idempotent).
+    if !openstack_keystone_tls_provider::install_default() {
+        tracing::warn!(
+            "Failed to install the {} crypto provider",
+            openstack_keystone_tls_provider::PROVIDER_NAME
+        );
     }
 
     let grpc_addr = ds.node_listener_addr;

@@ -132,7 +132,7 @@ mod tests {
         });
 
         let file = write_rule();
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = UpdateCommand {
             mapping_id: "mapping-1".to_string(),
             rule_name: "rule-1".to_string(),
@@ -155,7 +155,7 @@ mod tests {
         });
 
         let file = write_rule();
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = UpdateCommand {
             mapping_id: "mapping-1".to_string(),
             rule_name: "rule-1".to_string(),

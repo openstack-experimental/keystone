@@ -74,6 +74,7 @@ impl KeystoneDynamicPluginHttpFetcher {
             return Ok(Arc::clone(&cached.client));
         }
 
+        openstack_keystone_tls_provider::install_default();
         let client = Arc::new(
             Client::builder()
                 .resolve(host, addr)

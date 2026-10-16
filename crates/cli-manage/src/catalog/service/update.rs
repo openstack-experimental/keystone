@@ -110,7 +110,6 @@ impl PerformAction for UpdateCommand {
 #[cfg(test)]
 mod tests {
     use httpmock::{Method, MockServer};
-    use reqwest::Client;
 
     use super::*;
 
@@ -128,7 +127,7 @@ mod tests {
                 }));
         });
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = UpdateCommand {
             id: "svc-1".to_string(),
             r#type: None,
@@ -152,7 +151,7 @@ mod tests {
             then.status(404).body("not found");
         });
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = UpdateCommand {
             id: "missing".to_string(),
             r#type: None,

@@ -29,7 +29,7 @@ fn test_kek_gating_production_mode_rejected() {
 
 #[allow(unsafe_code)]
 async fn test_kek_gating_production_mode_rejected_inner() -> Result<()> {
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
 
     let storage_dir = tempfile::TempDir::new().unwrap();
@@ -64,7 +64,7 @@ fn test_kek_gating_dev_mode_requires_allow_env_kek() {
 
 #[allow(unsafe_code)]
 async fn test_kek_gating_dev_mode_requires_allow_env_kek_inner() -> Result<()> {
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
 
     let storage_dir = tempfile::TempDir::new().unwrap();

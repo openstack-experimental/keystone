@@ -26,31 +26,20 @@ unwrap_used = "deny"
 doc_paragraphs_missing_punctuation = "warn"
 
 [features]
-default = ["rustcrypto"]
-# Pure-Rust RustCrypto primitives (AES-GCM, HKDF, HMAC). Unused, but still
-# compiled, when `fips` is also enabled; build with
-# `--no-default-features --features fips` to keep them out of the tree.
-rustcrypto = [
-  "dep:aes-gcm",
-  "dep:hkdf",
-  "dep:hmac",
-  "dep:hybrid-array",
-  "dep:sha2",
-]
+default = ["ring"]
+# `ring` primitives (AES-GCM, HKDF, HMAC, RNG). Unused, but still compiled,
+# when `fips` is also enabled; build with
+# `--no-default-features --features fips` to keep it out of this crate.
+ring = ["dep:ring"]
 # Route all primitives (AES-GCM, HKDF, HMAC, RNG) through the FIPS 140-3
-# validated AWS-LC module. Takes precedence over the RustCrypto backend.
-# Building it needs cmake, a C compiler, clang (bindgen) and Go.
+# validated AWS-LC module. Takes precedence over `ring`. Building it needs
+# cmake, a C compiler, clang (bindgen) and Go.
 fips = ["dep:aws-lc-rs", "aws-lc-rs/fips"]
 
 [dependencies]
-aws-lc-rs = { version = "1.18", optional = true }
-aes-gcm = { workspace = true, optional = true }
-hkdf = { workspace = true, optional = true }
-hmac = { workspace = true, optional = true }
-hybrid-array = { version = "0.4", optional = true }
-sha2 = { workspace = true, optional = true }
+aws-lc-rs = { version = "1.18", default-features = false, features = ["alloc"], optional = true }
 nix = { workspace = true, features = ["mman", "feature"] }
-rand.workspace = true
+ring = { workspace = true, optional = true }
 thiserror.workspace = true
 tracing.workspace = true
 zeroize = "1"

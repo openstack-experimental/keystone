@@ -295,6 +295,125 @@ jobs:
       - name: Check delegated-policy scope-drift test presence (Gate C)
         run: python3 tools/check_delegated_policy_scope_drift_tests.py
 
+  # The `test` job builds with `--all-features`, which enables every TLS and
+  # crypto provider at once and so hides single-provider breakage (hardcoded
+  # provider calls, a missing cfg, an optional dependency that is not).
+  # These jobs exercise the shipping default and each provider on its own.
+  tls-provider-guard:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921 # stable
+        with:
+          toolchain: stable
+
+      - name: Check default tree has no aws-lc and no hardcoded provider
+        run: tools/check_tls_provider.sh
+
+  features:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Shipping default: ring, no `--all-features`.
+          - name: ring (default)
+            native: false
+            run: |
+              cargo check -p openstack-keystone -p openstack-keystone-cli-manage
+              cargo nextest run --profile ci \
+                -p openstack-keystone-tls-provider \
+                -p openstack-keystone-storage-crypto \
+                -p cadf \
+                -p openstack-keystone-identity-driver-ldap \
+                -p openstack-keystone-telemetry \
+                -p openstack-keystone-distributed-storage \
+                -p openstack-keystone
+          - name: aws-lc
+            native: true
+            run: |
+              cargo check -p openstack-keystone -p openstack-keystone-cli-manage \
+                --features openstack-keystone/rustls-aws-lc
+              cargo nextest run --profile ci -p openstack-keystone-tls-provider \
+                --features aws-lc
+              cargo nextest run --profile ci -p openstack-keystone \
+                --features rustls-aws-lc
+          # FIPS 140-3 validated module: needs cmake, clang and Go.
+          - name: fips
+            native: true
+            run: |
+              cargo check -p openstack-keystone --features fips
+              cargo nextest run --profile ci -p openstack-keystone-tls-provider \
+                --features fips
+              cargo nextest run --profile ci -p openstack-keystone-storage-crypto \
+                --no-default-features --features fips
+          # Every feature alone (the fips features are covered by their row;
+          # telemetry's `sdk` is internal and only builds with an exporter).
+          - name: each feature
+            native: false
+            run: |
+              cargo hack check --each-feature --no-dev-deps \
+                --exclude-no-default-features --skip fips,sdk \
+                -p openstack-keystone-tls-provider \
+                -p openstack-keystone-storage-crypto \
+                -p openstack-keystone-identity-driver-ldap \
+                -p cadf \
+                -p openstack-keystone-telemetry
+    name: Features (${{ matrix.name }})
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler libtss2-dev pkg-config
+
+      - name: Install aws-lc build prerequisites
+        if: matrix.native
+        run: sudo apt-get install -y cmake clang golang-go
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921 # stable
+        with:
+          toolchain: stable
+
+      # The keystone unit tests evaluate the real Rego policies via `opa run`.
+      - name: Setup OPA
+        uses: open-policy-agent/setup-opa@b2b258e089860efaadaaf71bf6e3aecb4a3eeff1 # v2.4.0
+        with:
+          version: latest
+
+      - name: Install cargo-nextest and cargo-hack
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: cargo-nextest,cargo-hack
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: features-${{ matrix.name }}
+
+      - name: Build and test
+        run: ${{ matrix.run }}
+
   openapi:
     needs: changes
     if: needs.changes.outputs.code == 'true' && github.event_name != 'merge_group'

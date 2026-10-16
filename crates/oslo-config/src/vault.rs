@@ -348,6 +348,9 @@ pub(crate) async fn resolve(
     let settings = settings
         .build()
         .map_err(|_| VaultConfigError::ClientInitialization)?;
+    // `vaultrs` builds a `reqwest` client, which needs a process-wide rustls
+    // provider.
+    openstack_keystone_tls_provider::install_default();
     let client =
         Arc::new(VaultClient::new(settings).map_err(|_| VaultConfigError::ClientInitialization)?);
 

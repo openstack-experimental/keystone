@@ -51,7 +51,7 @@ fn load_config() -> TestConfig {
     // cannot start correctly, so we crash immediately.
     let keystone_url =
         env::var("KEYSTONE_URL").expect("FATAL: Environment variable KEYSTONE_URL must be set");
-    let client = Client::new();
+    let client = http_client();
 
     // Return the loaded configuration
     TestConfig {
@@ -105,7 +105,7 @@ pub async fn ensure_user<T: AsRef<str>, U: AsRef<str>, D: AsRef<str>>(
     domain_id: D,
 ) -> Result<User, Report> {
     let keystone_url = env::var("KEYSTONE_URL").expect("KEYSTONE_URL is set");
-    let client = Client::new();
+    let client = http_client();
 
     let user_rsp = client
         .post(format!("{}/v4/users", keystone_url))
@@ -369,4 +369,17 @@ async fn handle_request(
                 .unwrap())
         }
     }
+}
+
+/// `reqwest` has no built-in rustls provider; install one before any client
+/// is built.
+pub fn http_client_builder() -> reqwest::ClientBuilder {
+    openstack_keystone_tls_provider::install_default();
+    reqwest::ClientBuilder::new()
+}
+
+/// Plain `reqwest` client with the rustls provider installed.
+pub fn http_client() -> Client {
+    openstack_keystone_tls_provider::install_default();
+    Client::new()
 }

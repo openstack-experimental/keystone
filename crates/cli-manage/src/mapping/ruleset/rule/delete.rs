@@ -93,7 +93,7 @@ mod tests {
                 }));
         });
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = DeleteCommand {
             mapping_id: "mapping-1".to_string(),
             rule_name: "rule-1".to_string(),
@@ -114,7 +114,7 @@ mod tests {
             then.status(500).body("internal error");
         });
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = DeleteCommand {
             mapping_id: "mapping-1".to_string(),
             rule_name: "rule-1".to_string(),

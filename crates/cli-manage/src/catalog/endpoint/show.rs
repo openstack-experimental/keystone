@@ -73,7 +73,6 @@ impl PerformAction for ShowCommand {
 #[cfg(test)]
 mod tests {
     use httpmock::{Method, MockServer};
-    use reqwest::Client;
 
     use super::*;
 
@@ -94,7 +93,7 @@ mod tests {
                 }));
         });
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = ShowCommand {
             id: "ep-1".to_string(),
         };
@@ -113,7 +112,7 @@ mod tests {
             then.status(404).body("not found");
         });
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = ShowCommand {
             id: "missing".to_string(),
         };

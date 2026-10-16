@@ -28,7 +28,7 @@ fn test_abort_pending_rotation_via_raft() {
 
 #[allow(unsafe_code)]
 async fn test_abort_pending_rotation_via_raft_inner() -> Result<()> {
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
 
     let storage_dir = tempfile::TempDir::new().unwrap();
@@ -120,7 +120,7 @@ fn test_propose_abort_pending_rotation_leader_only() {
 
 #[allow(unsafe_code)]
 async fn test_propose_abort_pending_rotation_leader_only_inner() -> Result<()> {
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
 
     // SAFETY: no concurrent env readers; test is `#[serial_test::serial]`.
@@ -193,7 +193,7 @@ fn test_emergency_dek_rotation_preserves_data_across_restart() {
 async fn test_emergency_dek_rotation_preserves_data_across_restart_inner() -> Result<()> {
     use openstack_keystone_storage_crypto::{EnvKek, KekProvider, generate_dek};
 
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
 
     let storage_dir = tempfile::TempDir::new().unwrap();
@@ -476,7 +476,7 @@ fn test_rotation_under_concurrent_writes_never_reverts_a_write() {
 async fn test_rotation_under_concurrent_writes_never_reverts_a_write_inner() -> Result<()> {
     use openstack_keystone_storage_crypto::{EnvKek, KekProvider, generate_dek};
 
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
     let tls_configuration = make_certificates()?;
 
@@ -628,7 +628,7 @@ async fn test_automatic_dek_rotation_inner() -> Result<()> {
     use openstack_keystone_distributed_storage::app::RotationTrigger;
     use openstack_keystone_storage_crypto::{EnvKek, KekProvider, generate_dek};
 
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
     let tls_configuration = make_certificates()?;
 

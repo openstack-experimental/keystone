@@ -432,7 +432,7 @@ async fn test_k8s_auth_cannot_rescope_to_other_project() -> Result<()> {
     let keystone_url =
         env::var("KEYSTONE_URL").unwrap_or_else(|_| "http://localhost:5000".to_string());
 
-    let rescope_rsp = reqwest::Client::new()
+    let rescope_rsp = test_api::common::http_client()
         .post(format!("{}/v3/auth/tokens", keystone_url))
         .header("X-Auth-Token", token_secret.expose_secret())
         .header("Content-Type", "application/json")

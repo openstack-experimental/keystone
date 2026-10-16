@@ -47,7 +47,8 @@ tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 tokio = { workspace = true, features = ["fs", "rt-multi-thread", "macros"] }
 tokio-rustls.workspace = true
-tonic = { workspace = true, features = ["tls-aws-lc"] }
+openstack-keystone-tls-provider.workspace = true
+tonic.workspace = true
 tracing-test.workspace = true
 thirtyfour = "0.37"
 webauthn-authenticator-rs = { workspace = true, features = ["softtoken"] }

@@ -196,6 +196,7 @@ impl OpenFGADriver {
         let timeout = timeout_secs
             .map(|secs| Duration::from_secs(secs.into()))
             .unwrap_or_else(|| Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS));
+        openstack_keystone_tls_provider::install_default();
         Ok(Client::builder().timeout(timeout).build()?)
     }
 

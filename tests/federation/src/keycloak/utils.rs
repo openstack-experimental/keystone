@@ -195,7 +195,7 @@ pub async fn generate_user_jwt<CI: AsRef<str>, CS: AsRef<str>>(
     user: &'static str,
     password: &'static str,
 ) -> Result<String, Report> {
-    let client = Client::new();
+    let client = crate::keystone_utils::http_client();
     let url = std::env::var("KEYCLOAK_URL").unwrap_or_else(|_| "http://localhost:8082".into());
     let realm = "master";
     let response: AuthResponse = client

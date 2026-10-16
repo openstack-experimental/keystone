@@ -95,7 +95,6 @@ impl PerformAction for UpdateCommand {
 #[cfg(test)]
 mod tests {
     use httpmock::{Method, MockServer};
-    use reqwest::Client;
     use tempfile::NamedTempFile;
 
     use super::*;
@@ -128,7 +127,7 @@ mod tests {
         });
 
         let file = write_payload(&serde_json::json!({ "enabled": false }));
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = UpdateCommand {
             mapping_id: "mapping-1".to_string(),
             file: file.path().to_path_buf(),
@@ -162,7 +161,7 @@ mod tests {
         });
 
         let file = write_payload(&serde_json::json!({ "enabled": false }));
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = UpdateCommand {
             mapping_id: "mapping-1".to_string(),
             file: file.path().to_path_buf(),
@@ -185,7 +184,7 @@ mod tests {
         });
 
         let file = write_payload(&serde_json::json!({ "enabled": false }));
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = UpdateCommand {
             mapping_id: "missing".to_string(),
             file: file.path().to_path_buf(),

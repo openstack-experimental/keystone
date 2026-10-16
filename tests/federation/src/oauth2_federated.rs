@@ -55,7 +55,7 @@ use crate::keystone_utils::*;
 
 thread_local! {
     static CONFIG: &'static TestConfig = Box::leak(Box::new(TestConfig {
-        client: Client::new(),
+        client: crate::keystone_utils::http_client(),
         keystone_url: env::var("KEYSTONE_URL").unwrap_or_default(),
     }));
 }
@@ -653,7 +653,7 @@ struct Probe {
 
 impl Probe {
     async fn new_http() -> Client {
-        Client::builder()
+        crate::keystone_utils::http_client_builder()
             .cookie_store(true)
             .redirect(Policy::none())
             .build()

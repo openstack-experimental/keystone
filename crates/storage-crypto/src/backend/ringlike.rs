@@ -11,12 +11,20 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-//! AWS-LC (FIPS 140-3 validated module) implementation of the
-//! [`crate::backend`] primitives.
+//! Implementation of the [`crate::backend`] primitives for the `ring` API.
+//!
+//! `aws-lc-rs` is a drop-in for the subset of `ring` used here, so one body
+//! serves both providers; `provider` below is the only thing that differs.
 
-use aws_lc_rs::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
-use aws_lc_rs::hkdf::{HKDF_SHA256, KeyType, Prk};
-use aws_lc_rs::hmac;
+#[cfg(feature = "fips")]
+use aws_lc_rs as provider;
+#[cfg(not(feature = "fips"))]
+use ring as provider;
+
+use provider::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
+use provider::hkdf::{HKDF_SHA256, KeyType, Prk};
+use provider::hmac;
+use provider::rand::{SecureRandom, SystemRandom};
 use zeroize::Zeroizing;
 
 use crate::error::CryptoError;
@@ -27,10 +35,6 @@ fn key_for(key: &[u8]) -> Result<LessSafeKey, CryptoError> {
         .map_err(|_| CryptoError::InvalidKeyLength)
 }
 
-fn nonce_for(nonce: &[u8; 12]) -> Result<Nonce, CryptoError> {
-    Nonce::try_assume_unique_for_key(nonce).map_err(|_| CryptoError::InvalidArrayLength)
-}
-
 /// Encrypt `buf` in place and return the detached 16-byte tag.
 pub(crate) fn gcm_seal(
     key: &[u8],
@@ -39,7 +43,7 @@ pub(crate) fn gcm_seal(
     buf: &mut [u8],
 ) -> Result<[u8; 16], CryptoError> {
     let tag = key_for(key)?
-        .seal_in_place_separate_tag(nonce_for(nonce)?, Aad::from(aad), buf)
+        .seal_in_place_separate_tag(Nonce::assume_unique_for_key(*nonce), Aad::from(aad), buf)
         .map_err(|_| CryptoError::AesEncrypt)?;
     let mut out = [0u8; 16];
     out.copy_from_slice(tag.as_ref());
@@ -54,12 +58,16 @@ pub(crate) fn gcm_open(
     buf: &mut [u8],
     tag: &[u8; 16],
 ) -> Result<(), CryptoError> {
-    // aws-lc-rs wants ciphertext and tag contiguous.
+    // The providers want ciphertext and tag contiguous.
     let mut joined = Zeroizing::new(Vec::with_capacity(buf.len() + tag.len()));
     joined.extend_from_slice(buf);
     joined.extend_from_slice(tag);
     let plain = key_for(key)?
-        .open_in_place(nonce_for(nonce)?, Aad::from(aad), joined.as_mut_slice())
+        .open_in_place(
+            Nonce::assume_unique_for_key(*nonce),
+            Aad::from(aad),
+            joined.as_mut_slice(),
+        )
         .map_err(|_| CryptoError::AesDecrypt)?;
     buf.copy_from_slice(plain);
     Ok(())
@@ -90,12 +98,7 @@ pub(crate) fn hmac_sha256(key: &[u8], msg: &[u8]) -> Result<[u8; 32], CryptoErro
     Ok(out)
 }
 
-/// Fill `out` from the validated module's DRBG.
+/// Fill `out` from the provider's CSPRNG.
 pub(crate) fn fill_random(out: &mut [u8]) -> Result<(), CryptoError> {
-    aws_lc_rs::rand::fill(out).map_err(|_| CryptoError::Rng)
-}
-
-/// Ok only when the validated module is running in FIPS mode.
-pub(super) fn fips_active() -> Result<(), CryptoError> {
-    aws_lc_rs::try_fips_mode().map_err(|_| CryptoError::FipsUnavailable)
+    SystemRandom::new().fill(out).map_err(|_| CryptoError::Rng)
 }

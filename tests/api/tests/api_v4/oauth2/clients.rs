@@ -98,10 +98,13 @@ async fn create(
     provider_id: &str,
 ) -> Result<(StatusCode, Value)> {
     let _ = a;
-    let rsp = authed(Client::new().post(url(domain, "")?), token)
-        .json(&body(provider_id))
-        .send()
-        .await?;
+    let rsp = authed(
+        test_api::common::http_client().post(url(domain, "")?),
+        token,
+    )
+    .json(&body(provider_id))
+    .send()
+    .await?;
     let status = rsp.status();
     Ok((status, rsp.json().await.unwrap_or(Value::Null)))
 }
@@ -163,7 +166,7 @@ async fn test_client_create_pre_authorized_requires_admin() -> Result<()> {
     payload["oauth2_client"]["confidential"] = json!(false);
     payload["oauth2_client"]["token_endpoint_auth_method"] = json!("none");
     payload["oauth2_client"]["require_pkce"] = json!(true);
-    let rsp = Client::new()
+    let rsp = test_api::common::http_client()
         .post(url(&a.domain_id, "")?)
         .header("x-auth-token", &a.manager)
         .json(&payload)
@@ -174,7 +177,7 @@ async fn test_client_create_pre_authorized_requires_admin() -> Result<()> {
     // `admin` may register one.
     let mut payload = payload;
     payload["oauth2_client"]["provider_id"] = json!(pid());
-    let rsp = Client::new()
+    let rsp = test_api::common::http_client()
         .post(url(&a.domain_id, "")?)
         .header("x-auth-token", &a.admin)
         .json(&payload)
@@ -195,7 +198,7 @@ async fn test_client_list_and_show() -> Result<()> {
     let p = pid();
     create(&a, &a.domain_id, Some(&a.admin), &p).await?;
 
-    let rsp = Client::new()
+    let rsp = test_api::common::http_client()
         .get(url(&a.domain_id, "")?)
         .header("x-auth-token", &a.admin)
         .send()
@@ -209,7 +212,7 @@ async fn test_client_list_and_show() -> Result<()> {
         "{list}"
     );
 
-    let rsp = Client::new()
+    let rsp = test_api::common::http_client()
         .get(url(&a.domain_id, &format!("/{p}"))?)
         .header("x-auth-token", &a.admin)
         .send()
@@ -221,7 +224,7 @@ async fn test_client_list_and_show() -> Result<()> {
     assert!(shown.get("client_secret").is_none());
 
     // unknown -> 404
-    let rsp = Client::new()
+    let rsp = test_api::common::http_client()
         .get(url(&a.domain_id, "/no-such-client")?)
         .header("x-auth-token", &a.admin)
         .send()
@@ -245,9 +248,12 @@ async fn test_client_list_show_denied_and_unauthenticated() -> Result<()> {
         (None, vec![StatusCode::UNAUTHORIZED]),
     ] {
         for tail in ["".to_string(), format!("/{p}")] {
-            let rsp = authed(Client::new().get(url(&a.domain_id, &tail)?), token)
-                .send()
-                .await?;
+            let rsp = authed(
+                test_api::common::http_client().get(url(&a.domain_id, &tail)?),
+                token,
+            )
+            .send()
+            .await?;
             assert!(expected.contains(&rsp.status()), "{tail}: {}", rsp.status());
         }
     }
@@ -264,7 +270,7 @@ async fn test_client_update_allowed_denied_unauthenticated() -> Result<()> {
     create(&a, &a.domain_id, Some(&a.admin), &p).await?;
     let upd = json!({"oauth2_client": {"name": "renamed", "enabled": false}});
 
-    let rsp = Client::new()
+    let rsp = test_api::common::http_client()
         .put(url(&a.domain_id, &format!("/{p}"))?)
         .header("x-auth-token", &a.admin)
         .json(&upd)
@@ -275,7 +281,7 @@ async fn test_client_update_allowed_denied_unauthenticated() -> Result<()> {
     assert_eq!(out["oauth2_client"]["name"], "renamed");
     assert_eq!(out["oauth2_client"]["enabled"], false);
 
-    let rsp = Client::new()
+    let rsp = test_api::common::http_client()
         .put(url(&a.domain_id, &format!("/{p}"))?)
         .header("x-auth-token", &a.plain)
         .json(&upd)
@@ -286,7 +292,7 @@ async fn test_client_update_allowed_denied_unauthenticated() -> Result<()> {
         StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED
     ));
 
-    let rsp = Client::new()
+    let rsp = test_api::common::http_client()
         .put(url(&a.domain_id, &format!("/{p}"))?)
         .json(&upd)
         .send()
@@ -301,7 +307,7 @@ async fn test_client_update_cannot_enable_pre_authorized_as_manager() -> Result<
     let a = actors().await?;
     let p = pid();
     create(&a, &a.domain_id, Some(&a.admin), &p).await?;
-    let rsp = Client::new()
+    let rsp = test_api::common::http_client()
         .put(url(&a.domain_id, &format!("/{p}"))?)
         .header("x-auth-token", &a.manager)
         .json(&json!({"oauth2_client": {"pre_authorized": true}}))
@@ -336,7 +342,7 @@ async fn test_client_delete_allowed_denied_unauthenticated() -> Result<()> {
         (None, vec![StatusCode::UNAUTHORIZED]),
     ] {
         let rsp = authed(
-            Client::new().delete(url(&a.domain_id, &format!("/{p}"))?),
+            test_api::common::http_client().delete(url(&a.domain_id, &format!("/{p}"))?),
             token,
         )
         .send()
@@ -344,14 +350,14 @@ async fn test_client_delete_allowed_denied_unauthenticated() -> Result<()> {
         assert!(expected.contains(&rsp.status()), "{}", rsp.status());
     }
 
-    let rsp = Client::new()
+    let rsp = test_api::common::http_client()
         .delete(url(&a.domain_id, &format!("/{p}"))?)
         .header("x-auth-token", &a.admin)
         .send()
         .await?;
     assert_eq!(rsp.status(), StatusCode::NO_CONTENT);
 
-    let rsp = Client::new()
+    let rsp = test_api::common::http_client()
         .get(url(&a.domain_id, &format!("/{p}"))?)
         .header("x-auth-token", &a.admin)
         .send()
@@ -381,7 +387,7 @@ async fn test_client_delete_stops_token_issuance() -> Result<()> {
         .unwrap_or_default()
         .to_string();
 
-    Client::new()
+    test_api::common::http_client()
         .delete(url(&a.domain_id, &format!("/{p}"))?)
         .header("x-auth-token", &a.admin)
         .send()
@@ -416,7 +422,7 @@ async fn test_client_rotate_secret_invalidates_old_secret() -> Result<()> {
         .unwrap_or_default()
         .to_string();
 
-    let rsp = Client::new()
+    let rsp = test_api::common::http_client()
         .post(url(&a.domain_id, &format!("/{p}/rotate-secret"))?)
         .header("x-auth-token", &a.admin)
         .send()
@@ -456,7 +462,8 @@ async fn test_client_rotate_secret_denied_and_unauthenticated() -> Result<()> {
         (None, vec![StatusCode::UNAUTHORIZED]),
     ] {
         let rsp = authed(
-            Client::new().post(url(&a.domain_id, &format!("/{p}/rotate-secret"))?),
+            test_api::common::http_client()
+                .post(url(&a.domain_id, &format!("/{p}/rotate-secret"))?),
             token,
         )
         .send()

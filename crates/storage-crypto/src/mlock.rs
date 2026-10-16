@@ -53,7 +53,6 @@ use std::sync::OnceLock;
 
 use nix::sys::mman::{MmapAdvise, ProtFlags, madvise, mlock, mprotect, munlock};
 use nix::unistd::{SysconfVar, sysconf};
-use rand::RngExt;
 use zeroize::Zeroize;
 
 /// Key size in bytes.
@@ -79,7 +78,7 @@ fn alloc_state() -> &'static AllocState {
             "page size {page_size} too small for guard-page allocation"
         );
         let mut canary = [0u8; CANARY_SIZE];
-        rand::rng().fill(&mut canary);
+        crate::backend::fill_random(&mut canary).expect("canary RNG failed");
         AllocState { page_size, canary }
     })
 }

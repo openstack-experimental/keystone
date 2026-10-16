@@ -1,0 +1,38 @@
+[package]
+name = "openstack-keystone-tls-provider"
+description = "Build-time selection of the rustls crypto provider (ring or aws-lc-rs)"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+exclude.workspace = true
+
+[features]
+default = ["ring"]
+# `ring` provider. Also enables it on `tokio-rustls` and `tonic`.
+ring = [
+  "rustls/ring",
+  "tokio-rustls/ring",
+  "tonic/tls-ring",
+]
+# `aws-lc-rs` provider; wins over `ring` when both are enabled. Building it
+# needs cmake and a C compiler.
+aws-lc = [
+  "rustls/aws_lc_rs",
+  "tokio-rustls/aws_lc_rs",
+  "tonic/tls-aws-lc",
+]
+# FIPS 140-3 validated aws-lc-rs through rustls' own `fips` feature (which
+# implies `aws_lc_rs`). Also needs cmake, clang and Go to build.
+fips = ["aws-lc", "rustls/fips"]
+
+[dependencies]
+rustls.workspace = true
+tokio-rustls.workspace = true
+tonic.workspace = true
+
+[lints]
+workspace = true

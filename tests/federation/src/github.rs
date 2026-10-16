@@ -58,7 +58,7 @@ async fn resolve_jwt() -> Option<String> {
         env::var("ACTIONS_ID_TOKEN_AUDIENCE").unwrap_or_else(|_| "https://github.com".to_string());
     let url = format!("{request_url}&audience={audience}");
 
-    let resp = Client::new()
+    let resp = crate::keystone_utils::http_client()
         .get(&url)
         .header("Authorization", format!("bearer {request_token}"))
         .send()

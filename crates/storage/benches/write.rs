@@ -270,7 +270,7 @@ fn bench_storage_cluster(_c: &mut Criterion) {
         ],
         || {
             let c = _c;
-            let provider = rustls::crypto::aws_lc_rs::default_provider();
+            let provider = openstack_keystone_tls_provider::provider();
             rustls::crypto::CryptoProvider::install_default(provider).unwrap();
 
             let rt = Runtime::new().unwrap();

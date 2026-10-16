@@ -163,3 +163,11 @@ pub fn print_attribute_table(rows: Vec<(&str, String)>) {
     }
     println!("{table}");
 }
+
+/// Plain `reqwest` client for unit tests. reqwest has no built-in rustls
+/// provider, so one is installed first.
+#[cfg(test)]
+pub(crate) fn test_client() -> reqwest::Client {
+    openstack_keystone_tls_provider::install_default();
+    reqwest::Client::new()
+}

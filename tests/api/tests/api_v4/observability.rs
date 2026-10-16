@@ -88,7 +88,7 @@ async fn test_request_is_traced_and_counted() -> Result<()> {
     let keystone = env::var("KEYSTONE_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".into());
     let metrics =
         env::var("KEYSTONE_METRICS_URL").unwrap_or_else(|_| "http://127.0.0.1:8099".into());
-    let client = Client::new();
+    let client = test_api::common::http_client();
 
     let trace_id = Uuid::new_v4().simple().to_string();
     let span_id = &Uuid::new_v4().simple().to_string()[..16];

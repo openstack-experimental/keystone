@@ -101,7 +101,6 @@ impl PerformAction for ListCommand {
 #[cfg(test)]
 mod tests {
     use httpmock::{Method, MockServer};
-    use reqwest::Client;
 
     use super::*;
 
@@ -127,7 +126,7 @@ mod tests {
                 }));
         });
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = ListCommand {
             domain_id: None,
             enabled: None,
@@ -152,7 +151,7 @@ mod tests {
                 .json_body_obj(&serde_json::json!({ "mappings": [] }));
         });
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = ListCommand {
             domain_id: Some("domain-1".to_string()),
             enabled: Some(true),
@@ -172,7 +171,7 @@ mod tests {
             then.status(500).body("internal error");
         });
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = ListCommand {
             domain_id: None,
             enabled: None,

@@ -136,7 +136,6 @@ impl PerformAction for CreateCommand {
 #[cfg(test)]
 mod tests {
     use httpmock::{Method, MockServer};
-    use reqwest::Client;
 
     use super::*;
 
@@ -174,7 +173,7 @@ mod tests {
                 }));
         });
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = command("identity-rs", Some("keystone-rs"));
         let created = cmd.create_with_client(&client, &base).await;
         assert!(created.is_ok());
@@ -198,7 +197,7 @@ mod tests {
                 }));
         });
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = command("identity-rs", None);
         let created = cmd.create_with_client(&client, &base).await;
         assert!(created.is_ok());
@@ -216,7 +215,7 @@ mod tests {
             then.status(500).body("internal error");
         });
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = command("identity-rs", None);
         let result = cmd.create_with_client(&client, &base).await;
         assert!(result.is_err());
@@ -240,7 +239,7 @@ mod tests {
         // No POST mock registered: httpmock fails the test if an
         // unmatched request (e.g. an unexpected POST) is made.
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = command("identity-rs", Some("keystone-rs"));
         let created = cmd.create_with_client(&client, &base).await;
         assert!(created.is_ok());
@@ -269,7 +268,7 @@ mod tests {
             then.status(409).body("conflict");
         });
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = command("identity-rs", Some("keystone-rs"));
         let result = cmd.create_with_client(&client, &base).await;
         assert!(result.is_err());

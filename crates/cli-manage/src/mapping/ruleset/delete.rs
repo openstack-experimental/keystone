@@ -67,7 +67,6 @@ impl PerformAction for DeleteCommand {
 #[cfg(test)]
 mod tests {
     use httpmock::{Method, MockServer};
-    use reqwest::Client;
 
     use super::*;
 
@@ -82,7 +81,7 @@ mod tests {
             then.status(204);
         });
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = DeleteCommand {
             mapping_id: "mapping-1".to_string(),
         };
@@ -101,7 +100,7 @@ mod tests {
             then.status(404).body("not found");
         });
 
-        let client = Client::new();
+        let client = crate::common::test_client();
         let cmd = DeleteCommand {
             mapping_id: "missing".to_string(),
         };

@@ -46,6 +46,8 @@ impl HttpPolicyEnforcer {
     /// A `Result` containing the `HttpPolicyEnforcer` instance, or a
     /// `PolicyError`.
     pub async fn new(url: Url) -> Result<Self, PolicyError> {
+        // reqwest has no built-in rustls provider; make sure one is installed.
+        openstack_keystone_tls_provider::install_default();
         match url.scheme() {
             "http" | "https" => {
                 // Communication with OPA over the network IF

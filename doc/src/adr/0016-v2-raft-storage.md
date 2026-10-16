@@ -212,8 +212,11 @@ tags must be 16 bytes.
   `LessSafeKey`, so `assert_fips()` proves the validated module is in use, not
   that each GCM encrypt is an approved service. Closing that gap needs the
   same storage format change. Building the feature requires cmake, a C
-  compiler, clang and Go; use `--no-default-features --features fips` to
-  keep the RustCrypto crates out of the dependency tree.
+  compiler, clang and Go. The default backend is `ring`; both go through one
+  ring-API implementation (`backend/ringlike.rs`), and `backend.rs` documents
+  how to add another provider. The service's `fips` feature also selects
+  `aws-lc-rs` with rustls' `fips` for TLS (`openstack-keystone-tls-provider`),
+  except SPIFFE mTLS, which `spiffe-rustls` pins to `ring`.
 
 ### 2.3 Associated Data (AD) Bindings
 

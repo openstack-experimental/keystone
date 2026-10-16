@@ -98,7 +98,7 @@ async fn subject_request(
     auth_token: Option<&SecretString>,
     subject_token: &SecretString,
 ) -> Result<reqwest::Response> {
-    let mut request = reqwest::Client::new()
+    let mut request = crate::common::http_client()
         .request(method, tc.base_url.join("v3/auth/tokens")?)
         .header("x-subject-token", sensitive_header(subject_token)?);
     if let Some(auth_token) = auth_token {
@@ -120,7 +120,7 @@ pub async fn authenticate_identity(
     let request = AuthRequest {
         auth: AuthRequestInner { identity, scope },
     };
-    Ok(reqwest::Client::new()
+    Ok(crate::common::http_client()
         .post(tc.base_url.join("v3/auth/tokens")?)
         .json(&request)
         .send()

@@ -220,7 +220,7 @@ fn test_pkcs11_backed_cluster_write_read() {
     if skip_without_softhsm() {
         return;
     }
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
 
     with_provisioned_token(|module| {
@@ -295,7 +295,7 @@ fn test_pkcs11_backed_cluster_restart_reopens_token() {
     if skip_without_softhsm() {
         return;
     }
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
 
     with_provisioned_token(|module| {

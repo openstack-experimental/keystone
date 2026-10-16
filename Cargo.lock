@@ -27,16 +27,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
-name = "aead"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1973cfbc1a2daf9cf550e74e1f088c28e7f7d8c1e1418fb6c9dc5184b7e84c99"
-dependencies = [
- "crypto-common 0.2.2",
- "inout 0.2.2",
-]
-
-[[package]]
 name = "aes"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -45,31 +35,6 @@ dependencies = [
  "cfg-if",
  "cipher 0.4.4",
  "cpufeatures 0.2.17",
-]
-
-[[package]]
-name = "aes"
-version = "0.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35f0f96ce78e38c3dc6d8948aa8163d06385be74000f3c7a95bf1eef35d3ea32"
-dependencies = [
- "cipher 0.5.2",
- "cpubits",
- "cpufeatures 0.3.1",
-]
-
-[[package]]
-name = "aes-gcm"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f2b8006a0c83f52b62ba44a97b58bf76fe2f70a329e588f67f89691d93d498f"
-dependencies = [
- "aead",
- "aes 0.9.3",
- "cipher 0.5.2",
- "ctr",
- "ctutils",
- "ghash",
 ]
 
 [[package]]
@@ -605,7 +570,6 @@ checksum = "b281d307588d634de920874890732659e2e7672f72b5e10e81badc1a8a83621e"
 dependencies = [
  "aws-lc-fips-sys",
  "aws-lc-sys",
- "untrusted 0.7.1",
  "zeroize",
 ]
 
@@ -1043,6 +1007,7 @@ dependencies = [
  "hmac 0.13.0",
  "nix 0.31.3",
  "openstack-keystone-telemetry",
+ "openstack-keystone-tls-provider",
  "rcgen",
  "rustls",
  "rustls-native-certs",
@@ -1951,15 +1916,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ctr"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "baaca1c4b237092596f64d571e9db6ce4109c4ef9742e27590f1709594461f21"
-dependencies = [
- "cipher 0.5.2",
-]
-
-[[package]]
 name = "ctutils"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2758,7 +2714,7 @@ version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c66b725fe9483b9ee72ccaec072b15eb8ad95a3ae63a8c798d5748883b72fd33"
 dependencies = [
- "aes 0.8.4",
+ "aes",
  "base64 0.22.1",
  "byteorder",
  "cbc",
@@ -3130,15 +3086,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "ghash"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2eecf2d5dc9b66b732b97707a0210906b1d30523eb773193ab777c0c84b3e8d5"
-dependencies = [
- "polyval",
 ]
 
 [[package]]
@@ -5118,6 +5065,7 @@ dependencies = [
  "openstack-keystone-scim-driver-raft",
  "openstack-keystone-storage-api",
  "openstack-keystone-telemetry",
+ "openstack-keystone-tls-provider",
  "openstack-keystone-token-driver-fernet",
  "openstack-keystone-token-driver-jws",
  "openstack-keystone-token-restriction-driver-sql",
@@ -5233,6 +5181,7 @@ dependencies = [
  "openstack-keystone-config",
  "openstack-keystone-core",
  "openstack-keystone-core-types",
+ "openstack-keystone-tls-provider",
  "oslo-config",
  "reqwest 0.13.5",
  "serde",
@@ -5335,6 +5284,7 @@ dependencies = [
  "openstack-keystone-distributed-storage",
  "openstack-keystone-federation-driver-sql",
  "openstack-keystone-k8s-auth-driver-sql",
+ "openstack-keystone-tls-provider",
  "openstack-keystone-token-driver-fernet",
  "openstack-keystone-token-restriction-driver-sql",
  "openstack-keystone-webauthn",
@@ -5516,6 +5466,7 @@ dependencies = [
  "openstack-keystone-storage-crypto-pkcs11",
  "openstack-keystone-storage-crypto-tpm",
  "openstack-keystone-telemetry",
+ "openstack-keystone-tls-provider",
  "oslo-config",
  "prost",
  "rand 0.10.2",
@@ -5922,14 +5873,9 @@ dependencies = [
 name = "openstack-keystone-storage-crypto"
 version = "0.1.0"
 dependencies = [
- "aes-gcm",
  "aws-lc-rs",
- "hkdf 0.13.0",
- "hmac 0.13.0",
- "hybrid-array",
  "nix 0.31.3",
- "rand 0.10.2",
- "sha2 0.11.0",
+ "ring",
  "thiserror 2.0.20",
  "tracing",
  "zeroize",
@@ -5968,6 +5914,7 @@ dependencies = [
  "http",
  "inventory",
  "openstack-keystone-config",
+ "openstack-keystone-tls-provider",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
@@ -5982,6 +5929,15 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "url",
+]
+
+[[package]]
+name = "openstack-keystone-tls-provider"
+version = "0.1.0"
+dependencies = [
+ "rustls",
+ "tokio-rustls",
+ "tonic",
 ]
 
 [[package]]
@@ -6086,6 +6042,7 @@ dependencies = [
  "openstack-keystone-core",
  "openstack-keystone-core-types",
  "openstack-keystone-distributed-storage",
+ "openstack-keystone-tls-provider",
  "openstack-keystone-token-driver-fernet",
  "rcgen",
  "reqwest 0.13.5",
@@ -6676,6 +6633,7 @@ dependencies = [
  "inventory",
  "ipnet",
  "notify",
+ "openstack-keystone-tls-provider",
  "secrecy",
  "serde",
  "serde_json",
@@ -7164,17 +7122,6 @@ checksum = "4b3eba432a00a1f6c16f39147847a870e94e2e9b992759b503e330efec778cbe"
 dependencies = [
  "once_cell",
  "regex",
-]
-
-[[package]]
-name = "polyval"
-version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0fa31d631f2b2cb2a544d0aa321ce847a94764d701ca2becc411138b93d49cd"
-dependencies = [
- "cpubits",
- "cpufeatures 0.3.1",
- "universal-hash",
 ]
 
 [[package]]
@@ -7734,8 +7681,8 @@ version = "0.14.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8774e05a7d0de114588e6a28fe7e71694b82614ed569d86d8b389dfbc98b8ad8"
 dependencies = [
- "aws-lc-rs",
  "pem 4.0.0",
+ "ring",
  "rustls-pki-types",
  "time",
  "x509-parser 0.18.1",
@@ -7967,7 +7914,7 @@ dependencies = [
  "cfg-if",
  "getrandom 0.2.17",
  "libc",
- "untrusted 0.9.0",
+ "untrusted",
  "windows-sys 0.52.0",
 ]
 
@@ -8241,7 +8188,7 @@ dependencies = [
  "aws-lc-rs",
  "ring",
  "rustls-pki-types",
- "untrusted 0.9.0",
+ "untrusted",
 ]
 
 [[package]]
@@ -9512,6 +9459,7 @@ dependencies = [
  "openidconnect",
  "openstack-keystone-api-types",
  "openstack-keystone-distributed-storage",
+ "openstack-keystone-tls-provider",
  "openstack_sdk",
  "reqwest 0.13.5",
  "rustls",
@@ -9550,6 +9498,7 @@ dependencies = [
  "keycloak",
  "local-ip-address",
  "openstack-keystone-api-types",
+ "openstack-keystone-tls-provider",
  "reqwest 0.13.5",
  "serde",
  "serde_json",
@@ -10321,22 +10270,6 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
-
-[[package]]
-name = "universal-hash"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4987bdc12753382e0bec4a65c50738ffaabc998b9cdd1f952fb5f39b0048a96"
-dependencies = [
- "crypto-common 0.2.2",
- "ctutils",
-]
-
-[[package]]
-name = "untrusted"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
 
 [[package]]
 name = "untrusted"
@@ -11634,12 +11567,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d43b0f71ce057da06bc0851b23ee24f3f86190b07203dd8f567d0b706a185202"
 dependencies = [
  "asn1-rs 0.7.2",
- "aws-lc-rs",
  "data-encoding",
  "der-parser 10.0.0",
  "lazy_static",
  "nom",
  "oid-registry 0.8.1",
+ "ring",
  "rusticata-macros",
  "thiserror 2.0.20",
  "time",

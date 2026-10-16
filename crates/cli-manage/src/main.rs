@@ -102,6 +102,7 @@ pub trait PerformAction {
 #[tokio::main]
 async fn main() -> Result<(), Report> {
     let args = Args::parse();
+    openstack_keystone_tls_provider::install_default();
     // Keep the `[distributed_storage]` section registration linked (ADR 0018).
     openstack_keystone_distributed_storage::anchor();
     let cfg = oslo_config::load_snapshot_from::<Config>(args.config).await?;

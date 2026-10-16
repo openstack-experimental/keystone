@@ -43,7 +43,7 @@ async fn wait_until_ready(storage: &Storage) -> Vec<String> {
 }
 
 async fn test_readiness_and_metrics_inner() -> Result<()> {
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
 
     let tls_configuration = make_certificates()?;
@@ -171,7 +171,7 @@ async fn test_admin_rpcs_redirect_to_leader_inner() -> Result<()> {
 
     const PORT: u16 = ADMIN_LEADER_REDIRECT_PORT_BASE;
 
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
     let tls_configuration = make_certificates()?;
 
@@ -341,7 +341,7 @@ fn test_transfer_leader_before_demoting_the_leader() {
 async fn test_transfer_leader_before_demoting_the_leader_inner() -> Result<()> {
     const PORT: u16 = TRANSFER_LEADER_PORT_BASE;
 
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
     let tls_configuration = make_certificates()?;
 
@@ -439,7 +439,7 @@ fn test_leader_failover_and_rejoin() {
 
 async fn test_leader_failover_and_rejoin_inner() -> Result<()> {
     const PORT: u16 = FAILOVER_PORT_BASE;
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
     let tls = make_certificates()?;
 

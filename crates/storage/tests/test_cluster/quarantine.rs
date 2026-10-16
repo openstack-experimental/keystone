@@ -27,7 +27,7 @@ fn test_quarantine_committed_via_raft() {
 
 #[allow(unsafe_code)]
 async fn test_quarantine_committed_via_raft_inner() -> Result<()> {
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
 
     let storage_dir = tempfile::TempDir::new().unwrap();
@@ -123,7 +123,7 @@ async fn test_report_quarantine_follower_hint_and_leader_commit_inner() -> Resul
     use openstack_keystone_distributed_storage::app::{LEADER_ENDPOINT_HEADER, LEADER_ID_HEADER};
     use openstack_keystone_distributed_storage::protobuf::api::storage_service_client::StorageServiceClient;
 
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
     let tls_configuration = make_certificates()?;
 
@@ -318,7 +318,7 @@ async fn test_rogue_identities_rejected_tls_roles_inner() -> Result<()> {
 
     const PORT: u16 = ROGUE_IDENTITIES_PORT_BASE;
 
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
 
     let pki = TestPki::new()?;
@@ -535,7 +535,7 @@ fn test_follower_quarantine_forwarded_to_leader() {
 async fn test_follower_quarantine_forwarded_to_leader_inner() -> Result<()> {
     const PORT: u16 = QUARANTINE_FORWARD_PORT_BASE;
 
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
 
     let pki = TestPki::new()?;
@@ -676,7 +676,7 @@ fn test_quarantine_survives_restart_and_is_cleared() {
 
 async fn test_quarantine_survives_restart_and_is_cleared_inner() -> Result<()> {
     const PORT: u16 = QUARANTINE_RESTART_PORT_BASE;
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
     let tls = make_certificates()?;
 

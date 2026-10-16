@@ -149,6 +149,7 @@ fn resolve_health_url(opa_url: &Url, socket_path: Option<&Path>) -> Url {
 /// Unix socket the client must be bound to it with `.unix_socket()` so
 /// requests are routed over the socket rather than TCP to localhost.
 fn build_health_client(socket_path: Option<&Path>) -> Result<reqwest::Client, Report> {
+    openstack_keystone_tls_provider::install_default();
     match socket_path {
         Some(socket_path) => reqwest::Client::builder()
             .unix_socket(socket_path.to_path_buf())

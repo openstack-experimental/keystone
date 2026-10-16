@@ -93,7 +93,10 @@ async fn wait_for_callback(timeout_secs: u64) -> FederationAuthCodeCallbackRespo
 
     let start = std::time::Instant::now();
     while start.elapsed() < Duration::from_secs(timeout_secs) {
-        let resp = reqwest::get(format!("{callback_url}/status")).await;
+        let resp = crate::keystone_utils::http_client()
+            .get(format!("{callback_url}/status"))
+            .send()
+            .await;
         if let Ok(r) = resp {
             if r.status().is_success() {
                 if let Ok(data) = r.json::<FederationAuthCodeCallbackResponse>().await {
@@ -124,7 +127,10 @@ async fn test_login_oidc() {
         env::var("CALLBACK_URL").unwrap_or_else(|_| "http://dex-callback:8050".to_string());
 
     // Clear previous callback data
-    let _ = reqwest::get(format!("{callback_url}/clear")).await;
+    let _ = crate::keystone_utils::http_client()
+        .get(format!("{callback_url}/clear"))
+        .send()
+        .await;
 
     let auth_resp = initialize_oidc_auth(&config, &idp.id, &ruleset.mapping_id, redirect_uri)
         .await

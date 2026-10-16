@@ -28,7 +28,7 @@ fn test_live_uniqueness_check_detects_conflict() {
 
 #[allow(unsafe_code)]
 async fn test_live_uniqueness_check_detects_conflict_inner() -> Result<()> {
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
 
     let tls_configuration = make_certificates()?;
@@ -138,7 +138,7 @@ fn test_live_uniqueness_check_proceeds_when_no_peer_reachable() {
 
 #[allow(unsafe_code)]
 async fn test_live_uniqueness_check_proceeds_when_no_peer_reachable_inner() -> Result<()> {
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
 
     let storage_dir = tempfile::TempDir::new().unwrap();
@@ -208,7 +208,7 @@ fn test_join_adopts_cluster_dek() {
 
 async fn test_join_adopts_cluster_dek_inner() -> Result<()> {
     // Crypto provider may already be installed by a parallel test.
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
 
     let tls_configuration = make_certificates()?;
@@ -392,7 +392,7 @@ fn test_purge_then_join_learner_catches_up_via_snapshot() {
 }
 
 async fn test_purge_then_join_learner_catches_up_via_snapshot_inner() -> Result<()> {
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
 
     let tls_configuration = make_certificates()?;
@@ -577,7 +577,7 @@ async fn test_join_after_automatic_compaction_serves_all_keyspaces_inner(
     port_base: u16,
     via_cli_path: bool,
 ) -> Result<()> {
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
     let tls_configuration = make_certificates()?;
 
@@ -749,7 +749,7 @@ async fn test_ensure_raft_initialized_bootstraps_and_auto_joins_inner() -> Resul
     use openstack_keystone_distributed_storage::bootstrap::ensure_raft_initialized;
 
     const PORT: u16 = AUTO_JOIN_PORT_BASE;
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
     let tls = make_certificates()?;
     let peers = vec![(0, get_addr_with_port(0, PORT).to_string())];

@@ -40,7 +40,7 @@ fn test_node_restart_with_address_format_change() {
 
 #[allow(unsafe_code)]
 async fn test_node_restart_inner() -> Result<()> {
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     // Crypto provider may already be installed by a parallel test
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
 
@@ -175,7 +175,7 @@ async fn test_node_restart_inner() -> Result<()> {
 
 async fn test_cluster_inner() -> Result<()> {
     // Crypto provider may already be installed by a parallel test
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
 
     let tls_configuration = make_certificates()?;

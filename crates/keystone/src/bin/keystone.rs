@@ -23,5 +23,6 @@ use openstack_keystone::server::startup;
 
 #[tokio::main]
 async fn main() -> Result<(), Report> {
+    openstack_keystone_tls_provider::install_default();
     startup::run().await
 }

@@ -74,7 +74,7 @@ async fn exchange(
         .unwrap_or_default();
     let mut all = vec![("grant_type", GRANT)];
     all.extend_from_slice(form);
-    let rsp = Client::new()
+    let rsp = test_api::common::http_client()
         .post(base_url()?.join(&format!("v4/oauth2/{domain_id}/token"))?)
         .basic_auth(&client.client_id, Some(secret))
         .form(&all)
@@ -232,7 +232,7 @@ async fn test_token_exchange_grant_is_admin_only_for_clients() -> Result<()> {
     // Enabling the grant on a client is a system-admin operation.
     let domain_id = create_ready_domain("xchg-gate").await?;
     let manager = project_role_token(&domain_id, "manager").await?;
-    let rsp = Client::new()
+    let rsp = test_api::common::http_client()
         .post(base_url()?.join(&format!("v4/oauth2/{domain_id}/clients"))?)
         .header("x-auth-token", manager)
         .json(&json!({"oauth2_client": {

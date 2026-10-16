@@ -225,7 +225,7 @@ async fn test_webauthn_roundtrip() -> Result<()> {
             .await
             .unwrap();
     });
-    let client = Client::new();
+    let client = test_client();
     let ccr = client
         .post(format!(
             "http://{}/users/{}/passkeys/register_start",
@@ -338,7 +338,7 @@ async fn test_webauthn_auth_start_unknown_user_returns_decoys() -> Result<()> {
             .await
             .unwrap();
     });
-    let client = Client::new();
+    let client = test_client();
 
     let start = async |user_id: &str| -> Result<PasskeyAuthenticationStartResponse> {
         let rsp = client
@@ -388,4 +388,10 @@ async fn test_webauthn_auth_start_unknown_user_returns_decoys() -> Result<()> {
         .collect::<std::collections::HashSet<_>>();
     assert_eq!(unique.len(), all_decoy_ids.len());
     Ok(())
+}
+
+/// `reqwest` has no built-in rustls provider; install one first.
+fn test_client() -> Client {
+    openstack_keystone_tls_provider::install_default();
+    Client::new()
 }

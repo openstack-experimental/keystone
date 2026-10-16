@@ -591,6 +591,12 @@ mod tests {
 
     use super::*;
 
+    /// reqwest has no built-in rustls provider; install one first.
+    fn new_client() -> Client {
+        openstack_keystone_tls_provider::install_default();
+        Client::new()
+    }
+
     /// Build a minimal config for bootstrap tests.
     fn test_config() -> Config {
         Config {
@@ -772,7 +778,7 @@ mod tests {
 
         mock_full_bootstrap(&server);
 
-        let client = Client::new();
+        let client = new_client();
         let config = test_config();
         let result = test_command()
             .bootstrap_with_client(&client, &config, &base, "secret")
@@ -807,7 +813,7 @@ mod tests {
                 }));
         });
 
-        let client = Client::new();
+        let client = new_client();
         let config = test_config();
         let result = test_command()
             .bootstrap_with_client(&client, &config, &base, "secret")
@@ -850,7 +856,7 @@ mod tests {
 
         mock_full_bootstrap(&server);
 
-        let client = Client::new();
+        let client = new_client();
         let config = test_config();
         let result = test_command()
             .bootstrap_with_client(&client, &config, &base, "secret")
@@ -902,7 +908,7 @@ mod tests {
 
         mock_full_bootstrap(&server);
 
-        let client = Client::new();
+        let client = new_client();
         let config = test_config();
         let result = test_command()
             .bootstrap_with_client(&client, &config, &base, "secret")
@@ -971,7 +977,7 @@ mod tests {
             then.status(401).body("Unauthorized");
         });
 
-        let client = Client::new();
+        let client = new_client();
         let config = test_config();
         let result = test_command()
             .bootstrap_with_client(&client, &config, &base, "secret")
@@ -1026,7 +1032,7 @@ mod tests {
                 }));
         });
 
-        let client = Client::new();
+        let client = new_client();
         let config = test_config();
         let cmd = test_command();
 
@@ -1048,7 +1054,7 @@ mod tests {
         let prior = make_role("a", "admin");
         let implied = make_role("b", "member");
 
-        let client = Client::new();
+        let client = new_client();
         let cmd = test_command();
         let result = cmd
             .upsert_implied_role(&client, &prior, &implied, &base)
@@ -1071,7 +1077,7 @@ mod tests {
         let project = make_project("p");
         let role = make_role("admin-role", "admin");
 
-        let client = Client::new();
+        let client = new_client();
         let cmd = test_command();
         let result = cmd
             .upsert_user_role_project(&client, &user, &project, &role, &base)
@@ -1097,7 +1103,7 @@ mod tests {
         let user = make_user("u", "admin", true);
         let role = make_role("admin-role", "admin");
 
-        let client = Client::new();
+        let client = new_client();
         let cmd = test_command();
         let result = cmd
             .upsert_user_role_system(&client, &user, &role, &base)
@@ -1133,7 +1139,7 @@ mod tests {
                 }));
         });
 
-        let client = Client::new();
+        let client = new_client();
         let config = test_config();
         let cmd = test_command();
 
@@ -1170,7 +1176,7 @@ mod tests {
                 }));
         });
 
-        let client = Client::new();
+        let client = new_client();
         let cmd = test_command();
 
         let service = cmd.upsert_service(&client, "identity", &base).await;
@@ -1200,7 +1206,7 @@ mod tests {
                 }));
         });
 
-        let client = Client::new();
+        let client = new_client();
         let cmd = test_command();
 
         let service = cmd.upsert_service(&client, "identity", &base).await;
@@ -1229,7 +1235,7 @@ mod tests {
             then.status(409);
         });
 
-        let client = Client::new();
+        let client = new_client();
         let cmd = test_command();
 
         let service = cmd.upsert_service(&client, "identity", &base).await;
@@ -1259,7 +1265,7 @@ mod tests {
         });
 
         let service = make_service("svc-1");
-        let client = Client::new();
+        let client = new_client();
         let cmd = test_command();
 
         let endpoint = cmd
@@ -1296,7 +1302,7 @@ mod tests {
         });
 
         let service = make_service("svc-1");
-        let client = Client::new();
+        let client = new_client();
         let cmd = test_command();
 
         let endpoint = cmd
@@ -1329,7 +1335,7 @@ mod tests {
         });
 
         let service = make_service("svc-1");
-        let client = Client::new();
+        let client = new_client();
         let cmd = test_command();
 
         let endpoint = cmd
@@ -1409,7 +1415,7 @@ mod tests {
                 }));
         });
 
-        let client = Client::new();
+        let client = new_client();
         let config = test_config();
         let mut cmd = test_command();
         cmd.bootstrap_public_url = Some("https://example.com/public".to_string());
@@ -1458,7 +1464,7 @@ mod tests {
         // Deliberately no /v3/services or /v3/endpoints mocks — the request
         // would fail if bootstrap tried to call them.
 
-        let client = Client::new();
+        let client = new_client();
         let config = test_config();
         let result = test_command()
             .bootstrap_with_client(&client, &config, &base, "secret")
@@ -1545,7 +1551,7 @@ mod tests {
                 }));
         });
 
-        let client = Client::new();
+        let client = new_client();
         let config = test_config();
         let result = test_command()
             .bootstrap_with_client(&client, &config, &base, "secret")
@@ -1570,7 +1576,7 @@ mod tests {
             then.status(500).body("internal error");
         });
 
-        let client = Client::new();
+        let client = new_client();
         let config = test_config();
         let result = test_command()
             .bootstrap_with_client(&client, &config, &base, "secret")
@@ -1660,7 +1666,7 @@ mod tests {
 
         mock_full_bootstrap(&server);
 
-        let client = Client::new();
+        let client = new_client();
         let config = test_config();
         let result = test_command()
             .bootstrap_with_client(&client, &config, &base, "secret")
@@ -1691,7 +1697,7 @@ mod tests {
         let prior = make_role("a", "admin");
         let implied = make_role("b", "member");
 
-        let client = Client::new();
+        let client = new_client();
         let cmd = test_command();
         let result = cmd
             .upsert_implied_role(&client, &prior, &implied, &base)
@@ -1720,7 +1726,7 @@ mod tests {
         let project = make_project("p");
         let role = make_role("admin-role", "admin");
 
-        let client = Client::new();
+        let client = new_client();
         let cmd = test_command();
         let result = cmd
             .upsert_user_role_project(&client, &user, &project, &role, &base)
@@ -1747,7 +1753,7 @@ mod tests {
         let project = make_project("p");
         let role = make_role("admin-role", "admin");
 
-        let client = Client::new();
+        let client = new_client();
         let cmd = test_command();
         let result = cmd
             .upsert_user_role_project(&client, &user, &project, &role, &base)
@@ -1775,7 +1781,7 @@ mod tests {
         let user = make_user("u", "admin", true);
         let role = make_role("admin-role", "admin");
 
-        let client = Client::new();
+        let client = new_client();
         let cmd = test_command();
         let result = cmd
             .upsert_user_role_system(&client, &user, &role, &base)
@@ -1801,7 +1807,7 @@ mod tests {
         let user = make_user("u", "admin", true);
         let role = make_role("admin-role", "admin");
 
-        let client = Client::new();
+        let client = new_client();
         let cmd = test_command();
         let result = cmd
             .upsert_user_role_system(&client, &user, &role, &base)
