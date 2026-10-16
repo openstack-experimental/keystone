@@ -369,8 +369,12 @@ jobs:
                 -p openstack-keystone-tls-provider \
                 -p openstack-keystone-storage-crypto \
                 -p openstack-keystone-identity-driver-ldap \
-                -p cadf \
                 -p openstack-keystone-telemetry
+              # cadf needs a crypto backend next to every other feature, so
+              # keep `ring` on for the combinations.
+              cargo hack check --each-feature --no-dev-deps \
+                --exclude-no-default-features --skip fips --features ring \
+                -p cadf
     name: Features (${{ matrix.name }})
 
     steps:
