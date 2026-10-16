@@ -325,10 +325,13 @@ client lives in the operator's infrastructure domain. Therefore:
   is permitted **only** when `client.delegation.cross_domain == true`. Every
   other client authentication path at `/v4/oauth2/{domain_id}/token` keeps
   today's same-domain-only rule.
-- The minted token is still signed by the **grantor's** domain key and carries
-  `aud = openstack-apis` with `iss` naming the grantor's domain (ADR 0026 §5
-  domain key isolation: isolation rests on `iss` + the issuer's own JWKS). The
-  grantee's own domain never appears in the token; it is a registry fact only.
+- The minted token is signed by the key of the **target project's** domain and
+  carries `aud = openstack-apis` with `iss` naming that domain (ADR 0026 §5
+  domain key isolation: isolation rests on `iss` + the issuer's own JWKS, so a
+  domain's key only vouches for that domain's projects). The grantor may belong
+  to another domain, exactly as a user may hold roles on projects of other
+  domains; the token's user claims name the grantor's own domain. The grantee's
+  own domain never appears in the token; it is a registry fact only.
 
 ### 4. Service grant resource
 
@@ -338,7 +341,7 @@ client lives in the operator's infrastructure domain. Therefore:
 pub struct ServiceGrant {
     pub id: String,
     pub version: u64,                  // bumped on every change; compared by the resolver (§7)
-    pub domain_id: String,             // grantor's domain; the token endpoint the grant is redeemed at
+    pub domain_id: String,             // target project's domain; the token endpoint the grant is redeemed at
     pub grantor_user_id: String,
     pub grantee: Grantee,              // v1: Client { client_id, client_domain_id } (§3.2); later: User { user_id } (§9)
     pub target: GrantTarget,           // v1: Project { project_id }; the I2 delegation boundary
@@ -511,8 +514,8 @@ The endpoint checks, in order:
 3. `grant.domain_id == {domain_id}` from the request path — a grant is only ever
    redeemable at its own domain's token endpoint.
 4. Grant exists, `enabled`, not expired, `grantee` is this client, and either
-   `grant.grantee.client_domain_id == grant.domain_id` or
-   `client.delegation.cross_domain` (§3.2).
+   the client's domain equals both `grant.domain_id` and the grantor's domain,
+   or `client.delegation.cross_domain` (§3.2).
 5. Grantor is enabled and the grantor's domain is enabled.
 6. Effective roles =
    `grant.role_ids ∩ grantor's live effective roles on target ∩ roles narrowing`.
@@ -1120,9 +1123,12 @@ with a description and an expiry, and can delete any of them.
 
 Where the phase 1 implementation refines or departs from the decision above:
 
-- **Target project domain.** A grant's project must be in the grantor's
-  domain, so the token is signed with the key of the domain that owns the
-  project. Cross-project-domain grants are rejected at creation.
+- **Grant domain.** A grant lives in, and is redeemed at, its target
+  project's domain rather than the grantor's (§3.2 and §4.1 were amended), so
+  a user may delegate their roles on a project of another domain while each
+  domain's key still only signs tokens for its own projects.
+- **`cross_domain` scope.** The opt-in is required whenever the client's
+  domain differs from either the grantor's domain or the project's domain.
 - **`target_disabled` reason.** §8 disables grants when their project is
   disabled but names no reason; `DisabledReason::TargetDisabled` was added.
 - **Partial role loss.** The lifecycle hook disables a grant as `role_lost`

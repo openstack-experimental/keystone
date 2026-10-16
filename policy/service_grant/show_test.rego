@@ -7,7 +7,7 @@ grant := {
 	"domain_id": "d1",
 	"grantor_user_id": "u1",
 	"grantee": {"type": "client", "client_id": "heat", "client_domain_id": "infra"},
-	"target": {"type": "project", "project_id": "p1", "project_domain_id": "d2"},
+	"target": {"type": "project", "project_id": "p1", "project_domain_id": "d1"},
 }
 
 user(extra) := object.union(
@@ -44,9 +44,9 @@ test_project_manager if {
 }
 
 test_domain_manager if {
-	# The grantor's domain and the project's domain.
+	# The grant's domain is its project's domain; the grantor's own
+	# domain (which may differ) grants nothing.
 	check(user({"roles": ["manager"], "domain_id": "d1"}))
-	check(user({"roles": ["manager"], "domain_id": "d2"}))
 	not check(user({"roles": ["manager"], "domain_id": "d3"}))
 }
 

@@ -100,7 +100,9 @@ pub async fn redeem_service_grant(
 ) -> Result<RedeemedServiceGrant, ServiceGrantRedeemError> {
     let internal = ExecutionContext::internal(state);
 
-    // Check 3: a grant is only redeemable at its own domain's endpoint.
+    // Check 3: a grant is only redeemable at its own domain's endpoint,
+    // which is the domain of its project (the grantor may belong to
+    // another one).
     let grant = state
         .provider
         .get_service_grant_provider()
@@ -131,8 +133,18 @@ pub async fn redeem_service_grant(
     {
         return Err(ServiceGrantRedeemError::InvalidClient);
     }
-    // Check 4: a grantee of another domain must accept cross-domain grants.
-    if client.domain_id != grant.domain_id && !policy.cross_domain {
+    // Check 4: a grantee acting for a user or on a project of another
+    // domain must accept cross-domain grants.
+    let grantor = state
+        .provider
+        .get_identity_provider()
+        .get_user(&internal, &grant.grantor_user_id)
+        .await
+        .map_err(ServiceGrantRedeemError::provider)?
+        .ok_or(AuthenticationError::Unauthorized)?;
+    if (client.domain_id != grant.domain_id || client.domain_id != grantor.domain_id)
+        && !policy.cross_domain
+    {
         return Err(ServiceGrantRedeemError::UnknownGrant);
     }
 
@@ -156,13 +168,6 @@ pub async fn redeem_service_grant(
 
     // Check 5: the grantor and its domain are enabled (`validate` in
     // `new_for_scope`), and the target project exists and is enabled.
-    let grantor = state
-        .provider
-        .get_identity_provider()
-        .get_user(&internal, &grant.grantor_user_id)
-        .await
-        .map_err(ServiceGrantRedeemError::provider)?
-        .ok_or(AuthenticationError::Unauthorized)?;
     let resource = state.provider.get_resource_provider();
     let project = resource
         .get_project(&internal, grant.target.project_id())
@@ -300,8 +305,9 @@ async fn touch_last_redeemed(state: &ServiceState, grant: &ServiceGrant) {
 /// the grantor's own methods), and the delegation context carries the grant
 /// id and its project. No refresh token exists for this grant type.
 ///
-/// `domain_id` is the issuing domain; a grant whose project is outside it
-/// is refused rather than signed (ADR 0026 §5 domain key isolation).
+/// `domain_id` is the issuing domain, which must own the grant's project: a
+/// grant whose project is outside it is refused rather than signed (ADR
+/// 0026 §5 domain key isolation). The grantor may be of any domain.
 #[allow(clippy::too_many_arguments)]
 pub fn build_service_grant_claims(
     redeemed: &RedeemedServiceGrant,
@@ -479,6 +485,17 @@ mod tests {
         roles: &'static [&'static str],
         expect_update: Option<fn(&ServiceGrantUpdate) -> bool>,
     ) -> ServiceState {
+        state_with_grantor_domain(stored, client, roles, expect_update, "d1").await
+    }
+
+    /// Like [`state`], with the grantor in `grantor_domain`.
+    async fn state_with_grantor_domain(
+        stored: ServiceGrant,
+        client: OAuth2ClientResource,
+        roles: &'static [&'static str],
+        expect_update: Option<fn(&ServiceGrantUpdate) -> bool>,
+        grantor_domain: &'static str,
+    ) -> ServiceState {
         let mut grants = MockServiceGrantProvider::default();
         grants
             .expect_get_service_grant()
@@ -502,11 +519,11 @@ mod tests {
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
         let mut identity = MockIdentityProvider::default();
-        identity.expect_get_user().returning(|_, id| {
+        identity.expect_get_user().returning(move |_, id| {
             Ok(Some(
                 UserResponseBuilder::default()
                     .id(id)
-                    .domain_id("d1")
+                    .domain_id(grantor_domain)
                     .enabled(true)
                     .name("alice")
                     .build()
@@ -672,6 +689,60 @@ mod tests {
     #[tokio::test]
     async fn test_redeem_rejects_cross_domain_without_opt_in() {
         let state = state(grant(), client(false), &["member"], None).await;
+        assert!(matches!(
+            redeem_service_grant(&state, "d1", &svid(SVID), None, "g1", None).await,
+            Err(ServiceGrantRedeemError::UnknownGrant)
+        ));
+    }
+
+    /// A grantor of another domain than the project redeems at the
+    /// project's domain, which signs the token.
+    #[tokio::test]
+    async fn test_redeem_grantor_of_other_domain() {
+        let state = state_with_grantor_domain(
+            grant(),
+            client(true),
+            &["member"],
+            Some(records_redemption),
+            "users",
+        )
+        .await;
+        let redeemed = redeem_service_grant(&state, "d1", &svid(SVID), None, "g1", None)
+            .await
+            .unwrap();
+        let claims = build_service_grant_claims(
+            &redeemed,
+            "d1",
+            "https://ks/v4/oauth2/d1",
+            "jti".into(),
+            1,
+            2,
+            Audience::control_plane(),
+        )
+        .unwrap();
+        assert_eq!(claims.sub, "u1");
+        assert_eq!(
+            claims.openstack_context.user_domain_id.as_deref(),
+            Some("users")
+        );
+        assert!(matches!(
+            claims.openstack_context.scope,
+            OpenStackScope::Project { ref project_domain_id, .. } if project_domain_id == "d1"
+        ));
+    }
+
+    /// A service of the project's domain without the cross-domain opt-in
+    /// does not act for a grantor of another domain.
+    #[tokio::test]
+    async fn test_redeem_rejects_grantor_of_other_domain_without_opt_in() {
+        let mut stored = grant();
+        stored.grantee = Grantee::Client {
+            client_id: "heat".into(),
+            client_domain_id: "d1".into(),
+        };
+        let mut local = client(false);
+        local.domain_id = "d1".into();
+        let state = state_with_grantor_domain(stored, local, &["member"], None, "users").await;
         assert!(matches!(
             redeem_service_grant(&state, "d1", &svid(SVID), None, "g1", None).await,
             Err(ServiceGrantRedeemError::UnknownGrant)

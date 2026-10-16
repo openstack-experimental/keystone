@@ -96,8 +96,8 @@ is_grantee_service(grant) if {
 # METADATA
 # description: >
 #   True when the caller may read or delete `grant`: the grantor, a
-#   manager of the grant's project, or of the grantor's or the project's
-#   domain, an admin, or the grantee service.
+#   manager of the grant's project or of its domain (the grant's
+#   `domain_id`), an admin, or the grantee service.
 may_manage(_) if {
 	not_under_service_grant
 	is_admin
@@ -118,11 +118,6 @@ may_manage(grant) if {
 may_manage(grant) if {
 	not_under_service_grant
 	is_domain_manager(object.get(grant, "domain_id", null))
-}
-
-may_manage(grant) if {
-	not_under_service_grant
-	is_domain_manager(object.get(grant, ["target", "project_domain_id"], null))
 }
 
 may_manage(grant) if {

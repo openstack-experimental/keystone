@@ -73,7 +73,8 @@ pub struct ServiceGrant {
     /// Grant id.
     pub id: String,
 
-    /// Grantor's domain.
+    /// Domain of the target project, whose token endpoint redeems the
+    /// grant. The grantor may belong to another domain.
     pub domain_id: String,
 
     /// The user whose authority is delegated.
@@ -187,7 +188,7 @@ pub struct ServiceGrantListParameters {
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub project_id: Option<String>,
 
-    /// Grantor domain id.
+    /// Domain of the target project.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "validate", validate(length(min = 1, max = 64)))]
     pub domain_id: Option<String>,
@@ -216,7 +217,7 @@ pub struct DelegatableService {
     /// Client domain.
     pub domain_id: String,
 
-    /// Users of other domains may delegate to this client.
+    /// Users and projects of other domains may delegate to this client.
     pub cross_domain: bool,
 
     /// Role ids a grant may carry; empty means no ceiling beyond the

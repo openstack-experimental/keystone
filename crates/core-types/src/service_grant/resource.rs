@@ -115,7 +115,9 @@ pub struct ServiceGrant {
     pub id: String,
     /// Record version, incremented on every lifecycle update.
     pub version: u64,
-    /// Domain of the grantor; the grant lives (and is redeemed) in it.
+    /// Domain of the target project; the grant lives (and is redeemed) in
+    /// it, so that domain's issuer signs its tokens. The grantor may belong
+    /// to another domain.
     pub domain_id: String,
     /// The user whose authority the grant delegates.
     pub grantor_user_id: String,
@@ -203,7 +205,7 @@ impl ServiceGrant {
 /// Filters for listing service grants. Every set filter must match.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct ServiceGrantListParameters {
-    /// Grantor's domain.
+    /// Domain of the target project (the grant's domain).
     pub domain_id: Option<String>,
     /// Grantor user id.
     pub grantor_user_id: Option<String>,

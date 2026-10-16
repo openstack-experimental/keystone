@@ -52,7 +52,8 @@ pub struct DelegationPolicy {
     #[serde(default)]
     pub on_behalf_of: bool,
 
-    /// Users of other domains may delegate to this client.
+    /// Users of other domains, or users on projects of other domains, may
+    /// delegate to this client.
     #[serde(default)]
     pub cross_domain: bool,
 

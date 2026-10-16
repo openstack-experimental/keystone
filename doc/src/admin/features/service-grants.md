@@ -22,7 +22,7 @@ delegatable service.
 | ----------- | ---------------------------------------------------------------------------------------- |
 | Grantor     | The user who creates the grant. Delegated roles never exceed the grantor's live roles.   |
 | Grantee     | A registered OAuth2 client with a `delegation` policy accepting service grants.          |
-| Target      | The single project the grant applies to. It must be in the grantor's domain.             |
+| Target      | The single project the grant applies to. It may be in another domain than the grantor.   |
 | Role subset | The roles the grant carries, chosen at creation and fixed afterwards.                    |
 | Redemption  | `POST /v4/oauth2/{domain_id}/token` with the service grant grant type, over SPIFFE mTLS. |
 
@@ -34,7 +34,7 @@ delegatable service.
   `trust_domains`.
 - Raft storage is enabled. Grants are stored only there; with Raft disabled the
   endpoints answer `501`.
-- The grantor's domain has an OAuth2 signing key. Keys are provisioned when a
+- The target project's domain has an OAuth2 signing key. Keys are provisioned when a
   domain is created through the API, so the bootstrap `default` domain has none
   (see [OAuth2 / OIDC Provider](oauth2.md#provisioning-a-domains-signing-key)).
 
@@ -69,9 +69,10 @@ requires an administrator.
 - `spiffe_ids` patterns match segment by segment. `*` matches exactly one
   non-empty segment and is only allowed as the whole last segment. The trust
   domain must match exactly.
-- `cross_domain: true` lets users of any domain delegate to the client. Without
-  it only users of the client's own domain can, and a grant naming it from
-  another domain is rejected as if the grant did not exist.
+- `cross_domain: true` lets users of any domain delegate to the client, on
+  projects of any domain. Without it both the grantor and the project must be
+  in the client's own domain; otherwise creation is rejected and redemption
+  answers as if the grant did not exist.
 - `max_role_ids` is a ceiling on the roles a grant to this client may carry. An
   empty list means the grant is bounded only by the grantor's own roles.
 - `max_grant_lifetime` (seconds) caps `expires_at`. Without it a grant may be
@@ -141,14 +142,15 @@ grantee service itself. A grantee service calls `GET` or `DELETE
 token, which is how Heat cleans up grants when a stack is deleted.
 
 `GET /v4/service-grants` accepts `user_id`, `project_id`, `domain_id` (the
-grantor's domain), `grantee_client_id` and `enabled` filters. A non-admin must
+project's domain), `grantee_client_id` and `enabled` filters. A non-admin must
 filter on their own `user_id`, or on a project or domain they manage. Every
 returned grant is re-checked against the show policy.
 
 ## Redeeming a grant
 
-The grantee service calls the token endpoint of the grantor's domain over the
-internal interface, presenting its X.509-SVID:
+The grantee service calls the token endpoint of the grant's `domain_id`, which
+is the project's domain, over the internal interface, presenting its
+X.509-SVID:
 
 ```
 POST /v4/oauth2/{domain_id}/token
@@ -194,13 +196,15 @@ limiter, keyed on the SVID.
   },
   "scope_type": "project",
   "project_id": "<project id>",
-  "project_domain_id": "<grantor domain id>",
+  "project_domain_id": "<project domain id>",
   "scope_roles": [{ "id": "<member-role-id>", "name": "member" }]
 }
 ```
 
-The remaining OpenStack claims (`user_id`, domains, roles) are those of any
-project-scoped access token. Downstream services treat it like any delegated
+The token is issued and signed by the project's domain (`iss` is
+`/v4/oauth2/<project domain>`), so each domain's key only vouches for its own
+projects. The remaining OpenStack claims (`user_id`, `user_domain_id` naming
+the grantor's own domain, roles) are those of any project-scoped access token. Downstream services treat it like any delegated
 token: the scope-drift tripwire (`project_id` equals `delegated_project_id`) is enforced by
 `verify_openstack_access_token` and must be kept by policy. `act` identifies
 the acting service in audit records and is also returned by introspection.

@@ -420,6 +420,9 @@ into a JWT for downstream services.
 - Roles (I4): `grant.role_ids` (narrowed by the redemption request) intersected
   with the grantor's live effective roles on the project. There is no admin
   bypass: the grant, not the grantor's privileges, is the ceiling.
+- Issuer: the grant lives in, and is redeemed at, its project's domain, so
+  only that domain's key signs the token (ADR 0026 §5 domain key isolation).
+  The grantor may be of any domain; never sign with the grantor's domain key.
 - Validation re-checks that the grant is enabled and unexpired and that its
   grantor is the principal. Redemption additionally re-checks the grantee
   client, its SPIFFE match, and the grantor, project and domain.

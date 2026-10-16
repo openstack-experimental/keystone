@@ -204,7 +204,7 @@ impl ServiceGrantApi for ServiceGrantService {
         })?;
         ensure_chain_may_delegate(sc)?;
         let grantor_user_id = sc.principal().get_user_id();
-        let domain_id = sc.principal().domain_id().ok_or_else(|| {
+        let grantor_domain_id = sc.principal().domain_id().ok_or_else(|| {
             ServiceGrantProviderError::Forbidden("the caller's domain is not resolved".to_string())
         })?;
         if data
@@ -217,8 +217,7 @@ impl ServiceGrantApi for ServiceGrantService {
             )));
         }
 
-        // The grantee: an enabled delegatable service accepting grants, and
-        // in the caller's domain unless it accepts cross-domain grants.
+        // The grantee: an enabled delegatable service accepting grants.
         let client = state
             .provider
             .get_oauth2_client_provider()
@@ -236,10 +235,6 @@ impl ServiceGrantApi for ServiceGrantService {
             .service_grant_policy()
             .ok_or_else(not_delegatable)?
             .clone();
-        if client.domain_id != domain_id && !policy.cross_domain {
-            return Err(not_delegatable());
-        }
-
         let project = state
             .provider
             .get_resource_provider()
@@ -254,15 +249,12 @@ impl ServiceGrantApi for ServiceGrantService {
                 ))
             })?;
 
-        // The redeemed token is signed by, and names as `iss`, the grantor's
-        // domain (ADR 0036 §3.2), which must not assert authority over a
-        // project of another domain (ADR 0026 §5 domain key isolation; the
-        // token exchange grant applies the same rule).
-        if project.domain_id != domain_id {
-            return Err(ServiceGrantProviderError::Validation(format!(
-                "project {} is not in the grantor's domain",
-                project.id
-            )));
+        // A service only acts in another domain, for the grantor's or the
+        // project's, when it accepts cross-domain grants.
+        if (client.domain_id != grantor_domain_id || client.domain_id != project.domain_id)
+            && !policy.cross_domain
+        {
+            return Err(not_delegatable());
         }
 
         let effective = effective_role_ids(state, sc, &grantor_user_id, &project.id).await?;
@@ -321,7 +313,11 @@ impl ServiceGrantApi for ServiceGrantService {
         let grant = ServiceGrant {
             id: uuid::Uuid::new_v4().simple().to_string(),
             version: 1,
-            domain_id,
+            // The grant lives in, and is redeemed at, the project's domain:
+            // its token asserts authority over that project, so only that
+            // domain's issuer may sign it (ADR 0026 §5 domain key
+            // isolation). The grantor may belong to another domain.
+            domain_id: project.domain_id.clone(),
             grantor_user_id,
             grantee: Grantee::Client {
                 client_id: client.client_id.clone(),
@@ -625,12 +621,40 @@ mod tests {
         assert!(grant.expires_at.is_some());
     }
 
-    /// The grant's token is signed by the grantor's domain, so the project
-    /// must be in that domain.
+    /// A grant on a project of another domain lives in the project's
+    /// domain, whose issuer signs its tokens.
     #[tokio::test]
-    async fn test_create_rejects_project_of_other_domain() {
+    async fn test_create_on_project_of_other_domain_anchors_on_project_domain() {
+        let policy = DelegationPolicy {
+            cross_domain: true,
+            ..grants_policy()
+        };
+        let state = state_in(Some(client("d1", policy)), &["member"], "d2").await;
+        let auth = vsc(AuthenticationContext::Password);
+        let ctx = ExecutionContext::from_auth(&state, &auth);
+        let grant = service(0)
+            .create_service_grant(&ctx, create(None))
+            .await
+            .unwrap();
+        assert_eq!(grant.domain_id, "d2");
+        assert_eq!(grant.target.project_domain_id(), "d2");
+        assert_eq!(grant.grantor_user_id, "u1");
+    }
+
+    /// A service without the cross-domain opt-in acts neither for users of
+    /// other domains nor on projects of other domains.
+    #[tokio::test]
+    async fn test_create_cross_domain_requires_opt_in() {
+        // Project in another domain than the grantor and the client.
         let state = state_in(Some(client("d1", grants_policy())), &["member"], "d2").await;
         let auth = vsc(AuthenticationContext::Password);
+        let ctx = ExecutionContext::from_auth(&state, &auth);
+        assert!(matches!(
+            service(0).create_service_grant(&ctx, create(None)).await,
+            Err(ServiceGrantProviderError::Validation(_))
+        ));
+        // Client in another domain than the grantor and the project.
+        let state = state_in(Some(client("d2", grants_policy())), &["member"], "d1").await;
         let ctx = ExecutionContext::from_auth(&state, &auth);
         assert!(matches!(
             service(0).create_service_grant(&ctx, create(None)).await,
