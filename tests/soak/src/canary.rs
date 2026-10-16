@@ -303,12 +303,15 @@ impl Api {
     async fn ensure_scim_access(&mut self) -> Result<()> {
         let role_id = self.ensure_role(SCIM_ROLE).await?;
         let manager_id = self.ensure_role("manager").await?;
-        self.expect(
-            Method::PUT,
-            &format!("/v3/roles/{role_id}/implies/{manager_id}"),
-            None,
-        )
-        .await?;
+        // The rule outlives the soak pod and creating it twice is a conflict,
+        // so only create it when it is missing.
+        let imply = format!("/v3/roles/{role_id}/implies/{manager_id}");
+        let (status, _) = self.send(Method::GET, &imply, None).await?;
+        if status == StatusCode::NOT_FOUND {
+            self.expect(Method::PUT, &imply, None).await?;
+        } else if !status.is_success() {
+            bail!("{imply} answered {status}");
+        }
 
         let ruleset = json!({"mapping": {
             "mapping_id": SCIM_MAPPING,
