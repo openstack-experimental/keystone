@@ -137,7 +137,7 @@ url.workspace = true
 default = []
 # Runtime-loaded WASM (Extism) dynamic auth plugins, ADR 0025. Off by default:
 # it pulls in extism/wasmtime (~75 crates).
-wasm_plugins = ["dep:openstack-keystone-auth-plugin-runtime", "openstack-keystone-core/wasm_plugins"]
+wasm_plugins = ["dep:openstack-keystone-auth-plugin-runtime", "openstack-keystone-auth-plugin-runtime/extism", "openstack-keystone-core/wasm_plugins"]
 # Use aws-lc-rs instead of ring as the TLS crypto provider (LDAP, gRPC, SPIFFE,
 # syslog). Building it needs cmake and a C compiler.
 rustls-aws-lc = [

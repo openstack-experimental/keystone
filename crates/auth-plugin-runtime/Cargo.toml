@@ -11,7 +11,7 @@ homepage.workspace = true
 exclude.workspace = true
 
 [dependencies]
-extism.workspace = true
+extism = { workspace = true, optional = true }
 openstack-keystone-auth-plugin-core.workspace = true
 openstack-keystone-config.workspace = true
 serde = { workspace = true, features = ["derive"] }
@@ -24,6 +24,11 @@ tracing.workspace = true
 config = { workspace = true, features = ["ini"] }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
+
+[features]
+default = []
+# Pulls in extism/wasmtime and compiles the runtime; the crate is empty without it.
+extism = ["dep:extism"]
 
 [lints]
 workspace = true

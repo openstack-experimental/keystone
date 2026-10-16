@@ -83,7 +83,7 @@ api = ["openstack-keystone-api-types/builder", "dep:axum", "openstack-keystone-a
 bench_internals = []
 # Enables the end-to-end tests that load real wasm plugins (pulls in
 # extism/wasmtime).
-wasm_plugins = ["dep:openstack-keystone-auth-plugin-runtime"]
+wasm_plugins = ["dep:openstack-keystone-auth-plugin-runtime", "openstack-keystone-auth-plugin-runtime/extism"]
 mock = ["dep:mockall", "openstack-keystone-core-types/mock", "cadf/testing"]
 
 [lints]

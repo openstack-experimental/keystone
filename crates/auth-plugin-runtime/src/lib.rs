@@ -33,6 +33,11 @@
 //! a fresh `wasmtime::Store`) from the cached compiled module, matching ADR
 //! §7 "Isolation between requests" - no state or resource budget survives
 //! from one invocation to the next.
+//!
+//! The whole crate is compiled only with the `extism` feature (off by
+//! default), so that depending on it does not pull in `extism`/`wasmtime`
+//! unless a plugin runtime is actually wanted.
+#![cfg(feature = "extism")]
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;

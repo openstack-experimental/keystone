@@ -7,7 +7,7 @@
 //! this test suite rebuilds the fixture itself (cargo no-ops if nothing
 //! changed) and hashes the artifact it just produced, so a test can never
 //! run against a stale `.wasm`/`sha256` pair.
-#![cfg(test)]
+#![cfg(all(test, feature = "extism"))]
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
