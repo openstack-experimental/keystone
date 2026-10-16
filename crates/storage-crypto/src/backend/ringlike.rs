@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: STO-1, STO-2; see doc/src/contributor/crypto-inventory.md
 //! Implementation of the [`crate::backend`] primitives for the `ring` API.
 //!
 //! `aws-lc-rs` is a drop-in for the subset of `ring` used here, so one body

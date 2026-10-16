@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: AUD-1, AUD-2, AUD-3; see doc/src/contributor/crypto-inventory.md
 //! Cryptographic primitive seam of the audit framework.
 //!
 //! Every HMAC-SHA256, HKDF-SHA256 and random-bytes operation of this crate

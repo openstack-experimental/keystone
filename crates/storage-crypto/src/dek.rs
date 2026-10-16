@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: STO-2, STO-5; see doc/src/contributor/crypto-inventory.md
 //! # Data Encryption Key (DEK) hierarchy
 //!
 //! A [`DekEpoch`] holds the current DEK version and the sub-keys derived from

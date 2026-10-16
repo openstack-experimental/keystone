@@ -47,6 +47,11 @@ You are a coding agent working on the OpenStack Keystone Rust implementation.
 
 - **Forbidden**: `unwrap()`, `expect()`, `println!`, `unsafe` (workspace lints)
 - **Required**: Apache-2.0 license header on every source file
+- **Cryptography**: when adding, moving or removing a cryptographic primitive,
+  update its row in `doc/src/contributor/crypto-inventory.md` and the
+  `// Crypto inventory: <ID>` comment below the license header, in the same
+  change. Route primitives that can run on the FIPS module through the
+  crate's backend seam (`storage-crypto`, `cadf`, `tls-provider`)
 - **Error handling**: Use `thiserror` for error types, propagate with
   `Result<T, E>`
 - **Async**: Heavily async codebase, built on `tokio`
@@ -222,6 +227,8 @@ For detailed setup and environment configuration, see:
   configuration
 - doc/src/contributor/security-model.md: Security model, invariants, and reviewer
   checklist for auth/authorization
+- doc/src/contributor/crypto-inventory.md: Cryptographic primitives, providers
+  and FIPS 140-3 status; update it with any crypto change
 - doc/src/adr/: Architecture Decision Records
 - .pre-commit-config.yaml: Linting hooks
 - committed.toml: Commit message format

@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: TOK-6; see doc/src/contributor/crypto-inventory.md
 //! HMAC-SHA256 derivation for virtual user IDs.
 //!
 //! Derives deterministic virtual user IDs from workload and provider

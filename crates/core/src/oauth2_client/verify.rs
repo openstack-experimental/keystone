@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: TOK-4; see doc/src/contributor/crypto-inventory.md
 //! # Offline `OpenStackAccessTokenClaims` verification (ADR 0026 §6, §10 Phase 5)
 //!
 //! Rust-native equivalent of the ADR's `KeystoneNativeJwtMiddleware` Python

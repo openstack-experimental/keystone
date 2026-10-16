@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: TOK-5; see doc/src/contributor/crypto-inventory.md
 //! # OAuth2 browser session provider (ADR 0026 §10 Phase 4)
 //!
 //! Internal plumbing consumed directly by the `/authorize` and `/token`

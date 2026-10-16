@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: STO-6; see doc/src/contributor/crypto-inventory.md
 //! # PKCS#11 KEK provider
 //!
 //! Implements [`Pkcs11Kek`], a [`KekProvider`] backed by a non-extractable

@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: AUD-4; see doc/src/contributor/crypto-inventory.md
 
 //! RFC 5424 syslog sink over TCP, optionally wrapped in TLS (#1375).
 //!

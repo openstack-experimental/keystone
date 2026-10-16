@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: STO-7; see doc/src/contributor/crypto-inventory.md
 //! # TPM 2.0 KEK provider
 //!
 //! Implements [`TpmKek`], a [`KekProvider`] backed by two TPM-resident,

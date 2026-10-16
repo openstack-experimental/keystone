@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: TOK-1; see doc/src/contributor/crypto-inventory.md
 //! # Filesystem-backed [`KeySource`]
 //!
 //! Key entries are files named by their integer index (`0`, `1`, `2`, ...)

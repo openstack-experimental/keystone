@@ -96,6 +96,7 @@
   - [Python API compatibility](contributor/python-compatibility.md)
   - [Authentication plugin development](contributor/auth-plugins.md)
   - [Security model](contributor/security-model.md)
+  - [Crypto inventory and FIPS](contributor/crypto-inventory.md)
   - [Security architecture review](contributor/security-review.md)
   - [Architecture Decision Records](adr/index.md)
     - [Record architecture decisions](adr/0001-record-architecture-decisions.md)

@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: TOK-9; see doc/src/contributor/crypto-inventory.md
 //! Server-rendered HTML helpers shared by every human-facing OAuth2 flow
 //! (`authorize`'s `authorization_code` login/consent, `device`'s RFC 8628
 //! verification page): security headers, the login/consent/error

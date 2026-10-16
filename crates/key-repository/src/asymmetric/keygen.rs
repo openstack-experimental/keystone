@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: TOK-2; see doc/src/contributor/crypto-inventory.md
 //! # Asymmetric keypair generation (ADR 0026 §3)
 use chrono::Utc;
 use p256::ecdsa::SigningKey as EcdsaSigningKey;

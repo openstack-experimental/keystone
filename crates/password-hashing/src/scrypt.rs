@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: PWD-2; see doc/src/contributor/crypto-inventory.md
 
 //! Scrypt hasher - mirrors
 //! `keystone/common/password_hashers/scrypt.py::Scrypt`.

@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: AUD-2; see doc/src/contributor/crypto-inventory.md
 //! Per-node HMAC key derivation for the CADF audit framework (ADR 0023).
 //!
 //! The derivation formula is full HKDF-SHA256 (RFC 5869):

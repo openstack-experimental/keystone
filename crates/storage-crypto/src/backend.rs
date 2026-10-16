@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: STO-1, STO-2, STO-3, STO-4, STO-5; see doc/src/contributor/crypto-inventory.md
 //! # Cryptographic backend selection
 //!
 //! Every AES-256-GCM, HKDF-SHA256, HMAC-SHA256 and random-bytes operation of

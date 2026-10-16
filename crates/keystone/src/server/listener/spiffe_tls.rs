@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: STO-12; see doc/src/contributor/crypto-inventory.md
 //! # TLS server listener with the SPIFFE integration
 
 use axum::Router;

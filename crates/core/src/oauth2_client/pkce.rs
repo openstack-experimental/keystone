@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: TOK-5; see doc/src/contributor/crypto-inventory.md
 //! # PKCE (RFC 7636) `S256` code challenge verification (ADR 0026 §1, §10 Phase 4)
 //!
 //! `S256` is the only supported method -- `plain` is never accepted, per the

@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: STO-4; see doc/src/contributor/crypto-inventory.md
 //! # Key Encryption Key (KEK) providers
 //!
 //! A `KekProvider` wraps and unwraps the Data Encryption Key (DEK) using an

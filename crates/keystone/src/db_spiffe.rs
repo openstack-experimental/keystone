@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: STO-12; see doc/src/contributor/crypto-inventory.md
 
 //! Keystone-managed SPIFFE writer for the `[database]` mTLS identity.
 //!

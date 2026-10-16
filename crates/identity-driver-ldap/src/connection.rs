@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: NET-2; see doc/src/contributor/crypto-inventory.md
 //! # LDAP connection pools (ADR-0027 §8)
 //!
 //! Two independent pools are maintained:

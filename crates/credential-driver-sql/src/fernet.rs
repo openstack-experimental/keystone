@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: TOK-1; see doc/src/contributor/crypto-inventory.md
 //! # Credential Fernet key repository (ADR 0019 §4)
 //!
 //! Thin adapter over [`openstack_keystone_key_repository`], which owns the

@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: TOK-5; see doc/src/contributor/crypto-inventory.md
 
 //! Deterministic user id generation, bit-compatible with python-keystone's
 //! `keystone.identity.id_generators.sha256.Generator.generate_public_ID`.

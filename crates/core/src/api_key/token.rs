@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: TOK-8; see doc/src/contributor/crypto-inventory.md
 //! # API Key opaque token format (ADR 0021 §2.C, §3 Step 1)
 //!
 //! Format: `kscim_{entropy}_{crc32}`, where `entropy` is high-entropy

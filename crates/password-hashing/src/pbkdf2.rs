@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: PWD-3; see doc/src/contributor/crypto-inventory.md
 
 //! PBKDF2-HMAC-SHA512 hasher - mirrors `pbkdf2.py::Sha512`.
 //!

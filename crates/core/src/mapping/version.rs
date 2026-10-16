@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: TOK-5; see doc/src/contributor/crypto-inventory.md
 //! Content-aware ruleset version computation.
 //!
 //! Per ADR §5.4, the `ruleset_version` is a SHA-256 hash (first 16 bytes,

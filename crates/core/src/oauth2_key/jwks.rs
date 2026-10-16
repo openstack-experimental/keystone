@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: TOK-3; see doc/src/contributor/crypto-inventory.md
 //! # `KeyMaterial` → JWK conversion (ADR 0026 §3)
 //!
 //! Publishes only the public half of a keypair: `public_key_der` is parsed

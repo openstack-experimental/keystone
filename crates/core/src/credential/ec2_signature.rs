@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: EC2-1; see doc/src/contributor/crypto-inventory.md
 //! EC2 signature verification (ADR 0019 §5).
 //!
 //! Pure, DB-free re-implementation of

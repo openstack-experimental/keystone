@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: TOK-6; see doc/src/contributor/crypto-inventory.md
 //! ADR 0025 Phase 1 (PR 1.1): [`CoreHostFunctions`] implements
 //! `openstack_keystone_auth_plugin_core::HostFunctions` - all four
 //! host functions (§6 A-D) - against this crate's real

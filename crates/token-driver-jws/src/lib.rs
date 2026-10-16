@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: TOK-2; see doc/src/contributor/crypto-inventory.md
 //! # JWS token driver for the `openstack_keystone` crate (ADR 0026 §10, Phase 0)
 //!
 //! Wire-compatible with Python Keystone's `[token] provider = jws`:

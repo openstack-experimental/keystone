@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: AUD-3; see doc/src/contributor/crypto-inventory.md
 
 //! Persistent, versioned audit HMAC key material (ADR 0023, #1318).
 //!

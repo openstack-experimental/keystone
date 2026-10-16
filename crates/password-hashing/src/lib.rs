@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: PWD-4; see doc/src/contributor/crypto-inventory.md
 
 //! Password hashing with cross-compatibility to Python Keystone.
 //!

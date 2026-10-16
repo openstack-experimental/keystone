@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: NET-1, NET-2, STO-9, AUD-4; see doc/src/contributor/crypto-inventory.md
 //! # TLS crypto provider selection
 //!
 //! The one place that decides which cryptographic provider rustls runs on,

@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: TOK-1; see doc/src/contributor/crypto-inventory.md
 //! # Fernet token driver for the `openstack_keystone` crate
 
 use std::collections::BTreeMap;

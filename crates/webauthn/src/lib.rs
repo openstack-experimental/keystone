@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: WEB-1; see doc/src/contributor/crypto-inventory.md
 //! # WebauthN extension.
 //!
 //! This extension adds WebAuthN functionality to Keystone:

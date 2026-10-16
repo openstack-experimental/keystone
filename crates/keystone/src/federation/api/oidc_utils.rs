@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: TOK-4, TOK-9; see doc/src/contributor/crypto-inventory.md
 
 //! OIDC utilities replacing the openidconnect crate.
 //!

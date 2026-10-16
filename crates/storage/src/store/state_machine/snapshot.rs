@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: STO-8; see doc/src/contributor/crypto-inventory.md
 
 //! Snapshot files on disk and the snapshot builder.
 

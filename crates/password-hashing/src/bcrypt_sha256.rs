@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: PWD-1; see doc/src/contributor/crypto-inventory.md
 
 //! Bcrypt-SHA256 hasher - mirrors `bcrypt.py::Bcrypt_sha256`.
 //!

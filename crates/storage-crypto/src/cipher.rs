@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: STO-1, STO-3; see doc/src/contributor/crypto-inventory.md
 //! # AES-256-GCM encrypt / decrypt helpers
 //!
 //! Two domains, each with distinct nonce schemes and Associated Data (AD):

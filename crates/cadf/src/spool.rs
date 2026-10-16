@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: AUD-5; see doc/src/contributor/crypto-inventory.md
 //! Spool writer, rotation and startup verification for CADF audit events.
 //!
 //! Each node owns one spool directory (guarded by [`SpoolLock`]) holding:

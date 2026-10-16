@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: STO-9, STO-10; see doc/src/contributor/crypto-inventory.md
 //! # Raft gRPC listener
 use std::sync::Arc;
 

@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: TOK-7; see doc/src/contributor/crypto-inventory.md
 //! # OAuth2 client secret generation & Argon2id hashing (ADR 0026 §5)
 use argon2::password_hash::phc::PasswordHash;
 use argon2::password_hash::{PasswordHasher, PasswordVerifier};

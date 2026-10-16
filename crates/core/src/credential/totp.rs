@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: TOTP-1; see doc/src/contributor/crypto-inventory.md
 //! TOTP passcode verification (ADR 0019 §3).
 //!
 //! Pure, DB-free implementation of RFC 4226 (HOTP) / RFC 6238 (TOTP). Since

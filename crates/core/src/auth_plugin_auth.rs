@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: TOK-5; see doc/src/contributor/crypto-inventory.md
 //! ADR 0025 Phase 1 (PR 1.2): dispatch a `POST /v3/auth/tokens` request
 //! naming an unrecognized `identity.<method>` to a loaded `mode = full_auth`
 //! dynamic auth plugin's `authenticate` entry point.

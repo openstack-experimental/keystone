@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: AUD-5; see doc/src/contributor/crypto-inventory.md
 
 //! Audit dispatcher bootstrap (ADR 0023 / ADR 0016-v2 §3.1): KEK
 //! load-or-generate, per-node key derivation, spool sealing and replay

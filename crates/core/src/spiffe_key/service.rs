@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: TOK-3; see doc/src/contributor/crypto-inventory.md
 //! # SPIFFE attestation signing key provider
 //!
 //! Filesystem-backed, one subdirectory per domain under

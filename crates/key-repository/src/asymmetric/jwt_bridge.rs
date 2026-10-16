@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: TOK-2; see doc/src/contributor/crypto-inventory.md
 //! # `KeyMaterial` <-> `jsonwebtoken` key format conversion
 //!
 //! [`KeyMaterial`] stores keys in a uniform, algorithm-agnostic shape:

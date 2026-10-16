@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: TOK-7; see doc/src/contributor/crypto-inventory.md
 //! # API Key Argon2id hashing & verification (ADR 0021 §3 Step 3, §6.B).
 use argon2::password_hash::phc::PasswordHash;
 use argon2::password_hash::{PasswordHasher, PasswordVerifier};

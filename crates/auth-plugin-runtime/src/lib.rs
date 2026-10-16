@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: TOK-10; see doc/src/contributor/crypto-inventory.md
 //! # Dynamic auth plugin runtime (ADR 0025)
 //!
 //! Loads WebAssembly auth plugins from local disk at process startup,

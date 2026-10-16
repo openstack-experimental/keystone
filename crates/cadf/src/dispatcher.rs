@@ -11,6 +11,7 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
+// Crypto inventory: AUD-1; see doc/src/contributor/crypto-inventory.md
 //! `AuditDispatcher` — dual-channel QoS dispatch with HMAC-SHA256 signing.
 //!
 //! The dispatcher owns two `mpsc` channels:
