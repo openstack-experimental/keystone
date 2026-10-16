@@ -554,14 +554,18 @@ startup: `state.event_dispatcher.subscribe_audit(CadfAuditHook).await`.
   `serde(flatten)`. Private fields prevent unsigned construction. Per-node
   signing key derived via:
   ```
-  HKDF-Expand(KEK, info="keystone-audit-hmac-v1:{node_id_utf8}", L=32)
+  HKDF(salt="keystone-audit-hmac-salt-v1", IKM=KEK,
+       info="keystone-audit-hmac-v1:{node_id_utf8}", L=32)
   ```
   The `node_id` suffix ensures each node holds a **distinct** signing key; a
   compromised node cannot forge audit records attributed to other nodes.  This
   aligns with ADR 0016-v2 §3.1 (which uses `node_id_u64_be` for Raft nodes;
-  here we use the UTF-8 encoding of the string node ID).  HKDF-Expand-only is
-  used because the KEK is already uniformly random (Extract is a no-op
-  security-wise).  Key+version as `ArcSwap<(Arc<[u8]>, u64)>` for atomic
+  here we use the UTF-8 encoding of the string node ID).  Full HKDF
+  (Extract-then-Expand with a fixed non-empty salt) is used, rather than the
+  Expand-only form, because it is the flow the FIPS 140-3 validated module
+  documents as an approved key derivation.  The `cadf` crate has a `fips`
+  feature that runs HMAC-SHA256, HKDF and key generation on that module.
+  Key+version as `ArcSwap<(Arc<[u8]>, u64)>` for atomic
   rotation (ADR 0016-v2 §6.2).  HMAC input is the JCS-canonical (RFC 8785)
   serialization of the payload (all fields, lexicographically sorted keys,
   compact, null fields included).

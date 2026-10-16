@@ -61,6 +61,10 @@ pub enum RuntimeError {
         spool: PathBuf,
     },
 
+    /// A FIPS build is running without the validated cryptographic module.
+    #[error("audit signing requires the FIPS 140-3 validated module")]
+    Fips(#[source] crate::crypto::CryptoError),
+
     /// The HMAC keyring could not be loaded or created.
     #[error("failed to load the audit HMAC keyring")]
     Keyring(#[source] KeyringError),
@@ -165,10 +169,14 @@ pub async fn run_key_reloader(
         match loaded {
             Ok(Ok(Some(keyring))) if keyring.current_version() > active_version => {
                 let version = keyring.current_version();
-                dispatcher.refresh_hmac_key(
-                    Arc::from(keyring.current_node_key(&service, &node_id).as_slice()),
-                    version,
-                );
+                let key = match keyring.current_node_key(&service, &node_id) {
+                    Ok(key) => key,
+                    Err(error) => {
+                        warn!(%error, "cannot derive rotated audit HMAC key");
+                        continue;
+                    }
+                };
+                dispatcher.refresh_hmac_key(Arc::from(key.as_slice()), version);
                 info!(
                     from = active_version,
                     to = version,
@@ -370,6 +378,9 @@ pub async fn init(
         let sealed = seal_previous_spool(&prelude_dir, prelude_node_id.as_str())
             .map_err(RuntimeError::Seal)?;
 
+        if crate::crypto::FIPS_BUILD {
+            crate::crypto::assert_fips().map_err(RuntimeError::Fips)?;
+        }
         let keyring = HmacKeyring::load_or_create(&prelude_kek).map_err(RuntimeError::Keyring)?;
         let sink: Option<Arc<dyn AuditSink>> = match prelude_cfg.sink.clone() {
             AuditSinkConfig::None => None,
@@ -393,12 +404,13 @@ pub async fn init(
     let hmac_key_version = keyring.current_version();
 
     // Per-node signing key:
-    //   HKDF-Expand(KEK, info="{service}-audit-hmac-v1:{node_id}", L=32)
+    //   HKDF(salt="{service}-audit-hmac-salt-v1", KEK, info="{service}-audit-hmac-v1:{node_id}", L=32)
     // Per ADR 0023 / ADR 0016-v2 §3.1: per-node derivation ensures a
     // compromised node cannot forge records attributed to other nodes.
     let audit_hmac_key: Arc<[u8]> = Arc::from(
         keyring
             .current_node_key(&service, node_id.as_str())
+            .map_err(RuntimeError::Keyring)?
             .as_slice(),
     );
 
@@ -852,7 +864,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("audit.keyring");
         let keyring = HmacKeyring::load_or_create(&path).unwrap();
-        let key: Arc<[u8]> = Arc::from(keyring.current_node_key(&SERVICE, "test-node").as_slice());
+        let key: Arc<[u8]> = Arc::from(
+            keyring
+                .current_node_key(&SERVICE, "test-node")
+                .unwrap()
+                .as_slice(),
+        );
         let (dispatcher, _rx) = AuditDispatcher::new(
             "test-node",
             Uuid::new_v4().to_string(),

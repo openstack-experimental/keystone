@@ -188,6 +188,7 @@ regex-syntax = "0.8"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "charset", "http2", "system-proxy"] }
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 ring = { version = "0.17" }
+aws-lc-rs = { version = "1.18", default-features = false, features = ["alloc"] }
 rmp = { version = "0.8" }
 rstest = { version = "0.27" }
 rmp-serde = "1.3"

@@ -43,6 +43,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::ServiceIdentity;
+use crate::crypto::{self, CryptoError};
 use crate::hex;
 use crate::kdf::derive_audit_hmac_key;
 use crate::spool::HmacKeyStore;
@@ -81,7 +82,10 @@ pub enum KeyringError {
     Missing(PathBuf),
     /// Random key material could not be generated.
     #[error("cannot generate random key material: {0}")]
-    Random(#[from] getrandom::Error),
+    Random(#[source] CryptoError),
+    /// A signing key could not be derived.
+    #[error("cannot derive audit signing key: {0}")]
+    Derive(#[from] CryptoError),
 }
 
 fn io_err(path: &Path) -> impl FnOnce(std::io::Error) -> KeyringError + '_ {
@@ -123,8 +127,12 @@ impl fmt::Debug for HmacKeyring {
 
 impl HmacKeyring {
     /// The per-node signing key for the current version.
-    pub fn current_node_key(&self, service: &ServiceIdentity, node_id: &str) -> [u8; 32] {
-        derive_audit_hmac_key(service, &self.current_kek, node_id)
+    pub fn current_node_key(
+        &self,
+        service: &ServiceIdentity,
+        node_id: &str,
+    ) -> Result<[u8; 32], KeyringError> {
+        Ok(derive_audit_hmac_key(service, &self.current_kek, node_id)?)
     }
 
     /// The version that signs new events.
@@ -179,9 +187,14 @@ impl HmacKeyring {
         version: u64,
         node_id: &str,
     ) -> Option<[u8; 32]> {
-        self.keks
-            .get(&version)
-            .map(|kek| derive_audit_hmac_key(service, kek, node_id))
+        let kek = self.keks.get(&version)?;
+        match derive_audit_hmac_key(service, kek, node_id) {
+            Ok(key) => Some(key),
+            Err(error) => {
+                tracing::warn!(%error, version, "cannot derive audit signing key");
+                None
+            }
+        }
     }
 
     fn parse(path: &Path, bytes: &[u8]) -> Result<Self, KeyringError> {
@@ -292,7 +305,7 @@ impl HmacKeyring {
 
 fn random_kek() -> Result<[u8; KEK_LEN], KeyringError> {
     let mut raw = [0u8; KEK_LEN];
-    getrandom::fill(&mut raw)?;
+    crypto::fill_random(&mut raw).map_err(KeyringError::Random)?;
     Ok(raw)
 }
 
@@ -333,8 +346,8 @@ mod tests {
 
         let reloaded = HmacKeyring::load_or_create(&path).unwrap();
         assert_eq!(
-            created.current_node_key(&SERVICE, "n"),
-            reloaded.current_node_key(&SERVICE, "n")
+            created.current_node_key(&SERVICE, "n").unwrap(),
+            reloaded.current_node_key(&SERVICE, "n").unwrap()
         );
     }
 
@@ -348,8 +361,8 @@ mod tests {
         assert_eq!(keyring.versions(), vec![1]);
         // Same key as the pre-keyring releases derived.
         assert_eq!(
-            keyring.current_node_key(&SERVICE, "n"),
-            derive_audit_hmac_key(&SERVICE, &[7u8; 32], "n")
+            keyring.current_node_key(&SERVICE, "n").unwrap(),
+            derive_audit_hmac_key(&SERVICE, &[7u8; 32], "n").unwrap()
         );
         // The file is left untouched until a rotation.
         assert_eq!(std::fs::read(&path).unwrap(), vec![7u8; 32]);
@@ -370,7 +383,7 @@ mod tests {
         // Version 1 is still the legacy key, so old events stay verifiable.
         assert_eq!(
             keyring.node_key(&SERVICE, 1, "n").unwrap(),
-            derive_audit_hmac_key(&SERVICE, &[7u8; 32], "n")
+            derive_audit_hmac_key(&SERVICE, &[7u8; 32], "n").unwrap()
         );
         assert_ne!(
             keyring.node_key(&SERVICE, 2, "n"),

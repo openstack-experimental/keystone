@@ -251,6 +251,7 @@
 #![deny(clippy::unwrap_used)]
 
 pub mod config;
+pub mod crypto;
 pub mod dispatcher;
 mod hex;
 pub mod identity;
@@ -267,6 +268,7 @@ pub mod syslog;
 pub mod types;
 
 pub use config::{AuditConfig, AuditSinkConfig, UNKNOWN_NODE_ID};
+pub use crypto::{CryptoError, FIPS_BUILD, assert_fips};
 pub use dispatcher::{
     AuditChannelDead, AuditChannelReceivers, AuditDispatcher, DEFAULT_CRITICAL_CHANNEL_CAPACITY,
     DEFAULT_PERIMETER_CHANNEL_CAPACITY,

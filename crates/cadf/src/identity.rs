@@ -45,6 +45,12 @@ impl ServiceIdentity {
         format!("{}-audit-hmac-v1:{node_id}", self.name)
     }
 
+    /// HKDF `salt` of the per-node signing key:
+    /// `{name}-audit-hmac-salt-v1`. Fixed per service and never secret.
+    pub(crate) fn kdf_salt(&self) -> String {
+        format!("{}-audit-hmac-salt-v1", self.name)
+    }
+
     /// Prometheus metric name: `{name}_audit_{suffix}`.
     pub fn metric_name(&self, suffix: &str) -> String {
         format!("{}_audit_{suffix}", self.name)

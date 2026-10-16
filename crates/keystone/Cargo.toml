@@ -150,6 +150,7 @@ fips = [
   "rustls-aws-lc",
   "openstack-keystone-tls-provider/fips",
   "openstack-keystone-distributed-storage/fips",
+  "cadf/fips",
 ]
 openfga = ["dep:openstack-keystone-assignment-driver-openfga"]
 # RFC 5424 syslog audit sink (`[audit] sink = { type = "syslog", .. }`).

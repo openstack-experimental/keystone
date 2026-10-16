@@ -13,42 +13,38 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Per-node HMAC key derivation for the CADF audit framework (ADR 0023).
 //!
-//! The derivation formula is:
+//! The derivation formula is full HKDF-SHA256 (RFC 5869):
 //!
 //! ```text
-//! HKDF-Expand(KEK, info = "{service_name}-audit-hmac-v1:" ++ node_id_utf8, L = 32)
+//! HKDF(salt = "{service_name}-audit-hmac-salt-v1",
+//!      IKM  = KEK,
+//!      info = "{service_name}-audit-hmac-v1:" ++ node_id_utf8,
+//!      L    = 32)
 //! ```
 //!
-//! `KEK` is the root key material (≥ 32 uniform random bytes).  The
+//! `KEK` is the root key material (>= 32 uniform random bytes).  The
 //! `node_id` suffix ensures each node receives a **distinct** signing key;
 //! a compromised node therefore cannot forge audit records attributed to
-//! other nodes.  This aligns with ADR 0016-v2 §3.1 which uses the same
-//! Expand-only construction with `node_id_u64_be` for Raft nodes.
-
-use hkdf::Hkdf;
-use sha2::Sha256;
+//! other nodes.  Extract-then-Expand with a fixed, non-empty salt is used
+//! (rather than Expand-only) because it is the flow the FIPS 140-3 validated
+//! module documents as an approved key-derivation service.
 
 use crate::ServiceIdentity;
+use crate::crypto::{self, CryptoError};
 
 /// Derive a 32-byte HMAC signing key for the given node from a root KEK.
 ///
 /// `kek` MUST be at least 32 bytes of uniform random key material.
-///
-/// # Panics
-///
-/// Panics if `kek` is shorter than 32 bytes (SHA-256 output size), since
-/// the PRK is too short to be used as HKDF pseudo-random key material.
-pub fn derive_audit_hmac_key(service: &ServiceIdentity, kek: &[u8], node_id: &str) -> [u8; 32] {
+pub fn derive_audit_hmac_key(
+    service: &ServiceIdentity,
+    kek: &[u8],
+    node_id: &str,
+) -> Result<[u8; 32], CryptoError> {
     let info = service.kdf_info(node_id);
-    // Expand-only: KEK is already uniform random, Extract is a no-op
-    // security-wise (same justification as ADR 0016-v2 §3.1).
-    #[allow(clippy::expect_used)]
-    let hk = Hkdf::<Sha256>::from_prk(kek).expect("KEK must be >= 32 bytes (SHA-256 output size)");
+    let salt = service.kdf_salt();
     let mut out = [0u8; 32];
-    #[allow(clippy::expect_used)]
-    hk.expand(info.as_bytes(), &mut out)
-        .expect("32 bytes is always a valid HKDF-SHA256 output length");
-    out
+    crypto::hkdf_extract_expand(salt.as_bytes(), kek, info.as_bytes(), &mut out)?;
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -60,15 +56,15 @@ mod tests {
 
     #[test]
     fn different_nodes_yield_different_keys() {
-        let k1 = derive_audit_hmac_key(&SERVICE, KEK, "node-1");
-        let k2 = derive_audit_hmac_key(&SERVICE, KEK, "node-2");
+        let k1 = derive_audit_hmac_key(&SERVICE, KEK, "node-1").unwrap();
+        let k2 = derive_audit_hmac_key(&SERVICE, KEK, "node-2").unwrap();
         assert_ne!(k1, k2, "distinct node IDs must produce distinct keys");
     }
 
     #[test]
     fn derivation_is_deterministic() {
-        let k1 = derive_audit_hmac_key(&SERVICE, KEK, "node-1");
-        let k2 = derive_audit_hmac_key(&SERVICE, KEK, "node-1");
+        let k1 = derive_audit_hmac_key(&SERVICE, KEK, "node-1").unwrap();
+        let k2 = derive_audit_hmac_key(&SERVICE, KEK, "node-1").unwrap();
         assert_eq!(k1, k2, "same inputs must always yield the same key");
     }
 
@@ -78,11 +74,11 @@ mod tests {
         // verification. Regenerate with:
         //   cargo test -p cadf kdf::tests::known_vector --
         // --nocapture
-        let key = derive_audit_hmac_key(&SERVICE, KEK, "keystone-node-1");
+        let key = derive_audit_hmac_key(&SERVICE, KEK, "keystone-node-1").unwrap();
         let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(
             hex,
-            "85256aea1521266824b36db34a3060d0cb91b76bbad266e10ba20dba76eabe72"
+            "2f35c5d70caf6e454245b6e88f79a351314b5645d485f84dd302d3d3cc5834c2"
         );
     }
 }

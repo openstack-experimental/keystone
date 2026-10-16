@@ -1385,7 +1385,7 @@ To prevent structural key sprawl across the deployment, the auditing framework
 uses **the exact same per-node KEK-derived HMAC engine** established in the
 storage layer:
 
-$$\text{HKDF-Expand}(\text{KEK}, \text{info}=\text{"keystone-audit-hmac-v1"} \parallel \text{node\_id\_u64\_be}, L=32)$$
+$$\text{HKDF}(\text{salt}=\text{"keystone-audit-hmac-salt-v1"}, \text{KEK}, \text{info}=\text{"keystone-audit-hmac-v1:"} \parallel \text{node\_id}, L=32)$$
 
 ### JCS Canonicalization Requirements
 

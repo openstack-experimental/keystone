@@ -120,13 +120,28 @@ disk for `spool_max_segments * spool_max_segment_bytes`.
 
 `hmac-key.bin` holds at least 32 random bytes. It is created with mode `0600`
 on first start; a file that is too short makes startup fail. Each node derives
-its own signing key from it with HKDF-SHA256 and the info string
+its own signing key from it with HKDF-SHA256 (Extract-then-Expand) using the
+salt `keystone-audit-hmac-salt-v1` and the info string
 `keystone-audit-hmac-v1:<node_id>`, so a compromised node cannot forge records
 attributed to another node. Back the file up with the same care as the Fernet
 keys: without it the spool cannot be verified, with it an attacker can forge
 records. The key version in use is exported as `keystone_audit_hmac_key_version`
 and stamped on every record (`hmac_key_version` in the `integrity` attachment), so old records stay
 verifiable; automated rotation is not available yet.
+
+SIEM implementors reproduce the key as
+`HKDF-SHA256(salt, IKM = KEK, info, L = 32)` with the standard RFC 5869
+Extract and Expand steps. Releases before this derivation used Expand-only
+HKDF (no salt); their records do not verify with the key above.
+
+### FIPS builds
+
+Build with the `cadf/fips` feature (`--no-default-features --features fips`
+to leave `ring` out) to run the HMAC signature, the key derivation and
+KEK generation on the FIPS 140-3 validated AWS-LC module. Call
+`cadf::assert_fips()` at start-up to refuse to run without it. The syslog TLS
+stack follows the service's `fips` feature (the TLS provider crate), not this
+one.
 
 ## Verifying records in a SIEM
 

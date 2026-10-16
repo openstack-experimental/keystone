@@ -37,7 +37,7 @@ ring = ["dep:ring"]
 fips = ["dep:aws-lc-rs", "aws-lc-rs/fips"]
 
 [dependencies]
-aws-lc-rs = { version = "1.18", default-features = false, features = ["alloc"], optional = true }
+aws-lc-rs = { workspace = true, optional = true }
 nix = { workspace = true, features = ["mman", "feature"] }
 ring = { workspace = true, optional = true }
 thiserror.workspace = true

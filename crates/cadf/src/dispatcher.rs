@@ -26,15 +26,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use arc_swap::ArcSwap;
-use hmac::{Hmac, KeyInit, Mac};
-use sha2::Sha256;
 use tokio::sync::mpsc;
 use tracing::error;
 
 use crate::metrics::AuditMetrics;
 use crate::types::{CadfEvent, CadfEventPayload};
-
-type HmacSha256 = Hmac<Sha256>;
 
 /// Default capacity of the best-effort perimeter channel.
 pub const DEFAULT_PERIMETER_CHANNEL_CAPACITY: usize = 4096;
@@ -357,11 +353,7 @@ impl AuditDispatcher {
             return false;
         };
         let canonical = jcs_canonical(&event.event);
-        let Ok(mut mac) = HmacSha256::new_from_slice(key) else {
-            return false;
-        };
-        mac.update(canonical.as_bytes());
-        mac.verify_slice(&signature).is_ok()
+        crate::crypto::hmac_sha256_verify(key, canonical.as_bytes(), &signature)
     }
 
     /// Like [`AuditDispatcher::new`] with explicit channel capacities.
@@ -409,12 +401,7 @@ impl AuditDispatcher {
 /// correct for flat and nested JSON objects.
 pub(crate) fn compute_hmac_sha256(payload: &CadfEventPayload, key: &[u8]) -> String {
     let canonical = jcs_canonical(payload);
-    #[allow(clippy::expect_used)]
-    let mut mac = HmacSha256::new_from_slice(key)
-        .expect("HMAC accepts any key length; keys are always 32-byte HKDF-derived");
-    mac.update(canonical.as_bytes());
-    let result = mac.finalize();
-    crate::hex::encode(result.into_bytes())
+    crate::hex::encode(crate::crypto::hmac_sha256(key, canonical.as_bytes()))
 }
 
 /// Serialize `payload` to JCS-canonical JSON (RFC 8785 §3.2.3):
