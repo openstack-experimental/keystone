@@ -222,22 +222,25 @@ Key Encryption Key (KEK)                — never enters RAM as plaintext (prod)
   ▼
 Data Encryption Key (DEK)              — 256-bit random, mlock'd allocation
   │
-  ├── Log DEK     HKDF-Expand(DEK, "keystone-raft-log-v1",    L=32)
-  ├── State DEK   HKDF-Expand(DEK, "keystone-fjall-state-v1", L=32)
-  └── Backup DEK  HKDF-Expand(DEK, "keystone-backup-v1"
+  ├── Log DEK     HKDF(salt, DEK, "keystone-raft-log-v1",    L=32)
+  ├── State DEK   HKDF(salt, DEK, "keystone-fjall-state-v1", L=32)
+  └── Backup DEK  HKDF(salt, DEK, "keystone-backup-v1"
                                ++ dek_version_u32_BE,          L=32)
 
-Audit HMAC key  HKDF-Expand(KEK, "keystone-audit-hmac-v1"
+Audit HMAC key  HKDF(salt, DEK, "keystone-audit-dek-v1"
+                              ++ dek_version_u32_BE
                               ++ node_id_u64_BE,               L=32)
 ```
 
-HKDF-Expand-only is used because the DEK is already uniformly random;
-HKDF-Extract would add no entropy. Each sub-key is domain-separated by a
+The DEK sub-keys use full HKDF with the fixed salt `keystone-dek-hierarchy-v1`.
+The DEK is already uniformly random, so Extract adds no entropy; it is run
+because Extract-then-Expand is the flow the FIPS module documents as an
+approved service. Each sub-key is domain-separated by a
 distinct info string, ensuring ciphertexts from different contexts are never
 encrypted under the same key material.
 
-The Audit HMAC key is derived from the **KEK** (not the DEK) so it survives DEK
-rotation without needing re-derivation, while remaining per-node to prevent
+The Audit HMAC key is derived from the **DEK** of the epoch it signs for, so it
+rotates with every DEK epoch swap, while remaining per-node to prevent
 cross-node forgery.
 
 ### DEK Persistence
@@ -554,7 +557,7 @@ re-serialise it before verifying).
 
 **Key derivation:** the key is derived from the DEK of the epoch it signs for,
 not from the KEK:
-`HKDF-Expand(DEK, info = "keystone-audit-dek-v1" ‖ dek_version_u32_be ‖ node_id_u64_be)`.
+`HKDF(salt, DEK, info = "keystone-audit-dek-v1" ‖ dek_version_u32_be ‖ node_id_u64_be)`.
 It rotates with every DEK epoch swap, on every node, and the `key_version` field
 names the epoch whose key signed the line — verifiers select the key by
 `key_version`. The `node_id` binding gives each node a distinct key. Because the

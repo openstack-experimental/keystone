@@ -126,9 +126,9 @@ HSM / PKCS#11 / Cloud KMS
         ▼
 Data Encryption Key (DEK)       ← 256-bit random key, generated at bootstrap
          │
-         ├── Log DEK (LD)          ← HKDF-Expand(DEK, info="keystone-raft-log-v1", L=32)
-         ├── State DEK (SD)        ← HKDF-Expand(DEK, info="keystone-fjall-state-v1", L=32)
-         └── Backup DEK (BDEK)     ← HKDF-Expand(DEK, info="keystone-backup-v1" ++ dek_version_u32_be, L=32)
+         ├── Log DEK (LD)          ← HKDF(salt, DEK, info="keystone-raft-log-v1", L=32)
+         ├── State DEK (SD)        ← HKDF(salt, DEK, info="keystone-fjall-state-v1", L=32)
+         └── Backup DEK (BDEK)     ← HKDF(salt, DEK, info="keystone-backup-v1" ++ dek_version_u32_be, L=32)
 
 ```
 
@@ -147,8 +147,11 @@ memory protection described in §9.
   persist in the process environment for the lifetime of the process, preventing
   exposure via `/proc/<pid>/environ`.
 - **DEK Derivation:** The DEK is derived into isolated sub-keys via
-  HKDF-Expand (Expand-only; the DEK is already uniformly random so HKDF-Extract
-  is not needed) to ensure log, state, and backup ciphertexts are never
+  full HKDF (Extract-then-Expand with the fixed salt
+  `keystone-dek-hierarchy-v1` and a non-empty info). The DEK is already
+  uniformly random, so Extract adds no entropy; it is run because
+  Extract-then-Expand is the flow the FIPS module documents as an approved
+  service. This ensures log, state, and backup ciphertexts are never
   encrypted under the same key context. The backup DEK (BDEK) incorporates the active
   `dek_version_u32` into its derivation input, binding it to the current DEK
   epoch. This ensures backups created under different DEK rotations do not share
@@ -203,20 +206,35 @@ tags must be 16 bytes.
 - **FIPS builds:** the `fips` cargo feature of `storage-crypto` (forwarded by
   `storage`) routes AES-256-GCM, HKDF, HMAC and random generation through the
   FIPS 140-3 validated AWS-LC module and `assert_fips()` fails start-up unless
-  that module is active. The HKDF-derived state and backup nonces above are
-  pseudorandom rather than the fixed-field/counter construction of SP 800-38D
-  §8.2.1; a strict audit may require replacing them (a storage format change,
-  tracked separately).
-  Likewise the module only counts AES-GCM encryption as an approved service
-  when it generates the IV itself; this crate passes deterministic IVs through
-  `LessSafeKey`, so `assert_fips()` proves the validated module is in use, not
-  that each GCM encrypt is an approved service. Closing that gap needs the
-  same storage format change. Building the feature requires cmake, a C
-  compiler, clang and Go. The default backend is `ring`; both go through one
-  ring-API implementation (`backend/ringlike.rs`), and `backend.rs` documents
-  how to add another provider. The service's `fips` feature also selects
+  that module is active. Building the feature requires cmake, a C compiler,
+  clang and Go; use `--no-default-features --features fips` to keep `ring`
+  out of this crate. The default backend is `ring`; both providers go through
+  one ring-API implementation (`backend/ringlike.rs`), and `backend.rs`
+  documents how to add another. The service's `fips` feature also selects
   `aws-lc-rs` with rustls' `fips` for TLS (`openstack-keystone-tls-provider`),
   except SPIFFE mTLS, which `spiffe-rustls` pins to `ring`.
+
+  The module only reports AES-GCM encryption as an approved service when it
+  generates the IV itself, so in a `fips` build the deterministic nonce
+  schemes above are replaced, for every encrypt path (log, state, backup and
+  the DEK wrap), by a random 96-bit IV from the module's DRBG
+  (SP 800-38D §8.2.2). The IV is still stored in front of the ciphertext, so
+  the on-disk layout is unchanged.
+
+  Random IVs are only safe for fewer than 2^32 encryptions under one key
+  (SP 800-38D §8.3), and every member that applies the writes (voters and
+  learners alike) encrypts under the same DEK, so a shared key would run out
+  after `2^32 / members` writes: days, with a fleet of learners. Log entries
+  and state records are therefore encrypted under a key derived per message:
+  `HKDF(salt = "keystone-gcm-message-key-v1", ikm = Log/StateDek,
+  info = context)` (full Extract-then-Expand with a non-empty salt and info,
+  the flow the validated module documents as approved), with
+  `context` = `term ++ index` for a log entry and `domain ++ pk ++ version`
+  for a state record. A key only ever encrypts one message (once per member
+  applying it), so the limit is never approached, no usage counter or
+  cluster-size accounting is needed, and the DEK rotation schedule stays
+  independent of cluster size. Backup and DEK-wrap encryptions are rare and
+  use their key directly.
 
 ### 2.3 Associated Data (AD) Bindings
 
@@ -503,7 +521,7 @@ independently of the identity data store.
 
 **Integrity:** Each audit record is signed with a per-node, per-epoch
 HMAC-SHA256 key derived from the active DEK via
-`HKDF-Expand(DEK, info="keystone-audit-dek-v1" ++ dek_version_u32_be ++ node_id_u64_be, L=32)`.
+`HKDF(salt, DEK, info="keystone-audit-dek-v1" ++ dek_version_u32_be ++ node_id_u64_be, L=32)`.
 The `node_id` makes each node's key distinct; a compromised node cannot forge
 records attributed to other nodes. The key rotates on every DEK epoch swap
 (applied on every node from the Raft state machine), binding the HMAC key

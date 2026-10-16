@@ -31,7 +31,7 @@ use std::env;
 
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::backend::{gcm_open, gcm_seal, hkdf_expand, hmac_sha256};
+use crate::backend::{FIPS_BUILD, gcm_open, gcm_seal_iv, hkdf_expand, hmac_sha256};
 use crate::error::CryptoError;
 
 /// Associated data used for DEK wrapping to bind context.
@@ -164,14 +164,18 @@ impl KekProvider for EnvKek {
     /// Wrapping the same DEK twice yields identical output, which reveals
     /// nothing beyond equality.
     fn wrap_dek(&self, dek: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
-        let mut nonce_key = Zeroizing::new([0u8; 32]);
-        hkdf_expand(&*self.key, DEK_WRAP_NONCE_INFO, nonce_key.as_mut())?;
-        let mac = hmac_sha256(nonce_key.as_ref(), dek)?;
         let mut nonce_bytes = [0u8; 12];
-        nonce_bytes.copy_from_slice(&mac[..12]);
+        // A `fips` build ignores the hint: the module generates the IV.
+        if !FIPS_BUILD {
+            let mut nonce_key = Zeroizing::new([0u8; 32]);
+            hkdf_expand(&*self.key, DEK_WRAP_NONCE_INFO, nonce_key.as_mut())?;
+            let mac = hmac_sha256(nonce_key.as_ref(), dek)?;
+            nonce_bytes.copy_from_slice(&mac[..12]);
+        }
 
         let mut buf = dek.to_vec();
-        let tag = gcm_seal(&*self.key, &nonce_bytes, DEK_WRAP_AD, buf.as_mut_slice())?;
+        let (nonce_bytes, tag) =
+            gcm_seal_iv(&*self.key, &nonce_bytes, DEK_WRAP_AD, buf.as_mut_slice())?;
 
         let mut out = Vec::with_capacity(12 + 32 + 16);
         out.extend_from_slice(&nonce_bytes);
@@ -238,6 +242,20 @@ mod tests {
         assert_eq!(unwrapped.as_ref(), &dek);
     }
 
+    #[cfg(feature = "fips")]
+    #[test]
+    fn test_wrap_uses_module_generated_iv() {
+        let kek = test_kek();
+        let dek = [0xCDu8; 32];
+        let w1 = kek.wrap_dek(&dek).expect("wrap 1");
+        let w2 = kek.wrap_dek(&dek).expect("wrap 2");
+        // Random IV: same DEK wraps differently, both unwrap.
+        assert_ne!(w1[..12], w2[..12]);
+        assert_eq!(kek.unwrap_dek(&w1).expect("unwrap").as_ref(), &dek);
+        assert_eq!(kek.unwrap_dek(&w2).expect("unwrap").as_ref(), &dek);
+    }
+
+    #[cfg(not(feature = "fips"))]
     #[test]
     fn test_wrap_nonce_is_deterministic_and_dek_specific() {
         let kek = test_kek();
@@ -258,7 +276,7 @@ mod tests {
         let dek = [0x5Au8; 32];
         let nonce = [0x11u8; 12];
         let mut buf = dek.to_vec();
-        let tag = gcm_seal(&*kek.key, &nonce, DEK_WRAP_AD, &mut buf).expect("seal");
+        let tag = crate::backend::gcm_seal(&*kek.key, &nonce, DEK_WRAP_AD, &mut buf).expect("seal");
         let mut blob = nonce.to_vec();
         blob.extend_from_slice(&buf);
         blob.extend_from_slice(&tag);

@@ -22,7 +22,7 @@ use aws_lc_rs as provider;
 use ring as provider;
 
 use provider::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
-use provider::hkdf::{HKDF_SHA256, KeyType, Prk};
+use provider::hkdf::{HKDF_SHA256, KeyType, Prk, Salt};
 use provider::hmac;
 use provider::rand::{SecureRandom, SystemRandom};
 use zeroize::Zeroizing;
@@ -35,7 +35,10 @@ fn key_for(key: &[u8]) -> Result<LessSafeKey, CryptoError> {
         .map_err(|_| CryptoError::InvalidKeyLength)
 }
 
-/// Encrypt `buf` in place and return the detached 16-byte tag.
+/// Encrypt `buf` in place with a caller-supplied nonce and return the
+/// detached 16-byte tag. A non-approved service in the FIPS module, so the
+/// `fips` build only keeps it for tests.
+#[cfg(any(not(feature = "fips"), test))]
 pub(crate) fn gcm_seal(
     key: &[u8],
     nonce: &[u8; 12],
@@ -48,6 +51,33 @@ pub(crate) fn gcm_seal(
     let mut out = [0u8; 16];
     out.copy_from_slice(tag.as_ref());
     Ok(out)
+}
+
+/// Encrypt `buf` in place with an IV generated inside the validated module
+/// (SP 800-38D §8.2.2) and return that IV with the detached tag.
+///
+/// This is the only AES-GCM encrypt service the module reports as approved:
+/// sealing with a caller-supplied nonce is flagged non-approved. `ring` has
+/// no equivalent, so this exists for the `fips` provider only.
+#[cfg(feature = "fips")]
+pub(crate) fn gcm_seal_random(
+    key: &[u8],
+    aad: &[u8],
+    buf: &mut [u8],
+) -> Result<([u8; 12], [u8; 16]), CryptoError> {
+    use aws_lc_rs::aead::RandomizedNonceKey;
+
+    let key =
+        RandomizedNonceKey::new(&AES_256_GCM, key).map_err(|_| CryptoError::InvalidKeyLength)?;
+    let (nonce, tag) = key
+        .seal_in_place_separate_tag(Aad::from(aad), buf)
+        .map_err(|_| CryptoError::AesEncrypt)?;
+    let iv: [u8; 12] = *nonce.as_ref();
+    let tag: [u8; 16] = tag
+        .as_ref()
+        .try_into()
+        .map_err(|_| CryptoError::InvalidArrayLength)?;
+    Ok((iv, tag))
 }
 
 /// Verify `tag` and decrypt `buf` in place.
@@ -84,6 +114,28 @@ impl KeyType for OutLen {
 /// HKDF-Expand (no Extract) with SHA-256 using `prk` directly.
 pub(crate) fn hkdf_expand(prk: &[u8], info: &[u8], out: &mut [u8]) -> Result<(), CryptoError> {
     Prk::new_less_safe(HKDF_SHA256, prk)
+        .expand(&[info], OutLen(out.len()))
+        .map_err(|_| CryptoError::InvalidKeyLength)?
+        .fill(out)
+        .map_err(|_| CryptoError::InvalidKeyLength)
+}
+
+/// Full HKDF (Extract-then-Expand) with SHA-256.
+///
+/// This is the flow the validated module documents as an approved service:
+/// the PRK comes from `Salt::extract` with a non-empty salt and the info is
+/// non-empty.
+pub(crate) fn hkdf_extract_expand(
+    salt: &[u8],
+    ikm: &[u8],
+    info: &[u8],
+    out: &mut [u8],
+) -> Result<(), CryptoError> {
+    if salt.is_empty() || info.is_empty() {
+        return Err(CryptoError::HkdfEmptyInput);
+    }
+    Salt::new(HKDF_SHA256, salt)
+        .extract(ikm)
         .expand(&[info], OutLen(out.len()))
         .map_err(|_| CryptoError::InvalidKeyLength)?
         .fill(out)

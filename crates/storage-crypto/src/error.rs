@@ -63,6 +63,11 @@ pub enum CryptoError {
     #[error("invalid key length: expected 32 bytes")]
     InvalidKeyLength,
 
+    /// HKDF was called with an empty salt or info. The approved
+    /// Extract-then-Expand flow requires both to be non-empty.
+    #[error("HKDF salt and info must be non-empty")]
+    HkdfEmptyInput,
+
     /// KEK is not configured.
     #[error("KEK not configured or unavailable")]
     KekMissing,

@@ -27,17 +27,18 @@
 //! ## Adding a backend
 //!
 //! A backend is a module exporting `gcm_seal`, `gcm_open`, `hkdf_expand`,
-//! `hmac_sha256` and `fill_random` with the signatures of [`ringlike`]. To add
+//! `hkdf_extract_expand`, `hmac_sha256` and `fill_random` with the signatures of [`ringlike`]. To add
 //! one (for example the RustCrypto crates), add a cargo feature with optional
 //! dependencies, a module, and one arm to each `cfg` chain below; `fips`
 //! stays first so it keeps precedence. Both [`ringlike`] and the new module
 //! must pass `test_gcm_known_answer`.
 //!
 //! Caveat: the validated module only treats AES-GCM encryption as an approved
-//! service when it generates the IV itself, whereas this crate supplies
-//! deterministic IVs (ADR 0016-v2 §2.2 and invariant 10) through
-//! `LessSafeKey`. [`assert_fips`] therefore proves the module is the
-//! validated one, not that every GCM encrypt is an approved service. See the
+//! service when it generates the IV itself. [`gcm_seal_iv`] therefore lets the
+//! `fips` build generate the IV (and `cipher` derives a per-message key so no
+//! key sees many random IVs), while the default build keeps the deterministic
+//! IVs of ADR 0016-v2 §2.2 and invariant 10. [`assert_fips`] proves the module
+//! is the validated one, not that every call is an approved service. See the
 //! "FIPS builds" paragraph of the ADR.
 //!
 //! A deployment that claims FIPS operation must call [`assert_fips`] during
@@ -48,14 +49,44 @@ use crate::error::CryptoError;
 #[cfg(not(any(feature = "fips", feature = "ring")))]
 compile_error!("enable either the `ring` (default) or the `fips` feature");
 
-#[cfg(any(feature = "fips", feature = "ring"))]
 mod ringlike;
 
-#[cfg(any(feature = "fips", feature = "ring"))]
-pub(crate) use ringlike::{fill_random, gcm_open, gcm_seal, hkdf_expand, hmac_sha256};
+pub(crate) use ringlike::{fill_random, gcm_open, hkdf_expand, hkdf_extract_expand, hmac_sha256};
+// Sealing with a caller-supplied IV is a non-approved service in the FIPS
+// module, so the `fips` build only keeps it for tests.
+#[cfg(any(not(feature = "fips"), test))]
+pub(crate) use ringlike::gcm_seal;
 
-/// Fill `out` with cryptographically secure random bytes: the provider's
-/// CSPRNG by default, the validated module's DRBG with the `fips` feature. Callers
+/// Encrypt `buf` in place and return the IV that was actually used with the
+/// detached tag. This is what every encrypt path in the crate calls.
+///
+/// * default build: `nonce` is used as given (the caller owns uniqueness: a
+///   durable counter or a derived value, ADR §2.2);
+/// * `fips` build: `nonce` is ignored and the validated module generates a
+///   random 96-bit IV, because it only reports AES-GCM encryption with an
+///   internally generated IV as an approved service. Uniqueness is then
+///   statistical, so a key must see fewer than 2^32 encryptions; `cipher`
+///   keeps every log and state key far below that by deriving one key per
+///   message.
+pub(crate) fn gcm_seal_iv(
+    key: &[u8],
+    nonce: &[u8; 12],
+    aad: &[u8],
+    buf: &mut [u8],
+) -> Result<([u8; 12], [u8; 16]), CryptoError> {
+    #[cfg(feature = "fips")]
+    {
+        let _ = nonce;
+        ringlike::gcm_seal_random(key, aad, buf)
+    }
+    #[cfg(not(feature = "fips"))]
+    {
+        gcm_seal(key, nonce, aad, buf).map(|tag| (*nonce, tag))
+    }
+}
+
+/// Fill `out` with cryptographically secure random bytes: the OS CSPRNG by
+/// default, the validated module's DRBG with the `fips` feature. Callers
 /// outside this crate that need random material (for example the snapshot
 /// nonce salt) should use this instead of their own RNG so a FIPS build stays
 /// on the validated generator.
@@ -95,6 +126,33 @@ mod tests {
         } else {
             assert!(matches!(res, Err(CryptoError::FipsUnavailable)));
         }
+    }
+
+    /// RFC 5869 test case 1 (HKDF-SHA256): both backends must reproduce the
+    /// same output keying material.
+    #[test]
+    fn test_hkdf_extract_expand_known_answer() {
+        let ikm = [0x0bu8; 22];
+        let salt: Vec<u8> = (0x00..=0x0c).collect();
+        let info: Vec<u8> = (0xf0..=0xf9).collect();
+        let mut okm = [0u8; 42];
+        hkdf_extract_expand(&salt, &ikm, &info, &mut okm).expect("hkdf");
+        assert_eq!(
+            okm,
+            [
+                0x3c, 0xb2, 0x5f, 0x25, 0xfa, 0xac, 0xd5, 0x7a, 0x90, 0x43, 0x4f, 0x64, 0xd0, 0x36,
+                0x2f, 0x2a, 0x2d, 0x2d, 0x0a, 0x90, 0xcf, 0x1a, 0x5a, 0x4c, 0x5d, 0xb0, 0x2d, 0x56,
+                0xec, 0xc4, 0xc5, 0xbf, 0x34, 0x00, 0x72, 0x08, 0xd5, 0xb8, 0x87, 0x18, 0x58, 0x65
+            ]
+        );
+        assert!(matches!(
+            hkdf_extract_expand(&[], &ikm, &info, &mut okm),
+            Err(CryptoError::HkdfEmptyInput)
+        ));
+        assert!(matches!(
+            hkdf_extract_expand(&salt, &ikm, &[], &mut okm),
+            Err(CryptoError::HkdfEmptyInput)
+        ));
     }
 
     /// NIST GCM test case 16 (AES-256, 96-bit IV, AAD): both backends must

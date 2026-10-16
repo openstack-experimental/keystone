@@ -36,7 +36,7 @@
 
 use zeroize::Zeroizing;
 
-use crate::backend::{gcm_open, gcm_seal, hkdf_expand};
+use crate::backend::{FIPS_BUILD, gcm_open, gcm_seal_iv, hkdf_expand, hkdf_extract_expand};
 use crate::dek::{BackupDek, LogDek, StateDek};
 use crate::error::CryptoError;
 
@@ -52,6 +52,78 @@ const LOG_MIN_LEN: usize = 28;
 /// [`CryptoError::InvalidArrayLength`].
 fn array_ref<const N: usize>(s: &[u8]) -> Result<[u8; N], CryptoError> {
     s.try_into().map_err(|_| CryptoError::InvalidArrayLength)
+}
+
+// ---------------------------------------------------------------------------
+// Per-message keys (fips builds)
+// ---------------------------------------------------------------------------
+
+/// HKDF salt of the per-message keys used in `fips` builds. The derivation is
+/// full HKDF (Extract-then-Expand) with a non-empty salt and info, the flow
+/// the validated module documents as an approved service, unlike the
+/// Expand-only derivation of the sub-keys themselves.
+const MESSAGE_KEY_SALT: &[u8] = b"keystone-gcm-message-key-v1";
+
+/// Key a single log entry or state record is encrypted under in a `fips`
+/// build: `HKDF(salt = MESSAGE_KEY_SALT, ikm = base, info = context)`.
+///
+/// The validated module picks random IVs, which are only safe for fewer than
+/// 2^32 encryptions under one key (SP 800-38D §8.3). Log entries and state
+/// records are encrypted at a rate that would exhaust that limit within days
+/// once many nodes (for example a fleet of learners) encrypt under the same
+/// DEK. Deriving the key from the message identity (`term`/`index`, or
+/// keyspace/key/`version`) means a key only ever encrypts the same
+/// message, which every node applies once, so the limit is never approached
+/// and no usage counter or cluster-size accounting is needed.
+fn message_key(base: &[u8; 32], context: &[u8]) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
+    let mut key = Zeroizing::new([0u8; 32]);
+    hkdf_extract_expand(MESSAGE_KEY_SALT, base, context, key.as_mut())?;
+    Ok(key)
+}
+
+/// Encrypt `buf` in place for the message identified by `context`.
+///
+/// With the `fips` feature the module-chosen IV is used under the per-message
+/// key; otherwise `nonce` is used under `base` itself.
+fn seal_message(
+    base: &[u8; 32],
+    context: &[u8],
+    nonce: &[u8; 12],
+    aad: &[u8],
+    buf: &mut [u8],
+) -> Result<([u8; 12], [u8; 16]), CryptoError> {
+    if FIPS_BUILD {
+        gcm_seal_iv(message_key(base, context)?.as_ref(), nonce, aad, buf)
+    } else {
+        gcm_seal_iv(base, nonce, aad, buf)
+    }
+}
+
+/// Decrypt the message identified by `context`.
+///
+/// A `fips` build tries the per-message key first and then `base` itself, so
+/// records written by a default build keep decrypting. The flag is `true`
+/// when `base` was used, i.e. the record has the default-build layout and the
+/// caller must still apply that layout's own checks (derived-nonce
+/// validation).
+fn open_message(
+    base: &[u8; 32],
+    context: &[u8],
+    nonce: &[u8; 12],
+    aad: &[u8],
+    ciphertext: &[u8],
+    tag: &[u8; 16],
+) -> Result<(Zeroizing<Vec<u8>>, bool), CryptoError> {
+    if FIPS_BUILD {
+        let key = message_key(base, context)?;
+        let mut buf = Zeroizing::new(ciphertext.to_vec());
+        if gcm_open(key.as_ref(), nonce, aad, &mut buf, tag).is_ok() {
+            return Ok((buf, false));
+        }
+    }
+    let mut buf = Zeroizing::new(ciphertext.to_vec());
+    gcm_open(base, nonce, aad, &mut buf, tag)?;
+    Ok((buf, true))
 }
 
 // ---------------------------------------------------------------------------
@@ -79,10 +151,16 @@ pub fn log_encrypt(
     let aad = log_aad(term, index);
 
     let mut buf = plaintext.to_vec();
-    let tag = gcm_seal(dek.0.as_bytes(), nonce, &aad, &mut buf)?;
+    let (iv, tag) = seal_message(
+        dek.0.as_bytes(),
+        &log_context(term, index),
+        nonce,
+        &aad,
+        &mut buf,
+    )?;
 
     let mut out = Vec::with_capacity(12 + plaintext.len() + 16);
-    out.extend_from_slice(nonce);
+    out.extend_from_slice(&iv);
     out.extend_from_slice(&buf);
     out.extend_from_slice(&tag);
     Ok(out)
@@ -108,8 +186,14 @@ pub fn log_decrypt(
     let tag = array_ref::<16>(tag_bytes)?;
     let aad = log_aad(term, index);
 
-    let mut buf = Zeroizing::new(ciphertext.to_vec());
-    gcm_open(dek.0.as_bytes(), &gcm_nonce, &aad, &mut buf, &tag)?;
+    let (buf, _) = open_message(
+        dek.0.as_bytes(),
+        &log_context(term, index),
+        &gcm_nonce,
+        &aad,
+        ciphertext,
+        &tag,
+    )?;
     Ok(buf)
 }
 
@@ -133,14 +217,26 @@ pub fn state_encrypt(
     pk: &[u8],
     version: u32,
 ) -> Result<Vec<u8>, CryptoError> {
-    let nonce_array = state_nonce(dek, pk, version)?;
+    // With the `fips` feature the module picks the IV; the derived value is
+    // then only a placeholder.
+    let nonce_array = if FIPS_BUILD {
+        [0u8; 12]
+    } else {
+        state_nonce(dek, pk, version)?
+    };
     let aad = state_aad(tier, domain_id, pk);
 
     let mut buf = plaintext.to_vec();
-    let tag = gcm_seal(dek.0.as_bytes(), &nonce_array, &aad, &mut buf)?;
+    let (iv, tag) = seal_message(
+        dek.0.as_bytes(),
+        &state_context(domain_id, pk, version),
+        &nonce_array,
+        &aad,
+        &mut buf,
+    )?;
 
     let mut out = Vec::with_capacity(12 + plaintext.len() + 16 + 4);
-    out.extend_from_slice(&nonce_array);
+    out.extend_from_slice(&iv);
     out.extend_from_slice(&buf);
     out.extend_from_slice(&tag);
     out.extend_from_slice(&version.to_be_bytes());
@@ -175,19 +271,30 @@ pub fn state_decrypt(
     }
     let (ciphertext, tag_bytes) = middle.split_at(middle.len() - 16);
 
-    // Re-derive the nonce from the stored version to validate.
-    let expected_nonce = state_nonce(dek, pk, stored_version)?;
-    if nonce_bytes != expected_nonce.as_ref() {
-        // Nonce mismatch indicates tampering or key/version confusion.
-        return Err(CryptoError::AesDecrypt);
-    }
-
+    // The AAD does not contain the version; it is bound through the nonce.
+    // Default-layout records (all records in a default build, legacy records
+    // in a `fips` build) re-derive the nonce from the stored version to
+    // validate it, see below. `fips` records are bound to the version by the
+    // per-message key instead.
     let gcm_nonce = array_ref::<12>(nonce_bytes)?;
     let tag = array_ref::<16>(tag_bytes)?;
     let aad = state_aad(tier, domain_id, pk);
 
-    let mut buf = Zeroizing::new(ciphertext.to_vec());
-    gcm_open(dek.0.as_bytes(), &gcm_nonce, &aad, &mut buf, &tag)?;
+    let (buf, default_layout) = open_message(
+        dek.0.as_bytes(),
+        &state_context(domain_id, pk, stored_version),
+        &gcm_nonce,
+        &aad,
+        ciphertext,
+        &tag,
+    )?;
+    if default_layout {
+        let expected_nonce = state_nonce(dek, pk, stored_version)?;
+        if nonce_bytes != expected_nonce.as_ref() {
+            // Nonce mismatch indicates tampering or key/version confusion.
+            return Err(CryptoError::AesDecrypt);
+        }
+    }
 
     let next_version = stored_version.saturating_add(1);
     Ok((buf, next_version))
@@ -217,14 +324,18 @@ pub fn backup_encrypt(
     utc_epoch: u64,
     counter: u64,
 ) -> Result<Vec<u8>, CryptoError> {
-    let nonce_bytes = backup_nonce(dek, utc_epoch, counter)?;
+    let nonce_bytes = if FIPS_BUILD {
+        [0u8; 12]
+    } else {
+        backup_nonce(dek, utc_epoch, counter)?
+    };
     let aad = backup_aad(dek_version, utc_epoch, counter);
 
     let mut buf = plaintext.to_vec();
-    let tag = gcm_seal(dek.as_bytes(), &nonce_bytes, &aad, &mut buf)?;
+    let (iv, tag) = gcm_seal_iv(dek.as_bytes(), &nonce_bytes, &aad, &mut buf)?;
 
     let mut out = Vec::with_capacity(12 + plaintext.len() + 16);
-    out.extend_from_slice(&nonce_bytes);
+    out.extend_from_slice(&iv);
     out.extend_from_slice(&buf);
     out.extend_from_slice(&tag);
     Ok(out)
@@ -250,10 +361,13 @@ pub fn backup_decrypt(
     }
     let (nonce_bytes, rest) = stored.split_at(12);
 
-    // Verify nonce matches the deterministic derivation.
-    let expected_nonce = backup_nonce(dek, utc_epoch, counter)?;
-    if nonce_bytes != expected_nonce {
-        return Err(CryptoError::AesDecrypt);
+    // Verify nonce matches the deterministic derivation (not possible for
+    // module-generated IVs in a `fips` build; the tag still authenticates).
+    if !FIPS_BUILD {
+        let expected_nonce = backup_nonce(dek, utc_epoch, counter)?;
+        if nonce_bytes != expected_nonce {
+            return Err(CryptoError::AesDecrypt);
+        }
     }
 
     let (ciphertext, tag_bytes) = rest.split_at(rest.len() - 16);
@@ -269,6 +383,28 @@ pub fn backup_decrypt(
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/// Identity of a log entry for per-message key derivation.
+fn log_context(term: u64, index: u64) -> Vec<u8> {
+    let mut ctx = Vec::with_capacity(3 + 16);
+    ctx.extend_from_slice(b"log");
+    ctx.extend_from_slice(&term.to_be_bytes());
+    ctx.extend_from_slice(&index.to_be_bytes());
+    ctx
+}
+
+/// Identity of a state record version for per-message key derivation. The
+/// lengths keep `domain_id ++ pk` unambiguous.
+fn state_context(domain_id: &[u8], pk: &[u8], version: u32) -> Vec<u8> {
+    let mut ctx = Vec::with_capacity(5 + 8 + domain_id.len() + pk.len() + 4);
+    ctx.extend_from_slice(b"state");
+    ctx.extend_from_slice(&(domain_id.len() as u64).to_be_bytes());
+    ctx.extend_from_slice(domain_id);
+    ctx.extend_from_slice(&(pk.len() as u64).to_be_bytes());
+    ctx.extend_from_slice(pk);
+    ctx.extend_from_slice(&version.to_be_bytes());
+    ctx
+}
 
 fn log_aad(term: u64, index: u64) -> [u8; 16] {
     let mut aad = [0u8; 16];
@@ -335,6 +471,115 @@ mod tests {
 
     fn test_state_dek() -> StateDek {
         StateDek(LockedKey::from_raw([0x22u8; 32]))
+    }
+
+    /// `fips` builds ignore the supplied nonce and let the module pick a
+    /// fresh IV for every encryption; the IV is stored so decryption works.
+    #[cfg(feature = "fips")]
+    #[test]
+    fn test_fips_encrypt_uses_module_generated_iv() {
+        let dek = test_log_dek();
+        let hint = [0x42u8; 12];
+        let a = log_encrypt(&dek, b"payload", 1, 2, &hint).expect("a");
+        let b = log_encrypt(&dek, b"payload", 1, 2, &hint).expect("b");
+        assert_ne!(a[..12], hint);
+        assert_ne!(a[..12], b[..12]);
+        assert_eq!(
+            log_decrypt(&dek, &a, 1, 2).expect("dec a").as_slice(),
+            b"payload"
+        );
+        assert_eq!(
+            log_decrypt(&dek, &b, 1, 2).expect("dec b").as_slice(),
+            b"payload"
+        );
+
+        let sdek = test_state_dek();
+        let s1 = state_encrypt(&sdek, b"v", 0, b"dom", b"pk", 0).expect("s1");
+        let s2 = state_encrypt(&sdek, b"v", 0, b"dom", b"pk", 0).expect("s2");
+        assert_ne!(s1[..12], s2[..12]);
+        let (pt, next) = state_decrypt(&sdek, &s1, 0, b"dom", b"pk").expect("dec s1");
+        assert_eq!((pt.as_slice(), next), (b"v".as_slice(), 1));
+    }
+
+    /// Every message gets its own key in a `fips` build, so a record cannot
+    /// be opened under the neighbouring (term, index) or version even by
+    /// someone replaying the stored IV and tag.
+    #[cfg(feature = "fips")]
+    #[test]
+    fn test_fips_messages_use_distinct_keys() {
+        let dek = test_log_dek();
+        let k1 = message_key(dek.0.as_bytes(), &log_context(1, 2)).expect("k1");
+        let k2 = message_key(dek.0.as_bytes(), &log_context(1, 3)).expect("k2");
+        assert_ne!(*k1, *k2);
+        assert_ne!(*k1, *dek.0.as_bytes());
+        let ctx_a = state_context(b"ab", b"c", 0);
+        let ctx_b = state_context(b"a", b"bc", 0);
+        assert_ne!(ctx_a, ctx_b);
+
+        // A stored record does not open under a neighbouring identity.
+        let entry = log_encrypt(&dek, b"payload", 1, 2, &[0u8; 12]).expect("enc");
+        assert!(log_decrypt(&dek, &entry, 1, 3).is_err());
+        assert!(log_decrypt(&dek, &entry, 2, 2).is_err());
+        let sdek = test_state_dek();
+        let rec = state_encrypt(&sdek, b"v", 0, b"dom", b"pk", 4).expect("enc");
+        let mut moved = rec.clone();
+        let n = moved.len();
+        moved[n - 4..].copy_from_slice(&5u32.to_be_bytes());
+        assert!(state_decrypt(&sdek, &moved, 0, b"dom", b"pk").is_err());
+    }
+
+    /// A legacy record read by a `fips` node keeps its version binding: the
+    /// unauthenticated trailing version cannot be rewritten.
+    #[cfg(feature = "fips")]
+    #[test]
+    fn test_fips_legacy_state_record_version_is_bound() {
+        let sdek = test_state_dek();
+        let nonce = state_nonce(&sdek, b"pk", 3).expect("nonce");
+        let aad = state_aad(0, b"dom", b"pk");
+        let mut buf = b"legacy".to_vec();
+        let tag =
+            crate::backend::gcm_seal(sdek.0.as_bytes(), &nonce, &aad, &mut buf).expect("seal");
+        let mut stored = nonce.to_vec();
+        stored.extend_from_slice(&buf);
+        stored.extend_from_slice(&tag);
+        stored.extend_from_slice(&9u32.to_be_bytes());
+        assert!(state_decrypt(&sdek, &stored, 0, b"dom", b"pk").is_err());
+    }
+
+    /// Log entries written by a default build (nonce counter, shared key)
+    /// keep decrypting under `fips`.
+    #[cfg(feature = "fips")]
+    #[test]
+    fn test_fips_reads_default_build_log_entries() {
+        let dek = test_log_dek();
+        let aad = log_aad(5, 9);
+        let nonce = [7u8; 12];
+        let mut buf = b"old entry".to_vec();
+        let tag = crate::backend::gcm_seal(dek.0.as_bytes(), &nonce, &aad, &mut buf).expect("seal");
+        let mut stored = nonce.to_vec();
+        stored.extend_from_slice(&buf);
+        stored.extend_from_slice(&tag);
+        let out = log_decrypt(&dek, &stored, 5, 9).expect("decrypt");
+        assert_eq!(out.as_slice(), b"old entry");
+    }
+
+    /// Records written with HKDF-derived nonces by a default build keep
+    /// decrypting under `fips`: the nonce is read from the record.
+    #[cfg(feature = "fips")]
+    #[test]
+    fn test_fips_reads_derived_nonce_records() {
+        let sdek = test_state_dek();
+        let nonce = state_nonce(&sdek, b"pk", 3).expect("nonce");
+        let aad = state_aad(0, b"dom", b"pk");
+        let mut buf = b"legacy".to_vec();
+        let tag =
+            crate::backend::gcm_seal(sdek.0.as_bytes(), &nonce, &aad, &mut buf).expect("seal");
+        let mut stored = nonce.to_vec();
+        stored.extend_from_slice(&buf);
+        stored.extend_from_slice(&tag);
+        stored.extend_from_slice(&3u32.to_be_bytes());
+        let (pt, next) = state_decrypt(&sdek, &stored, 0, b"dom", b"pk").expect("decrypt");
+        assert_eq!((pt.as_slice(), next), (b"legacy".as_slice(), 4));
     }
 
     fn test_nonce() -> [u8; 12] {

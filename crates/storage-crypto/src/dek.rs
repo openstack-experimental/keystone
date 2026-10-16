@@ -14,26 +14,33 @@
 //! # Data Encryption Key (DEK) hierarchy
 //!
 //! A [`DekEpoch`] holds the current DEK version and the sub-keys derived from
-//! it via HKDF-Expand.  Sub-keys are domain-separated so log, state, and
+//! it via HKDF.  Sub-keys are domain-separated so log, state, and
 //! backup ciphertexts are never encrypted under the same key context.
 //!
 //! ## Sub-key derivation
 //!
 //! ```text
 //! DEK (256-bit uniform random)
-//!  ├── LogDek   = HKDF-Expand(DEK, info="keystone-raft-log-v1",    L=32)
-//!  └── StateDek = HKDF-Expand(DEK, info="keystone-fjall-state-v1", L=32)
+//!  ├── LogDek   = HKDF(salt, DEK, info="keystone-raft-log-v1",    L=32)
+//!  └── StateDek = HKDF(salt, DEK, info="keystone-fjall-state-v1", L=32)
 //! ```
 //!
-//! HKDF-Expand (without Extract) is used because the DEK is already
-//! cryptographically uniform random (generated with a CSPRNG), so the
-//! Extract step adds no security and Extract is omitted as per ADR §2.1.
+//! with `salt = "keystone-dek-hierarchy-v1"`. The DEK is already
+//! cryptographically uniform random (generated with a CSPRNG), so Extract adds
+//! no entropy; it is run anyway, with a fixed public salt and a non-empty
+//! info, because full Extract-then-Expand is the flow the FIPS module
+//! documents as an approved service (ADR §2.1).
 
 use crate::audit::AuditHmacKey;
-use crate::backend::{fill_random, hkdf_expand};
+use crate::backend::{fill_random, hkdf_extract_expand};
 use crate::error::CryptoError;
 use crate::mlock::LockedKey;
 
+/// HKDF salt of the key hierarchy. Full Extract-then-Expand with a non-empty
+/// salt and info is the flow the FIPS module documents as an approved
+/// service; the salt is a fixed public domain separator, as the DEK itself is
+/// already uniformly random.
+const DEK_HIERARCHY_SALT: &[u8] = b"keystone-dek-hierarchy-v1";
 const LOG_DEK_INFO: &[u8] = b"keystone-raft-log-v1";
 const STATE_DEK_INFO: &[u8] = b"keystone-fjall-state-v1";
 const BACKUP_DEK_INFO_PREFIX: &[u8] = b"keystone-backup-v1";
@@ -95,7 +102,7 @@ fn backup_info(version: u32) -> Vec<u8> {
 /// this one.
 ///
 /// The root DEK is stored in a `LockedKey` (mlock'd page) per ADR §9.
-/// Sub-keys are derived via HKDF-Expand and stored independently.
+/// Sub-keys are derived via HKDF and stored independently.
 pub struct DekEpoch {
     backup_dek: BackupDek,
     log_dek: LogDek,
@@ -114,7 +121,7 @@ impl DekEpoch {
 
     /// Derive the per-epoch audit HMAC key from the root DEK (ADR §3.1).
     ///
-    /// `AuditHmacKey = HKDF-Expand(DEK, info = b"keystone-audit-dek-v1" ++
+    /// `AuditHmacKey = HKDF(salt, DEK, info = b"keystone-audit-dek-v1" ++
     /// version_u32_be ++ node_id_u64_be, L=32)`. Binding to both DEK
     /// version and node ID ensures the audit key rotates with every DEK
     /// rotation and cannot be forged across nodes.
@@ -123,30 +130,50 @@ impl DekEpoch {
         info.extend_from_slice(&self.version.to_be_bytes());
         info.extend_from_slice(&node_id.to_be_bytes());
         let mut out = [0u8; 32];
-        hkdf_expand(self.root_dek.as_bytes().as_ref(), &info, &mut out)?;
+        hkdf_extract_expand(
+            DEK_HIERARCHY_SALT,
+            self.root_dek.as_bytes().as_ref(),
+            &info,
+            &mut out,
+        )?;
         Ok(AuditHmacKey::from_raw(out))
     }
 
     /// Derive a `DekEpoch` from a `LockedKey` containing the root DEK bytes.
     ///
-    /// Uses HKDF-Expand (no Extract) to produce domain-separated sub-keys.
+    /// Uses HKDF (Extract-then-Expand) to produce domain-separated sub-keys.
     /// The backup sub-key is version-bound so different rotation epochs produce
     /// different backup encryption keys.
     pub fn from_raw(dek: LockedKey, version: u32) -> Result<Self, CryptoError> {
-        let prk = dek.as_bytes();
+        let ikm = dek.as_bytes();
 
         // Derive sub-keys directly into mlock'd allocations (ADR §9): never
         // materialise the key in an unlocked buffer first.
         let mut log_locked = LockedKey::alloc().map_err(|_| CryptoError::InvalidKeyLength)?;
-        hkdf_expand(prk.as_ref(), LOG_DEK_INFO, log_locked.as_mut())?;
+        hkdf_extract_expand(
+            DEK_HIERARCHY_SALT,
+            ikm.as_ref(),
+            LOG_DEK_INFO,
+            log_locked.as_mut(),
+        )?;
 
         let mut state_locked = LockedKey::alloc().map_err(|_| CryptoError::InvalidKeyLength)?;
-        hkdf_expand(prk.as_ref(), STATE_DEK_INFO, state_locked.as_mut())?;
+        hkdf_extract_expand(
+            DEK_HIERARCHY_SALT,
+            ikm.as_ref(),
+            STATE_DEK_INFO,
+            state_locked.as_mut(),
+        )?;
 
         // BackupDek info is version-bound: prefix ++ version_u32_BE.
         // Derive into a LockedKey so backup key material is mlock'd (ADR §9).
         let mut backup_locked = LockedKey::alloc().map_err(|_| CryptoError::InvalidKeyLength)?;
-        hkdf_expand(prk.as_ref(), &backup_info(version), backup_locked.as_mut())?;
+        hkdf_extract_expand(
+            DEK_HIERARCHY_SALT,
+            ikm.as_ref(),
+            &backup_info(version),
+            backup_locked.as_mut(),
+        )?;
 
         Ok(Self {
             version,
