@@ -27,7 +27,8 @@
 //! so a node that rejects it has not applied the key yet.
 
 use std::collections::VecDeque;
-use std::time::Duration;
+use std::sync::OnceLock;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use reqwest::{Method, StatusCode};
@@ -51,6 +52,19 @@ const SCIM_MAPPING: &str = "soak-scim-mapping";
 /// The SCIM bearer key lives one hour; mint a new one well before.
 const SCIM_KEY_LIFETIME: Duration = Duration::from_secs(30 * 60);
 const USER_SCHEMA: &str = "urn:ietf:params:scim:schemas:core:2.0:User";
+
+/// Tells this run's records from those of earlier runs. The process id is
+/// always 1 in a container, so the start time is part of it: records that a
+/// previous pod left behind must not collide with new ones.
+fn run_id() -> &'static str {
+    static ID: OnceLock<String> = OnceLock::new();
+    ID.get_or_init(|| {
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        format!("{}-{secs}", std::process::id())
+    })
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct CanaryFailure {
@@ -189,7 +203,7 @@ impl Api {
     }
 
     async fn write_key(&mut self, n: u64) -> Result<Record> {
-        let provider_id = format!("soak-canary-{}-{n}", std::process::id());
+        let provider_id = format!("soak-canary-{}-{n}", run_id());
         let description = format!("soak canary {n} {provider_id}");
         let val = self.create_key(&provider_id, &description).await?;
         let client_id = val["api_key"]["client_id"]
@@ -353,8 +367,8 @@ impl Api {
     }
 
     async fn write_scim_user(&mut self, bearer: &str, n: u64) -> Result<Record> {
-        let user_name = format!("soak-canary-{}-{n}", std::process::id());
-        let external_id = format!("soak-ext-{}-{n}", std::process::id());
+        let user_name = format!("soak-canary-{}-{n}", run_id());
+        let external_id = format!("soak-ext-{}-{n}", run_id());
         let body = json!({
             "schemas": [USER_SCHEMA],
             "externalId": external_id,
@@ -454,7 +468,7 @@ impl Prober {
     /// Write one API key through `node` (`host:port`).
     pub async fn write_via(&mut self, node: &str) -> ProbeWrite {
         self.n += 1;
-        let provider_id = format!("soak-probe-{}-{}", std::process::id(), self.n);
+        let provider_id = format!("soak-probe-{}-{}", run_id(), self.n);
         let token = match self.api.token().await {
             Ok(t) => t,
             Err(e) => return ProbeWrite::Rejected(format!("login failed: {e:#}")),
