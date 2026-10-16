@@ -290,8 +290,10 @@ async fn resolve_verified_api_client(
         .get_by_lookup_hash(state, &domain_id, &parsed.lookup_hash)
         .await
         .map_err(|e| {
+            // A storage failure says nothing about the credential: answering
+            // 401 would make the client discard a valid key.
             warn!(error = %e, "api_key lookup failed");
-            AuthenticationError::Unauthorized
+            KeystoneApiError::ServiceUnavailable("api_key lookup failed".to_string())
         })?;
 
     let Some(resource) = resource else {

@@ -522,7 +522,8 @@ enum Read {
     Ok,
     /// Not judged: the node could not answer.
     Unavailable,
-    Missing,
+    /// The node answered 404 (or 401 for credentials) with this status.
+    Missing(u16),
     Altered(String),
 }
 
@@ -533,7 +534,7 @@ fn judge(status: Option<StatusCode>, body: &Value, rec: &Record) -> Read {
     if status == StatusCode::NOT_FOUND
         || (rec.unauthorized_is_stale && status == StatusCode::UNAUTHORIZED)
     {
-        return Read::Missing;
+        return Read::Missing(status.as_u16());
     }
     if !status.is_success() {
         return Read::Unavailable;
@@ -606,11 +607,14 @@ async fn verify(
         }
         match r {
             Read::Ok | Read::Unavailable => {}
-            Read::Missing => record_failure(
+            Read::Missing(status) => record_failure(
                 cfg,
                 seq,
                 check_on_missing,
-                format!("{addr} does not return {} {}", rec.label, rec.id),
+                format!(
+                    "{addr} does not return {} {} (HTTP {status})",
+                    rec.label, rec.id
+                ),
             ),
             Read::Altered(d) => record_failure(
                 cfg,
@@ -740,7 +744,7 @@ mod tests {
         );
         assert_eq!(
             judge(Some(StatusCode::NOT_FOUND), &Value::Null, &r),
-            Read::Missing
+            Read::Missing(404)
         );
         assert!(matches!(
             judge(Some(StatusCode::OK), &body("other"), &r),
@@ -776,7 +780,7 @@ mod tests {
     fn judges_unauthorized_by_record() {
         assert_eq!(
             judge(Some(StatusCode::UNAUTHORIZED), &Value::Null, &rec(true)),
-            Read::Missing
+            Read::Missing(401)
         );
         assert_eq!(
             judge(Some(StatusCode::UNAUTHORIZED), &Value::Null, &rec(false)),
