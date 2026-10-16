@@ -997,6 +997,41 @@ impl Oauth2SessionApi for Oauth2SessionService {
         Ok(family_ids.len())
     }
 
+    #[tracing::instrument(name = "provider.oauth2_session.list_refresh_token_families_by_user", level = "debug", skip_all, fields(user_id = %user_id))]
+    async fn list_refresh_token_families_by_user(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        user_id: &str,
+    ) -> Result<Vec<RefreshTokenFamilySummary>, Oauth2SessionProviderError> {
+        let family_ids = self
+            .backend_driver
+            .list_refresh_families_by_user(state, domain_id, user_id)
+            .await?;
+        let mut summaries = Vec::with_capacity(family_ids.len());
+        for family_id in family_ids {
+            let tokens = self
+                .backend_driver
+                .list_refresh_token_family(state, &family_id)
+                .await?;
+            let (Some(first), Some(last)) = (tokens.first(), tokens.last()) else {
+                continue;
+            };
+            let revoked = tokens.iter().find(|t| t.revoked_at.is_some());
+            summaries.push(RefreshTokenFamilySummary {
+                family_id,
+                domain_id: first.domain_id.clone(),
+                client_id: first.client_id.clone(),
+                user_id: first.user_id.clone(),
+                issued_at: first.issued_at,
+                last_rotated: last.issued_at,
+                revoked_at: revoked.and_then(|t| t.revoked_at),
+                revocation_reason: revoked.and_then(|t| t.revocation_reason.clone()),
+            });
+        }
+        Ok(summaries)
+    }
+
     #[tracing::instrument(name = "provider.oauth2_session.revoke_refresh_token_families_by_user", level = "debug", skip_all, fields(user_id = %user_id))]
     async fn revoke_refresh_token_families_by_user<'a>(
         &self,

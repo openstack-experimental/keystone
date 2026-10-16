@@ -48,6 +48,7 @@ mod renderer;
 mod revocations;
 mod revoke;
 mod rotate_signing_key;
+mod sessions;
 mod sso;
 mod static_files;
 mod token;
@@ -92,6 +93,7 @@ pub(super) fn openapi_router() -> OpenApiRouter<ServiceState> {
         .routes(routes!(device_federated::device_federated_callback))
         .routes(routes!(device::device_consent))
         .routes(routes!(revocations::create))
+        .routes(routes!(sessions::list))
         .routes(routes!(rotate_signing_key::rotate_signing_key))
         .routes(routes!(
             confirm_rotate_signing_key::confirm_rotate_signing_key

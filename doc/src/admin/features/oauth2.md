@@ -376,6 +376,7 @@ During an incident, revoke refresh token families from the command line (the
 access tokens already issued stay valid until they expire):
 
 ```
+keystone-manage oauth2 sessions list --domain <domain_id> --user <user_id>
 keystone-manage oauth2 revoke --domain <domain_id> --user <user_id>
 keystone-manage oauth2 revoke --domain <domain_id> --client <client_id>
 keystone-manage oauth2 revoke --domain <domain_id> --all --reason "incident 42"

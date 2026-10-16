@@ -382,6 +382,27 @@ pub struct RefreshToken {
     pub upstream: Option<UpstreamLogin>,
 }
 
+/// Operator view of one refresh token family (an OAuth2 session).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RefreshTokenFamilySummary {
+    /// Family id.
+    pub family_id: String,
+    /// Owning domain.
+    pub domain_id: String,
+    /// Client the family was issued to.
+    pub client_id: String,
+    /// Owning user.
+    pub user_id: String,
+    /// UTC epoch seconds the family was created.
+    pub issued_at: i64,
+    /// UTC epoch seconds of the latest rotation.
+    pub last_rotated: i64,
+    /// UTC epoch seconds the family was revoked, if it was.
+    pub revoked_at: Option<i64>,
+    /// Why the family was revoked, if it was.
+    pub revocation_reason: Option<String>,
+}
+
 /// Reason a refresh token family was revoked (stored in
 /// [`RefreshToken::revocation_reason`]).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

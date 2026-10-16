@@ -43,3 +43,41 @@ pub struct Oauth2RevocationResponse {
     /// selecting a user or the whole domain counts only newly revoked ones.
     pub revoked_families: usize,
 }
+
+/// Query of `GET /v4/oauth2/{domain_id}/sessions`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
+pub struct Oauth2SessionListParameters {
+    /// User whose sessions are listed.
+    pub user_id: String,
+}
+
+/// One OAuth2 session (refresh token family).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct Oauth2Session {
+    /// Family id.
+    pub family_id: String,
+    /// Client the session was issued to.
+    pub client_id: String,
+    /// Owning user.
+    pub user_id: String,
+    /// UTC epoch seconds the session was created.
+    pub issued_at: i64,
+    /// UTC epoch seconds of the latest refresh token rotation.
+    pub last_rotated: i64,
+    /// UTC epoch seconds the session was revoked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revoked_at: Option<i64>,
+    /// Why the session was revoked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revocation_reason: Option<String>,
+}
+
+/// Response of `GET /v4/oauth2/{domain_id}/sessions`.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct Oauth2SessionList {
+    /// The user's sessions.
+    pub oauth2_sessions: Vec<Oauth2Session>,
+}

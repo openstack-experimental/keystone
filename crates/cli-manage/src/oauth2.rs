@@ -29,6 +29,7 @@ mod list_local_emergency_candidates;
 mod reconcile_local_emergency_key;
 mod revoke;
 mod rotate_signing_key;
+mod sessions;
 
 use crate::PerformAction;
 use crate::oauth2::client::ClientCommand;
@@ -38,6 +39,7 @@ use crate::oauth2::list_local_emergency_candidates::ListLocalEmergencyCandidates
 use crate::oauth2::reconcile_local_emergency_key::ReconcileLocalEmergencyKeyCommand;
 use crate::oauth2::revoke::RevokeCommand;
 use crate::oauth2::rotate_signing_key::RotateSigningKeyCommand;
+use crate::oauth2::sessions::SessionsCommand;
 
 /// OAuth2/OIDC provider administration (ADR 0026).
 #[derive(Parser)]
@@ -52,6 +54,7 @@ impl PerformAction for Oauth2Command {
         match self.command {
             Oauth2Commands::Client(e) => e.take_action(config).await,
             Oauth2Commands::Revoke(e) => e.take_action(config).await,
+            Oauth2Commands::Sessions(e) => e.take_action(config).await,
             Oauth2Commands::RotateSigningKey(e) => e.take_action(config).await,
             Oauth2Commands::ConfirmRotateSigningKey(e) => e.take_action(config).await,
             Oauth2Commands::EnsureSigningKey(e) => e.take_action(config).await,
@@ -66,6 +69,7 @@ impl PerformAction for Oauth2Command {
 enum Oauth2Commands {
     Client(ClientCommand),
     Revoke(RevokeCommand),
+    Sessions(SessionsCommand),
     RotateSigningKey(RotateSigningKeyCommand),
     ConfirmRotateSigningKey(ConfirmRotateSigningKeyCommand),
     EnsureSigningKey(EnsureSigningKeyCommand),

@@ -17,7 +17,8 @@ use async_trait::async_trait;
 
 use openstack_keystone_core_types::oauth2_session::{
     AuthorizationCode, Consent, DeviceCodeGrant, PreAuthSession, RefreshToken,
-    RefreshTokenRevocationReason, RpSession, SsoSession, UpstreamLogin, UpstreamLoginCompletion,
+    RefreshTokenFamilySummary, RefreshTokenRevocationReason, RpSession, SsoSession, UpstreamLogin,
+    UpstreamLoginCompletion,
 };
 
 use crate::keystone::ServiceState;
@@ -522,6 +523,15 @@ pub trait Oauth2SessionApi: Send + Sync {
         client_id: &str,
         reason: RefreshTokenRevocationReason,
     ) -> Result<usize, Oauth2SessionProviderError>;
+
+    /// Summarize the refresh token families `user_id` holds in `domain_id`,
+    /// revoked ones included, for incident triage.
+    async fn list_refresh_token_families_by_user(
+        &self,
+        state: &ServiceState,
+        domain_id: &str,
+        user_id: &str,
+    ) -> Result<Vec<RefreshTokenFamilySummary>, Oauth2SessionProviderError>;
 
     /// Revoke every refresh token family `user_id` holds with the given
     /// `reason` and return the ids of the families revoked. `domain_id`
