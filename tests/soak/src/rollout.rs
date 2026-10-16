@@ -197,7 +197,13 @@ async fn settled(cfg: &RolloutConfig, kube: &Kube, http: &reqwest::Client) -> bo
     cluster_settled(&cfg.state, kube, http, &cluster, "rollout").await
 }
 
-pub async fn run(cfg: RolloutConfig, deadline: Option<Instant>) -> Result<()> {
+/// `new_until` bounds starting a new fault, `deadline` the whole run: a fault that
+/// began before `new_until` is followed to the end.
+pub async fn run(
+    cfg: RolloutConfig,
+    deadline: Option<Instant>,
+    new_until: Option<Instant>,
+) -> Result<()> {
     let kube = Kube::in_cluster().await?;
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
@@ -206,11 +212,11 @@ pub async fn run(cfg: RolloutConfig, deadline: Option<Instant>) -> Result<()> {
     info!(interval = ?cfg.interval, statefulset = %cfg.statefulset, "rollout enabled");
     let mut seq = 0u64;
     loop {
-        if !sleep_until_deadline(cfg.interval, deadline).await {
+        if !sleep_until_deadline(cfg.interval, new_until).await {
             return Ok(());
         }
         while !settled(&cfg, &kube, &http).await {
-            if !sleep_until_deadline(POLL, deadline).await {
+            if !sleep_until_deadline(POLL, new_until).await {
                 return Ok(());
             }
         }

@@ -189,7 +189,8 @@ pub fn render_markdown(v: &Verdict) -> String {
         "- nodes: {} ({} scraped, {} ready), leaders: {}, voters: {}, learners: {}\n\
          - applied index spread: {}, max apply lag: {}, max replication lag: {}\n\
          - quarantined partitions: {}, disk spread ratio: {:.2}\n\
-         - applied entries: {}, disk per entry and node: {:.0} B",
+         - applied entries: {}, disk per entry and node: {:.0} B\n\
+         - disk growth: {} node(s) judged without a restart, largest {:+.1}%",
         sm.nodes,
         sm.nodes_scraped,
         sm.nodes_ready,
@@ -202,7 +203,9 @@ pub fn render_markdown(v: &Verdict) -> String {
         sm.quarantined_total,
         sm.disk_spread_ratio,
         sm.applied_index_max,
-        sm.bytes_per_entry
+        sm.bytes_per_entry,
+        sm.disk_growth_nodes,
+        sm.disk_growth_max * 100.0
     );
 
     if !v.violations.is_empty() {

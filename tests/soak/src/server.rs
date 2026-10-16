@@ -281,6 +281,16 @@ pub fn render(v: &Verdict) -> String {
         sm.disk_spread_ratio,
     );
     g(
+        "soak_disk_growth_nodes",
+        "Nodes whose disk growth was judged (no restart in the growth window)",
+        sm.disk_growth_nodes as f64,
+    );
+    g(
+        "soak_disk_growth_max",
+        "Largest relative disk growth among the judged nodes",
+        sm.disk_growth_max,
+    );
+    g(
         "soak_applied_index_max",
         "Highest applied Raft index (log entries so far)",
         sm.applied_index_max as f64,

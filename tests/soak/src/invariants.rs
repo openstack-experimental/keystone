@@ -56,6 +56,11 @@ pub struct Thresholds {
     pub max_disk_spread_ratio: f64,
     /// The spread is only judged once every node holds at least this much.
     pub min_disk_for_spread: f64,
+    /// Allowed relative disk growth of one node between the first and the
+    /// last quarter of the window, while the node ran without a restart.
+    pub max_disk_growth_ratio: f64,
+    /// Disk growth below this many bytes is never a violation.
+    pub min_disk_growth_bytes: f64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -85,6 +90,11 @@ pub struct Summary {
     pub log_disk_bytes_total: f64,
     pub snapshot_bytes_total: f64,
     pub disk_spread_ratio: f64,
+    /// Nodes whose disk growth could be judged: they ran without a restart
+    /// for the whole growth window.
+    pub disk_growth_nodes: usize,
+    /// Largest relative disk growth among those nodes.
+    pub disk_growth_max: f64,
     pub quarantined_total: f64,
 }
 
@@ -95,6 +105,10 @@ pub struct Evaluator {
     last_gcm: HashMap<String, f64>,
     /// `(time, total log bytes)` samples inside the growth window.
     log_series: VecDeque<(Duration, f64)>,
+    /// `(time, disk bytes)` samples per node inside the growth window. A
+    /// node that cannot be scraped (it restarted) starts over, so restarts
+    /// that shrink the store never mask growth.
+    node_disk: HashMap<String, VecDeque<(Duration, f64)>>,
 }
 
 impl Evaluator {
@@ -104,6 +118,7 @@ impl Evaluator {
             failing_since: HashMap::new(),
             last_gcm: HashMap::new(),
             log_series: VecDeque::new(),
+            node_disk: HashMap::new(),
         }
     }
 
@@ -157,7 +172,10 @@ impl Evaluator {
             if self.persistent(&format!("ready:{}", n.addr), not_ready, now, grace) {
                 v("ready", format!("{} not ready for {:?}", n.addr, grace));
             }
-            let Some(m) = &n.scrape else { continue };
+            let Some(m) = &n.scrape else {
+                self.node_disk.remove(&n.addr);
+                continue;
+            };
 
             if m.get("keystone_raft_is_leader") == Some(1.0) {
                 s.leaders += 1;
@@ -182,6 +200,14 @@ impl Evaluator {
             let disk = m.get("keystone_raft_disk_space_bytes").unwrap_or(0.0);
             s.disk_bytes_total += disk;
             disks.push(disk);
+            let series = self.node_disk.entry(n.addr.clone()).or_default();
+            series.push_back((now, disk));
+            while series
+                .front()
+                .is_some_and(|(t, _)| now.saturating_sub(*t) > self.th.growth_window)
+            {
+                series.pop_front();
+            }
 
             let q = m
                 .get("keystone_raft_quarantined_partitions_count")
@@ -311,13 +337,48 @@ impl Evaluator {
                 ),
             );
         }
+
+        // Disk growth of single nodes. Only a node that ran without a
+        // restart for the whole window is judged: restarts compact the
+        // store, so a node that is restarted often hides fragmentation.
+        if now >= self.th.warmup {
+            let mut addrs: Vec<&String> = self.node_disk.keys().collect();
+            addrs.sort();
+            for addr in addrs {
+                let Some((head, tail)) =
+                    quarter_means(&self.node_disk[addr], self.th.growth_window)
+                else {
+                    continue;
+                };
+                s.disk_growth_nodes += 1;
+                if head > 0.0 {
+                    s.disk_growth_max = s.disk_growth_max.max((tail - head) / head);
+                }
+                if head > 0.0
+                    && (tail - head) / head > self.th.max_disk_growth_ratio
+                    && tail - head > self.th.min_disk_growth_bytes
+                {
+                    v(
+                        "disk_growth",
+                        format!(
+                            "{addr} disk grew {:.0}% ({:.0} MiB) over {:?} without a restart \
+                             (limit {:.0}%)",
+                            (tail - head) / head * 100.0,
+                            (tail - head) / 1_048_576.0,
+                            self.th.growth_window,
+                            self.th.max_disk_growth_ratio * 100.0
+                        ),
+                    );
+                }
+            }
+        }
         (s, out)
     }
 }
 
-/// Relative growth of the mean log size between the first and last quarter
-/// of the window. `None` until the series spans (almost) the whole window.
-fn log_growth_ratio(series: &VecDeque<(Duration, f64)>, window: Duration) -> Option<f64> {
+/// Mean of the first and of the last quarter of the window. `None` until the
+/// series spans (almost) the whole window.
+fn quarter_means(series: &VecDeque<(Duration, f64)>, window: Duration) -> Option<(f64, f64)> {
     let (first_t, _) = series.front()?;
     let (last_t, _) = series.back()?;
     if last_t.saturating_sub(*first_t) < window.mul_f64(0.9) {
@@ -339,6 +400,13 @@ fn log_growth_ratio(series: &VecDeque<(Duration, f64)>, window: Duration) -> Opt
             .map(|(_, b)| *b)
             .collect(),
     )?;
+    Some((head, tail))
+}
+
+/// Relative growth of the mean log size between the first and last quarter
+/// of the window. `None` until the series spans (almost) the whole window.
+fn log_growth_ratio(series: &VecDeque<(Duration, f64)>, window: Duration) -> Option<f64> {
+    let (head, tail) = quarter_means(series, window)?;
     (head > 0.0).then(|| (tail - head) / head)
 }
 
@@ -359,6 +427,8 @@ mod tests {
             max_log_growth_ratio: 0.5,
             max_disk_spread_ratio: 2.0,
             min_disk_for_spread: 1_048_576.0,
+            max_disk_growth_ratio: 0.25,
+            min_disk_growth_bytes: 1_000_000.0,
         }
     }
 
@@ -468,6 +538,62 @@ mod tests {
         for i in 0..=100u64 {
             let (_, v) = e.evaluate(Duration::from_secs(i * 10), &healthy(1000.0));
             assert!(v.is_empty(), "{v:?}");
+        }
+    }
+
+    fn with_disk(mut nodes: Vec<NodeObservation>, idx: usize, disk: f64) -> Vec<NodeObservation> {
+        if let Some(sc) = nodes[idx].scrape.as_mut() {
+            sc.values
+                .insert("keystone_raft_disk_space_bytes".into(), disk);
+        }
+        nodes
+    }
+
+    #[test]
+    fn growing_node_disk_is_flagged_without_a_restart() {
+        let mut e = Evaluator::new(th());
+        let (mut flagged, mut judged) = (false, 0);
+        for i in 0..=100u64 {
+            // Node "a" grows 10 MB per step, the others stay flat.
+            let nodes = with_disk(healthy(1000.0), 0, 10_000_000.0 + 10_000_000.0 * i as f64);
+            let (s, v) = e.evaluate(Duration::from_secs(i * 10), &nodes);
+            judged = judged.max(s.disk_growth_nodes);
+            flagged |= v
+                .iter()
+                .any(|x| x.check == "disk_growth" && x.detail.starts_with('a'));
+        }
+        assert!(flagged);
+        assert_eq!(judged, 3);
+    }
+
+    #[test]
+    fn restarts_hide_nothing_but_are_not_judged() {
+        let mut e = Evaluator::new(th());
+        for i in 0..=100u64 {
+            let mut nodes = with_disk(healthy(1000.0), 0, 10_000_000.0 + 10_000_000.0 * i as f64);
+            // The growing node is unreachable every 30 s: its series starts
+            // over each time, so there is no verdict about it.
+            if i % 3 == 0 {
+                nodes[0].scrape = None;
+                nodes[0].ready = None;
+            }
+            let (s, v) = e.evaluate(Duration::from_secs(i * 10), &nodes);
+            assert!(
+                v.iter().all(|x| x.check != "disk_growth"),
+                "unexpected {v:?}"
+            );
+            assert!(s.disk_growth_nodes <= 2);
+        }
+    }
+
+    #[test]
+    fn small_disk_growth_is_ignored() {
+        let mut e = Evaluator::new(th());
+        for i in 0..=100u64 {
+            // +100 % but only 0.5 MB.
+            let nodes = with_disk(healthy(1000.0), 0, 500_000.0 + 5_000.0 * i as f64);
+            let (_, v) = e.evaluate(Duration::from_secs(i * 10), &nodes);
+            assert!(v.iter().all(|x| x.check != "disk_growth"), "{v:?}");
         }
     }
 }

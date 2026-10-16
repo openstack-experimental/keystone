@@ -124,6 +124,13 @@ data:
   # ready again within SOAK_CHAOS_RECOVERY or the run fails.
   SOAK_CHAOS_INTERVAL: "20m"
   SOAK_CHAOS_RECOVERY: "5m"
+  # Never kill or wipe this pod, so one node keeps an uninterrupted disk
+  # series for judging long-term storage growth (empty disables).
+  SOAK_CONTROL_POD: "keystone-rs-0"
+  # No new fault in the last stretch of the run, so every node can be
+  # judged for disk growth without restarts. Must exceed SOAK_GROWTH_WINDOW
+  # (1h) plus the longest recovery (`0` disables).
+  SOAK_QUIET_WINDOW: "90m"
   # Partition: cut one node (alternately the leader and a follower) off
   # from its peers this often by blocking the Raft port with a network
   # policy (`0` disables). The other nodes must lead and accept writes

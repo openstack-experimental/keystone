@@ -105,6 +105,8 @@ pub struct MembershipConfig {
     /// Replicas the `scale` scenario grows to.
     pub scale_to: usize,
     pub selector: String,
+    /// Pod that is never wiped, see `SOAK_CONTROL_POD`; empty for none.
+    pub control_pod: String,
     /// Voters (and pods) of the normal cluster.
     pub expected_pods: usize,
     pub service: String,
@@ -286,7 +288,7 @@ async fn wipe(ctx: &Ctx<'_>, writes: &mut Writes) -> Option<()> {
     let seen = fetch_views(ctx.http, &cfg.service, cfg.metrics_port, &pods).await;
     let followers: Vec<&str> = seen
         .iter()
-        .filter(|v| !v.is_leader)
+        .filter(|v| !v.is_leader && v.pod != cfg.control_pod)
         .map(|v| v.pod.as_str())
         .collect();
     let Some(victim) = followers
@@ -524,7 +526,13 @@ async fn scale_down(ctx: &Ctx<'_>, writes: &mut Writes) -> Option<()> {
     Some(())
 }
 
-pub async fn run(cfg: MembershipConfig, deadline: Option<Instant>) -> Result<()> {
+/// `new_until` bounds starting a new fault, `deadline` the whole run: a fault that
+/// began before `new_until` is followed to the end.
+pub async fn run(
+    cfg: MembershipConfig,
+    deadline: Option<Instant>,
+    new_until: Option<Instant>,
+) -> Result<()> {
     let kube = Kube::in_cluster().await?;
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
@@ -537,7 +545,7 @@ pub async fn run(cfg: MembershipConfig, deadline: Option<Instant>) -> Result<()>
     info!(interval = ?cfg.interval, "membership churn enabled");
     let mut seq = 0u64;
     loop {
-        if !sleep_until_deadline(cfg.interval, deadline).await {
+        if !sleep_until_deadline(cfg.interval, new_until).await {
             return Ok(());
         }
         let ctx = Ctx {
@@ -548,7 +556,7 @@ pub async fn run(cfg: MembershipConfig, deadline: Option<Instant>) -> Result<()>
             seq,
         };
         while !ctx.settled(cfg.expected_pods).await {
-            if !sleep_until_deadline(Duration::from_secs(5), deadline).await {
+            if !sleep_until_deadline(Duration::from_secs(5), new_until).await {
                 return Ok(());
             }
         }

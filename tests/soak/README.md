@@ -83,6 +83,12 @@ restarts are tolerated.
 - the Raft log plateaus: after `SOAK_WARMUP` its total size may not grow more
   than `SOAK_MAX_LOG_GROWTH` between the first and last quarter of
   `SOAK_GROWTH_WINDOW`
+- the disk of a single node does not grow more than `SOAK_MAX_DISK_GROWTH`
+  (25 %, and at least `SOAK_MIN_DISK_GROWTH`, 256 MiB) between the first and
+  last quarter of `SOAK_GROWTH_WINDOW`. Only a node that was scraped without
+  a gap for the whole window is judged: a restart compacts the store and
+  starts the node's series over, so a node that is killed more often than
+  the window is never judged. See [Long-term storage growth](#long-term-storage-growth).
 - the load generator keeps running, and at most `SOAK_MAX_LOAD_ERROR_RATE`
   (1 %) of the requests of a load phase fail. Phases with fewer than
   `SOAK_MIN_LOAD_REQUESTS` requests are not judged. Expected negative
@@ -104,12 +110,35 @@ restarts are tolerated.
 `soak_snapshot_bytes_total` are exported for judging long-term growth in
 Prometheus.
 
+## Long-term storage growth
+
+Pod kills, rollouts and wipes restart nodes, and a restart can compact or
+purge a store, so slow fragmentation of a long-lived node would never show
+up while every node is restarted regularly. Two settings keep it observable:
+
+- `SOAK_CONTROL_POD` (`keystone-rs-0` in the soak overlay): this pod is never
+  killed by chaos and never wiped by the membership task, so its disk series
+  runs for hours without a break and is judged against `SOAK_MAX_DISK_GROWTH`
+  after `SOAK_WARMUP`. A rolling restart still replaces it, which starts its
+  series over; keep `SOAK_ROLLOUT_INTERVAL` well above `SOAK_GROWTH_WINDOW`.
+  Partitions and SPIRE agent restarts do not restart Raft nodes.
+- `SOAK_QUIET_WINDOW` (`90m` in the soak overlay, `0` disables): the last
+  stretch of the run in which no new fault starts (a fault under way is
+  followed to its end). The load and canaries go on, so every node then
+  has an uninterrupted disk series and is judged. Make it longer than
+  `SOAK_GROWTH_WINDOW` plus the longest recovery, or no node qualifies.
+
+`soak_disk_growth_nodes` (nodes judged) and `soak_disk_growth_max` (largest
+growth) are exported and shown in the report. A run whose report says `0
+node(s) judged` proved nothing about disk growth.
+
 ## Chaos
 
 With `SOAK_CHAOS_INTERVAL` set (`20m` in the soak overlay, `0` disables) the
 controller deletes one Raft pod at that interval while the load keeps
 running. Pods are hit in name order, so every node, the leader included, is
-killed repeatedly. A pod is only deleted while all pods are ready, and the
+killed repeatedly, except the control pod, see
+[Long-term storage growth](#long-term-storage-growth). A pod is only deleted while all pods are ready, and the
 next one only after the previous victim came back as a new, ready pod.
 
 - A victim that is not ready again within `SOAK_CHAOS_RECOVERY` (`5m`)

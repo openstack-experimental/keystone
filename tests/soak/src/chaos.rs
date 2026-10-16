@@ -66,6 +66,8 @@ pub struct ChaosConfig {
     /// Label selector of the Raft pods.
     pub selector: String,
     pub expected_pods: usize,
+    /// Pod that is never killed, see `SOAK_CONTROL_POD`; empty for none.
+    pub control_pod: String,
     pub start: Instant,
     pub state: Shared,
 }
@@ -391,11 +393,13 @@ impl Kube {
     }
 }
 
-/// Next victim: the pod after `previous` in name order, wrapping around.
-fn pick_victim<'a>(pods: &'a [Pod], previous: Option<&str>) -> Option<&'a Pod> {
-    let after = previous.and_then(|p| pods.iter().position(|x| x.metadata.name == p));
-    let idx = after.map_or(0, |i| (i + 1) % pods.len().max(1));
-    pods.get(idx)
+/// Next victim: the pod after `previous` in name order, wrapping around. The
+/// `control` pod is never picked.
+fn pick_victim<'a>(pods: &'a [Pod], previous: Option<&str>, control: &str) -> Option<&'a Pod> {
+    let candidates: Vec<&Pod> = pods.iter().filter(|p| p.metadata.name != control).collect();
+    let after = previous.and_then(|p| candidates.iter().position(|x| x.metadata.name == p));
+    let idx = after.map_or(0, |i| (i + 1) % candidates.len().max(1));
+    candidates.get(idx).copied()
 }
 
 pub(crate) fn all_ready(pods: &[Pod], expected: usize) -> bool {
@@ -421,13 +425,19 @@ fn update_event(cfg: &ChaosConfig, seq: u64, f: impl FnOnce(&mut ChaosEvent)) {
     }
 }
 
-pub async fn run(cfg: ChaosConfig, deadline: Option<Instant>) -> Result<()> {
+/// `new_until` bounds starting a new fault, `deadline` the whole run: a fault that
+/// began before `new_until` is followed to the end.
+pub async fn run(
+    cfg: ChaosConfig,
+    deadline: Option<Instant>,
+    new_until: Option<Instant>,
+) -> Result<()> {
     let kube = Kube::in_cluster().await?;
     info!(interval = ?cfg.interval, recovery = ?cfg.recovery_timeout, "chaos enabled");
     let mut previous: Option<String> = None;
     let mut seq = 0u64;
     loop {
-        if !sleep_until_deadline(cfg.interval, deadline).await {
+        if !sleep_until_deadline(cfg.interval, new_until).await {
             return Ok(());
         }
 
@@ -440,11 +450,11 @@ pub async fn run(cfg: ChaosConfig, deadline: Option<Instant>) -> Result<()> {
                 Ok(_) => {}
                 Err(e) => warn!(error = %e, "chaos: cannot list pods"),
             }
-            if !sleep_until_deadline(POLL, deadline).await {
+            if !sleep_until_deadline(POLL, new_until).await {
                 return Ok(());
             }
         };
-        let Some(victim) = pick_victim(&pods, previous.as_deref()) else {
+        let Some(victim) = pick_victim(&pods, previous.as_deref(), &cfg.control_pod) else {
             continue;
         };
         let (name, old_uid) = (victim.metadata.name.clone(), victim.metadata.uid.clone());
@@ -535,12 +545,22 @@ mod tests {
     #[test]
     fn victims_rotate_in_name_order() {
         let pods = vec![pod("ks-0", true), pod("ks-1", true), pod("ks-2", true)];
-        let name = |p: Option<&str>| pick_victim(&pods, p).map(|x| x.metadata.name.clone());
+        let name = |p: Option<&str>| pick_victim(&pods, p, "").map(|x| x.metadata.name.clone());
         assert_eq!(name(None).as_deref(), Some("ks-0"));
         assert_eq!(name(Some("ks-0")).as_deref(), Some("ks-1"));
         assert_eq!(name(Some("ks-2")).as_deref(), Some("ks-0"));
         assert_eq!(name(Some("gone")).as_deref(), Some("ks-0"));
-        assert!(pick_victim(&[], None).is_none());
+        assert!(pick_victim(&[], None, "").is_none());
+    }
+
+    #[test]
+    fn control_pod_is_never_a_victim() {
+        let pods = vec![pod("ks-0", true), pod("ks-1", true), pod("ks-2", true)];
+        let name = |p: Option<&str>| pick_victim(&pods, p, "ks-0").map(|x| x.metadata.name.clone());
+        assert_eq!(name(None).as_deref(), Some("ks-1"));
+        assert_eq!(name(Some("ks-1")).as_deref(), Some("ks-2"));
+        assert_eq!(name(Some("ks-2")).as_deref(), Some("ks-1"));
+        assert!(pick_victim(&pods[..1], None, "ks-0").is_none());
     }
 
     #[test]

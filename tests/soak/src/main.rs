@@ -129,6 +129,17 @@ struct Args {
         default_value = "app.kubernetes.io/name=keystone-rs"
     )]
     chaos_selector: String,
+    /// Raft pod that chaos never kills and the membership task never wipes.
+    /// It keeps one uninterrupted disk series, so storage growth that the
+    /// restarts of the other pods hide still shows up (empty disables).
+    #[arg(long, env = "SOAK_CONTROL_POD", default_value = "")]
+    control_pod: String,
+    /// Stop starting faults (kills, partitions, rollouts, agent restarts,
+    /// membership changes) this long before the end of the run, so every
+    /// node's storage can be judged without restarts (`0` disables). Should
+    /// exceed `SOAK_GROWTH_WINDOW` by the longest recovery time.
+    #[arg(long, env = "SOAK_QUIET_WINDOW", default_value = "0s", value_parser = humantime::parse_duration)]
+    quiet_window: Duration,
     /// Cut one Raft node off from its peers this often (`0` disables).
     /// Needs RBAC for network policies, see `overlays/soak/soak.yaml`, and a
     /// CNI that enforces them (k3s does).
@@ -245,6 +256,14 @@ struct Args {
     /// Allowed relative log growth within the window (0.5 = +50 %).
     #[arg(long, env = "SOAK_MAX_LOG_GROWTH", default_value_t = 0.5)]
     max_log_growth: f64,
+    /// Allowed relative disk growth of one node between the first and last
+    /// quarter of an uninterrupted `SOAK_GROWTH_WINDOW` (0.25 = +25 %).
+    #[arg(long, env = "SOAK_MAX_DISK_GROWTH", default_value_t = 0.25)]
+    max_disk_growth: f64,
+    /// Disk growth below this many bytes is not judged (journal files are
+    /// preallocated in 64 MiB steps).
+    #[arg(long, env = "SOAK_MIN_DISK_GROWTH", default_value_t = 268_435_456.0)]
+    min_disk_growth: f64,
     /// Allowed max/min disk usage ratio between nodes.
     #[arg(long, env = "SOAK_MAX_DISK_SPREAD", default_value_t = 2.0)]
     max_disk_spread: f64,
@@ -687,6 +706,19 @@ async fn main() -> Result<()> {
 
     let start = Instant::now();
     let deadline = (!args.duration.is_zero()).then(|| start + args.duration);
+    if !args.quiet_window.is_zero() && args.duration <= args.quiet_window {
+        bail!("SOAK_QUIET_WINDOW must be shorter than SOAK_DURATION");
+    }
+    if !args.quiet_window.is_zero() && args.quiet_window < args.growth_window {
+        warn!(
+            quiet = ?args.quiet_window,
+            growth = ?args.growth_window,
+            "quiet window is shorter than the growth window, \
+             node disk growth will not be judged"
+        );
+    }
+    // Fault tasks stop starting new faults at this point.
+    let fault_deadline = deadline.map(|d| d.checked_sub(args.quiet_window).unwrap_or(d));
     info!(duration = ?args.duration, interval = ?args.interval, "soak test starting");
     if args.expected_voters < 3 {
         warn!(
@@ -731,11 +763,12 @@ async fn main() -> Result<()> {
             recovery_timeout: args.chaos_recovery,
             selector: args.chaos_selector.clone(),
             expected_pods: usize::try_from(args.expected_voters).unwrap_or(usize::MAX),
+            control_pod: args.control_pod.clone(),
             start,
             state: state.clone(),
         };
         tokio::spawn(async move {
-            if let Err(e) = chaos::run(cfg, deadline).await {
+            if let Err(e) = chaos::run(cfg, deadline, fault_deadline).await {
                 error!(error = %format!("{e:#}"), "chaos task stopped");
             }
         });
@@ -757,7 +790,7 @@ async fn main() -> Result<()> {
             state: state.clone(),
         };
         tokio::spawn(async move {
-            if let Err(e) = partition::run(cfg, deadline).await {
+            if let Err(e) = partition::run(cfg, deadline, fault_deadline).await {
                 error!(error = %format!("{e:#}"), "partition task stopped");
             }
         });
@@ -783,7 +816,7 @@ async fn main() -> Result<()> {
             state: state.clone(),
         };
         tokio::spawn(async move {
-            if let Err(e) = rollout::run(cfg, deadline).await {
+            if let Err(e) = rollout::run(cfg, deadline, fault_deadline).await {
                 error!(error = %format!("{e:#}"), "rollout task stopped");
             }
         });
@@ -811,7 +844,7 @@ async fn main() -> Result<()> {
             state: state.clone(),
         };
         tokio::spawn(async move {
-            if let Err(e) = spire::run(cfg, deadline).await {
+            if let Err(e) = spire::run(cfg, deadline, fault_deadline).await {
                 error!(error = %format!("{e:#}"), "spire task stopped");
             }
         });
@@ -827,6 +860,7 @@ async fn main() -> Result<()> {
             claim_prefix: args.claim_prefix.clone(),
             scale_to: args.membership_scale_to,
             selector: args.chaos_selector.clone(),
+            control_pod: args.control_pod.clone(),
             expected_pods: usize::try_from(args.expected_voters).unwrap_or(usize::MAX),
             service: args.metrics_service.clone(),
             metrics_port: args.metrics_port,
@@ -840,7 +874,7 @@ async fn main() -> Result<()> {
             state: state.clone(),
         };
         tokio::spawn(async move {
-            if let Err(e) = membership::run(cfg, deadline).await {
+            if let Err(e) = membership::run(cfg, deadline, fault_deadline).await {
                 error!(error = %format!("{e:#}"), "membership task stopped");
             }
         });
@@ -876,6 +910,8 @@ async fn main() -> Result<()> {
         growth_window: args.growth_window,
         max_log_growth_ratio: args.max_log_growth,
         max_disk_spread_ratio: args.max_disk_spread,
+        max_disk_growth_ratio: args.max_disk_growth,
+        min_disk_growth_bytes: args.min_disk_growth,
         min_disk_for_spread: args.min_disk_for_spread,
     });
 
