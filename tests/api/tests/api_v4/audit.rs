@@ -444,7 +444,7 @@ async fn test_live_audit_spool_records() -> Result<()> {
 #[tokio::test]
 async fn test_tampered_spool_line_fails_verification() -> Result<()> {
     let key: Arc<[u8]> =
-        Arc::from(derive_audit_hmac_key(&AUDIT_SERVICE, &[7u8; 32], "tamper-node").as_slice());
+        Arc::from(derive_audit_hmac_key(&AUDIT_SERVICE, &[7u8; 32], "tamper-node")?.as_slice());
     let (dispatcher, _receivers) = AuditDispatcher::new(
         "tamper-node",
         "boot-session".to_string(),

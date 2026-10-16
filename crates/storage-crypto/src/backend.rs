@@ -61,28 +61,35 @@ pub(crate) use ringlike::gcm_seal;
 /// Encrypt `buf` in place and return the IV that was actually used with the
 /// detached tag. This is what every encrypt path in the crate calls.
 ///
-/// * default build: `nonce` is used as given (the caller owns uniqueness: a
-///   durable counter or a derived value, ADR §2.2);
-/// * `fips` build: `nonce` is ignored and the validated module generates a
-///   random 96-bit IV, because it only reports AES-GCM encryption with an
-///   internally generated IV as an approved service. Uniqueness is then
-///   statistical, so a key must see fewer than 2^32 encryptions; `cipher`
-///   keeps every log and state key far below that by deriving one key per
-///   message.
-pub(crate) fn gcm_seal_iv(
+/// `nonce` produces the IV for the default build (the caller owns uniqueness:
+/// a durable counter or a derived value, ADR §2.2). It is a closure so that a
+/// `fips` build never has to build, or even see, a placeholder value:
+///
+/// * default build: `nonce()` is called once and its result is used as the IV;
+/// * `fips` build: `nonce` is dropped without being called and the validated
+///   module generates a random 96-bit IV, because it only reports AES-GCM
+///   encryption with an internally generated IV as an approved service.
+///   Uniqueness is then statistical, so a key must see fewer than 2^32
+///   encryptions; `cipher` keeps every log and state key far below that by
+///   deriving one key per message.
+pub(crate) fn gcm_seal_iv<N>(
     key: &[u8],
-    nonce: &[u8; 12],
+    nonce: N,
     aad: &[u8],
     buf: &mut [u8],
-) -> Result<([u8; 12], [u8; 16]), CryptoError> {
+) -> Result<([u8; 12], [u8; 16]), CryptoError>
+where
+    N: FnOnce() -> Result<[u8; 12], CryptoError>,
+{
     #[cfg(feature = "fips")]
     {
-        let _ = nonce;
+        drop(nonce);
         ringlike::gcm_seal_random(key, aad, buf)
     }
     #[cfg(not(feature = "fips"))]
     {
-        gcm_seal(key, nonce, aad, buf).map(|tag| (*nonce, tag))
+        let nonce = nonce()?;
+        gcm_seal(key, &nonce, aad, buf).map(|tag| (nonce, tag))
     }
 }
 

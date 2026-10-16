@@ -85,14 +85,18 @@ fn message_key(base: &[u8; 32], context: &[u8]) -> Result<Zeroizing<[u8; 32]>, C
 /// Encrypt `buf` in place for the message identified by `context`.
 ///
 /// With the `fips` feature the module-chosen IV is used under the per-message
-/// key; otherwise `nonce` is used under `base` itself.
-fn seal_message(
+/// key and `nonce` is never called; otherwise its result is used under `base`
+/// itself.
+fn seal_message<N>(
     base: &[u8; 32],
     context: &[u8],
-    nonce: &[u8; 12],
+    nonce: N,
     aad: &[u8],
     buf: &mut [u8],
-) -> Result<([u8; 12], [u8; 16]), CryptoError> {
+) -> Result<([u8; 12], [u8; 16]), CryptoError>
+where
+    N: FnOnce() -> Result<[u8; 12], CryptoError>,
+{
     if FIPS_BUILD {
         gcm_seal_iv(message_key(base, context)?.as_ref(), nonce, aad, buf)
     } else {
@@ -155,7 +159,7 @@ pub fn log_encrypt(
     let (iv, tag) = seal_message(
         dek.0.as_bytes(),
         &log_context(term, index),
-        nonce,
+        || Ok(*nonce),
         &aad,
         &mut buf,
     )?;
@@ -218,20 +222,14 @@ pub fn state_encrypt(
     pk: &[u8],
     version: u32,
 ) -> Result<Vec<u8>, CryptoError> {
-    // With the `fips` feature the module picks the IV; the derived value is
-    // then only a placeholder.
-    let nonce_array = if FIPS_BUILD {
-        [0u8; 12]
-    } else {
-        state_nonce(dek, pk, version)?
-    };
     let aad = state_aad(tier, domain_id, pk);
 
     let mut buf = plaintext.to_vec();
     let (iv, tag) = seal_message(
         dek.0.as_bytes(),
         &state_context(domain_id, pk, version),
-        &nonce_array,
+        // Not called in a `fips` build: the module picks the IV.
+        || state_nonce(dek, pk, version),
         &aad,
         &mut buf,
     )?;
@@ -325,15 +323,16 @@ pub fn backup_encrypt(
     utc_epoch: u64,
     counter: u64,
 ) -> Result<Vec<u8>, CryptoError> {
-    let nonce_bytes = if FIPS_BUILD {
-        [0u8; 12]
-    } else {
-        backup_nonce(dek, utc_epoch, counter)?
-    };
     let aad = backup_aad(dek_version, utc_epoch, counter);
 
     let mut buf = plaintext.to_vec();
-    let (iv, tag) = gcm_seal_iv(dek.as_bytes(), &nonce_bytes, &aad, &mut buf)?;
+    // The closure is not called in a `fips` build: the module picks the IV.
+    let (iv, tag) = gcm_seal_iv(
+        dek.as_bytes(),
+        || backup_nonce(dek, utc_epoch, counter),
+        &aad,
+        &mut buf,
+    )?;
 
     let mut out = Vec::with_capacity(12 + plaintext.len() + 16);
     out.extend_from_slice(&iv);
