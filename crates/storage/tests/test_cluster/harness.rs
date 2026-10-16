@@ -280,6 +280,7 @@ pub async fn join_node2_as_voter(
         .change_membership(pb::raft::ChangeMembershipRequest {
             members: vec![1, 2],
             retain: false,
+            remove_learners: Vec::new(),
         })
         .await?;
     Ok(instance2)
@@ -637,6 +638,7 @@ pub async fn start_three_node_cluster_with(
         .change_membership(pb::raft::ChangeMembershipRequest {
             members: vec![1, 2, 3],
             retain: false,
+            remove_learners: Vec::new(),
         })
         .await?;
     Ok(nodes)

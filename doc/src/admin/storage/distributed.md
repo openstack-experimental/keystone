@@ -51,25 +51,25 @@ cluster member to contact; it defaults to `node_cluster_addr` from the config
 file when omitted. `init` always targets that local address, and `join` takes
 the member to contact as its positional argument.
 
-| Subcommand                                                                 | Target      | Description                                                |
-| -------------------------------------------------------------------------- | ----------- | ---------------------------------------------------------- |
-| `init`                                                                     | local node  | Bootstrap a new single-node cluster                        |
-| `join <cluster-addr>`                                                      | leader      | Adopt the cluster DEK, then join as a learner              |
-| `promote [--cluster-addr] <node-id>`                                       | leader      | Promote a learner to voting member                         |
-| `demote [--cluster-addr] <node-id>`                                        | leader      | Demote a voter to non-voting learner                       |
-| `remove-peer [--cluster-addr] <node-id>`                                   | leader      | Remove a voter from the cluster membership                 |
-| `transfer-leader [--cluster-addr] [<node-id>]`                             | leader      | Hand leadership over to another voter                      |
-| `list-peers [--cluster-addr]`                                              | any node    | Show cluster peers in a table                              |
-| `metrics [--cluster-addr]`                                                 | any node    | Show raw cluster metrics and leader status                 |
-| `status [--cluster-addr]`                                                  | any node    | Show DEK, rotation, quarantine and nonce state of the node |
-| `clear-quarantine [--cluster-addr] [--partition <name>]`                   | leader      | Clear a GCM-failure quarantine (default partition `data`)  |
-| `rotate-dek [--cluster-addr] [--emergency]`                                | leader      | Rotate the Data Encryption Key                             |
-| `rotate-dek [--cluster-addr] --local-quorum-bypass --justification <text>` | given node  | Stage a node-local emergency DEK candidate (no quorum)     |
-| `confirm-rotate-dek [--cluster-addr] --rotation-id <id>`                   | leader      | Confirm a pending emergency DEK rotation                   |
-| `list-dek-local-emergency-candidates [--cluster-addr]`                     | given node  | List node-local emergency DEK candidates                   |
-| `reconcile-dek-local-emergency [--cluster-addr] --rotation-id <id>`        | leader only | Install a node-local emergency DEK candidate through Raft  |
-| `backup [--cluster-addr] --output <file>`                                  | leader      | Create an encrypted Fjall snapshot                         |
-| `restore [--cluster-addr] --snapshot <file> [--elect]`                     | leader \*   | Restore an encrypted snapshot to the cluster               |
+| Subcommand                                                                          | Target      | Description                                                 |
+| ----------------------------------------------------------------------------------- | ----------- | ----------------------------------------------------------- |
+| `init`                                                                              | local node  | Bootstrap a new single-node cluster                         |
+| `join <cluster-addr>`                                                               | leader      | Adopt the cluster DEK, then join as a learner               |
+| `promote [--cluster-addr] <node-id>`                                                | leader      | Promote a learner to voting member                          |
+| `demote [--cluster-addr] <node-id>`                                                 | leader      | Demote a voter to non-voting learner                        |
+| `remove-peer [--cluster-addr] <node-id>`                                            | leader      | Remove a voter or a learner from the cluster membership     |
+| `transfer-leader [--cluster-addr] [<node-id>]`                                      | leader      | Hand leadership over to another voter                       |
+| `list-peers [--cluster-addr]`                                                       | any node    | Show cluster peers in a table                               |
+| `metrics [--cluster-addr]`                                                          | any node    | Show raw cluster metrics and leader status                  |
+| `status [--cluster-addr]`                                                           | any node    | Show DEK, rotation, quarantine and nonce state of the node  |
+| `clear-quarantine [--cluster-addr] [--partition <name>]`                            | leader      | Clear a GCM-failure quarantine (default partition `data`)   |
+| `rotate-dek [--cluster-addr] [--emergency]`                                         | leader      | Rotate the Data Encryption Key                              |
+| `rotate-dek [--cluster-addr] --local-quorum-bypass --justification <text>`          | given node  | Stage a node-local emergency DEK candidate (no quorum)      |
+| `confirm-rotate-dek [--cluster-addr] --rotation-id <id>`                            | leader      | Confirm a pending emergency DEK rotation                    |
+| `list-dek-local-emergency-candidates [--cluster-addr]`                              | given node  | List node-local emergency DEK candidates                    |
+| `reconcile-dek-local-emergency [--cluster-addr] --rotation-id <id>`                 | leader only | Install a node-local emergency DEK candidate through Raft   |
+| `backup [--cluster-addr] --output <file>`                                           | leader      | Create an encrypted Fjall snapshot                          |
+| `restore [--cluster-addr] --snapshot <file> [--elect]`                              | leader \*   | Restore an encrypted snapshot to the cluster                |
 
 **Leader targeting.** Membership changes, DEK rotations, quarantine clearing,
 backup and restore into a running cluster must be proposed by the Raft leader. A

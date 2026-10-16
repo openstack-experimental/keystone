@@ -276,6 +276,7 @@ async fn test_cluster_inner() -> Result<()> {
             .change_membership(pb::raft::ChangeMembershipRequest {
                 members: vec![1, 2, 3],
                 retain: false,
+                remove_learners: Vec::new(),
             })
             .await?;
 
@@ -598,6 +599,7 @@ async fn test_cluster_inner() -> Result<()> {
             .change_membership(pb::raft::ChangeMembershipRequest {
                 members: vec![3],
                 retain: false,
+                remove_learners: Vec::new(),
             })
             .await?;
 

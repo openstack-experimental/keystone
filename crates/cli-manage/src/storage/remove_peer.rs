@@ -25,7 +25,7 @@ use openstack_keystone_distributed_storage::protobuf as pb;
 use super::{connect_leader, rpc_error, step_down_leader, voters};
 use crate::PerformAction;
 
-/// Removes a node from the Raft cluster.
+/// Removes a voter or a learner from the Raft cluster.
 ///
 /// This command is used to remove a node from being a peer to the Raft cluster.
 /// In certain cases where a peer may be left behind in the Raft configuration
@@ -45,7 +45,7 @@ pub(super) struct RemovePeerCommand {
     #[arg(long)]
     pub cluster_addr: Option<Uri>,
 
-    /// Node ID of the voter to remove.
+    /// Node ID of the voter or learner to remove.
     #[arg()]
     pub node_id: u64,
 }
@@ -56,11 +56,28 @@ impl PerformAction for RemovePeerCommand {
         if super::ds_config(config).is_none() {
             return Err(eyre!("no distributed_storage configuration"));
         }
-        let (client, metrics) = connect_leader(config, self.cluster_addr).await?;
+        let (mut client, metrics) = connect_leader(config, self.cluster_addr).await?;
 
         let mut members = voters(&metrics);
         if !members.remove(&self.node_id) {
-            println!("Node {} is not a voter; nothing to do.", self.node_id);
+            let is_learner = metrics
+                .membership
+                .iter()
+                .any(|m| m.nodes.contains_key(&self.node_id));
+            if !is_learner {
+                println!("Node {} is not a member; nothing to do.", self.node_id);
+                return Ok(());
+            }
+            // A learner takes no part in the quorum, so no leadership handover
+            // is needed.
+            client
+                .change_membership(pb::raft::ChangeMembershipRequest {
+                    remove_learners: vec![self.node_id],
+                    ..Default::default()
+                })
+                .await
+                .map_err(rpc_error)?;
+            println!("Learner {} removed from the cluster.", self.node_id);
             return Ok(());
         }
         let (mut client, _) =
@@ -70,6 +87,7 @@ impl PerformAction for RemovePeerCommand {
             .change_membership(pb::raft::ChangeMembershipRequest {
                 members: Vec::from_iter(members),
                 retain: false,
+                remove_learners: Vec::new(),
             })
             .await
             .map_err(rpc_error)?;

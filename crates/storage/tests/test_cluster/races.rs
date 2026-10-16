@@ -108,6 +108,7 @@ async fn test_prefix_index_leader_race_concurrent_inner() -> Result<()> {
         .change_membership(pb::raft::ChangeMembershipRequest {
             members: vec![1, 2, 3],
             retain: false,
+            remove_learners: Vec::new(),
         })
         .await?;
 
@@ -364,6 +365,7 @@ async fn test_replication_race_get_by_key_inner() -> Result<()> {
         .change_membership(pb::raft::ChangeMembershipRequest {
             members: vec![1, 2, 3],
             retain: false,
+            remove_learners: Vec::new(),
         })
         .await?;
 
@@ -537,6 +539,7 @@ async fn test_replication_race_delete_stale_inner() -> Result<()> {
         .change_membership(pb::raft::ChangeMembershipRequest {
             members: vec![1, 2, 3],
             retain: false,
+            remove_learners: Vec::new(),
         })
         .await?;
 

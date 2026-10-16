@@ -407,6 +407,7 @@ async fn test_disaster_recovery_elects_exactly_one_leader_inner() -> Result<()> 
         .change_membership(pb::raft::ChangeMembershipRequest {
             members: vec![1, 2],
             retain: false,
+            remove_learners: Vec::new(),
         })
         .await?;
     const NUM_RECORDS: usize = 50;

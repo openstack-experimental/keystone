@@ -538,11 +538,19 @@ impl ClusterAdminService for ClusterAdminServiceImpl {
             req.members, req.retain
         );
 
-        let result = self
-            .raft_node
-            .change_membership(req.members, req.retain)
-            .await
-            .map_err(|e| raft_write_status("Failed to change membership", e))?;
+        let result = if req.remove_learners.is_empty() {
+            self.raft_node
+                .change_membership(req.members, req.retain)
+                .await
+        } else {
+            self.raft_node
+                .change_membership(
+                    openraft::ChangeMembers::RemoveNodes(req.remove_learners.into_iter().collect()),
+                    false,
+                )
+                .await
+        }
+        .map_err(|e| raft_write_status("Failed to change membership", e))?;
 
         trace!("Successfully changed cluster membership");
         Ok(Response::new(result.into()))

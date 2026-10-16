@@ -473,6 +473,7 @@ async fn test_rogue_identities_rejected_tls_roles_inner() -> Result<()> {
             .change_membership(pb::raft::ChangeMembershipRequest {
                 members: vec![1],
                 retain: false,
+                remove_learners: Vec::new(),
             })
             .await,
         "node ChangeMembership",
@@ -568,6 +569,7 @@ async fn test_follower_quarantine_forwarded_to_leader_inner() -> Result<()> {
         .change_membership(pb::raft::ChangeMembershipRequest {
             members: vec![1, 2],
             retain: false,
+            remove_learners: Vec::new(),
         })
         .await?;
 

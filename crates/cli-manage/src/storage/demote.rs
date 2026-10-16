@@ -67,6 +67,7 @@ impl PerformAction for DemoteCommand {
             .change_membership(pb::raft::ChangeMembershipRequest {
                 members: Vec::from_iter(members),
                 retain: true,
+                remove_learners: Vec::new(),
             })
             .await
             .map_err(rpc_error)?;

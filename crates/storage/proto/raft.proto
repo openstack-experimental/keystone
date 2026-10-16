@@ -219,6 +219,10 @@ message ChangeMembershipRequest {
   repeated uint64 members = 1;
   // Whether to retain existing configuration.
   bool retain = 2;
+  // Learners to remove from the membership. When not empty, `members` and
+  // `retain` are ignored and only these nodes are removed; a node that is
+  // still a voter is rejected.
+  repeated uint64 remove_learners = 3;
 }
 
 message AdminResponse {

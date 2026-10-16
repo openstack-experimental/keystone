@@ -106,6 +106,7 @@ async fn test_readiness_and_metrics_inner() -> Result<()> {
         .change_membership(pb::raft::ChangeMembershipRequest {
             members: vec![1, 2, 3],
             retain: false,
+            remove_learners: Vec::new(),
         })
         .await?;
 
@@ -254,6 +255,7 @@ async fn test_admin_rpcs_redirect_to_leader_inner() -> Result<()> {
             .change_membership(pb::raft::ChangeMembershipRequest {
                 members: vec![1, 2],
                 retain: false,
+                remove_learners: Vec::new(),
             })
             .await
             .map(drop),
@@ -402,6 +404,7 @@ async fn test_transfer_leader_before_demoting_the_leader_inner() -> Result<()> {
         .change_membership(pb::raft::ChangeMembershipRequest {
             members: vec![2],
             retain: true,
+            remove_learners: Vec::new(),
         })
         .await?;
     wait_for_leader(&mut admin2, 2).await;
@@ -409,6 +412,41 @@ async fn test_transfer_leader_before_demoting_the_leader_inner() -> Result<()> {
         .storage
         .set_value("after-demote".to_string(), make_env("v")?, None, None)
         .await?;
+
+    // A voter is refused: only learners can be removed this way.
+    let err = admin2
+        .change_membership(pb::raft::ChangeMembershipRequest {
+            remove_learners: vec![2],
+            ..Default::default()
+        })
+        .await
+        .expect_err("a voter is not a learner");
+    assert_ne!(err.code(), tonic::Code::Ok, "{err}");
+
+    // The demoted node stays in the membership as a learner until removed.
+    let nodes = admin2
+        .metrics(())
+        .await?
+        .into_inner()
+        .membership
+        .map(|m| m.nodes)
+        .unwrap_or_default();
+    assert!(nodes.contains_key(&1), "{nodes:?}");
+    admin2
+        .change_membership(pb::raft::ChangeMembershipRequest {
+            remove_learners: vec![1],
+            ..Default::default()
+        })
+        .await?;
+    let nodes = admin2
+        .metrics(())
+        .await?
+        .into_inner()
+        .membership
+        .map(|m| m.nodes)
+        .unwrap_or_default();
+    assert!(!nodes.contains_key(&1), "learner 1 must be gone: {nodes:?}");
+    assert!(nodes.contains_key(&2));
     Ok(())
 }
 
@@ -469,6 +507,7 @@ async fn test_leader_failover_and_rejoin_inner() -> Result<()> {
         .change_membership(pb::raft::ChangeMembershipRequest {
             members: vec![1, 2, 3],
             retain: false,
+            remove_learners: Vec::new(),
         })
         .await?;
 

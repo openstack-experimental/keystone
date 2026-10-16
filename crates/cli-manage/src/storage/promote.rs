@@ -72,6 +72,7 @@ impl PerformAction for PromoteCommand {
             .change_membership(pb::raft::ChangeMembershipRequest {
                 members: Vec::from_iter(members),
                 retain: false,
+                remove_learners: Vec::new(),
             })
             .await
             .map_err(rpc_error)?;

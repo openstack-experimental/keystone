@@ -532,6 +532,7 @@ async fn join_node2_through_admin_rpcs(
         .change_membership(pb::raft::ChangeMembershipRequest {
             members: vec![1, 2],
             retain: false,
+            remove_learners: Vec::new(),
         })
         .await?;
     Ok(instance2)
@@ -946,6 +947,7 @@ async fn test_rejoining_voter_is_demoted_to_learner_inner() -> Result<()> {
         .change_membership(pb::raft::ChangeMembershipRequest {
             members: vec![1, 2],
             retain: false,
+            remove_learners: Vec::new(),
         })
         .await?;
     assert_eq!(voters(&instance1), vec![1, 2]);
