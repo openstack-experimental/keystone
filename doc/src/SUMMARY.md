@@ -143,3 +143,4 @@
     - [OpenTelemetry Telemetry Pipeline](adr/0040-opentelemetry.md)
     - [OAuth2 Provider Session Management](adr/0041-oauth2-session-management.md)
     - [Provider Event Delivery and Delete Cascades](adr/0042-event-delivery-and-cascades.md)
+    - [OAuth2 Sender-Constrained Tokens with DPoP](adr/0043-oauth2-dpop.md)
