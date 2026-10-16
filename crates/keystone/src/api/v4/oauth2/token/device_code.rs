@@ -175,6 +175,9 @@ pub(super) async fn handle_device_code_grant(
         .await
         .map_err(|e| {
             tracing::warn!(error = %e, "oauth2 device code grant poll failed");
+            if matches!(e, openstack_keystone_core_types::oauth2_session::Oauth2SessionProviderError::RaftNotAvailable) {
+                return Oauth2TokenError::raft_unavailable();
+            }
             Oauth2TokenError::internal("token issuance failed")
         })?;
 
@@ -226,6 +229,9 @@ pub(super) async fn handle_device_code_grant(
             .await
             .map_err(|e| {
                 tracing::warn!(error = %e, "oauth2 refresh token issuance failed");
+            if matches!(e, openstack_keystone_core_types::oauth2_session::Oauth2SessionProviderError::RaftNotAvailable) {
+                return Oauth2TokenError::raft_unavailable();
+            }
                 Oauth2TokenError::internal("token issuance failed")
             })?;
         (Some(record_rt.family_id), Some(bearer))

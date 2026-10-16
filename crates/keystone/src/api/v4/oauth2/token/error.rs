@@ -161,6 +161,16 @@ impl Oauth2TokenError {
         Self::new(StatusCode::SERVICE_UNAVAILABLE, "server_error", description)
     }
 
+    /// RFC 6749 §5.2 `temporarily_unavailable` served as `503`: the Raft
+    /// store backing the provider cannot be reached.
+    pub(crate) fn raft_unavailable() -> Self {
+        Self::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "temporarily_unavailable",
+            "the OAuth2 provider storage is not available",
+        )
+    }
+
     pub(crate) fn internal(description: impl Into<String>) -> Self {
         Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,

@@ -183,6 +183,12 @@ pub(super) async fn handle_client_credentials_grant(
         .await
         .map_err(|e| {
             tracing::warn!(error = %e, "oauth2 signing key lookup failed");
+            if matches!(
+                e,
+                openstack_keystone_core_types::oauth2_key::Oauth2KeyProviderError::RaftNotAvailable
+            ) {
+                return Oauth2TokenError::raft_unavailable();
+            }
             Oauth2TokenError::internal("token issuance failed")
         })?;
 
