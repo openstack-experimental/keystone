@@ -179,10 +179,11 @@ does not increment the counter.
 | `keystone_oauth2_janitor_purged_total` | counter | `kind` | Records purged or keys retired |
 | `keystone_oauth2_janitor_errors_total` | counter | — | Janitor errors |
 | `keystone_oauth2_janitor_last_run_timestamp_seconds` | gauge | `janitor` | Last janitor sweep (`key`, `session`) |
-| `keystone_oauth2_revocations_total` | counter | `reason` | Refresh token families revoked by operators (`operator`) and client revocation (`client_revoked`) |
+| `keystone_oauth2_revocations_total` | counter | `reason` | Refresh token families revoked (operator, client, user and domain lifecycle) |
+| `keystone_oauth2_refresh_foreign_client_total` | counter | — | Refresh tokens presented by a client other than their owner |
+| `keystone_oauth2_authorize_requests_total` | counter | `outcome` (redirect/page/rate_limited/invalid/error) | `/authorize` requests |
+| `keystone_oauth2_login_attempts_total` | counter | `outcome` (success/failure), `factor` (password/totp/passkey) | Browser login attempts |
 
-`keystone_oauth2_authorize_requests_total` and
-`keystone_oauth2_login_attempts_total` are registered but not yet incremented.
 `user_id` is never a label.
 
 #### Policy (OPA)

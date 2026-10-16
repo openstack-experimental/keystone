@@ -60,6 +60,7 @@ use crate::audit::{
     CorrelationId, build_initiator_from_user_id, build_initiator_unknown, emit_oauth2_session_event,
 };
 use crate::keystone::ServiceState;
+use openstack_keystone_core::oauth2_metrics::OAUTH2_METRICS;
 
 pub(super) const SESSION_COOKIE_NAME: &str = "keystone_oauth2_session";
 
@@ -321,324 +322,329 @@ pub(super) async fn authorize(
     jar: CookieJar,
     Query(query): Query<AuthorizeQuery>,
 ) -> Result<Response, std::convert::Infallible> {
-    if let Err(retry_after) = state
-        .rate_limiters
-        .check_ip(&headers, peer_addr.map(|a| a.ip()))
-    {
-        return Ok(too_many_requests(retry_after.as_secs()));
-    }
+    let result: Result<Response, std::convert::Infallible> = async {
+        if let Err(retry_after) = state
+            .rate_limiters
+            .check_ip(&headers, peer_addr.map(|a| a.ip()))
+        {
+            return Ok(too_many_requests(retry_after.as_secs()));
+        }
 
-    if !crate::api::common::oauth2_issuer_is_trusted(&state).await {
-        tracing::error!(
-            "OAuth2 /authorize refused: [DEFAULT] public_endpoint is not set \
+        if !crate::api::common::oauth2_issuer_is_trusted(&state).await {
+            tracing::error!(
+                "OAuth2 /authorize refused: [DEFAULT] public_endpoint is not set \
              (set it, or [oauth2] allow_host_header_issuer = true for development only)"
-        );
-        return Ok(error_page(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "the OAuth2 provider is not configured with a public endpoint",
-        ));
-    }
-
-    let Some(response_type) = query.response_type.as_deref() else {
-        return Ok(error_page(
-            StatusCode::BAD_REQUEST,
-            "missing required parameter: response_type",
-        ));
-    };
-    if response_type != "code" {
-        return Ok(error_page(
-            StatusCode::BAD_REQUEST,
-            "unsupported response_type; only `code` is supported",
-        ));
-    }
-    let Some(client_id) = query.client_id.clone() else {
-        return Ok(error_page(
-            StatusCode::BAD_REQUEST,
-            "missing required parameter: client_id",
-        ));
-    };
-
-    let exec = ExecutionContext::internal(&state);
-    let client = match state
-        .provider
-        .get_oauth2_client_provider()
-        .get_by_client_id(&exec, &client_id)
-        .await
-    {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!(error = %e, "oauth2 client lookup failed");
+            );
             return Ok(error_page(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal error",
+                StatusCode::SERVICE_UNAVAILABLE,
+                "the OAuth2 provider is not configured with a public endpoint",
             ));
         }
-    };
-    let Some(client) =
-        client.filter(|c| c.domain_id == domain_id && c.enabled && c.deleted_at.is_none())
-    else {
-        return Ok(error_page(
-            StatusCode::BAD_REQUEST,
-            "unknown or disabled client",
-        ));
-    };
-    if !client.grant_types.contains(&GrantType::AuthorizationCode) {
-        return Ok(error_page(
-            StatusCode::BAD_REQUEST,
-            "client is not authorized for the authorization_code grant",
-        ));
-    }
 
-    let Some(redirect_uri) = query.redirect_uri.clone() else {
-        return Ok(error_page(
-            StatusCode::BAD_REQUEST,
-            "missing required parameter: redirect_uri",
-        ));
-    };
-    // Open-redirect defense (ADR 0026 §1 Threat Model item 2): never
-    // redirect to an unvalidated URI. Every error above this point renders
-    // directly; every error below it is delivered via redirect.
-    if !client.redirect_uris.iter().any(|u| u == &redirect_uri) {
-        return Ok(error_page(
-            StatusCode::BAD_REQUEST,
-            "redirect_uri is not registered for this client",
-        ));
-    }
-
-    let state_param = query.state.clone().unwrap_or_default();
-
-    let Some(code_challenge) = query.code_challenge.clone() else {
-        return Ok(redirect_with_error(
-            &redirect_uri,
-            &state_param,
-            "invalid_request",
-            "missing code_challenge",
-        ));
-    };
-    let code_challenge_method = query.code_challenge_method.clone().unwrap_or_default();
-    if code_challenge_method != "S256" {
-        // PKCE is mandatory and S256-only (ADR 0026 §1) -- not just for
-        // public clients.
-        return Ok(redirect_with_error(
-            &redirect_uri,
-            &state_param,
-            "invalid_request",
-            "code_challenge_method must be S256",
-        ));
-    }
-
-    let requested_scope: Vec<String> = query
-        .scope
-        .clone()
-        .unwrap_or_default()
-        .split_whitespace()
-        .map(str::to_string)
-        .collect();
-    const DISPLAY_SCOPES: &[&str] = &["openid", "profile", "email"];
-    for s in &requested_scope {
-        if s == "openstack:api" {
-            return Ok(redirect_with_error(
-                &redirect_uri,
-                &state_param,
-                "invalid_scope",
-                "openstack:api is not yet supported on the authorization_code grant",
+        let Some(response_type) = query.response_type.as_deref() else {
+            return Ok(error_page(
+                StatusCode::BAD_REQUEST,
+                "missing required parameter: response_type",
             ));
-        }
-        if !DISPLAY_SCOPES.contains(&s.as_str()) || !client.allowed_scopes.iter().any(|a| a == s) {
-            return Ok(redirect_with_error(
-                &redirect_uri,
-                &state_param,
-                "invalid_scope",
-                "requested scope exceeds the client's allowed_scopes",
-            ));
-        }
-    }
-
-    let prompt = match parse_prompt(query.prompt.as_deref()) {
-        Ok(p) => p,
-        Err(message) => {
-            return Ok(redirect_with_error(
-                &redirect_uri,
-                &state_param,
-                "invalid_request",
-                message,
-            ));
-        }
-    };
-    let max_age = match query.max_age.as_deref().map(str::parse::<i64>) {
-        None => None,
-        Some(Ok(n)) if n >= 0 => Some(n),
-        Some(_) => {
-            return Ok(redirect_with_error(
-                &redirect_uri,
-                &state_param,
-                "invalid_request",
-                "max_age must be a non-negative integer",
-            ));
-        }
-    };
-
-    // An existing SSO session is reused unless the request forces a fresh
-    // login (`prompt=login|select_account`, or `max_age` older than the
-    // login; `max_age=0` always forces one).
-    let now = chrono::Utc::now().timestamp();
-    let sso = super::sso::current(&state, &jar, &domain_id).await;
-    let force_login = prompt.login
-        || prompt.select_account
-        || max_age.is_some_and(|m| m == 0 || sso.as_ref().is_some_and(|s| now - s.auth_time > m));
-    let sso = sso.filter(|_| !force_login);
-    if prompt.none {
-        // Never render HTML: either the request is satisfiable silently or
-        // it is answered with an error redirect, and no cookie is set.
-        if sso.is_none() {
-            return Ok(redirect_with_error(
-                &redirect_uri,
-                &state_param,
-                "login_required",
-                "the user is not signed in",
-            ));
-        }
-        let remembered = match &sso {
-            Some(s) if !client.pre_authorized => {
-                super::consent::is_covered(
-                    &state,
-                    &domain_id,
-                    &s.user_id,
-                    &client.client_id,
-                    &requested_scope,
-                )
-                .await
-            }
-            _ => false,
         };
-        if !client.pre_authorized && !remembered {
-            return Ok(redirect_with_error(
-                &redirect_uri,
-                &state_param,
-                "consent_required",
-                "the user has not consented to this client",
-            ));
-        }
-    }
-
-    let session = match state
-        .provider
-        .get_oauth2_session_provider()
-        .start_pre_auth_session(
-            &state,
-            StartPreAuthSessionRequest {
-                domain_id: domain_id.clone(),
-                client_id: client.client_id.clone(),
-                redirect_uri: redirect_uri.clone(),
-                scope: requested_scope,
-                state: state_param.clone(),
-                code_challenge,
-                code_challenge_method,
-                nonce: query.nonce.clone(),
-                force_consent: prompt.consent,
-            },
-        )
-        .await
-    {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::warn!(error = %e, "oauth2 pre-auth session creation failed");
+        if response_type != "code" {
             return Ok(error_page(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal error",
+                StatusCode::BAD_REQUEST,
+                "unsupported response_type; only `code` is supported",
             ));
         }
-    };
+        let Some(client_id) = query.client_id.clone() else {
+            return Ok(error_page(
+                StatusCode::BAD_REQUEST,
+                "missing required parameter: client_id",
+            ));
+        };
 
-    emit_oauth2_session_event(
-        &state.audit_dispatcher,
-        &correlation_id.0,
-        "authorize",
-        build_initiator_unknown(),
-        &client.client_id,
-        Outcome::Pending,
-        None,
-    );
-
-    if let Some(sso) = sso {
-        let session = match state
+        let exec = ExecutionContext::internal(&state);
+        let client = match state
             .provider
-            .get_oauth2_session_provider()
-            .mark_authenticated_by_sso(&state, &session.session_id, &sso)
+            .get_oauth2_client_provider()
+            .get_by_client_id(&exec, &client_id)
             .await
         {
-            Ok(s) => s,
+            Ok(c) => c,
             Err(e) => {
-                tracing::warn!(error = %e, "oauth2 pre-auth session update failed");
+                tracing::warn!(error = %e, "oauth2 client lookup failed");
                 return Ok(error_page(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "internal error",
                 ));
             }
         };
+        let Some(client) =
+            client.filter(|c| c.domain_id == domain_id && c.enabled && c.deleted_at.is_none())
+        else {
+            return Ok(error_page(
+                StatusCode::BAD_REQUEST,
+                "unknown or disabled client",
+            ));
+        };
+        if !client.grant_types.contains(&GrantType::AuthorizationCode) {
+            return Ok(error_page(
+                StatusCode::BAD_REQUEST,
+                "client is not authorized for the authorization_code grant",
+            ));
+        }
+
+        let Some(redirect_uri) = query.redirect_uri.clone() else {
+            return Ok(error_page(
+                StatusCode::BAD_REQUEST,
+                "missing required parameter: redirect_uri",
+            ));
+        };
+        // Open-redirect defense (ADR 0026 §1 Threat Model item 2): never
+        // redirect to an unvalidated URI. Every error above this point renders
+        // directly; every error below it is delivered via redirect.
+        if !client.redirect_uris.iter().any(|u| u == &redirect_uri) {
+            return Ok(error_page(
+                StatusCode::BAD_REQUEST,
+                "redirect_uri is not registered for this client",
+            ));
+        }
+
+        let state_param = query.state.clone().unwrap_or_default();
+
+        let Some(code_challenge) = query.code_challenge.clone() else {
+            return Ok(redirect_with_error(
+                &redirect_uri,
+                &state_param,
+                "invalid_request",
+                "missing code_challenge",
+            ));
+        };
+        let code_challenge_method = query.code_challenge_method.clone().unwrap_or_default();
+        if code_challenge_method != "S256" {
+            // PKCE is mandatory and S256-only (ADR 0026 §1) -- not just for
+            // public clients.
+            return Ok(redirect_with_error(
+                &redirect_uri,
+                &state_param,
+                "invalid_request",
+                "code_challenge_method must be S256",
+            ));
+        }
+
+        let requested_scope: Vec<String> = query
+            .scope
+            .clone()
+            .unwrap_or_default()
+            .split_whitespace()
+            .map(str::to_string)
+            .collect();
+        const DISPLAY_SCOPES: &[&str] = &["openid", "profile", "email"];
+        for s in &requested_scope {
+            if s == "openstack:api" {
+                return Ok(redirect_with_error(
+                    &redirect_uri,
+                    &state_param,
+                    "invalid_scope",
+                    "openstack:api is not yet supported on the authorization_code grant",
+                ));
+            }
+            if !DISPLAY_SCOPES.contains(&s.as_str())
+                || !client.allowed_scopes.iter().any(|a| a == s)
+            {
+                return Ok(redirect_with_error(
+                    &redirect_uri,
+                    &state_param,
+                    "invalid_scope",
+                    "requested scope exceeds the client's allowed_scopes",
+                ));
+            }
+        }
+
+        let prompt = match parse_prompt(query.prompt.as_deref()) {
+            Ok(p) => p,
+            Err(message) => {
+                return Ok(redirect_with_error(
+                    &redirect_uri,
+                    &state_param,
+                    "invalid_request",
+                    message,
+                ));
+            }
+        };
+        let max_age = match query.max_age.as_deref().map(str::parse::<i64>) {
+            None => None,
+            Some(Ok(n)) if n >= 0 => Some(n),
+            Some(_) => {
+                return Ok(redirect_with_error(
+                    &redirect_uri,
+                    &state_param,
+                    "invalid_request",
+                    "max_age must be a non-negative integer",
+                ));
+            }
+        };
+
+        // An existing SSO session is reused unless the request forces a fresh
+        // login (`prompt=login|select_account`, or `max_age` older than the
+        // login; `max_age=0` always forces one).
+        let now = chrono::Utc::now().timestamp();
+        let sso = super::sso::current(&state, &jar, &domain_id).await;
+        let force_login = prompt.login
+            || prompt.select_account
+            || max_age
+                .is_some_and(|m| m == 0 || sso.as_ref().is_some_and(|s| now - s.auth_time > m));
+        let sso = sso.filter(|_| !force_login);
+        if prompt.none {
+            // Never render HTML: either the request is satisfiable silently or
+            // it is answered with an error redirect, and no cookie is set.
+            if sso.is_none() {
+                return Ok(redirect_with_error(
+                    &redirect_uri,
+                    &state_param,
+                    "login_required",
+                    "the user is not signed in",
+                ));
+            }
+            let remembered = match &sso {
+                Some(s) if !client.pre_authorized => {
+                    super::consent::is_covered(
+                        &state,
+                        &domain_id,
+                        &s.user_id,
+                        &client.client_id,
+                        &requested_scope,
+                    )
+                    .await
+                }
+                _ => false,
+            };
+            if !client.pre_authorized && !remembered {
+                return Ok(redirect_with_error(
+                    &redirect_uri,
+                    &state_param,
+                    "consent_required",
+                    "the user has not consented to this client",
+                ));
+            }
+        }
+
+        let session = match state
+            .provider
+            .get_oauth2_session_provider()
+            .start_pre_auth_session(
+                &state,
+                StartPreAuthSessionRequest {
+                    domain_id: domain_id.clone(),
+                    client_id: client.client_id.clone(),
+                    redirect_uri: redirect_uri.clone(),
+                    scope: requested_scope,
+                    state: state_param.clone(),
+                    code_challenge,
+                    code_challenge_method,
+                    nonce: query.nonce.clone(),
+                    force_consent: prompt.consent,
+                },
+            )
+            .await
+        {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(error = %e, "oauth2 pre-auth session creation failed");
+                return Ok(error_page(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal error",
+                ));
+            }
+        };
+
         emit_oauth2_session_event(
             &state.audit_dispatcher,
             &correlation_id.0,
-            "authenticate",
-            build_initiator_from_user_id(&sso.user_id, &domain_id),
-            &session.client_id,
-            Outcome::Success,
+            "authorize",
+            build_initiator_unknown(),
+            &client.client_id,
+            Outcome::Pending,
             None,
         );
-        let response = after_authentication(
-            &state,
-            &domain_id,
-            &session,
-            Some(&client),
-            Some(&sso.sso_id),
-            &correlation_id.0,
-        )
-        .await;
+
+        if let Some(sso) = sso {
+            let session = match state
+                .provider
+                .get_oauth2_session_provider()
+                .mark_authenticated_by_sso(&state, &session.session_id, &sso)
+                .await
+            {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(error = %e, "oauth2 pre-auth session update failed");
+                    return Ok(error_page(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "internal error",
+                    ));
+                }
+            };
+            emit_oauth2_session_event(
+                &state.audit_dispatcher,
+                &correlation_id.0,
+                "authenticate",
+                build_initiator_from_user_id(&sso.user_id, &domain_id),
+                &session.client_id,
+                Outcome::Success,
+                None,
+            );
+            let response = after_authentication(
+                &state,
+                &domain_id,
+                &session,
+                Some(&client),
+                Some(&sso.sso_id),
+                &correlation_id.0,
+            )
+            .await;
+            let jar = CookieJar::new().add(session_cookie(
+                session.session_id.clone(),
+                cookie_secure(&state, &headers).await,
+            ));
+            return Ok((jar, response).into_response());
+        }
+
         let jar = CookieJar::new().add(session_cookie(
             session.session_id.clone(),
             cookie_secure(&state, &headers).await,
         ));
-        return Ok((jar, response).into_response());
-    }
-
-    let jar = CookieJar::new().add(session_cookie(
-        session.session_id.clone(),
-        cookie_secure(&state, &headers).await,
-    ));
-    let client_ui = client_view(&state, &session.client_id).await;
-    let idps = login_idps(&state, &domain_id).await;
-    if let Some(hint) = query.idp_hint.as_deref()
-        && let Some(idp) = idps.iter().find(|idp| idp.id == hint).cloned()
-    {
-        let response = match redirect_to_upstream(
-            &state,
-            &headers,
-            &domain_id,
-            &session.session_id,
-            idp,
-        )
-        .await
+        let client_ui = client_view(&state, &session.client_id).await;
+        let idps = login_idps(&state, &domain_id).await;
+        if let Some(hint) = query.idp_hint.as_deref()
+            && let Some(idp) = idps.iter().find(|idp| idp.id == hint).cloned()
         {
-            Ok(redirect) => redirect,
-            Err(message) => render_login(
-                &domain_id,
-                &session,
-                &client_ui,
-                Some(message),
-                idp_views(&idps),
-            ),
-        };
-        return Ok((jar, response).into_response());
+            let response =
+                match redirect_to_upstream(&state, &headers, &domain_id, &session.session_id, idp)
+                    .await
+                {
+                    Ok(redirect) => redirect,
+                    Err(message) => render_login(
+                        &domain_id,
+                        &session,
+                        &client_ui,
+                        Some(message),
+                        idp_views(&idps),
+                    ),
+                };
+            return Ok((jar, response).into_response());
+        }
+        let response = render_login_hinted(
+            &domain_id,
+            &session,
+            &client_ui,
+            None,
+            idp_views(&idps),
+            query.login_hint.as_deref(),
+        );
+        Ok((jar, response).into_response())
     }
-    let response = render_login_hinted(
-        &domain_id,
-        &session,
-        &client_ui,
-        None,
-        idp_views(&idps),
-        query.login_hint.as_deref(),
-    );
-    Ok((jar, response).into_response())
+    .await;
+    if let Ok(response) = &result {
+        OAUTH2_METRICS.record_authorize(authorize_outcome(response.status()));
+    }
+    result
 }
 
 /// `POST /v4/oauth2/{domain_id}/authorize/login`.
@@ -761,6 +767,7 @@ pub(super) async fn authorize_login(
         Ok(r) => r,
         Err(e) => {
             tracing::debug!(error = %e, "oauth2 authorize login failed");
+            OAUTH2_METRICS.record_login_attempt("failure", "password");
             emit_oauth2_session_event(
                 &state.audit_dispatcher,
                 &correlation_id.0,
@@ -848,6 +855,7 @@ pub(super) async fn authorize_login(
         }
     };
 
+    OAUTH2_METRICS.record_login_attempt("success", "password");
     emit_oauth2_session_event(
         &state.audit_dispatcher,
         &correlation_id.0,
@@ -872,6 +880,17 @@ pub(super) async fn authorize_login(
         established.map(|e| e.cookie),
         response,
     ))
+}
+
+/// Fixed `/authorize` outcome label for a response status.
+fn authorize_outcome(status: StatusCode) -> &'static str {
+    match status {
+        s if s.is_redirection() => "redirect",
+        StatusCode::OK => "page",
+        StatusCode::TOO_MANY_REQUESTS => "rate_limited",
+        s if s.is_client_error() => "invalid",
+        _ => "error",
+    }
 }
 
 /// Everything after a completed login (password and any second factor):

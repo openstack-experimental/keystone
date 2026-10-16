@@ -45,6 +45,7 @@ pub struct Oauth2Metrics {
     janitor_errors_total: CounterVec<0>,
     janitor_last_run_timestamp_seconds: GaugeVec<1>,
     revocations_total: CounterVec<1>,
+    refresh_foreign_client_total: CounterVec<0>,
 }
 
 impl Oauth2Metrics {
@@ -130,6 +131,12 @@ impl Oauth2Metrics {
                 "Refresh token families revoked by reason.",
                 ["reason"],
             ),
+            refresh_foreign_client_total: CounterVec::new(
+                meter,
+                "keystone_oauth2_refresh_foreign_client_total",
+                "Refresh tokens presented by a client other than their owner.",
+                [],
+            ),
         }
     }
 
@@ -207,11 +214,16 @@ impl Oauth2Metrics {
             .set(unix_seconds, [janitor.into()]);
     }
 
+    /// Count a refresh token presented by a client that does not own it.
+    pub fn record_refresh_foreign_client(&self) {
+        self.refresh_foreign_client_total.inc([]);
+    }
+
     /// Count revoked refresh token families. `reason` is a fixed
-    /// `RefreshTokenRevocationReason` name. Only operator and client
-    /// revocations made through the API are counted; the number is the one
-    /// the revoking call reports, so a client selector also counts families
-    /// that were already revoked.
+    /// `RefreshTokenRevocationReason` name. Counted for operator and client
+    /// revocations made through the API and for user and domain lifecycle
+    /// revocations; the number is the one the revoking call reports, so a
+    /// client selector also counts families that were already revoked.
     pub fn record_revocations(&self, reason: &'static str, n: u64) {
         self.revocations_total.add(n, [Label::fixed(reason)]);
     }
@@ -302,6 +314,7 @@ mod tests {
         m.record_janitor_errors(2);
         m.set_janitor_last_run("key", 1_700_000_000);
         m.record_revocations("operator", 4);
+        m.record_refresh_foreign_client();
         let text = pipeline.render();
         assert!(text.contains("keystone_oauth2_signing_key_age_seconds{domain_id=\"d1\"} 3600\n"));
         assert!(text.contains("keystone_oauth2_janitor_purged_total{kind=\"refresh\"} 3\n"));
@@ -311,5 +324,6 @@ mod tests {
         ));
         assert!(text.contains("keystone_oauth2_revocations_total{reason=\"operator\"} 4\n"));
         assert!(text.contains("signing_key_rotations_total"));
+        assert!(text.contains("keystone_oauth2_refresh_foreign_client_total 1\n"));
     }
 }

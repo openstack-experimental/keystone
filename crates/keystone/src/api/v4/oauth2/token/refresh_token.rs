@@ -117,6 +117,7 @@ pub(super) async fn handle_refresh_token_grant(
     if let Some(record) = peeked {
         // Never act on (or reveal anything about) another client's family.
         if record.client_id != client_id || record.domain_id != domain_id {
+            OAUTH2_METRICS.record_refresh_foreign_client();
             emit_oauth2_session_event(
                 &state.audit_dispatcher,
                 correlation_id,
