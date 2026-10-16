@@ -516,6 +516,9 @@ async fn node_ips(service: &str) -> Vec<String> {
     }
 }
 
+/// Pause before a missing record is read from the same node once more.
+const RETRY_DELAY: Duration = Duration::from_secs(2);
+
 /// Outcome of reading one record from one node.
 #[derive(Debug, PartialEq)]
 enum Read {
@@ -607,15 +610,27 @@ async fn verify(
         }
         match r {
             Read::Ok | Read::Unavailable => {}
-            Read::Missing(status) => record_failure(
-                cfg,
-                seq,
-                check_on_missing,
-                format!(
-                    "{addr} does not return {} {} (HTTP {status})",
-                    rec.label, rec.id
-                ),
-            ),
+            Read::Missing(status) => {
+                // Read once more to tell a lag of a few seconds from a node
+                // that stays wrong.
+                tokio::time::sleep(RETRY_DELAY).await;
+                let again = match read_from(http, &addr, headers, rec).await {
+                    Read::Ok => "recovered".to_string(),
+                    Read::Missing(s) => format!("still missing, HTTP {s}"),
+                    _ => "retry unavailable".to_string(),
+                };
+                record_failure(
+                    cfg,
+                    seq,
+                    check_on_missing,
+                    format!(
+                        "{addr} does not return {} {} (HTTP {status}; after {}s: {again})",
+                        rec.label,
+                        rec.id,
+                        RETRY_DELAY.as_secs()
+                    ),
+                );
+            }
             Read::Altered(d) => record_failure(
                 cfg,
                 seq,

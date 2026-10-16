@@ -300,7 +300,7 @@ async fn resolve_verified_api_client(
         // Dummy hash: burn the same Argon2id cost as a real verification
         // to prevent timing-based enumeration of valid lookup hashes
         // (ADR 0021 Invariant 7).
-        debug!(
+        warn!(
             domain_id,
             lookup_hash = %parsed.lookup_hash,
             "api_key lookup returned no resource"
@@ -311,7 +311,7 @@ async fn resolve_verified_api_client(
 
     let now = chrono::Utc::now().timestamp();
     if !resource.is_active(now) {
-        debug!(
+        warn!(
             domain_id,
             lookup_hash = %parsed.lookup_hash,
             enabled = resource.enabled,
@@ -338,7 +338,7 @@ async fn resolve_verified_api_client(
         // cost, letting an attacker distinguish "this lookup_hash exists
         // but my IP is disallowed" from "this lookup_hash doesn't exist"
         // by response latency alone (ADR 0021 Invariant 7).
-        debug!(
+        warn!(
             domain_id,
             client_id = %resource.client_id,
             ?effective_ip,
@@ -357,7 +357,7 @@ async fn resolve_verified_api_client(
             AuthenticationError::Unauthorized
         })?;
     if !verified {
-        debug!(
+        warn!(
             domain_id,
             client_id = %resource.client_id,
             lookup_hash = %parsed.lookup_hash,
