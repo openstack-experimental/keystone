@@ -358,7 +358,7 @@ async fn seed_auth_project(
     user_ids: &[String],
 ) -> Option<(String, String)> {
     let project_id =
-        create_project(client, host, token, AUTH_PROJECT_NAME, DEFAULT_DOMAIN_ID).await?;
+        get_or_create_project(client, host, token, AUTH_PROJECT_NAME, DEFAULT_DOMAIN_ID).await?;
     let role_id = get_or_create_role(client, host, token, AUTH_ROLE_NAME).await?;
 
     for user_id in user_ids {
@@ -370,6 +370,33 @@ async fn seed_auth_project(
     }
 
     Some((project_id, role_id))
+}
+
+/// Find a project by name, creating it if it doesn't exist.
+///
+/// The project has a fixed name, so one left behind by a run that was killed
+/// before its cleanup would make a plain create fail with 409.
+async fn get_or_create_project(
+    client: &Client,
+    host: &str,
+    token: &str,
+    name: &str,
+    domain_id: &str,
+) -> Option<String> {
+    let resp = client
+        .get(format!("{host}/v3/projects"))
+        .header("x-auth-token", token)
+        .query(&[("name", name), ("domain_id", domain_id)])
+        .send()
+        .await
+        .ok()?;
+    if resp.status().is_success() {
+        let val: serde_json::Value = resp.json().await.ok()?;
+        if let Some(id) = val["projects"][0]["id"].as_str() {
+            return Some(id.to_owned());
+        }
+    }
+    create_project(client, host, token, name, domain_id).await
 }
 
 /// Find a role by name, creating it if it doesn't exist.
