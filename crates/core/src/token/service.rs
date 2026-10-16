@@ -348,7 +348,18 @@ impl TokenService {
             .get_identity_provider()
             .get_user(ctx, token.user_id())
             .await?
-            .ok_or(TokenProviderError::UserNotFound(token.user_id().clone()))?;
+            .ok_or_else(|| {
+                // Either the user was deleted after the token was issued, or
+                // this node has not seen the user yet: the age of the token
+                // tells which.
+                tracing::warn!(
+                    user_id = %token.user_id(),
+                    issued_at = %token.issued_at(),
+                    expires_at = %token.expires_at(),
+                    "the user of a valid token cannot be found"
+                );
+                TokenProviderError::UserNotFound(token.user_id().clone())
+            })?;
         let user_domain = state
             .provider
             .get_resource_provider()

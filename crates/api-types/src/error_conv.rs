@@ -771,9 +771,11 @@ impl From<TokenProviderError> for KeystoneApiError {
             | TokenProviderError::TrustorUserDisabled(_) => {
                 Self::unauthorized(value, None::<String>)
             }
+            // A token whose user is gone is as unusable as an expired one.
             TokenProviderError::Expired
             | TokenProviderError::InvalidToken { .. }
-            | TokenProviderError::TokenRevoked => Self::unauthorized(value, None::<String>),
+            | TokenProviderError::TokenRevoked
+            | TokenProviderError::UserNotFound(_) => Self::unauthorized(value, None::<String>),
             TokenProviderError::DomainDisabled(x) => Self::NotFound {
                 resource: "domain".into(),
                 identifier: x,
@@ -855,6 +857,7 @@ mod tests {
                 source: Box::new(std::io::Error::other("invalid token detail")),
             },
             TokenProviderError::TokenRevoked,
+            TokenProviderError::UserNotFound("uid".into()),
         ];
 
         for error in errors {
