@@ -34,7 +34,7 @@ jobs:
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
-          username: openstack-experimental
+          username: cloud-plane
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Keycloak image
@@ -44,5 +44,5 @@ jobs:
           file: tools/Dockerfile.keycloak
           push: true
           tags: |
-            ghcr.io/openstack-experimental/keystone/keycloak-ci-service:26.2
-            ghcr.io/openstack-experimental/keystone/keycloak-ci-service:${{ github.sha }}
+            ghcr.io/cloud-plane/iam/keycloak-ci-service:26.2
+            ghcr.io/cloud-plane/iam/keycloak-ci-service:${{ github.sha }}

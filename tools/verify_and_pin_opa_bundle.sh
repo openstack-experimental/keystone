@@ -49,7 +49,7 @@ usage() {
 Usage: $0 --repo <owner/repo> --tag <tag> [--config <path>]
 
   --repo    GitHub repository the bundle was published from, e.g.
-            openstack-experimental/keystone. Used both to build the image
+            cloud-plane/iam. Used both to build the image
             reference and to constrain the cosign certificate-identity
             check to that repository's GitHub Actions OIDC issuer.
   --tag     Tag to resolve and verify, e.g. main or latest.

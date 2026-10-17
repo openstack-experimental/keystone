@@ -80,7 +80,7 @@ done.
 
 ```console
 
-docker run -v /etc/keystone/:/etc/keystone -p 8080:8080 ghcr.io/openstack-experimental/keystone:main -v /etc/keystone/keystone.conf
+docker run -v /etc/keystone/:/etc/keystone -p 8080:8080 ghcr.io/cloud-plane/iam:main -v /etc/keystone/keystone.conf
 ```
 
 ## Database migrations

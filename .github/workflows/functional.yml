@@ -573,7 +573,7 @@ jobs:
         run: kubectl -n keystone-raft-test get events --sort-by=.lastTimestamp
 
   loadtest-track:
-    if: "success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'openstack-experimental-release-plz'"
+    if: "success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'cloud-plane-release-plz'"
     runs-on: ubuntu-latest
     needs:
       - k3s-test
@@ -606,7 +606,7 @@ jobs:
             [View full report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
   tempest-track:
-    if: "success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'openstack-experimental-release-plz'"
+    if: "success() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'cloud-plane-release-plz'"
     runs-on: ubuntu-latest
     needs:
       - k3s-test

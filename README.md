@@ -1,86 +1,78 @@
-# OpenStack Keystone in Rust
+# Identity and Access Management for clouds
+
+IAM stands for Identity and Access Management. The project began as an extension
+to OpenStack Keystone that added better federation growing into a partial
+drop-in replacement for it. Because OpenStack does not list Rust as an approved
+language, the project has refocused as a general-purpose IAM service that
+OpenStack deployers can run alongside Keystone.
 
 ## Table of Contents
 
-- [Project documentation](#documentation)
-  - [Installation guide](doc/src/install/index.md)
-  - [User documentation](doc/src/user/index.md)
-  - [Administrator guides](doc/src/admin/index.md)
-    - [CLI documentation](doc/src/admin/cli/index.md)
-  - [Configuration reference](doc/src/configuration/index.md)
-  - [Contributor documentation](doc/src/contributor/index.md)
-- [Configuration](#config)
-- [API and OpenAPI](#api--openapi)
-- [Database](#database)
-- [Load testing](#load-test)
-- [Trying Keystone](#trying)
+- [Background](#background)
+- [Architecture](#architecture)
+- [Documentation](#documentation)
+- [Configuration and database](#configuration-and-database)
+- [Load test](#load-test)
+- [Trying IAM](#trying-iam)
 - [Talks](#talks)
 
+## Background
+
 The Python Keystone identity service, maintained upstream by the OpenStack
-community, has served the OpenStack ecosystem reliably for years.
-It handles authentication, authorization, token issuance, service catalog,
-project/tenant management, and federation services across thousands of
-deployments. However, as we embarked on adding next-generation identity
-features—such as native WebAuthn (“passkeys”), modern federation flows, direct
-OIDC support, JWT login, workload authorization, restricted tokens and
-service-accounts—it became clear that certain design and performance
-limitations of the Python codebase would hamper efficient implementation of
-these new features.
+community, has served the OpenStack ecosystem reliably for years. It handles
+authentication, authorization, token issuance, service catalog, project/tenant
+management, and federation across thousands of deployments.
 
-Consequently, we initiated a project termed “Keystone-NG”: a Rust-based
-component that augments rather than fully replaces the existing Keystone
-service. The original plan was to implement only the new feature-set in Rust
-and route those new API paths to the Rust component, while keeping the core
-Python Keystone service in place for existing users and workflows.
+However, as we began adding next-generation identity features - such as native
+WebAuthn (“passkeys”), modern federation flows, direct OIDC support, JWT login,
+workload authorization, restricted tokens and service accounts - it became clear
+that certain design and performance limitations of the Python codebase would
+hamper their efficient implementation.
 
-As development progressed, however, the breadth of new functionality (and the
-opportunity to revisit some of the existing limitations) led to a partial
-re-implementation of certain core identity flows in Rust. This allows us to
-benefit from Rust's memory safety, concurrency model, performance, and modern
-tooling, while still preserving the upstream Keystone Python service as the
-canonical “master” identity service, routing only the new endpoints and
-capabilities through the Rust component.
+The original plan was to implement only the new feature set in Rust and route
+the new API paths to it, leaving the Python Keystone service in place for
+existing users and workflows. As development progressed, the breadth of the new
+functionality, and the opportunity to revisit some existing limitations, led to
+a re-implementation of the core identity flows in Rust as well. This brings
+Rust's memory safety, concurrency model, performance and modern tooling to the
+whole service, not only to the new features.
 
-In practice, this architecture means:
+## Architecture
 
-- The upstream Python Keystone remains the main identity interface, preserving
-  backward compatibility, integration with other OpenStack services, existing
-  user workflows, catalogs, policies and plugins.
+IAM is a standalone service that speaks the OpenStack Keystone APIs and adds its
+own. It can be deployed in two ways:
 
-- The Rust “Keystone-NG” component handles new functionality, specifically:
+- **Alongside Python Keystone.** Requests for the new functionality are routed
+  to IAM, while Python Keystone continues to serve existing OpenStack services,
+  workflows, catalogs, policies and plugins. This allows IAM to be adopted
+  incrementally without disturbing existing deployments.
+- **On its own.** IAM serves the identity flows it implements directly, for
+  deployments that do not need the Python service.
 
-  - Native WebAuthN (passkeys) support for passwordless / phishing-resistant MFA
+IAM provides the following functionality:
 
-  - A reworked federation service, enabling modern identity brokering and
-    advanced federation semantics OIDC (OpenID Connect) Direct in Keystone,
-    enabling Keystone to act as an OIDC Provider or integrate with external
-    OIDC identity providers natively JWT login flows, enabling stateless,
-    compact tokens suitable for new micro-services, CLI, SDK, and
-    workload-to-workload scenarios
+- Native WebAuthn (passkeys) support for passwordless, phishing-resistant MFA.
+- A reworked federation service, enabling modern identity brokering and advanced
+  federation semantics.
+- OIDC Direct, enabling IAM to act as an OpenID Connect (OIDC) provider or to
+  integrate natively with external OIDC identity providers.
+- JWT login flows, enabling stateless, compact tokens suitable for new
+  microservices, CLIs, SDKs and workload-to-workload scenarios.
+- Workload authorization, designed for service-to-service authorization in
+  cloud-native contexts (not just human users).
+- Restricted tokens and service accounts, which allow fine-grained,
+  limited-scope credentials for automation, agents and services, with explicit
+  constraints and expiry.
+- Full OAuth2 OpenID Provider (OP) functionality.
 
-  - Workload Authorization, designed for service-to-service authorization in
-    cloud native contexts (not just human users)
-
-  - Restricted Tokens and Service Accounts, which allow fine-grained,
-    limited‐scope credentials for automation, agents, and service accounts,
-    with explicit constraints and expiry
-
-By routing only the new flows through the Rust component we preserve the
-stability and ecosystem compatibility of Keystone, while enabling a
-forward-looking identity architecture. Over time, additional identity flows
-may be migrated or refactored into the Rust component as needed, but our
-current objective is to retain the existing Keystone Python implementation as
-the trusted, mature baseline and incrementally build the “Keystone-NG” Rust
-service as the complement.
-
-We believe this approach allows the best of both worlds: the trusted maturity
-of Keystone's Python code-base, combined with the modern, high-safety,
-high-performance capabilities of Rust where they matter most.
+IAM combines the maturity of the Keystone APIs with the safety and performance
+of Rust.
 
 ## Documentation
 
-The [published documentation](https://openstack-experimental.github.io/keystone/)
-uses an audience-first structure inspired by Python Keystone:
+The
+[published documentation](https://cloud-plane.github.io/iam/)
+uses an audience-first structure:
 
 - [User documentation](doc/src/user/index.md) covers APIs, authentication, and
   the client side of each user-visible feature.
@@ -90,8 +82,8 @@ uses an audience-first structure inspired by Python Keystone:
 - [Contributor documentation](doc/src/contributor/index.md) covers architecture,
   extension points, testing, security invariants, and contribution requirements.
 - Separate [installation](doc/src/install/index.md) and
-  [configuration reference](doc/src/configuration/index.md) sections keep
-  shared material out of audience guides. The
+  [configuration reference](doc/src/configuration/index.md) sections keep shared
+  material out of audience guides. The
   [CLI documentation](doc/src/admin/cli/index.md) is grouped with operator
   guidance because both commands are administrative tools.
 
@@ -99,52 +91,46 @@ Architecture Decision Records and detailed feature references remain in the
 documentation book and are linked from the relevant guide instead of being
 duplicated.
 
-## Config
+## Configuration and database
 
 The configuration parser accepts the OpenStack INI format and supports file,
-site-variable file, and environment overrides. Keystone-NG also defines
-sections for its Rust-specific services. See the
-[configuration reference](doc/src/configuration/index.md) for precedence and
-the current configuration sections.
+site-variable file, and environment overrides. IAM also defines sections for its
+Rust-specific services. See the
+[configuration reference](doc/src/configuration/index.md) for precedence and the
+current configuration sections.
 
-## API + OpenAPI
-
-The OpenAPI document is built directly from the server routers. The generated
-specification is published at
-[openapi.yaml](https://openstack-experimental.github.io/keystone/openapi.yaml)
-and can be explored through the
-[Swagger UI](https://openstack-experimental.github.io/keystone/swagger-ui.html).
-
-## Database
-
-Sea-ORM is used to access the database. SQLite, PostgreSQL, and MySQL drivers
-are available. In a parallel Python/Rust deployment, each implementation
-manages its own schema additions; see
+IAM uses Sea-ORM for database access, with SQLite, PostgreSQL, and MySQL drivers
+available. In a parallel Python/Rust deployment, each implementation manages its
+own schema additions; see
 [Database migrations](doc/src/install/index.md#database-migrations).
 
 ## Load test
 
-A very brief load test is implemented in `loadtest` using `Goose` framework.
-It generates test load by first incrementally increasing requests up to the
-configured amount (defaults to count of the cpu cores), keeps the load for the
-configured amount of time while measuring the response latency and the
-throughput (RPS).
+IAM ships with an extensive load test suite in `tests/loadtest`, built on the
+[Goose](https://book.goose.rs/) framework. It exercises the exposed API with
+realistic request mixes, ramping the load up to the configured level, holding it
+for the configured time, and reporting response latency and throughput (RPS).
 
-For every PR load test suite is being executed. It is absolutely clear that the
-Rust implementation currently misses certain things original Keystone doe, but
-the gap is being closed over the time. However test shows difference of factor
-**10-100** which is already remarkable. New tests will appear to have a more
-thorough coverage of the exposed API.
+In these tests IAM outperforms the Python Keystone implementation by a factor of
+**10-100** and scales better under concurrent load.
 
-## Trying
+## Trying IAM
 
-Trying Keystone (assuming you have the Rust build environment or you are in the
-possession of the binary is as easy as `keystone -c etc/keystone.conf -vv`
+Trying IAM is as easy as `keystone -c etc/keystone.conf -vv`, provided you have
+the Rust build environment or a prebuilt binary.
 
-Alternatively you can try it with `docker compose -f docker-compose.yaml up`.
+Alternatively, you can try it with `docker compose -f docker-compose.yaml up`.
 
 ## Talks
 
-Detailed introduction of the project was given as
-* [ALASCA tech talk](https://www.youtube.com/watch?v=0Hx4Q22ZNFU)
-* [OpenStack Summit 2025](https://www.youtube.com/watch?v=XOHYqE2HRw4&list=PLKqaoAnDyfgr91wN_12nwY321504Ctw1s&index=30)
+The project is introduced in detail in these talks:
+
+- [ALASCA tech talk](https://www.youtube.com/watch?v=0Hx4Q22ZNFU)
+- [OpenStack Summit 2025](https://www.youtube.com/watch?v=XOHYqE2HRw4&list=PLKqaoAnDyfgr91wN_12nwY321504Ctw1s&index=30)
+
+---
+
+OpenStack and Keystone are trademarks of The Linux Foundation. See the OpenInfra
+[trademark policy](https://www.openinfra.org/legal/trademark-policy/). More on
+Keystone at <https://www.openstack.org/> and
+<https://docs.openstack.org/keystone/latest/>.

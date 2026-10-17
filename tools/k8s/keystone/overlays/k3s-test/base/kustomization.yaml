@@ -21,10 +21,10 @@ images:
   # Match the post-production image name so the override applies after the
   # production overlay has already renamed `keystone-rs`. The local Skaffold
   # profile pushes these images to the development registry.
-  - name: ghcr.io/openstack-experimental/keystone
+  - name: ghcr.io/cloud-plane/iam
     newName: localhost:5000/keystone-rs
     newTag: raft-test
-  - name: ghcr.io/openstack-experimental/keystone-opa
+  - name: ghcr.io/cloud-plane/iam-opa
     newName: localhost:5000/keystone-opa
     newTag: raft-test
 

@@ -1,5 +1,5 @@
 ---
-# Build container image with the OpenStack Keystone-RS
+# Build container image with the CloudPlane IAM
 name: Build container image
 
 # Configures this workflow to run every time a change is pushed to the branch called `release`.
