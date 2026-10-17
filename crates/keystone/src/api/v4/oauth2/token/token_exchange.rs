@@ -85,7 +85,7 @@ pub(super) async fn handle_token_exchange_grant(
         ));
     }
 
-    let (vsc, delegation_context) =
+    let (vsc, delegation_context, credential_expires_at) =
         openstack_keystone_core::oauth2_client::validate_subject_token(state, &subject_token)
             .await
             .map_err(|e| {
@@ -107,6 +107,7 @@ pub(super) async fn handle_token_exchange_grant(
         &client,
         &vsc,
         delegation_context,
+        credential_expires_at,
         &issuer,
         jti,
         now,
@@ -114,14 +115,31 @@ pub(super) async fn handle_token_exchange_grant(
         audience,
     )
     .map_err(|e| {
-        tracing::warn!(error = %e, "oauth2 token exchange claim construction failed");
+        use openstack_keystone_core::oauth2_client::TokenExchangeError;
+
         match e {
-            openstack_keystone_core::oauth2_client::TokenExchangeError::CrossDomainSubjectToken => {
+            TokenExchangeError::CrossDomainSubjectToken => {
+                tracing::warn!(error = %e, "subject_token's scope belongs to a different domain than this token endpoint");
                 Oauth2TokenError::invalid_grant(
                     "subject_token's scope belongs to a different domain than this token endpoint",
                 )
             }
-            _ => Oauth2TokenError::internal("token issuance failed"),
+            TokenExchangeError::MissingSubjectTokenExpiry => {
+                tracing::warn!(error = %e, "subject_token is missing an expiry claim");
+                Oauth2TokenError::invalid_grant(
+                    "subject_token is missing an expiry claim, cannot be exchanged",
+                )
+            }
+            TokenExchangeError::CredentialChainExpired => {
+                tracing::warn!(error = %e, "subject_token or application credential chain is already expireed or expires too soon");
+                Oauth2TokenError::invalid_grant(
+                    "subject_token or application credential expiry does not permit token exchange",
+                )
+            }
+            _ => {
+                tracing::error!(error = %e, "unexpected error occurred during token exchange");
+                Oauth2TokenError::internal("token issuance failed")
+            }
         }
     })?;
     let access_token = sign_jwt(state, domain_id, &claims).await?;
@@ -139,7 +157,7 @@ pub(super) async fn handle_token_exchange_grant(
     let response = TokenResponse {
         access_token,
         token_type: "Bearer",
-        expires_in: access_lifetime,
+        expires_in: claims.exp - now,
         scope: "openstack:api".to_string(),
         id_token: None,
         refresh_token: None,
@@ -200,6 +218,7 @@ async fn requested_audience(
 mod tests {
 
     use axum::http::StatusCode;
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
     use tower::ServiceExt;
     use tower_http::trace::TraceLayer;
@@ -226,6 +245,43 @@ mod tests {
             grant_types: vec![provider_types::GrantType::TokenExchange],
             ..confidential_client().await
         }
+    }
+
+    async fn exchange_with_app_cred_expiries(
+        subject_expires_at: chrono::DateTime<chrono::Utc>,
+        app_cred_expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> axum::response::Response {
+        let client = token_exchange_client().await;
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_get_by_client_id()
+            .returning(move |_, _| Ok(Some(client.clone())));
+
+        let mut token_mock = crate::token::MockTokenProvider::default();
+        token_mock
+            .expect_validate_to_context()
+            .returning(move |_, _, _, _| {
+                Ok(app_cred_delegated_vsc(
+                    subject_expires_at,
+                    app_cred_expires_at,
+                ))
+            });
+
+        let provider = Provider::mocked_builder()
+            .mock_oauth2_client(client_mock)
+            .mock_token(token_mock)
+            .mock_oauth2_key(ok_key_mock());
+        let state = get_mocked_state(provider, true, None).await;
+        let mut api = openapi_router()
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        api.as_service()
+            .oneshot(request(
+                "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&client_id=client-1&client_secret=s3cr3t&subject_token=some-existing-token",
+            ))
+            .await
+            .unwrap()
     }
 
     fn trust_delegated_vsc() -> openstack_keystone_core::auth::ValidatedSecurityContext {
@@ -295,7 +351,10 @@ mod tests {
         openstack_keystone_core::auth::ValidatedSecurityContext::test_new(sc)
     }
 
-    fn app_cred_delegated_vsc() -> openstack_keystone_core::auth::ValidatedSecurityContext {
+    fn app_cred_delegated_vsc(
+        subject_expires_at: chrono::DateTime<chrono::Utc>,
+        app_cred_expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> openstack_keystone_core::auth::ValidatedSecurityContext {
         use openstack_keystone_core_types::identity::UserResponseBuilder;
         use openstack_keystone_core_types::resource::{Domain, Project};
 
@@ -335,7 +394,7 @@ mod tests {
                     openstack_keystone_core_types::application_credential::ApplicationCredential {
                         access_rules: None,
                         description: None,
-                        expires_at: None,
+                        expires_at: Some(app_cred_expires_at),
                         id: "app-cred-1".to_string(),
                         name: "app-cred".to_string(),
                         project_id: "project-1".to_string(),
@@ -361,12 +420,16 @@ mod tests {
                 ),
             })
             .authorization(authz)
+            .expires_at(subject_expires_at)
             .build();
         openstack_keystone_core::auth::ValidatedSecurityContext::test_new(sc)
     }
 
     #[tokio::test]
     async fn test_token_exchange_success_issues_signed_jwt_with_app_cred_delegation() {
+        let now = chrono::Utc::now();
+        let app_cred_expires_at = now + chrono::Duration::seconds(120);
+        let subject_expires_at = now + chrono::Duration::seconds(300);
         let client = token_exchange_client().await;
         let mut client_mock = MockOauth2ClientProvider::default();
         client_mock
@@ -376,7 +439,12 @@ mod tests {
         let mut token_mock = crate::token::MockTokenProvider::default();
         token_mock
             .expect_validate_to_context()
-            .returning(|_, _, _, _| Ok(app_cred_delegated_vsc()));
+            .returning(move |_, _, _, _| {
+                Ok(app_cred_delegated_vsc(
+                    subject_expires_at,
+                    app_cred_expires_at,
+                ))
+            });
 
         let provider = Provider::mocked_builder()
             .mock_oauth2_client(client_mock)
@@ -398,7 +466,14 @@ mod tests {
         let body = json_body(response).await;
         assert_eq!(body["token_type"], "Bearer");
         let access_token = body["access_token"].as_str().unwrap();
-        assert_eq!(access_token.split('.').count(), 3);
+        let token_parts: Vec<_> = access_token.split('.').collect();
+        assert_eq!(token_parts.len(), 3);
+        let claims_json = URL_SAFE_NO_PAD.decode(token_parts[1]).unwrap();
+        let claims: serde_json::Value = serde_json::from_slice(&claims_json).unwrap();
+        let exp = claims["exp"].as_i64().unwrap();
+        let iat = claims["iat"].as_i64().unwrap();
+        assert_eq!(exp, app_cred_expires_at.timestamp());
+        assert_eq!(body["expires_in"].as_i64().unwrap(), exp - iat);
     }
 
     fn jwt_payload(access_token: &str) -> serde_json::Value {
@@ -421,9 +496,10 @@ mod tests {
             .expect_get_by_client_id()
             .returning(move |_, _| Ok(Some(client.clone())));
         let mut token_mock = crate::token::MockTokenProvider::default();
+        let expires_at = chrono::Utc::now() + chrono::Duration::hours(1);
         token_mock
             .expect_validate_to_context()
-            .returning(|_, _, _, _| Ok(app_cred_delegated_vsc()));
+            .returning(move |_, _, _, _| Ok(app_cred_delegated_vsc(expires_at, expires_at)));
         let mut catalog_mock = crate::catalog::MockCatalogProvider::default();
         catalog_mock.expect_list_services().returning(|_, _| {
             Ok(["compute", "network"]
@@ -634,5 +710,47 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_eq!(json_body(response).await["error"], "invalid_grant");
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_rejects_already_expired_app_cred() {
+        let now = chrono::Utc::now();
+        let response = exchange_with_app_cred_expiries(
+            now + chrono::Duration::seconds(300),
+            now - chrono::Duration::seconds(60),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = json_body(response).await;
+        assert_eq!(body["error"], "invalid_grant");
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_rejects_app_cred_expiring_now() {
+        // The handler takes its own `now` after this one, so an expiry equal
+        // to this `now` always leaves a lifetime <= 0.
+        let now = chrono::Utc::now();
+        let response =
+            exchange_with_app_cred_expiries(now + chrono::Duration::seconds(300), now).await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = json_body(response).await;
+        assert_eq!(body["error"], "invalid_grant");
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_rejects_expired_subject_token() {
+        // Still-valid app credential; the subject token expiry is the limit.
+        let now = chrono::Utc::now();
+        let response = exchange_with_app_cred_expiries(
+            now - chrono::Duration::seconds(60),
+            now + chrono::Duration::seconds(300),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = json_body(response).await;
+        assert_eq!(body["error"], "invalid_grant");
     }
 }

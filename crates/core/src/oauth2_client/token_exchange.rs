@@ -21,6 +21,7 @@
 //! reflects the presented credential's own delegation, per security.md I2
 //! (the delegation boundary is the credential's own immutable project, not
 //! the request's current scope).
+use openstack_keystone_api_types::webauthn::credential_protection_policy;
 use openstack_keystone_core_types::auth::{AuthenticationContext, IdentityInfo, ScopeInfo};
 use openstack_keystone_core_types::oauth2_client::{
     Audience, DelegationContext, OAuth2ClientResource, OpenStackAccessTokenClaims,
@@ -55,6 +56,15 @@ pub enum TokenExchangeError {
     /// The validated context carries no resolved authorization/scope.
     #[error("subject_token's context has no resolved authorization scope")]
     NoAuthorization,
+
+    /// The validated subject token has no expiry to bound the exchanged token.
+    #[error("subject_token has no expiration")]
+    MissingSubjectTokenExpiry,
+
+    /// The credential-chain expiry is not later than the new token's issue time.
+    /// Subject token/ App Cred has either already expired or expires at/before the new token's issue time
+    #[error("credential-chain expiry does not leave a positive token lifetime")]
+    CredentialChainExpired,
 
     /// The delegation object (app-cred) has no bound project. Exchange requires
     /// a concrete I2 boundary to enforce; there is nothing to bind the new
@@ -93,7 +103,7 @@ pub enum TokenExchangeError {
 /// [`ServiceState`]/[`TokenApi`] round trip.
 fn derive_delegation_context(
     ctx: &AuthenticationContext,
-) -> Result<DelegationContext, TokenExchangeError> {
+) -> Result<(DelegationContext, Option<chrono::DateTime<chrono::Utc>>), TokenExchangeError> {
     match ctx {
         AuthenticationContext::Trust { .. } => {
             Err(TokenExchangeError::UnsupportedDelegation("trust"))
@@ -101,9 +111,12 @@ fn derive_delegation_context(
         AuthenticationContext::ApplicationCredential {
             application_credential,
             ..
-        } => Ok(DelegationContext::AppCred {
-            project_id: application_credential.project_id.clone(),
-        }),
+        } => Ok((
+            DelegationContext::AppCred {
+                project_id: application_credential.project_id.clone(),
+            },
+            application_credential.expires_at,
+        )),
         AuthenticationContext::Ec2Credential => {
             Err(TokenExchangeError::UnsupportedDelegation("ec2"))
         }
@@ -119,7 +132,14 @@ fn derive_delegation_context(
 pub async fn validate_subject_token(
     state: &ServiceState,
     subject_token: &str,
-) -> Result<(ValidatedSecurityContext, DelegationContext), TokenExchangeError> {
+) -> Result<
+    (
+        ValidatedSecurityContext,
+        DelegationContext,
+        Option<chrono::DateTime<chrono::Utc>>,
+    ),
+    TokenExchangeError,
+> {
     let exec = ExecutionContext::internal(state);
     let vsc = state
         .provider
@@ -127,9 +147,10 @@ pub async fn validate_subject_token(
         .validate_to_context(&exec, subject_token, Some(false), None)
         .await?;
 
-    let delegation_context = derive_delegation_context(vsc.inner().authentication_context())?;
+    let (delegation_context, credenial_expiration) =
+        derive_delegation_context(vsc.inner().authentication_context())?;
 
-    Ok((vsc, delegation_context))
+    Ok((vsc, delegation_context, credenial_expiration))
 }
 
 /// Build the [`OpenStackAccessTokenClaims`] for a Token Exchange grant, from
@@ -144,6 +165,7 @@ pub fn build_token_exchange_claims(
     client: &OAuth2ClientResource,
     vsc: &ValidatedSecurityContext,
     delegation_context: DelegationContext,
+    credential_expiration: Option<chrono::DateTime<chrono::Utc>>,
     issuer: &str,
     jti: String,
     iat: i64,
@@ -176,6 +198,20 @@ pub fn build_token_exchange_claims(
     };
     if scope_domain_id != Some(client.domain_id.as_str()) {
         return Err(TokenExchangeError::CrossDomainSubjectToken);
+    }
+
+    let subject_expires_at = vsc
+        .inner()
+        .expires_at()
+        .ok_or(TokenExchangeError::MissingSubjectTokenExpiry)?
+        .timestamp();
+
+    let mut exp = exp.min(subject_expires_at);
+    if let Some(credential_expires_at) = credential_expiration {
+        exp = exp.min(credential_expires_at.timestamp());
+    }
+    if exp <= iat {
+        return Err(TokenExchangeError::CredentialChainExpired);
     }
 
     let role_refs = authz.effective_roles().unwrap_or(&[]).to_vec();
@@ -262,13 +298,16 @@ mod tests {
         }
     }
 
-    fn app_cred_context(project_id: &str) -> AuthenticationContext {
+    fn app_cred_context(
+        project_id: &str,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> AuthenticationContext {
         AuthenticationContext::ApplicationCredential {
             application_credential:
                 openstack_keystone_core_types::application_credential::ApplicationCredential {
                     access_rules: None,
                     description: None,
-                    expires_at: None,
+                    expires_at,
                     id: "appcred-1".to_string(),
                     name: "appcred".to_string(),
                     project_id: project_id.to_string(),
@@ -282,14 +321,16 @@ mod tests {
 
     #[test]
     fn test_derive_delegation_context_app_cred() {
-        let ctx = app_cred_context("project-2");
-        let result = derive_delegation_context(&ctx).unwrap();
+        let expires_at = chrono::DateTime::from_timestamp(2100, 0); // already an Option
+        let ctx = app_cred_context("project-2", expires_at);
+        let (delegation, expiry) = derive_delegation_context(&ctx).unwrap();
         assert_eq!(
-            result,
+            delegation,
             DelegationContext::AppCred {
                 project_id: "project-2".to_string()
             }
         );
+        assert_eq!(expiry, expires_at);
     }
 
     #[test]
@@ -347,7 +388,10 @@ mod tests {
         }
     }
 
-    fn user_vsc(authentication_context: AuthenticationContext) -> ValidatedSecurityContext {
+    fn user_vsc(
+        authentication_context: AuthenticationContext,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> ValidatedSecurityContext {
         let user = UserResponseBuilder::default()
             .id("user-1")
             .domain_id("domain-1")
@@ -374,7 +418,7 @@ mod tests {
             })
             .build()
             .unwrap();
-        let sc = SecurityContext::test_build()
+        let mut sc_builder = SecurityContext::test_build()
             .authentication_context(authentication_context)
             .principal(PrincipalInfo {
                 identity: IdentityInfo::User(
@@ -391,20 +435,26 @@ mod tests {
                         .unwrap(),
                 ),
             })
-            .authorization(authz)
-            .build();
+            .authorization(authz);
+        if let Some(expires_at) = expires_at {
+            sc_builder = sc_builder.expires_at(expires_at);
+        }
+        let sc = sc_builder.build();
         ValidatedSecurityContext::test_new(sc)
     }
 
     #[test]
     fn test_build_token_exchange_claims_for_app_cred() {
-        let vsc = user_vsc(app_cred_context("project-1"));
+        let subject_expires_at = chrono::DateTime::from_timestamp(2000, 0).unwrap();
+        let app_cred_expires_at = chrono::DateTime::from_timestamp(2100, 0).unwrap();
+        let ctx = app_cred_context("project-1", Some(app_cred_expires_at));
+        let (delegation, credential_expiration) = derive_delegation_context(&ctx).unwrap();
+        let vsc = user_vsc(ctx, Some(subject_expires_at));
         let claims = build_token_exchange_claims(
             &sample_client(),
             &vsc,
-            DelegationContext::AppCred {
-                project_id: "project-1".to_string(),
-            },
+            delegation,
+            credential_expiration,
             "https://ks.example/v4/oauth2/domain-1",
             "jti-1".to_string(),
             1000,
@@ -422,6 +472,130 @@ mod tests {
                 project_id: "project-1".to_string()
             }
         );
+    }
+
+    fn build_claims_with_expiries(
+        subject_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+        app_cred_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+        requested_exp: i64,
+    ) -> Result<OpenStackAccessTokenClaims, TokenExchangeError> {
+        let ctx = app_cred_context("project-1", app_cred_expires_at);
+        let (delegation, credential_expiration) = derive_delegation_context(&ctx).unwrap();
+        let vsc = user_vsc(ctx, subject_expires_at);
+        build_token_exchange_claims(
+            &sample_client(),
+            &vsc,
+            delegation,
+            credential_expiration,
+            "https://ks.example/v4/oauth2/domain-1",
+            "jti-1".to_string(),
+            1000,
+            requested_exp,
+            Audience::control_plane(),
+        )
+    }
+
+    #[test]
+    fn test_build_token_exchange_claims_caps_at_subject_token_expiry() {
+        let claims = build_claims_with_expiries(
+            Some(chrono::DateTime::from_timestamp(1500, 0).unwrap()),
+            Some(chrono::DateTime::from_timestamp(1800, 0).unwrap()),
+            1900,
+        )
+        .unwrap();
+
+        assert_eq!(claims.exp, 1500);
+    }
+
+    #[test]
+    fn test_build_token_exchange_claims_caps_at_app_credential_expiry() {
+        let claims = build_claims_with_expiries(
+            Some(chrono::DateTime::from_timestamp(1800, 0).unwrap()),
+            Some(chrono::DateTime::from_timestamp(1500, 0).unwrap()),
+            1900,
+        )
+        .unwrap();
+
+        assert_eq!(claims.exp, 1500);
+    }
+
+    #[test]
+    fn test_build_token_exchange_claims_uses_default_when_credentials_live_longer() {
+        let claims = build_claims_with_expiries(
+            Some(chrono::DateTime::from_timestamp(2000, 0).unwrap()),
+            Some(chrono::DateTime::from_timestamp(2100, 0).unwrap()),
+            1900,
+        )
+        .unwrap();
+
+        assert_eq!(claims.exp, 1900);
+    }
+
+    #[test]
+    fn test_build_token_exchange_claims_rejects_missing_subject_expiry() {
+        let app_cred_expiry = Some(chrono::DateTime::from_timestamp(2000, 0).unwrap());
+        assert!(matches!(
+            build_claims_with_expiries(None, app_cred_expiry, 1900),
+            Err(TokenExchangeError::MissingSubjectTokenExpiry)
+        ));
+    }
+
+    #[test]
+    fn test_build_token_exchange_claims_rejects_expiry_equal_to_iat() {
+        let at = |ts| Some(chrono::DateTime::from_timestamp(ts, 0).unwrap());
+
+        // subject_token expiry == iat
+        assert!(matches!(
+            build_claims_with_expiries(at(1000), at(2000), 1900),
+            Err(TokenExchangeError::CredentialChainExpired)
+        ));
+        // app-cred expiry == iat
+        assert!(matches!(
+            build_claims_with_expiries(at(2000), at(1000), 1900),
+            Err(TokenExchangeError::CredentialChainExpired)
+        ));
+        // configured lifetime ceiling == iat
+        assert!(matches!(
+            build_claims_with_expiries(at(2000), at(2000), 1000),
+            Err(TokenExchangeError::CredentialChainExpired)
+        ));
+
+        // One second of remaining lifetime is the smallest valid token.
+        let claims = build_claims_with_expiries(at(1001), at(2000), 1900).unwrap();
+        assert_eq!(claims.exp, 1001);
+    }
+
+    #[test]
+    fn test_build_token_exchange_claims_skips_app_credential_term_without_expiry() {
+        // Non-expiring app cred, configured lifetime is the minimum.
+        let claims = build_claims_with_expiries(
+            Some(chrono::DateTime::from_timestamp(2000, 0).unwrap()),
+            None,
+            1900,
+        )
+        .unwrap();
+        assert_eq!(claims.exp, 1900);
+
+        // Non-expiring app cred, subject_token expiry is still the cap.
+        let claims = build_claims_with_expiries(
+            Some(chrono::DateTime::from_timestamp(1500, 0).unwrap()),
+            None,
+            1900,
+        )
+        .unwrap();
+        assert_eq!(claims.exp, 1500);
+    }
+
+    #[test]
+    fn test_build_token_exchange_claims_rejects_non_positive_lifetime() {
+        let err = build_claims_with_expiries(
+            Some(chrono::DateTime::from_timestamp(999, 0).unwrap()),
+            Some(chrono::DateTime::from_timestamp(2000, 0).unwrap()),
+            1900,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, TokenExchangeError::CredentialChainExpired));
     }
 
     #[test]
@@ -482,6 +656,7 @@ mod tests {
             DelegationContext::Trust {
                 project_id: "project-2".to_string(),
             },
+            None,
             "https://ks.example/v4/oauth2/domain-1",
             "jti-1".to_string(),
             1000,
@@ -495,7 +670,7 @@ mod tests {
     #[test]
     fn test_build_token_exchange_claims_rejects_non_user_principal() {
         let sc = SecurityContext::test_build()
-            .authentication_context(app_cred_context("project-1"))
+            .authentication_context(app_cred_context("project-1", None))
             .principal(PrincipalInfo {
                 identity: IdentityInfo::Principal(
                     PrincipalIdentityInfoBuilder::default()
@@ -521,6 +696,7 @@ mod tests {
             DelegationContext::AppCred {
                 project_id: "project-1".to_string(),
             },
+            None,
             "https://ks.example/v4/oauth2/domain-1",
             "jti-1".to_string(),
             1000,
