@@ -4054,7 +4054,8 @@ mod tests {
                     .unwrap()
             }
         };
-        // Signed in but not yet approved, or denied: no tokens, no relying party.
+        // Signed in but not yet approved, or denied: no tokens, no relying
+        // party.
         assert!(rps("user-1").await.is_empty());
         backend
             .mark_device_code_grant_decision_impl(&storage, &device_code, DeviceGrantStatus::Denied)

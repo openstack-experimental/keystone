@@ -352,6 +352,11 @@ impl IntrospectContext<'_> {
                 out.insert("iss".into(), json!(c.iss));
                 out.insert("jti".into(), json!(c.jti));
                 out.insert("token_use".into(), json!(c.token_use));
+                // ADR 0036 §5.2: the acting service of a service grant token
+                // (RFC 8693 §4.1 `act`).
+                if let Some(act) = &c.act {
+                    out.insert("act".into(), json!(act));
+                }
                 match (
                     serde_json::to_value(&c.openstack_context),
                     serde_json::to_value(&c.delegation_context),

@@ -429,8 +429,9 @@ impl RateLimitState {
     /// guesses can slip a few extra attempts through before the first
     /// failure lands; the excess is bounded by request concurrency.
     /// The tracked-key map is capped: at the cap a new key displaces an
-    /// entry with no earned penalty history; only if every entry is under an active penalty and
-    /// the eviction scan is rate limited does it go untracked (fail-open).
+    /// entry with no earned penalty history; only if every entry is under an
+    /// active penalty and the eviction scan is rate limited does it go
+    /// untracked (fail-open).
     #[cfg(any(feature = "api", test))]
     pub fn record_device_code_failure(
         &self,

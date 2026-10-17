@@ -39,6 +39,59 @@ pub enum GrantType {
     TokenExchange,
 }
 
+/// Upper bound on the length of a single SPIFFE ID pattern or role id.
+#[cfg(feature = "validate")]
+const MAX_ID_LENGTH: usize = 512;
+
+/// Reject list entries longer than [`MAX_ID_LENGTH`].
+#[cfg(feature = "validate")]
+fn validate_id_lengths(ids: &[String]) -> Result<(), validator::ValidationError> {
+    if ids.iter().any(|id| id.len() > MAX_ID_LENGTH) {
+        return Err(validator::ValidationError::new("id_too_long"));
+    }
+    Ok(())
+}
+
+/// Delegation capabilities of a delegatable service client (ADR 0036 §3).
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "validate", derive(validator::Validate))]
+pub struct DelegationPolicy {
+    /// Users of other domains, or users on projects of other domains, may
+    /// delegate to this client.
+    #[serde(default)]
+    pub cross_domain: bool,
+
+    /// Maximum service grant lifetime in seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_grant_lifetime: Option<u64>,
+
+    /// Maximum live grants per project for this client.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_grants_per_project: Option<u32>,
+
+    /// Maximum operation token lifetime in seconds; required with
+    /// `on_behalf_of`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_operation_lifetime: Option<u64>,
+
+    /// Role ids a delegation to this client may carry; empty = no ceiling.
+    #[serde(default)]
+    #[cfg_attr(
+        feature = "validate",
+        validate(length(max = 64), custom(function = "validate_id_lengths"))
+    )]
+    pub max_role_ids: Vec<String>,
+
+    /// The client may exchange user tokens for operation tokens.
+    #[serde(default)]
+    pub on_behalf_of: bool,
+
+    /// Users may create service grants naming this client.
+    #[serde(default)]
+    pub service_grants: bool,
+}
+
 /// A registered OAuth2/OIDC relying party. Never carries `client_secret` or
 /// its hash -- the plaintext secret is only ever returned once, by `create`
 /// or `rotate-secret`.
@@ -134,6 +187,15 @@ pub struct OAuth2Client {
 
     /// Whether front-channel logout requests must carry `iss` and `sid`.
     pub frontchannel_logout_session_required: bool,
+
+    /// SPIFFE ID patterns the client authenticates with
+    /// (`tls_client_auth`, ADR 0036 §3.1).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spiffe_ids: Vec<String>,
+
+    /// Delegation capabilities (ADR 0036 §3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegation: Option<DelegationPolicy>,
 }
 
 /// OAuth2 client creation payload.
@@ -234,6 +296,21 @@ pub struct OAuth2ClientCreate {
     /// `frontchannel_logout_uri`.
     #[serde(default)]
     pub frontchannel_logout_session_required: bool,
+
+    /// SPIFFE ID patterns for `tls_client_auth` (ADR 0036 §3.1); only the
+    /// last path segment may be `*`. Admin only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(
+        feature = "validate",
+        validate(length(max = 32), custom(function = "validate_id_lengths"))
+    )]
+    pub spiffe_ids: Vec<String>,
+
+    /// Register the client as a delegatable service (ADR 0036 §3). Needs
+    /// `tls_client_auth` and `spiffe_ids`. Admin only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub delegation: Option<DelegationPolicy>,
 }
 
 /// OAuth2 client creation request wrapper.
@@ -344,6 +421,24 @@ pub struct OAuth2ClientUpdate {
     /// New `frontchannel_logout_session_required` value.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frontchannel_logout_session_required: Option<bool>,
+
+    /// New SPIFFE ID patterns. Admin only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "validate",
+        validate(length(max = 32), custom(function = "validate_id_lengths"))
+    )]
+    pub spiffe_ids: Option<Vec<String>>,
+
+    /// New delegation policy, replacing the current one. Admin only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "validate", validate(nested))]
+    pub delegation: Option<DelegationPolicy>,
+
+    /// Remove the delegation policy; exclusive with `delegation`. Admin
+    /// only.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub remove_delegation: bool,
 }
 
 /// OAuth2 client update request wrapper.

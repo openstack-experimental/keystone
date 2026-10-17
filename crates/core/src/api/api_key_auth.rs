@@ -123,6 +123,7 @@ fn api_key_failure_reason(error: &KeystoneApiError) -> &'static str {
         KeystoneApiError::UnprocessableEntity(_) => "UnprocessableEntity",
         KeystoneApiError::NotImplemented(_) => "NotImplemented",
         KeystoneApiError::TooManyRequests { .. } => "TooManyRequests",
+        KeystoneApiError::QuotaExceeded(_) => "QuotaExceeded",
         KeystoneApiError::ServiceUnavailable(_) => "ServiceUnavailable",
     }
 }

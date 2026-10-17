@@ -11,7 +11,8 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-// Crypto inventory: STO-1, STO-2, STO-3, STO-4, STO-5; see doc/src/contributor/crypto-inventory.md
+// Crypto inventory: STO-1, STO-2, STO-3, STO-4, STO-5; see
+// doc/src/contributor/crypto-inventory.md
 //! # Cryptographic backend selection
 //!
 //! Every AES-256-GCM, HKDF-SHA256, HMAC-SHA256 and random-bytes operation of
@@ -19,20 +20,19 @@
 //! provider can be swapped without touching the call sites:
 //!
 //! * default (`ring` feature): the `ring` crate ([`ringlike`]);
-//! * `fips` feature: `aws-lc-rs` built against the FIPS 140-3 validated
-//!   AWS-LC module, through the same [`ringlike`] code. When both features are
-//!   enabled `fips` wins, because cargo features are additive and a
-//!   workspace-wide build must not silently fall back to non-validated
-//!   primitives.
+//! * `fips` feature: `aws-lc-rs` built against the FIPS 140-3 validated AWS-LC
+//!   module, through the same [`ringlike`] code. When both features are enabled
+//!   `fips` wins, because cargo features are additive and a workspace-wide
+//!   build must not silently fall back to non-validated primitives.
 //!
 //! ## Adding a backend
 //!
 //! A backend is a module exporting `gcm_seal`, `gcm_open`, `hkdf_expand`,
-//! `hkdf_extract_expand`, `hmac_sha256` and `fill_random` with the signatures of [`ringlike`]. To add
-//! one (for example the RustCrypto crates), add a cargo feature with optional
-//! dependencies, a module, and one arm to each `cfg` chain below; `fips`
-//! stays first so it keeps precedence. Both [`ringlike`] and the new module
-//! must pass `test_gcm_known_answer`.
+//! `hkdf_extract_expand`, `hmac_sha256` and `fill_random` with the signatures
+//! of [`ringlike`]. To add one (for example the RustCrypto crates), add a cargo
+//! feature with optional dependencies, a module, and one arm to each `cfg`
+//! chain below; `fips` stays first so it keeps precedence. Both [`ringlike`]
+//! and the new module must pass `test_gcm_known_answer`.
 //!
 //! Caveat: the validated module only treats AES-GCM encryption as an approved
 //! service when it generates the IV itself. [`gcm_seal_iv`] therefore lets the

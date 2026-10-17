@@ -11,7 +11,8 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-// Crypto inventory: AUD-1, AUD-2, AUD-3; see doc/src/contributor/crypto-inventory.md
+// Crypto inventory: AUD-1, AUD-2, AUD-3; see
+// doc/src/contributor/crypto-inventory.md
 //! Cryptographic primitive seam of the audit framework.
 //!
 //! Every HMAC-SHA256, HKDF-SHA256 and random-bytes operation of this crate
@@ -19,17 +20,17 @@
 //! touching the call sites:
 //!
 //! * default (`ring` feature): the `ring` crate;
-//! * `fips` feature: `aws-lc-rs` built against the FIPS 140-3 validated
-//!   AWS-LC module. It wins when both features are enabled, because cargo
-//!   features are additive and a workspace-wide build must not silently fall
-//!   back to non-validated primitives.
+//! * `fips` feature: `aws-lc-rs` built against the FIPS 140-3 validated AWS-LC
+//!   module. It wins when both features are enabled, because cargo features are
+//!   additive and a workspace-wide build must not silently fall back to
+//!   non-validated primitives.
 //!
 //! The TLS provider of the syslog sink is chosen by
 //! `openstack-keystone-tls-provider`, not by this crate's features.
 //!
-//! The `imp` module below mirrors `ringlike` in `openstack-keystone-storage-crypto`
-//! on purpose: that crate pulls in far more than the audit framework needs.
-//! Keep the two in step when changing either.
+//! The `imp` module below mirrors `ringlike` in
+//! `openstack-keystone-storage-crypto` on purpose: that crate pulls in far more
+//! than the audit framework needs. Keep the two in step when changing either.
 //!
 //! A deployment that claims FIPS operation calls [`assert_fips`] at start-up.
 

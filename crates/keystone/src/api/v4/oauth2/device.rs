@@ -476,7 +476,8 @@ pub(super) async fn device_login(
         {
             Ok(f) => f,
             Err(e) => {
-                // Fail closed: never skip a second factor because the lookup failed.
+                // Fail closed: never skip a second factor because the lookup
+                // failed.
                 tracing::warn!(error = %e, "oauth2 second-factor lookup failed");
                 return Ok(error_page(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -992,6 +993,8 @@ mod tests {
                     backchannel_logout_session_required: false,
                     frontchannel_logout_uri: None,
                     frontchannel_logout_session_required: false,
+                    spiffe_ids: vec![],
+                    delegation: None,
                     client_id: "client-1".into(),
                     provider_id: "provider-1".into(),
                     domain_id: "domain-1".into(),
@@ -1039,7 +1042,8 @@ mod tests {
         session_mock
             .expect_get_device_code_grant()
             .returning(|_, _| Ok(Some(grant(false, 0))));
-        // `mark_device_authenticated` has no expectation: calling it would panic.
+        // `mark_device_authenticated` has no expectation: calling it would
+        // panic.
         session_mock
             .expect_begin_device_mfa()
             .returning(|_, _, _, _| Ok(grant(true, 0)));

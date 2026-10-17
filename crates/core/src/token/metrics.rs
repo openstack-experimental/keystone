@@ -143,7 +143,9 @@ pub fn issue_method_label(ctx: &AuthenticationContext) -> Option<&'static str> {
         | AuthenticationContext::Admin
         | AuthenticationContext::Totp
         | AuthenticationContext::Mapping(_)
-        | AuthenticationContext::WasmPlugin { .. } => None,
+        | AuthenticationContext::WasmPlugin { .. }
+        | AuthenticationContext::ServiceGrant { .. }
+        | AuthenticationContext::ServiceClient { .. } => None,
     }
 }
 

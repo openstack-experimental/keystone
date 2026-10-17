@@ -129,6 +129,7 @@ fn build_target_from_event(event: &Event) -> Target {
         EventPayload::Oauth2Client { provider_id, .. } => {
             (provider_id, "data/security/identity/oauth2-client")
         }
+        EventPayload::ServiceGrant { id, .. } => (id, "data/security/identity/service-grant"),
         EventPayload::Oauth2SsoSession { sso_ref, .. } => {
             (sso_ref, "data/security/identity/oauth2-sso-session")
         }

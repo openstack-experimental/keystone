@@ -19,6 +19,10 @@ import data.identity.oauth2.client as client_common
 # (no interactive consent) client to widen where its tokens land, without
 # ever needing to touch the `pre_authorized` field the admin-only gate
 # actually watches.
+#
+# The same applies to delegatable service clients (ADR 0036 §3): changing
+# `spiffe_ids` or `delegation`, or editing a client that already has them,
+# requires `admin`/`is_admin`.
 
 default allow := false
 
@@ -35,6 +39,8 @@ allow if {
 	"manager" in input.credentials.roles
 	not input.target.oauth2_client.pre_authorized
 	not input.existing.oauth2_client.pre_authorized
+	not client_common.delegation_fields(input.target.oauth2_client)
+	not client_common.delegation_fields(input.existing.oauth2_client)
 }
 
 violation contains {"field": "domain_id", "msg": msg} if {
@@ -63,4 +69,18 @@ violation contains {"field": "pre_authorized", "msg": msg} if {
 	not "admin" in input.credentials.roles
 	not input.credentials.is_admin
 	msg := "editing an already pre_authorized OAuth2 client requires `admin` role."
+}
+
+violation contains {"field": "delegation", "msg": msg} if {
+	client_common.delegation_fields(input.target.oauth2_client)
+	not "admin" in input.credentials.roles
+	not input.credentials.is_admin
+	msg := "changing the delegation of an OAuth2 client requires `admin` role."
+}
+
+violation contains {"field": "delegation", "msg": msg} if {
+	client_common.delegation_fields(input.existing.oauth2_client)
+	not "admin" in input.credentials.roles
+	not input.credentials.is_admin
+	msg := "editing a delegatable service client requires `admin` role."
 }

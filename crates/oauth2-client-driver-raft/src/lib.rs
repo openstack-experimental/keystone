@@ -125,6 +125,8 @@ impl RaftOauth2ClientBackend {
             backchannel_logout_session_required: data.backchannel_logout_session_required,
             frontchannel_logout_uri: data.frontchannel_logout_uri,
             frontchannel_logout_session_required: data.frontchannel_logout_session_required,
+            spiffe_ids: data.spiffe_ids,
+            delegation: data.delegation,
         };
         let primary_key = self.get_resource_key_name(&obj.domain_id, &obj.provider_id);
         let index_key = self.get_client_id_idx_key_name(&obj.client_id);
@@ -259,6 +261,20 @@ impl RaftOauth2ClientBackend {
             .map(|x| x.data))
     }
 
+    async fn list_spiffe_clients_impl(
+        &self,
+        storage: &dyn StorageApi,
+    ) -> Result<Vec<OAuth2ClientResource>, StoreError> {
+        let mut res: Vec<OAuth2ClientResource> = Vec::new();
+        for (_, envelope) in storage.prefix(b"oauth2:client:v1:", None).await? {
+            let candidate = envelope.try_deserialize::<OAuth2ClientResource>()?.data;
+            if candidate.deleted_at.is_none() && !candidate.spiffe_ids.is_empty() {
+                res.push(candidate);
+            }
+        }
+        Ok(res)
+    }
+
     async fn list_impl(
         &self,
         storage: &dyn StorageApi,
@@ -302,6 +318,23 @@ impl RaftOauth2ClientBackend {
                 res.truncate(limit);
             }
         }
+        Ok(res)
+    }
+
+    async fn list_delegatable_impl(
+        &self,
+        storage: &dyn StorageApi,
+    ) -> Result<Vec<OAuth2ClientResource>, StoreError> {
+        // A full scan of the client keyspace (ADR 0036 §3). Client counts
+        // are small; an index can replace it if that changes.
+        let mut res: Vec<OAuth2ClientResource> = Vec::new();
+        for (_, envelope) in storage.prefix(b"oauth2:client:v1:", None).await? {
+            let candidate = envelope.try_deserialize::<OAuth2ClientResource>()?.data;
+            if candidate.service_grant_policy().is_some() {
+                res.push(candidate);
+            }
+        }
+        res.sort_by(|a, b| a.client_id.cmp(&b.client_id));
         Ok(res)
     }
 
@@ -468,6 +501,42 @@ impl Oauth2ClientBackend for RaftOauth2ClientBackend {
             .map_err(Oauth2ClientProviderError::raft)
     }
 
+    #[tracing::instrument(
+        name = "driver.raft.oauth2_client.list_spiffe_clients",
+        level = "debug",
+        skip_all
+    )]
+    async fn list_spiffe_clients(
+        &self,
+        state: &ServiceState,
+    ) -> Result<Vec<OAuth2ClientResource>, Oauth2ClientProviderError> {
+        let raft = state
+            .storage
+            .as_deref()
+            .ok_or(Oauth2ClientProviderError::RaftNotAvailable)?;
+        self.list_spiffe_clients_impl(raft)
+            .await
+            .map_err(Oauth2ClientProviderError::raft)
+    }
+
+    #[tracing::instrument(
+        name = "driver.raft.oauth2_client.list_delegatable",
+        level = "debug",
+        skip_all
+    )]
+    async fn list_delegatable(
+        &self,
+        state: &ServiceState,
+    ) -> Result<Vec<OAuth2ClientResource>, Oauth2ClientProviderError> {
+        let raft = state
+            .storage
+            .as_deref()
+            .ok_or(Oauth2ClientProviderError::RaftNotAvailable)?;
+        self.list_delegatable_impl(raft)
+            .await
+            .map_err(Oauth2ClientProviderError::raft)
+    }
+
     #[tracing::instrument(name = "driver.raft.oauth2_client.rotate_secret", level = "debug", skip_all, fields(domain_id = %domain_id, provider_id = %provider_id))]
     async fn rotate_secret<'a>(
         &self,
@@ -534,6 +603,8 @@ mod tests {
             backchannel_logout_session_required: false,
             frontchannel_logout_uri: None,
             frontchannel_logout_session_required: false,
+            spiffe_ids: vec![],
+            delegation: None,
             client_id: client_id.to_string(),
             provider_id: provider_id.to_string(),
             domain_id: domain_id.to_string(),
@@ -653,6 +724,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_list_delegatable_across_domains() {
+        let backend = RaftOauth2ClientBackend::default();
+        let storage = MockStorage::default();
+        let delegation = DelegationPolicy {
+            service_grants: true,
+            ..Default::default()
+        };
+
+        let mut heat = make_create("heat", "infra", "client-b");
+        heat.delegation = Some(delegation.clone());
+        backend.create_impl(&storage, heat).await.unwrap();
+        let mut local = make_create("local", "tenant", "client-a");
+        local.delegation = Some(delegation.clone());
+        backend.create_impl(&storage, local).await.unwrap();
+        // Not a grantee: no delegation, or delegation without grants.
+        backend
+            .create_impl(&storage, make_create("plain", "infra", "client-c"))
+            .await
+            .unwrap();
+        let mut obo = make_create("obo", "infra", "client-d");
+        obo.delegation = Some(DelegationPolicy {
+            on_behalf_of: true,
+            max_operation_lifetime: Some(60),
+            ..Default::default()
+        });
+        backend.create_impl(&storage, obo).await.unwrap();
+        // Deleted grantee.
+        let mut gone = make_create("gone", "infra", "client-e");
+        gone.delegation = Some(delegation);
+        backend.create_impl(&storage, gone).await.unwrap();
+        backend
+            .delete_impl(&storage, "infra", "gone")
+            .await
+            .unwrap();
+
+        let listed = backend.list_delegatable_impl(&storage).await.unwrap();
+        let ids: Vec<&str> = listed.iter().map(|c| c.client_id.as_str()).collect();
+        assert_eq!(ids, vec!["client-a", "client-b"]);
+    }
+
+    #[tokio::test]
     async fn test_display_metadata_persisted_and_name_filter() {
         let backend = RaftOauth2ClientBackend::default();
         let storage = MockStorage::default();
@@ -745,6 +857,70 @@ mod tests {
         assert_eq!(parsed.name, "");
         assert!(parsed.contacts.is_empty());
         assert_eq!(parsed.display_name(), "prov");
+        assert!(parsed.spiffe_ids.is_empty());
+        assert!(parsed.delegation.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_list_spiffe_clients_spans_domains() {
+        let backend = RaftOauth2ClientBackend::default();
+        let storage = MockStorage::default();
+
+        for (domain, provider) in [("domain-1", "provider-1"), ("domain-2", "provider-2")] {
+            let mut create = make_create(provider, domain, &format!("client-{provider}"));
+            create.token_endpoint_auth_method = "tls_client_auth".into();
+            create.spiffe_ids = vec![format!("spiffe://cloud.example/ns/{provider}")];
+            backend.create_impl(&storage, create).await.unwrap();
+        }
+        // No SPIFFE IDs: not listed.
+        backend
+            .create_impl(&storage, make_create("provider-3", "domain-1", "client-3"))
+            .await
+            .unwrap();
+
+        let listed = backend.list_spiffe_clients_impl(&storage).await.unwrap();
+        assert_eq!(listed.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_delegation_persisted_and_removed() {
+        let backend = RaftOauth2ClientBackend::default();
+        let storage = MockStorage::default();
+
+        let mut create = make_create("provider-1", "domain-1", "client-1");
+        create.token_endpoint_auth_method = "tls_client_auth".into();
+        create.spiffe_ids = vec!["spiffe://cloud.example/ns/nova/sa/*".into()];
+        create.delegation = Some(DelegationPolicy {
+            service_grants: true,
+            cross_domain: true,
+            max_role_ids: vec!["member".into()],
+            max_grant_lifetime: Some(3600),
+            ..Default::default()
+        });
+        backend.create_impl(&storage, create.clone()).await.unwrap();
+
+        let fetched = backend
+            .get_by_client_id_impl(&storage, "client-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.spiffe_ids, create.spiffe_ids);
+        assert_eq!(fetched.delegation, create.delegation);
+
+        let updated = backend
+            .update_impl(
+                &storage,
+                "domain-1",
+                "provider-1",
+                OAuth2ClientResourceUpdate {
+                    remove_delegation: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert!(updated.delegation.is_none());
+        assert_eq!(updated.spiffe_ids, create.spiffe_ids);
     }
 
     #[tokio::test]

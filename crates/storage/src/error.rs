@@ -16,7 +16,8 @@
 //! [`StoreError`] is the heavy, implementation-specific error used inside
 //! this crate. Across the [`StorageApi`](crate::StorageApi) boundary it is
 //! converted into the lightweight
-//! [`ApiStoreError`](crate::ApiStoreError) (see the `From` impl below) so consumers do not depend on Raft, Fjall or gRPC types.
+//! [`ApiStoreError`](crate::ApiStoreError) (see the `From` impl below) so
+//! consumers do not depend on Raft, Fjall or gRPC types.
 //use std::io;
 
 use openstack_keystone_storage_crypto::CryptoError;

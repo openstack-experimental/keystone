@@ -121,6 +121,10 @@ pub enum AuthenticationError {
     #[error("trustor user disabled")]
     TrustorUserDisabled(String),
 
+    /// The service grant is disabled or expired (ADR 0036 §5).
+    #[error("service grant {0} is disabled or expired")]
+    ServiceGrantDisabled(String),
+
     /// Unauthorized.
     #[error("The request you have made requires authentication.")]
     Unauthorized,
@@ -696,6 +700,19 @@ impl SecurityContext {
             {
                 return Err(AuthenticationError::AuthzPrincipalMismatch);
             }
+            // A service grant acts for its grantor, who must be a user.
+            AuthenticationContext::ServiceGrant { grant, .. }
+                if !matches!(self.principal.identity, IdentityInfo::User(_))
+                    || grant.grantor_user_id != self.principal.get_user_id() =>
+            {
+                return Err(AuthenticationError::AuthzPrincipalMismatch);
+            }
+            // A service acting as itself is a workload, never a user.
+            AuthenticationContext::ServiceClient { .. }
+                if !matches!(self.principal.identity, IdentityInfo::Principal(_)) =>
+            {
+                return Err(AuthenticationError::AuthzPrincipalMismatch);
+            }
             _ => {}
         }
         Ok(())
@@ -774,6 +791,10 @@ impl SecurityContext {
                 // Direct, non-delegated authentication (ADR 0025 §4), same
                 // as Password/Token.
                 AuthenticationContext::WasmPlugin { .. } => Ok(()),
+                AuthenticationContext::ServiceGrant { .. }
+                | AuthenticationContext::ServiceClient { .. } => {
+                    Err(AuthenticationError::ScopeNotAllowed)
+                }
             },
             ScopeInfo::Project { project, .. } => {
                 match &self.authentication_context {
@@ -844,6 +865,18 @@ impl SecurityContext {
                     AuthenticationContext::WebauthN => Ok(()),
                     AuthenticationContext::Mapping(_) => Ok(()),
                     AuthenticationContext::WasmPlugin { .. } => Ok(()),
+                    // A service grant is bound to its own target project
+                    // (ADR 0036 §5).
+                    AuthenticationContext::ServiceGrant { grant, .. } => {
+                        if grant.target.project_id() != project.id {
+                            Err(AuthenticationError::ScopeNotAllowed)
+                        } else {
+                            Ok(())
+                        }
+                    }
+                    AuthenticationContext::ServiceClient { .. } => {
+                        Err(AuthenticationError::ScopeNotAllowed)
+                    }
                 }
             }
             ScopeInfo::TrustProject(_) => match &self.authentication_context {
@@ -861,6 +894,10 @@ impl SecurityContext {
                 AuthenticationContext::WebauthN => Err(AuthenticationError::ScopeNotAllowed),
                 AuthenticationContext::Mapping(_) => Err(AuthenticationError::ScopeNotAllowed),
                 AuthenticationContext::WasmPlugin { .. } => Ok(()),
+                AuthenticationContext::ServiceGrant { .. }
+                | AuthenticationContext::ServiceClient { .. } => {
+                    Err(AuthenticationError::ScopeNotAllowed)
+                }
             },
             ScopeInfo::System(_system) => match &self.authentication_context {
                 AuthenticationContext::ApplicationCredential { .. } => {
@@ -877,6 +914,10 @@ impl SecurityContext {
                 AuthenticationContext::WebauthN => Ok(()),
                 AuthenticationContext::Mapping(_) => Ok(()),
                 AuthenticationContext::WasmPlugin { .. } => Ok(()),
+                AuthenticationContext::ServiceGrant { .. }
+                | AuthenticationContext::ServiceClient { .. } => {
+                    Err(AuthenticationError::ScopeNotAllowed)
+                }
             },
             ScopeInfo::Unscoped => match &self.authentication_context {
                 AuthenticationContext::ApplicationCredential { .. } => {
@@ -893,6 +934,11 @@ impl SecurityContext {
                 AuthenticationContext::WebauthN => Ok(()),
                 AuthenticationContext::Mapping(_) => Ok(()),
                 AuthenticationContext::WasmPlugin { .. } => Ok(()),
+                AuthenticationContext::ServiceGrant { .. } => {
+                    Err(AuthenticationError::ScopeNotAllowed)
+                }
+                // The service acting as itself holds no roles anywhere.
+                AuthenticationContext::ServiceClient { .. } => Ok(()),
             },
         }
     }
@@ -1374,6 +1420,36 @@ pub enum AuthenticationContext {
         /// shape and doesn't need a second breaking change later.
         token: Option<FernetToken>,
     },
+    /// A delegatable service acting for a user under a service grant (ADR
+    /// 0036 §5). The principal is the grantor; the grant bounds the scope
+    /// (its project only) and the roles (the grant's roles intersected
+    /// with the grantor's live roles). Only produced by grant redemption at
+    /// the token endpoint, never decoded from a bearer token.
+    ServiceGrant {
+        /// The redeemed grant; its `role_ids` may be narrowed by the
+        /// redemption request.
+        grant: crate::service_grant::ServiceGrant,
+        /// The service presenting the grant.
+        actor: ActorInfo,
+    },
+    /// A delegatable service authenticated by its SPIFFE X.509-SVID on the
+    /// internal interface, acting as itself (ADR 0036 §4.2: the grantee
+    /// reading or revoking its own grants). The principal is the workload
+    /// itself; only the unscoped scope is allowed.
+    ServiceClient {
+        /// The authenticated service.
+        actor: ActorInfo,
+    },
+}
+
+/// A delegatable service acting in a delegation (ADR 0036 §5): the OAuth2
+/// client it is registered as and the SPIFFE ID it authenticated with.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub struct ActorInfo {
+    /// Registered `client_id` of the service.
+    pub client_id: String,
+    /// SPIFFE ID of the presented X.509-SVID.
+    pub spiffe_id: String,
 }
 
 /// K8s auth context.
@@ -1419,6 +1495,8 @@ impl AuthenticationContext {
             Self::Ec2Credential => once("ec2credential".to_string()).collect(),
             Self::Totp => once("totp".to_string()).collect(),
             Self::WasmPlugin { plugin_name, .. } => once(plugin_name.clone()).collect(),
+            Self::ServiceGrant { .. } => once("service_grant".to_string()).collect(),
+            Self::ServiceClient { .. } => once("service_client".to_string()).collect(),
         }
     }
 
@@ -1447,6 +1525,8 @@ impl AuthenticationContext {
             Self::Ec2Credential => Cow::Borrowed("ec2credential"),
             Self::Totp => Cow::Borrowed("totp"),
             Self::WasmPlugin { plugin_name, .. } => Cow::Owned(plugin_name.clone()),
+            Self::ServiceGrant { .. } => Cow::Borrowed("service_grant"),
+            Self::ServiceClient { .. } => Cow::Borrowed("service_client"),
         }
     }
 
@@ -1466,11 +1546,11 @@ impl AuthenticationContext {
     pub fn is_delegated(&self) -> bool {
         matches!(
             self,
-            Self::ApplicationCredential { .. } | Self::Trust { .. }
+            Self::ApplicationCredential { .. } | Self::Trust { .. } | Self::ServiceGrant { .. }
         ) || self
             .methods()
             .iter()
-            .any(|m| m == "trust" || m == "application_credential")
+            .any(|m| m == "trust" || m == "application_credential" || m == "service_grant")
     }
 }
 

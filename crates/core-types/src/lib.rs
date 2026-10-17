@@ -44,6 +44,7 @@ pub mod revoke;
 pub mod role;
 pub mod scim;
 pub mod scope;
+pub mod service_grant;
 pub mod spiffe_key;
 pub mod token;
 pub mod trust;

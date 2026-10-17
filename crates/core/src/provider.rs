@@ -96,6 +96,9 @@ use crate::scim_realm::ScimRealmApi;
 use crate::scim_resource::MockScimResourceProvider;
 use crate::scim_resource::ScimResourceApi;
 #[cfg(any(test, feature = "mock"))]
+use crate::service_grant::MockServiceGrantProvider;
+use crate::service_grant::ServiceGrantApi;
+#[cfg(any(test, feature = "mock"))]
 use crate::spiffe_key::MockSpiffeKeyProvider;
 use crate::spiffe_key::SpiffeKeyApi;
 #[cfg(any(test, feature = "mock"))]
@@ -162,6 +165,8 @@ pub struct Provider {
     scim_realm: Box<dyn ScimRealmApi>,
     /// SCIM resource ownership index provider.
     scim_resource: Box<dyn ScimResourceApi>,
+    /// Service grant provider (ADR 0036).
+    service_grant: Box<dyn ServiceGrantApi>,
     /// SPIFFE attestation signing key provider (SPIRE integration plan,
     /// Phase 2).
     spiffe_key: Box<dyn SpiffeKeyApi>,
@@ -245,6 +250,12 @@ impl ProviderBuilder {
     pub fn mock_oauth2_client(self, value: impl Oauth2ClientApi + 'static) -> Self {
         let mut new = self;
         new.oauth2_client = Some(Box::new(value));
+        new
+    }
+
+    pub fn mock_service_grant(self, value: impl ServiceGrantApi + 'static) -> Self {
+        let mut new = self;
+        new.service_grant = Some(Box::new(value));
         new
     }
 
@@ -407,6 +418,10 @@ impl Provider {
             cfg,
             plugin_manager,
         )?);
+        let service_grant = Box::new(crate::service_grant::ServiceGrantService::new(
+            cfg,
+            plugin_manager,
+        )?);
         let token = Box::new(crate::token::TokenService::new(cfg, plugin_manager)?);
         let trust = Box::new(crate::trust::TrustService::new(cfg, plugin_manager)?);
 
@@ -435,6 +450,7 @@ impl Provider {
             role,
             scim_realm,
             scim_resource,
+            service_grant,
             spiffe_key,
             token,
             trust,
@@ -458,6 +474,7 @@ impl Provider {
             .mock_mapping(MockMappingProvider::default())
             .mock_nova_client(MockNovaClientProvider::default())
             .mock_oauth2_client(MockOauth2ClientProvider::default())
+            .mock_service_grant(MockServiceGrantProvider::default())
             .mock_oauth2_key(MockOauth2KeyProvider::default())
             .mock_oauth2_session(MockOauth2SessionProvider::default())
             .mock_federation(MockFederationProvider::default())
@@ -542,6 +559,11 @@ impl Provider {
     /// Get the OAuth2 client provider.
     pub fn get_oauth2_client_provider(&self) -> &dyn Oauth2ClientApi {
         &*self.oauth2_client
+    }
+
+    /// Get the service grant provider (ADR 0036).
+    pub fn get_service_grant_provider(&self) -> &dyn ServiceGrantApi {
+        &*self.service_grant
     }
 
     /// Get the OAuth2 signing key provider.

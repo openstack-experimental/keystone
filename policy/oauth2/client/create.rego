@@ -14,7 +14,9 @@ import data.identity.oauth2.client as client_common
 # Rules (ADR 0026 §5, same tier structure as identity.api_key.create):
 # client registration requires the `manager` role (DomainManager) scoped to
 # the client's own domain, or `admin` (SystemAdmin). Registering a
-# pre-authorized client always requires `admin`, regardless of domain.
+# pre-authorized client always requires `admin`, regardless of domain, and
+# so does registering a delegatable service (`spiffe_ids`, `delegation`,
+# ADR 0036 §3).
 
 default allow := false
 
@@ -30,6 +32,7 @@ allow if {
 	client_common.own_client
 	"manager" in input.credentials.roles
 	not input.target.oauth2_client.pre_authorized
+	not client_common.delegation_fields(input.target.oauth2_client)
 }
 
 violation contains {"field": "domain_id", "msg": msg} if {
@@ -51,4 +54,11 @@ violation contains {"field": "pre_authorized", "msg": msg} if {
 	not "admin" in input.credentials.roles
 	not input.credentials.is_admin
 	msg := "registering a pre_authorized OAuth2 client requires `admin` role."
+}
+
+violation contains {"field": "delegation", "msg": msg} if {
+	client_common.delegation_fields(input.target.oauth2_client)
+	not "admin" in input.credentials.roles
+	not input.credentials.is_admin
+	msg := "registering a delegatable service client requires `admin` role."
 }

@@ -227,6 +227,7 @@ pub fn build_token_exchange_claims(
         amr,
         token_use: "access".to_string(),
         delegation_context,
+        act: None,
         openstack_context: OpenStackContext {
             user_id,
             user_name,
@@ -323,6 +324,8 @@ mod tests {
             backchannel_logout_session_required: false,
             frontchannel_logout_uri: None,
             frontchannel_logout_session_required: false,
+            spiffe_ids: vec![],
+            delegation: None,
             client_id: "client-1".into(),
             provider_id: "provider-1".into(),
             domain_id: "domain-1".into(),

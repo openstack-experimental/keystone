@@ -12,7 +12,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! Real-browser tests of the OAuth2 sign-in pages. Need a WebDriver
-//! (`chromedriver --port=4444`, Chromium) or `BROWSER=firefox` with geckodriver; see `test_api::browser`.
+//! (`chromedriver --port=4444`, Chromium) or `BROWSER=firefox` with
+//! geckodriver; see `test_api::browser`.
 
 mod api_browser {
     mod oauth2_device;

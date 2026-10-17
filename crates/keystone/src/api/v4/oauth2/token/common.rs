@@ -22,6 +22,7 @@ use sha2::{Digest, Sha256};
 
 use openstack_keystone_core::auth::ExecutionContext;
 use openstack_keystone_core::oauth2_client::crypto;
+use openstack_keystone_core::oauth2_client::service::TLS_CLIENT_AUTH;
 use openstack_keystone_core_types::oauth2_client::{GrantType, OAuth2ClientResource};
 use openstack_keystone_key_repository::asymmetric::{jwt_algorithm, to_encoding_key};
 
@@ -187,6 +188,16 @@ pub(in crate::api::v4::oauth2) async fn authenticate_client(
         ));
     }
 
+    // `tls_client_auth` clients (delegatable services) authenticate by SVID
+    // on the internal interface only. They carry no secret, so without this
+    // they would pass as public clients here.
+    if client.token_endpoint_auth_method == TLS_CLIENT_AUTH {
+        let _ = crypto::generate_dummy_hash(oauth2_cfg).await;
+        return Err(Oauth2TokenError::invalid_client(
+            "client authentication failed",
+        ));
+    }
+
     match (client.client_secret_hash.as_deref(), client_secret) {
         (Some(hash), Some(secret)) => {
             let verified = crypto::verify_secret(secret, hash).await.map_err(|e| {
@@ -279,7 +290,36 @@ mod tests {
     use axum::{http::StatusCode, response::IntoResponse};
     use openstack_keystone_core_types::oauth2_client::Oauth2ClientProviderError;
 
+    use openstack_keystone_core::oauth2_client::MockOauth2ClientProvider;
+    use openstack_keystone_core::provider::Provider;
+
     use super::*;
+    use crate::api::v4::oauth2::token::test_fixtures::public_authz_code_client;
+
+    #[tokio::test]
+    async fn authenticate_client_rejects_tls_client_auth_client() {
+        let mut client = public_authz_code_client().await;
+        client.token_endpoint_auth_method = TLS_CLIENT_AUTH.into();
+        let domain_id = client.domain_id.clone();
+        let client_id = client.client_id.clone();
+        let mut client_mock = MockOauth2ClientProvider::default();
+        client_mock
+            .expect_get_by_client_id()
+            .returning(move |_, _| Ok(Some(client.clone())));
+        let provider = Provider::mocked_builder().mock_oauth2_client(client_mock);
+        let (state, _) = openstack_keystone_core::api::tests::get_mocked_state_with_audit(
+            provider,
+            true,
+            openstack_keystone_config::Config::default(),
+        )
+        .await;
+        let cfg = openstack_keystone_config::Oauth2Provider::default();
+
+        let err = authenticate_client(&state, &cfg, &domain_id, &client_id, None)
+            .await
+            .unwrap_err();
+        assert_eq!(err.into_response().status(), StatusCode::UNAUTHORIZED);
+    }
 
     #[test]
     fn raft_unavailable_maps_to_503_with_retry_after() {
