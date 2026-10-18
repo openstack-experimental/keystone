@@ -13,7 +13,7 @@ default = []
 builder = ["dep:derive_builder", "dep:openstack-keystone-core-types"]
 openapi = ["dep:utoipa"]
 validate = ["dep:validator"]
-conv = ["dep:axum", "dep:openstack-keystone-core-types", "dep:uuid", "builder", "dep:serde_urlencoded", "dep:url", "dep:validator"]
+conv = ["dep:axum", "dep:openstack-keystone-common", "dep:openstack-keystone-core-types", "dep:uuid", "builder", "dep:serde_urlencoded", "dep:url", "dep:validator"]
 
 [dependencies]
 axum = { workspace = true, features = ["json"], optional = true }
@@ -22,6 +22,7 @@ chrono = { workspace = true, default-features = false, features = ["serde", "all
 derive_builder = { workspace = true, optional = true }
 eyre.workspace = true
 http = { workspace = true, optional = true }
+openstack-keystone-common = { workspace = true, optional = true }
 openstack-keystone-core-types = { workspace = true, optional = true }
 secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true

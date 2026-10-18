@@ -5136,6 +5136,7 @@ dependencies = [
  "derive_builder",
  "eyre",
  "http",
+ "openstack-keystone-common",
  "openstack-keystone-core-types",
  "secrecy",
  "serde",

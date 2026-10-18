@@ -23,6 +23,7 @@ use {
     std::error::Error,
 };
 
+use openstack_keystone_common::is_storage_unavailable;
 use openstack_keystone_core_types::api_key::ApiKeyProviderError;
 use openstack_keystone_core_types::application_credential::ApplicationCredentialProviderError;
 use openstack_keystone_core_types::assignment::AssignmentProviderError;
@@ -484,6 +485,11 @@ impl From<ApiKeyProviderError> for KeystoneApiError {
             ApiKeyProviderError::RaftNotAvailable => Self::NotImplemented(
                 "API Key storage requires distributed storage (raft)".to_string(),
             ),
+            ApiKeyProviderError::RaftStoreError { source }
+                if is_storage_unavailable(source.as_ref()) =>
+            {
+                Self::ServiceUnavailable(format!("storage temporarily unavailable: {source}"))
+            }
             other => Self::InternalError(other.to_string()),
         }
     }
@@ -507,6 +513,11 @@ impl From<Oauth2ClientProviderError> for KeystoneApiError {
             Oauth2ClientProviderError::RaftNotAvailable => Self::NotImplemented(
                 "OAuth2 client storage requires distributed storage (raft)".to_string(),
             ),
+            Oauth2ClientProviderError::RaftStoreError { source }
+                if is_storage_unavailable(source.as_ref()) =>
+            {
+                Self::ServiceUnavailable(format!("storage temporarily unavailable: {source}"))
+            }
             other => Self::InternalError(other.to_string()),
         }
     }
@@ -528,6 +539,11 @@ impl From<ServiceGrantProviderError> for KeystoneApiError {
             ServiceGrantProviderError::RaftNotAvailable => Self::NotImplemented(
                 "service grant storage requires distributed storage (raft)".to_string(),
             ),
+            ServiceGrantProviderError::RaftStoreError { source }
+                if is_storage_unavailable(source.as_ref()) =>
+            {
+                Self::ServiceUnavailable(format!("storage temporarily unavailable: {source}"))
+            }
             other => Self::InternalError(other.to_string()),
         }
     }
@@ -543,6 +559,11 @@ impl From<Oauth2SessionProviderError> for KeystoneApiError {
             Oauth2SessionProviderError::RaftNotAvailable => Self::NotImplemented(
                 "OAuth2 session storage requires distributed storage (raft)".to_string(),
             ),
+            Oauth2SessionProviderError::RaftStoreError { source }
+                if is_storage_unavailable(source.as_ref()) =>
+            {
+                Self::ServiceUnavailable(format!("storage temporarily unavailable: {source}"))
+            }
             other => Self::InternalError(other.to_string()),
         }
     }
@@ -585,6 +606,11 @@ impl From<Oauth2KeyProviderError> for KeystoneApiError {
                 resource: "oauth2_signing_key".into(),
                 identifier: "no raft storage configured for OAuth2 signing keys".into(),
             },
+            Oauth2KeyProviderError::RaftStoreError { source }
+                if is_storage_unavailable(source.as_ref()) =>
+            {
+                Self::ServiceUnavailable(format!("storage temporarily unavailable: {source}"))
+            }
             other => Self::InternalError(other.to_string()),
         }
     }
@@ -628,6 +654,11 @@ impl From<AuthPluginIdentityProviderError> for KeystoneApiError {
             // Every other variant is an infra/storage failure with no client-actionable
             // distinction (ADR 0025 §6.B/§6.C); surface as a generic 500 without
             // leaking backend detail on the linking path.
+            AuthPluginIdentityProviderError::RaftStoreError { source }
+                if is_storage_unavailable(source.as_ref()) =>
+            {
+                Self::ServiceUnavailable(format!("storage temporarily unavailable: {source}"))
+            }
             other => Self::InternalError(other.to_string()),
         }
     }
@@ -692,6 +723,9 @@ impl From<MappingProviderError> for KeystoneApiError {
             MappingProviderError::RaftNotAvailable => Self::NotImplemented(
                 "mapping provider requires distributed storage (raft)".to_string(),
             ),
+            MappingProviderError::RaftStoreError { source } if is_storage_unavailable(source.as_ref()) => {
+                Self::ServiceUnavailable(format!("storage temporarily unavailable: {source}"))
+            }
             MappingProviderError::RaftStoreError { source } => {
                 Self::InternalError(format!("raft storage error: {source}"))
             }
@@ -721,6 +755,11 @@ impl From<ScimRealmProviderError> for KeystoneApiError {
             ScimRealmProviderError::RaftNotAvailable => Self::NotImplemented(
                 "SCIM realm provider requires distributed storage (raft)".to_string(),
             ),
+            ScimRealmProviderError::RaftStoreError { source }
+                if is_storage_unavailable(source.as_ref()) =>
+            {
+                Self::ServiceUnavailable(format!("storage temporarily unavailable: {source}"))
+            }
             ScimRealmProviderError::RaftStoreError { source } => {
                 Self::InternalError(format!("raft storage error: {source}"))
             }
@@ -750,6 +789,11 @@ impl From<ScimResourceProviderError> for KeystoneApiError {
             ScimResourceProviderError::RaftNotAvailable => Self::NotImplemented(
                 "SCIM resource provider requires distributed storage (raft)".to_string(),
             ),
+            ScimResourceProviderError::RaftStoreError { source }
+                if is_storage_unavailable(source.as_ref()) =>
+            {
+                Self::ServiceUnavailable(format!("storage temporarily unavailable: {source}"))
+            }
             ScimResourceProviderError::RaftStoreError { source } => {
                 Self::InternalError(format!("raft storage error: {source}"))
             }
@@ -854,6 +898,20 @@ impl From<KeystoneError> for KeystoneApiError {
 mod tests {
     use super::*;
     use axum::http::StatusCode;
+    use openstack_keystone_common::StorageUnavailable;
+
+    #[test]
+    fn raft_storage_unavailable_returns_503() {
+        let unavailable: KeystoneApiError =
+            ApiKeyProviderError::raft(StorageUnavailable::new("no leader")).into();
+        assert!(matches!(
+            unavailable,
+            KeystoneApiError::ServiceUnavailable(_)
+        ));
+        let other: KeystoneApiError =
+            ApiKeyProviderError::raft(std::io::Error::other("disk")).into();
+        assert!(matches!(other, KeystoneApiError::InternalError(_)));
+    }
 
     #[test]
     fn token_credential_rejections_return_401() {
