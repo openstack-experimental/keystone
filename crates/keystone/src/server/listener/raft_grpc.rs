@@ -186,6 +186,9 @@ pub async fn start_raft_app(
                 |(listener, acceptor, mut fail_count)| async move {
                     loop {
                         let (tcp, _) = listener.accept().await?;
+                        // Avoid Nagle + delayed ACK stalls (~40ms) on small
+                        // RPC responses.
+                        tcp.set_nodelay(true)?;
                         match acceptor.accept(tcp).await {
                             Ok(tls) => {
                                 return Ok::<_, std::io::Error>(Some((

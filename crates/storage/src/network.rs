@@ -149,6 +149,9 @@ impl tower::Service<http::Uri> for SpiffeConnector {
             .map_err(|_| {
                 std::io::Error::new(std::io::ErrorKind::TimedOut, "connect timed out")
             })??;
+            // Small request/response RPCs stall ~40ms on Nagle + delayed ACK
+            // without this.
+            tcp.set_nodelay(true)?;
             let connector = tokio_rustls::TlsConnector::from(tls);
             // `SpiffeServerCertVerifier` validates the peer's SPIFFE URI SAN
             // and ignores the DNS server name, so any valid
