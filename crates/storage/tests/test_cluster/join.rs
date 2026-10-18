@@ -831,7 +831,7 @@ async fn test_bootstrap_node_joins_existing_cluster_inner() -> Result<()> {
     use openstack_keystone_distributed_storage::bootstrap::ensure_raft_initialized;
 
     const PORT: u16 = AUTO_JOIN_PORT_BASE + 10;
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
     let tls = make_certificates()?;
 
@@ -909,7 +909,7 @@ fn test_rejoining_voter_is_demoted_to_learner() {
 }
 
 async fn test_rejoining_voter_is_demoted_to_learner_inner() -> Result<()> {
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = openstack_keystone_tls_provider::provider();
     let _ = rustls::crypto::CryptoProvider::install_default(provider);
     let tls = make_certificates()?;
 
