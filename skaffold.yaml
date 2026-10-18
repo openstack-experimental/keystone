@@ -386,6 +386,14 @@ profiles:
         path: /manifests/kustomize/paths/0
         value: tools/k8s/keystone/overlays/skaffold-soak
 
+  # Soak cluster with traces. `soak` and `otel` each replace the one kustomize
+  # path, so combining them (`-p soak,otel`) silently drops one: use this.
+  - name: soak-otel
+    patches:
+      - op: replace
+        path: /manifests/kustomize/paths/0
+        value: tools/k8s/keystone/overlays/skaffold-soak-otel
+
   # Export traces to the `observability` module's Jaeger (deploy that module
   # first): `skaffold run -m keystone -p local,otel`.
   - name: otel

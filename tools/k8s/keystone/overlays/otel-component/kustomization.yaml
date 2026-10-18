@@ -1,0 +1,7 @@
+# OpenTelemetry export to the stack in tools/k8s/observability (Jaeger),
+# shared by the skaffold-otel and skaffold-soak-otel overlays.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+patches:
+  - path: statefulset-otel-patch.yaml

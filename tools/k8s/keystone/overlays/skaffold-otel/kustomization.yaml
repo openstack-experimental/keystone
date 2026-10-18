@@ -4,5 +4,5 @@
 resources:
   - ../skaffold
 
-patches:
-  - path: statefulset-otel-patch.yaml
+components:
+  - ../otel-component

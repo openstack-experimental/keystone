@@ -30,6 +30,10 @@ skaffold deploy -m soak -p local -a soak-build.json
 skaffold delete -m soak
 ```
 
+For traces too, use the combined `soak-otel` profile instead of `-p soak,otel`
+(each profile replaces the single kustomize path, so the last one silently
+wins).
+
 Manually:
 
 ```sh

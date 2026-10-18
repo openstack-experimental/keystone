@@ -1,0 +1,9 @@
+# The 3-voter soak cluster with OpenTelemetry export. Selected by the
+# `soak-otel` profile of the `keystone` skaffold module. The `soak` and
+# `otel` profiles each replace the single kustomize path, so they cannot be
+# combined; use this one instead of `-p soak,otel`.
+resources:
+  - ../skaffold-soak
+
+components:
+  - ../otel-component
