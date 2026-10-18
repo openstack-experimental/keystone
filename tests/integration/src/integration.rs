@@ -41,6 +41,7 @@ mod resource;
 mod revoke;
 mod role;
 mod scim_realm;
+mod service_grant;
 mod token;
 mod trust;
 
