@@ -36,6 +36,7 @@ pub mod role;
 pub mod scim;
 pub mod scim_realm;
 pub mod service;
+pub mod svid_client;
 pub mod token_restriction;
 pub mod trust;
 pub mod webauthn;

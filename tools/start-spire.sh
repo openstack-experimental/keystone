@@ -105,5 +105,16 @@ spire-server entry create \
     -spiffeID "spiffe://$TRUST_DOMAIN/keystone" \
     -selector "unix:uid:$CURRENT_UID"
 
+# Distinct SVIDs for the live service grant tests: a client's spiffe_ids may not
+# overlap another client's, so every test that redeems with a real SVID owns
+# one. The test picks its SVID by ID from the ones the agent hands out.
+for name in redeem foreign; do
+    spire-server entry create \
+        -socketPath "$SERVER_SOCKET" \
+        -parentID "spiffe://$TRUST_DOMAIN/agent" \
+        -spiffeID "spiffe://$TRUST_DOMAIN/service/it-$name/host/h1" \
+        -selector "unix:uid:$CURRENT_UID"
+done
+
 echo "✅ SPIRE is fully initialized and running in the background!"
 echo "📍 Agent Socket available at: $AGENT_SOCKET"

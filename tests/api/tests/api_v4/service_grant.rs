@@ -29,6 +29,7 @@ use openstack_keystone_api_types::scope::{DomainBuilder, Scope, ScopeProjectBuil
 use test_api::common::{TestClient, get_password_auth, http_client};
 use test_api::oauth2::post_token_form;
 use test_api::oauth2_browser::*;
+use test_api::svid_client::post_form;
 
 const GRANT_TYPE: &str = "urn:openstack:params:oauth:grant-type:service-grant";
 
@@ -73,6 +74,17 @@ fn id_of(body: &Value, key: &str) -> Result<String> {
 /// A domain with a user holding a role on a project, and a delegatable
 /// `tls_client_auth` service whose role ceiling names that role.
 async fn fixture() -> Result<Fixture> {
+    fixture_with_svid(None).await
+}
+
+/// SVID of the harness SPIRE entry the redeeming test owns, and one that no
+/// client is ever registered for (`tools/start-spire.sh`).
+const REDEEM_SVID: &str = "spiffe://example.org/service/it-redeem/host/h1";
+const FOREIGN_SVID: &str = "spiffe://example.org/service/it-foreign/host/h1";
+
+/// Like [`fixture`], with the client's `spiffe_ids` set to the exact `svid`
+/// instead of a pattern unique to the client.
+async fn fixture_with_svid(svid: Option<&str>) -> Result<Fixture> {
     let domain_id = create_ready_domain("sg").await?;
     let (user_id, user_name) = create_browser_user(&domain_id).await?;
 
@@ -123,7 +135,10 @@ async fn fixture() -> Result<Fixture> {
             "require_pkce": false,
             "redirect_uris": [],
             "post_logout_redirect_uris": [],
-            "spiffe_ids": [format!("spiffe://example.org/service/{provider_id}/host/*")],
+            "spiffe_ids": [svid.map_or_else(
+                || format!("spiffe://example.org/service/{provider_id}/host/*"),
+                String::from,
+            )],
             "delegation": {"service_grants": true, "max_role_ids": [role_id]},
         }),
     )
@@ -569,5 +584,98 @@ async fn test_internal_interface_refuses_clients_without_svid() -> Result<()> {
             .await;
         assert!(rsp.is_err(), "{scheme} request reached the internal port");
     }
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_grant_can_be_redeemed_with_svid_on_internal_interface() -> Result<()> {
+    let f = fixture_with_svid(Some(REDEEM_SVID)).await?;
+    let owner = f.user().await?;
+    let id = f.create_grant(&owner).await?;
+    let path = format!("/v4/oauth2/{}/token", f.domain_id);
+    let form = [
+        ("grant_type", GRANT_TYPE),
+        ("grant_id", id.as_str()),
+        ("client_id", f.client_id.as_str()),
+    ];
+
+    // The grantee's real X.509-SVID, from the SPIRE agent, over mTLS.
+    let (status, body) = post_form(REDEEM_SVID, &path, &form).await?;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let token = body["access_token"]
+        .as_str()
+        .ok_or_else(|| eyre!("no access_token in {body}"))?;
+
+    // The token is issued to the grantor, acted for by the SVID.
+    let payload = token
+        .split('.')
+        .nth(1)
+        .ok_or_else(|| eyre!("access token is not a JWT"))?;
+    let claims: Value =
+        serde_json::from_slice(&data_encoding::BASE64URL_NOPAD.decode(payload.as_bytes())?)?;
+    assert_eq!(claims["sub"], f.user_id.as_str(), "{claims}");
+    assert_eq!(claims["act"]["sub"], REDEEM_SVID, "{claims}");
+    assert_eq!(claims["act"]["sub_type"], "spiffe", "{claims}");
+
+    // A grant is a standing delegation: it redeems again, and records it.
+    let (status, body) = post_form(REDEEM_SVID, &path, &form).await?;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let rsp = owner
+        .client
+        .get(owner.base_url.join(&format!("v4/service-grants/{id}"))?)
+        .send()
+        .await?;
+    let shown: Value = rsp.json().await?;
+    assert!(
+        !shown["service_grant"]["last_redeemed_at"].is_null(),
+        "{shown}"
+    );
+
+    // Revoking it ends redemption.
+    let rsp = owner
+        .client
+        .delete(owner.base_url.join(&format!("v4/service-grants/{id}"))?)
+        .send()
+        .await?;
+    assert!(rsp.status().is_success(), "{}", rsp.status());
+    let (status, body) = post_form(REDEEM_SVID, &path, &form).await?;
+    assert!(!status.is_success(), "revoked grant redeemed: {body}");
+    assert!(body["access_token"].is_null(), "{body}");
+    Ok(())
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_other_svid_can_not_redeem_grant() -> Result<()> {
+    // The client is bound to a pattern of its own; the SVID presented is
+    // valid for the trust domain but not one of the client's `spiffe_ids`.
+    let f = fixture().await?;
+    let owner = f.user().await?;
+    let id = f.create_grant(&owner).await?;
+    let path = format!("/v4/oauth2/{}/token", f.domain_id);
+
+    let (status, body) = post_form(
+        FOREIGN_SVID,
+        &path,
+        &[
+            ("grant_type", GRANT_TYPE),
+            ("grant_id", &id),
+            ("client_id", &f.client_id),
+        ],
+    )
+    .await?;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_eq!(body["error"], "invalid_client");
+    assert!(body["access_token"].is_null(), "{body}");
+
+    // The grant is untouched.
+    let rsp = owner
+        .client
+        .get(owner.base_url.join(&format!("v4/service-grants/{id}"))?)
+        .send()
+        .await?;
+    let shown: Value = rsp.json().await?;
+    assert_eq!(shown["service_grant"]["enabled"], true, "{shown}");
     Ok(())
 }
