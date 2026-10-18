@@ -180,8 +180,9 @@ Errors follow RFC 6749: `invalid_grant` (`400`) for an unknown or foreign grant
 or an authentication failure, `invalid_client` (`401`) when the SVID does not
 match the grantee, `invalid_request` (`400`) for a `roles` value outside the
 grant, and `invalid_grant` with status `403` when the grant is disabled or the
-grantor lost every delegated role. Redemption shares the token endpoint rate
-limiter, keyed on the SVID.
+grantor lost every delegated role. Redemption is rate limited per SVID
+(`service_grant:<svid>`) with the token endpoint's `[oauth2]` quota, so it never
+shares a budget with the client-keyed grants.
 
 ### Token content
 
@@ -255,4 +256,5 @@ with the internal context and appear in the grant's `disabled_reason`.
   `private_key_jwt` on the public interface is phase 3.
 - The on-behalf-of exchange (phase 2) and EC2 credentials under a grant
   (phase 4) are not implemented. Trusts remain available.
-- A `429` for a grant quota carries no `Retry-After` header.
+- A `429` for a grant quota carries no `Retry-After` header: unlike a rate
+  limit, waiting does not free quota, only revoking or expiring grants does.

@@ -40,6 +40,12 @@ use crate::api::v4::oauth2::well_known::base_url;
 pub(super) const SERVICE_GRANT_GRANT_TYPE: &str =
     "urn:openstack:params:oauth:grant-type:service-grant";
 
+/// Rate limiter key of a redemption: a bucket of its own per presented
+/// SVID, never shared with the `client_id`-keyed grants.
+fn rate_limit_key(svid: &str) -> String {
+    format!("service_grant:{svid}")
+}
+
 /// Redeem a service grant for a short-lived access token acting for the
 /// grantor (ADR 0036 §5).
 ///
@@ -81,7 +87,10 @@ pub(super) async fn handle_service_grant_grant(
 
     // Step 1 (ADR 0026 §7.A): rate limit before any lookup, keyed on the
     // presented identity.
-    if let Err(not_until) = state.oauth2_token_rate_limiter.check_key(&svid.to_string()) {
+    if let Err(not_until) = state
+        .oauth2_token_rate_limiter
+        .check_key(&rate_limit_key(&svid.to_string()))
+    {
         let retry_after = not_until
             .wait_time_from(state.oauth2_token_rate_limiter.clock().now())
             .as_secs()
@@ -196,6 +205,14 @@ fn redeem_error(e: ServiceGrantRedeemError) -> Oauth2TokenError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_rate_limit_key_is_namespaced() {
+        assert_eq!(
+            super::rate_limit_key("spiffe://x/ns/a"),
+            "service_grant:spiffe://x/ns/a"
+        );
+    }
+
     use axum::http::StatusCode;
     use chrono::Utc;
     use tower::ServiceExt;
