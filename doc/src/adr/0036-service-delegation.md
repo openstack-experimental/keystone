@@ -1148,7 +1148,9 @@ Where the phase 1 implementation refines or departs from the decision above:
   `429` without `Retry-After`.
 - **Registry.** Removing a client's policy is `remove_delegation: true` on
   update (a JSON `null` cannot be told apart from an absent field).
-  `max_role_ids` entries are not checked against existing roles.
+  `max_role_ids` entries added by a write must be existing roles; ids
+  already in the stored ceiling are not re-checked, so a role deleted later
+  does not block unrelated edits.
 - **List filter.** `domain_id` on `GET /v4/service-grants` filters on the
   grant's domain, which is the target project's domain. Domain managers
   are authorized on that same domain.

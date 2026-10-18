@@ -74,7 +74,10 @@ requires an administrator.
   in the client's own domain; otherwise creation is rejected and redemption
   answers as if the grant did not exist.
 - `max_role_ids` is a ceiling on the roles a grant to this client may carry. An
-  empty list means the grant is bounded only by the grantor's own roles.
+  empty list means the grant is bounded only by the grantor's own roles. Every
+  id added to the ceiling must be an existing role; ids already stored are not
+  re-checked, so a role deleted later simply never matches and does not block
+  edits.
 - `max_grant_lifetime` (seconds) caps `expires_at`. Without it a grant may be
   created without an expiry.
 - `max_grants_per_project` caps live grants per (project, client). The
@@ -252,6 +255,4 @@ with the internal context and appear in the grant's `disabled_reason`.
   `private_key_jwt` on the public interface is phase 3.
 - The on-behalf-of exchange (phase 2) and EC2 credentials under a grant
   (phase 4) are not implemented. Trusts remain available.
-- `max_role_ids` entries are not checked against existing roles at
-  registration. An unknown id simply never matches.
 - A `429` for a grant quota carries no `Retry-After` header.

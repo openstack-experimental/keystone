@@ -498,6 +498,12 @@ impl From<Oauth2ClientProviderError> for KeystoneApiError {
             },
             Oauth2ClientProviderError::Conflict(x) => Self::Conflict(x),
             Oauth2ClientProviderError::Validation(x) => Self::UnprocessableEntity(x),
+            // The detail is another provider's error text: log it, do not
+            // return it.
+            Oauth2ClientProviderError::Dependency(x) => {
+                tracing::error!(error = %x, "OAuth2 client provider dependency failure");
+                Self::InternalError("dependency failure".to_string())
+            }
             Oauth2ClientProviderError::RaftNotAvailable => Self::NotImplemented(
                 "OAuth2 client storage requires distributed storage (raft)".to_string(),
             ),

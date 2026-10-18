@@ -362,6 +362,41 @@ fn validate_delegation(
     Ok(())
 }
 
+/// Reject `max_role_ids` entries that are not existing roles (ADR 0036
+/// §3): a ceiling naming a role that does not exist would silently
+/// delegate less than the registrant meant (a typo, or a role later
+/// recreated under another id).
+///
+/// Ids in `unchanged` (the stored ceiling) are skipped: a role deleted
+/// since registration must not block an edit that leaves it in place.
+async fn ensure_roles_exist(
+    ctx: &ExecutionContext<'_>,
+    delegation: Option<&DelegationPolicy>,
+    unchanged: &[String],
+) -> Result<(), Oauth2ClientProviderError> {
+    let Some(delegation) = delegation else {
+        return Ok(());
+    };
+    let roles = ctx.state().provider.get_role_provider();
+    for role_id in delegation
+        .max_role_ids
+        .iter()
+        .filter(|id| !unchanged.contains(id))
+    {
+        if roles
+            .get_role(ctx, role_id)
+            .await
+            .map_err(|e| Oauth2ClientProviderError::Dependency(e.to_string()))?
+            .is_none()
+        {
+            return Err(Oauth2ClientProviderError::Validation(format!(
+                "delegation.max_role_ids names an unknown role: {role_id}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// A `tls_client_auth` client has no secret and is exempt from the PKCE
 /// rule, so it must not use the browser and device grants, which rely on
 /// one of the two to bind the code to the client. Without those grants,
@@ -461,6 +496,7 @@ impl Oauth2ClientApi for Oauth2ClientService {
             &self.internal_trust_domains,
             true,
         )?;
+        ensure_roles_exist(ctx, data.delegation.as_ref(), &[]).await?;
         // A `tls_client_auth` client authenticates with its SVID: it never
         // gets a secret and is exempt from the PKCE rule.
         let mtls = data.token_endpoint_auth_method == TLS_CLIENT_AUTH;
@@ -680,6 +716,16 @@ impl Oauth2ClientApi for Oauth2ClientService {
             &self.internal_trust_domains,
             data.spiffe_ids.is_some(),
         )?;
+        // Only role ids this update adds are checked: one already in the
+        // stored ceiling may name a role deleted since, which must not
+        // block unrelated edits.
+        if !data.remove_delegation {
+            let stored = current
+                .delegation
+                .as_ref()
+                .map_or(&[][..], |d| d.max_role_ids.as_slice());
+            ensure_roles_exist(ctx, data.delegation.as_ref(), stored).await?;
+        }
         if let Some(spiffe_ids) = data.spiffe_ids.as_deref().filter(|ids| !ids.is_empty()) {
             let existing = self.backend_driver.list_spiffe_clients(ctx.state()).await?;
             if let Some(msg) = find_spiffe_conflict(
@@ -797,6 +843,7 @@ mod tests {
     use crate::oauth2_session::MockOauth2SessionProvider;
     use crate::provider::Provider;
     use crate::tests::get_mocked_state;
+    use openstack_keystone_core_types::role::RoleBuilder;
     use std::collections::HashMap;
 
     fn sample_create() -> OAuth2ClientResourceCreate {
@@ -853,6 +900,132 @@ mod tests {
             ..Default::default()
         });
         req
+    }
+
+    fn state_with_roles(
+        known: &'static [&'static str],
+    ) -> impl std::future::Future<Output = crate::keystone::ServiceState> {
+        let mut roles = crate::role::MockRoleProvider::default();
+        roles.expect_get_role().returning(move |_, id| {
+            Ok(known
+                .contains(&id)
+                .then(|| RoleBuilder::default().id(id).name(id).build().unwrap()))
+        });
+        get_mocked_state(
+            None,
+            Some(crate::provider::Provider::mocked_builder().mock_role(roles)),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_create_rejects_unknown_max_role_id() {
+        let mut mock = MockOauth2ClientBackend::new();
+        mock.expect_list_spiffe_clients().returning(|_| Ok(vec![]));
+        mock.expect_create()
+            .returning(|_, data| Ok(sample_resource_from(data)));
+        let service = service_with(mock);
+        let state = state_with_roles(&["member"]).await;
+        let ctx = ExecutionContext::internal(&state);
+
+        let mut req = sample_service_create();
+        req.delegation = Some(DelegationPolicy {
+            service_grants: true,
+            max_role_ids: vec!["member".into(), "membr".into()],
+            ..Default::default()
+        });
+        assert!(matches!(
+            service.create(&ctx, req.clone(), false).await,
+            Err(Oauth2ClientProviderError::Validation(msg)) if msg.contains("membr")
+        ));
+
+        req.delegation = Some(DelegationPolicy {
+            service_grants: true,
+            max_role_ids: vec!["member".into()],
+            ..Default::default()
+        });
+        assert!(service.create(&ctx, req, false).await.is_ok());
+    }
+
+    fn resource_with_ceiling(ids: &[&str]) -> OAuth2ClientResource {
+        let mut req = sample_service_create();
+        req.delegation = Some(DelegationPolicy {
+            service_grants: true,
+            max_role_ids: ids.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        });
+        sample_resource_from(req)
+    }
+
+    fn update_with_ceiling(ids: &[&str]) -> OAuth2ClientResourceUpdate {
+        OAuth2ClientResourceUpdate {
+            delegation: Some(DelegationPolicy {
+                service_grants: true,
+                max_role_ids: ids.iter().map(|s| s.to_string()).collect(),
+                max_grant_lifetime: Some(60),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_update_checks_only_added_max_role_ids() {
+        let mut mock = MockOauth2ClientBackend::new();
+        // Stored ceiling names `gone`, which no longer exists.
+        mock.expect_get()
+            .returning(|_, _, _| Ok(Some(resource_with_ceiling(&["member", "gone"]))));
+        mock.expect_update()
+            .returning(|_, _, _, _| Ok(resource_with_ceiling(&["member", "gone"])));
+        let service = service_with(mock);
+        let state = state_with_roles(&["member", "reader"]).await;
+        let ctx = ExecutionContext::internal(&state);
+
+        // Same ids, other delegation field changed: not re-checked.
+        assert!(
+            service
+                .update(&ctx, "d", "p", update_with_ceiling(&["member", "gone"]))
+                .await
+                .is_ok()
+        );
+        // A new existing id is accepted.
+        assert!(
+            service
+                .update(&ctx, "d", "p", update_with_ceiling(&["gone", "reader"]))
+                .await
+                .is_ok()
+        );
+        // A new unknown id is rejected.
+        assert!(matches!(
+            service
+                .update(&ctx, "d", "p", update_with_ceiling(&["member", "membr"]))
+                .await,
+            Err(Oauth2ClientProviderError::Validation(msg)) if msg.contains("membr")
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_role_lookup_failure_is_dependency_error() {
+        let mut roles = crate::role::MockRoleProvider::default();
+        roles.expect_get_role().returning(|_, _| {
+            Err(openstack_keystone_core_types::role::RoleProviderError::Driver("boom".into()))
+        });
+        let state = get_mocked_state(
+            None,
+            Some(crate::provider::Provider::mocked_builder().mock_role(roles)),
+        )
+        .await;
+        let ctx = ExecutionContext::internal(&state);
+        let mut req = sample_service_create();
+        req.delegation = Some(DelegationPolicy {
+            service_grants: true,
+            max_role_ids: vec!["member".into()],
+            ..Default::default()
+        });
+        let service = service_with(MockOauth2ClientBackend::new());
+        assert!(matches!(
+            service.create(&ctx, req, false).await,
+            Err(Oauth2ClientProviderError::Dependency(_))
+        ));
     }
 
     #[tokio::test]

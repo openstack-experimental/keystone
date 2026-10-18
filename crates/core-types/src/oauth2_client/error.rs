@@ -33,6 +33,10 @@ pub enum Oauth2ClientProviderError {
     #[error("crypto error in the oauth2 client provider: {0}")]
     Crypto(String),
 
+    /// A dependency provider (for example the role provider) failed.
+    #[error("dependency failure in the oauth2 client provider: {0}")]
+    Dependency(String),
+
     /// OAuth2 client not found.
     #[error("OAuth2 client {0} not found")]
     NotFound(String),
