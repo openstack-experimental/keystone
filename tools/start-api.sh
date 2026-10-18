@@ -126,6 +126,13 @@ key_repository = ${STATE_DIR}/etc/fernet-keys
 tcp_address = 0.0.0.0:8080
 type = "http"
 
+# SPIFFE mTLS listener for services (service grants, ADR 0036). Its trust
+# domains are also the ones client spiffe_ids may name at registration.
+[interface_internal]
+tcp_address = 127.0.0.1:8215
+type = "spiffe"
+trust_domains = example.org
+
 [interface_admin]
 socket_path = ${STATE_DIR}/keystone.sock
 trust_domains=example.org
