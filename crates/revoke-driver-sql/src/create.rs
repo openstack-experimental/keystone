@@ -13,6 +13,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Create a token revocation record.
 
+use chrono::SubsecRound;
 use openstack_keystone_core::revoke::RevokeProviderError;
 use sea_orm::DatabaseConnection;
 use sea_orm::entity::*;
@@ -73,7 +74,11 @@ pub async fn create(
             .expires_at
             .map(|val| Set(Some(val.naive_utc())))
             .unwrap_or(NotSet),
-        issued_before: Set(revocation.issued_before.naive_utc()),
+        // Tokens carry `issued_at` at whole-second precision, so truncate here
+        // explicitly. Otherwise MySQL (DATETIME(0)) rounds the fraction to the
+        // nearest second, possibly into the next second, which would revoke
+        // tokens issued after the event.
+        issued_before: Set(revocation.issued_before.trunc_subsecs(0).naive_utc()),
         project_id: revocation
             .project_id
             .clone()
@@ -145,7 +150,7 @@ mod tests {
                     "trust_id".into(),
                     "consumer_id".into(),
                     "access_token_id".into(),
-                    time2.naive_utc().into(),
+                    time2.trunc_subsecs(0).naive_utc().into(),
                     time1.naive_utc().into(),
                     time3.naive_utc().into(),
                     "audit_id".into(),
